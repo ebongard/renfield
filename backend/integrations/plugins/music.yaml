@@ -1,0 +1,186 @@
+name: music
+version: 1.0.0
+description: Control music playback via Spotify Web API
+author: Renfield Team
+enabled_var: MUSIC_ENABLED
+
+config:
+  url: SPOTIFY_API_URL
+  additional:
+    access_token: SPOTIFY_ACCESS_TOKEN
+
+intents:
+  - name: music.search
+    description: Search for songs, artists, albums, or playlists
+    parameters:
+      - name: query
+        type: string
+        required: true
+        description: Search query (song, artist, album, or playlist name)
+      - name: type
+        type: string
+        required: false
+        default: track
+        enum: [track, artist, album, playlist]
+        description: Type of content to search for
+      - name: limit
+        type: integer
+        required: false
+        default: 5
+        description: Number of results (1-10)
+    examples:
+      - "Suche nach Musik von Coldplay"
+      - "Finde das Lied Bohemian Rhapsody"
+      - "Suche das Album Abbey Road"
+      - "Zeige mir Chill Playlists"
+    api:
+      method: GET
+      url: "{config.url}/v1/search?q={params.query}&type={params.type}&limit={params.limit}"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 10
+      response_mapping:
+        tracks: "tracks.items"
+        artists: "artists.items"
+        albums: "albums.items"
+        playlists: "playlists.items"
+
+  - name: music.play
+    description: Start playing a track, album, or playlist
+    parameters:
+      - name: uri
+        type: string
+        required: true
+        description: Spotify URI (e.g., spotify:track:abc123)
+      - name: device_id
+        type: string
+        required: false
+        description: Target device ID (optional)
+    examples:
+      - "Spiele diesen Song"
+      - "Starte die Playlist"
+      - "Spiele das Album"
+    api:
+      method: PUT
+      url: "{config.url}/v1/me/player/play"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+        Content-Type: "application/json"
+      body:
+        uris: ["{params.uri}"]
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.pause
+    description: Pause playback
+    parameters: []
+    examples:
+      - "Pausiere die Musik"
+      - "Stoppe die Wiedergabe"
+      - "Musik anhalten"
+    api:
+      method: PUT
+      url: "{config.url}/v1/me/player/pause"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.resume
+    description: Resume playback
+    parameters: []
+    examples:
+      - "Musik weiterspielen"
+      - "Fortsetzen"
+      - "Weiter abspielen"
+    api:
+      method: PUT
+      url: "{config.url}/v1/me/player/play"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.next
+    description: Skip to next track
+    parameters: []
+    examples:
+      - "Nächster Song"
+      - "Überspringe diesen Track"
+      - "Weiter"
+    api:
+      method: POST
+      url: "{config.url}/v1/me/player/next"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.previous
+    description: Go to previous track
+    parameters: []
+    examples:
+      - "Vorheriger Song"
+      - "Zurück"
+      - "Letzter Track"
+    api:
+      method: POST
+      url: "{config.url}/v1/me/player/previous"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.volume
+    description: Set playback volume (0-100)
+    parameters:
+      - name: level
+        type: integer
+        required: true
+        description: Volume level (0-100)
+    examples:
+      - "Lautstärke auf 50"
+      - "Mach lauter auf 80"
+      - "Leiser auf 30"
+    api:
+      method: PUT
+      url: "{config.url}/v1/me/player/volume?volume_percent={params.level}"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping: {}
+
+  - name: music.current
+    description: Get currently playing track
+    parameters: []
+    examples:
+      - "Was läuft gerade?"
+      - "Welcher Song spielt?"
+      - "Aktueller Track"
+    api:
+      method: GET
+      url: "{config.url}/v1/me/player/currently-playing"
+      headers:
+        Authorization: "Bearer {config.access_token}"
+      timeout: 5
+      response_mapping:
+        is_playing: "is_playing"
+        track_name: "item.name"
+        artist: "item.artists[0].name"
+        album: "item.album.name"
+        duration_ms: "item.duration_ms"
+        progress_ms: "progress_ms"
+
+error_mappings:
+  - code: 401
+    message: "Spotify-Authentifizierung fehlgeschlagen. Bitte SPOTIFY_ACCESS_TOKEN aktualisieren."
+  - code: 403
+    message: "Zugriff verweigert. Überprüfe Spotify-Berechtigungen."
+  - code: 404
+    message: "Kein aktives Gerät gefunden. Bitte öffne Spotify auf einem Gerät."
+  - code: 429
+    message: "Zu viele Anfragen. Bitte später erneut versuchen."
+  - code: 500
+    message: "Spotify-Service vorübergehend nicht verfügbar."
+
+rate_limit: 180

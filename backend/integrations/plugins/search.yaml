@@ -1,0 +1,82 @@
+name: search
+version: 1.0.0
+description: Web search using DuckDuckGo Instant Answer API
+author: Renfield Team
+enabled_var: SEARCH_ENABLED
+
+config:
+  url: DUCKDUCKGO_API_URL
+
+intents:
+  - name: search.web
+    description: Search the web for information using DuckDuckGo
+    parameters:
+      - name: query
+        type: string
+        required: true
+        description: Search query
+      - name: format
+        type: string
+        required: false
+        default: json
+        enum: [json]
+        description: Response format
+    examples:
+      - "Suche nach Python Tutorials"
+      - "Was ist Quantencomputing?"
+      - "Wie funktioniert Photosynthese?"
+      - "Wer hat die Relativitätstheorie entwickelt?"
+      - "Suche Informationen über den Mars"
+    api:
+      method: GET
+      url: "{config.url}/?q={params.query}&format={params.format}&no_html=1&skip_disambig=1"
+      timeout: 10
+      response_mapping:
+        heading: "Heading"
+        abstract: "Abstract"
+        abstract_text: "AbstractText"
+        abstract_source: "AbstractSource"
+        abstract_url: "AbstractURL"
+        image: "Image"
+        answer: "Answer"
+        answer_type: "AnswerType"
+        definition: "Definition"
+        definition_source: "DefinitionSource"
+        definition_url: "DefinitionURL"
+        related_topics: "RelatedTopics"
+        results: "Results"
+        type: "Type"
+
+  - name: search.instant_answer
+    description: Get instant answers to factual questions
+    parameters:
+      - name: query
+        type: string
+        required: true
+        description: Question or search term
+    examples:
+      - "Wie alt ist die Erde?"
+      - "Hauptstadt von Frankreich"
+      - "Wann wurde Einstein geboren?"
+      - "Was ist die Lichtgeschwindigkeit?"
+    api:
+      method: GET
+      url: "{config.url}/?q={params.query}&format=json&no_html=1&skip_disambig=1"
+      timeout: 10
+      response_mapping:
+        answer: "Answer"
+        answer_type: "AnswerType"
+        heading: "Heading"
+        abstract: "AbstractText"
+        source: "AbstractSource"
+        url: "AbstractURL"
+
+error_mappings:
+  - code: 403
+    message: "Zugriff auf Such-API verweigert."
+  - code: 500
+    message: "Suchserver-Fehler. Bitte später erneut versuchen."
+  - code: 503
+    message: "Such-Service vorübergehend nicht verfügbar."
+
+rate_limit: 60

@@ -1,0 +1,121 @@
+services:
+  # PostgreSQL Datenbank
+  postgres:
+    image: postgres:16-alpine
+    container_name: renfield-postgres
+    environment:
+      POSTGRES_DB: renfield
+      POSTGRES_USER: renfield
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - renfield-network
+    restart: unless-stopped
+
+  # Redis für Message Queue und Caching
+  redis:
+    image: redis:7-alpine
+    container_name: renfield-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - renfield-network
+    restart: unless-stopped
+
+  # Ollama - Lokales LLM (optional - kann durch externe Instanz ersetzt werden)
+  ollama:
+    image: ollama/ollama:latest
+    container_name: renfield-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - renfield-network
+    restart: unless-stopped
+    profiles:
+      - ollama  # Aktiviere mit: docker compose --profile ollama up
+#    deploy:
+#      resources:
+#        reservations:
+#          devices:
+#            - driver: nvidia
+#              count: all
+#              capabilities: [gpu]
+    # Falls keine GPU: deploy-Sektion entfernen
+    # Falls externe Ollama-Instanz: Setze OLLAMA_URL in .env auf externe URL
+
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: renfield-backend
+    env_file:
+      - .env
+    environment:
+      # Override specific variables that need container-specific values
+      DATABASE_URL: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/renfield
+      REDIS_URL: redis://redis:6379
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    volumes:
+      - ./backend:/app
+      - whisper_models:/root/.cache/whisper
+      - piper_models:/root/.local/share/piper
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - renfield-network
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  # Frontend Web-App
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: renfield-frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+      VITE_WS_URL: ws://localhost:8000/ws
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - renfield-network
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  # Nginx Reverse Proxy (optional, für Produktiv-Setup)
+  nginx:
+    image: nginx:alpine
+    container_name: renfield-nginx
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - backend
+      - frontend
+    networks:
+      - renfield-network
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    profiles:
+      - production
+
+networks:
+  renfield-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  whisper_models:
+  piper_models:

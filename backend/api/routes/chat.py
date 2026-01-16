@@ -1,0 +1,362 @@
+"""
+Chat API Routes
+"""
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from typing import List, Optional
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, func
+
+from services.database import get_db
+from services.ollama_service import OllamaService
+from models.database import Conversation, Message
+from datetime import datetime
+import uuid
+
+router = APIRouter()
+
+class ChatRequest(BaseModel):
+    message: str
+    session_id: Optional[str] = None
+    context: Optional[List[dict]] = None
+
+class ChatResponse(BaseModel):
+    message: str
+    session_id: str
+    intent: Optional[dict] = None
+
+@router.post("/send", response_model=ChatResponse)
+async def send_message(
+    request: ChatRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """Nachricht senden und Antwort erhalten"""
+    try:
+        logger.info(f"📨 Neue Nachricht: '{request.message[:100]}'")
+        
+        # Session ID generieren falls nicht vorhanden
+        session_id = request.session_id or str(uuid.uuid4())
+        
+        # Conversation in DB speichern/laden
+        result = await db.execute(
+            select(Conversation).where(Conversation.session_id == session_id)
+        )
+        conversation = result.scalar_one_or_none()
+        
+        if not conversation:
+            conversation = Conversation(session_id=session_id)
+            db.add(conversation)
+            await db.commit()
+            await db.refresh(conversation)
+        
+        # User Message speichern
+        user_msg = Message(
+            conversation_id=conversation.id,
+            role="user",
+            content=request.message
+        )
+        db.add(user_msg)
+        
+        # Kontext aus DB laden falls nicht übergeben
+        context = request.context or []
+        if not context:
+            # Letzte 10 Nachrichten laden
+            result = await db.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation.id)
+                .order_by(Message.timestamp.desc())
+                .limit(10)
+            )
+            messages = result.scalars().all()
+            context = [
+                {"role": msg.role, "content": msg.content}
+                for msg in reversed(messages)
+            ]
+        
+        # Ollama Service nutzen
+        from main import app
+        ollama: OllamaService = app.state.ollama
+        
+        # Intent extrahieren
+        logger.info("🔍 Extrahiere Intent...")
+        intent = await ollama.extract_intent(request.message)
+        logger.info(f"🎯 Erkannter Intent: {intent.get('intent')} (confidence: {intent.get('confidence', 0):.2f})")
+        
+        # Action ausführen falls nötig
+        action_result = None
+        if intent.get("intent") != "general.conversation":
+            logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
+            from services.action_executor import ActionExecutor
+            executor = ActionExecutor()
+            action_result = await executor.execute(intent)
+            logger.info(f"✅ Aktion ausgeführt: {action_result.get('success')} - {action_result.get('message')}")
+        
+        # Antwort generieren
+        if action_result and action_result.get("success"):
+            # Erfolgreiche Aktion - nutze Ergebnis für Antwort
+            enhanced_prompt = f"""Du bist Renfield, ein persönlicher Assistent.
+
+Der Nutzer hat gefragt: "{request.message}"
+
+Die Aktion wurde ausgeführt mit folgendem Ergebnis:
+{action_result.get('message')}
+
+Zusätzliche Details:
+{action_result.get('data', {})}
+
+Gib eine kurze, natürliche Antwort basierend auf dem Ergebnis.
+WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
+            
+            response_text = await ollama.chat(enhanced_prompt, context=[])
+        
+        elif action_result and not action_result.get("success"):
+            # Aktion fehlgeschlagen
+            response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+        
+        else:
+            # Normale Konversation
+            response_text = await ollama.chat(request.message, context)
+        
+        # Assistant Message speichern
+        assistant_msg = Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=response_text,
+            message_metadata={
+                "intent": intent,
+                "action_result": action_result
+            }
+        )
+        db.add(assistant_msg)
+        
+        # Update conversation timestamp
+        conversation.updated_at = datetime.utcnow()
+        
+        await db.commit()
+        
+        logger.info(f"✅ Antwort generiert: '{response_text[:100]}'")
+        
+        return ChatResponse(
+            message=response_text,
+            session_id=session_id,
+            intent=intent
+        )
+    except Exception as e:
+        logger.error(f"❌ Chat Fehler: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/history/{session_id}")
+async def get_history(
+    session_id: str,
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db)
+):
+    """Chat-Historie abrufen"""
+    try:
+        result = await db.execute(
+            select(Conversation).where(Conversation.session_id == session_id)
+        )
+        conversation = result.scalar_one_or_none()
+        
+        if not conversation:
+            return {"messages": []}
+        
+        result = await db.execute(
+            select(Message)
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.timestamp.asc())
+            .limit(limit)
+        )
+        messages = result.scalars().all()
+        
+        return {
+            "messages": [
+                {
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat(),
+                    "metadata": msg.message_metadata  # Spalte heißt message_metadata
+                }
+                for msg in messages
+            ]
+        }
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Laden der Historie: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/session/{session_id}")
+async def delete_session(
+    session_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Chat-Session löschen"""
+    try:
+        result = await db.execute(
+            select(Conversation).where(Conversation.session_id == session_id)
+        )
+        conversation = result.scalar_one_or_none()
+
+        if conversation:
+            await db.delete(conversation)
+            await db.commit()
+
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Löschen der Session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/conversations")
+async def list_conversations(
+    limit: int = 50,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db)
+):
+    """Liste aller Konversationen"""
+    try:
+        from main import app
+        ollama: OllamaService = app.state.ollama
+
+        conversations = await ollama.get_all_conversations(db, limit, offset)
+
+        return {
+            "conversations": conversations,
+            "limit": limit,
+            "offset": offset,
+            "count": len(conversations)
+        }
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Laden der Konversationen: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/conversation/{session_id}/summary")
+async def get_conversation_summary(
+    session_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Zusammenfassung einer Konversation"""
+    try:
+        from main import app
+        ollama: OllamaService = app.state.ollama
+
+        summary = await ollama.get_conversation_summary(session_id, db)
+
+        if not summary:
+            raise HTTPException(status_code=404, detail="Konversation nicht gefunden")
+
+        return summary
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Laden der Zusammenfassung: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/search")
+async def search_conversations(
+    q: str,
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db)
+):
+    """Suche in Konversationen"""
+    try:
+        if not q or len(q) < 2:
+            raise HTTPException(status_code=400, detail="Suchanfrage muss mindestens 2 Zeichen lang sein")
+
+        from main import app
+        ollama: OllamaService = app.state.ollama
+
+        results = await ollama.search_conversations(q, db, limit)
+
+        return {
+            "query": q,
+            "results": results,
+            "count": len(results)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Fehler bei der Suche: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/stats")
+async def get_conversation_stats(
+    db: AsyncSession = Depends(get_db)
+):
+    """Statistiken über Konversationen"""
+    try:
+        # Gesamt-Anzahl Konversationen
+        result = await db.execute(select(func.count(Conversation.id)))
+        total_conversations = result.scalar()
+
+        # Gesamt-Anzahl Nachrichten
+        result = await db.execute(select(func.count(Message.id)))
+        total_messages = result.scalar()
+
+        # Durchschnittliche Nachrichten pro Konversation
+        avg_messages = total_messages / total_conversations if total_conversations > 0 else 0
+
+        # Letzte aktive Konversation
+        result = await db.execute(
+            select(Conversation)
+            .order_by(Conversation.updated_at.desc())
+            .limit(1)
+        )
+        latest_conversation = result.scalar_one_or_none()
+
+        # Nachrichten der letzten 24h
+        from datetime import timedelta
+        yesterday = datetime.utcnow() - timedelta(days=1)
+        result = await db.execute(
+            select(func.count(Message.id))
+            .where(Message.timestamp >= yesterday)
+        )
+        messages_24h = result.scalar()
+
+        return {
+            "total_conversations": total_conversations,
+            "total_messages": total_messages,
+            "avg_messages_per_conversation": round(avg_messages, 2),
+            "messages_last_24h": messages_24h,
+            "latest_activity": latest_conversation.updated_at.isoformat() if latest_conversation else None
+        }
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Laden der Statistiken: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/conversations/cleanup")
+async def cleanup_old_conversations(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db)
+):
+    """Lösche alte Konversationen (älter als X Tage)"""
+    try:
+        from datetime import timedelta
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+
+        # Finde alte Konversationen
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.updated_at < cutoff_date)
+        )
+        old_conversations = result.scalars().all()
+
+        deleted_count = 0
+        for conv in old_conversations:
+            await db.delete(conv)
+            deleted_count += 1
+
+        await db.commit()
+
+        logger.info(f"🧹 Gelöscht: {deleted_count} Konversationen älter als {days} Tage")
+
+        return {
+            "success": True,
+            "deleted_count": deleted_count,
+            "cutoff_days": days
+        }
+    except Exception as e:
+        logger.error(f"❌ Fehler beim Cleanup: {e}")
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

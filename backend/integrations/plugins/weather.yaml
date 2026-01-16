@@ -1,0 +1,82 @@
+name: weather
+version: 1.0.0
+description: Get weather information using OpenWeatherMap
+author: Renfield Team
+enabled_var: WEATHER_ENABLED
+
+config:
+  url: OPENWEATHER_API_URL
+  api_key: OPENWEATHER_API_KEY
+
+intents:
+  - name: weather.get_current
+    description: Get current weather for a location
+    parameters:
+      - name: location
+        type: string
+        required: true
+        description: City name (e.g., Berlin) or coordinates
+    examples:
+      - "Wie ist das Wetter in Berlin?"
+      - "Wie warm ist es draußen?"
+      - "Wetter München"
+      - "Zeig mir das aktuelle Wetter"
+    api:
+      method: GET
+      url: "{config.url}/weather?q={params.location}&appid={config.api_key}&units=metric&lang=de"
+      timeout: 10
+      response_mapping:
+        city: "name"
+        temperature: "main.temp"
+        feels_like: "main.feels_like"
+        temp_min: "main.temp_min"
+        temp_max: "main.temp_max"
+        conditions: "weather[0].description"
+        humidity: "main.humidity"
+        pressure: "main.pressure"
+        wind_speed: "wind.speed"
+        wind_direction: "wind.deg"
+        clouds: "clouds.all"
+        visibility: "visibility"
+        sunrise: "sys.sunrise"
+        sunset: "sys.sunset"
+        country: "sys.country"
+
+  - name: weather.get_forecast
+    description: Get weather forecast for next days
+    parameters:
+      - name: location
+        type: string
+        required: true
+        description: City name for forecast
+      - name: days
+        type: integer
+        required: false
+        default: 3
+        description: Number of days to forecast (1-5)
+    examples:
+      - "Wettervorhersage für Berlin"
+      - "Wie wird das Wetter morgen?"
+      - "Wetter für die nächsten 3 Tage"
+    api:
+      method: GET
+      url: "{config.url}/forecast?q={params.location}&appid={config.api_key}&units=metric&lang=de&cnt=24"
+      timeout: 10
+      response_mapping:
+        city: "city.name"
+        country: "city.country"
+        timezone: "city.timezone"
+        forecast: "list"
+        forecast_count: "cnt"
+
+error_mappings:
+  - code: 401
+    message: "API-Schlüssel ungültig. Bitte OPENWEATHER_API_KEY überprüfen."
+  - code: 404
+    message: "Stadt nicht gefunden. Bitte Schreibweise überprüfen."
+  - code: 429
+    message: "Zu viele Anfragen. Bitte später erneut versuchen."
+  - code: 500
+    message: "Wetterdienst vorübergehend nicht verfügbar."
+
+rate_limit: 60
