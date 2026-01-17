@@ -17,7 +17,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes
+from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes
 from services.database import init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
@@ -132,6 +132,7 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
+app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
 
 # WebSocket für Echtzeit-Chat
 @app.websocket("/ws")
@@ -230,6 +231,87 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
         import traceback
         logger.error(traceback.format_exc())
         await websocket.close()
+
+
+# WebSocket for Wake Word Detection (Server-Side Fallback)
+@app.websocket("/ws/wakeword")
+async def wakeword_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for server-side wake word detection.
+
+    This is a fallback for clients where browser-based WASM detection
+    is not available or performant.
+
+    Protocol:
+    - Client sends: Raw audio bytes (16-bit PCM, 16kHz, mono)
+                   Expected: 2560 bytes per chunk (1280 samples * 2 bytes)
+    - Server sends: JSON messages
+                   {"type": "ready"} - Service is ready
+                   {"type": "wakeword_detected", "keyword": str, "score": float}
+                   {"type": "error", "message": str}
+    """
+    await websocket.accept()
+    logger.info("🎤 Wake word WebSocket connection established")
+
+    try:
+        from services.wakeword_service import get_wakeword_service
+
+        service = get_wakeword_service()
+
+        # Check if service is available
+        if not service.available:
+            await websocket.send_json({
+                "type": "error",
+                "message": "OpenWakeWord not installed on server"
+            })
+            await websocket.close()
+            return
+
+        # Load model if not already loaded
+        if not service.load_model():
+            await websocket.send_json({
+                "type": "error",
+                "message": "Failed to load wake word model"
+            })
+            await websocket.close()
+            return
+
+        # Signal ready
+        await websocket.send_json({
+            "type": "ready",
+            "keywords": service.keywords,
+            "threshold": service.threshold
+        })
+
+        # Process audio chunks
+        while True:
+            # Receive audio chunk
+            audio_bytes = await websocket.receive_bytes()
+
+            # Process chunk
+            result = service.process_audio_chunk(audio_bytes)
+
+            # Send detection if wake word found
+            if result.get("detected"):
+                await websocket.send_json({
+                    "type": "wakeword_detected",
+                    "keyword": result["keyword"],
+                    "score": result["score"]
+                })
+
+    except WebSocketDisconnect:
+        logger.info("👋 Wake word WebSocket connection closed")
+    except Exception as e:
+        logger.error(f"❌ Wake word WebSocket error: {e}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e)
+            })
+        except:
+            pass
+        await websocket.close()
+
 
 # Health Check
 @app.get("/health")

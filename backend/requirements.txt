@@ -23,6 +23,10 @@ openai-whisper==20231117
 # faster-whisper benötigt PyAV was Build-Probleme verursacht
 # openai-whisper ist ausreichend und funktioniert ohne PyAV
 
+# Wake Word Detection (Optional - Server-Side Fallback)
+# Uncomment to enable server-side wake word detection
+# openwakeword>=0.5.0
+
 # Integrationen
 requests==2.31.0
 httpx==0.25.2

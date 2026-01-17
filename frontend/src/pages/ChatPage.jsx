@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Send, Mic, MicOff, Volume2, Loader } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { useWakeWord } from '../hooks/useWakeWord';
+import { WAKEWORD_CONFIG } from '../config/wakeword';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([]);
@@ -25,6 +27,91 @@ export default function ChatPage() {
   const isStoppingRef = useRef(false); // Verhindert doppelte stopRecording() Aufrufe
   const lastAutoTTSTextRef = useRef(''); // Verhindert doppelte Auto-TTS für gleichen Text
   const autoTTSPendingRef = useRef(false); // Verhindert gleichzeitige Auto-TTS Anfragen
+
+  // Wake word state
+  const [wakeWordStatus, setWakeWordStatus] = useState('idle'); // idle | listening | activated | recording
+  const [showWakeWordSettings, setShowWakeWordSettings] = useState(false);
+  const wakeWordActivatedRef = useRef(false); // Track if current recording was triggered by wake word
+
+  // Handle wake word detection - triggers recording
+  const handleWakeWordDetected = useCallback(async (keyword, score) => {
+    console.log(`🎯 Wake word detected: ${keyword} (score: ${score.toFixed(2)})`);
+    setWakeWordStatus('activated');
+    wakeWordActivatedRef.current = true;
+
+    // Play activation sound (optional)
+    playActivationSound();
+
+    // Small delay to let wake word audio finish
+    await new Promise(r => setTimeout(r, WAKEWORD_CONFIG.activationDelayMs));
+
+    // Start recording - uses existing startRecording function
+    // We need to call it after component has mounted, so we use a ref
+    if (startRecordingRef.current) {
+      startRecordingRef.current();
+    }
+  }, []);
+
+  // Handle speech end from wake word VAD
+  const handleWakeWordSpeechEnd = useCallback(() => {
+    console.log('🤫 Wake word VAD: Speech ended');
+  }, []);
+
+  // Handle wake word errors
+  const handleWakeWordError = useCallback((error) => {
+    console.error('🚨 Wake word error:', error);
+    setWakeWordStatus('idle');
+  }, []);
+
+  // Initialize wake word hook
+  const {
+    isEnabled: wakeWordEnabled,
+    isListening: wakeWordListening,
+    isLoading: wakeWordLoading,
+    isReady: wakeWordReady,
+    isAvailable: wakeWordAvailable,
+    lastDetection,
+    error: wakeWordError,
+    settings: wakeWordSettings,
+    enable: enableWakeWord,
+    disable: disableWakeWord,
+    toggle: toggleWakeWord,
+    pause: pauseWakeWord,
+    resume: resumeWakeWord,
+    setKeyword: setWakeWordKeyword,
+    setThreshold: setWakeWordThreshold,
+    availableKeywords,
+  } = useWakeWord({
+    onWakeWordDetected: handleWakeWordDetected,
+    onSpeechEnd: handleWakeWordSpeechEnd,
+    onError: handleWakeWordError,
+  });
+
+  // Ref to hold startRecording function for wake word callback
+  const startRecordingRef = useRef(null);
+
+  // Play activation sound when wake word is detected
+  const playActivationSound = useCallback(() => {
+    try {
+      // Create a simple beep using Web Audio API
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.frequency.value = 880; // A5 note
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.2);
+    } catch (e) {
+      console.warn('Could not play activation sound:', e);
+    }
+  }, []);
 
   useEffect(() => {
     // Session ID generieren
@@ -99,11 +186,27 @@ export default function ChatPage() {
                 setTimeout(() => {
                   speakText(completedMessage.content).finally(() => {
                     autoTTSPendingRef.current = false; // Reset nach Abschluss
+
+                    // Resume wake word after TTS playback completes
+                    if (wakeWordEnabled && wakeWordActivatedRef.current) {
+                      console.log('▶️ Resuming wake word detection after TTS...');
+                      resumeWakeWord();
+                      setWakeWordStatus('listening');
+                      wakeWordActivatedRef.current = false;
+                    }
                   });
                 }, 200);
               }
             } else {
               console.log('❌ Kein Auto-TTS: Channel ist', lastInputChannelRef.current);
+
+              // Resume wake word if no TTS needed
+              if (wakeWordEnabled && wakeWordActivatedRef.current) {
+                console.log('▶️ Resuming wake word detection (no TTS)...');
+                resumeWakeWord();
+                setWakeWordStatus('listening');
+                wakeWordActivatedRef.current = false;
+              }
             }
 
             return [...prev.slice(0, -1), completedMessage];
@@ -187,6 +290,13 @@ export default function ChatPage() {
     lastAutoTTSTextRef.current = ''; // Reset Auto-TTS Guard für neue Aufnahme
     autoTTSPendingRef.current = false; // Reset Pending Flag
     console.log('📝 Channel gesetzt auf: voice');
+
+    // Pause wake word listening while recording
+    if (wakeWordEnabled) {
+      console.log('⏸️ Pausing wake word detection for recording...');
+      await pauseWakeWord();
+    }
+    setWakeWordStatus('recording');
 
     try {
       console.log('🎤 Starte Aufnahme mit Voice Activity Detection...');
@@ -397,8 +507,18 @@ export default function ChatPage() {
     } catch (error) {
       console.error('❌ Mikrofon-Fehler:', error);
       alert('Konnte nicht auf das Mikrofon zugreifen: ' + error.message);
+
+      // Resume wake word on error
+      if (wakeWordEnabled) {
+        console.log('▶️ Resuming wake word detection after error...');
+        resumeWakeWord();
+        setWakeWordStatus('listening');
+      }
     }
   };
+
+  // Assign startRecording to ref for wake word callback
+  startRecordingRef.current = startRecording;
 
   const stopRecording = () => {
     // Verhindere doppelte Aufrufe (Race Condition Protection)
@@ -555,13 +675,136 @@ export default function ChatPage() {
             <h1 className="text-2xl font-bold text-white">Chat</h1>
             <p className="text-gray-400">Unterhalte dich mit Renfield</p>
           </div>
-          <div className="flex items-center space-x-2">
-            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-400">
-              {wsConnected ? 'Verbunden' : 'Getrennt'}
-            </span>
+          <div className="flex items-center space-x-4">
+            {/* Wake Word Controls */}
+            <div className="flex items-center space-x-2">
+              <button
+                onClick={toggleWakeWord}
+                disabled={wakeWordLoading || recording}
+                className={`p-2 rounded-lg transition-all ${
+                  wakeWordEnabled
+                    ? 'bg-green-600 hover:bg-green-700 text-white'
+                    : wakeWordError
+                      ? 'bg-red-900/50 hover:bg-red-800/50 text-red-300'
+                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                } ${wakeWordLoading ? 'opacity-50 cursor-wait' : ''}`}
+                title={wakeWordError
+                  ? `Wake word not available: ${wakeWordError.message}`
+                  : wakeWordEnabled
+                    ? `Wake word active - say "${availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis'}"`
+                    : 'Enable wake word detection'
+                }
+              >
+                {wakeWordLoading ? (
+                  <Loader className="w-4 h-4 animate-spin" />
+                ) : wakeWordEnabled ? (
+                  <Ear className="w-4 h-4" />
+                ) : (
+                  <EarOff className="w-4 h-4" />
+                )}
+              </button>
+
+              {/* Wake Word Settings Button */}
+              {wakeWordEnabled && (
+                <button
+                  onClick={() => setShowWakeWordSettings(!showWakeWordSettings)}
+                  className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
+                  title="Wake word settings"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Connection Status */}
+            <div className="flex items-center space-x-2">
+              <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className="text-sm text-gray-400">
+                {wsConnected ? 'Verbunden' : 'Getrennt'}
+              </span>
+            </div>
           </div>
         </div>
+
+        {/* Wake Word Error Message */}
+        {wakeWordError && !wakeWordEnabled && (
+          <div className="mt-3 flex items-center px-3 py-2 bg-red-900/30 rounded-lg border border-red-700/50">
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 rounded-full bg-red-500" />
+              <span className="text-sm text-red-300">
+                {wakeWordError.name === 'BrowserNotSupportedError'
+                  ? 'Wake word not supported in this browser. Use Chrome/Edge/Safari or the manual mic button.'
+                  : <>Wake word not available. Run: <code className="bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
+                }
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Wake Word Listening Indicator */}
+        {wakeWordEnabled && !recording && (
+          <div className="mt-3 flex items-center justify-between px-3 py-2 bg-green-900/30 rounded-lg border border-green-700/50">
+            <div className="flex items-center space-x-2">
+              <div className={`w-2 h-2 rounded-full ${wakeWordListening ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
+              <span className="text-sm text-green-300">
+                {wakeWordListening
+                  ? `Listening for "${availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis'}"...`
+                  : wakeWordStatus === 'activated'
+                    ? 'Wake word detected! Starting recording...'
+                    : 'Wake word paused'
+                }
+              </span>
+            </div>
+            {lastDetection && (
+              <span className="text-xs text-gray-400">
+                Last: {lastDetection.keyword} ({(lastDetection.score * 100).toFixed(0)}%)
+              </span>
+            )}
+          </div>
+        )}
+
+        {/* Wake Word Settings Dropdown */}
+        {showWakeWordSettings && (
+          <div className="mt-3 p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <h3 className="text-sm font-medium text-white mb-3">Wake Word Settings</h3>
+
+            <div className="space-y-3">
+              {/* Keyword Selection */}
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">Wake Word</label>
+                <select
+                  value={wakeWordSettings.keyword}
+                  onChange={(e) => setWakeWordKeyword(e.target.value)}
+                  className="w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-primary-500 focus:outline-none"
+                >
+                  {availableKeywords.map(kw => (
+                    <option key={kw.id} value={kw.id}>{kw.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Threshold Slider */}
+              <div>
+                <label className="text-xs text-gray-400 mb-1 block">
+                  Sensitivity: {(wakeWordSettings.threshold * 100).toFixed(0)}%
+                </label>
+                <input
+                  type="range"
+                  min="0.3"
+                  max="0.8"
+                  step="0.05"
+                  value={wakeWordSettings.threshold}
+                  onChange={(e) => setWakeWordThreshold(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>More sensitive</span>
+                  <span>Less false positives</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Messages */}

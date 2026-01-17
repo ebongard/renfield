@@ -2,8 +2,23 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
+// Custom plugin to serve /ort/*.mjs files as static assets without import analysis
+const ortStaticPlugin = () => ({
+  name: 'ort-static',
+  configureServer(server) {
+    server.middlewares.use((req, res, next) => {
+      // Strip ?import query from /ort/ requests so Vite serves them as static files
+      if (req.url && req.url.startsWith('/ort/') && req.url.includes('?')) {
+        req.url = req.url.split('?')[0];
+      }
+      next();
+    });
+  },
+});
+
 export default defineConfig({
   plugins: [
+    ortStaticPlugin(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -51,8 +66,16 @@ export default defineConfig({
     port: 3000,
     watch: {
       usePolling: true
+    },
+    fs: {
+      // Allow serving files from the public/ort directory
+      allow: ['..']
     }
   },
+  optimizeDeps: {
+    exclude: ['onnxruntime-web']
+  },
+  assetsInclude: ['**/*.wasm'],
   preview: {
     port: 3000
   }

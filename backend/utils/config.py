@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     default_language: str = "de"
     whisper_model: str = "base"
     piper_voice: str = "de_DE-thorsten-high"
+
+    # Wake Word Detection
+    wake_word_enabled: bool = False  # Disabled by default (opt-in)
+    wake_word_default: str = "hey_jarvis"
+    wake_word_threshold: float = 0.5
+    wake_word_cooldown_ms: int = 2000
     
     # Logging
     log_level: str = "INFO"

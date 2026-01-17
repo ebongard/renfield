@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "postinstall": "mkdir -p public/ort && cp node_modules/onnxruntime-web/dist/ort-wasm*.wasm node_modules/onnxruntime-web/dist/ort-wasm*.mjs public/ort/ 2>/dev/null || true"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -15,7 +16,9 @@
     "react-router-dom": "^6.21.0",
     "axios": "^1.6.5",
     "lucide-react": "^0.307.0",
-    "@headlessui/react": "^1.7.17"
+    "@headlessui/react": "^1.7.17",
+    "openwakeword-wasm-browser": "^0.1.1",
+    "onnxruntime-web": "^1.17.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.48",
