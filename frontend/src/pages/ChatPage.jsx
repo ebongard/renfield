@@ -32,6 +32,8 @@ export default function ChatPage() {
   const [wakeWordStatus, setWakeWordStatus] = useState('idle'); // idle | listening | activated | recording
   const [showWakeWordSettings, setShowWakeWordSettings] = useState(false);
   const wakeWordActivatedRef = useRef(false); // Track if current recording was triggered by wake word
+  const wakeWordEnabledRef = useRef(false); // Ref to track wake word enabled state for async callbacks
+  const audioContextUnlockedRef = useRef(null); // Shared AudioContext for TTS (pre-unlocked)
 
   // Handle wake word detection - triggers recording
   const handleWakeWordDetected = useCallback(async (keyword, score) => {
@@ -90,11 +92,27 @@ export default function ChatPage() {
   // Ref to hold startRecording function for wake word callback
   const startRecordingRef = useRef(null);
 
+  // Keep wakeWordEnabledRef in sync with state
+  useEffect(() => {
+    wakeWordEnabledRef.current = wakeWordEnabled;
+  }, [wakeWordEnabled]);
+
   // Play activation sound when wake word is detected
+  // Also unlocks AudioContext for later TTS playback
   const playActivationSound = useCallback(() => {
     try {
-      // Create a simple beep using Web Audio API
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      // Reuse or create AudioContext (keeps it unlocked for TTS)
+      if (!audioContextUnlockedRef.current || audioContextUnlockedRef.current.state === 'closed') {
+        audioContextUnlockedRef.current = new (window.AudioContext || window.webkitAudioContext)();
+        console.log('🔓 AudioContext created and unlocked for TTS');
+      }
+      const audioContext = audioContextUnlockedRef.current;
+
+      // Resume if suspended
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
 
@@ -186,9 +204,12 @@ export default function ChatPage() {
                 setTimeout(() => {
                   speakText(completedMessage.content).finally(() => {
                     autoTTSPendingRef.current = false; // Reset nach Abschluss
+                    console.log('🔄 TTS finally block - checking wake word resume...');
+                    console.log('   wakeWordEnabledRef:', wakeWordEnabledRef.current);
+                    console.log('   wakeWordActivatedRef:', wakeWordActivatedRef.current);
 
-                    // Resume wake word after TTS playback completes
-                    if (wakeWordEnabled && wakeWordActivatedRef.current) {
+                    // Resume wake word after TTS playback completes (use ref to avoid stale closure)
+                    if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
                       console.log('▶️ Resuming wake word detection after TTS...');
                       resumeWakeWord();
                       setWakeWordStatus('listening');
@@ -200,8 +221,8 @@ export default function ChatPage() {
             } else {
               console.log('❌ Kein Auto-TTS: Channel ist', lastInputChannelRef.current);
 
-              // Resume wake word if no TTS needed
-              if (wakeWordEnabled && wakeWordActivatedRef.current) {
+              // Resume wake word if no TTS needed (use ref to avoid stale closure)
+              if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
                 console.log('▶️ Resuming wake word detection (no TTS)...');
                 resumeWakeWord();
                 setWakeWordStatus('listening');
@@ -608,7 +629,11 @@ export default function ChatPage() {
     try {
       // Stoppe aktuelles Audio falls vorhanden
       if (audioRef.current) {
-        audioRef.current.pause();
+        if (audioRef.current.stop) {
+          audioRef.current.stop();
+        } else if (audioRef.current.pause) {
+          audioRef.current.pause();
+        }
         audioRef.current = null;
       }
 
@@ -627,33 +652,51 @@ export default function ChatPage() {
 
       const response = await apiClient.post('/api/voice/tts',
         { text },
-        { responseType: 'blob' }
+        { responseType: 'arraybuffer' }  // Use arraybuffer for AudioContext decoding
       );
 
       // Prüfe ob Response valide (detect Piper unavailable)
-      if (response.data.size < 100) {
+      if (response.data.byteLength < 100) {
         throw new Error('TTS response too small (Piper likely not available)');
       }
 
-      const audioUrl = URL.createObjectURL(response.data);
-      const audio = new Audio(audioUrl);
-      audioRef.current = audio;
+      // Use pre-unlocked AudioContext if available, otherwise create new one
+      let audioContext = audioContextUnlockedRef.current;
+      if (!audioContext || audioContext.state === 'closed') {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextUnlockedRef.current = audioContext;
+        console.log('🔓 Created new AudioContext for TTS');
+      }
 
-      // Cleanup bei Ende
-      audio.onended = () => {
-        URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
-        console.log('✅ TTS playback completed');
-      };
+      // Resume if suspended
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+        console.log('▶️ AudioContext resumed');
+      }
 
-      audio.onerror = (e) => {
-        console.error('❌ Audio playback error:', e);
-        URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
-      };
+      // Decode audio data
+      const audioBuffer = await audioContext.decodeAudioData(response.data.slice(0));
+      console.log('✅ Audio decoded:', audioBuffer.duration.toFixed(2), 'seconds');
 
-      await audio.play();
-      console.log('▶️ TTS playback started');
+      // Create source and play
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      // Store source for potential stopping
+      audioRef.current = source;
+
+      // Return a promise that resolves when playback ends
+      return new Promise((resolve) => {
+        source.onended = () => {
+          audioRef.current = null;
+          console.log('✅ TTS playback completed');
+          resolve();
+        };
+
+        source.start(0);
+        console.log('▶️ TTS playback started');
+      });
 
     } catch (error) {
       console.error('❌ TTS Fehler:', error);

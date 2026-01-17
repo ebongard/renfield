@@ -80,11 +80,18 @@ export function useWakeWord({
   const engineRef = useRef(null);
   const unsubscribersRef = useRef([]);
   const callbacksRef = useRef({ onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady });
+  const isEnabledRef = useRef(false); // Ref to avoid stale closure in resume()
 
   // Keep callbacks ref updated
   useEffect(() => {
     callbacksRef.current = { onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady };
   }, [onWakeWordDetected, onSpeechStart, onSpeechEnd, onError, onReady]);
+
+  // Keep isEnabledRef in sync with state
+  useEffect(() => {
+    isEnabledRef.current = isEnabled;
+    console.log('🔄 isEnabledRef updated to:', isEnabled);
+  }, [isEnabled]);
 
   // Initialize engine
   const initEngine = useCallback(async () => {
@@ -229,11 +236,17 @@ export function useWakeWord({
 
   // Pause listening temporarily (e.g., while recording)
   const pause = useCallback(async () => {
-    if (!isListening || !engineRef.current) return;
+    console.log('⏸️ pause() called - isListening:', isListening, 'hasEngine:', !!engineRef.current);
+
+    if (!isListening || !engineRef.current) {
+      console.log('⚠️ pause() skipped: not listening or no engine');
+      return;
+    }
 
     try {
       await engineRef.current.stop();
       setIsListening(false);
+      console.log('✅ Wake word paused (isEnabled stays true)');
     } catch (err) {
       console.error('Failed to pause wake word:', err);
     }
@@ -241,18 +254,41 @@ export function useWakeWord({
 
   // Resume listening after pause
   const resume = useCallback(async () => {
-    if (isListening || !isEnabled || !engineRef.current) return;
+    // Use refs to avoid stale closure issues
+    const currentIsEnabled = isEnabledRef.current;
+
+    console.log('🔄 resume() called - checking conditions:', {
+      isListening,
+      isEnabled: currentIsEnabled,
+      isEnabledRef: isEnabledRef.current,
+      hasEngine: !!engineRef.current
+    });
+
+    if (isListening) {
+      console.log('⚠️ resume() skipped: already listening');
+      return;
+    }
+    if (!currentIsEnabled) {
+      console.log('⚠️ resume() skipped: wake word not enabled (using ref)');
+      return;
+    }
+    if (!engineRef.current) {
+      console.log('⚠️ resume() skipped: no engine');
+      return;
+    }
 
     try {
+      console.log('▶️ Starting wake word engine...');
       await engineRef.current.start({
         gain: WAKEWORD_CONFIG.defaults.gain,
       });
       setIsListening(true);
+      console.log('✅ Wake word engine resumed successfully');
     } catch (err) {
       console.error('Failed to resume wake word:', err);
       setError(err);
     }
-  }, [isListening, isEnabled]);
+  }, [isListening]); // Removed isEnabled from deps since we use ref
 
   // Update keyword
   const setKeyword = useCallback(async (keyword) => {
