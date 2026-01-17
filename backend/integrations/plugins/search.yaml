@@ -23,6 +23,7 @@ intents:
         description: Response format
     examples:
       - "Suche nach Python Tutorials"
+      - "Test"
       - "Was ist Quantencomputing?"
       - "Wie funktioniert Photosynthese?"
       - "Wer hat die Relativitätstheorie entwickelt?"
