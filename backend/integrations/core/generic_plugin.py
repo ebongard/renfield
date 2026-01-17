@@ -163,8 +163,8 @@ class GenericPlugin:
         """Execute API call defined in intent"""
         api_def = intent_def.api
 
-        # Build URL with template substitution
-        url = self._substitute_template(api_def.url, parameters)
+        # Build URL with template substitution (URL-encode parameters)
+        url = self._substitute_template(api_def.url, parameters, url_encode=True)
 
         # Build headers
         headers = {}
@@ -235,17 +235,24 @@ class GenericPlugin:
             except httpx.RequestError as e:
                 return PluginResponse.error(f"Request failed: {str(e)}")
 
-    def _substitute_template(self, template: str, parameters: Dict[str, Any]) -> str:
+    def _substitute_template(self, template: str, parameters: Dict[str, Any], url_encode: bool = False) -> str:
         """
         Substitute template variables with values
 
         Supports:
         - {config.api_key} - from config
         - {params.location} - from parameters
+
+        Args:
+            template: Template string with placeholders
+            parameters: Parameter values
+            url_encode: If True, URL-encode parameter values (for URLs)
         """
+        from urllib.parse import quote_plus
+
         result = template
 
-        # Substitute config variables
+        # Substitute config variables (never URL-encode config values like API keys)
         for key, value in self.config_cache.items():
             placeholder = f"{{config.{key}}}"
             if placeholder in result:
@@ -255,7 +262,11 @@ class GenericPlugin:
         for key, value in parameters.items():
             placeholder = f"{{params.{key}}}"
             if placeholder in result:
-                result = result.replace(placeholder, str(value))
+                # URL-encode if this is a URL template
+                if url_encode:
+                    result = result.replace(placeholder, quote_plus(str(value)))
+                else:
+                    result = result.replace(placeholder, str(value))
 
         return result
 
