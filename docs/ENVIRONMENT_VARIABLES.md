@@ -275,25 +275,30 @@ NEWSAPI_KEY=your_api_key_here
 
 ---
 
-### Search Plugin (DuckDuckGo)
+### Search Plugin (SearXNG)
 
 ```bash
 # Plugin aktivieren
 SEARCH_ENABLED=true
 
-# API-URL (kein Key nötig!)
-DUCKDUCKGO_API_URL=https://api.duckduckgo.com
+# SearXNG-Instanz URL (kein Key nötig!)
+SEARXNG_API_URL=http://cuda.local:3002
 ```
 
 **Erforderlich:**
 - `SEARCH_ENABLED` - Boolean
-- `DUCKDUCKGO_API_URL` - API-Basis-URL
+- `SEARXNG_API_URL` - SearXNG-Instanz-URL
 
 **API-Key:** Nicht erforderlich! ✅
 
+**Hinweis:** Benötigt eine laufende SearXNG-Instanz.
+SearXNG ist eine Privacy-respektierende Metasearch-Engine.
+
+**Setup:** https://docs.searxng.org/
+
 **Intents:**
 - `search.web` - Web-Suche
-- `search.instant_answer` - Instant Answers
+- `search.instant_answer` - Schnelle Antworten
 
 ---
 
@@ -558,9 +563,9 @@ NEWS_ENABLED=false
 NEWSAPI_URL=https://newsapi.org/v2
 NEWSAPI_KEY=your_key_here
 
-# Search Plugin (DuckDuckGo)
+# Search Plugin (SearXNG)
 SEARCH_ENABLED=true
-DUCKDUCKGO_API_URL=https://api.duckduckgo.com
+SEARXNG_API_URL=http://cuda.local:3002
 
 # Music Plugin (Spotify)
 MUSIC_ENABLED=false

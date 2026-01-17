@@ -72,7 +72,7 @@ NEWSAPI_KEY=<dein_api_key>
 
 ### 3. Search Plugin (`search.yaml`)
 
-**Beschreibung:** Web-Suche mit DuckDuckGo (kein API-Key nötig!)
+**Beschreibung:** Web-Suche mit SearXNG Metasearch Engine (kein API-Key nötig!)
 
 **Intents:**
 - `search.web` - Web-Suche
@@ -81,12 +81,15 @@ NEWSAPI_KEY=<dein_api_key>
 **Konfiguration:**
 ```bash
 SEARCH_ENABLED=true
-DUCKDUCKGO_API_URL=https://api.duckduckgo.com
+SEARXNG_API_URL=http://cuda.local:3002
 ```
+
+**Hinweis:** Benötigt eine laufende SearXNG-Instanz auf dem angegebenen Host.
 
 **Beispiele:**
 - "Suche nach Python Tutorials"
 - "Was ist Quantencomputing?"
+- "Wie funktioniert Photosynthese?"
 
 ---
 
@@ -417,7 +420,7 @@ docker exec renfield-backend python3 /app/test_performance.py
 
 - **OpenWeatherMap API:** https://openweathermap.org/api
 - **NewsAPI:** https://newsapi.org/docs
-- **DuckDuckGo API:** https://duckduckgo.com/api
+- **SearXNG:** https://docs.searxng.org/
 - **Spotify Web API:** https://developer.spotify.com/documentation/web-api
 - **YAML Tutorial:** https://learnxinyminutes.com/docs/yaml/
 - **JSONPath Guide:** https://goessner.net/articles/JsonPath/

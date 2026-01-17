@@ -190,18 +190,21 @@ NEWSAPI_KEY=dein_api_key
 
 ---
 
-#### 🔍 Search Plugin (DuckDuckGo)
-Web-Suche und Instant Answers - **Kein API-Key nötig!**
+#### 🔍 Search Plugin (SearXNG)
+Web-Suche mit SearXNG Metasearch Engine - **Kein API-Key nötig!**
 
 **Aktivierung:**
 ```bash
 SEARCH_ENABLED=true
-DUCKDUCKGO_API_URL=https://api.duckduckgo.com
+SEARXNG_API_URL=http://cuda.local:3002
 ```
+
+**Hinweis:** Benötigt eine laufende SearXNG-Instanz.
 
 **Beispiele:**
 - "Suche nach Python Tutorials"
 - "Was ist Quantencomputing?"
+- "Wie funktioniert Photosynthese?"
 
 ---
 
