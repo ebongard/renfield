@@ -138,6 +138,35 @@ LOG_LEVEL=INFO
 
 ---
 
+### Satellite System
+
+```bash
+# Wake Word Konfiguration
+WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_THRESHOLD=0.5
+
+# Zeroconf Service Advertisement
+ADVERTISE_HOST=renfield
+# Oder:
+ADVERTISE_IP=192.168.1.100
+```
+
+**Defaults:**
+- `WAKE_WORD_DEFAULT`: `alexa`
+- `WAKE_WORD_THRESHOLD`: `0.5`
+
+**Wake Word Optionen:**
+- `alexa` - "Alexa" (empfohlen, funktioniert auf 32-bit)
+- `hey_mycroft` - "Hey Mycroft"
+- `hey_jarvis` - "Hey Jarvis"
+
+**Zeroconf:**
+- Satellites finden das Backend automatisch über mDNS
+- Setze `ADVERTISE_HOST` auf den Hostnamen deines Servers
+- Alternativ `ADVERTISE_IP` für eine feste IP-Adresse
+
+---
+
 ### Security
 
 ```bash
@@ -547,6 +576,13 @@ HOME_ASSISTANT_TOKEN=eyJhbGci...
 N8N_WEBHOOK_URL=http://192.168.1.78:5678/webhook
 
 FRIGATE_URL=http://frigate.local:5000
+
+# -----------------------------------------------------------------------------
+# Satellite System
+# -----------------------------------------------------------------------------
+WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_THRESHOLD=0.5
+ADVERTISE_HOST=renfield
 
 # -----------------------------------------------------------------------------
 # Plugin System
