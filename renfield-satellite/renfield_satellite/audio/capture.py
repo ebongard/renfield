@@ -22,11 +22,17 @@ try:
 except ImportError:
     pyaudio = None
 
-try:
-    import soundcard as sc
-    SOUNDCARD_AVAILABLE = True
-except ImportError:
-    sc = None
+# Only try soundcard if PyAudio is not available
+# soundcard can crash on Raspberry Pi when trying to connect to PulseAudio
+if not PYAUDIO_AVAILABLE:
+    try:
+        import soundcard as sc
+        SOUNDCARD_AVAILABLE = True
+    except Exception as e:
+        # Catch any exception, not just ImportError
+        # soundcard may crash with IndexError on Raspberry Pi
+        sc = None
+        print(f"soundcard not available: {e}")
 
 if not PYAUDIO_AVAILABLE and not SOUNDCARD_AVAILABLE:
     print("Warning: Neither pyaudio nor soundcard installed. Audio capture disabled.")

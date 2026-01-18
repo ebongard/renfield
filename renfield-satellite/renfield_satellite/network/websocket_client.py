@@ -164,6 +164,9 @@ class WebSocketClient:
             print("No server URL configured - use auto-discovery or set URL")
             return False
 
+        # Cancel any existing tasks before reconnecting
+        await self._cancel_background_tasks()
+
         self._running = True
         self._state = ConnectionState.CONNECTING
         print(f"Connecting to {self.server_url}...")
@@ -193,6 +196,32 @@ class WebSocketClient:
             if self._on_error:
                 self._on_error(str(e))
             return False
+
+    async def _cancel_background_tasks(self):
+        """Cancel any running background tasks"""
+        if self._heartbeat_task and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            try:
+                await self._heartbeat_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_task = None
+
+        if self._receive_task and not self._receive_task.done():
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+            self._receive_task = None
+
+        # Close existing WebSocket connection
+        if self._ws:
+            try:
+                await self._ws.close()
+            except:
+                pass
+            self._ws = None
 
     async def _register(self):
         """Send registration message to server"""
@@ -232,28 +261,8 @@ class WebSocketClient:
         """Disconnect from server"""
         self._running = False
 
-        # Cancel tasks
-        if self._heartbeat_task:
-            self._heartbeat_task.cancel()
-            try:
-                await self._heartbeat_task
-            except asyncio.CancelledError:
-                pass
-
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-
-        # Close connection
-        if self._ws:
-            try:
-                await self._ws.close()
-            except:
-                pass
-            self._ws = None
+        # Cancel all background tasks and close connection
+        await self._cancel_background_tasks()
 
         self._state = ConnectionState.DISCONNECTED
 
@@ -320,7 +329,6 @@ class WebSocketClient:
         if msg_type == "state":
             # Server requesting state change
             new_state = data.get("state", "")
-            print(f"Server state command: {new_state}")
             if self._on_state_change:
                 self._on_state_change(new_state)
 
@@ -328,7 +336,6 @@ class WebSocketClient:
             # Transcription result
             session_id = data.get("session_id", "")
             text = data.get("text", "")
-            print(f"Transcription: {text}")
             if self._on_transcription:
                 self._on_transcription(session_id, text)
 
@@ -337,7 +344,6 @@ class WebSocketClient:
             session_id = data.get("session_id", "")
             intent = data.get("intent", {})
             success = data.get("success", False)
-            print(f"Action result: {intent.get('intent')} = {success}")
             if self._on_action:
                 self._on_action(session_id, intent, success)
 
@@ -349,7 +355,6 @@ class WebSocketClient:
 
             if audio_b64:
                 audio_bytes = base64.b64decode(audio_b64)
-                print(f"TTS audio received: {len(audio_bytes)} bytes")
                 if self._on_tts_audio:
                     self._on_tts_audio(session_id, audio_bytes, is_final)
 

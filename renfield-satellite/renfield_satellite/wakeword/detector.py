@@ -361,7 +361,7 @@ class WakeWordDetector:
             detected, confidence = self._run_detection(model, audio_bytes)
             if detected:
                 self._last_detection_time[keyword] = current_time
-                print(f"Wake word detected: {keyword} ({confidence:.2f})")
+                print(f"Wake word detected in wakeword detector: {keyword} ({confidence:.2f})")
                 return Detection(
                     keyword=keyword,
                     confidence=confidence,

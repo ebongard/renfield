@@ -5,10 +5,10 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-Group=audio
+User=evdb
+Group=evdb
 WorkingDirectory=/opt/renfield-satellite
-ExecStart=/opt/renfield-satellite/venv/bin/python -m renfield_satellite
+ExecStart=/opt/renfield-satellite/venv/bin/python -m renfield_satellite config/satellite.yaml
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

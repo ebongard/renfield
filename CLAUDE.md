@@ -11,6 +11,7 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 - Frontend: React 18 + Vite + Tailwind CSS + PWA
 - Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
 - Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows)
+- Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
 ## Development Commands
 
@@ -25,6 +26,24 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 # Debug mode with detailed logging
 ./debug.sh
 ```
+
+### Docker Compose Variants
+```bash
+# Development on Mac (no GPU)
+docker compose -f docker-compose.dev.yml up -d
+
+# Production with NVIDIA GPU
+docker compose -f docker-compose.prod.yml up -d
+
+# Standard (CPU only)
+docker compose up -d
+```
+
+| File | Use Case | Features |
+|------|----------|----------|
+| `docker-compose.yml` | Standard | Basic setup, CPU-only |
+| `docker-compose.dev.yml` | Development | Mac-friendly, debug ports exposed |
+| `docker-compose.prod.yml` | Production | NVIDIA GPU, nginx with SSL |
 
 ### Backend Development
 ```bash
@@ -148,6 +167,25 @@ Integration → HomeAssistantClient / N8NClient / FrigateClient
 Response → Frontend (streaming or JSON)
 ```
 
+### Satellite Request Flow
+```
+Wake Word → Satellite (Pi Zero 2 W)
+  ↓
+Audio Streaming → Backend (WebSocket /ws/satellite)
+  ↓
+Whisper STT → Transcription
+  ↓
+Intent Recognition → OllamaService.extract_intent()
+  ↓
+Action Execution → ActionExecutor.execute()
+  ↓
+Response Generation → OllamaService.generate()
+  ↓
+Piper TTS → Audio Response
+  ↓
+Audio Playback → Satellite Speaker
+```
+
 ### Intent Recognition System
 
 The core of Renfield is the intent recognition system in `backend/services/ollama_service.py`:
@@ -195,7 +233,9 @@ Renfield implements full conversation persistence with PostgreSQL:
 
 ```
 backend/
-├── main.py                    # FastAPI app, WebSocket endpoint, lifecycle management
+├── main.py                    # FastAPI app, WebSocket endpoints, lifecycle management
+├── Dockerfile                 # CPU-only image
+├── Dockerfile.gpu             # NVIDIA CUDA image for GPU acceleration
 ├── api/routes/                # REST API endpoints
 │   ├── chat.py               # Chat history, non-streaming chat
 │   ├── voice.py              # STT, TTS, voice-chat endpoint
@@ -204,20 +244,45 @@ backend/
 │   └── tasks.py              # Task queue management
 ├── services/                  # Business logic layer
 │   ├── ollama_service.py     # LLM interaction, intent extraction
-│   ├── whisper_service.py    # Speech-to-text
+│   ├── whisper_service.py    # Speech-to-text (with GPU support)
 │   ├── piper_service.py      # Text-to-speech
+│   ├── satellite_manager.py  # Satellite session management
 │   ├── action_executor.py    # Routes intents to appropriate integrations
-│   ├── intent_handler.py     # (if present) Additional intent processing
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
 ├── integrations/              # External service clients
 │   ├── homeassistant.py      # Home Assistant REST API client
 │   ├── frigate.py            # Frigate API client
-│   └── n8n.py                # n8n webhook trigger client
+│   ├── n8n.py                # n8n webhook trigger client
+│   └── plugins/              # YAML-based plugin system
 ├── models/                    # SQLAlchemy ORM models
 │   └── database.py
 └── utils/
     └── config.py             # Pydantic settings (loads from .env)
+```
+
+### Satellite Structure
+
+```
+renfield-satellite/
+├── README.md                  # Full satellite documentation
+├── renfield_satellite/
+│   ├── __init__.py
+│   ├── __main__.py           # Entry point
+│   ├── config.py             # Configuration loading
+│   ├── satellite.py          # Main Satellite class, state machine
+│   ├── audio/
+│   │   ├── capture.py        # Microphone capture (PyAudio/ALSA)
+│   │   └── playback.py       # Speaker output (mpv)
+│   ├── wakeword/
+│   │   └── detector.py       # OpenWakeWord wrapper
+│   ├── hardware/
+│   │   ├── led.py            # APA102 RGB LED control
+│   │   └── button.py         # GPIO button
+│   └── network/
+│       └── websocket_client.py
+└── config/
+    └── satellite.yaml        # Example configuration
 ```
 
 ### Frontend Structure
@@ -240,7 +305,7 @@ frontend/src/
 
 ### WebSocket Protocol
 
-The main WebSocket endpoint at `/ws` handles streaming chat:
+#### Frontend Chat (`/ws`)
 
 **Client → Server:**
 ```json
@@ -258,6 +323,41 @@ The main WebSocket endpoint at `/ws` handles streaming chat:
 {"type": "done"}                                       // End of stream
 ```
 
+#### Satellite (`/ws/satellite`)
+
+**Satellite → Server:**
+```json
+// Registration
+{"type": "register", "satellite_id": "sat-living", "room": "Living Room", "capabilities": {...}}
+
+// Wake word detected
+{"type": "wakeword_detected", "keyword": "alexa", "confidence": 0.85, "session_id": "sat-living-abc123"}
+
+// Audio streaming
+{"type": "audio", "chunk": "<base64 PCM>", "sequence": 1, "session_id": "..."}
+
+// End of speech
+{"type": "audio_end", "session_id": "...", "reason": "silence"}
+
+// Heartbeat
+{"type": "heartbeat", "status": "idle"}
+```
+
+**Server → Satellite:**
+```json
+// Registration ack
+{"type": "register_ack", "success": true, "config": {"wake_words": ["alexa"], "threshold": 0.5}}
+
+// State change
+{"type": "state", "state": "listening|processing|speaking|idle"}
+
+// Transcription result
+{"type": "transcription", "session_id": "...", "text": "Turn on the lights"}
+
+// TTS audio response
+{"type": "tts_audio", "session_id": "...", "audio": "<base64 WAV>", "is_final": true}
+```
+
 ### Key Configuration
 
 All configuration is in `.env` and loaded via `backend/utils/config.py` using Pydantic Settings:
@@ -272,6 +372,9 @@ All configuration is in `.env` and loaded via `backend/utils/config.py` using Py
 - `N8N_WEBHOOK_URL` - n8n webhook endpoint
 - `WHISPER_MODEL` - Whisper model size (base/small/medium/large)
 - `PIPER_VOICE` - Piper voice model (default: `de_DE-thorsten-high`)
+- `WAKE_WORD_DEFAULT` - Default wake word for satellites (default: `alexa`)
+- `WAKE_WORD_THRESHOLD` - Wake word detection threshold (default: `0.5`)
+- `ADVERTISE_HOST` - Hostname for Zeroconf service advertisement
 
 ## Common Development Patterns
 
@@ -354,8 +457,16 @@ pytest tests/test_intent.py::test_extract_intent_turn_on -v
 - First startup takes 5-10 minutes to download Ollama and Whisper models
 - Whisper models are cached in Docker volume `whisper_models`
 - Ollama models are cached in Docker volume `ollama_data`
-- For production, uncomment GPU support in `docker-compose.yml` if using NVIDIA GPU
-- Use nginx profile for reverse proxy: `docker-compose --profile production up -d`
+- For production with GPU, use `docker-compose.prod.yml`
+- For development on Mac, use `docker-compose.dev.yml`
+
+### GPU Support
+
+For NVIDIA GPU acceleration (faster Whisper transcription):
+
+1. Install NVIDIA Container Toolkit on the host
+2. Use `docker compose -f docker-compose.prod.yml up -d`
+3. The backend will automatically use GPU for Whisper
 
 ## Common Issues
 
@@ -380,7 +491,7 @@ pytest tests/test_intent.py::test_extract_intent_turn_on -v
 
 - Check CORS settings in `backend/main.py`
 - Verify frontend `VITE_WS_URL` matches backend WebSocket endpoint
-- Check backend logs: `docker-compose logs -f backend`
+- Check backend logs: `docker compose logs -f backend`
 
 ### Voice Input Not Working
 
@@ -395,6 +506,13 @@ pytest tests/test_intent.py::test_extract_intent_turn_on -v
 - Ensure HA URL is accessible from Docker network
 - Use `http://homeassistant.local:8123` or IP address, not `localhost`
 
+### Satellite Issues
+
+- **Satellite not finding backend**: Check Zeroconf advertisement with `docker compose logs backend | grep zeroconf`
+- **Wrong microphone**: Ensure `.asoundrc` is configured for ReSpeaker (see satellite README)
+- **Garbled transcription**: PyAudio must be installed (not soundcard) for ALSA support
+- **GPIO errors**: Add user to gpio group with `sudo usermod -aG gpio $USER`
+
 ## Project Documentation
 
 Additional documentation files in the repository:
@@ -404,6 +522,7 @@ Additional documentation files in the repository:
 - `QUICKSTART.md` - Quick setup guide
 - `INSTALLATION.md` - Detailed installation guide
 - `FEATURES.md` - Feature documentation
-- `TRACING_GUIDE.md` - Debugging and tracing guide
-- `DEBUGGING.md` - Debugging tips
-- Various `*_FIX.md` files document bug fixes and improvements
+- `EXTERNAL_OLLAMA.md` - External Ollama instance setup
+- `renfield-satellite/README.md` - Satellite setup guide
+- `backend/integrations/plugins/README.md` - Plugin development guide
+- `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference

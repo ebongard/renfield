@@ -61,6 +61,7 @@ class Satellite:
         self._processing_start: Optional[float] = None  # Track when processing started
         self._processing_timeout: float = 30.0  # Max time to wait for server response
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
+        self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
 
         # Initialize components
         self._init_components()
@@ -330,9 +331,11 @@ class Satellite:
     def _on_audio_chunk(self, audio_bytes: bytes):
         """Handle incoming audio chunk from microphone (called from audio thread)"""
         # Process for wake word in IDLE state
-        if self._state == SatelliteState.IDLE:
+        if self._state == SatelliteState.IDLE and not self._wakeword_pending:
             detection = self.wakeword.process_audio(audio_bytes)
             if detection and not detection.is_stop_word:
+                # Set flag immediately to prevent duplicate detection
+                self._wakeword_pending = True
                 self._schedule_async(self._on_wakeword_detected(detection.keyword, detection.confidence))
             return
 
@@ -375,16 +378,18 @@ class Satellite:
 
         if self._state != SatelliteState.IDLE:
             print("Ignoring - not in idle state")
+            self._wakeword_pending = False
             return
 
         if not self.ws_client.is_connected:
             print("Ignoring - not connected to server")
+            self._wakeword_pending = False
             self.leds.set_pattern(LEDPattern.ERROR)
             await asyncio.sleep(1)
             self.leds.set_pattern(LEDPattern.IDLE)
             return
 
-        # Start listening
+        # Start listening - flag will be cleared in _reset_session when done
         self._set_state(SatelliteState.LISTENING)
         self._audio_buffer.clear()
         self._silence_start = None
@@ -411,6 +416,10 @@ class Satellite:
 
     async def _reset_session(self, reason: str = "reset"):
         """Reset session state and return to idle"""
+        # Skip if already idle (prevents duplicate resets)
+        if self._state == SatelliteState.IDLE and self._session_id is None:
+            return
+
         print(f"Resetting session: {reason}")
 
         # Clear session data
@@ -418,6 +427,7 @@ class Satellite:
         self._audio_buffer.clear()
         self._silence_start = None
         self._processing_start = None
+        self._wakeword_pending = False  # Allow new wake word detection
 
         # Reset wake word detector
         self.wakeword.reset()

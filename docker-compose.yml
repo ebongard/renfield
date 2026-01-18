@@ -70,9 +70,6 @@ services:
     ports:
       - "8000:8000"
     restart: unless-stopped
-    profiles:
-      - cpu
-      - default
 
   # Backend API with GPU support (for Whisper acceleration)
   # Use with: docker compose --profile gpu up

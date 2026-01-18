@@ -32,11 +32,14 @@ OLLAMA_MODEL=llama3.2:3b
 ### 2. Renfield ohne lokalen Ollama-Container starten
 
 ```bash
-# Standard-Start (ohne Ollama-Container)
-docker compose up -d
+# Entwicklung auf Mac
+docker compose -f docker-compose.dev.yml up -d
 
-# Oder explizit ohne Ollama-Profil
-docker compose --profile "" up -d
+# Produktion mit GPU (Whisper)
+docker compose -f docker-compose.prod.yml up -d
+
+# Standard
+docker compose up -d
 ```
 
 Der Ollama-Container wird nun **nicht** gestartet, da er im `ollama`-Profil ist.
