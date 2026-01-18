@@ -33,12 +33,14 @@ class WhisperService:
         """Audio-Datei transkribieren"""
         if self.model is None:
             self.load_model()
-        
+
         try:
             # Transkribieren mit OpenAI Whisper
+            # fp16=False verhindert die Warnung auf CPU-only Systemen
             result = self.model.transcribe(
                 audio_path,
-                language=self.language
+                language=self.language,
+                fp16=False
             )
             
             text = result["text"]

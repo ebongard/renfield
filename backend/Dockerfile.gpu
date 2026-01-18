@@ -1,0 +1,68 @@
+# GPU-enabled Dockerfile for Whisper acceleration
+# Requires: NVIDIA GPU, nvidia-docker installed
+FROM nvidia/cuda:12.1-cudnn8-runtime-ubuntu22.04
+
+WORKDIR /app
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.11 \
+    python3.11-venv \
+    python3-pip \
+    ffmpeg \
+    libsndfile1 \
+    portaudio19-dev \
+    pkg-config \
+    libavformat-dev \
+    libavcodec-dev \
+    libavdevice-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    gcc \
+    g++ \
+    wget \
+    espeak-ng \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 the default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+# Piper TTS Binary installieren
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "aarch64" ]; then \
+        PIPER_ARCH="arm64"; \
+    elif [ "$ARCH" = "x86_64" ]; then \
+        PIPER_ARCH="amd64"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz \
+    && tar -xzf piper_${PIPER_ARCH}.tar.gz \
+    && mv piper/piper /usr/local/bin/ \
+    && mv piper/lib* /usr/local/lib/ \
+    && chmod +x /usr/local/bin/piper \
+    && ldconfig \
+    && rm -rf piper piper_${PIPER_ARCH}.tar.gz
+
+# Piper Voice Model herunterladen
+RUN mkdir -p /usr/share/piper/voices \
+    && cd /usr/share/piper/voices \
+    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
+    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
+
+# Install PyTorch with CUDA support FIRST (before other packages)
+RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Python Dependencies (ohne torch, da schon installiert)
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# App Code
+COPY . .
+
+# Verify CUDA is available
+RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

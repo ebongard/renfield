@@ -1,0 +1,32 @@
+# Renfield Satellite Requirements
+# For Raspberry Pi Zero 2 W with ReSpeaker 2-Mics Pi HAT
+#
+# Inspired by OHF-Voice/linux-voice-assistant
+
+# WebSocket communication
+websockets>=12.0
+
+# Audio capture (using soundcard for better compatibility)
+soundcard>=0.4.0
+numpy>=1.24.0
+
+# Audio playback (using MPV for robust playback)
+python-mpv>=1.0.0
+
+# Wake word detection (TFLite-based, preferred)
+pymicro-wakeword>=2.0.0
+pyopen-wakeword>=1.0.0
+
+# Wake word detection (ONNX-based, legacy fallback)
+# openwakeword>=0.6.0
+# onnxruntime>=1.17.0
+
+# Hardware control (Raspberry Pi)
+spidev>=3.6  # SPI for APA102 LEDs
+RPi.GPIO>=0.7.1  # GPIO for button
+
+# Configuration
+pyyaml>=6.0
+
+# Service discovery (optional)
+zeroconf>=0.100.0

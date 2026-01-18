@@ -1,10 +1,10 @@
 # Renfield - Feature Dokumentation
 
-## 🎯 Übersicht
+## Übersicht
 
 Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für Smart Home und Hausautomatisierung entwickelt wurde.
 
-## 💬 Chat & Konversation
+## Chat & Konversation
 
 ### Natural Language Understanding
 - **Intent Recognition**: Automatische Erkennung von Benutzerabsichten
@@ -21,13 +21,14 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Persistente Speicherung**: Alle Nachrichten werden in PostgreSQL gespeichert
 - **Historie-Suche**: Durchsuche frühere Konversationen
 
-## 🎤 Sprach-Interface
+## Sprach-Interface
 
 ### Speech-to-Text (STT)
 - **Whisper Integration**: OpenAI's Whisper für hochwertige Transkription
 - **Offline-Verarbeitung**: Keine Cloud-Dienste nötig
 - **Deutsche Sprache**: Optimiert für deutsche Spracheingabe
 - **Modell-Auswahl**: Wählbar zwischen tiny, base, small, medium, large
+- **GPU-Beschleunigung**: Optional mit NVIDIA GPU für schnellere Transkription
 - **Rauschunterdrückung**: Gute Qualität auch bei Background-Geräuschen
 
 ### Text-to-Speech (TTS)
@@ -41,7 +42,44 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Streaming Audio**: Antworten werden sofort vorgelesen
 - **Hands-Free Mode**: Freihändige Bedienung möglich
 
-## 🏠 Home Assistant Integration
+## Multi-Room Satellite System
+
+### Raspberry Pi Satellites
+- **Pi Zero 2 W Support**: Kostengünstige (~63€) Satellite-Einheiten
+- **ReSpeaker 2-Mics HAT**: Hochwertige Mikrofonerfassung mit 3m Reichweite
+- **Lokale Wake-Word-Erkennung**: OpenWakeWord mit ONNX Runtime
+- **LED-Feedback**: Visuelles Feedback für alle Zustände
+- **Hardware-Button**: Manuelle Aktivierung möglich
+
+### Wake-Word Detection
+- **Lokale Verarbeitung**: Wake-Word wird auf dem Satellite erkannt
+- **Konfigurierbare Keywords**: Alexa, Hey Mycroft, Hey Jarvis, etc.
+- **Niedriger CPU-Verbrauch**: ~20% auf Pi Zero 2 W
+- **Refractory Period**: Verhindert Doppel-Auslösungen
+- **Stop-Word Support**: Laufende Interaktionen abbrechen
+
+### Multi-Room Features
+- **Auto-Discovery**: Satellites finden Backend automatisch via Zeroconf/mDNS
+- **Parallele Verarbeitung**: Mehrere Räume gleichzeitig bedienen
+- **Session-Routing**: Antworten werden zum richtigen Satellite geroutet
+- **Room-Independence**: Räume blockieren sich nicht gegenseitig
+
+### LED-Feedback
+| Zustand | Muster | Farbe |
+|---------|--------|-------|
+| Idle | Dimmes Pulsieren | Blau |
+| Listening | Durchgehend | Grün |
+| Processing | Laufen | Gelb |
+| Speaking | Atmen | Cyan |
+| Error | Blinken | Rot |
+
+### WebSocket Protokoll
+- **Audio-Streaming**: 16-bit PCM, 16kHz, Mono
+- **Base64-Encoding**: Für WebSocket-Übertragung
+- **Heartbeat**: Verbindung wird überwacht
+- **Auto-Reconnect**: Automatische Wiederverbindung bei Ausfall
+
+## Home Assistant Integration
 
 ### Gerätesteuerung
 - **Lichter**: Ein/Aus/Dimmen/Farbsteuerung
@@ -67,9 +105,9 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 ### Szenen und Automationen
 - **Szenen aktivieren**: "Aktiviere Filmabend"
 - **Automationen triggern**: "Starte Gute-Nacht-Routine"
-- **Gruppenstuerung**: Mehrere Geräte gleichzeitig
+- **Gruppensteuerung**: Mehrere Geräte gleichzeitig
 
-## 📹 Kamera-Überwachung
+## Kamera-Überwachung
 
 ### Frigate Integration
 - **Event-Erkennung**: Person, Auto, Tier, etc.
@@ -94,7 +132,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Live-Status**: Aktuelle Kamera-Stati
 - **Streaming**: Optional Live-Streams anzeigen
 
-## 🔄 n8n Workflow Integration
+## n8n Workflow Integration
 
 ### Workflow-Trigger
 - **Webhook-basiert**: Triggert n8n Workflows per Webhook
@@ -115,7 +153,26 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Dokumentation**: Workflows in Datenbank dokumentieren
 - **Scheduling**: Zeitgesteuerte Workflows
 
-## 📋 Task Management
+## Plugin System
+
+### YAML-basierte Plugins
+- **Keine Code-Änderungen**: Plugins werden über YAML definiert
+- **Hot-Reload**: Plugins werden beim Start geladen
+- **Umgebungsvariablen**: Konfiguration über .env
+
+### Verfügbare Plugins
+- **Weather** (OpenWeatherMap): Wetterdaten und Vorhersagen
+- **News** (NewsAPI): Aktuelle Nachrichten
+- **Search** (SearXNG): Web-Suche ohne API-Key
+- **Music** (Spotify): Musik-Steuerung
+
+### Plugin-Entwicklung
+- **Einfache Syntax**: YAML-basierte Definition
+- **API-Mapping**: HTTP-Anfragen konfigurieren
+- **Response-Mapping**: Antworten transformieren
+- **Intent-Integration**: Automatische Intent-Erkennung
+
+## Task Management
 
 ### Task-Queue
 - **Asynchrone Verarbeitung**: Tasks laufen im Hintergrund
@@ -136,13 +193,14 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Error-Logs**: Detaillierte Fehlermeldungen
 - **Performance-Metriken**: Laufzeit-Statistiken
 
-## 🧠 KI-Features
+## KI-Features
 
 ### Ollama LLM
 - **Lokale Verarbeitung**: Kein Internet nötig
 - **Modell-Auswahl**: Verschiedene Größen verfügbar
 - **GPU-Beschleunigung**: Optional für bessere Performance
 - **Kontext-Fenster**: Großer Kontext für komplexe Anfragen
+- **Externe Instanz**: Kann auf separatem GPU-Server laufen
 
 ### Intent Recognition
 - **Automatisch**: Erkennt Benutzerabsicht aus Text
@@ -156,7 +214,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Time-Awareness**: Versteht zeitliche Bezüge
 - **Location-Awareness**: Versteht Räume und Orte
 
-## 📱 Progressive Web App
+## Progressive Web App
 
 ### Multi-Platform
 - **Desktop**: Vollwertiger Browser
@@ -176,7 +234,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Dark Mode**: Angenehm für die Augen
 - **Accessibility**: Screen-Reader kompatibel
 
-## 🔒 Sicherheit & Datenschutz
+## Sicherheit & Datenschutz
 
 ### Offline-First
 - **Keine Cloud**: Alle Daten bleiben lokal
@@ -195,7 +253,13 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Chat-Historie**: Nur auf deinem Server
 - **Keine Profilbildung**: Keine Datensammlung
 
-## 🚀 Performance
+## Performance
+
+### GPU-Beschleunigung
+- **NVIDIA CUDA**: Support für NVIDIA GPUs
+- **Whisper-Beschleunigung**: Schnellere Transkription
+- **Ollama-GPU**: Schnellere LLM-Inferenz
+- **Docker GPU**: Native Container-Unterstützung
 
 ### Optimierungen
 - **Redis-Caching**: Schnelle Datenzugriffe
@@ -209,7 +273,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Load-Balancing**: Optional mit Nginx
 - **Microservices**: Modular erweiterbar
 
-## 🔧 Erweiterbarkeit
+## Erweiterbarkeit
 
 ### Plugin-System
 - **Custom Integrations**: Eigene Integrationen hinzufügen
@@ -229,7 +293,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Voices**: Verschiedene TTS-Stimmen
 - **Models**: Austauschbare KI-Modelle
 
-## 📊 Monitoring
+## Monitoring
 
 ### System-Health
 - **Service-Status**: Alle Services überwachen
@@ -249,7 +313,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Alerting**: Benachrichtigungen bei Problemen
 - **Historical Data**: Langzeit-Statistiken
 
-## 🛠️ Wartung
+## Wartung
 
 ### Updates
 - **Rolling Updates**: Keine Downtime
@@ -269,7 +333,7 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Debug-Mode**: Detaillierte Ausgaben
 - **Support**: Community-Support
 
-## 🎨 UI/UX Features
+## UI/UX Features
 
 ### Benutzerfreundlichkeit
 - **Intuitive Navigation**: Klare Menüstruktur

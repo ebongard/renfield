@@ -1,3 +1,23 @@
+# Production Docker Compose with NVIDIA GPU Support
+# Usage: docker compose -f docker-compose.prod.yml up -d
+#
+# Prerequisites:
+#   1. NVIDIA GPU with drivers installed (nvidia-smi should work)
+#   2. NVIDIA Container Toolkit installed:
+#      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+#      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+#        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+#        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+#      sudo apt update && sudo apt install -y nvidia-container-toolkit
+#      sudo nvidia-ctk runtime configure --runtime=docker
+#      sudo systemctl restart docker
+#
+# For external Ollama (recommended for production), set in .env:
+#   OLLAMA_URL=http://cuda.local:11434
+#
+# For local Ollama with GPU:
+#   docker compose -f docker-compose.prod.yml --profile ollama-gpu up -d
+
 services:
   # PostgreSQL Datenbank
   postgres:
@@ -11,7 +31,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - renfield-network
-    restart: unless-stopped
+    restart: always
+    # Not exposed externally in production
 
   # Redis für Message Queue und Caching
   redis:
@@ -22,61 +43,30 @@ services:
       - redis_data:/data
     networks:
       - renfield-network
-    restart: unless-stopped
+    restart: always
+    # Not exposed externally in production
 
-  # Ollama - Lokales LLM (optional - kann durch externe Instanz ersetzt werden)
-  ollama:
+  # Ollama with GPU (optional - use external instance for better resource management)
+  ollama-gpu:
     image: ollama/ollama:latest
     container_name: renfield-ollama
     volumes:
       - ollama_data:/root/.ollama
     networks:
       - renfield-network
-    restart: unless-stopped
+    restart: always
     profiles:
-      - ollama  # Aktiviere mit: docker compose --profile ollama up
-#    deploy:
-#      resources:
-#        reservations:
-#          devices:
-#            - driver: nvidia
-#              count: all
-#              capabilities: [gpu]
-    # Falls keine GPU: deploy-Sektion entfernen
-    # Falls externe Ollama-Instanz: Setze OLLAMA_URL in .env auf externe URL
+      - ollama-gpu
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
-  # Backend API (CPU version)
+  # Backend API with GPU Support (Whisper acceleration)
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: renfield-backend
-    env_file:
-      - .env
-    environment:
-      # Override specific variables that need container-specific values
-      DATABASE_URL: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/renfield
-      REDIS_URL: redis://redis:6379
-      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
-    volumes:
-      - ./backend:/app
-      - whisper_models:/root/.cache/whisper
-      - piper_models:/root/.local/share/piper
-    depends_on:
-      - postgres
-      - redis
-    networks:
-      - renfield-network
-    ports:
-      - "8000:8000"
-    restart: unless-stopped
-    profiles:
-      - cpu
-      - default
-
-  # Backend API with GPU support (for Whisper acceleration)
-  # Use with: docker compose --profile gpu up
-  backend-gpu:
     build:
       context: ./backend
       dockerfile: Dockerfile.gpu
@@ -97,11 +87,7 @@ services:
       - redis
     networks:
       - renfield-network
-    ports:
-      - "8000:8000"
-    restart: unless-stopped
-    profiles:
-      - gpu
+    restart: always
     deploy:
       resources:
         reservations:
@@ -109,33 +95,31 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
+    # Backend exposed via nginx only
 
-  # Frontend Web-App
+  # Frontend Web-App (Production build)
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NODE_ENV: production
     container_name: renfield-frontend
     environment:
-      VITE_API_URL: http://localhost:8000
-      VITE_WS_URL: ws://localhost:8000/ws
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    depends_on:
-      - backend
+      VITE_API_URL: ${EXTERNAL_URL:-http://localhost}/api
+      VITE_WS_URL: ${EXTERNAL_WS_URL:-ws://localhost}/ws
     networks:
       - renfield-network
-    ports:
-      - "3000:3000"
-    restart: unless-stopped
+    restart: always
+    # Frontend exposed via nginx only
 
-  # Nginx Reverse Proxy (optional, für Produktiv-Setup)
+  # Nginx Reverse Proxy (Production)
   nginx:
     image: nginx:alpine
     container_name: renfield-nginx
     volumes:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/ssl:/etc/nginx/ssl:ro  # Optional: SSL certificates
     depends_on:
       - backend
       - frontend
@@ -144,9 +128,7 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    restart: unless-stopped
-    profiles:
-      - production
+    restart: always
 
 networks:
   renfield-network:

@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     try:
         from integrations.homeassistant import HomeAssistantClient
         import asyncio
-        
+
         async def preload_keywords():
             """Lade HA Keywords im Hintergrund"""
             try:
@@ -98,13 +98,27 @@ async def lifespan(app: FastAPI):
                 logger.info(f"✅ Home Assistant Keywords vorgeladen: {len(keywords)} Keywords")
             except Exception as e:
                 logger.warning(f"⚠️  Keywords konnten nicht vorgeladen werden: {e}")
-        
+
         # Starte im Hintergrund (blockiert Start nicht)
         asyncio.create_task(preload_keywords())
     except Exception as e:
         logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
-    
+
+    # Zeroconf Service für Satellite Auto-Discovery
+    zeroconf_service = None
+    try:
+        from services.zeroconf_service import get_zeroconf_service
+        zeroconf_service = get_zeroconf_service(port=8000)
+        await zeroconf_service.start()
+        app.state.zeroconf_service = zeroconf_service
+    except Exception as e:
+        logger.warning(f"⚠️  Zeroconf Service konnte nicht gestartet werden: {e}")
+
     yield
+
+    # Zeroconf Service stoppen
+    if zeroconf_service:
+        await zeroconf_service.stop()
     
     # Cleanup
     logger.info("👋 Renfield wird heruntergefahren...")
@@ -231,6 +245,227 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
         import traceback
         logger.error(traceback.format_exc())
         await websocket.close()
+
+
+# WebSocket for Satellite Voice Assistants
+@app.websocket("/ws/satellite")
+async def satellite_websocket(websocket: WebSocket):
+    """
+    WebSocket endpoint for Raspberry Pi satellite voice assistants.
+
+    Protocol:
+    Satellite → Server:
+        - {"type": "register", "satellite_id": str, "room": str, "capabilities": {...}}
+        - {"type": "wakeword_detected", "keyword": str, "confidence": float, "session_id": str}
+        - {"type": "audio", "chunk": str (base64), "sequence": int, "session_id": str}
+        - {"type": "audio_end", "session_id": str, "reason": str}
+        - {"type": "heartbeat", "status": str, "uptime_seconds": int}
+
+    Server → Satellite:
+        - {"type": "register_ack", "success": bool, "config": {...}}
+        - {"type": "state", "state": "idle|listening|processing|speaking"}
+        - {"type": "transcription", "session_id": str, "text": str}
+        - {"type": "action", "session_id": str, "intent": {...}, "success": bool}
+        - {"type": "tts_audio", "session_id": str, "audio": str (base64), "is_final": bool}
+    """
+    await websocket.accept()
+    logger.info("📡 Satellite WebSocket connection established")
+
+    from services.satellite_manager import get_satellite_manager, SatelliteState
+    satellite_manager = get_satellite_manager()
+
+    satellite_id = None
+
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            # Handle registration
+            if msg_type == "register":
+                satellite_id = data.get("satellite_id", "unknown")
+                room = data.get("room", "Unknown Room")
+                capabilities = data.get("capabilities", {})
+
+                success = await satellite_manager.register(
+                    satellite_id=satellite_id,
+                    room=room,
+                    websocket=websocket,
+                    capabilities=capabilities
+                )
+
+                await websocket.send_json({
+                    "type": "register_ack",
+                    "success": success,
+                    "config": {
+                        "wake_words": satellite_manager.default_wake_words,
+                        "threshold": satellite_manager.default_threshold
+                    }
+                })
+                logger.info(f"📡 Satellite {satellite_id} registered from {room}")
+
+            # Handle wake word detection
+            elif msg_type == "wakeword_detected":
+                keyword = data.get("keyword", "unknown")
+                confidence = data.get("confidence", 0.0)
+                sat_id = data.get("satellite_id", satellite_id)
+                # Use the session_id provided by the satellite (important for matching audio chunks)
+                client_session_id = data.get("session_id")
+
+                session_id = await satellite_manager.start_session(
+                    satellite_id=sat_id,
+                    keyword=keyword,
+                    confidence=confidence,
+                    session_id=client_session_id  # Use satellite's session ID
+                )
+
+                if session_id:
+                    logger.info(f"🎙️ Wake word '{keyword}' detected by {sat_id}, session: {session_id}")
+                else:
+                    logger.warning(f"⚠️ Could not start session for {sat_id}")
+
+            # Handle audio chunks
+            elif msg_type == "audio":
+                session_id = data.get("session_id")
+                chunk_b64 = data.get("chunk", "")
+                sequence = data.get("sequence", 0)
+
+                if session_id and chunk_b64:
+                    satellite_manager.buffer_audio(session_id, chunk_b64, sequence)
+
+            # Handle end of audio
+            elif msg_type == "audio_end":
+                session_id = data.get("session_id")
+                reason = data.get("reason", "unknown")
+
+                if not session_id:
+                    continue
+
+                logger.info(f"🔚 Audio ended for session {session_id} (reason: {reason})")
+
+                # Update state to processing
+                await satellite_manager.set_session_state(session_id, SatelliteState.PROCESSING)
+
+                # Get audio buffer
+                audio_bytes = satellite_manager.get_audio_buffer(session_id)
+
+                if not audio_bytes:
+                    logger.warning(f"⚠️ No audio buffered for session {session_id}")
+                    await satellite_manager.end_session(session_id, reason="no_audio")
+                    continue
+
+                logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
+
+                # Transcribe with Whisper
+                try:
+                    from services.whisper_service import WhisperService
+                    whisper = WhisperService()
+                    whisper.load_model()
+
+                    # Create WAV file with proper header
+                    import io
+                    import wave
+                    wav_buffer = io.BytesIO()
+                    with wave.open(wav_buffer, 'wb') as wav_file:
+                        wav_file.setnchannels(1)
+                        wav_file.setsampwidth(2)  # 16-bit
+                        wav_file.setframerate(16000)
+                        wav_file.writeframes(audio_bytes)
+
+                    wav_bytes = wav_buffer.getvalue()
+                    logger.info(f"📦 Created WAV: {len(wav_bytes)} bytes")
+
+                    # Transcribe the audio
+                    text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav")
+
+                    if not text or not text.strip():
+                        logger.warning(f"⚠️ Empty transcription for session {session_id}")
+                        await satellite_manager.end_session(session_id, reason="empty_transcription")
+                        continue
+
+                    logger.info(f"📝 Transcription: '{text}'")
+                    await satellite_manager.send_transcription(session_id, text)
+
+                except Exception as e:
+                    logger.error(f"❌ Whisper transcription failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+                    await satellite_manager.end_session(session_id, reason="transcription_error")
+                    continue
+
+                # Process with Ollama (intent extraction + action)
+                try:
+                    ollama = app.state.ollama
+                    plugin_registry = app.state.plugin_registry
+
+                    # Extract intent
+                    intent = await ollama.extract_intent(text, plugin_registry)
+                    logger.info(f"🎯 Intent: {intent.get('intent')}")
+
+                    # Execute action if needed
+                    action_result = None
+                    if intent.get("intent") != "general.conversation":
+                        from services.action_executor import ActionExecutor
+                        executor = ActionExecutor(plugin_registry)
+                        action_result = await executor.execute(intent)
+                        logger.info(f"⚡ Action result: {action_result.get('success')}")
+                        await satellite_manager.send_action_result(
+                            session_id, intent, action_result.get("success", False)
+                        )
+
+                    # Generate response
+                    response_text = ""
+                    if action_result and action_result.get("success"):
+                        result_info = action_result.get("message", "")
+                        enhanced_prompt = f"""Der Nutzer hat gefragt: "{text}"
+Die Aktion wurde ausgeführt: {result_info}
+Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
+
+                        async for chunk in ollama.chat_stream(enhanced_prompt):
+                            response_text += chunk
+                    elif action_result and not action_result.get("success"):
+                        response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+                    else:
+                        # Normal conversation
+                        async for chunk in ollama.chat_stream(text):
+                            response_text += chunk
+
+                    logger.info(f"💬 Response: '{response_text[:100]}...'")
+
+                    # Generate TTS
+                    from services.piper_service import PiperService
+                    piper = PiperService()
+                    tts_audio = await piper.synthesize_to_bytes(response_text)
+
+                    if tts_audio:
+                        await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+                    else:
+                        logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
+
+                except Exception as e:
+                    logger.error(f"❌ Processing failed: {e}")
+                    import traceback
+                    logger.error(traceback.format_exc())
+
+                # End session
+                await satellite_manager.end_session(session_id, reason="completed")
+
+            # Handle heartbeat
+            elif msg_type == "heartbeat":
+                if satellite_id:
+                    satellite_manager.update_heartbeat(satellite_id)
+                    # Optionally send heartbeat ack
+                    await websocket.send_json({"type": "heartbeat_ack"})
+
+    except WebSocketDisconnect:
+        logger.info(f"👋 Satellite WebSocket disconnected: {satellite_id}")
+    except Exception as e:
+        logger.error(f"❌ Satellite WebSocket error: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+    finally:
+        if satellite_id:
+            await satellite_manager.unregister(satellite_id)
 
 
 # WebSocket for Wake Word Detection (Server-Side Fallback)

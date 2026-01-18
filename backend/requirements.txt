@@ -32,6 +32,9 @@ requests==2.31.0
 httpx==0.25.2
 paho-mqtt==1.6.1
 
+# Service Discovery
+zeroconf==0.131.0
+
 # Kamera / Computer Vision
 opencv-python-headless==4.9.0.80
 pillow==10.2.0

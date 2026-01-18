@@ -1,0 +1,28 @@
+[Unit]
+Description=Renfield Satellite Voice Assistant
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=audio
+WorkingDirectory=/opt/renfield-satellite
+ExecStart=/opt/renfield-satellite/venv/bin/python -m renfield_satellite
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+# Allow access to hardware
+SupplementaryGroups=spi gpio i2c
+
+# Resource limits (Pi Zero 2 W has 512MB RAM)
+MemoryMax=300M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=renfield-satellite
+
+[Install]
+WantedBy=multi-user.target

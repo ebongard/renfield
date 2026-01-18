@@ -1,0 +1,51 @@
+# Renfield Satellite Configuration
+# Copy this file to /opt/renfield-satellite/config/satellite.yaml
+
+# Satellite identification
+satellite:
+  id: "sat-livingroom"      # Unique ID for this satellite
+  room: "Living Room"        # Human-readable room name
+
+# Renfield server connection
+# If url is not specified, auto-discovery will find the server automatically
+server:
+  # url: "ws://renfield.local:8000/ws/satellite"  # Manual WebSocket URL (optional)
+  auto_discover: true         # Use zeroconf to find server automatically
+  discovery_timeout: 10       # Seconds to wait for discovery
+  reconnect_interval: 5       # Seconds between reconnect attempts
+  heartbeat_interval: 30      # Seconds between heartbeats
+
+# Audio settings
+audio:
+  sample_rate: 16000         # Hz (must match wake word model)
+  chunk_size: 1280           # Samples per chunk (~80ms at 16kHz)
+  channels: 1                # Mono
+  device: "plughw:1,0"       # ALSA capture device
+  playback_device: "plughw:1,0"  # ALSA playback device
+
+# Wake word detection
+wakeword:
+  model: "okay_nabu"         # Wake word model name (okay_nabu, hey_jarvis, etc.)
+  threshold: 0.5             # Detection threshold (0.0-1.0)
+  models_path: "/opt/renfield-satellite/models"
+  refractory_seconds: 2.0    # Cooldown before re-triggering same wake word
+  # stop_words:              # Words that cancel ongoing interaction (optional)
+  #   - "stop"
+  #   - "cancel"
+  #   - "nevermind"
+
+# Voice Activity Detection (for end-of-speech)
+vad:
+  silence_threshold: 500     # RMS below this = silence
+  silence_duration_ms: 1500  # How long silence to end recording
+  max_recording_seconds: 15  # Maximum recording length
+
+# LED settings (ReSpeaker HAT)
+led:
+  brightness: 20             # 0-31 (hardware limit)
+  num_leds: 3                # Number of APA102 LEDs
+
+# Button settings (ReSpeaker HAT)
+button:
+  gpio_pin: 17               # BCM GPIO pin number
+  debounce_ms: 50            # Debounce time

@@ -2,7 +2,7 @@
 
 Dieser Guide führt dich Schritt für Schritt durch die Installation von Renfield.
 
-## 📋 Systemanforderungen
+## Systemanforderungen
 
 ### Minimum
 - **CPU**: 4 Cores
@@ -18,7 +18,7 @@ Dieser Guide führt dich Schritt für Schritt durch die Installation von Renfiel
 - **Speicher**: 100 GB+ SSD
 - **GPU**: NVIDIA GPU mit CUDA Support (optional, für bessere Performance)
 
-## 🛠️ Installation
+## Installation
 
 ### 1. System vorbereiten
 
@@ -92,6 +92,13 @@ DEFAULT_LANGUAGE=de
 OLLAMA_MODEL=llama3.2:3b
 WHISPER_MODEL=base
 PIPER_VOICE=de_DE-thorsten-high
+
+# Externe Ollama-Instanz (optional)
+# OLLAMA_URL=http://cuda.local:11434
+
+# Satellite Konfiguration
+WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_THRESHOLD=0.5
 ```
 
 ### 4. Home Assistant Token erstellen
@@ -104,12 +111,29 @@ PIPER_VOICE=de_DE-thorsten-high
 
 ### 5. Services starten
 
+#### Variante A: Entwicklung auf Mac
 ```bash
-# Alle Container im Hintergrund starten
-docker-compose up -d
+docker compose -f docker-compose.dev.yml up -d
 
 # Logs verfolgen
-docker-compose logs -f
+docker compose -f docker-compose.dev.yml logs -f
+```
+
+#### Variante B: Produktion mit NVIDIA GPU
+```bash
+# Voraussetzung: NVIDIA Container Toolkit (siehe unten)
+docker compose -f docker-compose.prod.yml up -d
+
+# Logs verfolgen
+docker compose -f docker-compose.prod.yml logs -f
+```
+
+#### Variante C: Standard (ohne GPU)
+```bash
+docker compose up -d
+
+# Logs verfolgen
+docker compose logs -f
 ```
 
 ### 6. Ollama Modell laden
@@ -139,7 +163,21 @@ curl http://localhost:8000/health
 http://localhost:3000
 ```
 
-## 🎯 Erste Schritte
+## Docker Compose Varianten
+
+| Datei | Verwendung | Features |
+|-------|------------|----------|
+| `docker-compose.yml` | Standard | Basis-Setup, CPU-only |
+| `docker-compose.dev.yml` | Entwicklung | Mac-freundlich, Debug-Ports offen |
+| `docker-compose.prod.yml` | Produktion | NVIDIA GPU, nginx mit SSL |
+
+### Wann welche Datei?
+
+- **Mac-Entwicklung**: `docker-compose.dev.yml`
+- **Linux Server ohne GPU**: `docker-compose.yml`
+- **Linux Server mit NVIDIA GPU**: `docker-compose.prod.yml`
+
+## Erste Schritte
 
 ### Test 1: Chat ohne Home Assistant
 
@@ -159,22 +197,36 @@ http://localhost:3000
 2. Du solltest deine Geräte sehen
 3. Klicke auf ein Gerät zum Ein-/Ausschalten
 
-## 🔧 Erweiterte Konfiguration
+## Erweiterte Konfiguration
 
 ### GPU Support aktivieren (NVIDIA)
 
-1. NVIDIA Docker installieren:
+1. NVIDIA Container Toolkit installieren:
 ```bash
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID)
-curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add -
-curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
+# GPG Key hinzufügen
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
 
+# Repository hinzufügen
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
+  sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
+  sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+
+# Installieren
 sudo apt-get update
-sudo apt-get install -y nvidia-docker2
+sudo apt-get install -y nvidia-container-toolkit
+
+# Docker konfigurieren
+sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
+
+# Testen
+docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu22.04 nvidia-smi
 ```
 
-2. Docker Compose anpassen (bereits konfiguriert in `docker-compose.yml`)
+2. Mit GPU-Profil starten:
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
 
 ### Nginx Reverse Proxy (HTTPS)
 
@@ -184,14 +236,17 @@ sudo apt install certbot
 sudo certbot certonly --standalone -d deine-domain.de
 ```
 
-2. Nginx Konfiguration anpassen:
+2. Zertifikate kopieren:
 ```bash
-nano config/nginx.conf
+mkdir -p config/ssl
+sudo cp /etc/letsencrypt/live/deine-domain.de/fullchain.pem config/ssl/cert.pem
+sudo cp /etc/letsencrypt/live/deine-domain.de/privkey.pem config/ssl/key.pem
+sudo chown $USER:$USER config/ssl/*.pem
 ```
 
-3. Nginx Profil aktivieren:
+3. Nginx mit Production-Compose starten:
 ```bash
-docker-compose --profile production up -d nginx
+docker compose -f docker-compose.prod.yml up -d
 ```
 
 ### Firewall konfigurieren
@@ -211,17 +266,63 @@ sudo ufw allow 8000/tcp # Backend (nur im lokalen Netz)
 sudo ufw enable
 ```
 
-## 🔍 Troubleshooting
+## Multi-Room Satellite System
+
+Für Sprachsteuerung in mehreren Räumen kannst du Raspberry Pi Satellites einrichten.
+
+### Hardware pro Satellite (~63€)
+
+| Komponente | Preis |
+|------------|-------|
+| Raspberry Pi Zero 2 W | ~18€ |
+| ReSpeaker 2-Mics Pi HAT V2.0 | ~12€ |
+| MicroSD Card 16GB | ~8€ |
+| 5V/2A Netzteil | ~10€ |
+| 3.5mm Lautsprecher | ~10€ |
+| Gehäuse (optional) | ~5€ |
+
+### Features
+
+- Lokale Wake-Word-Erkennung mit OpenWakeWord
+- Auto-Discovery via Zeroconf/mDNS
+- LED-Feedback (Idle, Listening, Processing, Speaking)
+- Hardware-Button für manuelle Aktivierung
+- ~25% CPU-Auslastung auf Pi Zero 2 W
+
+### Schnellstart Satellite
+
+**Vollständige Anleitung:** [renfield-satellite/README.md](renfield-satellite/README.md)
+
+```bash
+# Auf dem Raspberry Pi
+cd /opt/renfield-satellite
+source venv/bin/activate
+python -m renfield_satellite config/satellite.yaml
+```
+
+### Backend-Konfiguration für Satellites
+
+In deiner `.env` Datei:
+```env
+# Zeroconf Service Advertisement
+ADVERTISE_HOST=renfield    # oder IP-Adresse
+
+# Wake Word Konfiguration
+WAKE_WORD_DEFAULT=alexa
+WAKE_WORD_THRESHOLD=0.5
+```
+
+## Troubleshooting
 
 ### Container startet nicht
 
 ```bash
 # Logs prüfen
-docker-compose logs renfield-backend
-docker-compose logs renfield-ollama
+docker compose logs renfield-backend
+docker compose logs renfield-ollama
 
 # Container neu starten
-docker-compose restart
+docker compose restart
 ```
 
 ### Ollama Modell lädt nicht
@@ -237,21 +338,47 @@ docker exec -it renfield-ollama ollama list
 ### Whisper Fehler
 
 ```bash
-# Cache leeren
-docker exec -it renfield-backend rm -rf /root/.cache/whisper
+# Package aktualisieren
+docker exec -it renfield-backend pip install --upgrade openai-whisper
 
 # Container neu bauen
-docker-compose build backend
-docker-compose up -d backend
+docker compose build backend
+docker compose up -d backend
+```
+
+### GPU nicht erkannt
+
+```bash
+# NVIDIA Treiber prüfen
+nvidia-smi
+
+# Container Toolkit prüfen
+docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu22.04 nvidia-smi
+
+# Falls Fehler: Docker neu starten
+sudo systemctl restart docker
+```
+
+### Satellite findet Backend nicht
+
+```bash
+# Prüfe ob Backend Zeroconf advertised
+docker compose logs backend | grep zeroconf
+
+# Manuelle URL in satellite config setzen
+# config/satellite.yaml:
+server:
+  auto_discover: false
+  url: "ws://192.168.1.100:8000/ws/satellite"
 ```
 
 ### Datenbank Probleme
 
 ```bash
 # Datenbank neu initialisieren
-docker-compose down
+docker compose down
 docker volume rm renfield_postgres_data
-docker-compose up -d
+docker compose up -d
 ```
 
 ### Speicherplatz freigeben
@@ -268,7 +395,7 @@ docker system prune -a
 #     max-file: "3"
 ```
 
-## 📊 Performance-Optimierung
+## Performance-Optimierung
 
 ### Ollama Modell-Wahl
 
@@ -287,32 +414,36 @@ docker system prune -a
 - `base` - Standard, gute Balance (empfohlen)
 - `small` - Besser, langsamer
 - `medium` - Sehr gut, braucht mehr RAM
-- `large` - Beste Qualität, sehr langsam
+- `large` - Beste Qualität, sehr langsam (GPU empfohlen)
 
-## 🔄 Updates
+### GPU-beschleunigtes Whisper
+
+Mit `docker-compose.prod.yml` wird Whisper automatisch auf der GPU ausgeführt, was die Transkription erheblich beschleunigt.
+
+## Updates
 
 ```bash
 # Repository aktualisieren
 git pull
 
 # Container neu bauen und starten
-docker-compose down
-docker-compose build
-docker-compose up -d
+docker compose down
+docker compose build
+docker compose up -d
 ```
 
-## 🗑️ Deinstallation
+## Deinstallation
 
 ```bash
 # Container und Volumes löschen
-docker-compose down -v
+docker compose down -v
 
 # Repository entfernen
 cd ..
 rm -rf renfield
 ```
 
-## 💾 Backup
+## Backup
 
 ### Wichtige Daten sichern
 
@@ -335,10 +466,10 @@ cat backup_db.sql | docker exec -i renfield-postgres psql -U renfield renfield
 docker run --rm -v renfield_whisper_models:/data -v $(pwd):/backup alpine sh -c "cd /data && tar xzf /backup/whisper_models_backup.tar.gz --strip 1"
 ```
 
-## 📞 Support
+## Support
 
 Bei Problemen:
-1. Prüfe die Logs: `docker-compose logs`
+1. Prüfe die Logs: `docker compose logs`
 2. Suche in den Issues auf GitHub
 3. Erstelle ein neues Issue mit:
    - Systeminformationen
@@ -347,4 +478,4 @@ Bei Problemen:
 
 ---
 
-**Viel Erfolg mit Renfield!** 🎉
+**Viel Erfolg mit Renfield!**
