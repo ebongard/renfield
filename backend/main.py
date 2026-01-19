@@ -669,7 +669,7 @@ async def device_websocket(websocket: WebSocket):
 
                         async with AsyncSessionLocal() as db_session:
                             room_service = RoomService(db_session)
-                            db_room = await room_service.register_device(
+                            db_device = await room_service.register_device(
                                 device_id=device_id,
                                 room_name=room,
                                 device_type=device_type,
@@ -679,10 +679,11 @@ async def device_websocket(websocket: WebSocket):
                                 user_agent=user_agent,
                                 ip_address=ip_address
                             )
-                            if db_room:
-                                room_id = db_room.id
+                            if db_device:
+                                room_id = db_device.room_id
                                 device_manager.set_room_id(device_id, room_id)
-                                logger.info(f"📍 Device {device_id} linked to room '{db_room.name}' (id: {room_id})")
+                                # Use the provided room name (avoid lazy loading in async context)
+                                logger.info(f"📍 Device {device_id} linked to room '{room}' (id: {room_id})")
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to persist device to database: {e}")
 

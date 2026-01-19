@@ -2,9 +2,19 @@ import React, { useState, useEffect } from 'react';
 import {
   Home, Plus, Edit3, Trash2, Loader, CheckCircle, XCircle,
   AlertCircle, RefreshCw, Link as LinkIcon, Unlink, Radio,
-  ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight
+  ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
+  Monitor, Tablet, Smartphone, Tv
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+
+// Device type icons and labels
+const DEVICE_TYPE_CONFIG = {
+  satellite: { icon: Radio, label: 'Satellite', color: 'text-green-400' },
+  web_panel: { icon: Monitor, label: 'Panel', color: 'text-blue-400' },
+  web_tablet: { icon: Tablet, label: 'Tablet', color: 'text-purple-400' },
+  web_browser: { icon: Smartphone, label: 'Browser', color: 'text-gray-400' },
+  web_kiosk: { icon: Tv, label: 'Kiosk', color: 'text-yellow-400' },
+};
 
 export default function RoomsPage() {
   // State
@@ -367,34 +377,45 @@ export default function RoomsPage() {
                   )}
                 </div>
 
-                {/* Satellites */}
-                <div className="flex items-center justify-between text-sm mb-4">
-                  <span className="text-gray-400">Satellites:</span>
-                  <span className="text-gray-300 flex items-center space-x-1">
-                    <Radio className="w-3 h-3" />
-                    <span>{room.satellite_count}</span>
-                    {room.satellites?.filter(s => s.is_online).length > 0 && (
-                      <span className="text-green-400">
-                        ({room.satellites.filter(s => s.is_online).length} online)
+                {/* Devices Summary */}
+                <div className="flex items-center justify-between text-sm mb-2">
+                  <span className="text-gray-400">Geraete:</span>
+                  <span className="text-gray-300">
+                    {room.device_count || 0}
+                    {room.online_count > 0 && (
+                      <span className="text-green-400 ml-1">
+                        ({room.online_count} online)
                       </span>
                     )}
                   </span>
                 </div>
 
-                {/* Satellite List */}
-                {room.satellites?.length > 0 && (
-                  <div className="mb-4 p-2 bg-gray-800 rounded-lg">
-                    {room.satellites.map((sat) => (
-                      <div
-                        key={sat.satellite_id}
-                        className="flex items-center justify-between text-xs py-1"
-                      >
-                        <span className="text-gray-400 truncate">{sat.satellite_id}</span>
-                        <span className={sat.is_online ? 'text-green-400' : 'text-gray-500'}>
-                          {sat.is_online ? 'online' : 'offline'}
-                        </span>
-                      </div>
-                    ))}
+                {/* Device List */}
+                {room.devices?.length > 0 && (
+                  <div className="mb-4 p-2 bg-gray-800 rounded-lg space-y-1">
+                    {room.devices.map((device) => {
+                      const config = DEVICE_TYPE_CONFIG[device.device_type] || DEVICE_TYPE_CONFIG.web_browser;
+                      const DeviceIcon = config.icon;
+                      return (
+                        <div
+                          key={device.device_id}
+                          className="flex items-center justify-between text-xs py-1"
+                        >
+                          <div className="flex items-center space-x-2 min-w-0 flex-1">
+                            <DeviceIcon className={`w-3 h-3 flex-shrink-0 ${config.color}`} />
+                            <span className="text-gray-400 truncate" title={device.device_id}>
+                              {device.device_name || device.device_id}
+                            </span>
+                          </div>
+                          <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
+                            <span className="text-gray-500 text-[10px]">{config.label}</span>
+                            <span className={device.is_online ? 'text-green-400' : 'text-gray-500'}>
+                              {device.is_online ? 'online' : 'offline'}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
 

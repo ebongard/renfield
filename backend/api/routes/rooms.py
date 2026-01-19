@@ -40,8 +40,13 @@ class RoomResponse(BaseModel):
     created_at: Optional[str]
     updated_at: Optional[str]
     last_synced_at: Optional[str]
-    satellite_count: int
-    satellites: List[dict]
+    # Device counts
+    device_count: int = 0
+    satellite_count: int = 0
+    online_count: int = 0
+    # Device lists
+    devices: List[dict] = []
+    satellites: List[dict] = []  # Legacy compatibility
 
     class Config:
         from_attributes = True

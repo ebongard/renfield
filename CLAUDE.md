@@ -255,6 +255,44 @@ Renfield includes automatic speaker recognition using **SpeechBrain ECAPA-TDNN**
 
 **Documentation:** See `SPEAKER_RECOGNITION.md` for detailed documentation.
 
+### Device Management System
+
+Renfield supports multiple device types that can connect and interact with the system:
+
+**Device Types:**
+- `satellite` - Hardware Raspberry Pi satellites with wake word detection
+- `web_panel` - Stationary web panels (e.g., wall-mounted tablets)
+- `web_tablet` - Mobile tablets
+- `web_browser` - Desktop/mobile browsers
+- `web_kiosk` - Kiosk terminals
+
+**Key Features:**
+- **Unified WebSocket Endpoint** (`/ws/device`): All web devices connect through this endpoint
+- **IP-based Room Detection**: Stationary devices are identified by IP address for automatic room context
+- **Capability-based Features**: UI adapts based on device capabilities (microphone, speaker, wake word)
+- **Persistent Registration**: Devices are stored in database and survive reconnects
+
+**Key Implementation:**
+- `DeviceManager` (`backend/services/device_manager.py`): In-memory device state management
+- `RoomService` (`backend/services/room_service.py`): Database persistence for devices and rooms
+- `RoomDevice` model: Stores device info including IP address, capabilities, online status
+
+**Automatic Room Detection:**
+When a client connects to `/ws` (chat), the backend checks their IP against registered stationary devices:
+```python
+room_context = await room_service.get_room_context_by_ip(ip_address)
+# Returns: {"room_name": "Kitchen", "room_id": 1, "device_id": "...", "auto_detected": True}
+```
+This context is passed to intent recognition, allowing commands like "turn on the light" to work without specifying the room.
+
+**API Endpoints:**
+- `GET /api/rooms` - List rooms with all devices
+- `GET /api/rooms/{id}/devices` - Get devices in a room
+- `GET /api/rooms/devices/connected` - Get currently connected devices (real-time)
+- `POST /api/rooms/{id}/devices` - Manually register a device
+- `DELETE /api/rooms/devices/{device_id}` - Delete a device
+- `PATCH /api/rooms/devices/{device_id}/room/{room_id}` - Move device to another room
+
 ### Backend Structure
 
 ```
@@ -266,26 +304,29 @@ backend/
 │   ├── chat.py               # Chat history, non-streaming chat
 │   ├── voice.py              # STT, TTS, voice-chat endpoint
 │   ├── speakers.py           # Speaker recognition management
+│   ├── rooms.py              # Room and device management, HA sync
 │   ├── homeassistant.py      # HA state queries, control endpoints
 │   ├── camera.py             # Frigate events, snapshots
 │   └── tasks.py              # Task queue management
 ├── services/                  # Business logic layer
-│   ├── ollama_service.py     # LLM interaction, intent extraction
+│   ├── ollama_service.py     # LLM interaction, intent extraction (with room context)
 │   ├── whisper_service.py    # Speech-to-text (with speaker recognition)
 │   ├── speaker_service.py    # Speaker recognition (SpeechBrain ECAPA-TDNN)
 │   ├── audio_preprocessor.py # Noise reduction, normalization for STT
 │   ├── piper_service.py      # Text-to-speech
 │   ├── satellite_manager.py  # Satellite session management
+│   ├── device_manager.py     # Web device session management
+│   ├── room_service.py       # Room and device CRUD, HA area sync
 │   ├── action_executor.py    # Routes intents to appropriate integrations
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
 ├── integrations/              # External service clients
-│   ├── homeassistant.py      # Home Assistant REST API client
+│   ├── homeassistant.py      # Home Assistant REST API client (with area API)
 │   ├── frigate.py            # Frigate API client
 │   ├── n8n.py                # n8n webhook trigger client
 │   └── plugins/              # YAML-based plugin system
 ├── models/                    # SQLAlchemy ORM models
-│   └── database.py
+│   └── database.py           # Room, RoomDevice, and other models
 └── utils/
     └── config.py             # Pydantic settings (loads from .env)
 ```
@@ -324,11 +365,19 @@ frontend/src/
 │   ├── HomePage.jsx          # Dashboard/landing
 │   ├── ChatPage.jsx          # Chat interface with WebSocket, voice controls
 │   ├── SpeakersPage.jsx      # Speaker management and enrollment
+│   ├── RoomsPage.jsx         # Room management with device list, HA sync
 │   ├── HomeAssistantPage.jsx # Device browser and controls
 │   ├── CameraPage.jsx        # Frigate events viewer
 │   └── TasksPage.jsx         # Task queue viewer
 ├── components/
-│   └── Layout.jsx            # Navigation, responsive layout
+│   ├── Layout.jsx            # Navigation, responsive layout
+│   ├── DeviceSetup.jsx       # Device registration modal
+│   └── DeviceStatus.jsx      # Device/room status indicator for navbar
+├── context/
+│   └── DeviceContext.jsx     # App-wide device connection state
+├── hooks/
+│   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
+│   └── useCapabilities.jsx     # Capability-based feature toggles
 └── utils/
     └── axios.js              # Axios instance with base URL config
 ```
@@ -336,6 +385,10 @@ frontend/src/
 ### WebSocket Protocol
 
 #### Frontend Chat (`/ws`)
+
+**Features:**
+- Automatic room detection via IP address for registered stationary devices
+- Room context passed to intent recognition
 
 **Client → Server:**
 ```json
@@ -351,6 +404,51 @@ frontend/src/
 {"type": "stream", "content": "Ich habe..."}          // Response chunks
 {"type": "stream", "content": " das Licht..."}
 {"type": "done"}                                       // End of stream
+```
+
+#### Web Devices (`/ws/device`)
+
+**Client → Server:**
+```json
+// Registration
+{
+  "type": "register",
+  "device_id": "web-123-abc",
+  "device_type": "web_panel",
+  "room": "Kitchen",
+  "device_name": "Kitchen iPad",
+  "is_stationary": true,
+  "capabilities": {"has_microphone": true, "has_speaker": true, "has_wakeword": true}
+}
+
+// Text message
+{"type": "text", "content": "Turn on the lights", "session_id": "..."}
+
+// Audio streaming
+{"type": "audio", "chunk": "<base64 PCM>", "sequence": 1, "session_id": "..."}
+{"type": "audio_end", "session_id": "...", "reason": "silence"}
+
+// Heartbeat
+{"type": "heartbeat", "status": "idle"}
+```
+
+**Server → Client:**
+```json
+// Registration ack
+{"type": "register_ack", "success": true, "device_id": "...", "room_id": 1, "capabilities": {...}}
+
+// State change
+{"type": "state", "state": "idle|listening|processing|speaking"}
+
+// Transcription
+{"type": "transcription", "text": "Turn on the lights", "session_id": "..."}
+
+// Response
+{"type": "response_text", "text": "I turned on the kitchen light", "session_id": "..."}
+{"type": "tts_audio", "audio": "<base64 WAV>", "is_final": true, "session_id": "..."}
+
+// Session end
+{"type": "session_end", "session_id": "...", "reason": "complete"}
 ```
 
 #### Satellite (`/ws/satellite`)

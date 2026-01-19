@@ -333,10 +333,13 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
 
             # Extrahiere aktuellen Raum aus Context
             current_room = None
+            current_room_normalized = None
             if room_context:
-                current_room = room_context.get("room_name", "").lower()
-                # Normalisiere Raumnamen (entferne Umlaute für Matching)
-                current_room_normalized = current_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
+                room_name = room_context.get("room_name")
+                if room_name:
+                    current_room = room_name.lower()
+                    # Normalisiere Raumnamen (entferne Umlaute für Matching)
+                    current_room_normalized = current_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
 
             # Filtere relevante Entities basierend auf Message
             relevant_entities = []
@@ -344,7 +347,7 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
             # Priorisierung: Raum und Device-Type erkennen
             for entity in entity_map:
                 relevance_score = 0
-                entity_room = entity.get("room", "").lower()
+                entity_room = (entity.get("room") or "").lower()
 
                 # HÖCHSTE Priorität: Entity ist im aktuellen Raum des Benutzers
                 if current_room and entity_room:
@@ -358,7 +361,7 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                         relevance_score += 10
 
                 # Friendly Name Match
-                friendly_name_lower = entity.get("friendly_name", "").lower()
+                friendly_name_lower = (entity.get("friendly_name") or "").lower()
                 for word in message_lower.split():
                     if len(word) > 2 and word in friendly_name_lower:
                         relevance_score += 5
@@ -415,7 +418,7 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                 context_lines.append(f"  [Entitäten im aktuellen Raum '{current_room}' haben Priorität]")
 
             for entity in top_entities:
-                entity_room = entity.get("room", "").lower()
+                entity_room = (entity.get("room") or "").lower()
                 is_current_room = current_room and entity_room and current_room in entity_room
 
                 room_suffix = f" ({entity['room']})" if entity.get('room') else ""

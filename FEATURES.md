@@ -42,7 +42,26 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Streaming Audio**: Antworten werden sofort vorgelesen
 - **Hands-Free Mode**: Freihändige Bedienung möglich
 
-## Multi-Room Satellite System
+## Multi-Room Device System
+
+### Unterstützte Gerätetypen
+- **Satellites**: Raspberry Pi Hardware-Geräte mit Wake-Word
+- **Web Panels**: Stationäre Web-Panels (z.B. Wand-Tablets)
+- **Web Tablets**: Mobile Tablets
+- **Web Browser**: Desktop/Mobile Browser
+- **Web Kiosk**: Kiosk-Terminals
+
+### Automatische Raum-Erkennung
+- **IP-basiert**: Stationäre Geräte werden anhand der IP-Adresse erkannt
+- **Kontext-Weitergabe**: Raum-Kontext wird an LLM übergeben
+- **Implizite Befehle**: "Schalte das Licht ein" funktioniert ohne Raum-Angabe
+- **IP-Update**: IP wird bei jeder Verbindung aktualisiert
+
+### Geräte-Registrierung
+- **Frontend Setup**: Geräte-Konfiguration über Web-Interface
+- **Persistente Speicherung**: Geräte überleben Neustarts
+- **Capability-basiert**: UI passt sich an Gerätefähigkeiten an
+- **Raum-Zuweisung**: Geräte werden Räumen zugeordnet
 
 ### Raspberry Pi Satellites
 - **Pi Zero 2 W Support**: Kostengünstige (~63€) Satellite-Einheiten
@@ -78,6 +97,26 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Base64-Encoding**: Für WebSocket-Übertragung
 - **Heartbeat**: Verbindung wird überwacht
 - **Auto-Reconnect**: Automatische Wiederverbindung bei Ausfall
+
+## Raum-Management
+
+### Raum-Verwaltung
+- **CRUD-Operationen**: Räume erstellen, bearbeiten, löschen
+- **Alias-System**: Normalisierte Namen für Sprachbefehle
+- **Source-Tracking**: Ursprung des Raums (Renfield, Home Assistant, Satellite)
+- **Icon-Support**: Material Design Icons für Räume
+
+### Home Assistant Area Sync
+- **Bidirektionaler Sync**: Import und Export von Areas
+- **Konfliktlösung**: Skip, Link oder Overwrite bei Namenskollisionen
+- **Automatische Verknüpfung**: Räume mit gleichen Namen werden verknüpft
+- **Area Registry API**: Nutzt HA WebSocket API
+
+### Geräte pro Raum
+- **Übersicht**: Alle Geräte eines Raums auf einen Blick
+- **Online-Status**: Echtzeit-Anzeige welche Geräte verbunden sind
+- **Geräte-Icons**: Visuelle Unterscheidung nach Gerätetyp
+- **Geräte verschieben**: Geräte zwischen Räumen verschieben
 
 ## Home Assistant Integration
 
