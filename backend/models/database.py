@@ -106,3 +106,48 @@ class SpeakerEmbedding(Base):
 
     # Beziehungen
     speaker = relationship("Speaker", back_populates="embeddings")
+
+
+# --- Room Management Models ---
+
+class Room(Base):
+    """Raum für Smart Home und Satellite-Zuordnung"""
+    __tablename__ = "rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)  # "Wohnzimmer"
+    alias = Column(String(50), index=True)  # "wohnzimmer" (für Sprachbefehle, normalisiert)
+
+    # Home Assistant Sync
+    ha_area_id = Column(String(100), nullable=True, unique=True, index=True)
+    source = Column(String(20), default="renfield")  # renfield/homeassistant/satellite
+
+    # Metadata
+    icon = Column(String(50), nullable=True)  # "mdi:sofa"
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_synced_at = Column(DateTime, nullable=True)
+
+    # Beziehungen
+    satellites = relationship("RoomSatellite", back_populates="room", cascade="all, delete-orphan")
+
+
+class RoomSatellite(Base):
+    """Satellite-Zuordnung zu einem Raum"""
+    __tablename__ = "room_satellites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    satellite_id = Column(String(100), nullable=False, unique=True, index=True)
+
+    # Status
+    is_online = Column(Boolean, default=False)
+    last_connected_at = Column(DateTime, nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Beziehungen
+    room = relationship("Room", back_populates="satellites")

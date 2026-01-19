@@ -71,6 +71,9 @@ class Settings(BaseSettings):
     speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
     speaker_continuous_learning: bool = True     # Add embeddings to known speakers on each interaction
 
+    # Room Management
+    rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
+
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)
     wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)

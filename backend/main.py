@@ -17,7 +17,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers
+from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms
 from services.database import init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
@@ -158,6 +158,7 @@ app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
+app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 
 # WebSocket für Echtzeit-Chat
 @app.websocket("/ws")
@@ -305,13 +306,35 @@ async def satellite_websocket(websocket: WebSocket):
                     capabilities=capabilities
                 )
 
+                # Persist room assignment to database
+                room_id = None
+                if success and settings.rooms_auto_create_from_satellite:
+                    try:
+                        from services.database import AsyncSessionLocal
+                        from services.room_service import RoomService
+
+                        async with AsyncSessionLocal() as db_session:
+                            room_service = RoomService(db_session)
+                            db_room = await room_service.get_or_create_room_for_satellite(
+                                satellite_id=satellite_id,
+                                room_name=room,
+                                auto_create=True
+                            )
+                            if db_room:
+                                room_id = db_room.id
+                                satellite_manager.set_room_id(satellite_id, room_id)
+                                logger.info(f"📍 Satellite {satellite_id} linked to room '{db_room.name}' (id: {room_id})")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to persist room for satellite: {e}")
+
                 await websocket.send_json({
                     "type": "register_ack",
                     "success": success,
                     "config": {
                         "wake_words": satellite_manager.default_wake_words,
                         "threshold": satellite_manager.default_threshold
-                    }
+                    },
+                    "room_id": room_id
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
@@ -497,6 +520,17 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
         logger.error(traceback.format_exc())
     finally:
         if satellite_id:
+            # Mark satellite offline in database
+            try:
+                from services.database import AsyncSessionLocal
+                from services.room_service import RoomService
+
+                async with AsyncSessionLocal() as db_session:
+                    room_service = RoomService(db_session)
+                    await room_service.set_satellite_online(satellite_id, False)
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to mark satellite offline: {e}")
+
             await satellite_manager.unregister(satellite_id)
 
 

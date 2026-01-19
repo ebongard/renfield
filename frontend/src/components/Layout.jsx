@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, MessageSquare, CheckSquare, Camera, Lightbulb, Users, Menu, X } from 'lucide-react';
+import { Home, MessageSquare, CheckSquare, Camera, Lightbulb, Users, Menu, X, DoorOpen } from 'lucide-react';
 
 const navigation = [
   { name: 'Home', href: '/', icon: Home },
@@ -8,6 +8,7 @@ const navigation = [
   { name: 'Aufgaben', href: '/tasks', icon: CheckSquare },
   { name: 'Kameras', href: '/camera', icon: Camera },
   { name: 'Smart Home', href: '/homeassistant', icon: Lightbulb },
+  { name: 'Raeume', href: '/rooms', icon: DoorOpen },
   { name: 'Sprecher', href: '/speakers', icon: Users },
 ];
 

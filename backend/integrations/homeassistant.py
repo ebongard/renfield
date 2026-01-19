@@ -1,8 +1,13 @@
 """
 Home Assistant Integration
+
+Provides REST API client for controlling devices and WebSocket API client
+for Area Registry operations (listing, creating, updating areas).
 """
 import httpx
-from typing import Dict, List, Optional
+import json
+import asyncio
+from typing import Dict, List, Optional, Any
 from loguru import logger
 from utils.config import settings
 
@@ -336,3 +341,213 @@ class HomeAssistantClient:
                     return part
 
         return None
+
+    # --- Area Registry (WebSocket API) ---
+
+    async def _ws_send_command(self, ws_type: str, **kwargs) -> Optional[Dict]:
+        """
+        Send a command via WebSocket API.
+
+        Home Assistant WebSocket API uses a different URL and protocol than REST.
+        Protocol:
+        1. Connect to ws://<host>:8123/api/websocket
+        2. Receive auth_required message
+        3. Send auth with access_token
+        4. Receive auth_ok or auth_invalid
+        5. Send commands with incrementing id
+
+        Args:
+            ws_type: WebSocket message type (e.g., "config/area_registry/list")
+            **kwargs: Additional parameters for the command
+
+        Returns:
+            Response data or None on error
+        """
+        import websockets
+
+        # Convert http(s) URL to ws(s) URL
+        ws_url = self.base_url.replace("http://", "ws://").replace("https://", "wss://")
+        ws_url = f"{ws_url}/api/websocket"
+
+        try:
+            async with websockets.connect(ws_url) as ws:
+                # 1. Receive auth_required
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                data = json.loads(msg)
+
+                if data.get("type") != "auth_required":
+                    logger.error(f"Unexpected HA WS message: {data}")
+                    return None
+
+                # 2. Send authentication
+                await ws.send(json.dumps({
+                    "type": "auth",
+                    "access_token": self.token
+                }))
+
+                # 3. Receive auth result
+                msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+                data = json.loads(msg)
+
+                if data.get("type") != "auth_ok":
+                    logger.error(f"HA WS auth failed: {data}")
+                    return None
+
+                # 4. Send command
+                cmd = {"id": 1, "type": ws_type}
+                cmd.update(kwargs)
+                await ws.send(json.dumps(cmd))
+
+                # 5. Receive response
+                msg = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                data = json.loads(msg)
+
+                if data.get("success"):
+                    return data.get("result")
+                else:
+                    logger.error(f"HA WS command failed: {data}")
+                    return None
+
+        except ImportError:
+            logger.error("websockets library not installed. Install with: pip install websockets")
+            return None
+        except asyncio.TimeoutError:
+            logger.error("HA WebSocket timeout")
+            return None
+        except Exception as e:
+            logger.error(f"HA WebSocket error: {e}")
+            return None
+
+    async def get_areas(self) -> List[Dict[str, Any]]:
+        """
+        Fetch all areas from Home Assistant Area Registry.
+
+        Returns:
+            List of areas: [{"area_id": str, "name": str, "icon": str}, ...]
+        """
+        try:
+            result = await self._ws_send_command("config/area_registry/list")
+
+            if result is None:
+                # Fallback: Try REST API (some HA versions support this)
+                return await self._get_areas_rest_fallback()
+
+            return result if isinstance(result, list) else []
+
+        except Exception as e:
+            logger.error(f"Failed to get HA areas: {e}")
+            return await self._get_areas_rest_fallback()
+
+    async def _get_areas_rest_fallback(self) -> List[Dict[str, Any]]:
+        """
+        Fallback method to get areas via REST API.
+
+        Uses /api/config/area_registry (may not be available on all HA versions).
+        """
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f"{self.base_url}/api/config/area_registry",
+                    headers=self.headers,
+                    timeout=10.0
+                )
+
+                if response.status_code == 200:
+                    return response.json()
+
+                logger.warning(f"HA areas REST fallback failed: {response.status_code}")
+                return []
+
+        except Exception as e:
+            logger.error(f"HA areas REST fallback error: {e}")
+            return []
+
+    async def create_area(self, name: str, icon: Optional[str] = None) -> Optional[Dict]:
+        """
+        Create a new area in Home Assistant.
+
+        Args:
+            name: Area name (display name)
+            icon: Optional Material Design icon (e.g., "mdi:sofa")
+
+        Returns:
+            Created area dict with area_id, or None on error
+        """
+        kwargs = {"name": name}
+        if icon:
+            kwargs["icon"] = icon
+
+        try:
+            result = await self._ws_send_command("config/area_registry/create", **kwargs)
+
+            if result:
+                logger.info(f"Created HA area: {name} (id: {result.get('area_id')})")
+                return result
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to create HA area: {e}")
+            return None
+
+    async def update_area(
+        self,
+        area_id: str,
+        name: Optional[str] = None,
+        icon: Optional[str] = None
+    ) -> Optional[Dict]:
+        """
+        Update an existing area in Home Assistant.
+
+        Args:
+            area_id: Area ID to update
+            name: New name (optional)
+            icon: New icon (optional)
+
+        Returns:
+            Updated area dict or None on error
+        """
+        kwargs = {"area_id": area_id}
+        if name:
+            kwargs["name"] = name
+        if icon:
+            kwargs["icon"] = icon
+
+        try:
+            result = await self._ws_send_command("config/area_registry/update", **kwargs)
+
+            if result:
+                logger.info(f"Updated HA area: {area_id}")
+                return result
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Failed to update HA area: {e}")
+            return None
+
+    async def delete_area(self, area_id: str) -> bool:
+        """
+        Delete an area from Home Assistant.
+
+        Args:
+            area_id: Area ID to delete
+
+        Returns:
+            True if deleted, False on error
+        """
+        try:
+            result = await self._ws_send_command(
+                "config/area_registry/delete",
+                area_id=area_id
+            )
+
+            if result is not None:
+                logger.info(f"Deleted HA area: {area_id}")
+                return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Failed to delete HA area: {e}")
+            return False

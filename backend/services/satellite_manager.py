@@ -51,6 +51,7 @@ class SatelliteInfo:
     connected_at: float = field(default_factory=time.time)
     last_heartbeat: float = field(default_factory=time.time)
     current_session_id: Optional[str] = None
+    room_id: Optional[int] = None  # Database room ID (populated after DB sync)
 
 
 @dataclass
@@ -448,6 +449,7 @@ class SatelliteManager:
             result.append({
                 "satellite_id": sat_id,
                 "room": sat.room,
+                "room_id": sat.room_id,
                 "state": sat.state.value,
                 "connected_at": sat.connected_at,
                 "last_heartbeat": sat.last_heartbeat,
@@ -459,6 +461,15 @@ class SatelliteManager:
                 }
             })
         return result
+
+    def set_room_id(self, satellite_id: str, room_id: int):
+        """Set the database room ID for a satellite after DB sync"""
+        if satellite_id in self.satellites:
+            self.satellites[satellite_id].room_id = room_id
+
+    def get_satellite(self, satellite_id: str) -> Optional[SatelliteInfo]:
+        """Get satellite info by ID"""
+        return self.satellites.get(satellite_id)
 
     async def cleanup_stale(self):
         """Remove stale satellites and timed-out sessions"""
