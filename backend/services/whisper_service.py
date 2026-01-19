@@ -9,11 +9,12 @@ import tempfile
 
 class WhisperService:
     """Service für Speech-to-Text mit Whisper"""
-    
+
     def __init__(self):
         self.model_size = settings.whisper_model
         self.model = None
-        self.language = "de"
+        self.language = settings.default_language
+        self.initial_prompt = settings.whisper_initial_prompt or None
     
     def load_model(self):
         """Modell laden"""
@@ -37,11 +38,17 @@ class WhisperService:
         try:
             # Transkribieren mit OpenAI Whisper
             # fp16=False verhindert die Warnung auf CPU-only Systemen
-            result = self.model.transcribe(
-                audio_path,
-                language=self.language,
-                fp16=False
-            )
+            # beam_size=5 und best_of=5 für bessere Genauigkeit
+            transcribe_opts = {
+                "language": self.language,
+                "fp16": False,
+                "beam_size": 5,
+                "best_of": 5,
+            }
+            if self.initial_prompt:
+                transcribe_opts["initial_prompt"] = self.initial_prompt
+
+            result = self.model.transcribe(audio_path, **transcribe_opts)
             
             text = result["text"]
             

@@ -17,6 +17,8 @@ from typing import Optional
 from .config import Config
 from .audio.capture import AudioCapture
 from .audio.playback import AudioPlayback
+from .audio.preprocessor import AudioPreprocessor
+from .audio.vad import VoiceActivityDetector, VADBackend
 from .wakeword.detector import WakeWordDetector, Detection
 from .hardware.led import LEDController, LEDPattern
 from .hardware.button import ButtonHandler
@@ -81,6 +83,29 @@ class Satellite:
         # Audio playback
         self.audio_playback = AudioPlayback(
             device=self.config.audio.playback_device,
+        )
+
+        # Audio preprocessor (noise reduction + normalization)
+        self.preprocessor = AudioPreprocessor(
+            sample_rate=self.config.audio.sample_rate,
+            noise_reduce_enabled=True,
+            normalize_enabled=True,
+            target_db=-20.0,
+        )
+
+        # Voice Activity Detection
+        vad_backend_map = {
+            "rms": VADBackend.RMS,
+            "webrtc": VADBackend.WEBRTC,
+            "silero": VADBackend.SILERO,
+        }
+        vad_backend = vad_backend_map.get(self.config.vad.backend, VADBackend.RMS)
+        self.vad = VoiceActivityDetector(
+            sample_rate=self.config.audio.sample_rate,
+            backend=vad_backend,
+            rms_threshold=self.config.vad.silence_threshold,
+            webrtc_aggressiveness=self.config.vad.webrtc_aggressiveness,
+            silero_threshold=self.config.vad.silero_threshold,
         )
 
         # Wake word detector
@@ -349,17 +374,19 @@ class Satellite:
 
         # Buffer and stream audio in LISTENING state
         if self._state == SatelliteState.LISTENING:
-            self._audio_buffer.append(audio_bytes)
+            # Normalize audio for consistent volume (real-time, low latency)
+            normalized_audio = self.preprocessor.normalize(audio_bytes)
+            self._audio_buffer.append(normalized_audio)
 
-            # Stream to server
+            # Stream normalized audio to server
             if self._session_id:
                 self._schedule_async(
-                    self.ws_client.send_audio_chunk(self._session_id, audio_bytes)
+                    self.ws_client.send_audio_chunk(self._session_id, normalized_audio)
                 )
 
-            # Check for silence (VAD)
-            rms = self.audio_capture.get_rms(audio_bytes)
-            if rms < self.config.vad.silence_threshold:
+            # Check for silence using VAD
+            is_speech = self.vad.is_speech(normalized_audio)
+            if not is_speech:
                 if self._silence_start is None:
                     self._silence_start = time.time()
                 elif time.time() - self._silence_start > self.config.vad.silence_duration_ms / 1000:

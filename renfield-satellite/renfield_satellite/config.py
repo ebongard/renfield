@@ -56,9 +56,13 @@ class WakeWordConfig:
 @dataclass
 class VADConfig:
     """Voice Activity Detection settings"""
-    silence_threshold: int = 500  # RMS threshold
+    backend: str = "rms"  # "rms", "webrtc", or "silero"
+    silence_threshold: int = 500  # RMS threshold (for RMS backend)
     silence_duration_ms: int = 1500  # ms of silence to end recording
     max_recording_seconds: float = 15.0  # Maximum recording length
+    webrtc_aggressiveness: int = 2  # WebRTC VAD aggressiveness (0-3)
+    silero_threshold: float = 0.5  # Silero VAD threshold (0-1)
+    silero_model_path: Optional[str] = None  # Path to silero_vad.onnx
 
 
 @dataclass
@@ -158,9 +162,13 @@ def load_config(config_path: Optional[str] = None) -> Config:
 
     if "vad" in config_data:
         vad = config_data["vad"]
+        config.vad.backend = vad.get("backend", config.vad.backend)
         config.vad.silence_threshold = vad.get("silence_threshold", config.vad.silence_threshold)
         config.vad.silence_duration_ms = vad.get("silence_duration_ms", config.vad.silence_duration_ms)
         config.vad.max_recording_seconds = vad.get("max_recording_seconds", config.vad.max_recording_seconds)
+        config.vad.webrtc_aggressiveness = vad.get("webrtc_aggressiveness", config.vad.webrtc_aggressiveness)
+        config.vad.silero_threshold = vad.get("silero_threshold", config.vad.silero_threshold)
+        config.vad.silero_model_path = vad.get("silero_model_path", config.vad.silero_model_path)
 
     if "led" in config_data:
         led = config_data["led"]

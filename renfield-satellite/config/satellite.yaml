@@ -3,13 +3,13 @@
 
 # Satellite identification
 satellite:
-  id: "sat-livingroom"      # Unique ID for this satellite
-  room: "Living Room"        # Human-readable room name
+  id: "sat-wohnzimmer"      # Unique ID for this satellite
+  room: "Wohnzimmer"        # Human-readable room name
 
 # Renfield server connection
 # If url is not specified, auto-discovery will find the server automatically
 server:
-  # url: "ws://renfield.local:8000/ws/satellite"  # Manual WebSocket URL (optional)
+  url: "ws://demeter.local:8000/ws/satellite"  # Manual WebSocket URL (optional)
   auto_discover: true         # Use zeroconf to find server automatically
   discovery_timeout: 10       # Seconds to wait for discovery
   reconnect_interval: 5       # Seconds between reconnect attempts
@@ -25,7 +25,7 @@ audio:
 
 # Wake word detection
 wakeword:
-  model: "okay_nabu"         # Wake word model name (okay_nabu, hey_jarvis, etc.)
+  model: "alexa"         # Wake word model name (okay_nabu, hey_jarvis, etc.)
   threshold: 0.5             # Detection threshold (0.0-1.0)
   models_path: "/opt/renfield-satellite/models"
   refractory_seconds: 2.0    # Cooldown before re-triggering same wake word
@@ -36,9 +36,13 @@ wakeword:
 
 # Voice Activity Detection (for end-of-speech)
 vad:
-  silence_threshold: 500     # RMS below this = silence
-  silence_duration_ms: 1500  # How long silence to end recording
-  max_recording_seconds: 15  # Maximum recording length
+  backend: "webrtc"             # "rms" (simple), "webrtc" (fast), or "silero" (ML-based, best)
+  silence_threshold: 350     # RMS threshold (for RMS backend, vorher 500)
+  silence_duration_ms: 1200  # How long silence to end recording (vorher 1500)
+  max_recording_seconds: 20  # Maximum recording length (vorher 15)
+  webrtc_aggressiveness: 2  # WebRTC VAD aggressiveness 0-3 (higher = more aggressive)
+  # silero_threshold: 0.5     # Silero VAD threshold 0-1 (higher = stricter)
+  # silero_model_path: "/opt/renfield-satellite/models/silero_vad.onnx"
 
 # LED settings (ReSpeaker HAT)
 led:

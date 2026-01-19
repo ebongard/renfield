@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     # Sprache
     default_language: str = "de"
     whisper_model: str = "base"
+    whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
     piper_voice: str = "de_DE-thorsten-high"
 
     # Wake Word Detection

@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=evdb
-Group=evdb
+Group=audio
 WorkingDirectory=/opt/renfield-satellite
 ExecStart=/opt/renfield-satellite/venv/bin/python -m renfield_satellite config/satellite.yaml
 Restart=always

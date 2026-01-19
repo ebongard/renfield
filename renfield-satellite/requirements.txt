@@ -10,6 +10,13 @@ websockets>=12.0
 soundcard>=0.4.0
 numpy>=1.24.0
 
+# Audio preprocessing (optional but recommended for better recognition)
+noisereduce>=3.0.0  # Spectral noise reduction
+
+# Voice Activity Detection backends (optional)
+# webrtcvad>=2.0.10  # Google WebRTC VAD (fast, lightweight)
+# torch>=2.0.0       # For Silero VAD (ML-based, most accurate)
+
 # Audio playback (using MPV for robust playback)
 python-mpv>=1.0.0
 
