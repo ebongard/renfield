@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, MessageSquare, CheckSquare, Camera, Lightbulb, Users, Menu, X, DoorOpen } from 'lucide-react';
+import DeviceStatus from './DeviceStatus';
 
 const navigation = [
   { name: 'Home', href: '/', icon: Home },
@@ -52,6 +53,11 @@ export default function Layout({ children }) {
                   </Link>
                 );
               })}
+
+              {/* Device Status */}
+              <div className="ml-4 pl-4 border-l border-gray-700">
+                <DeviceStatus compact />
+              </div>
             </div>
 
             {/* Mobile menu button */}
@@ -89,6 +95,11 @@ export default function Layout({ children }) {
                   </Link>
                 );
               })}
+
+              {/* Mobile Device Status */}
+              <div className="px-3 py-2 border-t border-gray-700 mt-2 pt-2">
+                <DeviceStatus compact />
+              </div>
             </div>
           </div>
         )}

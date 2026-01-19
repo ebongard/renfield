@@ -86,6 +86,49 @@ class SatelliteAssignRequest(BaseModel):
     satellite_id: str
 
 
+class DeviceResponse(BaseModel):
+    """Response model for device info"""
+    id: int
+    device_id: str
+    device_type: str
+    device_name: Optional[str]
+    room_id: int
+    room_name: str
+    capabilities: dict
+    is_online: bool
+    is_stationary: bool
+    last_connected_at: Optional[str]
+    user_agent: Optional[str]
+    ip_address: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class DeviceRegisterRequest(BaseModel):
+    """Request model for manual device registration"""
+    device_id: str
+    device_type: str = "web_browser"
+    device_name: Optional[str] = None
+    capabilities: Optional[dict] = None
+    is_stationary: bool = True
+
+
+class ConnectedDeviceResponse(BaseModel):
+    """Response model for currently connected device (from DeviceManager)"""
+    device_id: str
+    device_type: str
+    device_name: Optional[str]
+    room: str
+    room_id: Optional[int]
+    state: str
+    connected_at: float
+    last_heartbeat: float
+    has_active_session: bool
+    is_stationary: bool
+    capabilities: dict
+
+
 # --- Room CRUD Endpoints ---
 
 @router.post("", response_model=RoomResponse)
@@ -504,4 +547,208 @@ async def unassign_satellite(
         "message": f"Satellite '{satellite_id}' removed from room",
         "room_id": room_id,
         "satellite_id": satellite_id
+    }
+
+
+# --- Device Endpoints ---
+
+@router.get("/devices/connected", response_model=List[ConnectedDeviceResponse])
+async def get_connected_devices():
+    """
+    Get all currently connected devices (via WebSocket).
+
+    Returns real-time status of all connected satellites and web clients.
+    """
+    from services.device_manager import get_device_manager
+
+    device_manager = get_device_manager()
+    devices = device_manager.get_all_devices()
+
+    return [ConnectedDeviceResponse(**d) for d in devices]
+
+
+@router.get("/devices/connected/{room_id}", response_model=List[ConnectedDeviceResponse])
+async def get_connected_devices_in_room(room_id: int):
+    """Get all connected devices in a specific room"""
+    from services.device_manager import get_device_manager
+
+    device_manager = get_device_manager()
+    devices = device_manager.get_devices_in_room_by_id(room_id)
+
+    return [
+        ConnectedDeviceResponse(
+            device_id=d.device_id,
+            device_type=d.device_type,
+            device_name=d.device_name,
+            room=d.room,
+            room_id=d.room_id,
+            state=d.state.value,
+            connected_at=d.connected_at,
+            last_heartbeat=d.last_heartbeat,
+            has_active_session=d.current_session_id is not None,
+            is_stationary=d.is_stationary,
+            capabilities=d.capabilities.to_dict()
+        )
+        for d in devices
+    ]
+
+
+@router.get("/{room_id}/devices", response_model=List[DeviceResponse])
+async def get_room_devices(
+    room_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all devices registered in a room (from database).
+
+    This includes both online and offline devices.
+    For real-time connected status, use /devices/connected endpoint.
+    """
+    service = RoomService(db)
+
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    devices = await service.get_devices_in_room(room_id)
+
+    return [
+        DeviceResponse(
+            id=d.id,
+            device_id=d.device_id,
+            device_type=d.device_type,
+            device_name=d.device_name,
+            room_id=room_id,
+            room_name=room.name,
+            capabilities=d.capabilities or {},
+            is_online=d.is_online,
+            is_stationary=d.is_stationary,
+            last_connected_at=d.last_connected_at.isoformat() if d.last_connected_at else None,
+            user_agent=d.user_agent,
+            ip_address=d.ip_address
+        )
+        for d in devices
+    ]
+
+
+@router.post("/{room_id}/devices", response_model=DeviceResponse)
+async def register_device(
+    room_id: int,
+    request: DeviceRegisterRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Manually register a device to a room.
+
+    Normally devices register themselves via WebSocket, but this endpoint
+    allows pre-registering devices or registering devices manually.
+    """
+    service = RoomService(db)
+
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # Check if device already exists
+    existing = await service.get_device(request.device_id)
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Device '{request.device_id}' already registered"
+        )
+
+    device = await service.register_device(
+        device_id=request.device_id,
+        room_name=room.name,
+        device_type=request.device_type,
+        device_name=request.device_name,
+        capabilities=request.capabilities,
+        is_stationary=request.is_stationary
+    )
+
+    return DeviceResponse(
+        id=device.id,
+        device_id=device.device_id,
+        device_type=device.device_type,
+        device_name=device.device_name,
+        room_id=device.room_id,
+        room_name=room.name,
+        capabilities=device.capabilities or {},
+        is_online=device.is_online,
+        is_stationary=device.is_stationary,
+        last_connected_at=device.last_connected_at.isoformat() if device.last_connected_at else None,
+        user_agent=device.user_agent,
+        ip_address=device.ip_address
+    )
+
+
+@router.get("/devices/{device_id}", response_model=DeviceResponse)
+async def get_device(
+    device_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get a specific device by ID"""
+    service = RoomService(db)
+
+    device = await service.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return DeviceResponse(
+        id=device.id,
+        device_id=device.device_id,
+        device_type=device.device_type,
+        device_name=device.device_name,
+        room_id=device.room_id,
+        room_name=device.room.name,
+        capabilities=device.capabilities or {},
+        is_online=device.is_online,
+        is_stationary=device.is_stationary,
+        last_connected_at=device.last_connected_at.isoformat() if device.last_connected_at else None,
+        user_agent=device.user_agent,
+        ip_address=device.ip_address
+    )
+
+
+@router.delete("/devices/{device_id}")
+async def delete_device(
+    device_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete a device from the system"""
+    service = RoomService(db)
+
+    device = await service.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    await service.delete_device(device_id)
+
+    return {"message": f"Device '{device_id}' deleted"}
+
+
+@router.patch("/devices/{device_id}/room/{room_id}")
+async def move_device_to_room(
+    device_id: str,
+    room_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Move a device to a different room"""
+    service = RoomService(db)
+
+    device = await service.get_device(device_id)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    await service.move_device_to_room(device_id, room_id)
+
+    return {
+        "message": f"Device '{device_id}' moved to room '{room.name}'",
+        "device_id": device_id,
+        "room_id": room_id,
+        "room_name": room.name
     }

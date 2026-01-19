@@ -111,7 +111,7 @@ class SpeakerEmbedding(Base):
 # --- Room Management Models ---
 
 class Room(Base):
-    """Raum für Smart Home und Satellite-Zuordnung"""
+    """Raum für Smart Home und Device-Zuordnung"""
     __tablename__ = "rooms"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -120,7 +120,7 @@ class Room(Base):
 
     # Home Assistant Sync
     ha_area_id = Column(String(100), nullable=True, unique=True, index=True)
-    source = Column(String(20), default="renfield")  # renfield/homeassistant/satellite
+    source = Column(String(20), default="renfield")  # renfield/homeassistant/satellite/device
 
     # Metadata
     icon = Column(String(50), nullable=True)  # "mdi:sofa"
@@ -131,23 +131,149 @@ class Room(Base):
     last_synced_at = Column(DateTime, nullable=True)
 
     # Beziehungen
-    satellites = relationship("RoomSatellite", back_populates="room", cascade="all, delete-orphan")
+    devices = relationship("RoomDevice", back_populates="room", cascade="all, delete-orphan")
+
+    @property
+    def satellites(self):
+        """Backward compatibility: Get only satellite-type devices"""
+        return [d for d in self.devices if d.device_type == "satellite"]
+
+    @property
+    def online_devices(self):
+        """Get all online devices in this room"""
+        return [d for d in self.devices if d.is_online]
 
 
-class RoomSatellite(Base):
-    """Satellite-Zuordnung zu einem Raum"""
-    __tablename__ = "room_satellites"
+# Device Types
+DEVICE_TYPE_SATELLITE = "satellite"      # Physical Pi Zero + ReSpeaker
+DEVICE_TYPE_WEB_PANEL = "web_panel"      # Stationary web device (wall-mounted iPad)
+DEVICE_TYPE_WEB_TABLET = "web_tablet"    # Mobile web device (iPad, tablet)
+DEVICE_TYPE_WEB_BROWSER = "web_browser"  # Desktop browser
+DEVICE_TYPE_WEB_KIOSK = "web_kiosk"      # Touch kiosk terminal
+
+DEVICE_TYPES = [
+    DEVICE_TYPE_SATELLITE,
+    DEVICE_TYPE_WEB_PANEL,
+    DEVICE_TYPE_WEB_TABLET,
+    DEVICE_TYPE_WEB_BROWSER,
+    DEVICE_TYPE_WEB_KIOSK,
+]
+
+
+class RoomDevice(Base):
+    """
+    Unified Device Model for Room-based Input/Output Devices
+
+    Supports both physical satellites (Raspberry Pi) and web-based clients (iPad, Browser).
+    Capabilities are stored as JSON for flexibility.
+    """
+    __tablename__ = "room_devices"
 
     id = Column(Integer, primary_key=True, index=True)
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
-    satellite_id = Column(String(100), nullable=False, unique=True, index=True)
+    device_id = Column(String(100), nullable=False, unique=True, index=True)
+
+    # Device Classification
+    device_type = Column(String(20), nullable=False, default=DEVICE_TYPE_WEB_BROWSER)
+    device_name = Column(String(100), nullable=True)  # User-friendly name: "iPad Wohnzimmer"
+
+    # Capabilities (JSON for flexibility)
+    # Example: {"has_microphone": true, "has_speaker": true, "has_display": true, ...}
+    capabilities = Column(JSON, nullable=False, default=dict)
 
     # Status
     is_online = Column(Boolean, default=False)
+    is_stationary = Column(Boolean, default=True)  # Stationary vs. mobile device
     last_connected_at = Column(DateTime, nullable=True)
+
+    # Connection Info
+    user_agent = Column(String(500), nullable=True)  # Browser/client info
+    ip_address = Column(String(45), nullable=True)   # IPv4 or IPv6
 
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Beziehungen
-    room = relationship("Room", back_populates="satellites")
+    room = relationship("Room", back_populates="devices")
+
+    def has_capability(self, capability: str) -> bool:
+        """Check if device has a specific capability"""
+        return self.capabilities.get(capability, False)
+
+    @property
+    def can_record_audio(self) -> bool:
+        return self.has_capability("has_microphone")
+
+    @property
+    def can_play_audio(self) -> bool:
+        return self.has_capability("has_speaker")
+
+    @property
+    def can_show_display(self) -> bool:
+        return self.has_capability("has_display")
+
+    @property
+    def has_wakeword(self) -> bool:
+        return self.has_capability("has_wakeword")
+
+
+# Default capabilities for different device types
+DEFAULT_CAPABILITIES = {
+    DEVICE_TYPE_SATELLITE: {
+        "has_microphone": True,
+        "has_speaker": True,
+        "has_wakeword": True,
+        "wakeword_method": "openwakeword",
+        "has_display": False,
+        "has_leds": True,
+        "led_count": 3,
+        "has_button": True,
+    },
+    DEVICE_TYPE_WEB_PANEL: {
+        "has_microphone": True,
+        "has_speaker": True,
+        "has_wakeword": True,
+        "wakeword_method": "browser_wasm",
+        "has_display": True,
+        "display_size": "large",
+        "supports_notifications": True,
+        "has_leds": False,
+        "has_button": False,
+    },
+    DEVICE_TYPE_WEB_TABLET: {
+        "has_microphone": True,
+        "has_speaker": True,
+        "has_wakeword": True,
+        "wakeword_method": "browser_wasm",
+        "has_display": True,
+        "display_size": "medium",
+        "supports_notifications": True,
+        "has_leds": False,
+        "has_button": False,
+    },
+    DEVICE_TYPE_WEB_BROWSER: {
+        "has_microphone": False,  # May need permission
+        "has_speaker": False,     # May need permission
+        "has_wakeword": False,
+        "has_display": True,
+        "display_size": "large",
+        "supports_notifications": True,
+        "has_leds": False,
+        "has_button": False,
+    },
+    DEVICE_TYPE_WEB_KIOSK: {
+        "has_microphone": True,
+        "has_speaker": True,
+        "has_wakeword": False,
+        "has_display": True,
+        "display_size": "large",
+        "supports_notifications": False,
+        "has_leds": False,
+        "has_button": False,
+    },
+}
+
+
+# Legacy alias for backward compatibility
+RoomSatellite = RoomDevice

@@ -5,7 +5,7 @@ Handles:
 - Room CRUD operations
 - Room name normalization for voice commands
 - Home Assistant Area synchronization
-- Satellite-Room assignment
+- Device-Room assignment (satellites, web clients, tablets)
 """
 
 import re
@@ -17,7 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from loguru import logger
 
-from models.database import Room, RoomSatellite
+from models.database import (
+    Room, RoomDevice,
+    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL,
+    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK, DEVICE_TYPES,
+    DEFAULT_CAPABILITIES
+)
 
 
 def normalize_room_name(name: str) -> str:
@@ -62,6 +67,31 @@ def normalize_room_name(name: str) -> str:
     return result
 
 
+def generate_device_id(device_type: str, room_name: str, suffix: str = None) -> str:
+    """
+    Generate a unique device ID.
+
+    Format: {type_prefix}-{room_alias}-{suffix}
+    Example: "web-wohnzimmer-ipad1", "sat-kueche-main"
+    """
+    type_prefixes = {
+        DEVICE_TYPE_SATELLITE: "sat",
+        DEVICE_TYPE_WEB_PANEL: "panel",
+        DEVICE_TYPE_WEB_TABLET: "tablet",
+        DEVICE_TYPE_WEB_BROWSER: "web",
+        DEVICE_TYPE_WEB_KIOSK: "kiosk",
+    }
+
+    prefix = type_prefixes.get(device_type, "dev")
+    room_alias = normalize_room_name(room_name)[:20]  # Truncate long room names
+
+    if suffix:
+        return f"{prefix}-{room_alias}-{suffix}"
+    else:
+        import uuid
+        return f"{prefix}-{room_alias}-{uuid.uuid4().hex[:6]}"
+
+
 class RoomService:
     """Service for Room Management operations"""
 
@@ -82,7 +112,7 @@ class RoomService:
 
         Args:
             name: Display name for the room
-            source: Origin of room (renfield, homeassistant, satellite)
+            source: Origin of room (renfield, homeassistant, satellite, device)
             ha_area_id: Optional Home Assistant area ID to link
             icon: Optional Material Design icon (e.g., "mdi:sofa")
 
@@ -107,10 +137,10 @@ class RoomService:
         return room
 
     async def get_room(self, room_id: int) -> Optional[Room]:
-        """Get room by ID with satellites loaded"""
+        """Get room by ID with devices loaded"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.satellites))
+            .options(selectinload(Room.devices))
             .where(Room.id == room_id)
         )
         return result.scalar_one_or_none()
@@ -119,7 +149,7 @@ class RoomService:
         """Get room by exact name"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.satellites))
+            .options(selectinload(Room.devices))
             .where(Room.name == name)
         )
         return result.scalar_one_or_none()
@@ -129,7 +159,7 @@ class RoomService:
         normalized = normalize_room_name(alias)
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.satellites))
+            .options(selectinload(Room.devices))
             .where(Room.alias == normalized)
         )
         return result.scalar_one_or_none()
@@ -138,16 +168,16 @@ class RoomService:
         """Get room by Home Assistant area ID"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.satellites))
+            .options(selectinload(Room.devices))
             .where(Room.ha_area_id == ha_area_id)
         )
         return result.scalar_one_or_none()
 
     async def get_all_rooms(self) -> List[Room]:
-        """Get all rooms with satellites loaded"""
+        """Get all rooms with devices loaded"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.satellites))
+            .options(selectinload(Room.devices))
             .order_by(Room.name)
         )
         return list(result.scalars().all())
@@ -194,7 +224,7 @@ class RoomService:
 
     async def delete_room(self, room_id: int) -> bool:
         """
-        Delete a room and all associated satellite assignments.
+        Delete a room and all associated device assignments.
 
         Args:
             room_id: Room ID to delete
@@ -331,59 +361,326 @@ class RoomService:
         )
         return list(result.scalars().all())
 
-    # --- Satellite Operations ---
+    # --- Device Operations ---
+
+    async def register_device(
+        self,
+        device_id: str,
+        room_name: str,
+        device_type: str = DEVICE_TYPE_WEB_BROWSER,
+        device_name: Optional[str] = None,
+        capabilities: Optional[Dict[str, Any]] = None,
+        is_stationary: bool = True,
+        user_agent: Optional[str] = None,
+        ip_address: Optional[str] = None,
+        auto_create_room: bool = True
+    ) -> Optional[RoomDevice]:
+        """
+        Register a device to a room.
+
+        Creates the room if it doesn't exist (when auto_create_room=True).
+        Updates existing device if device_id already exists.
+
+        Args:
+            device_id: Unique device identifier
+            room_name: Room name to assign device to
+            device_type: Type of device (satellite, web_panel, web_tablet, etc.)
+            device_name: User-friendly device name
+            capabilities: Device capabilities dict (merged with defaults)
+            is_stationary: Whether device is stationary
+            user_agent: Browser/client user agent string
+            ip_address: Client IP address
+            auto_create_room: Create room if it doesn't exist
+
+        Returns:
+            RoomDevice record or None if room not found and auto_create=False
+        """
+        # Validate device type
+        if device_type not in DEVICE_TYPES:
+            logger.warning(f"Unknown device type: {device_type}, defaulting to web_browser")
+            device_type = DEVICE_TYPE_WEB_BROWSER
+
+        # Get or create room
+        room = await self.get_room_by_name(room_name)
+        if not room:
+            if auto_create_room:
+                source = "satellite" if device_type == DEVICE_TYPE_SATELLITE else "device"
+                room = await self.create_room(name=room_name, source=source)
+            else:
+                return None
+
+        # Build capabilities (merge defaults with provided)
+        default_caps = DEFAULT_CAPABILITIES.get(device_type, {}).copy()
+        if capabilities:
+            default_caps.update(capabilities)
+
+        # Check if device already exists
+        result = await self.db.execute(
+            select(RoomDevice).where(RoomDevice.device_id == device_id)
+        )
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update existing device
+            existing.room_id = room.id
+            existing.device_type = device_type
+            existing.device_name = device_name or existing.device_name
+            existing.capabilities = default_caps
+            existing.is_stationary = is_stationary
+            existing.is_online = True
+            existing.last_connected_at = datetime.utcnow()
+            existing.user_agent = user_agent
+            existing.ip_address = ip_address
+            existing.updated_at = datetime.utcnow()
+
+            await self.db.commit()
+            await self.db.refresh(existing)
+
+            logger.info(f"Updated device {device_id} in room {room.name}")
+            return existing
+
+        # Create new device
+        device = RoomDevice(
+            room_id=room.id,
+            device_id=device_id,
+            device_type=device_type,
+            device_name=device_name,
+            capabilities=default_caps,
+            is_stationary=is_stationary,
+            is_online=True,
+            last_connected_at=datetime.utcnow(),
+            user_agent=user_agent,
+            ip_address=ip_address
+        )
+
+        self.db.add(device)
+        await self.db.commit()
+        await self.db.refresh(device)
+
+        logger.info(f"Registered device {device_id} ({device_type}) to room {room.name}")
+        return device
+
+    async def get_device(self, device_id: str) -> Optional[RoomDevice]:
+        """Get device by ID with room loaded"""
+        result = await self.db.execute(
+            select(RoomDevice)
+            .options(selectinload(RoomDevice.room))
+            .where(RoomDevice.device_id == device_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_device_by_id(self, db_id: int) -> Optional[RoomDevice]:
+        """Get device by database ID"""
+        result = await self.db.execute(
+            select(RoomDevice)
+            .options(selectinload(RoomDevice.room))
+            .where(RoomDevice.id == db_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_devices_in_room(self, room_id: int) -> List[RoomDevice]:
+        """Get all devices in a room"""
+        result = await self.db.execute(
+            select(RoomDevice)
+            .where(RoomDevice.room_id == room_id)
+            .order_by(RoomDevice.device_name)
+        )
+        return list(result.scalars().all())
+
+    async def get_online_devices_in_room(self, room_id: int) -> List[RoomDevice]:
+        """Get online devices in a room"""
+        result = await self.db.execute(
+            select(RoomDevice)
+            .where(RoomDevice.room_id == room_id, RoomDevice.is_online == True)
+        )
+        return list(result.scalars().all())
+
+    async def get_all_devices(self) -> List[RoomDevice]:
+        """Get all devices with rooms loaded"""
+        result = await self.db.execute(
+            select(RoomDevice)
+            .options(selectinload(RoomDevice.room))
+            .order_by(RoomDevice.device_id)
+        )
+        return list(result.scalars().all())
+
+    async def set_device_online(self, device_id: str, is_online: bool, ip_address: Optional[str] = None):
+        """Update device online status and optionally IP address"""
+        values = {
+            "is_online": is_online,
+            "updated_at": datetime.utcnow()
+        }
+        if is_online:
+            values["last_connected_at"] = datetime.utcnow()
+            # Update IP address if provided (Option 1: update on every connection)
+            if ip_address:
+                values["ip_address"] = ip_address
+
+        await self.db.execute(
+            update(RoomDevice)
+            .where(RoomDevice.device_id == device_id)
+            .values(**values)
+        )
+        await self.db.commit()
+
+    async def update_device_ip(self, device_id: str, ip_address: str) -> Optional[RoomDevice]:
+        """
+        Update device IP address.
+
+        Called on every connection to ensure IP is current.
+        Logs a warning if a stationary device's IP changes.
+        """
+        device = await self.get_device(device_id)
+        if not device:
+            return None
+
+        old_ip = device.ip_address
+        if old_ip and old_ip != ip_address and device.is_stationary:
+            logger.warning(
+                f"Stationary device {device_id} IP changed: {old_ip} → {ip_address}"
+            )
+
+        device.ip_address = ip_address
+        device.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(device)
+
+        return device
+
+    async def get_stationary_device_by_ip(self, ip_address: str) -> Optional[RoomDevice]:
+        """
+        Find a stationary device by IP address.
+
+        Used for automatic room detection: when a client connects,
+        check if their IP matches a known stationary device to
+        automatically determine the room context.
+
+        Args:
+            ip_address: Client IP address
+
+        Returns:
+            RoomDevice if found (stationary only), None otherwise
+        """
+        result = await self.db.execute(
+            select(RoomDevice)
+            .options(selectinload(RoomDevice.room))
+            .where(
+                RoomDevice.ip_address == ip_address,
+                RoomDevice.is_stationary == True
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_room_context_by_ip(self, ip_address: str) -> Optional[Dict[str, Any]]:
+        """
+        Get room context for automatic room detection.
+
+        Args:
+            ip_address: Client IP address
+
+        Returns:
+            Room context dict if found, None otherwise
+        """
+        device = await self.get_stationary_device_by_ip(ip_address)
+        if not device or not device.room:
+            return None
+
+        return {
+            "room_name": device.room.name,
+            "room_id": device.room.id,
+            "device_id": device.device_id,
+            "device_type": device.device_type,
+            "device_name": device.device_name,
+            "auto_detected": True,  # Flag to indicate this was auto-detected
+        }
+
+    async def update_device_capabilities(
+        self,
+        device_id: str,
+        capabilities: Dict[str, Any]
+    ) -> Optional[RoomDevice]:
+        """Update device capabilities"""
+        device = await self.get_device(device_id)
+        if not device:
+            return None
+
+        # Merge with existing capabilities
+        current_caps = device.capabilities or {}
+        current_caps.update(capabilities)
+        device.capabilities = current_caps
+        device.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(device)
+
+        return device
+
+    async def unregister_device(self, device_id: str) -> bool:
+        """Remove a device"""
+        result = await self.db.execute(
+            select(RoomDevice).where(RoomDevice.device_id == device_id)
+        )
+        device = result.scalar_one_or_none()
+
+        if device:
+            await self.db.delete(device)
+            await self.db.commit()
+            logger.info(f"Unregistered device {device_id}")
+            return True
+        return False
+
+    async def delete_device(self, device_id: str) -> bool:
+        """Delete a device (alias for unregister_device)"""
+        return await self.unregister_device(device_id)
+
+    async def move_device_to_room(self, device_id: str, room_id: int) -> Optional[RoomDevice]:
+        """
+        Move a device to a different room.
+
+        Args:
+            device_id: Device ID to move
+            room_id: Target room ID
+
+        Returns:
+            Updated device or None if device/room not found
+        """
+        device = await self.get_device(device_id)
+        if not device:
+            return None
+
+        room = await self.get_room(room_id)
+        if not room:
+            return None
+
+        device.room_id = room_id
+        device.updated_at = datetime.utcnow()
+
+        await self.db.commit()
+        await self.db.refresh(device)
+
+        logger.info(f"Moved device {device_id} to room {room.name}")
+        return device
+
+    # --- Legacy Compatibility Methods ---
+    # These methods maintain backward compatibility with the old RoomSatellite API
 
     async def assign_satellite(
         self,
         room_id: int,
         satellite_id: str
-    ) -> Optional[RoomSatellite]:
-        """
-        Assign a satellite to a room.
-
-        If satellite is already assigned to another room, reassign it.
-
-        Args:
-            room_id: Room ID to assign to
-            satellite_id: Satellite identifier
-
-        Returns:
-            RoomSatellite record or None if room not found
-        """
+    ) -> Optional[RoomDevice]:
+        """Legacy method: Assign a satellite to a room."""
         room = await self.get_room(room_id)
         if not room:
             return None
 
-        # Check if satellite already assigned
-        result = await self.db.execute(
-            select(RoomSatellite).where(RoomSatellite.satellite_id == satellite_id)
+        return await self.register_device(
+            device_id=satellite_id,
+            room_name=room.name,
+            device_type=DEVICE_TYPE_SATELLITE,
+            auto_create_room=False
         )
-        existing = result.scalar_one_or_none()
-
-        if existing:
-            if existing.room_id == room_id:
-                # Already assigned to this room
-                return existing
-            # Reassign to new room
-            existing.room_id = room_id
-            existing.last_connected_at = datetime.utcnow()
-            await self.db.commit()
-            await self.db.refresh(existing)
-            logger.info(f"Reassigned satellite {satellite_id} to room {room.name}")
-            return existing
-
-        # Create new assignment
-        assignment = RoomSatellite(
-            room_id=room_id,
-            satellite_id=satellite_id,
-            last_connected_at=datetime.utcnow()
-        )
-        self.db.add(assignment)
-        await self.db.commit()
-        await self.db.refresh(assignment)
-
-        logger.info(f"Assigned satellite {satellite_id} to room {room.name}")
-        return assignment
 
     async def get_or_create_room_for_satellite(
         self,
@@ -391,87 +688,36 @@ class RoomService:
         room_name: str,
         auto_create: bool = True
     ) -> Optional[Room]:
-        """
-        Get or create room for a satellite registration.
-
-        Args:
-            satellite_id: Satellite identifier
-            room_name: Room name from satellite config
-            auto_create: Whether to create room if not exists
-
-        Returns:
-            Room object or None if not found and auto_create=False
-        """
-        # First check if satellite already has an assignment
-        result = await self.db.execute(
-            select(RoomSatellite)
-            .options(selectinload(RoomSatellite.room))
-            .where(RoomSatellite.satellite_id == satellite_id)
+        """Legacy method: Get or create room for a satellite registration."""
+        device = await self.register_device(
+            device_id=satellite_id,
+            room_name=room_name,
+            device_type=DEVICE_TYPE_SATELLITE,
+            auto_create_room=auto_create
         )
-        existing_assignment = result.scalar_one_or_none()
 
-        if existing_assignment and existing_assignment.room:
-            # Update connection timestamp
-            existing_assignment.is_online = True
-            existing_assignment.last_connected_at = datetime.utcnow()
-            await self.db.commit()
-            return existing_assignment.room
-
-        # Try to find room by name
-        room = await self.get_room_by_name(room_name)
-
-        if not room and auto_create:
-            # Create new room from satellite
-            room = await self.create_room(
-                name=room_name,
-                source="satellite"
-            )
-
-        if room:
-            # Assign satellite to room
-            await self.assign_satellite(room.id, satellite_id)
-
-        return room
+        if device:
+            return await self.get_room(device.room_id)
+        return None
 
     async def set_satellite_online(self, satellite_id: str, is_online: bool):
-        """Update satellite online status"""
-        await self.db.execute(
-            update(RoomSatellite)
-            .where(RoomSatellite.satellite_id == satellite_id)
-            .values(
-                is_online=is_online,
-                last_connected_at=datetime.utcnow() if is_online else RoomSatellite.last_connected_at
-            )
-        )
-        await self.db.commit()
+        """Legacy method: Update satellite online status"""
+        await self.set_device_online(satellite_id, is_online)
 
-    async def get_satellite_assignment(self, satellite_id: str) -> Optional[RoomSatellite]:
-        """Get satellite assignment with room loaded"""
-        result = await self.db.execute(
-            select(RoomSatellite)
-            .options(selectinload(RoomSatellite.room))
-            .where(RoomSatellite.satellite_id == satellite_id)
-        )
-        return result.scalar_one_or_none()
+    async def get_satellite_assignment(self, satellite_id: str) -> Optional[RoomDevice]:
+        """Legacy method: Get satellite assignment with room loaded"""
+        return await self.get_device(satellite_id)
 
     async def unassign_satellite(self, satellite_id: str) -> bool:
-        """Remove satellite from its room"""
-        result = await self.db.execute(
-            select(RoomSatellite).where(RoomSatellite.satellite_id == satellite_id)
-        )
-        assignment = result.scalar_one_or_none()
-
-        if assignment:
-            await self.db.delete(assignment)
-            await self.db.commit()
-            logger.info(f"Unassigned satellite {satellite_id}")
-            return True
-        return False
+        """Legacy method: Remove satellite from its room"""
+        return await self.unregister_device(satellite_id)
 
     # --- Helper Methods ---
 
     def room_to_dict(self, room: Room) -> Dict[str, Any]:
         """Convert Room to dictionary for API responses"""
+        devices = room.devices if room.devices else []
+
         return {
             "id": room.id,
             "name": room.name,
@@ -482,13 +728,34 @@ class RoomService:
             "created_at": room.created_at.isoformat() if room.created_at else None,
             "updated_at": room.updated_at.isoformat() if room.updated_at else None,
             "last_synced_at": room.last_synced_at.isoformat() if room.last_synced_at else None,
-            "satellite_count": len(room.satellites) if room.satellites else 0,
+            "device_count": len(devices),
+            "satellite_count": len([d for d in devices if d.device_type == DEVICE_TYPE_SATELLITE]),
+            "online_count": len([d for d in devices if d.is_online]),
+            "devices": [self.device_to_dict(d) for d in devices],
+            # Legacy compatibility
             "satellites": [
                 {
-                    "satellite_id": sat.satellite_id,
-                    "is_online": sat.is_online,
-                    "last_connected_at": sat.last_connected_at.isoformat() if sat.last_connected_at else None
+                    "satellite_id": d.device_id,
+                    "is_online": d.is_online,
+                    "last_connected_at": d.last_connected_at.isoformat() if d.last_connected_at else None
                 }
-                for sat in (room.satellites or [])
+                for d in devices if d.device_type == DEVICE_TYPE_SATELLITE
             ]
+        }
+
+    def device_to_dict(self, device: RoomDevice) -> Dict[str, Any]:
+        """Convert RoomDevice to dictionary for API responses"""
+        return {
+            "id": device.id,
+            "device_id": device.device_id,
+            "device_type": device.device_type,
+            "device_name": device.device_name,
+            "room_id": device.room_id,
+            "room_name": device.room.name if device.room else None,
+            "capabilities": device.capabilities,
+            "is_online": device.is_online,
+            "is_stationary": device.is_stationary,
+            "last_connected_at": device.last_connected_at.isoformat() if device.last_connected_at else None,
+            "created_at": device.created_at.isoformat() if device.created_at else None,
+            "updated_at": device.updated_at.isoformat() if device.updated_at else None,
         }

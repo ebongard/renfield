@@ -101,18 +101,51 @@ Du: 'System: Aktion ausgeführt'
             logger.error(f"❌ Streaming Fehler: {e}")
             yield f"Fehler: {str(e)}"
     
-    async def extract_intent(self, message: str, plugin_registry=None) -> Dict:
-        """Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung"""
+    async def extract_intent(
+        self,
+        message: str,
+        plugin_registry=None,
+        room_context: Optional[Dict] = None
+    ) -> Dict:
+        """
+        Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung.
 
-        # Lade echte Entity Map von Home Assistant
-        entity_context = await self._build_entity_context(message)
+        Args:
+            message: Die Benutzernachricht
+            plugin_registry: Optional Plugin Registry für zusätzliche Intents
+            room_context: Optional Room Context mit Informationen wie:
+                - room_name: Name des Raums in dem sich das Gerät befindet
+                - room_id: Datenbank-ID des Raums
+                - device_type: Typ des Geräts (satellite, web_panel, etc.)
+                - speaker_name: Name des erkannten Sprechers (optional)
+
+        Returns:
+            Dict mit intent, parameters und confidence
+        """
+
+        # Lade echte Entity Map von Home Assistant mit Room-Priorisierung
+        entity_context = await self._build_entity_context(message, room_context)
 
         # Build plugin context (NEW)
         plugin_context = ""
         if plugin_registry:
             plugin_context = self._build_plugin_context(plugin_registry)
 
+        # Build room context for the prompt
+        room_context_prompt = ""
+        if room_context:
+            room_name = room_context.get("room_name", "")
+            speaker_name = room_context.get("speaker_name", "")
+
+            if room_name:
+                room_context_prompt += f"\nRAUM-KONTEXT: Der Benutzer befindet sich im Raum '{room_name}'."
+                room_context_prompt += f"\nWenn der Benutzer 'das Licht' oder 'die Lampe' sagt ohne Raumnamen, bevorzuge Geräte im Raum '{room_name}'."
+
+            if speaker_name:
+                room_context_prompt += f"\nSPRECHER: {speaker_name}"
+
         prompt = f"""Erkenne den Intent für diese Nachricht: "{message}"
+{room_context_prompt}
 
 INTENT-TYPEN:
 
@@ -271,12 +304,20 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                 "confidence": 1.0
             }
     
-    async def _build_entity_context(self, message: str) -> str:
+    async def _build_entity_context(
+        self,
+        message: str,
+        room_context: Optional[Dict] = None
+    ) -> str:
         """
         Erstelle Entity-Kontext für Intent Recognition
 
         Filtert Entities basierend auf der Nachricht und gibt dem LLM
         eine Liste relevanter Entities zur Auswahl.
+
+        Args:
+            message: Die Benutzernachricht
+            room_context: Optional dict mit room_name, room_id etc.
         """
         try:
             from integrations.homeassistant import HomeAssistantClient
@@ -290,16 +331,30 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
 
             message_lower = message.lower()
 
+            # Extrahiere aktuellen Raum aus Context
+            current_room = None
+            if room_context:
+                current_room = room_context.get("room_name", "").lower()
+                # Normalisiere Raumnamen (entferne Umlaute für Matching)
+                current_room_normalized = current_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
+
             # Filtere relevante Entities basierend auf Message
             relevant_entities = []
 
             # Priorisierung: Raum und Device-Type erkennen
             for entity in entity_map:
                 relevance_score = 0
+                entity_room = entity.get("room", "").lower()
 
-                # Raum-Match
-                if entity.get("room"):
-                    if entity["room"] in message_lower:
+                # HÖCHSTE Priorität: Entity ist im aktuellen Raum des Benutzers
+                if current_room and entity_room:
+                    entity_room_normalized = entity_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
+                    if current_room in entity_room or current_room_normalized in entity_room_normalized:
+                        relevance_score += 20  # Starker Bonus für aktuellen Raum
+
+                # Raum-Match aus Nachricht
+                if entity_room:
+                    if entity_room in message_lower:
                         relevance_score += 10
 
                 # Friendly Name Match
@@ -354,11 +409,21 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
 
             # Formatiere als kompakte Liste
             context_lines = ["VERFÜGBARE HOME ASSISTANT ENTITIES:"]
+
+            # Wenn aktueller Raum bekannt, zeige Entities in diesem Raum zuerst
+            if current_room:
+                context_lines.append(f"  [Entitäten im aktuellen Raum '{current_room}' haben Priorität]")
+
             for entity in top_entities:
+                entity_room = entity.get("room", "").lower()
+                is_current_room = current_room and entity_room and current_room in entity_room
+
                 room_suffix = f" ({entity['room']})" if entity.get('room') else ""
                 state_info = f" [aktuell: {entity.get('state', 'unknown')}]"
+                current_room_marker = " ★" if is_current_room else ""
+
                 context_lines.append(
-                    f"  - {entity['entity_id']}: {entity['friendly_name']}{room_suffix}{state_info}"
+                    f"  - {entity['entity_id']}: {entity['friendly_name']}{room_suffix}{state_info}{current_room_marker}"
                 )
 
             return "\n".join(context_lines)
