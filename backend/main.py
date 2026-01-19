@@ -21,7 +21,18 @@ from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, s
 from services.database import init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
+from services.whisper_service import WhisperService
 from utils.config import settings
+
+# Global Whisper Service (singleton to avoid reloading model)
+_whisper_service: Optional[WhisperService] = None
+
+def get_whisper_service() -> WhisperService:
+    """Get or create the global WhisperService instance"""
+    global _whisper_service
+    if _whisper_service is None:
+        _whisper_service = WhisperService()
+    return _whisper_service
 
 # Lifecycle Management
 @asynccontextmanager
@@ -67,19 +78,18 @@ async def lifespan(app: FastAPI):
 
     # Whisper Service vorladen (für STT)
     try:
-        from services.whisper_service import WhisperService
         import asyncio
-        
+
         async def preload_whisper():
             """Lade Whisper-Modell im Hintergrund"""
             try:
-                whisper_service = WhisperService()
+                whisper_service = get_whisper_service()
                 whisper_service.load_model()
                 logger.info("✅ Whisper Service bereit (STT aktiviert)")
             except Exception as e:
                 logger.warning(f"⚠️  Whisper konnte nicht vorgeladen werden: {e}")
                 logger.warning("💡 Spracheingabe wird beim ersten Gebrauch geladen")
-        
+
         # Starte im Hintergrund
         asyncio.create_task(preload_whisper())
     except Exception as e:
@@ -359,10 +369,9 @@ async def satellite_websocket(websocket: WebSocket):
 
                 # Transcribe with Whisper (with speaker recognition)
                 try:
-                    from services.whisper_service import WhisperService
                     from services.database import AsyncSessionLocal
-                    whisper = WhisperService()
-                    whisper.load_model()
+                    whisper = get_whisper_service()
+                    whisper.load_model()  # No-op if already loaded
 
                     # Create WAV file with proper header
                     import io
