@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
     piper_voice: str = "de_DE-thorsten-high"
 
+    # Audio Preprocessing (for better STT quality)
+    whisper_preprocess_enabled: bool = True       # Enable audio preprocessing before Whisper
+    whisper_preprocess_noise_reduce: bool = True  # Enable noise reduction (removes background noise)
+    whisper_preprocess_normalize: bool = True     # Enable audio normalization (consistent volume)
+    whisper_preprocess_target_db: float = -20.0   # Target dB level for normalization
+
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)
     wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)
