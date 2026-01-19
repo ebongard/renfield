@@ -357,9 +357,10 @@ async def satellite_websocket(websocket: WebSocket):
 
                 logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
 
-                # Transcribe with Whisper
+                # Transcribe with Whisper (with speaker recognition)
                 try:
                     from services.whisper_service import WhisperService
+                    from services.database import AsyncSessionLocal
                     whisper = WhisperService()
                     whisper.load_model()
 
@@ -376,8 +377,29 @@ async def satellite_websocket(websocket: WebSocket):
                     wav_bytes = wav_buffer.getvalue()
                     logger.info(f"📦 Created WAV: {len(wav_bytes)} bytes")
 
-                    # Transcribe the audio
-                    text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav")
+                    # Transcribe with speaker recognition (if enabled)
+                    speaker_name = None
+                    speaker_alias = None
+                    speaker_confidence = 0.0
+
+                    if settings.speaker_recognition_enabled:
+                        async with AsyncSessionLocal() as db_session:
+                            result = await whisper.transcribe_bytes_with_speaker(
+                                wav_bytes,
+                                filename="satellite_audio.wav",
+                                db_session=db_session
+                            )
+                            text = result.get("text", "")
+                            speaker_name = result.get("speaker_name")
+                            speaker_alias = result.get("speaker_alias")
+                            speaker_confidence = result.get("speaker_confidence", 0.0)
+
+                            if speaker_name:
+                                logger.info(f"🎤 Satellite Sprecher erkannt: {speaker_name} (@{speaker_alias}) - Konfidenz: {speaker_confidence:.2f}")
+                            else:
+                                logger.info("🎤 Satellite Sprecher nicht erkannt")
+                    else:
+                        text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav")
 
                     if not text or not text.strip():
                         logger.warning(f"⚠️ Empty transcription for session {session_id}")

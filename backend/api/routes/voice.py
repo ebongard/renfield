@@ -1,14 +1,17 @@
 """
 Voice API Routes (Speech-to-Text & Text-to-Speech)
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from loguru import logger
 from io import BytesIO
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.whisper_service import WhisperService
 from services.piper_service import PiperService
+from services.database import get_db
+from utils.config import settings
 
 router = APIRouter()
 
@@ -21,32 +24,61 @@ class TTSRequest(BaseModel):
 
 @router.post("/stt")
 async def speech_to_text(
-    audio: UploadFile = File(...)
+    audio: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Speech-to-Text: Audio zu Text konvertieren"""
+    """Speech-to-Text: Audio zu Text konvertieren mit optionaler Sprechererkennung"""
     try:
         logger.info(f"🎤 STT-Anfrage erhalten: {audio.filename}, Content-Type: {audio.content_type}")
-        
+
         # Audio-Bytes lesen
         audio_bytes = await audio.read()
         logger.info(f"📊 Audio-Größe: {len(audio_bytes)} bytes")
-        
-        # Transkribieren
+
+        # Transkribieren mit Sprechererkennung (wenn aktiviert)
         logger.info("🔄 Starte Transkription...")
-        text = await whisper_service.transcribe_bytes(
-            audio_bytes,
-            filename=audio.filename
-        )
-        
+
+        if settings.speaker_recognition_enabled:
+            # Transkription MIT Sprechererkennung
+            result = await whisper_service.transcribe_bytes_with_speaker(
+                audio_bytes,
+                filename=audio.filename,
+                db_session=db
+            )
+            text = result.get("text", "")
+            speaker_id = result.get("speaker_id")
+            speaker_name = result.get("speaker_name")
+            speaker_alias = result.get("speaker_alias")
+            speaker_confidence = result.get("speaker_confidence", 0.0)
+
+            if speaker_name:
+                logger.info(f"🎤 Sprecher erkannt: {speaker_name} (@{speaker_alias}) - Konfidenz: {speaker_confidence:.2f}")
+            else:
+                logger.info("🎤 Sprecher nicht erkannt (unbekannt oder unter Threshold)")
+        else:
+            # Transkription OHNE Sprechererkennung
+            text = await whisper_service.transcribe_bytes(
+                audio_bytes,
+                filename=audio.filename
+            )
+            speaker_id = None
+            speaker_name = None
+            speaker_alias = None
+            speaker_confidence = 0.0
+
         if not text:
             logger.error("❌ Transkription ergab leeren Text")
             raise HTTPException(status_code=400, detail="Transkription fehlgeschlagen")
-        
+
         logger.info(f"✅ Transkription erfolgreich: '{text[:100]}'")
-        
+
         return {
             "text": text,
-            "language": "de"
+            "language": "de",
+            "speaker_id": speaker_id,
+            "speaker_name": speaker_name,
+            "speaker_alias": speaker_alias,
+            "speaker_confidence": speaker_confidence
         }
     except Exception as e:
         logger.error(f"❌ STT Fehler: {e}")
@@ -78,36 +110,58 @@ async def text_to_speech(request: TTSRequest):
 
 @router.post("/voice-chat")
 async def voice_chat(
-    audio: UploadFile = File(...)
+    audio: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Kompletter Voice-Chat Flow:
-    1. Audio zu Text (STT)
+    1. Audio zu Text (STT) mit Sprechererkennung
     2. Text an Ollama
     3. Antwort zu Audio (TTS)
     """
     try:
-        # 1. Speech-to-Text
+        # 1. Speech-to-Text mit Sprechererkennung
         audio_bytes = await audio.read()
-        user_text = await whisper_service.transcribe_bytes(audio_bytes, audio.filename)
-        
+
+        if settings.speaker_recognition_enabled:
+            result = await whisper_service.transcribe_bytes_with_speaker(
+                audio_bytes,
+                filename=audio.filename,
+                db_session=db
+            )
+            user_text = result.get("text", "")
+            speaker_name = result.get("speaker_name")
+            speaker_alias = result.get("speaker_alias")
+            speaker_confidence = result.get("speaker_confidence", 0.0)
+
+            if speaker_name:
+                logger.info(f"🎤 Voice-Chat von: {speaker_name} (@{speaker_alias})")
+        else:
+            user_text = await whisper_service.transcribe_bytes(audio_bytes, audio.filename)
+            speaker_name = None
+            speaker_alias = None
+            speaker_confidence = 0.0
+
         if not user_text:
             raise HTTPException(status_code=400, detail="Konnte Audio nicht verstehen")
-        
+
         # 2. Chat mit Ollama
         from main import app
         from services.ollama_service import OllamaService
-        
+
         ollama: OllamaService = app.state.ollama
         response_text = await ollama.chat(user_text)
-        
+
         # 3. Text-to-Speech
         response_audio = await piper_service.synthesize_to_bytes(response_text)
-        
+
         return {
             "user_text": user_text,
             "assistant_text": response_text,
-            "audio": response_audio.hex() if response_audio else None
+            "audio": response_audio.hex() if response_audio else None,
+            "speaker_name": speaker_name,
+            "speaker_alias": speaker_alias,
+            "speaker_confidence": speaker_confidence
         }
     except Exception as e:
         logger.error(f"❌ Voice Chat Fehler: {e}")

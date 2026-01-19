@@ -9,11 +9,12 @@ from pydantic import BaseModel
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from loguru import logger
 import numpy as np
 
 from services.database import get_db
-from services.speaker_service import get_speaker_service, SpeakerService
+from services.speaker_service import get_speaker_service, SpeakerService, SPEECHBRAIN_ERROR
 from models.database import Speaker, SpeakerEmbedding
 
 router = APIRouter()
@@ -84,9 +85,11 @@ async def get_speaker_embeddings_averaged(
     """
     service = get_speaker_service()
 
-    # Get all speakers with embeddings
+    # Get all speakers with embeddings (eagerly loaded)
     result = await db.execute(
-        select(Speaker).where(Speaker.embeddings.any())
+        select(Speaker)
+        .where(Speaker.embeddings.any())
+        .options(selectinload(Speaker.embeddings))
     )
     speakers = result.scalars().all()
 
@@ -115,11 +118,17 @@ async def get_service_status():
     """Check if speaker recognition service is available"""
     service = get_speaker_service()
 
+    if service.is_available():
+        message = "Speaker recognition is available"
+    elif SPEECHBRAIN_ERROR:
+        message = f"SpeechBrain not available: {SPEECHBRAIN_ERROR}"
+    else:
+        message = "SpeechBrain not installed. Install with: pip install speechbrain torchaudio"
+
     return ServiceStatusResponse(
         available=service.is_available(),
         model_loaded=service._model_loaded,
-        message="Speaker recognition is available" if service.is_available()
-                else "SpeechBrain not installed. Install with: pip install speechbrain torchaudio"
+        message=message
     )
 
 
@@ -165,7 +174,10 @@ async def create_speaker(
 @router.get("", response_model=List[SpeakerResponse])
 async def list_speakers(db: AsyncSession = Depends(get_db)):
     """List all registered speakers"""
-    result = await db.execute(select(Speaker))
+    # Use selectinload to eagerly load embeddings (avoids lazy-load in async context)
+    result = await db.execute(
+        select(Speaker).options(selectinload(Speaker.embeddings))
+    )
     speakers = result.scalars().all()
 
     return [
@@ -187,7 +199,9 @@ async def get_speaker(
 ):
     """Get a specific speaker"""
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id)
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(selectinload(Speaker.embeddings))
     )
     speaker = result.scalar_one_or_none()
 
@@ -211,7 +225,9 @@ async def update_speaker(
 ):
     """Update a speaker's information"""
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id)
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(selectinload(Speaker.embeddings))
     )
     speaker = result.scalar_one_or_none()
 
@@ -285,9 +301,11 @@ async def enroll_speaker(
 
     Recommended: Use samples of 3-10 seconds with clear speech.
     """
-    # Get speaker
+    # Get speaker with embeddings eagerly loaded
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id)
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(selectinload(Speaker.embeddings))
     )
     speaker = result.scalar_one_or_none()
 
@@ -440,9 +458,11 @@ async def verify_speaker(
             detail="Speaker recognition not available"
         )
 
-    # Get speaker
+    # Get speaker with embeddings eagerly loaded
     result = await db.execute(
-        select(Speaker).where(Speaker.id == speaker_id)
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(selectinload(Speaker.embeddings))
     )
     speaker = result.scalar_one_or_none()
 
@@ -465,7 +485,7 @@ async def verify_speaker(
             detail="Failed to extract voice embedding from audio"
         )
 
-    # Get speaker's embeddings
+    # Get speaker's embeddings (already loaded via selectinload)
     claimed_embeddings = [
         service.embedding_from_base64(emb.embedding)
         for emb in speaker.embeddings

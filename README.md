@@ -6,6 +6,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent für Smart Hom
 
 - **Chat-Interface** - Text- und Sprachbasierte Kommunikation
 - **Spracheingabe & -ausgabe** - Whisper STT und Piper TTS
+- **Sprechererkennung** - Automatische Identifikation mit SpeechBrain ECAPA-TDNN
 - **Multi-Room Voice Control** - Raspberry Pi Satellite Sprachassistenten
 - **Smart Home Steuerung** - Home Assistant Integration
 - **Kamera-Überwachung** - Frigate Integration mit Objekterkennung
@@ -402,6 +403,43 @@ docker compose up -d --force-recreate backend
 Vollständige Dokumentation, Beispiele und Troubleshooting:
 [Plugin Development Guide](backend/integrations/plugins/README.md)
 
+## Sprechererkennung
+
+Renfield erkennt automatisch **wer spricht** und kann personalisierte Antworten geben.
+
+### Features
+
+- **Automatische Identifikation** bei jeder Spracheingabe (Web & Satellite)
+- **Auto-Discovery** - Unbekannte Sprecher werden automatisch als Profile angelegt
+- **Continuous Learning** - Verbesserte Erkennung durch jede Interaktion
+- **Frontend-Verwaltung** - Sprecher unter `/speakers` verwalten
+
+### Wie es funktioniert
+
+1. **Erster Benutzer spricht** → "Unbekannter Sprecher #1" wird angelegt
+2. **Gleicher Benutzer spricht erneut** → Wird als #1 erkannt
+3. **Anderer Benutzer spricht** → "Unbekannter Sprecher #2" wird angelegt
+4. **Admin benennt um** → "Unbekannter Sprecher #1" → "Max Mustermann"
+
+### Konfiguration
+
+```bash
+# In .env
+SPEAKER_RECOGNITION_ENABLED=true      # Aktivieren/Deaktivieren
+SPEAKER_RECOGNITION_THRESHOLD=0.25    # Erkennungs-Schwellwert (0-1)
+SPEAKER_AUTO_ENROLL=true              # Auto-Discovery aktivieren
+SPEAKER_CONTINUOUS_LEARNING=true      # Lernen bei jeder Interaktion
+```
+
+### Logs
+
+```
+🎤 Speaker identified: Max Mustermann (0.85)
+🆕 New unknown speaker created: Unbekannter Sprecher #2 (ID: 4)
+```
+
+**Vollständige Dokumentation:** [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md)
+
 ## Entwicklung
 
 ### Backend entwickeln
@@ -505,6 +543,13 @@ server:
 - `GET /api/tasks/list` - Tasks auflisten
 - `GET /api/tasks/{task_id}` - Task Details
 
+### Speakers
+- `GET /api/speakers` - Alle Sprecher auflisten
+- `POST /api/speakers` - Neuen Sprecher anlegen
+- `POST /api/speakers/{id}/enroll` - Voice Sample hinzufügen
+- `POST /api/speakers/identify` - Sprecher identifizieren
+- `DELETE /api/speakers/{id}` - Sprecher löschen
+
 ## Sicherheit
 
 - Alle Daten bleiben lokal auf deinem Server
@@ -530,6 +575,7 @@ MIT License - siehe LICENSE Datei
 - [Ollama](https://ollama.ai/) - Lokales LLM
 - [Whisper](https://github.com/openai/whisper) - Speech-to-Text
 - [Piper](https://github.com/rhasspy/piper) - Text-to-Speech
+- [SpeechBrain](https://speechbrain.github.io/) - Speaker Recognition (ECAPA-TDNN)
 - [Home Assistant](https://www.home-assistant.io/) - Smart Home Platform
 - [Frigate](https://frigate.video/) - NVR mit Objekterkennung
 - [n8n](https://n8n.io/) - Workflow Automation

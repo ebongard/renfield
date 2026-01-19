@@ -164,6 +164,11 @@ class WhisperService:
         """
         Transcribe audio and identify speaker.
 
+        Features:
+        - Identifies known speakers
+        - Auto-enrolls unknown speakers (if enabled)
+        - Continuous learning: adds embeddings on each interaction (if enabled)
+
         Args:
             audio_path: Path to audio file
             db_session: Optional async database session for speaker lookup
@@ -174,7 +179,8 @@ class WhisperService:
                 "speaker_id": int or None,
                 "speaker_name": str or None,
                 "speaker_alias": str or None,
-                "speaker_confidence": float (0-1)
+                "speaker_confidence": float (0-1),
+                "is_new_speaker": bool
             }
         """
         # Transcribe audio
@@ -185,7 +191,8 @@ class WhisperService:
             "speaker_id": None,
             "speaker_name": None,
             "speaker_alias": None,
-            "speaker_confidence": 0.0
+            "speaker_confidence": 0.0,
+            "is_new_speaker": False
         }
 
         # Try to identify speaker if enabled and db_session provided
@@ -195,7 +202,8 @@ class WhisperService:
         try:
             from services.speaker_service import get_speaker_service
             from models.database import Speaker, SpeakerEmbedding
-            from sqlalchemy import select
+            from sqlalchemy import select, func
+            from sqlalchemy.orm import selectinload
             import numpy as np
 
             service = get_speaker_service()
@@ -211,56 +219,143 @@ class WhisperService:
                 logger.debug("Could not extract speaker embedding")
                 return {"text": text, **speaker_info}
 
-            # Load known speakers with embeddings
+            # Load ALL speakers (including those without embeddings for counting)
             result = await db_session.execute(
-                select(Speaker).where(Speaker.embeddings.any())
+                select(Speaker).options(selectinload(Speaker.embeddings))
             )
-            speakers = result.scalars().all()
+            all_speakers = result.scalars().all()
 
-            if not speakers:
-                logger.debug("No speakers enrolled")
-                return {"text": text, **speaker_info}
-
-            # Build list of (speaker_id, speaker_name, averaged_embedding)
+            # Build list of speakers WITH embeddings for identification
             known_speakers = []
-            for speaker in speakers:
-                if not speaker.embeddings:
-                    continue
+            speakers_with_embeddings = []
+            for speaker in all_speakers:
+                if speaker.embeddings:
+                    speakers_with_embeddings.append(speaker)
+                    embeddings = [
+                        service.embedding_from_base64(emb.embedding)
+                        for emb in speaker.embeddings
+                    ]
+                    if embeddings:
+                        averaged = np.mean(embeddings, axis=0)
+                        known_speakers.append((speaker.id, speaker.name, averaged))
 
-                embeddings = [
-                    service.embedding_from_base64(emb.embedding)
-                    for emb in speaker.embeddings
-                ]
+            # Try to identify speaker
+            identified_speaker = None
+            confidence = 0.0
 
-                if embeddings:
-                    averaged = np.mean(embeddings, axis=0)
-                    known_speakers.append((speaker.id, speaker.name, averaged))
+            if known_speakers:
+                result = service.identify_speaker(embedding, known_speakers)
+                if result:
+                    speaker_id, speaker_name, confidence = result
+                    # Find the speaker object
+                    for speaker in speakers_with_embeddings:
+                        if speaker.id == speaker_id:
+                            identified_speaker = speaker
+                            break
 
-            if not known_speakers:
-                return {"text": text, **speaker_info}
+            # Case 1: Speaker identified
+            if identified_speaker:
+                speaker_info = {
+                    "speaker_id": identified_speaker.id,
+                    "speaker_name": identified_speaker.name,
+                    "speaker_alias": identified_speaker.alias,
+                    "speaker_confidence": confidence,
+                    "is_new_speaker": False
+                }
+                logger.info(f"🎤 Speaker identified: {identified_speaker.name} ({confidence:.2f})")
 
-            # Identify speaker
-            result = service.identify_speaker(embedding, known_speakers)
+                # Continuous learning: add embedding to known speaker
+                if settings.speaker_continuous_learning:
+                    await self._add_embedding_to_speaker(
+                        db_session, identified_speaker.id, embedding, service
+                    )
 
-            if result:
-                speaker_id, speaker_name, confidence = result
+            # Case 2: No speaker identified - auto-enroll if enabled
+            elif settings.speaker_auto_enroll:
+                # Count existing "Unbekannter Sprecher" entries
+                unknown_count = sum(
+                    1 for s in all_speakers
+                    if s.name.startswith("Unbekannter Sprecher")
+                )
+                new_number = unknown_count + 1
 
-                # Get alias
-                for speaker in speakers:
-                    if speaker.id == speaker_id:
-                        speaker_info = {
-                            "speaker_id": speaker_id,
-                            "speaker_name": speaker_name,
-                            "speaker_alias": speaker.alias,
-                            "speaker_confidence": confidence
-                        }
-                        logger.info(f"🎤 Speaker identified: {speaker_name} ({confidence:.2f})")
-                        break
+                # Create new unknown speaker
+                new_speaker = Speaker(
+                    name=f"Unbekannter Sprecher #{new_number}",
+                    alias=f"unknown_{new_number}",
+                    is_admin=False
+                )
+                db_session.add(new_speaker)
+                await db_session.flush()  # Get the ID
+
+                # Add embedding
+                embedding_record = SpeakerEmbedding(
+                    speaker_id=new_speaker.id,
+                    embedding=service.embedding_to_base64(embedding)
+                )
+                db_session.add(embedding_record)
+                await db_session.commit()
+
+                speaker_info = {
+                    "speaker_id": new_speaker.id,
+                    "speaker_name": new_speaker.name,
+                    "speaker_alias": new_speaker.alias,
+                    "speaker_confidence": 1.0,  # It's a new profile, 100% match to itself
+                    "is_new_speaker": True
+                }
+                logger.info(f"🆕 New unknown speaker created: {new_speaker.name} (ID: {new_speaker.id})")
+
+            else:
+                logger.info("🎤 Speaker not recognized (auto-enroll disabled)")
 
         except Exception as e:
             logger.warning(f"Speaker identification failed: {e}")
+            import traceback
+            logger.debug(traceback.format_exc())
 
         return {"text": text, **speaker_info}
+
+    async def _add_embedding_to_speaker(
+        self,
+        db_session,
+        speaker_id: int,
+        embedding,
+        service
+    ):
+        """
+        Add embedding to existing speaker for continuous learning.
+
+        Limits to max 10 embeddings per speaker to prevent unbounded growth.
+        """
+        try:
+            from models.database import Speaker, SpeakerEmbedding
+            from sqlalchemy import select, func
+            from sqlalchemy.orm import selectinload
+
+            # Check current embedding count
+            result = await db_session.execute(
+                select(func.count(SpeakerEmbedding.id))
+                .where(SpeakerEmbedding.speaker_id == speaker_id)
+            )
+            count = result.scalar()
+
+            # Limit to 10 embeddings per speaker
+            if count >= 10:
+                logger.debug(f"Speaker {speaker_id} already has {count} embeddings, skipping")
+                return
+
+            # Add new embedding
+            embedding_record = SpeakerEmbedding(
+                speaker_id=speaker_id,
+                embedding=service.embedding_to_base64(embedding)
+            )
+            db_session.add(embedding_record)
+            await db_session.commit()
+
+            logger.debug(f"📊 Added embedding to speaker {speaker_id} (now {count + 1} total)")
+
+        except Exception as e:
+            logger.warning(f"Failed to add embedding for continuous learning: {e}")
 
     async def transcribe_bytes_with_speaker(
         self,

@@ -15,15 +15,39 @@ from utils.config import settings
 
 # Lazy imports for optional dependencies
 SPEECHBRAIN_AVAILABLE = False
+SPEECHBRAIN_ERROR = None
 try:
-    from speechbrain.inference.speaker import EncoderClassifier
-    import torchaudio
     import torch
+    import torchaudio
+
+    # Workaround for torchaudio 2.1+ where list_audio_backends() was removed
+    # SpeechBrain's check_torchaudio_backend() calls this deprecated function
+    if not hasattr(torchaudio, 'list_audio_backends'):
+        # Provide a dummy implementation to satisfy SpeechBrain's check
+        torchaudio.list_audio_backends = lambda: ['soundfile', 'sox']
+
+        # Also patch get_audio_backend if needed
+        if not hasattr(torchaudio, 'get_audio_backend'):
+            torchaudio.get_audio_backend = lambda: 'soundfile'
+
+    from speechbrain.inference.speaker import EncoderClassifier
     SPEECHBRAIN_AVAILABLE = True
-except ImportError:
+    logger.info("✅ SpeechBrain speaker recognition available")
+except ImportError as e:
+    SPEECHBRAIN_ERROR = str(e)
     logger.warning(
-        "SpeechBrain not available. Install with: pip install speechbrain torchaudio"
+        f"SpeechBrain not available (ImportError): {e}. "
+        "Install with: pip install speechbrain torchaudio"
     )
+except AttributeError as e:
+    SPEECHBRAIN_ERROR = str(e)
+    logger.warning(
+        f"SpeechBrain initialization failed (AttributeError): {e}. "
+        "This is likely a torchaudio version incompatibility."
+    )
+except Exception as e:
+    SPEECHBRAIN_ERROR = str(e)
+    logger.warning(f"SpeechBrain not available: {e}")
 
 
 class SpeakerService:
@@ -85,7 +109,7 @@ class SpeakerService:
         Extract speaker embedding from audio file.
 
         Args:
-            audio_path: Path to audio file (WAV, MP3, FLAC, etc.)
+            audio_path: Path to audio file (WAV, MP3, FLAC, WebM, etc.)
 
         Returns:
             192-dimensional embedding vector or None on error
@@ -97,23 +121,24 @@ class SpeakerService:
         self.load_model()
 
         try:
-            # Load audio
-            signal, fs = torchaudio.load(audio_path)
+            # Use librosa for audio loading (handles WebM, MP3, etc. better than torchaudio)
+            import librosa
+            import warnings
 
-            # Resample to 16kHz if needed
-            if fs != 16000:
-                resampler = torchaudio.transforms.Resample(fs, 16000)
-                signal = resampler(signal)
-
-            # Convert to mono if stereo
-            if signal.shape[0] > 1:
-                signal = torch.mean(signal, dim=0, keepdim=True)
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", message="PySoundFile failed")
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                # Load audio, resample to 16kHz mono
+                audio_np, sr = librosa.load(audio_path, sr=16000, mono=True)
 
             # Check minimum duration (at least 0.5 seconds)
             min_samples = int(0.5 * 16000)
-            if signal.shape[1] < min_samples:
-                logger.warning(f"Audio too short for speaker embedding: {signal.shape[1]} samples")
+            if len(audio_np) < min_samples:
+                logger.warning(f"Audio too short for speaker embedding: {len(audio_np)} samples")
                 return None
+
+            # Convert to torch tensor with shape (1, samples)
+            signal = torch.from_numpy(audio_np).unsqueeze(0).float()
 
             # Extract embedding
             with torch.no_grad():

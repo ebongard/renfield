@@ -21,6 +21,7 @@ export default function SpeakersPage() {
   const [identifyResult, setIdentifyResult] = useState(null);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [audioLevel, setAudioLevel] = useState(0);
 
   // Form state
   const [newSpeakerName, setNewSpeakerName] = useState('');
@@ -31,6 +32,9 @@ export default function SpeakersPage() {
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const streamRef = useRef(null);
+  const audioContextRef = useRef(null);
+  const analyserRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
   // Load data on mount
   useEffect(() => {
@@ -121,13 +125,67 @@ export default function SpeakersPage() {
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
+      // Set up audio context for level monitoring
+      try {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        audioContextRef.current = audioContext;
+
+        if (audioContext.state === 'suspended') {
+          await audioContext.resume();
+        }
+
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        analyser.smoothingTimeConstant = 0.3;
+        source.connect(analyser);
+        analyserRef.current = analyser;
+
+        // Start level monitoring
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const checkAudioLevel = () => {
+          if (!analyserRef.current) return;
+
+          analyserRef.current.getByteFrequencyData(dataArray);
+
+          // Calculate RMS
+          let sum = 0;
+          for (let i = 0; i < dataArray.length; i++) {
+            sum += dataArray[i] * dataArray[i];
+          }
+          const rms = Math.sqrt(sum / dataArray.length);
+          setAudioLevel(Math.round(rms));
+
+          animationFrameRef.current = requestAnimationFrame(checkAudioLevel);
+        };
+
+        checkAudioLevel();
+      } catch (audioErr) {
+        console.warn('Audio context setup failed:', audioErr);
+      }
+
       mediaRecorder.ondataavailable = (event) => {
         audioChunksRef.current.push(event.data);
       };
 
-      mediaRecorder.onstop = () => {
+      mediaRecorder.onstop = async () => {
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         setAudioBlob(blob);
+
+        // Stop level monitoring
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+        }
+        if (audioContextRef.current) {
+          try {
+            await audioContextRef.current.close();
+          } catch (e) {
+            // Ignore
+          }
+        }
+        setAudioLevel(0);
 
         // Stop stream
         if (streamRef.current) {
@@ -453,11 +511,39 @@ export default function SpeakersPage() {
               <div className="text-center">
                 {recording ? (
                   <div>
-                    <div className="w-16 h-16 mx-auto mb-4 bg-red-600 rounded-full flex items-center justify-center animate-pulse">
-                      <Mic className="w-8 h-8 text-white" />
+                    {/* Recording Header */}
+                    <div className="flex items-center justify-center space-x-2 mb-4">
+                      <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
+                      <span className="text-sm font-medium text-red-400">
+                        {audioLevel > 10 ? 'Sprechen erkannt' : 'Hoere zu...'}
+                      </span>
                     </div>
-                    <p className="text-red-400 font-medium">Aufnahme laeuft...</p>
-                    <p className="text-sm text-gray-400 mt-2">Sprich 3-10 Sekunden deutlich</p>
+
+                    {/* Waveform Visualization */}
+                    <div className="flex items-center justify-center space-x-1.5 h-16 mb-4">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
+                        const variation = Math.sin((Date.now() / 100) + i) * 0.3 + 0.7;
+                        const baseHeight = Math.max(10, audioLevel) * variation;
+                        const height = Math.min(100, baseHeight);
+                        const colorClass = audioLevel > 50 ? 'bg-green-500' :
+                                           audioLevel > 10 ? 'bg-primary-500' :
+                                           'bg-gray-600';
+
+                        return (
+                          <div
+                            key={i}
+                            className={`w-2 rounded-full transition-all duration-150 ease-out ${colorClass}`}
+                            style={{
+                              height: `${height}%`,
+                              opacity: audioLevel > 5 ? 1 : 0.3
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-sm text-gray-400">Sprich 3-10 Sekunden deutlich</p>
+                    <p className="text-xs text-gray-500 mt-1">Level: {audioLevel}</p>
                   </div>
                 ) : audioBlob ? (
                   <div>
@@ -538,10 +624,38 @@ export default function SpeakersPage() {
               <div className="text-center">
                 {recording ? (
                   <div>
-                    <div className="w-16 h-16 mx-auto mb-4 bg-red-600 rounded-full flex items-center justify-center animate-pulse">
-                      <Mic className="w-8 h-8 text-white" />
+                    {/* Recording Header */}
+                    <div className="flex items-center justify-center space-x-2 mb-4">
+                      <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
+                      <span className="text-sm font-medium text-red-400">
+                        {audioLevel > 10 ? 'Sprechen erkannt' : 'Hoere zu...'}
+                      </span>
                     </div>
-                    <p className="text-red-400 font-medium">Aufnahme laeuft...</p>
+
+                    {/* Waveform Visualization */}
+                    <div className="flex items-center justify-center space-x-1.5 h-16 mb-4">
+                      {[0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => {
+                        const variation = Math.sin((Date.now() / 100) + i) * 0.3 + 0.7;
+                        const baseHeight = Math.max(10, audioLevel) * variation;
+                        const height = Math.min(100, baseHeight);
+                        const colorClass = audioLevel > 50 ? 'bg-green-500' :
+                                           audioLevel > 10 ? 'bg-purple-500' :
+                                           'bg-gray-600';
+
+                        return (
+                          <div
+                            key={i}
+                            className={`w-2 rounded-full transition-all duration-150 ease-out ${colorClass}`}
+                            style={{
+                              height: `${height}%`,
+                              opacity: audioLevel > 5 ? 1 : 0.3
+                            }}
+                          />
+                        );
+                      })}
+                    </div>
+
+                    <p className="text-xs text-gray-500">Level: {audioLevel}</p>
                   </div>
                 ) : audioBlob && !identifyResult ? (
                   <div>

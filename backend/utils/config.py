@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     speaker_recognition_enabled: bool = True      # Enable speaker recognition
     speaker_recognition_threshold: float = 0.25  # Minimum similarity for positive identification (0-1)
     speaker_recognition_device: str = "cpu"      # Device for inference: "cpu" or "cuda"
+    speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
+    speaker_continuous_learning: bool = True     # Add embeddings to known speakers on each interaction
 
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)

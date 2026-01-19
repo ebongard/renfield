@@ -229,6 +229,32 @@ Renfield implements full conversation persistence with PostgreSQL:
 
 **Documentation:** See `backend/CONVERSATION_API.md` for detailed API documentation and usage examples.
 
+### Speaker Recognition System
+
+Renfield includes automatic speaker recognition using **SpeechBrain ECAPA-TDNN**:
+
+**Features:**
+- Automatic speaker identification on every voice input (Web & Satellite)
+- Auto-discovery of unknown speakers with automatic profile creation
+- Continuous learning - recognition improves with each interaction
+- Multi-speaker support - unlimited speaker profiles
+- Frontend management via `/speakers` page
+
+**Key Implementation:**
+- `SpeakerService` (`backend/services/speaker_service.py`): SpeechBrain model wrapper
+- `WhisperService.transcribe_with_speaker()`: Combines STT with speaker identification
+- 192-dimensional voice embeddings stored in PostgreSQL
+- Cosine similarity for speaker matching (threshold: 0.25)
+
+**API Endpoints:**
+- `GET /api/speakers` - List all speakers with embedding counts
+- `POST /api/speakers` - Create new speaker profile
+- `POST /api/speakers/{id}/enroll` - Add voice sample
+- `POST /api/speakers/identify` - Identify speaker from audio
+- `DELETE /api/speakers/{id}` - Delete speaker and embeddings
+
+**Documentation:** See `SPEAKER_RECOGNITION.md` for detailed documentation.
+
 ### Backend Structure
 
 ```
@@ -239,12 +265,15 @@ backend/
 ├── api/routes/                # REST API endpoints
 │   ├── chat.py               # Chat history, non-streaming chat
 │   ├── voice.py              # STT, TTS, voice-chat endpoint
+│   ├── speakers.py           # Speaker recognition management
 │   ├── homeassistant.py      # HA state queries, control endpoints
 │   ├── camera.py             # Frigate events, snapshots
 │   └── tasks.py              # Task queue management
 ├── services/                  # Business logic layer
 │   ├── ollama_service.py     # LLM interaction, intent extraction
-│   ├── whisper_service.py    # Speech-to-text (with GPU support)
+│   ├── whisper_service.py    # Speech-to-text (with speaker recognition)
+│   ├── speaker_service.py    # Speaker recognition (SpeechBrain ECAPA-TDNN)
+│   ├── audio_preprocessor.py # Noise reduction, normalization for STT
 │   ├── piper_service.py      # Text-to-speech
 │   ├── satellite_manager.py  # Satellite session management
 │   ├── action_executor.py    # Routes intents to appropriate integrations
@@ -294,6 +323,7 @@ frontend/src/
 ├── pages/                    # Route components
 │   ├── HomePage.jsx          # Dashboard/landing
 │   ├── ChatPage.jsx          # Chat interface with WebSocket, voice controls
+│   ├── SpeakersPage.jsx      # Speaker management and enrollment
 │   ├── HomeAssistantPage.jsx # Device browser and controls
 │   ├── CameraPage.jsx        # Frigate events viewer
 │   └── TasksPage.jsx         # Task queue viewer
@@ -375,6 +405,10 @@ All configuration is in `.env` and loaded via `backend/utils/config.py` using Py
 - `WAKE_WORD_DEFAULT` - Default wake word for satellites (default: `alexa`)
 - `WAKE_WORD_THRESHOLD` - Wake word detection threshold (default: `0.5`)
 - `ADVERTISE_HOST` - Hostname for Zeroconf service advertisement
+- `SPEAKER_RECOGNITION_ENABLED` - Enable speaker recognition (default: `true`)
+- `SPEAKER_RECOGNITION_THRESHOLD` - Similarity threshold for identification (default: `0.25`)
+- `SPEAKER_AUTO_ENROLL` - Auto-create profiles for unknown speakers (default: `true`)
+- `SPEAKER_CONTINUOUS_LEARNING` - Add embeddings on each interaction (default: `true`)
 
 ## Common Development Patterns
 
@@ -523,6 +557,7 @@ Additional documentation files in the repository:
 - `INSTALLATION.md` - Detailed installation guide
 - `FEATURES.md` - Feature documentation
 - `EXTERNAL_OLLAMA.md` - External Ollama instance setup
+- `SPEAKER_RECOGNITION.md` - Speaker recognition system documentation
 - `renfield-satellite/README.md` - Satellite setup guide
 - `backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference

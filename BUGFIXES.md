@@ -258,6 +258,121 @@ class SetValue(BaseModel):
 
 ---
 
+## 🐛 Problem 6: SpeechBrain/torchaudio Inkompatibilität (Technical Debt)
+
+### Symptom
+```
+AttributeError: module 'torchaudio' has no attribute 'list_audio_backends'
+```
+
+Backend startet nicht, Traceback endet in:
+```
+File "/usr/local/lib/python3.11/site-packages/speechbrain/utils/torch_audio_backend.py", line 57, in check_torchaudio_backend
+    available_backends = torchaudio.list_audio_backends()
+```
+
+### Ursache
+- **SpeechBrain** (für Speaker Recognition) nutzt die Funktion `torchaudio.list_audio_backends()`
+- In **torchaudio 2.1+** wurden `list_audio_backends()` und `get_audio_backend()` entfernt
+- Die Backend-Auswahl erfolgt jetzt automatisch, diese Funktionen sind deprecated/removed
+- SpeechBrain's `check_torchaudio_backend()` versucht trotzdem diese Funktionen aufzurufen
+
+### Lösung ✅ (Workaround)
+
+**Monkey-Patch in `speaker_service.py`:**
+
+```python
+# backend/services/speaker_service.py
+
+import torch
+import torchaudio
+
+# Workaround für torchaudio 2.1+ wo list_audio_backends() entfernt wurde
+if not hasattr(torchaudio, 'list_audio_backends'):
+    # Dummy-Implementation um SpeechBrain's check zu befriedigen
+    torchaudio.list_audio_backends = lambda: ['soundfile', 'sox']
+
+    if not hasattr(torchaudio, 'get_audio_backend'):
+        torchaudio.get_audio_backend = lambda: 'soundfile'
+
+from speechbrain.inference.speaker import EncoderClassifier
+```
+
+### Technical Debt Details
+
+| Aspekt | Details |
+|--------|---------|
+| **Betrifft** | Speaker Recognition Feature |
+| **Datei** | `backend/services/speaker_service.py` |
+| **Workaround** | Monkey-Patch fehlender torchaudio Funktionen |
+| **Risiko** | Niedrig - Funktionen wurden nur für Backend-Auswahl genutzt |
+| **Permanente Lösung** | Warten auf SpeechBrain Update das torchaudio 2.1+ unterstützt |
+
+---
+
+## 🐛 Problem 7: SpeechBrain/huggingface_hub Inkompatibilität (Technical Debt)
+
+### Symptom
+```
+TypeError: hf_hub_download() got an unexpected keyword argument 'use_auth_token'
+```
+
+### Ursache
+- SpeechBrain verwendet den veralteten Parameter `use_auth_token` beim Download von Modellen
+- In **huggingface_hub 0.24+** wurde dieser Parameter entfernt (ersetzt durch `token`)
+- SpeechBrain's `fetch()` Funktion ist nicht auf die neue API aktualisiert
+
+### Lösung ✅ (Version Pin)
+
+**In `requirements.txt`:**
+```python
+huggingface_hub<0.24.0  # SpeechBrain verwendet deprecated 'use_auth_token'
+```
+
+### Technical Debt Details
+
+| Aspekt | Details |
+|--------|---------|
+| **Betrifft** | Speaker Recognition Model Download |
+| **Datei** | `backend/requirements.txt` |
+| **Workaround** | Version Pin auf huggingface_hub<0.24.0 |
+| **Risiko** | Niedrig - Ältere Version ist stabil |
+| **Permanente Lösung** | Warten auf SpeechBrain Update mit neuer HF Hub API |
+
+### Langfristige Empfehlung
+
+1. SpeechBrain Updates beobachten
+2. Nach Update: Version Pin entfernen und testen
+3. huggingface_hub Changelog beachten bei Updates
+
+### Alternative Lösungen
+
+**Option 1: torchaudio Version pinnen**
+```python
+# requirements.txt
+torchaudio>=2.0.0,<2.1.0  # Vor Removal der Backend-APIs
+```
+- **Nachteil:** Ältere Version, evtl. fehlende Bug-Fixes
+
+**Option 2: Neuere SpeechBrain Version (wenn verfügbar)**
+```python
+# requirements.txt
+speechbrain>=1.1.0  # Falls Fix in neuerer Version
+```
+- **Status:** Prüfen ob neuere Version das Problem behebt
+
+**Option 3: Monkey-Patch (gewählt)**
+- **Vorteil:** Keine Version-Pins, funktioniert mit aktuellen Packages
+- **Nachteil:** Workaround, kein offizieller Fix
+
+### Langfristige Empfehlung
+
+1. SpeechBrain GitHub Issues beobachten für offiziellen Fix
+2. Bei nächstem SpeechBrain Update Workaround entfernen und testen
+3. Falls Problem persistiert, Issue bei SpeechBrain erstellen
+
+---
+
 ## 🎯 Aktueller Status
 
 ### ✅ Funktioniert ohne weitere Änderungen:
