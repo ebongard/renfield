@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Users, UserPlus, Mic, MicOff, Trash2, Loader, CheckCircle,
-  XCircle, AlertCircle, Volume2, Shield, ShieldCheck, RefreshCw
+  XCircle, AlertCircle, Volume2, Shield, ShieldCheck, RefreshCw,
+  Edit3, GitMerge
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 
@@ -13,7 +14,11 @@ export default function SpeakersPage() {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [showIdentifyModal, setShowIdentifyModal] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showMergeModal, setShowMergeModal] = useState(false);
   const [selectedSpeaker, setSelectedSpeaker] = useState(null);
+  const [mergeTargetId, setMergeTargetId] = useState(null);
+  const [merging, setMerging] = useState(false);
   const [recording, setRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState(null);
   const [enrolling, setEnrolling] = useState(false);
@@ -27,6 +32,12 @@ export default function SpeakersPage() {
   const [newSpeakerName, setNewSpeakerName] = useState('');
   const [newSpeakerAlias, setNewSpeakerAlias] = useState('');
   const [newSpeakerIsAdmin, setNewSpeakerIsAdmin] = useState(false);
+
+  // Edit form state
+  const [editSpeakerName, setEditSpeakerName] = useState('');
+  const [editSpeakerAlias, setEditSpeakerAlias] = useState('');
+  const [editSpeakerIsAdmin, setEditSpeakerIsAdmin] = useState(false);
+  const [updating, setUpdating] = useState(false);
 
   // Refs
   const mediaRecorderRef = useRef(null);
@@ -114,6 +125,81 @@ export default function SpeakersPage() {
       console.error('Failed to delete speaker:', err);
       setError('Sprecher konnte nicht geloescht werden');
     }
+  };
+
+  const updateSpeaker = async () => {
+    if (!selectedSpeaker || !editSpeakerName.trim() || !editSpeakerAlias.trim()) {
+      setError('Name und Alias sind erforderlich');
+      return;
+    }
+
+    try {
+      setUpdating(true);
+      await apiClient.patch(`/api/speakers/${selectedSpeaker.id}`, {
+        name: editSpeakerName,
+        alias: editSpeakerAlias,
+        is_admin: editSpeakerIsAdmin
+      });
+
+      setSuccess(`Sprecher "${editSpeakerName}" aktualisiert`);
+      setShowEditModal(false);
+      loadSpeakers();
+    } catch (err) {
+      console.error('Failed to update speaker:', err);
+      setError(err.response?.data?.detail || 'Sprecher konnte nicht aktualisiert werden');
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const mergeSpeakers = async () => {
+    if (!selectedSpeaker || !mergeTargetId) {
+      setError('Bitte Quell- und Zielsprecher auswaehlen');
+      return;
+    }
+
+    if (selectedSpeaker.id === parseInt(mergeTargetId)) {
+      setError('Quell- und Zielsprecher koennen nicht identisch sein');
+      return;
+    }
+
+    const targetSpeaker = speakers.find(s => s.id === parseInt(mergeTargetId));
+    if (!confirm(`"${selectedSpeaker.name}" in "${targetSpeaker?.name}" zusammenfuehren?\n\nAlle Voice Samples werden uebertragen und "${selectedSpeaker.name}" wird geloescht.`)) {
+      return;
+    }
+
+    try {
+      setMerging(true);
+      const response = await apiClient.post('/api/speakers/merge', {
+        source_speaker_id: selectedSpeaker.id,
+        target_speaker_id: parseInt(mergeTargetId)
+      });
+
+      setSuccess(response.data.message);
+      setShowMergeModal(false);
+      setSelectedSpeaker(null);
+      setMergeTargetId(null);
+      loadSpeakers();
+    } catch (err) {
+      console.error('Failed to merge speakers:', err);
+      setError(err.response?.data?.detail || 'Zusammenfuehrung fehlgeschlagen');
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  const openEditModal = (speaker) => {
+    setSelectedSpeaker(speaker);
+    setEditSpeakerName(speaker.name);
+    setEditSpeakerAlias(speaker.alias);
+    setEditSpeakerIsAdmin(speaker.is_admin);
+    setShowEditModal(true);
+  };
+
+  const openMergeModal = (speaker) => {
+    setSelectedSpeaker(speaker);
+    setMergeTargetId(null);
+    setShowMergeModal(true);
   };
 
   const startRecording = async () => {
@@ -423,6 +509,21 @@ export default function SpeakersPage() {
                   >
                     <Mic className="w-4 h-4" />
                     <span>Aufnehmen</span>
+                  </button>
+                  <button
+                    onClick={() => openEditModal(speaker)}
+                    className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-400"
+                    title="Bearbeiten"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => openMergeModal(speaker)}
+                    className="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 text-purple-400"
+                    title="Zusammenfuehren"
+                    disabled={speakers.length < 2}
+                  >
+                    <GitMerge className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => deleteSpeaker(speaker)}
@@ -743,6 +844,157 @@ export default function SpeakersPage() {
                   <Loader className="w-4 h-4 animate-spin mx-auto" />
                 ) : (
                   'Identifizieren'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Speaker Modal */}
+      {showEditModal && selectedSpeaker && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card max-w-md w-full">
+            <h2 className="text-xl font-bold text-white mb-4">Sprecher bearbeiten</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={editSpeakerName}
+                  onChange={(e) => setEditSpeakerName(e.target.value)}
+                  placeholder="Max Mustermann"
+                  className="input w-full"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Alias (fuer Ansprache)</label>
+                <input
+                  type="text"
+                  value={editSpeakerAlias}
+                  onChange={(e) => setEditSpeakerAlias(e.target.value.toLowerCase().replace(/\s/g, '_'))}
+                  placeholder="max"
+                  className="input w-full"
+                />
+              </div>
+
+              <div className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  id="editIsAdmin"
+                  checked={editSpeakerIsAdmin}
+                  onChange={(e) => setEditSpeakerIsAdmin(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                <label htmlFor="editIsAdmin" className="text-sm text-gray-300 flex items-center space-x-2">
+                  <Shield className="w-4 h-4" />
+                  <span>Administrator-Berechtigung</span>
+                </label>
+              </div>
+
+              <div className="text-sm text-gray-500">
+                Voice Samples: {selectedSpeaker.embedding_count}
+              </div>
+            </div>
+
+            <div className="flex space-x-3 mt-6">
+              <button
+                onClick={() => setShowEditModal(false)}
+                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={updateSpeaker}
+                disabled={updating}
+                className="flex-1 btn btn-primary disabled:opacity-50"
+              >
+                {updating ? (
+                  <Loader className="w-4 h-4 animate-spin mx-auto" />
+                ) : (
+                  'Speichern'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Speakers Modal */}
+      {showMergeModal && selectedSpeaker && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="card max-w-md w-full">
+            <h2 className="text-xl font-bold text-white mb-2">Sprecher zusammenfuehren</h2>
+            <p className="text-gray-400 mb-4">
+              Fuehre "{selectedSpeaker.name}" mit einem anderen Sprecher zusammen.
+              Alle Voice Samples werden uebertragen.
+            </p>
+
+            <div className="bg-gray-800 rounded-lg p-4 mb-4">
+              <div className="flex items-center space-x-3 mb-4">
+                <div className="p-2 bg-purple-600 rounded-lg">
+                  <GitMerge className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <p className="text-white font-medium">{selectedSpeaker.name}</p>
+                  <p className="text-sm text-gray-400">
+                    {selectedSpeaker.embedding_count} Voice Samples werden uebertragen
+                  </p>
+                </div>
+              </div>
+
+              <div className="border-t border-gray-700 pt-4">
+                <label className="block text-sm text-gray-400 mb-2">Zusammenfuehren mit:</label>
+                <select
+                  value={mergeTargetId || ''}
+                  onChange={(e) => setMergeTargetId(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">-- Zielsprecher auswaehlen --</option>
+                  {speakers
+                    .filter(s => s.id !== selectedSpeaker.id)
+                    .map(s => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} (@{s.alias}) - {s.embedding_count} Samples
+                      </option>
+                    ))
+                  }
+                </select>
+              </div>
+            </div>
+
+            <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-3 mb-4">
+              <div className="flex items-start space-x-2">
+                <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-yellow-400">
+                  <strong>Achtung:</strong> "{selectedSpeaker.name}" wird nach dem Zusammenfuehren geloescht.
+                  Diese Aktion kann nicht rueckgaengig gemacht werden.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex space-x-3">
+              <button
+                onClick={() => {
+                  setShowMergeModal(false);
+                  setSelectedSpeaker(null);
+                  setMergeTargetId(null);
+                }}
+                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+              >
+                Abbrechen
+              </button>
+              <button
+                onClick={mergeSpeakers}
+                disabled={!mergeTargetId || merging}
+                className="flex-1 btn bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50"
+              >
+                {merging ? (
+                  <Loader className="w-4 h-4 animate-spin mx-auto" />
+                ) : (
+                  'Zusammenfuehren'
                 )}
               </button>
             </div>

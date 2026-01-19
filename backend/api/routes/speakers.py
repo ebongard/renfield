@@ -66,6 +66,20 @@ class VerifyResponse(BaseModel):
     speaker_name: Optional[str]
 
 
+class MergeSpeakersRequest(BaseModel):
+    source_speaker_id: int
+    target_speaker_id: int
+
+
+class MergeSpeakersResponse(BaseModel):
+    target_speaker_id: int
+    target_speaker_name: str
+    merged_embedding_count: int
+    total_embedding_count: int
+    source_speaker_deleted: str
+    message: str
+
+
 class ServiceStatusResponse(BaseModel):
     available: bool
     model_loaded: bool
@@ -285,6 +299,100 @@ async def delete_speaker(
     logger.info(f"🗑️ Deleted speaker: {speaker_name}")
 
     return {"message": f"Speaker '{speaker_name}' deleted"}
+
+
+@router.post("/merge", response_model=MergeSpeakersResponse)
+async def merge_speakers(
+    request: MergeSpeakersRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Merge two speakers into one.
+
+    Moves all voice embeddings from the source speaker to the target speaker,
+    then deletes the source speaker. Use this when an unknown speaker was
+    actually a known speaker and you want to combine their data.
+
+    Args:
+        source_speaker_id: The speaker to merge FROM (will be deleted)
+        target_speaker_id: The speaker to merge INTO (will keep all embeddings)
+    """
+    if request.source_speaker_id == request.target_speaker_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Source and target speaker cannot be the same"
+        )
+
+    # Get source speaker with embeddings
+    source_result = await db.execute(
+        select(Speaker)
+        .where(Speaker.id == request.source_speaker_id)
+        .options(selectinload(Speaker.embeddings))
+    )
+    source_speaker = source_result.scalar_one_or_none()
+
+    if not source_speaker:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source speaker (ID: {request.source_speaker_id}) not found"
+        )
+
+    # Get target speaker with embeddings
+    target_result = await db.execute(
+        select(Speaker)
+        .where(Speaker.id == request.target_speaker_id)
+        .options(selectinload(Speaker.embeddings))
+    )
+    target_speaker = target_result.scalar_one_or_none()
+
+    if not target_speaker:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Target speaker (ID: {request.target_speaker_id}) not found"
+        )
+
+    # Count embeddings before merge
+    source_embedding_count = len(source_speaker.embeddings)
+    target_embedding_count_before = len(target_speaker.embeddings)
+
+    # Move all embeddings from source to target
+    for embedding in source_speaker.embeddings:
+        embedding.speaker_id = request.target_speaker_id
+
+    # Delete source speaker (cascade will NOT delete embeddings since we moved them)
+    source_name = source_speaker.name
+    await db.delete(source_speaker)
+
+    # Commit all changes
+    await db.commit()
+
+    # Refresh target speaker to get updated embedding count
+    await db.refresh(target_speaker)
+
+    # Get final count (need to re-fetch since we committed)
+    final_result = await db.execute(
+        select(Speaker)
+        .where(Speaker.id == request.target_speaker_id)
+        .options(selectinload(Speaker.embeddings))
+    )
+    target_speaker = final_result.scalar_one_or_none()
+    total_embedding_count = len(target_speaker.embeddings) if target_speaker else 0
+
+    logger.info(
+        f"🔗 Merged speaker '{source_name}' into '{target_speaker.name}': "
+        f"{source_embedding_count} embeddings moved, "
+        f"{total_embedding_count} total embeddings"
+    )
+
+    return MergeSpeakersResponse(
+        target_speaker_id=request.target_speaker_id,
+        target_speaker_name=target_speaker.name,
+        merged_embedding_count=source_embedding_count,
+        total_embedding_count=total_embedding_count,
+        source_speaker_deleted=source_name,
+        message=f"Successfully merged '{source_name}' into '{target_speaker.name}'. "
+                f"{source_embedding_count} embeddings transferred."
+    )
 
 
 @router.post("/{speaker_id}/enroll", response_model=EnrollResponse)
