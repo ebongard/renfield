@@ -67,7 +67,7 @@ class CameraEvent(Base):
 class HomeAssistantEntity(Base):
     """Home Assistant Entities Cache"""
     __tablename__ = "ha_entities"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     entity_id = Column(String, unique=True, index=True)
     friendly_name = Column(String)
@@ -75,3 +75,34 @@ class HomeAssistantEntity(Base):
     state = Column(String, nullable=True)
     attributes = Column(JSON, nullable=True)
     last_updated = Column(DateTime, default=datetime.utcnow)
+
+
+# --- Speaker Recognition Models ---
+
+class Speaker(Base):
+    """Registrierter Sprecher für Speaker Recognition"""
+    __tablename__ = "speakers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)       # "Max Mustermann"
+    alias = Column(String(50), unique=True, index=True)  # "max" (für Ansprache)
+    is_admin = Column(Boolean, default=False)        # Admin-Berechtigung
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Beziehungen
+    embeddings = relationship("SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan")
+
+
+class SpeakerEmbedding(Base):
+    """Voice Embedding für einen Sprecher (mehrere pro Speaker für bessere Erkennung)"""
+    __tablename__ = "speaker_embeddings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=False)
+    embedding = Column(Text, nullable=False)         # Base64-encoded numpy array
+    sample_duration = Column(Integer, nullable=True)  # Dauer des Samples in Millisekunden
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Beziehungen
+    speaker = relationship("Speaker", back_populates="embeddings")

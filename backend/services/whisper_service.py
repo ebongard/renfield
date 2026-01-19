@@ -149,9 +149,141 @@ class WhisperService:
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
-        
+
         try:
             return await self.transcribe_file(tmp_path)
         finally:
             # Temporäre Datei löschen
+            Path(tmp_path).unlink(missing_ok=True)
+
+    async def transcribe_with_speaker(
+        self,
+        audio_path: str,
+        db_session=None
+    ) -> dict:
+        """
+        Transcribe audio and identify speaker.
+
+        Args:
+            audio_path: Path to audio file
+            db_session: Optional async database session for speaker lookup
+
+        Returns:
+            {
+                "text": "transcribed text",
+                "speaker_id": int or None,
+                "speaker_name": str or None,
+                "speaker_alias": str or None,
+                "speaker_confidence": float (0-1)
+            }
+        """
+        # Transcribe audio
+        text = await self.transcribe_file(audio_path)
+
+        # Default speaker info
+        speaker_info = {
+            "speaker_id": None,
+            "speaker_name": None,
+            "speaker_alias": None,
+            "speaker_confidence": 0.0
+        }
+
+        # Try to identify speaker if enabled and db_session provided
+        if not settings.speaker_recognition_enabled or db_session is None:
+            return {"text": text, **speaker_info}
+
+        try:
+            from services.speaker_service import get_speaker_service
+            from models.database import Speaker, SpeakerEmbedding
+            from sqlalchemy import select
+            import numpy as np
+
+            service = get_speaker_service()
+
+            if not service.is_available():
+                logger.debug("Speaker recognition not available")
+                return {"text": text, **speaker_info}
+
+            # Extract embedding from audio
+            embedding = service.extract_embedding(audio_path)
+
+            if embedding is None:
+                logger.debug("Could not extract speaker embedding")
+                return {"text": text, **speaker_info}
+
+            # Load known speakers with embeddings
+            result = await db_session.execute(
+                select(Speaker).where(Speaker.embeddings.any())
+            )
+            speakers = result.scalars().all()
+
+            if not speakers:
+                logger.debug("No speakers enrolled")
+                return {"text": text, **speaker_info}
+
+            # Build list of (speaker_id, speaker_name, averaged_embedding)
+            known_speakers = []
+            for speaker in speakers:
+                if not speaker.embeddings:
+                    continue
+
+                embeddings = [
+                    service.embedding_from_base64(emb.embedding)
+                    for emb in speaker.embeddings
+                ]
+
+                if embeddings:
+                    averaged = np.mean(embeddings, axis=0)
+                    known_speakers.append((speaker.id, speaker.name, averaged))
+
+            if not known_speakers:
+                return {"text": text, **speaker_info}
+
+            # Identify speaker
+            result = service.identify_speaker(embedding, known_speakers)
+
+            if result:
+                speaker_id, speaker_name, confidence = result
+
+                # Get alias
+                for speaker in speakers:
+                    if speaker.id == speaker_id:
+                        speaker_info = {
+                            "speaker_id": speaker_id,
+                            "speaker_name": speaker_name,
+                            "speaker_alias": speaker.alias,
+                            "speaker_confidence": confidence
+                        }
+                        logger.info(f"🎤 Speaker identified: {speaker_name} ({confidence:.2f})")
+                        break
+
+        except Exception as e:
+            logger.warning(f"Speaker identification failed: {e}")
+
+        return {"text": text, **speaker_info}
+
+    async def transcribe_bytes_with_speaker(
+        self,
+        audio_bytes: bytes,
+        filename: str = "audio.wav",
+        db_session=None
+    ) -> dict:
+        """
+        Transcribe audio bytes and identify speaker.
+
+        Args:
+            audio_bytes: Raw audio bytes
+            filename: Original filename
+            db_session: Optional async database session
+
+        Returns:
+            Same as transcribe_with_speaker
+        """
+        with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
+            tmp.write(audio_bytes)
+            tmp_path = tmp.name
+
+        try:
+            return await self.transcribe_with_speaker(tmp_path, db_session)
+        finally:
             Path(tmp_path).unlink(missing_ok=True)

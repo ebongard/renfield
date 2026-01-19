@@ -17,7 +17,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes
+from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers
 from services.database import init_db
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
@@ -147,6 +147,7 @@ app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 
 # WebSocket für Echtzeit-Chat
 @app.websocket("/ws")

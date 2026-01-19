@@ -6,6 +6,7 @@ import HomePage from './pages/HomePage';
 import TasksPage from './pages/TasksPage';
 import CameraPage from './pages/CameraPage';
 import HomeAssistantPage from './pages/HomeAssistantPage';
+import SpeakersPage from './pages/SpeakersPage';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
         <Route path="/tasks" element={<TasksPage />} />
         <Route path="/camera" element={<CameraPage />} />
         <Route path="/homeassistant" element={<HomeAssistantPage />} />
+        <Route path="/speakers" element={<SpeakersPage />} />
       </Routes>
     </Layout>
   );

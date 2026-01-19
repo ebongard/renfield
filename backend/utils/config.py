@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     whisper_preprocess_normalize: bool = True     # Enable audio normalization (consistent volume)
     whisper_preprocess_target_db: float = -20.0   # Target dB level for normalization
 
+    # Speaker Recognition
+    speaker_recognition_enabled: bool = True      # Enable speaker recognition
+    speaker_recognition_threshold: float = 0.25  # Minimum similarity for positive identification (0-1)
+    speaker_recognition_device: str = "cpu"      # Device for inference: "cpu" or "cuda"
+
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)
     wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)
