@@ -96,8 +96,10 @@ export default function HomeAssistantPage() {
       {/* Search */}
       <div className="card">
         <div className="relative">
-          <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
+          <label htmlFor="device-search" className="sr-only">Geräte suchen</label>
+          <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" aria-hidden="true" />
           <input
+            id="device-search"
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -137,8 +139,8 @@ export default function HomeAssistantPage() {
         </div>
 
         {loading ? (
-          <div className="card text-center py-12">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
+          <div className="card text-center py-12" role="status" aria-label="Geräte werden geladen">
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
             <p className="text-gray-400">Lade Geräte...</p>
           </div>
         ) : filteredEntities.length === 0 ? (
@@ -146,20 +148,24 @@ export default function HomeAssistantPage() {
             <p className="text-gray-400">Keine Geräte gefunden</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" role="list">
             {filteredEntities.map((entity) => (
-              <div
+              <button
                 key={entity.entity_id}
-                className={`card cursor-pointer transition-all hover:scale-105 ${
+                type="button"
+                className={`card text-left cursor-pointer transition-all hover:scale-105 w-full ${
                   isEntityOn(entity) ? 'bg-primary-900/30 border-2 border-primary-600' : ''
                 }`}
                 onClick={() => toggleEntity(entity.entity_id)}
+                aria-pressed={isEntityOn(entity)}
+                aria-label={`${entity.attributes?.friendly_name || entity.entity_id} ${isEntityOn(entity) ? 'eingeschaltet' : 'ausgeschaltet'}`}
+                role="listitem"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
                     <div className={`p-2 rounded-lg ${
                       isEntityOn(entity) ? 'bg-primary-600' : 'bg-gray-700'
-                    }`}>
+                    }`} aria-hidden="true">
                       {getEntityIcon(entity)}
                     </div>
                     <div>
@@ -169,18 +175,30 @@ export default function HomeAssistantPage() {
                       <p className="text-xs text-gray-400">{entity.entity_id}</p>
                     </div>
                   </div>
-                  <div className={`w-3 h-3 rounded-full ${
-                    isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-600'
-                  }`} />
+                  <div
+                    className={`w-3 h-3 rounded-full ${
+                      isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-600'
+                    }`}
+                    aria-hidden="true"
+                  />
                 </div>
-                
+
                 {entity.attributes?.brightness && (
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
                       <span>Helligkeit</span>
-                      <span>{Math.round((entity.attributes.brightness / 255) * 100)}%</span>
+                      <span aria-label={`Helligkeit ${Math.round((entity.attributes.brightness / 255) * 100)} Prozent`}>
+                        {Math.round((entity.attributes.brightness / 255) * 100)}%
+                      </span>
                     </div>
-                    <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div
+                      className="w-full bg-gray-700 rounded-full h-2"
+                      role="progressbar"
+                      aria-valuenow={Math.round((entity.attributes.brightness / 255) * 100)}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-label="Helligkeit"
+                    >
                       <div
                         className="bg-primary-500 h-2 rounded-full"
                         style={{ width: `${(entity.attributes.brightness / 255) * 100}%` }}
@@ -188,7 +206,7 @@ export default function HomeAssistantPage() {
                     </div>
                   </div>
                 )}
-              </div>
+              </button>
             ))}
           </div>
         )}

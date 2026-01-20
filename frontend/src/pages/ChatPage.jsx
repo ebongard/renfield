@@ -867,7 +867,13 @@ export default function ChatPage() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto card space-y-4 mb-4">
+      <div
+        className="flex-1 overflow-y-auto card space-y-4 mb-4"
+        role="log"
+        aria-live="polite"
+        aria-label="Chat-Verlauf"
+        aria-relevant="additions"
+      >
         {messages.length === 0 && (
           <div className="text-center py-12">
             <p className="text-gray-400 mb-4">Starte ein Gespräch mit Renfield</p>
@@ -881,6 +887,8 @@ export default function ChatPage() {
           <div
             key={index}
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            role="article"
+            aria-label={message.role === 'user' ? 'Deine Nachricht' : 'Antwort von Renfield'}
           >
             <div
               className={`max-w-[70%] px-4 py-2 rounded-lg ${
@@ -890,13 +898,14 @@ export default function ChatPage() {
               }`}
             >
               <p className="whitespace-pre-wrap">{message.content}</p>
-              
+
               {message.role === 'assistant' && !message.streaming && (
                 <button
                   onClick={() => speakText(message.content)}
                   className="mt-2 text-xs text-gray-400 hover:text-white flex items-center space-x-1"
+                  aria-label="Nachricht vorlesen"
                 >
-                  <Volume2 className="w-3 h-3" />
+                  <Volume2 className="w-3 h-3" aria-hidden="true" />
                   <span>Vorlesen</span>
                 </button>
               )}
@@ -905,9 +914,10 @@ export default function ChatPage() {
         ))}
 
         {loading && (
-          <div className="flex justify-start">
+          <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
             <div className="bg-gray-700 px-4 py-2 rounded-lg">
-              <Loader className="w-5 h-5 animate-spin text-gray-400" />
+              <Loader className="w-5 h-5 animate-spin text-gray-400" aria-hidden="true" />
+              <span className="sr-only">Renfield denkt nach...</span>
             </div>
           </div>
         )}
@@ -979,16 +989,25 @@ export default function ChatPage() {
         )}
         
         <div className="flex items-center space-x-2">
+          <label htmlFor="chat-input" className="sr-only">Nachricht eingeben</label>
           <input
+            id="chat-input"
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage(input, false)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage(input, false);
+              }
+            }}
             placeholder="Nachricht eingeben..."
             className="input flex-1"
             disabled={loading || recording}
+            aria-describedby={loading ? 'chat-loading-hint' : undefined}
           />
-          
+          {loading && <span id="chat-loading-hint" className="sr-only">Bitte warten, Nachricht wird verarbeitet</span>}
+
           <button
             onClick={recording ? stopRecording : startRecording}
             className={`p-3 rounded-lg transition-colors ${
@@ -997,17 +1016,19 @@ export default function ChatPage() {
                 : 'bg-gray-700 hover:bg-gray-600'
             }`}
             disabled={loading}
-            title={recording ? 'Klicken um sofort zu stoppen (oder warte auf Stille)' : 'Klicken für Sprachaufnahme'}
+            aria-label={recording ? 'Aufnahme stoppen' : 'Sprachaufnahme starten'}
+            aria-pressed={recording}
           >
-            {recording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {recording ? <MicOff className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
           </button>
 
           <button
             onClick={() => sendMessage(input, false)}
             disabled={loading || !input.trim()}
             className="btn btn-primary"
+            aria-label="Nachricht senden"
           >
-            <Send className="w-5 h-5" />
+            <Send className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
       </div>

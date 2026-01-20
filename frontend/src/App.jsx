@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
+import ErrorBoundary from './components/ErrorBoundary';
 import ChatPage from './pages/ChatPage';
 import HomePage from './pages/HomePage';
 import TasksPage from './pages/TasksPage';
@@ -12,19 +13,21 @@ import { DeviceProvider } from './context/DeviceContext';
 
 function App() {
   return (
-    <DeviceProvider>
-      <Layout>
-        <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/chat" element={<ChatPage />} />
-          <Route path="/tasks" element={<TasksPage />} />
-          <Route path="/camera" element={<CameraPage />} />
-          <Route path="/homeassistant" element={<HomeAssistantPage />} />
-          <Route path="/speakers" element={<SpeakersPage />} />
-          <Route path="/rooms" element={<RoomsPage />} />
-        </Routes>
-      </Layout>
-    </DeviceProvider>
+    <ErrorBoundary>
+      <DeviceProvider>
+        <Layout>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/chat" element={<ChatPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/camera" element={<CameraPage />} />
+            <Route path="/homeassistant" element={<HomeAssistantPage />} />
+            <Route path="/speakers" element={<SpeakersPage />} />
+            <Route path="/rooms" element={<RoomsPage />} />
+          </Routes>
+        </Layout>
+      </DeviceProvider>
+    </ErrorBoundary>
   );
 }
 

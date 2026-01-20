@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import RoomOutputSettings from '../components/RoomOutputSettings';
+import { useConfirmDialog } from '../components/ConfirmDialog';
+import Modal from '../components/Modal';
 
 // Device type icons and labels
 const DEVICE_TYPE_CONFIG = {
@@ -18,6 +20,9 @@ const DEVICE_TYPE_CONFIG = {
 };
 
 export default function RoomsPage() {
+  // Confirm dialog hook
+  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
+
   // State
   const [rooms, setRooms] = useState([]);
   const [haAreas, setHAAreas] = useState([]);
@@ -131,17 +136,23 @@ export default function RoomsPage() {
   };
 
   const deleteRoom = async (room) => {
-    if (!confirm(`Raum "${room.name}" wirklich loeschen?`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Raum löschen?',
+      message: `Möchtest du "${room.name}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`,
+      confirmLabel: 'Löschen',
+      cancelLabel: 'Abbrechen',
+      variant: 'danger',
+    });
+
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/rooms/${room.id}`);
-      setSuccess(`Raum "${room.name}" geloescht`);
+      setSuccess(`Raum "${room.name}" gelöscht`);
       loadRooms();
     } catch (err) {
       console.error('Failed to delete room:', err);
-      setError('Raum konnte nicht geloescht werden');
+      setError('Raum konnte nicht gelöscht werden');
     }
   };
 
@@ -167,17 +178,23 @@ export default function RoomsPage() {
   };
 
   const unlinkFromHA = async (room) => {
-    if (!confirm(`Verknuepfung von "${room.name}" aufheben?`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Verknüpfung aufheben?',
+      message: `Möchtest du die Home Assistant Verknüpfung von "${room.name}" wirklich aufheben?`,
+      confirmLabel: 'Trennen',
+      cancelLabel: 'Abbrechen',
+      variant: 'warning',
+    });
+
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/rooms/${room.id}/link`);
-      setSuccess(`Verknuepfung aufgehoben`);
+      setSuccess(`Verknüpfung aufgehoben`);
       loadRooms();
     } catch (err) {
       console.error('Failed to unlink room:', err);
-      setError('Verknuepfung konnte nicht aufgehoben werden');
+      setError('Verknüpfung konnte nicht aufgehoben werden');
     }
   };
 
@@ -280,9 +297,9 @@ export default function RoomsPage() {
             <button
               onClick={loadRooms}
               className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
-              title="Aktualisieren"
+              aria-label="Räume aktualisieren"
             >
-              <RefreshCw className="w-5 h-5" />
+              <RefreshCw className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -333,9 +350,9 @@ export default function RoomsPage() {
         </h2>
 
         {loading ? (
-          <div className="card text-center py-12">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-400">Lade Raeume...</p>
+          <div className="card text-center py-12" role="status" aria-label="Räume werden geladen">
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
+            <p className="text-gray-400">Lade Räume...</p>
           </div>
         ) : rooms.length === 0 ? (
           <div className="card text-center py-12">
@@ -445,16 +462,16 @@ export default function RoomsPage() {
                   <button
                     onClick={() => openEditModal(room)}
                     className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
-                    title="Bearbeiten"
+                    aria-label={`${room.name} bearbeiten`}
                   >
-                    <Edit3 className="w-4 h-4" />
+                    <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteRoom(room)}
                     className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400"
-                    title="Loeschen"
+                    aria-label={`${room.name} löschen`}
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -730,12 +747,15 @@ export default function RoomsPage() {
                 onClick={() => setShowSyncPanel(false)}
                 className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
               >
-                Schliessen
+                Schließen
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Confirm Dialog */}
+      {ConfirmDialogComponent}
     </div>
   );
 }

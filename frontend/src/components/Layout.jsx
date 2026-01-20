@@ -19,8 +19,16 @@ export default function Layout({ children }) {
 
   return (
     <div className="min-h-screen bg-gray-900">
+      {/* Skip Link for Accessibility */}
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-primary-600 focus:text-white focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400"
+      >
+        Zum Inhalt springen
+      </a>
+
       {/* Navigation */}
-      <nav className="bg-gray-800 border-b border-gray-700">
+      <nav className="bg-gray-800 border-b border-gray-700" aria-label="Hauptnavigation">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between h-16">
             {/* Logo */}
@@ -34,7 +42,7 @@ export default function Layout({ children }) {
             </div>
 
             {/* Desktop Navigation */}
-            <div className="hidden md:flex md:items-center md:space-x-4">
+            <div className="hidden md:flex md:items-center md:space-x-4" role="menubar">
               {navigation.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.href;
@@ -47,8 +55,10 @@ export default function Layout({ children }) {
                         ? 'bg-gray-900 text-primary-400'
                         : 'text-gray-300 hover:bg-gray-700 hover:text-white'
                     }`}
+                    aria-current={isActive ? 'page' : undefined}
+                    role="menuitem"
                   >
-                    <Icon className="w-4 h-4" />
+                    <Icon className="w-4 h-4" aria-hidden="true" />
                     <span>{item.name}</span>
                   </Link>
                 );
@@ -64,9 +74,12 @@ export default function Layout({ children }) {
             <div className="flex items-center md:hidden">
               <button
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-                className="text-gray-400 hover:text-white"
+                className="text-gray-400 hover:text-white p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
+                aria-label={mobileMenuOpen ? 'Menü schließen' : 'Menü öffnen'}
+                aria-expanded={mobileMenuOpen}
+                aria-controls="mobile-menu"
               >
-                {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+                {mobileMenuOpen ? <X className="w-6 h-6" aria-hidden="true" /> : <Menu className="w-6 h-6" aria-hidden="true" />}
               </button>
             </div>
           </div>
@@ -74,8 +87,8 @@ export default function Layout({ children }) {
 
         {/* Mobile Navigation */}
         {mobileMenuOpen && (
-          <div className="md:hidden">
-            <div className="px-2 pt-2 pb-3 space-y-1">
+          <div className="md:hidden" id="mobile-menu">
+            <div className="px-2 pt-2 pb-3 space-y-1" role="menu">
               {navigation.map((item) => {
                 const Icon = item.icon;
                 const isActive = location.pathname === item.href;
@@ -89,8 +102,10 @@ export default function Layout({ children }) {
                         ? 'bg-gray-900 text-primary-400'
                         : 'text-gray-300 hover:bg-gray-700 hover:text-white'
                     }`}
+                    aria-current={isActive ? 'page' : undefined}
+                    role="menuitem"
                   >
-                    <Icon className="w-5 h-5" />
+                    <Icon className="w-5 h-5" aria-hidden="true" />
                     <span>{item.name}</span>
                   </Link>
                 );
@@ -106,7 +121,7 @@ export default function Layout({ children }) {
       </nav>
 
       {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main id="main-content" className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" tabIndex={-1}>
         {children}
       </main>
     </div>

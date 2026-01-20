@@ -5,8 +5,13 @@ import {
   Edit3, GitMerge
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { useConfirmDialog } from '../components/ConfirmDialog';
+import Modal from '../components/Modal';
 
 export default function SpeakersPage() {
+  // Confirm dialog hook
+  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
+
   // State
   const [speakers, setSpeakers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -113,17 +118,23 @@ export default function SpeakersPage() {
   };
 
   const deleteSpeaker = async (speaker) => {
-    if (!confirm(`Sprecher "${speaker.name}" wirklich loeschen?`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Sprecher löschen?',
+      message: `Möchtest du "${speaker.name}" wirklich löschen? Alle Voice Samples gehen verloren.`,
+      confirmLabel: 'Löschen',
+      cancelLabel: 'Abbrechen',
+      variant: 'danger',
+    });
+
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/speakers/${speaker.id}`);
-      setSuccess(`Sprecher "${speaker.name}" geloescht`);
+      setSuccess(`Sprecher "${speaker.name}" gelöscht`);
       loadSpeakers();
     } catch (err) {
       console.error('Failed to delete speaker:', err);
-      setError('Sprecher konnte nicht geloescht werden');
+      setError('Sprecher konnte nicht gelöscht werden');
     }
   };
 
@@ -154,19 +165,25 @@ export default function SpeakersPage() {
 
   const mergeSpeakers = async () => {
     if (!selectedSpeaker || !mergeTargetId) {
-      setError('Bitte Quell- und Zielsprecher auswaehlen');
+      setError('Bitte Quell- und Zielsprecher auswählen');
       return;
     }
 
     if (selectedSpeaker.id === parseInt(mergeTargetId)) {
-      setError('Quell- und Zielsprecher koennen nicht identisch sein');
+      setError('Quell- und Zielsprecher können nicht identisch sein');
       return;
     }
 
     const targetSpeaker = speakers.find(s => s.id === parseInt(mergeTargetId));
-    if (!confirm(`"${selectedSpeaker.name}" in "${targetSpeaker?.name}" zusammenfuehren?\n\nAlle Voice Samples werden uebertragen und "${selectedSpeaker.name}" wird geloescht.`)) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: 'Sprecher zusammenführen?',
+      message: `"${selectedSpeaker.name}" wird in "${targetSpeaker?.name}" zusammengeführt. Alle Voice Samples werden übertragen und "${selectedSpeaker.name}" wird gelöscht.`,
+      confirmLabel: 'Zusammenführen',
+      cancelLabel: 'Abbrechen',
+      variant: 'warning',
+    });
+
+    if (!confirmed) return;
 
     try {
       setMerging(true);
@@ -182,7 +199,7 @@ export default function SpeakersPage() {
       loadSpeakers();
     } catch (err) {
       console.error('Failed to merge speakers:', err);
-      setError(err.response?.data?.detail || 'Zusammenfuehrung fehlgeschlagen');
+      setError(err.response?.data?.detail || 'Zusammenführung fehlgeschlagen');
     } finally {
       setMerging(false);
     }
@@ -377,9 +394,9 @@ export default function SpeakersPage() {
             <button
               onClick={loadSpeakers}
               className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
-              title="Aktualisieren"
+              aria-label="Sprecherliste aktualisieren"
             >
-              <RefreshCw className="w-5 h-5" />
+              <RefreshCw className="w-5 h-5" aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -451,8 +468,8 @@ export default function SpeakersPage() {
         </h2>
 
         {loading ? (
-          <div className="card text-center py-12">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
+          <div className="card text-center py-12" role="status" aria-label="Sprecher werden geladen">
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
             <p className="text-gray-400">Lade Sprecher...</p>
           </div>
         ) : speakers.length === 0 ? (
@@ -506,31 +523,32 @@ export default function SpeakersPage() {
                   <button
                     onClick={() => openEnrollModal(speaker)}
                     className="flex-1 btn bg-green-600 hover:bg-green-700 text-white text-sm flex items-center justify-center space-x-1"
+                    aria-label={`Voice Sample für ${speaker.name} aufnehmen`}
                   >
-                    <Mic className="w-4 h-4" />
+                    <Mic className="w-4 h-4" aria-hidden="true" />
                     <span>Aufnehmen</span>
                   </button>
                   <button
                     onClick={() => openEditModal(speaker)}
                     className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-400"
-                    title="Bearbeiten"
+                    aria-label={`${speaker.name} bearbeiten`}
                   >
-                    <Edit3 className="w-4 h-4" />
+                    <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => openMergeModal(speaker)}
                     className="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 text-purple-400"
-                    title="Zusammenfuehren"
+                    aria-label={`${speaker.name} mit anderem Sprecher zusammenführen`}
                     disabled={speakers.length < 2}
                   >
-                    <GitMerge className="w-4 h-4" />
+                    <GitMerge className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteSpeaker(speaker)}
                     className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400"
-                    title="Loeschen"
+                    aria-label={`${speaker.name} löschen`}
                   >
-                    <Trash2 className="w-4 h-4" />
+                    <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -992,15 +1010,18 @@ export default function SpeakersPage() {
                 className="flex-1 btn bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-50"
               >
                 {merging ? (
-                  <Loader className="w-4 h-4 animate-spin mx-auto" />
+                  <Loader className="w-4 h-4 animate-spin mx-auto" aria-label="Wird zusammengeführt..." />
                 ) : (
-                  'Zusammenfuehren'
+                  'Zusammenführen'
                 )}
               </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* Confirm Dialog */}
+      {ConfirmDialogComponent}
     </div>
   );
 }

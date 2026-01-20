@@ -262,27 +262,32 @@ export default function DeviceSetup({
 
         {/* Room Selection */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            <MapPin className="w-4 h-4 inline mr-2" />
-            Room
+          <label htmlFor="room-select" className="block text-sm font-medium text-gray-300 mb-2">
+            <MapPin className="w-4 h-4 inline mr-2" aria-hidden="true" />
+            Raum
           </label>
           <div className="flex space-x-2">
             <select
+              id="room-select"
               value={selectedRoom}
               onChange={(e) => setSelectedRoom(e.target.value)}
               disabled={loadingRooms}
               className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-primary-500 focus:outline-none disabled:opacity-50"
+              aria-describedby={loadingRooms ? 'room-loading' : undefined}
             >
-              <option value="">Select a room...</option>
+              <option value="">Raum auswählen...</option>
               {rooms.map(room => (
                 <option key={room.id} value={room.name}>
                   {room.name}
                 </option>
               ))}
             </select>
+            {loadingRooms && <span id="room-loading" className="sr-only">Räume werden geladen</span>}
             <button
               onClick={() => setShowNewRoomInput(!showNewRoomInput)}
               className="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors"
+              aria-label="Neuen Raum hinzufügen"
+              aria-expanded={showNewRoomInput}
             >
               +
             </button>
@@ -290,28 +295,37 @@ export default function DeviceSetup({
               onClick={loadRooms}
               disabled={loadingRooms}
               className="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors disabled:opacity-50"
+              aria-label="Räume aktualisieren"
             >
-              <RefreshCw className={`w-4 h-4 ${loadingRooms ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${loadingRooms ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
           </div>
 
           {/* New room input */}
           {showNewRoomInput && (
             <div className="mt-2 flex space-x-2">
+              <label htmlFor="new-room-name" className="sr-only">Name des neuen Raums</label>
               <input
+                id="new-room-name"
                 type="text"
                 value={newRoomName}
                 onChange={(e) => setNewRoomName(e.target.value)}
-                placeholder="New room name..."
+                placeholder="Name des neuen Raums..."
                 className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:border-primary-500 focus:outline-none"
-                onKeyPress={(e) => e.key === 'Enter' && createRoom()}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    createRoom();
+                  }
+                }}
               />
               <button
                 onClick={createRoom}
                 disabled={!newRoomName.trim()}
                 className="px-4 py-2 bg-primary-600 hover:bg-primary-500 rounded-lg text-white transition-colors disabled:opacity-50"
+                aria-label="Raum erstellen"
               >
-                <Check className="w-4 h-4" />
+                <Check className="w-4 h-4" aria-hidden="true" />
               </button>
             </div>
           )}
@@ -358,14 +372,15 @@ export default function DeviceSetup({
 
         {/* Device Name (optional) */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Device Name (optional)
+          <label htmlFor="device-name" className="block text-sm font-medium text-gray-300 mb-2">
+            Gerätename (optional)
           </label>
           <input
+            id="device-name"
             type="text"
             value={deviceName}
             onChange={(e) => setDeviceName(e.target.value)}
-            placeholder="e.g., Living Room iPad"
+            placeholder="z.B. Wohnzimmer iPad"
             className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:border-primary-500 focus:outline-none"
           />
         </div>

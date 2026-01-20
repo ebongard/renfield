@@ -62,8 +62,9 @@ export default function CameraPage() {
           <button
             onClick={() => { loadCameras(); loadEvents(); }}
             className="btn btn-secondary"
+            aria-label="Kameras und Events aktualisieren"
           >
-            <RefreshCw className="w-5 h-5" />
+            <RefreshCw className="w-5 h-5" aria-hidden="true" />
           </button>
         </div>
       </div>
@@ -107,7 +108,7 @@ export default function CameraPage() {
         <h2 className="text-xl font-semibold text-white">Letzte Events</h2>
         
         {loading ? (
-          <div className="card text-center py-12">
+          <div className="card text-center py-12" role="status" aria-label="Events werden geladen">
             <p className="text-gray-400">Lade Events...</p>
           </div>
         ) : events.length === 0 ? (
