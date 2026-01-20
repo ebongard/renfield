@@ -30,6 +30,9 @@ class ServerConfig:
     discovery_timeout: float = 10.0  # Seconds to wait for discovery
     reconnect_interval: int = 5  # seconds
     heartbeat_interval: int = 30  # seconds
+    # Authentication (required when server has WS_AUTH_ENABLED=true)
+    auth_enabled: bool = False  # Whether to fetch and use auth token
+    auth_token: Optional[str] = None  # Pre-configured token (optional)
 
 
 @dataclass
@@ -143,6 +146,9 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.server.discovery_timeout = srv.get("discovery_timeout", config.server.discovery_timeout)
         config.server.reconnect_interval = srv.get("reconnect_interval", config.server.reconnect_interval)
         config.server.heartbeat_interval = srv.get("heartbeat_interval", config.server.heartbeat_interval)
+        config.server.auth_enabled = srv.get("auth_enabled", config.server.auth_enabled)
+        if "auth_token" in srv:
+            config.server.auth_token = srv["auth_token"]
 
     if "audio" in config_data:
         aud = config_data["audio"]
@@ -190,5 +196,10 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.server.auto_discover = os.environ["RENFIELD_AUTO_DISCOVER"].lower() in ("true", "1", "yes")
     if os.environ.get("RENFIELD_WAKEWORD_THRESHOLD"):
         config.wakeword.threshold = float(os.environ["RENFIELD_WAKEWORD_THRESHOLD"])
+    # Auth settings
+    if os.environ.get("RENFIELD_AUTH_ENABLED"):
+        config.server.auth_enabled = os.environ["RENFIELD_AUTH_ENABLED"].lower() in ("true", "1", "yes")
+    if os.environ.get("RENFIELD_AUTH_TOKEN"):
+        config.server.auth_token = os.environ["RENFIELD_AUTH_TOKEN"]
 
     return config

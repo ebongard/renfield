@@ -37,6 +37,8 @@ class ServerConfig:
     """Configuration received from server"""
     wake_words: List[str]
     threshold: float
+    protocol_version: str = "1.0"
+    room_id: Optional[int] = None
 
 
 class WebSocketClient:
@@ -79,6 +81,12 @@ class WebSocketClient:
         self._running = False
         self._server_config: Optional[ServerConfig] = None
 
+        # Authentication
+        self._auth_token: Optional[str] = None
+
+        # Protocol version
+        self._protocol_version: str = "1.0"
+
         # Callbacks
         self._on_state_change: Optional[Callable[[str], None]] = None
         self._on_transcription: Optional[Callable[[str, str], None]] = None
@@ -120,6 +128,15 @@ class WebSocketClient:
             url: WebSocket URL to connect to
         """
         self.server_url = url
+
+    def set_auth_token(self, token: str):
+        """
+        Set authentication token for WebSocket connection.
+
+        Args:
+            token: Auth token from /api/ws/token endpoint
+        """
+        self._auth_token = token
 
     def on_state_change(self, callback: Callable[[str], None]):
         """Register callback for state changes from server"""
@@ -169,11 +186,18 @@ class WebSocketClient:
 
         self._running = True
         self._state = ConnectionState.CONNECTING
+
+        # Build connection URL with optional auth token
+        ws_url = self.server_url
+        if self._auth_token:
+            separator = "&" if "?" in ws_url else "?"
+            ws_url = f"{ws_url}{separator}token={self._auth_token}"
+
         print(f"Connecting to {self.server_url}...")
 
         try:
             self._ws = await websockets.connect(
-                self.server_url,
+                ws_url,
                 ping_interval=20,
                 ping_timeout=10,
             )
@@ -234,7 +258,8 @@ class WebSocketClient:
                 "speaker": True,
                 "led_count": 3,
                 "button": True,
-            }
+            },
+            "protocol_version": self._protocol_version
         }
 
         await self._send(message)
@@ -246,16 +271,27 @@ class WebSocketClient:
         if data.get("type") == "register_ack":
             if data.get("success"):
                 config = data.get("config", {})
+                server_protocol = data.get("protocol_version", "1.0")
+                room_id = data.get("room_id")
+
                 self._server_config = ServerConfig(
                     wake_words=config.get("wake_words", ["hey_jarvis"]),
-                    threshold=config.get("threshold", 0.5)
+                    threshold=config.get("threshold", 0.5),
+                    protocol_version=server_protocol,
+                    room_id=room_id
                 )
-                print(f"Registered successfully. Config: {self._server_config}")
+                print(f"Registered successfully. Server protocol: {server_protocol}")
+                print(f"Config: wake_words={self._server_config.wake_words}, threshold={self._server_config.threshold}")
 
                 if self._on_connected:
                     self._on_connected(self._server_config)
             else:
-                raise Exception("Registration rejected by server")
+                error_msg = data.get("message", "Registration rejected by server")
+                raise Exception(error_msg)
+        elif data.get("type") == "error":
+            error_code = data.get("code", "UNKNOWN")
+            error_msg = data.get("message", "Unknown error")
+            raise Exception(f"Registration failed [{error_code}]: {error_msg}")
 
     async def disconnect(self):
         """Disconnect from server"""
@@ -362,10 +398,30 @@ class WebSocketClient:
             pass  # Heartbeat acknowledged
 
         elif msg_type == "error":
+            error_code = data.get("code", "UNKNOWN")
             error_msg = data.get("message", "Unknown error")
-            print(f"Server error: {error_msg}")
+            print(f"Server error [{error_code}]: {error_msg}")
+
+            # Handle specific error codes
+            if error_code == "RATE_LIMITED":
+                print("⚠️ Rate limited by server - slowing down")
+                await asyncio.sleep(1)
+            elif error_code == "BUFFER_FULL":
+                print("⚠️ Audio buffer full - ending current session")
+                self._current_session_id = None
+            elif error_code in ("UNAUTHORIZED", "AUTH_REQUIRED"):
+                print("❌ Authentication failed - may need new token")
+
             if self._on_error:
-                self._on_error(error_msg)
+                self._on_error(f"{error_code}: {error_msg}")
+
+        elif msg_type == "server_shutdown":
+            # Server is shutting down gracefully
+            shutdown_msg = data.get("message", "Server is shutting down")
+            print(f"⚠️ {shutdown_msg}")
+            self._state = ConnectionState.DISCONNECTED
+            if self._on_disconnected:
+                self._on_disconnected()
 
     async def _heartbeat_loop(self):
         """Background task sending periodic heartbeats"""

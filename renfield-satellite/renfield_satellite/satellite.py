@@ -24,6 +24,7 @@ from .hardware.led import LEDController, LEDPattern
 from .hardware.button import ButtonHandler
 from .network.websocket_client import WebSocketClient, ServerConfig
 from .network.discovery import ServiceDiscovery
+from .network.auth import fetch_ws_token, http_url_from_ws
 
 
 class SatelliteState(str, Enum):
@@ -195,6 +196,10 @@ class Satellite:
         if server_url:
             self.ws_client.set_server_url(server_url)
             print(f"Server: {server_url}")
+
+            # Fetch auth token if authentication is enabled
+            if self.config.server.auth_enabled:
+                await self._fetch_and_set_token(server_url)
         else:
             print("No server URL configured and auto-discovery disabled/failed")
             self._set_state(SatelliteState.ERROR)
@@ -296,11 +301,43 @@ class Satellite:
                 if server_url:
                     self.ws_client.set_server_url(server_url)
 
+                    # Fetch new auth token if authentication is enabled
+                    if self.config.server.auth_enabled:
+                        await self._fetch_and_set_token(server_url)
+
             # Try to connect
             if await self.ws_client.connect():
                 return True
 
         return False
+
+    async def _fetch_and_set_token(self, server_url: str):
+        """
+        Fetch authentication token and set it on the WebSocket client.
+
+        Args:
+            server_url: WebSocket URL to derive HTTP URL from
+        """
+        # Use pre-configured token if available
+        if self.config.server.auth_token:
+            print("Using pre-configured auth token")
+            self.ws_client.set_auth_token(self.config.server.auth_token)
+            return
+
+        # Derive HTTP URL from WebSocket URL
+        http_url = http_url_from_ws(server_url)
+        print(f"Fetching auth token from {http_url}...")
+
+        token, protocol_version = await fetch_ws_token(
+            http_url,
+            self.config.satellite.id,
+            device_type="satellite"
+        )
+
+        if token:
+            self.ws_client.set_auth_token(token)
+        else:
+            print("⚠️ No token received - server may have auth disabled")
 
     async def _main_loop(self):
         """Main event loop"""
