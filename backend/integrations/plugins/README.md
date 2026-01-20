@@ -122,6 +122,51 @@ SPOTIFY_ACCESS_TOKEN=<dein_access_token>
 
 ---
 
+### 5. Jellyfin Plugin (`jellyfin.yaml`)
+
+**Beschreibung:** Musik-Streaming von Jellyfin Media Server (DLNA/UPnP)
+
+**Intents:**
+- `jellyfin.search_music` - Musik suchen (Songs, Alben, Künstler)
+- `jellyfin.list_albums` - Alle Alben anzeigen
+- `jellyfin.list_artists` - Alle Künstler anzeigen
+- `jellyfin.get_album_tracks` - Tracks eines Albums
+- `jellyfin.get_artist_albums` - Alben eines Künstlers
+- `jellyfin.get_genres` - Alle Genres anzeigen
+- `jellyfin.get_recent` - Kürzlich hinzugefügte Musik
+- `jellyfin.get_favorites` - Favoriten anzeigen
+- `jellyfin.get_playlists` - Playlists anzeigen
+- `jellyfin.get_stream_url` - Streaming-URL abrufen
+- `jellyfin.library_stats` - Bibliotheks-Statistiken
+
+**Konfiguration:**
+```bash
+JELLYFIN_ENABLED=true
+JELLYFIN_URL=http://192.168.1.123:8096
+JELLYFIN_API_KEY=<dein_api_key>
+JELLYFIN_USER_ID=<deine_user_id>
+```
+
+**API-Key erhalten:**
+1. Jellyfin Dashboard → Administration → API Keys
+2. "+" klicken, Namen vergeben (z.B. "Renfield")
+3. API-Key kopieren
+
+**User-ID erhalten:**
+```bash
+curl "http://192.168.1.123:8096/Users?api_key=YOUR_KEY"
+# → "Id" Feld kopieren
+```
+
+**Beispiele:**
+- "Suche nach Musik von Queen"
+- "Zeige mir alle Alben"
+- "Welche Künstler habe ich?"
+- "Neue Musik anzeigen"
+- "Meine Lieblingssongs"
+
+---
+
 ## 🏗️ Eigenes Plugin erstellen
 
 ### Minimales Plugin-Beispiel

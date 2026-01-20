@@ -89,7 +89,27 @@ class Settings(BaseSettings):
     
     # Security
     secret_key: str = "changeme-in-production-use-strong-random-key"
-    
+
+    # CORS
+    cors_origins: str = "*"  # Comma-separated list or "*" for development
+
+    # WebSocket Security
+    ws_auth_enabled: bool = False  # Enable WebSocket authentication (set True in production)
+    ws_token_expire_minutes: int = 60  # WebSocket token expiration
+
+    # WebSocket Rate Limiting
+    ws_rate_limit_enabled: bool = True
+    ws_rate_limit_per_second: int = 20
+    ws_rate_limit_per_minute: int = 200
+
+    # WebSocket Connection Limits
+    ws_max_connections_per_ip: int = 10
+    ws_max_message_size: int = 1_000_000  # 1MB max message size
+    ws_max_audio_buffer_size: int = 10_000_000  # 10MB max audio buffer per session
+
+    # WebSocket Protocol
+    ws_protocol_version: str = "1.0"
+
     class Config:
         env_file = ".env"
         case_sensitive = False

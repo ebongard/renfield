@@ -206,14 +206,82 @@ ADVERTISE_HOST=demeter.local      # Server Hostname
 ```bash
 # Secret Key für Sessions/JWT
 SECRET_KEY=changeme-in-production-use-strong-random-key
+
+# CORS Origins (kommasepariert oder "*" für Entwicklung)
+CORS_ORIGINS=*
+CORS_ORIGINS=https://renfield.local,https://admin.local
 ```
 
-**Default:** `changeme-in-production-use-strong-random-key`
-**Hinweis:** In Produktion IMMER durch starken Zufallsschlüssel ersetzen!
+**Defaults:**
+- `SECRET_KEY`: `changeme-in-production-use-strong-random-key`
+- `CORS_ORIGINS`: `*`
+
+**Hinweis:** In Produktion IMMER durch starken Zufallsschlüssel und spezifische Origins ersetzen!
 
 **Generierung:**
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+```
+
+---
+
+### WebSocket Security
+
+```bash
+# WebSocket Authentifizierung aktivieren (für Produktion empfohlen!)
+WS_AUTH_ENABLED=false
+
+# Token-Gültigkeitsdauer in Minuten
+WS_TOKEN_EXPIRE_MINUTES=60
+
+# Rate Limiting aktivieren
+WS_RATE_LIMIT_ENABLED=true
+
+# Maximale Messages pro Sekunde/Minute
+WS_RATE_LIMIT_PER_SECOND=20
+WS_RATE_LIMIT_PER_MINUTE=200
+
+# Maximale WebSocket-Verbindungen pro IP
+WS_MAX_CONNECTIONS_PER_IP=10
+
+# Maximale Message-Größe in Bytes (Standard: 1MB)
+WS_MAX_MESSAGE_SIZE=1000000
+
+# Maximale Audio-Buffer-Größe pro Session in Bytes (Standard: 10MB)
+WS_MAX_AUDIO_BUFFER_SIZE=10000000
+
+# WebSocket Protokoll-Version
+WS_PROTOCOL_VERSION=1.0
+```
+
+**Defaults:**
+- `WS_AUTH_ENABLED`: `false` (für Entwicklung)
+- `WS_TOKEN_EXPIRE_MINUTES`: `60`
+- `WS_RATE_LIMIT_ENABLED`: `true`
+- `WS_RATE_LIMIT_PER_SECOND`: `20`
+- `WS_RATE_LIMIT_PER_MINUTE`: `200`
+- `WS_MAX_CONNECTIONS_PER_IP`: `10`
+- `WS_MAX_MESSAGE_SIZE`: `1000000` (1MB)
+- `WS_MAX_AUDIO_BUFFER_SIZE`: `10000000` (10MB)
+- `WS_PROTOCOL_VERSION`: `1.0`
+
+**Produktion:**
+```bash
+# EMPFOHLEN für Produktion:
+WS_AUTH_ENABLED=true
+CORS_ORIGINS=https://yourdomain.com
+```
+
+**Token-Generierung (wenn WS_AUTH_ENABLED=true):**
+```bash
+# Token für ein Gerät anfordern
+curl -X POST "http://localhost:8000/api/ws/token?device_id=my-device&device_type=web_browser"
+```
+
+**WebSocket-Verbindung mit Token:**
+```javascript
+// JavaScript
+const ws = new WebSocket(`ws://localhost:8000/ws?token=${token}`);
 ```
 
 ---
@@ -405,6 +473,57 @@ SPOTIFY_ACCESS_TOKEN=your_access_token
 
 ---
 
+### Jellyfin Plugin (DLNA/UPnP Media Server)
+
+```bash
+# Plugin aktivieren
+JELLYFIN_ENABLED=true
+
+# API-Konfiguration
+JELLYFIN_URL=http://192.168.1.123:8096
+JELLYFIN_API_KEY=your_api_key_here
+JELLYFIN_USER_ID=your_user_id_here
+```
+
+**Erforderlich:**
+- `JELLYFIN_ENABLED` - Boolean
+- `JELLYFIN_URL` - Jellyfin Server URL (inkl. Port, Standard: 8096)
+- `JELLYFIN_API_KEY` - API-Schlüssel
+- `JELLYFIN_USER_ID` - Benutzer-ID für personalisierte Bibliothek
+
+**API-Key erhalten:**
+1. Jellyfin Dashboard öffnen → Administration → API Keys
+2. "+" klicken, Namen vergeben (z.B. "Renfield")
+3. API-Key kopieren
+
+**User-ID erhalten:**
+1. Jellyfin Dashboard → Administration → Users
+2. Gewünschten Benutzer auswählen
+3. User-ID aus der URL kopieren (z.B. `d4f8...`)
+4. Oder: `curl "http://192.168.1.123:8096/Users?api_key=YOUR_KEY"` → `Id` Feld
+
+**Intents:**
+- `jellyfin.search_music` - Musik suchen (Songs, Alben, Künstler)
+- `jellyfin.list_albums` - Alle Alben anzeigen
+- `jellyfin.list_artists` - Alle Künstler anzeigen
+- `jellyfin.get_album_tracks` - Tracks eines Albums
+- `jellyfin.get_artist_albums` - Alben eines Künstlers
+- `jellyfin.get_genres` - Alle Genres anzeigen
+- `jellyfin.get_recent` - Kürzlich hinzugefügte Musik
+- `jellyfin.get_favorites` - Favoriten anzeigen
+- `jellyfin.get_playlists` - Playlists anzeigen
+- `jellyfin.get_stream_url` - Streaming-URL abrufen
+- `jellyfin.library_stats` - Bibliotheks-Statistiken
+
+**Beispiele:**
+- "Suche nach Musik von Queen"
+- "Zeige mir alle Alben"
+- "Welche Künstler habe ich?"
+- "Neue Musik anzeigen"
+- "Meine Lieblingssongs"
+
+---
+
 ## Best Practices
 
 ### 1. Niemals Secrets committen
@@ -587,6 +706,14 @@ mv .env.utf8 .env
 POSTGRES_PASSWORD=changeme_secure_password
 LOG_LEVEL=INFO
 SECRET_KEY=changeme-in-production
+
+# -----------------------------------------------------------------------------
+# Security (WebSocket & CORS)
+# -----------------------------------------------------------------------------
+CORS_ORIGINS=*
+WS_AUTH_ENABLED=false
+WS_RATE_LIMIT_ENABLED=true
+WS_MAX_CONNECTIONS_PER_IP=10
 
 # -----------------------------------------------------------------------------
 # Ollama LLM

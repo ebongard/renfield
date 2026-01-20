@@ -2,16 +2,18 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
 from loguru import logger
 from datetime import datetime
+from pydantic import ValidationError
+import asyncio
 import os
 import sys
 import uuid
-from typing import Optional
+from typing import Optional, List
 
 # Logging konfigurieren
 logger.remove()
@@ -19,16 +21,30 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
 from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms
-from services.database import init_db
+from services.database import init_db, AsyncSessionLocal
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from services.whisper_service import WhisperService
 from services.device_manager import get_device_manager, DeviceState, DeviceManager
+from services.websocket_auth import (
+    get_token_store, authenticate_websocket, close_unauthorized, WSAuthError
+)
+from services.websocket_rate_limiter import (
+    get_rate_limiter, get_connection_limiter, WSRateLimiter, WSConnectionLimiter
+)
 from models.database import (
     DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL,
     DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK, DEVICE_TYPES, DEFAULT_CAPABILITIES
 )
+from models.websocket_messages import (
+    parse_ws_message, create_error_response, WSErrorCode, WSErrorResponse,
+    WSRegisterMessage, WSTextMessage, WSAudioMessage, WSAudioEndMessage,
+    WSWakewordDetectedMessage, WSStartSessionMessage, WSHeartbeatMessage, WSChatMessage
+)
 from utils.config import settings
+
+# Track background tasks for graceful shutdown
+_startup_tasks: List[asyncio.Task] = []
 
 # Global Whisper Service (singleton to avoid reloading model)
 _whisper_service: Optional[WhisperService] = None
@@ -84,8 +100,6 @@ async def lifespan(app: FastAPI):
 
     # Whisper Service vorladen (für STT)
     try:
-        import asyncio
-
         async def preload_whisper():
             """Lade Whisper-Modell im Hintergrund"""
             try:
@@ -96,15 +110,15 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"⚠️  Whisper konnte nicht vorgeladen werden: {e}")
                 logger.warning("💡 Spracheingabe wird beim ersten Gebrauch geladen")
 
-        # Starte im Hintergrund
-        asyncio.create_task(preload_whisper())
+        # Starte im Hintergrund und tracke Task
+        task = asyncio.create_task(preload_whisper())
+        _startup_tasks.append(task)
     except Exception as e:
         logger.warning(f"⚠️  Whisper-Preloading fehlgeschlagen: {e}")
-    
+
     # Home Assistant Keywords vorladen (optional, im Hintergrund)
     try:
         from integrations.homeassistant import HomeAssistantClient
-        import asyncio
 
         async def preload_keywords():
             """Lade HA Keywords im Hintergrund"""
@@ -115,8 +129,9 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.warning(f"⚠️  Keywords konnten nicht vorgeladen werden: {e}")
 
-        # Starte im Hintergrund (blockiert Start nicht)
-        asyncio.create_task(preload_keywords())
+        # Starte im Hintergrund und tracke Task
+        task = asyncio.create_task(preload_keywords())
+        _startup_tasks.append(task)
     except Exception as e:
         logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
 
@@ -132,12 +147,37 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    # Graceful Shutdown
+    logger.info("👋 Renfield wird heruntergefahren...")
+
+    # Cancel pending startup tasks
+    for task in _startup_tasks:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    # Notify all connected devices about shutdown
+    try:
+        device_manager = get_device_manager()
+        shutdown_msg = {"type": "server_shutdown", "message": "Server is shutting down"}
+        for device in list(device_manager.devices.values()):
+            try:
+                await device.websocket.send_json(shutdown_msg)
+                await device.websocket.close(code=1001, reason="Server shutdown")
+            except Exception:
+                pass
+        logger.info(f"👋 Notified {len(device_manager.devices)} devices about shutdown")
+    except Exception as e:
+        logger.warning(f"⚠️ Error notifying devices: {e}")
+
     # Zeroconf Service stoppen
     if zeroconf_service:
         await zeroconf_service.stop()
-    
-    # Cleanup
-    logger.info("👋 Renfield wird heruntergefahren...")
+
+    logger.info("✅ Shutdown complete")
 
 # FastAPI App erstellen
 app = FastAPI(
@@ -147,13 +187,17 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS Middleware
+# CORS Middleware - configured via settings
+_cors_origins = (
+    ["*"] if settings.cors_origins == "*"
+    else [origin.strip() for origin in settings.cors_origins.split(",")]
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In Produktion einschränken
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
 # Router einbinden
@@ -166,19 +210,41 @@ app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settin
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 
+# Helper function for sending WebSocket errors
+async def _send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, request_id: str = None):
+    """Send a structured error response to the WebSocket client."""
+    try:
+        await websocket.send_json(create_error_response(code, message, request_id))
+    except Exception:
+        pass
+
+
 # WebSocket für Echtzeit-Chat
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str = Query(None, description="Authentication token")
+):
     """WebSocket Verbindung für Echtzeit-Chat"""
+    # Get client IP for rate limiting
+    ip_address = websocket.client.host if websocket.client else "unknown"
+
+    # Check authentication if enabled
+    auth_result = await authenticate_websocket(websocket, token)
+    if not auth_result:
+        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
+        return
+
     await websocket.accept()
-    logger.info("✅ WebSocket Verbindung hergestellt")
+    logger.info(f"✅ WebSocket Verbindung hergestellt (IP: {ip_address})")
+
+    # Get rate limiter
+    rate_limiter = get_rate_limiter()
 
     # Try to auto-detect room context from IP address
     room_context = None
     try:
-        ip_address = websocket.client.host if websocket.client else None
-        if ip_address:
-            from services.database import AsyncSessionLocal
+        if ip_address and ip_address != "unknown":
             from services.room_service import RoomService
 
             async with AsyncSessionLocal() as db_session:
@@ -196,8 +262,22 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # Nachricht empfangen
             data = await websocket.receive_json()
-            message_type = data.get("type", "text")
-            content = data.get("content", "")
+
+            # Rate limiting check
+            allowed, reason = rate_limiter.check(ip_address)
+            if not allowed:
+                await _send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
+                continue
+
+            # Validate message
+            try:
+                msg = WSChatMessage(**data)
+                message_type = msg.type
+                content = msg.content
+                request_id = msg.request_id
+            except ValidationError as e:
+                await _send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
+                continue
 
             logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}'")
 
@@ -298,11 +378,14 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
 
 # WebSocket for Satellite Voice Assistants
 @app.websocket("/ws/satellite")
-async def satellite_websocket(websocket: WebSocket):
+async def satellite_websocket(
+    websocket: WebSocket,
+    token: str = Query(None, description="Authentication token")
+):
     """
     WebSocket endpoint for Raspberry Pi satellite voice assistants.
 
-    Protocol:
+    Protocol v1.0:
     Satellite → Server:
         - {"type": "register", "satellite_id": str, "room": str, "capabilities": {...}}
         - {"type": "wakeword_detected", "keyword": str, "confidence": float, "session_id": str}
@@ -311,23 +394,49 @@ async def satellite_websocket(websocket: WebSocket):
         - {"type": "heartbeat", "status": str, "uptime_seconds": int}
 
     Server → Satellite:
-        - {"type": "register_ack", "success": bool, "config": {...}}
+        - {"type": "register_ack", "success": bool, "config": {...}, "protocol_version": str}
         - {"type": "state", "state": "idle|listening|processing|speaking"}
         - {"type": "transcription", "session_id": str, "text": str}
         - {"type": "action", "session_id": str, "intent": {...}, "success": bool}
         - {"type": "tts_audio", "session_id": str, "audio": str (base64), "is_final": bool}
+        - {"type": "error", "code": str, "message": str}
     """
+    # Extract client info
+    ip_address = websocket.client.host if websocket.client else "unknown"
+
+    # Check authentication if enabled
+    auth_result = await authenticate_websocket(websocket, token)
+    if not auth_result:
+        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
+        return
+
+    # Check connection limits
+    connection_limiter = get_connection_limiter()
+    can_connect, reason = connection_limiter.can_connect(ip_address, f"sat-pending-{ip_address}")
+    if not can_connect:
+        await websocket.close(code=4003, reason=reason)
+        return
+
     await websocket.accept()
-    logger.info("📡 Satellite WebSocket connection established")
+    logger.info(f"📡 Satellite WebSocket connection established (IP: {ip_address})")
 
     from services.satellite_manager import get_satellite_manager, SatelliteState
     satellite_manager = get_satellite_manager()
+    rate_limiter = get_rate_limiter()
 
     satellite_id = None
 
     try:
         while True:
             data = await websocket.receive_json()
+
+            # Rate limiting
+            rate_key = satellite_id if satellite_id else ip_address
+            allowed, rate_reason = rate_limiter.check(rate_key)
+            if not allowed:
+                await _send_ws_error(websocket, WSErrorCode.RATE_LIMITED, rate_reason)
+                continue
+
             msg_type = data.get("type", "")
 
             # Handle registration
@@ -335,6 +444,9 @@ async def satellite_websocket(websocket: WebSocket):
                 satellite_id = data.get("satellite_id", "unknown")
                 room = data.get("room", "Unknown Room")
                 capabilities = data.get("capabilities", {})
+
+                # Update connection limiter with actual satellite_id
+                connection_limiter.add_connection(ip_address, satellite_id)
 
                 success = await satellite_manager.register(
                     satellite_id=satellite_id,
@@ -347,7 +459,6 @@ async def satellite_websocket(websocket: WebSocket):
                 room_id = None
                 if success and settings.rooms_auto_create_from_satellite:
                     try:
-                        from services.database import AsyncSessionLocal
                         from services.room_service import RoomService
 
                         async with AsyncSessionLocal() as db_session:
@@ -371,7 +482,8 @@ async def satellite_websocket(websocket: WebSocket):
                         "wake_words": satellite_manager.default_wake_words,
                         "threshold": satellite_manager.default_threshold
                     },
-                    "room_id": room_id
+                    "room_id": room_id,
+                    "protocol_version": settings.ws_protocol_version
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
@@ -402,7 +514,9 @@ async def satellite_websocket(websocket: WebSocket):
                 sequence = data.get("sequence", 0)
 
                 if session_id and chunk_b64:
-                    satellite_manager.buffer_audio(session_id, chunk_b64, sequence)
+                    success, error = satellite_manager.buffer_audio(session_id, chunk_b64, sequence)
+                    if not success:
+                        await _send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
 
             # Handle end of audio
             elif msg_type == "audio_end":
@@ -575,10 +689,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
         import traceback
         logger.error(traceback.format_exc())
     finally:
+        # Clean up connection limiter
+        if satellite_id and ip_address:
+            connection_limiter.remove_connection(ip_address, satellite_id)
+
         if satellite_id:
             # Mark satellite offline in database
             try:
-                from services.database import AsyncSessionLocal
                 from services.room_service import RoomService
 
                 async with AsyncSessionLocal() as db_session:
@@ -592,7 +709,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
 # Unified WebSocket for All Device Types (Satellites + Web Clients)
 @app.websocket("/ws/device")
-async def device_websocket(websocket: WebSocket):
+async def device_websocket(
+    websocket: WebSocket,
+    token: str = Query(None, description="Authentication token")
+):
     """
     Unified WebSocket endpoint for all device types (satellites and web clients).
 
@@ -603,10 +723,10 @@ async def device_websocket(websocket: WebSocket):
     - Web browsers (desktop browser)
     - Web kiosks (touch terminals)
 
-    Protocol:
+    Protocol v1.0:
     Device → Server:
         - {"type": "register", "device_id": str, "device_type": str, "room": str,
-           "capabilities": {...}, "device_name": str?, "is_stationary": bool?}
+           "capabilities": {...}, "device_name": str?, "is_stationary": bool?, "protocol_version": str?}
         - {"type": "wakeword_detected", "keyword": str, "confidence": float, "session_id": str?}
         - {"type": "audio", "chunk": str (base64), "sequence": int, "session_id": str}
         - {"type": "audio_end", "session_id": str, "reason": str}
@@ -615,7 +735,7 @@ async def device_websocket(websocket: WebSocket):
         - {"type": "heartbeat", "status": str}
 
     Server → Device:
-        - {"type": "register_ack", "success": bool, "config": {...}, "room_id": int?}
+        - {"type": "register_ack", "success": bool, "config": {...}, "room_id": int?, "protocol_version": str}
         - {"type": "state", "state": "idle|listening|processing|speaking"}
         - {"type": "transcription", "session_id": str, "text": str, "speaker_name": str?, ...}
         - {"type": "action", "session_id": str, "intent": {...}, "success": bool}
@@ -623,43 +743,77 @@ async def device_websocket(websocket: WebSocket):
         - {"type": "response_text", "session_id": str, "text": str, "is_final": bool}
         - {"type": "stream", "session_id": str, "content": str}
         - {"type": "session_end", "session_id": str, "reason": str}
+        - {"type": "error", "code": str, "message": str}
     """
+    # Extract client info
+    user_agent = websocket.headers.get("user-agent", "") if websocket.headers else ""
+    ip_address = websocket.client.host if websocket.client else "unknown"
+
+    # Check authentication if enabled
+    auth_result = await authenticate_websocket(websocket, token)
+    if not auth_result:
+        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
+        return
+
+    # Check connection limits
+    connection_limiter = get_connection_limiter()
+    can_connect, reason = connection_limiter.can_connect(ip_address, f"pending-{ip_address}")
+    if not can_connect:
+        await websocket.close(code=4003, reason=reason)
+        return
+
     await websocket.accept()
-    logger.info("📱 Device WebSocket connection established")
+    logger.info(f"📱 Device WebSocket connection established (IP: {ip_address})")
 
     device_manager = get_device_manager()
+    rate_limiter = get_rate_limiter()
     device_id = None
-
-    # Extract client info from headers
-    user_agent = None
-    ip_address = None
-    try:
-        user_agent = websocket.headers.get("user-agent", "")
-        ip_address = websocket.client.host if websocket.client else None
-    except:
-        pass
 
     try:
         while True:
             data = await websocket.receive_json()
+
+            # Rate limiting (use device_id if registered, otherwise IP)
+            rate_key = device_id if device_id else ip_address
+            allowed, reason = rate_limiter.check(rate_key)
+            if not allowed:
+                await _send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
+                continue
+
             msg_type = data.get("type", "")
 
             # === REGISTRATION ===
             if msg_type == "register":
-                device_id = data.get("device_id", f"device-{uuid.uuid4().hex[:8]}")
-                device_type = data.get("device_type", DEVICE_TYPE_WEB_BROWSER)
-                room = data.get("room", "Unknown Room")
-                device_name = data.get("device_name")
-                is_stationary = data.get("is_stationary", True)
+                # Validate registration message
+                try:
+                    reg_msg = WSRegisterMessage(**data)
+                    device_id = reg_msg.device_id
+                    device_type = reg_msg.device_type
+                    room = reg_msg.room
+                    device_name = reg_msg.device_name
+                    is_stationary = reg_msg.is_stationary
+                    client_protocol = reg_msg.protocol_version
+                except ValidationError as e:
+                    await _send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, f"Invalid registration: {e}")
+                    continue
 
                 # Validate device type
                 if device_type not in DEVICE_TYPES:
                     logger.warning(f"⚠️ Unknown device type: {device_type}, defaulting to web_browser")
                     device_type = DEVICE_TYPE_WEB_BROWSER
 
+                # Check connection limits with actual device_id
+                can_connect, conn_reason = connection_limiter.can_connect(ip_address, device_id)
+                if not can_connect:
+                    await _send_ws_error(websocket, WSErrorCode.DEVICE_ERROR, conn_reason)
+                    continue
+
+                # Track connection
+                connection_limiter.add_connection(ip_address, device_id)
+
                 # Merge default capabilities with provided ones
                 default_caps = DEFAULT_CAPABILITIES.get(device_type, {}).copy()
-                provided_caps = data.get("capabilities", {})
+                provided_caps = reg_msg.capabilities.model_dump() if reg_msg.capabilities else {}
                 capabilities = {**default_caps, **provided_caps}
 
                 # Register device
@@ -679,7 +833,6 @@ async def device_websocket(websocket: WebSocket):
                 room_id = None
                 if success:
                     try:
-                        from services.database import AsyncSessionLocal
                         from services.room_service import RoomService
 
                         async with AsyncSessionLocal() as db_session:
@@ -697,12 +850,11 @@ async def device_websocket(websocket: WebSocket):
                             if db_device:
                                 room_id = db_device.room_id
                                 device_manager.set_room_id(device_id, room_id)
-                                # Use the provided room name (avoid lazy loading in async context)
                                 logger.info(f"📍 Device {device_id} linked to room '{room}' (id: {room_id})")
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to persist device to database: {e}")
 
-                # Send registration acknowledgement
+                # Send registration acknowledgement with protocol version
                 await websocket.send_json({
                     "type": "register_ack",
                     "success": success,
@@ -712,7 +864,8 @@ async def device_websocket(websocket: WebSocket):
                         "threshold": device_manager.default_threshold
                     },
                     "room_id": room_id,
-                    "capabilities": capabilities
+                    "capabilities": capabilities,
+                    "protocol_version": settings.ws_protocol_version
                 })
 
                 type_emoji = "📡" if device_type == DEVICE_TYPE_SATELLITE else "📱"
@@ -758,12 +911,20 @@ async def device_websocket(websocket: WebSocket):
 
             # === AUDIO STREAMING ===
             elif msg_type == "audio":
-                session_id = data.get("session_id")
-                chunk_b64 = data.get("chunk", "")
-                sequence = data.get("sequence", 0)
+                # Validate audio message
+                try:
+                    audio_msg = WSAudioMessage(**data)
+                    session_id = audio_msg.session_id
+                    chunk_b64 = audio_msg.chunk
+                    sequence = audio_msg.sequence
+                except ValidationError as e:
+                    await _send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, f"Invalid audio message: {e}")
+                    continue
 
                 if session_id and chunk_b64:
-                    device_manager.buffer_audio(session_id, chunk_b64, sequence)
+                    success, error = device_manager.buffer_audio(session_id, chunk_b64, sequence)
+                    if not success:
+                        await _send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
 
             # === END OF AUDIO / PROCESS REQUEST ===
             elif msg_type == "audio_end":
@@ -809,10 +970,13 @@ async def device_websocket(websocket: WebSocket):
         import traceback
         logger.error(traceback.format_exc())
     finally:
+        # Clean up connection limiter
+        if device_id and ip_address:
+            connection_limiter.remove_connection(ip_address, device_id)
+
         if device_id:
             # Mark device offline in database
             try:
-                from services.database import AsyncSessionLocal
                 from services.room_service import RoomService
 
                 async with AsyncSessionLocal() as db_session:
@@ -1271,18 +1435,113 @@ async def wakeword_websocket(websocket: WebSocket):
         await websocket.close()
 
 
-# Health Check
+# Health Check Endpoints
 @app.get("/health")
 async def health_check():
-    """System Health Check"""
-    return {
-        "status": "healthy",
-        "services": {
-            "ollama": "ok",
-            "database": "ok",
-            "redis": "ok"
+    """Quick health check for load balancers."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready")
+async def readiness_check():
+    """Kubernetes readiness probe - checks all dependencies."""
+    from sqlalchemy import text
+
+    checks = {}
+    overall_healthy = True
+
+    # Database check
+    try:
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
+        checks["database"] = {"status": "healthy"}
+    except Exception as e:
+        checks["database"] = {"status": "unhealthy", "error": str(e)}
+        overall_healthy = False
+
+    # Ollama check
+    try:
+        ollama = app.state.ollama if hasattr(app.state, "ollama") else None
+        if ollama:
+            checks["ollama"] = {"status": "healthy", "model": settings.ollama_model}
+        else:
+            checks["ollama"] = {"status": "degraded", "error": "Not initialized"}
+    except Exception as e:
+        checks["ollama"] = {"status": "unhealthy", "error": str(e)}
+        overall_healthy = False
+
+    # Redis check (optional)
+    try:
+        import redis.asyncio as redis
+        r = redis.from_url(settings.redis_url)
+        await r.ping()
+        await r.close()
+        checks["redis"] = {"status": "healthy"}
+    except Exception as e:
+        checks["redis"] = {"status": "degraded", "error": str(e)}
+        # Redis is optional, don't fail health check
+
+    # Connected devices count
+    try:
+        device_manager = get_device_manager()
+        checks["devices"] = {
+            "status": "healthy",
+            "connected": len(device_manager.devices),
+            "active_sessions": len(device_manager.sessions)
         }
+    except Exception:
+        checks["devices"] = {"status": "unknown"}
+
+    status = "healthy" if overall_healthy else "unhealthy"
+    status_code = 200 if overall_healthy else 503
+
+    return JSONResponse(
+        content={
+            "status": status,
+            "version": "1.0.0",
+            "checks": checks,
+            "timestamp": datetime.utcnow().isoformat()
+        },
+        status_code=status_code
+    )
+
+
+@app.get("/health/live")
+async def liveness_check():
+    """Kubernetes liveness probe - just checks if app is running."""
+    return {"status": "alive", "timestamp": datetime.utcnow().isoformat()}
+
+# WebSocket Token Generation Endpoint
+@app.post("/api/ws/token")
+async def create_ws_token(
+    device_id: str = None,
+    device_type: str = None
+):
+    """
+    Generate a WebSocket authentication token.
+
+    Only relevant when WS_AUTH_ENABLED=true.
+    In production, this endpoint should be protected by authentication.
+    """
+    if not settings.ws_auth_enabled:
+        return {
+            "token": None,
+            "message": "WebSocket authentication is disabled",
+            "expires_in": None
+        }
+
+    token_store = get_token_store()
+    token = token_store.create_token(
+        device_id=device_id,
+        device_type=device_type
+    )
+
+    return {
+        "token": token,
+        "expires_in": settings.ws_token_expire_minutes * 60,
+        "protocol_version": settings.ws_protocol_version
     }
+
 
 # Admin Endpoint: Refresh HA Keywords
 @app.post("/admin/refresh-keywords")

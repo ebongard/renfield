@@ -9,6 +9,7 @@ Features:
 - Concurrent request handling (different rooms in parallel)
 - First-speaker-wins for same-room conflicts
 - Audio buffer management for streaming
+- Message size limits and buffer protection
 """
 
 import asyncio
@@ -17,9 +18,11 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from fastapi import WebSocket
 from loguru import logger
+
+from utils.config import settings
 
 
 class SatelliteState(str, Enum):
@@ -217,7 +220,7 @@ class SatelliteManager:
         session_id: str,
         chunk_b64: str,
         sequence: int
-    ) -> bool:
+    ) -> Tuple[bool, str]:
         """
         Buffer an audio chunk from a satellite.
 
@@ -227,26 +230,37 @@ class SatelliteManager:
             sequence: Sequence number for ordering
 
         Returns:
-            True if buffered successfully
+            Tuple of (success: bool, error_message: str)
         """
         if session_id not in self.sessions:
             logger.warning(f"⚠️ Audio for unknown session: {session_id}")
-            return False
+            return False, "Unknown session"
 
         session = self.sessions[session_id]
+
+        # Check message size limit
+        if len(chunk_b64) > settings.ws_max_message_size:
+            logger.warning(f"⚠️ Audio chunk too large: {len(chunk_b64)} bytes (max: {settings.ws_max_message_size})")
+            return False, f"Audio chunk too large (max: {settings.ws_max_message_size} bytes)"
 
         # Decode audio
         try:
             audio_bytes = base64.b64decode(chunk_b64)
         except Exception as e:
             logger.error(f"❌ Failed to decode audio chunk: {e}")
-            return False
+            return False, "Invalid base64 encoding"
+
+        # Check buffer size limit
+        current_size = sum(len(c) for c in session.audio_chunks)
+        if current_size + len(audio_bytes) > settings.ws_max_audio_buffer_size:
+            logger.warning(f"⚠️ Audio buffer full for session {session_id}: {current_size} bytes")
+            return False, f"Audio buffer full (max: {settings.ws_max_audio_buffer_size} bytes)"
 
         # Buffer chunk
         session.audio_chunks.append(audio_bytes)
         session.audio_sequence = sequence
 
-        return True
+        return True, ""
 
     def get_audio_buffer(self, session_id: str) -> Optional[bytes]:
         """

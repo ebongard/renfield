@@ -93,6 +93,9 @@ class GenericPlugin:
                 f"Intent '{intent_name}' not found in plugin '{self.definition.metadata.name}'"
             )
 
+        # Apply default values for missing parameters
+        parameters = self._apply_defaults(intent_def, parameters)
+
         # Validate parameters
         validation_error = self._validate_parameters(intent_def, parameters)
         if validation_error:
@@ -105,6 +108,33 @@ class GenericPlugin:
         except Exception as e:
             logger.error(f"❌ Plugin execution error: {e}")
             return PluginResponse.error(str(e))
+
+    def _apply_defaults(
+        self,
+        intent_def: IntentDefinition,
+        parameters: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Apply default values for parameters that are not provided
+
+        Args:
+            intent_def: Intent definition with parameter specs
+            parameters: User-provided parameters
+
+        Returns:
+            Parameters dict with defaults applied
+        """
+        result = dict(parameters)  # Copy to avoid mutating original
+
+        for param_def in intent_def.parameters:
+            param_name = param_def.name
+
+            # If parameter not provided and has a default, apply it
+            if param_name not in result and param_def.default is not None:
+                result[param_name] = param_def.default
+                logger.debug(f"Applied default for {param_name}: {param_def.default}")
+
+        return result
 
     def _find_intent(self, intent_name: str) -> Optional[IntentDefinition]:
         """Find intent definition by name"""
