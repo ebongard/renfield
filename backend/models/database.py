@@ -1,7 +1,7 @@
 """
 Datenbank Models
 """
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -132,6 +132,12 @@ class Room(Base):
 
     # Beziehungen
     devices = relationship("RoomDevice", back_populates="room", cascade="all, delete-orphan")
+    output_devices = relationship(
+        "RoomOutputDevice",
+        back_populates="room",
+        cascade="all, delete-orphan",
+        order_by="RoomOutputDevice.priority"
+    )
 
     @property
     def satellites(self):
@@ -273,6 +279,73 @@ DEFAULT_CAPABILITIES = {
         "has_button": False,
     },
 }
+
+
+# Output Device Types
+OUTPUT_TYPE_AUDIO = "audio"
+OUTPUT_TYPE_VISUAL = "visual"
+
+OUTPUT_TYPES = [OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL]
+
+
+class RoomOutputDevice(Base):
+    """
+    Output device configuration for a room.
+
+    Defines which devices should be used for TTS audio output
+    in a room, with priority ordering and interruption settings.
+
+    Either renfield_device_id OR ha_entity_id must be set (not both).
+    """
+    __tablename__ = "room_output_devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
+
+    # Device source: either Renfield device OR Home Assistant entity
+    renfield_device_id = Column(String(100), ForeignKey("room_devices.device_id"), nullable=True)
+    ha_entity_id = Column(String(255), nullable=True)  # e.g. "media_player.linn_dsm"
+
+    # Output type
+    output_type = Column(String(20), nullable=False, default=OUTPUT_TYPE_AUDIO)
+
+    # Priority (1 = highest)
+    priority = Column(Integer, nullable=False, default=1)
+
+    # Interruption setting
+    allow_interruption = Column(Boolean, default=False)
+
+    # Volume setting (0.0 - 1.0, None = no change)
+    tts_volume = Column(Float, nullable=True, default=0.5)
+
+    # Device name (cached for display)
+    device_name = Column(String(255), nullable=True)
+
+    # Status
+    is_enabled = Column(Boolean, default=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    room = relationship("Room", back_populates="output_devices")
+    renfield_device = relationship("RoomDevice", foreign_keys=[renfield_device_id])
+
+    @property
+    def is_renfield_device(self) -> bool:
+        """Check if this output uses a Renfield device"""
+        return self.renfield_device_id is not None
+
+    @property
+    def is_ha_device(self) -> bool:
+        """Check if this output uses a Home Assistant entity"""
+        return self.ha_entity_id is not None
+
+    @property
+    def target_id(self) -> str:
+        """Get the target device/entity ID"""
+        return self.renfield_device_id or self.ha_entity_id or ""
 
 
 # Legacy alias for backward compatibility

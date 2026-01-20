@@ -119,6 +119,58 @@ class DeviceRegisterRequest(BaseModel):
     is_stationary: bool = True
 
 
+# --- Output Device Models ---
+
+class OutputDeviceCreate(BaseModel):
+    """Request model for creating an output device"""
+    output_type: str = "audio"  # "audio" or "visual"
+    renfield_device_id: Optional[str] = None
+    ha_entity_id: Optional[str] = None
+    priority: int = 1
+    allow_interruption: bool = False
+    tts_volume: Optional[float] = 0.5
+    device_name: Optional[str] = None
+
+
+class OutputDeviceUpdate(BaseModel):
+    """Request model for updating an output device"""
+    priority: Optional[int] = None
+    allow_interruption: Optional[bool] = None
+    tts_volume: Optional[float] = None
+    is_enabled: Optional[bool] = None
+    device_name: Optional[str] = None
+
+
+class OutputDeviceResponse(BaseModel):
+    """Response model for output device"""
+    id: int
+    room_id: int
+    output_type: str
+    renfield_device_id: Optional[str]
+    ha_entity_id: Optional[str]
+    priority: int
+    allow_interruption: bool
+    tts_volume: Optional[float]
+    device_name: Optional[str]
+    is_enabled: bool
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+class OutputDeviceReorderRequest(BaseModel):
+    """Request model for reordering output devices"""
+    device_ids: List[int]
+
+
+class AvailableOutputResponse(BaseModel):
+    """Response model for available output devices (HA + Renfield)"""
+    renfield_devices: List[dict]
+    ha_media_players: List[dict]
+
+
 class ConnectedDeviceResponse(BaseModel):
     """Response model for currently connected device (from DeviceManager)"""
     device_id: str
@@ -757,3 +809,216 @@ async def move_device_to_room(
         "room_id": room_id,
         "room_name": room.name
     }
+
+
+# --- Output Device Endpoints ---
+
+def _output_device_to_response(device) -> OutputDeviceResponse:
+    """Convert RoomOutputDevice model to response"""
+    return OutputDeviceResponse(
+        id=device.id,
+        room_id=device.room_id,
+        output_type=device.output_type,
+        renfield_device_id=device.renfield_device_id,
+        ha_entity_id=device.ha_entity_id,
+        priority=device.priority,
+        allow_interruption=device.allow_interruption,
+        tts_volume=device.tts_volume,
+        device_name=device.device_name,
+        is_enabled=device.is_enabled,
+        created_at=device.created_at.isoformat() if device.created_at else None,
+        updated_at=device.updated_at.isoformat() if device.updated_at else None
+    )
+
+
+@router.get("/{room_id}/output-devices", response_model=List[OutputDeviceResponse])
+async def get_room_output_devices(
+    room_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Get all output devices configured for a room"""
+    from services.output_routing_service import OutputRoutingService
+
+    service = RoomService(db)
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    routing_service = OutputRoutingService(db)
+    devices = await routing_service.get_output_devices_for_room(room_id)
+
+    return [_output_device_to_response(d) for d in devices]
+
+
+@router.post("/{room_id}/output-devices", response_model=OutputDeviceResponse)
+async def add_output_device(
+    room_id: int,
+    request: OutputDeviceCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Add an output device to a room"""
+    from services.output_routing_service import OutputRoutingService
+
+    service = RoomService(db)
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    # Validate that either renfield_device_id or ha_entity_id is provided
+    if not request.renfield_device_id and not request.ha_entity_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Either renfield_device_id or ha_entity_id must be provided"
+        )
+
+    if request.renfield_device_id and request.ha_entity_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Only one of renfield_device_id or ha_entity_id can be provided"
+        )
+
+    # Validate output_type
+    from models.database import OUTPUT_TYPES
+    if request.output_type not in OUTPUT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid output_type. Must be one of: {OUTPUT_TYPES}"
+        )
+
+    routing_service = OutputRoutingService(db)
+
+    try:
+        device = await routing_service.add_output_device(
+            room_id=room_id,
+            output_type=request.output_type,
+            renfield_device_id=request.renfield_device_id,
+            ha_entity_id=request.ha_entity_id,
+            priority=request.priority,
+            allow_interruption=request.allow_interruption,
+            tts_volume=request.tts_volume,
+            device_name=request.device_name
+        )
+        return _output_device_to_response(device)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.patch("/output-devices/{device_id}", response_model=OutputDeviceResponse)
+async def update_output_device(
+    device_id: int,
+    request: OutputDeviceUpdate,
+    db: AsyncSession = Depends(get_db)
+):
+    """Update an output device"""
+    from services.output_routing_service import OutputRoutingService
+
+    routing_service = OutputRoutingService(db)
+
+    device = await routing_service.update_output_device(
+        device_id=device_id,
+        priority=request.priority,
+        allow_interruption=request.allow_interruption,
+        tts_volume=request.tts_volume,
+        is_enabled=request.is_enabled,
+        device_name=request.device_name
+    )
+
+    if not device:
+        raise HTTPException(status_code=404, detail="Output device not found")
+
+    return _output_device_to_response(device)
+
+
+@router.delete("/output-devices/{device_id}")
+async def delete_output_device(
+    device_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """Delete an output device"""
+    from services.output_routing_service import OutputRoutingService
+
+    routing_service = OutputRoutingService(db)
+    success = await routing_service.delete_output_device(device_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail="Output device not found")
+
+    return {"message": "Output device deleted", "id": device_id}
+
+
+@router.post("/{room_id}/output-devices/reorder", response_model=List[OutputDeviceResponse])
+async def reorder_output_devices(
+    room_id: int,
+    request: OutputDeviceReorderRequest,
+    output_type: str = "audio",
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reorder output devices by setting new priorities.
+
+    The device_ids list should be in the desired order (first = highest priority).
+    """
+    from services.output_routing_service import OutputRoutingService
+    from models.database import OUTPUT_TYPES
+
+    service = RoomService(db)
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    if output_type not in OUTPUT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid output_type. Must be one of: {OUTPUT_TYPES}"
+        )
+
+    routing_service = OutputRoutingService(db)
+    devices = await routing_service.reorder_output_devices(
+        room_id=room_id,
+        output_type=output_type,
+        device_ids=request.device_ids
+    )
+
+    return [_output_device_to_response(d) for d in devices]
+
+
+@router.get("/{room_id}/available-outputs", response_model=AvailableOutputResponse)
+async def get_available_outputs(
+    room_id: int,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get all available output devices for a room.
+
+    Returns both Renfield devices (with speaker capability) and
+    Home Assistant media_player entities.
+    """
+    from services.output_routing_service import OutputRoutingService
+
+    service = RoomService(db)
+    room = await service.get_room(room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    routing_service = OutputRoutingService(db)
+
+    # Get Renfield devices with speaker capability
+    renfield_devices = await routing_service.get_available_renfield_devices(room_id)
+    renfield_list = [
+        {
+            "device_id": d.device_id,
+            "device_name": d.device_name or d.device_id,
+            "device_type": d.device_type,
+            "is_online": d.is_online,
+            "capabilities": d.capabilities
+        }
+        for d in renfield_devices
+    ]
+
+    # Get HA media players
+    ha_media_players = await routing_service.get_available_ha_media_players()
+
+    return AvailableOutputResponse(
+        renfield_devices=renfield_list,
+        ha_media_players=ha_media_players
+    )

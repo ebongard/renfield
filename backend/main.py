@@ -534,7 +534,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     tts_audio = await piper.synthesize_to_bytes(response_text)
 
                     if tts_audio:
-                        await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+                        # Route TTS to the best available output device
+                        await _route_satellite_tts_output(
+                            satellite_manager, satellite, session_id, tts_audio
+                        )
                     else:
                         logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
@@ -967,14 +970,15 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
         if device.capabilities.has_display:
             await device_manager.send_response_text(session_id, response_text, is_final=True)
 
-        # Generate and send TTS (for devices with speakers)
-        if device.capabilities.has_speaker and response_text:
+        # Generate TTS audio if response text exists
+        if response_text:
             from services.piper_service import PiperService
             piper = PiperService()
             tts_audio = await piper.synthesize_to_bytes(response_text)
 
             if tts_audio:
-                await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+                # Route TTS to the best available output device
+                await _route_tts_output(device_manager, device, session_id, tts_audio)
             else:
                 logger.warning(f"⚠️ TTS synthesis failed for session {session_id}")
 
@@ -985,6 +989,130 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
     # End session
     await device_manager.end_session(session_id, reason="completed")
+
+
+async def _route_tts_output(
+    device_manager: DeviceManager,
+    device,
+    session_id: str,
+    tts_audio: bytes
+):
+    """
+    Route TTS audio to the best available output device.
+
+    Routing logic:
+    1. If device has no room_id → output on input device
+    2. Check configured output devices for room
+    3. Use best available output device (by priority)
+    4. Fallback to input device if no output devices available
+    """
+    # If device is not registered or has no room, fallback to input device
+    if not device.room_id:
+        logger.debug(f"Device {device.device_id} has no room_id, using input device for output")
+        if device.capabilities.has_speaker:
+            await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+        return
+
+    try:
+        from services.database import AsyncSessionLocal
+        from services.output_routing_service import OutputRoutingService
+        from services.audio_output_service import get_audio_output_service
+
+        async with AsyncSessionLocal() as db_session:
+            routing_service = OutputRoutingService(db_session)
+            audio_output_service = get_audio_output_service()
+
+            # Get the best audio output device for this room
+            decision = await routing_service.get_audio_output_for_room(
+                room_id=device.room_id,
+                input_device_id=device.device_id
+            )
+
+            logger.info(f"🔊 Output routing decision: {decision.reason} → {decision.target_type}:{decision.target_id}")
+
+            if decision.output_device and not decision.fallback_to_input:
+                # Use configured output device
+                success = await audio_output_service.play_audio(
+                    audio_bytes=tts_audio,
+                    output_device=decision.output_device,
+                    session_id=session_id
+                )
+
+                if not success:
+                    # Fallback to input device if output failed
+                    logger.warning(f"Output device playback failed, falling back to input device")
+                    if device.capabilities.has_speaker:
+                        await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+            else:
+                # Fallback to input device
+                if device.capabilities.has_speaker:
+                    await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+
+    except Exception as e:
+        logger.error(f"❌ Output routing failed: {e}, falling back to input device")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Fallback to input device on error
+        if device.capabilities.has_speaker:
+            await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+
+
+async def _route_satellite_tts_output(
+    satellite_manager,
+    satellite,
+    session_id: str,
+    tts_audio: bytes
+):
+    """
+    Route TTS audio for satellite devices to the best available output device.
+
+    Similar to _route_tts_output but for the satellite WebSocket handler.
+    """
+    # If satellite has no room_id, fallback to satellite itself
+    if not satellite or not satellite.room_id:
+        logger.debug(f"Satellite has no room_id, using satellite for output")
+        await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+        return
+
+    try:
+        from services.database import AsyncSessionLocal
+        from services.output_routing_service import OutputRoutingService
+        from services.audio_output_service import get_audio_output_service
+
+        async with AsyncSessionLocal() as db_session:
+            routing_service = OutputRoutingService(db_session)
+            audio_output_service = get_audio_output_service()
+
+            # Get the best audio output device for this room
+            decision = await routing_service.get_audio_output_for_room(
+                room_id=satellite.room_id,
+                input_device_id=satellite.satellite_id
+            )
+
+            logger.info(f"🔊 Satellite output routing: {decision.reason} → {decision.target_type}:{decision.target_id}")
+
+            if decision.output_device and not decision.fallback_to_input:
+                # Use configured output device
+                success = await audio_output_service.play_audio(
+                    audio_bytes=tts_audio,
+                    output_device=decision.output_device,
+                    session_id=session_id
+                )
+
+                if not success:
+                    # Fallback to satellite if output failed
+                    logger.warning(f"Output device playback failed, falling back to satellite")
+                    await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+            else:
+                # Fallback to satellite
+                await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+
+    except Exception as e:
+        logger.error(f"❌ Satellite output routing failed: {e}, falling back to satellite")
+        import traceback
+        logger.error(traceback.format_exc())
+        # Fallback to satellite on error
+        await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
 
 # WebSocket for Wake Word Detection (Server-Side Fallback)

@@ -6,6 +6,7 @@ import {
   Monitor, Tablet, Smartphone, Tv
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import RoomOutputSettings from '../components/RoomOutputSettings';
 
 // Device type icons and labels
 const DEVICE_TYPE_CONFIG = {
@@ -418,6 +419,9 @@ export default function RoomsPage() {
                     })}
                   </div>
                 )}
+
+                {/* Output Device Settings */}
+                <RoomOutputSettings roomId={room.id} roomName={room.name} />
 
                 {/* Actions */}
                 <div className="flex space-x-2">
