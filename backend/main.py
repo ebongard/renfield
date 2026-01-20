@@ -543,7 +543,6 @@ async def satellite_websocket(
 
                 # Transcribe with Whisper (with speaker recognition)
                 try:
-                    from services.database import AsyncSessionLocal
                     whisper = get_whisper_service()
                     whisper.load_model()  # No-op if already loaded
 

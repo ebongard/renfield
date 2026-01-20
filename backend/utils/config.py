@@ -98,9 +98,10 @@ class Settings(BaseSettings):
     ws_token_expire_minutes: int = 60  # WebSocket token expiration
 
     # WebSocket Rate Limiting
+    # Note: Audio streaming sends ~12.5 chunks/second, so limits must accommodate this
     ws_rate_limit_enabled: bool = True
-    ws_rate_limit_per_second: int = 20
-    ws_rate_limit_per_minute: int = 200
+    ws_rate_limit_per_second: int = 50  # Allows audio streaming + overhead
+    ws_rate_limit_per_minute: int = 1000  # Allows longer recordings and multiple interactions
 
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10
