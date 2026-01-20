@@ -181,15 +181,31 @@ export default function ChatPage() {
         });
       } else if (data.type === 'done') {
         // Stream beendet
+        const ttsHandledByServer = data.tts_handled === true;
+
         setMessages(prev => {
           const lastMsg = prev[prev.length - 1];
           if (lastMsg && lastMsg.streaming) {
             const completedMessage = { ...lastMsg, streaming: false };
 
-            // Auto-TTS wenn Input via Voice kam
-            console.log('🔍 Prüfe Auto-TTS: Channel =', lastInputChannelRef.current, ', Role =', completedMessage.role, ', Pending =', autoTTSPendingRef.current);
+            // Auto-TTS wenn Input via Voice kam UND Server TTS nicht bereits gehandelt hat
+            console.log('🔍 Prüfe Auto-TTS: Channel =', lastInputChannelRef.current, ', Role =', completedMessage.role, ', Pending =', autoTTSPendingRef.current, ', ServerHandled =', ttsHandledByServer);
 
-            if (lastInputChannelRef.current === 'voice' && completedMessage.role === 'assistant') {
+            if (ttsHandledByServer) {
+              console.log('🔊 TTS wurde vom Server an Ausgabegerät gesendet - lokale Wiedergabe übersprungen');
+
+              // Resume wake word even though TTS was handled server-side
+              // (we don't know when the external playback finishes, so resume immediately)
+              if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
+                // Wait a bit for the audio to start playing on the external device
+                setTimeout(() => {
+                  console.log('▶️ Resuming wake word detection after server TTS...');
+                  resumeWakeWord();
+                  setWakeWordStatus('listening');
+                  wakeWordActivatedRef.current = false;
+                }, 3000); // 3 second delay to allow external playback
+              }
+            } else if (lastInputChannelRef.current === 'voice' && completedMessage.role === 'assistant') {
               // Prüfe ob bereits ein Auto-TTS Request läuft (verhindert Race Condition)
               if (autoTTSPendingRef.current) {
                 console.log('⚠️  Auto-TTS übersprungen: Bereits ein Request aktiv');

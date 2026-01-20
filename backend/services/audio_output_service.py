@@ -166,7 +166,7 @@ class AudioOutputService:
                     )
                     logger.debug(f"Set volume to {tts_volume} for {entity_id}")
 
-            # Play the audio
+            # Play the audio (use longer timeout as HA needs to fetch the audio file)
             success = await self.ha_client.call_service(
                 domain="media_player",
                 service="play_media",
@@ -174,7 +174,8 @@ class AudioOutputService:
                 service_data={
                     "media_content_id": audio_url,
                     "media_content_type": "music"
-                }
+                },
+                timeout=30.0  # Longer timeout for media playback
             )
 
             if success:
@@ -231,14 +232,16 @@ class AudioOutputService:
         Get the URL for the backend that HA can access.
 
         Priority:
-        1. ADVERTISE_HOST from settings
-        2. Backend host:port from settings
+        1. ADVERTISE_HOST from settings (required for HA integration)
+        2. Fallback to localhost (warning: won't work if HA is on different host)
         """
-        if hasattr(settings, 'advertise_host') and settings.advertise_host:
+        if settings.advertise_host:
             host = settings.advertise_host
-            return f"http://{host}:8000"
+            port = settings.advertise_port or 8000
+            return f"http://{host}:{port}"
 
-        # Fallback to localhost (might not work if HA is on different host)
+        # Fallback to localhost - this will likely not work for HA
+        logger.warning("⚠️ ADVERTISE_HOST not set - HA may not be able to fetch TTS audio!")
         return "http://localhost:8000"
 
     async def _cleanup_old_cache_files(self):

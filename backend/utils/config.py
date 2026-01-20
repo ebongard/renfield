@@ -74,6 +74,10 @@ class Settings(BaseSettings):
     # Room Management
     rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
 
+    # Output Routing
+    advertise_host: Optional[str] = None  # Hostname/IP that external services (like HA) can reach
+    advertise_port: int = 8000            # Port for advertise_host
+
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)
     wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)

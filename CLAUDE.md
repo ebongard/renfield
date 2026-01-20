@@ -148,7 +148,7 @@ docker compose up -d
 docker exec renfield-backend curl http://cuda.local:11434/api/tags
 ```
 
-**Dokumentation:** Siehe [EXTERNAL_OLLAMA.md](EXTERNAL_OLLAMA.md) für vollständige Anleitung zur Nutzung externer Ollama-Instanzen.
+**Dokumentation:** Siehe [EXTERNAL_OLLAMA.md](docs/EXTERNAL_OLLAMA.md) für vollständige Anleitung zur Nutzung externer Ollama-Instanzen.
 
 ## Architecture
 
@@ -293,6 +293,55 @@ This context is passed to intent recognition, allowing commands like "turn on th
 - `DELETE /api/rooms/devices/{device_id}` - Delete a device
 - `PATCH /api/rooms/devices/{device_id}/room/{room_id}` - Move device to another room
 
+### Audio Output Routing System
+
+Renfield supports intelligent routing of TTS responses to the best available output device in a room:
+
+**Features:**
+- Configurable output devices per room with priority ordering
+- Availability checking (on/off, busy/idle)
+- Interruption preferences per device
+- TTS volume control per device
+- Automatic fallback to input device when no output device is available
+- Supports Renfield devices (Satellites, Web Panels) and Home Assistant Media Players
+
+**Key Implementation:**
+- `OutputRoutingService` (`backend/services/output_routing_service.py`): Routing logic and device selection
+- `AudioOutputService` (`backend/services/audio_output_service.py`): Audio delivery to devices
+- `RoomOutputDevice` model: Database persistence for output device configurations
+- TTS cache endpoint for HA media players (`/api/voice/tts-cache/{audio_id}`)
+
+**Routing Algorithm:**
+```
+1. Get all configured output devices for room, sorted by priority
+2. For each device (in priority order):
+   a. Check availability via HA API / DeviceManager
+   b. If available (idle/paused) → use it
+   c. If busy AND allow_interruption=True → use it
+   d. If busy AND allow_interruption=False → try next
+   e. If off/unreachable → try next
+3. If no configured device available → fallback to input device
+4. If nothing available → no audio output
+```
+
+**API Endpoints:**
+- `GET /api/rooms/{room_id}/output-devices` - Get configured output devices
+- `POST /api/rooms/{room_id}/output-devices` - Add output device
+- `PATCH /api/rooms/output-devices/{id}` - Update device settings
+- `DELETE /api/rooms/output-devices/{id}` - Remove output device
+- `POST /api/rooms/{room_id}/output-devices/reorder` - Reorder priorities
+- `GET /api/rooms/{room_id}/available-outputs` - Get available devices (Renfield + HA)
+
+**WebSocket Protocol:**
+The `done` message includes a `tts_handled` flag:
+```json
+{"type": "done", "tts_handled": true}
+```
+- `tts_handled: true` → TTS was sent to external device, frontend skips local playback
+- `tts_handled: false` → Frontend plays TTS locally (as before)
+
+**Documentation:** See `OUTPUT_ROUTING.md` for detailed documentation.
+
 ### Backend Structure
 
 ```
@@ -317,6 +366,8 @@ backend/
 │   ├── satellite_manager.py  # Satellite session management
 │   ├── device_manager.py     # Web device session management
 │   ├── room_service.py       # Room and device CRUD, HA area sync
+│   ├── output_routing_service.py  # Audio/visual output device routing
+│   ├── audio_output_service.py    # TTS delivery to output devices
 │   ├── action_executor.py    # Routes intents to appropriate integrations
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
@@ -502,7 +553,8 @@ All configuration is in `.env` and loaded via `backend/utils/config.py` using Py
 - `PIPER_VOICE` - Piper voice model (default: `de_DE-thorsten-high`)
 - `WAKE_WORD_DEFAULT` - Default wake word for satellites (default: `alexa`)
 - `WAKE_WORD_THRESHOLD` - Wake word detection threshold (default: `0.5`)
-- `ADVERTISE_HOST` - Hostname for Zeroconf service advertisement
+- `ADVERTISE_HOST` - Hostname/IP for Zeroconf and TTS URL (required for HA media player output)
+- `ADVERTISE_PORT` - Port for advertise host (default: `8000`)
 - `SPEAKER_RECOGNITION_ENABLED` - Enable speaker recognition (default: `true`)
 - `SPEAKER_RECOGNITION_THRESHOLD` - Similarity threshold for identification (default: `0.25`)
 - `SPEAKER_AUTO_ENROLL` - Auto-create profiles for unknown speakers (default: `true`)
@@ -656,6 +708,7 @@ Additional documentation files in the repository:
 - `FEATURES.md` - Feature documentation
 - `EXTERNAL_OLLAMA.md` - External Ollama instance setup
 - `SPEAKER_RECOGNITION.md` - Speaker recognition system documentation
+- `OUTPUT_ROUTING.md` - Audio output device routing system documentation
 - `renfield-satellite/README.md` - Satellite setup guide
 - `backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference

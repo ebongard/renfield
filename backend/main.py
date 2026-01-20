@@ -226,7 +226,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     "result": action_result
                 })
             
-            # Response generieren
+            # Response generieren und Text sammeln für TTS
+            full_response = ""
+
             if action_result and action_result.get("success"):
                 # Erfolgreiche Aktion - nutze Ergebnis
                 result_info = action_result.get('message', '')
@@ -244,36 +246,46 @@ Die Aktion wurde ausgeführt:
 
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
-                
+
                 # Stream die Antwort
                 async for chunk in ollama.chat_stream(enhanced_prompt):
+                    full_response += chunk
                     await websocket.send_json({
                         "type": "stream",
                         "content": chunk
                     })
-            
+
             elif action_result and not action_result.get("success"):
                 # Aktion fehlgeschlagen
-                error_message = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+                full_response = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
                 await websocket.send_json({
                     "type": "stream",
-                    "content": error_message
+                    "content": full_response
                 })
-            
+
             else:
                 # Normale Konversation
                 async for chunk in ollama.chat_stream(content):
+                    full_response += chunk
                     await websocket.send_json({
                         "type": "stream",
                         "content": chunk
                     })
-            
-            # Stream beendet
+
+            # Check for output routing if we have room context
+            tts_handled_by_server = False
+            if room_context and room_context.get("room_id") and full_response:
+                tts_handled_by_server = await _route_chat_tts_output(
+                    room_context, full_response, websocket
+                )
+
+            # Stream beendet - tell frontend if TTS was handled server-side
             await websocket.send_json({
-                "type": "done"
+                "type": "done",
+                "tts_handled": tts_handled_by_server
             })
-            
-            logger.info("✅ WebSocket Response gesendet")
+
+            logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
             
     except WebSocketDisconnect:
         logger.info("👋 WebSocket Verbindung getrennt")
@@ -1055,6 +1067,70 @@ async def _route_tts_output(
         # Fallback to input device on error
         if device.capabilities.has_speaker:
             await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
+
+
+async def _route_chat_tts_output(
+    room_context: dict,
+    response_text: str,
+    websocket: WebSocket
+) -> bool:
+    """
+    Route TTS audio for chat WebSocket to the best available output device.
+
+    Returns True if TTS was handled server-side (sent to HA media player),
+    False if frontend should handle TTS.
+    """
+    room_id = room_context.get("room_id")
+    device_id = room_context.get("device_id")
+
+    if not room_id:
+        return False
+
+    try:
+        from services.database import AsyncSessionLocal
+        from services.output_routing_service import OutputRoutingService
+        from services.audio_output_service import get_audio_output_service
+
+        async with AsyncSessionLocal() as db_session:
+            routing_service = OutputRoutingService(db_session)
+
+            # Get the best audio output device for this room
+            decision = await routing_service.get_audio_output_for_room(
+                room_id=room_id,
+                input_device_id=device_id
+            )
+
+            logger.info(f"🔊 Chat output routing: {decision.reason} → {decision.target_type}:{decision.target_id}")
+
+            # Only handle server-side if we have a configured HA output device
+            # (Renfield devices would be the input device itself in this case)
+            if decision.output_device and not decision.fallback_to_input and decision.target_type == "homeassistant":
+                # Generate TTS
+                from services.piper_service import PiperService
+                piper = PiperService()
+                tts_audio = await piper.synthesize_to_bytes(response_text)
+
+                if tts_audio:
+                    audio_output_service = get_audio_output_service()
+                    success = await audio_output_service.play_audio(
+                        audio_bytes=tts_audio,
+                        output_device=decision.output_device,
+                        session_id=f"chat-{room_id}-{device_id}"
+                    )
+
+                    if success:
+                        logger.info(f"🔊 TTS sent to HA media player: {decision.target_id}")
+                        return True
+                    else:
+                        logger.warning(f"Failed to send TTS to {decision.target_id}, frontend will handle")
+
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Chat TTS routing failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
 
 
 async def _route_satellite_tts_output(

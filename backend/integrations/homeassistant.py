@@ -61,20 +61,21 @@ class HomeAssistantClient:
         domain: str,
         service: str,
         entity_id: Optional[str] = None,
-        service_data: Optional[Dict] = None
+        service_data: Optional[Dict] = None,
+        timeout: float = 10.0
     ) -> bool:
         """Service aufrufen"""
         try:
             data = service_data or {}
             if entity_id:
                 data["entity_id"] = entity_id
-            
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     f"{self.base_url}/api/services/{domain}/{service}",
                     headers=self.headers,
                     json=data,
-                    timeout=10.0
+                    timeout=timeout
                 )
                 response.raise_for_status()
                 logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")

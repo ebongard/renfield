@@ -8,6 +8,7 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 
 - [Naming Conventions](#naming-conventions)
 - [Core System](#core-system)
+- [Audio Output Routing](#audio-output-routing)
 - [Integrationen](#integrationen)
 - [Plugin System](#plugin-system)
 - [Verfügbare Plugins](#verfügbare-plugins)
@@ -164,6 +165,39 @@ ADVERTISE_IP=192.168.1.100
 - Satellites finden das Backend automatisch über mDNS
 - Setze `ADVERTISE_HOST` auf den Hostnamen deines Servers
 - Alternativ `ADVERTISE_IP` für eine feste IP-Adresse
+
+---
+
+### Audio Output Routing
+
+```bash
+# Hostname/IP die externe Dienste (z.B. Home Assistant) erreichen können
+ADVERTISE_HOST=demeter.local
+
+# Port für ADVERTISE_HOST (optional)
+ADVERTISE_PORT=8000
+```
+
+**Defaults:**
+- `ADVERTISE_HOST`: None (muss gesetzt werden für HA Media Player Output)
+- `ADVERTISE_PORT`: `8000`
+
+**Wann benötigt:**
+- Wenn TTS-Ausgabe auf Home Assistant Media Playern erfolgen soll
+- Der Wert muss eine Adresse sein, die Home Assistant erreichen kann (nicht `localhost`!)
+
+**Beispiele:**
+```bash
+ADVERTISE_HOST=192.168.1.100      # IP-Adresse
+ADVERTISE_HOST=renfield.local     # mDNS Hostname
+ADVERTISE_HOST=demeter.local      # Server Hostname
+```
+
+**Ohne ADVERTISE_HOST:**
+- TTS wird nur auf Renfield-Geräten (Satellites, Web Panels) abgespielt
+- HA Media Player können keine TTS-Dateien abrufen
+
+**Dokumentation:** Siehe `OUTPUT_ROUTING.md` für Details zum Output Routing System.
 
 ---
 
@@ -582,7 +616,13 @@ FRIGATE_URL=http://frigate.local:5000
 # -----------------------------------------------------------------------------
 WAKE_WORD_DEFAULT=alexa
 WAKE_WORD_THRESHOLD=0.5
-ADVERTISE_HOST=renfield
+
+# -----------------------------------------------------------------------------
+# Audio Output Routing
+# -----------------------------------------------------------------------------
+# Hostname/IP die externe Dienste (z.B. HA) erreichen können
+ADVERTISE_HOST=demeter.local
+ADVERTISE_PORT=8000
 
 # -----------------------------------------------------------------------------
 # Plugin System
