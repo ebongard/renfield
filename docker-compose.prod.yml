@@ -68,7 +68,7 @@ services:
   # Backend API with GPU Support (Whisper acceleration)
   backend:
     build:
-      context: ./backend
+      context: ./src/backend
       dockerfile: Dockerfile.gpu
     container_name: renfield-backend
     env_file:
@@ -79,7 +79,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
-      - ./backend:/app
+      - ./src/backend:/app
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
     depends_on:
@@ -100,7 +100,7 @@ services:
   # Frontend Web-App (Production build)
   frontend:
     build:
-      context: ./frontend
+      context: ./src/frontend
       dockerfile: Dockerfile
       args:
         NODE_ENV: production

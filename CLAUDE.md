@@ -47,7 +47,7 @@ docker compose up -d
 
 ### Backend Development
 ```bash
-cd backend
+cd src/backend
 
 # Install dependencies
 pip install -r requirements.txt
@@ -55,19 +55,13 @@ pip install -r requirements.txt
 # Run dev server with hot reload
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 
-# Run single test
-pytest tests/test_intent.py -v
-
-# Run all tests
-pytest
-
 # View API docs
 open http://localhost:8000/docs
 ```
 
 ### Frontend Development
 ```bash
-cd frontend
+cd src/frontend
 
 # Install dependencies
 npm install
@@ -188,7 +182,7 @@ Audio Playback → Satellite Speaker
 
 ### Intent Recognition System
 
-The core of Renfield is the intent recognition system in `backend/services/ollama_service.py`:
+The core of Renfield is the intent recognition system in `src/backend/services/ollama_service.py`:
 
 1. **extract_intent()**: Uses Ollama LLM to parse natural language into structured intents
 2. **Dynamic Keyword Matching**: Fetches device names from Home Assistant to improve accuracy
@@ -227,7 +221,7 @@ Renfield implements full conversation persistence with PostgreSQL:
 - `DELETE /api/chat/session/{session_id}` - Delete session
 - `DELETE /api/chat/conversations/cleanup?days=30` - Cleanup old data
 
-**Documentation:** See `backend/CONVERSATION_API.md` for detailed API documentation and usage examples.
+**Documentation:** See `src/backend/CONVERSATION_API.md` for detailed API documentation and usage examples.
 
 ### Speaker Recognition System
 
@@ -241,7 +235,7 @@ Renfield includes automatic speaker recognition using **SpeechBrain ECAPA-TDNN**
 - Frontend management via `/speakers` page
 
 **Key Implementation:**
-- `SpeakerService` (`backend/services/speaker_service.py`): SpeechBrain model wrapper
+- `SpeakerService` (`src/backend/services/speaker_service.py`): SpeechBrain model wrapper
 - `WhisperService.transcribe_with_speaker()`: Combines STT with speaker identification
 - 192-dimensional voice embeddings stored in PostgreSQL
 - Cosine similarity for speaker matching (threshold: 0.25)
@@ -273,8 +267,8 @@ Renfield supports multiple device types that can connect and interact with the s
 - **Persistent Registration**: Devices are stored in database and survive reconnects
 
 **Key Implementation:**
-- `DeviceManager` (`backend/services/device_manager.py`): In-memory device state management
-- `RoomService` (`backend/services/room_service.py`): Database persistence for devices and rooms
+- `DeviceManager` (`src/backend/services/device_manager.py`): In-memory device state management
+- `RoomService` (`src/backend/services/room_service.py`): Database persistence for devices and rooms
 - `RoomDevice` model: Stores device info including IP address, capabilities, online status
 
 **Automatic Room Detection:**
@@ -306,8 +300,8 @@ Renfield supports intelligent routing of TTS responses to the best available out
 - Supports Renfield devices (Satellites, Web Panels) and Home Assistant Media Players
 
 **Key Implementation:**
-- `OutputRoutingService` (`backend/services/output_routing_service.py`): Routing logic and device selection
-- `AudioOutputService` (`backend/services/audio_output_service.py`): Audio delivery to devices
+- `OutputRoutingService` (`src/backend/services/output_routing_service.py`): Routing logic and device selection
+- `AudioOutputService` (`src/backend/services/audio_output_service.py`): Audio delivery to devices
 - `RoomOutputDevice` model: Database persistence for output device configurations
 - TTS cache endpoint for HA media players (`/api/voice/tts-cache/{audio_id}`)
 
@@ -345,7 +339,7 @@ The `done` message includes a `tts_handled` flag:
 ### Backend Structure
 
 ```
-backend/
+src/backend/
 ├── main.py                    # FastAPI app, WebSocket endpoints, lifecycle management
 ├── Dockerfile                 # CPU-only image
 ├── Dockerfile.gpu             # NVIDIA CUDA image for GPU acceleration
@@ -385,7 +379,7 @@ backend/
 ### Satellite Structure
 
 ```
-renfield-satellite/
+src/satellite/
 ├── README.md                  # Full satellite documentation
 ├── renfield_satellite/
 │   ├── __init__.py
@@ -409,28 +403,32 @@ renfield-satellite/
 ### Frontend Structure
 
 ```
-frontend/src/
-├── main.jsx                  # React entry point
-├── App.jsx                   # Router setup, main layout
-├── pages/                    # Route components
-│   ├── HomePage.jsx          # Dashboard/landing
-│   ├── ChatPage.jsx          # Chat interface with WebSocket, voice controls
-│   ├── SpeakersPage.jsx      # Speaker management and enrollment
-│   ├── RoomsPage.jsx         # Room management with device list, HA sync
-│   ├── HomeAssistantPage.jsx # Device browser and controls
-│   ├── CameraPage.jsx        # Frigate events viewer
-│   └── TasksPage.jsx         # Task queue viewer
-├── components/
-│   ├── Layout.jsx            # Navigation, responsive layout
-│   ├── DeviceSetup.jsx       # Device registration modal
-│   └── DeviceStatus.jsx      # Device/room status indicator for navbar
-├── context/
-│   └── DeviceContext.jsx     # App-wide device connection state
-├── hooks/
-│   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
-│   └── useCapabilities.jsx     # Capability-based feature toggles
-└── utils/
-    └── axios.js              # Axios instance with base URL config
+src/frontend/
+├── src/
+│   ├── main.jsx              # React entry point
+│   ├── App.jsx               # Router setup, main layout
+│   ├── pages/                # Route components
+│   │   ├── HomePage.jsx      # Dashboard/landing
+│   │   ├── ChatPage.jsx      # Chat interface with WebSocket, voice controls
+│   │   ├── SpeakersPage.jsx  # Speaker management and enrollment
+│   │   ├── RoomsPage.jsx     # Room management with device list, HA sync
+│   │   ├── HomeAssistantPage.jsx # Device browser and controls
+│   │   ├── CameraPage.jsx    # Frigate events viewer
+│   │   └── TasksPage.jsx     # Task queue viewer
+│   ├── components/
+│   │   ├── Layout.jsx        # Navigation, responsive layout
+│   │   ├── DeviceSetup.jsx   # Device registration modal
+│   │   └── DeviceStatus.jsx  # Device/room status indicator for navbar
+│   ├── context/
+│   │   └── DeviceContext.jsx # App-wide device connection state
+│   ├── hooks/
+│   │   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
+│   │   └── useCapabilities.jsx     # Capability-based feature toggles
+│   └── utils/
+│       └── axios.js          # Axios instance with base URL config
+├── Dockerfile
+├── package.json
+└── vite.config.js
 ```
 
 ### WebSocket Protocol
@@ -539,7 +537,7 @@ frontend/src/
 
 ### Key Configuration
 
-All configuration is in `.env` and loaded via `backend/utils/config.py` using Pydantic Settings:
+All configuration is in `.env` and loaded via `src/backend/utils/config.py` using Pydantic Settings:
 
 - `DATABASE_URL` - PostgreSQL connection string
 - `REDIS_URL` - Redis connection
@@ -564,38 +562,38 @@ All configuration is in `.env` and loaded via `backend/utils/config.py` using Py
 
 ### Adding a New Integration
 
-1. Create client in `backend/integrations/your_service.py`:
+1. Create client in `src/backend/integrations/your_service.py`:
    ```python
    class YourServiceClient:
        async def do_something(self):
            # Implementation
    ```
 
-2. Add intent handling in `backend/services/action_executor.py`:
+2. Add intent handling in `src/backend/services/action_executor.py`:
    ```python
    elif intent.startswith("yourservice."):
        return await self._execute_yourservice(intent, parameters)
    ```
 
-3. Update intent recognition prompt in `backend/services/ollama_service.py` to include new intent types
+3. Update intent recognition prompt in `src/backend/services/ollama_service.py` to include new intent types
 
-4. Create API route in `backend/api/routes/yourservice.py`
+4. Create API route in `src/backend/api/routes/yourservice.py`
 
-5. Register route in `backend/main.py`:
+5. Register route in `src/backend/main.py`:
    ```python
    app.include_router(yourservice.router, prefix="/api/yourservice", tags=["YourService"])
    ```
 
 ### Adding a New Frontend Page
 
-1. Create page component in `frontend/src/pages/YourPage.jsx`
+1. Create page component in `src/frontend/src/pages/YourPage.jsx`
 
-2. Add route in `frontend/src/App.jsx`:
+2. Add route in `src/frontend/src/App.jsx`:
    ```jsx
    <Route path="/your-page" element={<YourPage />} />
    ```
 
-3. Add navigation link in `frontend/src/components/Layout.jsx`
+3. Add navigation link in `src/frontend/src/components/Layout.jsx`
 
 ### Debugging Intent Recognition
 
@@ -619,21 +617,69 @@ This reloads the dynamic keyword cache used for intent recognition.
 
 ## Testing
 
-Backend tests use pytest with async support:
+Tests are organized by component in the `tests/` directory at project root:
+
+```
+tests/
+├── conftest.py              # Shared fixtures for all tests
+├── backend/                 # Backend-specific tests
+│   ├── conftest.py          # Backend fixtures (DB, mocks)
+│   ├── test_models.py       # Database model tests
+│   ├── test_room_service.py # RoomService tests
+│   ├── test_action_executor.py
+│   ├── test_api_rooms.py    # API endpoint tests
+│   ├── test_integrations.py # HA, Frigate, n8n client tests
+│   ├── test_websocket.py    # WebSocket protocol tests
+│   └── test_utils.py        # Utility function tests
+├── frontend/                # Frontend-specific tests
+│   ├── conftest.py
+│   └── test_api_contracts.py # API contract validation
+├── satellite/               # Satellite-specific tests
+│   ├── conftest.py
+│   └── test_satellite.py    # Satellite functionality tests
+└── integration/             # Cross-component E2E tests
+    ├── conftest.py
+    ├── test_e2e_scenarios.py
+    └── test_component_communication.py
+```
+
+### Running Tests
 
 ```bash
-# Run all tests
+# Run all tests from project root
 pytest
 
+# Run only backend tests
+pytest tests/backend/ -v
+
+# Run only integration tests
+pytest tests/integration/ -v
+
+# Run by marker
+pytest -m unit           # Fast, isolated unit tests
+pytest -m integration    # Integration tests
+pytest -m e2e            # End-to-end tests
+pytest -m database       # Tests requiring database
+
 # Run with coverage
-pytest --cov=. --cov-report=html
+pytest --cov=src/backend --cov-report=html
 
 # Run specific test file
-pytest tests/test_intent.py -v
+pytest tests/backend/test_room_service.py -v
 
-# Run specific test
-pytest tests/test_intent.py::test_extract_intent_turn_on -v
+# Run in Docker container (with dependencies installed)
+docker exec -it renfield-backend pytest tests/backend/ -v
 ```
+
+### Test Markers
+
+- `@pytest.mark.unit` - Fast, isolated unit tests
+- `@pytest.mark.database` - Tests requiring database fixtures
+- `@pytest.mark.integration` - Integration tests with external services
+- `@pytest.mark.e2e` - Full end-to-end scenarios
+- `@pytest.mark.backend` - Backend-specific tests
+- `@pytest.mark.frontend` - Frontend-specific tests
+- `@pytest.mark.satellite` - Satellite-specific tests
 
 ## Deployment Notes
 
@@ -673,7 +719,7 @@ For NVIDIA GPU acceleration (faster Whisper transcription):
 
 ### WebSocket Connection Failures
 
-- Check CORS settings in `backend/main.py`
+- Check CORS settings in `src/backend/main.py`
 - Verify frontend `VITE_WS_URL` matches backend WebSocket endpoint
 - Check backend logs: `docker compose logs -f backend`
 
@@ -697,6 +743,31 @@ For NVIDIA GPU acceleration (faster Whisper transcription):
 - **Garbled transcription**: PyAudio must be installed (not soundcard) for ALSA support
 - **GPIO errors**: Add user to gpio group with `sudo usermod -aG gpio $USER`
 
+## Project Structure
+
+```
+renfield/
+├── src/                       # Source code
+│   ├── backend/               # Python FastAPI backend
+│   ├── frontend/              # React frontend
+│   └── satellite/             # Raspberry Pi satellite code
+├── tests/                     # Test suite
+│   ├── backend/               # Backend unit tests
+│   ├── frontend/              # Frontend API contract tests
+│   ├── satellite/             # Satellite tests
+│   └── integration/           # Cross-component E2E tests
+├── config/                    # Configuration files
+│   └── nginx.conf             # Nginx config for production
+├── docs/                      # Additional documentation
+├── docker-compose.yml         # Standard Docker setup
+├── docker-compose.dev.yml     # Development setup (Mac)
+├── docker-compose.prod.yml    # Production setup (GPU)
+├── pytest.ini                 # Test configuration
+├── start.sh                   # Quick start script
+├── debug.sh                   # Debug mode script
+└── update.sh                  # Update script
+```
+
 ## Project Documentation
 
 Additional documentation files in the repository:
@@ -709,6 +780,6 @@ Additional documentation files in the repository:
 - `EXTERNAL_OLLAMA.md` - External Ollama instance setup
 - `SPEAKER_RECOGNITION.md` - Speaker recognition system documentation
 - `OUTPUT_ROUTING.md` - Audio output device routing system documentation
-- `renfield-satellite/README.md` - Satellite setup guide
-- `backend/integrations/plugins/README.md` - Plugin development guide
+- `src/satellite/README.md` - Satellite setup guide
+- `src/backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference

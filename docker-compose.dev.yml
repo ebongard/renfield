@@ -54,7 +54,7 @@ services:
   # Backend API (CPU version - for Mac development)
   backend:
     build:
-      context: ./backend
+      context: ./src/backend
       dockerfile: Dockerfile
     container_name: renfield-backend
     env_file:
@@ -65,7 +65,7 @@ services:
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
     volumes:
-      - ./backend:/app
+      - ./src/backend:/app
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
     depends_on:
@@ -80,14 +80,14 @@ services:
   # Frontend Web-App (Development with hot reload)
   frontend:
     build:
-      context: ./frontend
+      context: ./src/frontend
       dockerfile: Dockerfile
     container_name: renfield-frontend
     environment:
       VITE_API_URL: http://localhost:8000
       VITE_WS_URL: ws://localhost:8000/ws
     volumes:
-      - ./frontend:/app
+      - ./src/frontend:/app
       - /app/node_modules
     depends_on:
       - backend
