@@ -1,27 +1,79 @@
-FROM python:3.11-slim
+# ============================================================================
+# Renfield Backend - Multi-Stage Docker Build
+# ============================================================================
+# Stage 1: Builder - Compiles Python packages with build dependencies
+# Stage 2: Runtime - Minimal image with only runtime dependencies
+# ============================================================================
 
-WORKDIR /app
+# ============================================================================
+# Stage 1: Builder
+# ============================================================================
+FROM python:3.11-slim AS builder
 
-# System-Dependencies für Audio und OpenCV
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    libsndfile1 \
-    portaudio19-dev \
+WORKDIR /build
+
+# Build dependencies (not needed at runtime)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
     pkg-config \
+    libsndfile1-dev \
+    portaudio19-dev \
     libavformat-dev \
     libavcodec-dev \
     libavdevice-dev \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
-    gcc \
-    g++ \
-    wget \
-    espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
-# Piper TTS Binary installieren (standalone - vermeidet PyAV Dependency Issues)
-# Automatische Architektur-Erkennung für ARM64 und AMD64
+# Create virtual environment for cleaner copying
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install PyTorch CPU-only first (saves ~500MB vs CUDA version)
+# ARM64 doesn't use +cpu suffix, x86_64 does
+RUN ARCH=$(uname -m) && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        pip install --no-cache-dir torch==2.1.2+cpu torchaudio==2.1.2+cpu \
+            --index-url https://download.pytorch.org/whl/cpu; \
+    else \
+        pip install --no-cache-dir torch==2.1.2 torchaudio==2.1.2; \
+    fi
+
+# Install remaining Python dependencies
+COPY requirements.txt .
+# Remove torch/torchaudio from requirements (already installed CPU-only)
+RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" > requirements-filtered.txt \
+    && pip install --no-cache-dir -r requirements-filtered.txt
+
+
+# ============================================================================
+# Stage 2: Runtime
+# ============================================================================
+FROM python:3.11-slim AS runtime
+
+WORKDIR /app
+
+# Runtime dependencies only (no compilers, no dev headers)
+# ffmpeg pulls in the correct libav* versions automatically
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libsndfile1 \
+    libportaudio2 \
+    libgomp1 \
+    espeak-ng \
+    wget \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy Python virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+# Piper TTS Binary (architecture-aware)
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
         PIPER_ARCH="arm64"; \
@@ -30,28 +82,33 @@ RUN ARCH=$(uname -m) && \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz \
+    wget -q https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz \
     && tar -xzf piper_${PIPER_ARCH}.tar.gz \
     && mv piper/piper /usr/local/bin/ \
-    && mv piper/lib* /usr/local/lib/ \
+    && mv piper/lib* /usr/local/lib/ 2>/dev/null || true \
     && chmod +x /usr/local/bin/piper \
     && ldconfig \
     && rm -rf piper piper_${PIPER_ARCH}.tar.gz
 
-# Piper Voice Model herunterladen (de_DE-thorsten-high)
+# Piper Voice Model (German - thorsten high quality)
 RUN mkdir -p /usr/share/piper/voices \
     && cd /usr/share/piper/voices \
-    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
-    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
+    && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
+    && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
 
-# Python Dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# App Code
+# Application code
 COPY . .
 
-# Whisper Modelle vorab herunterladen (optional)
-# RUN python -c "import whisper; whisper.load_model('base')"
+# Create non-root user for security
+RUN useradd --create-home --shell /bin/bash appuser \
+    && chown -R appuser:appuser /app
+# Note: Running as root for now due to volume mount permissions
+# USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+EXPOSE 8000
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
