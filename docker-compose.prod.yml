@@ -80,6 +80,8 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ./src/backend:/app
+      - ./tests:/tests
+      - ./pytest.ini:/pytest.ini
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
     depends_on:

@@ -1,0 +1,120 @@
+# Renfield PR Check
+# =================
+# Quick checks for pull requests
+# Runs fast linting and basic tests
+
+name: PR Check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  # ============================================================================
+  # Quick Lint Check
+  # ============================================================================
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "18"
+          cache: 'npm'
+          cache-dependency-path: src/frontend/package-lock.json
+
+      - name: Install linters
+        run: |
+          pip install flake8
+          cd src/frontend && npm ci
+
+      - name: Lint Python
+        run: |
+          flake8 src/backend --max-line-length=120 --exclude=__pycache__,alembic --count --show-source --statistics
+
+      - name: Lint JavaScript
+        run: |
+          cd src/frontend && npm run lint
+
+  # ============================================================================
+  # Commit Message Check
+  # ============================================================================
+  commit-check:
+    name: Commit Message
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check commit messages
+        run: |
+          # Check that commits have meaningful messages (more than 10 chars)
+          git log --oneline origin/${{ github.base_ref }}..HEAD | while read line; do
+            msg=$(echo "$line" | cut -d' ' -f2-)
+            if [ ${#msg} -lt 10 ]; then
+              echo "Commit message too short: $line"
+              exit 1
+            fi
+          done
+          echo "All commit messages look good!"
+
+  # ============================================================================
+  # File Size Check
+  # ============================================================================
+  file-check:
+    name: File Size Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check for large files
+        run: |
+          # Find files larger than 5MB
+          find . -type f -size +5M -not -path "./.git/*" | while read file; do
+            echo "Warning: Large file detected: $file ($(du -h "$file" | cut -f1))"
+          done
+
+      - name: Check for secrets
+        run: |
+          # Basic check for potential secrets
+          if grep -r "password\s*=\s*['\"]" --include="*.py" --include="*.js" --include="*.jsx" src/; then
+            echo "Warning: Potential hardcoded password detected"
+            exit 1
+          fi
+          echo "No obvious secrets detected"
+
+  # ============================================================================
+  # PR Description Check
+  # ============================================================================
+  pr-description:
+    name: PR Description
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check PR description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const body = pr.body || '';
+
+            if (body.length < 50) {
+              core.setFailed('PR description is too short. Please provide more context about your changes.');
+            }
+
+            console.log('PR description looks good!');

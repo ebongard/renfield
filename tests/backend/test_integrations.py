@@ -315,7 +315,7 @@ class TestN8NClient:
     @pytest.mark.unit
     def test_client_initialization(self, n8n_client):
         """Test: Client wird korrekt initialisiert"""
-        assert n8n_client.webhook_url == "http://n8n.local:5678/webhook"
+        assert n8n_client.base_url == "http://n8n.local:5678/webhook"
 
     @pytest.mark.unit
     async def test_trigger_workflow(self, n8n_client):
@@ -364,8 +364,8 @@ class TestN8NClient:
 
     @pytest.mark.unit
     def test_is_configured(self, n8n_client):
-        """Test: is_configured prüft Webhook URL"""
-        assert n8n_client.webhook_url is not None
+        """Test: is_configured prüft base_url"""
+        assert n8n_client.base_url is not None
 
 
 # ============================================================================

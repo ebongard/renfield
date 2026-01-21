@@ -131,10 +131,10 @@ class RoomService:
 
         self.db.add(room)
         await self.db.commit()
-        await self.db.refresh(room)
 
         logger.info(f"Created room: {name} (alias: {alias}, source: {source})")
-        return room
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_room(room.id)
 
     async def get_room(self, room_id: int) -> Optional[Room]:
         """Get room by ID with devices loaded"""
@@ -217,10 +217,10 @@ class RoomService:
 
         room.updated_at = datetime.utcnow()
         await self.db.commit()
-        await self.db.refresh(room)
 
         logger.info(f"Updated room {room_id}: {room.name}")
-        return room
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_room(room_id)
 
     async def delete_room(self, room_id: int) -> bool:
         """
@@ -254,10 +254,10 @@ class RoomService:
         room.ha_area_id = ha_area_id
         room.last_synced_at = datetime.utcnow()
         await self.db.commit()
-        await self.db.refresh(room)
 
         logger.info(f"Linked room {room.name} to HA area {ha_area_id}")
-        return room
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_room(room_id)
 
     async def unlink_from_ha(self, room_id: int) -> Optional[Room]:
         """Remove Home Assistant area link from room"""
@@ -268,10 +268,10 @@ class RoomService:
         room.ha_area_id = None
         room.last_synced_at = None
         await self.db.commit()
-        await self.db.refresh(room)
 
         logger.info(f"Unlinked room {room.name} from HA")
-        return room
+        # Re-fetch with eager loading to avoid lazy load issues
+        return await self.get_room(room_id)
 
     async def import_ha_areas(
         self,

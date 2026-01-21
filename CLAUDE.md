@@ -33,6 +33,45 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 ./bin/deploy.sh
 ```
 
+### Makefile Commands
+
+The project includes a Makefile for task orchestration:
+
+```bash
+# Show all available commands
+make help
+
+# Development
+make dev              # Start development environment
+make stop             # Stop all containers
+make restart          # Restart all containers
+make logs             # Show container logs
+
+# Building
+make build            # Build all components
+make docker-build     # Build Docker images
+
+# Testing
+make test             # Run all tests
+make test-backend     # Run backend tests only
+make test-frontend    # Run frontend tests only
+make test-coverage    # Run tests with coverage report
+make lint             # Lint all code
+
+# Database
+make db-migrate       # Create new migration
+make db-upgrade       # Apply migrations
+make db-downgrade     # Rollback last migration
+
+# Ollama
+make ollama-pull      # Pull/update Ollama model
+make ollama-test      # Test Ollama connection
+
+# CI/CD
+make ci               # Run CI pipeline (lint + test)
+make release          # Create a release tag
+```
+
 ### Docker Compose Variants
 ```bash
 # Development on Mac (no GPU)
@@ -654,30 +693,43 @@ tests/
 
 ### Running Tests
 
+**Recommended: Use Makefile commands** (runs tests in Docker with correct environment):
+
+```bash
+make test             # Run all tests
+make test-backend     # Run backend tests only
+make test-frontend    # Run frontend API contract tests
+make test-unit        # Run only unit tests
+make test-coverage    # Run with coverage report
+```
+
+**Manual Docker execution:**
+
+```bash
+# Run all tests in Docker
+docker compose exec -T -e PYTHONPATH=/app backend pytest /tests/ -v
+
+# Run only backend tests
+docker compose exec -T -e PYTHONPATH=/app backend pytest /tests/backend/ -v
+
+# Run by marker
+docker compose exec -T -e PYTHONPATH=/app backend pytest /tests/ -m unit -v
+```
+
+**Local execution** (requires local Python environment with dependencies):
+
 ```bash
 # Run all tests from project root
-pytest
+pytest tests/ -v
 
 # Run only backend tests
 pytest tests/backend/ -v
 
-# Run only integration tests
-pytest tests/integration/ -v
-
-# Run by marker
-pytest -m unit           # Fast, isolated unit tests
-pytest -m integration    # Integration tests
-pytest -m e2e            # End-to-end tests
-pytest -m database       # Tests requiring database
-
 # Run with coverage
-pytest --cov=src/backend --cov-report=html
+pytest tests/backend/ --cov=src/backend --cov-report=html
 
 # Run specific test file
 pytest tests/backend/test_room_service.py -v
-
-# Run in Docker container (with dependencies installed)
-docker exec -it renfield-backend pytest tests/backend/ -v
 ```
 
 ### Test Markers
@@ -701,6 +753,51 @@ Manual test scripts for interactive testing against running services:
 # Test media player intent extraction (requires running backend)
 python tests/manual/test_media_player.py
 ```
+
+## CI/CD Pipeline
+
+The project uses GitHub Actions for continuous integration and deployment.
+
+### Workflows
+
+| Workflow | Trigger | Description |
+|----------|---------|-------------|
+| `ci.yml` | Push to main/develop, PRs | Full CI pipeline: lint, test, build |
+| `pr-check.yml` | Pull requests | Quick checks for PRs |
+| `release.yml` | Tag push (v*.*.*) | Build and push Docker images to GHCR |
+
+### CI Pipeline
+
+The CI pipeline runs on every push and PR:
+
+1. **Backend Tests** - Python tests with PostgreSQL and Redis
+2. **Frontend Tests** - JavaScript linting and build
+3. **Integration Tests** - Cross-component tests
+4. **Docker Build** - Verify Docker images build correctly
+5. **Security Scan** - Check for vulnerabilities
+
+### Creating a Release
+
+```bash
+# Create and push a version tag
+git tag -a v1.0.0 -m "Release v1.0.0"
+git push origin v1.0.0
+
+# Or use make
+make release
+```
+
+This triggers the release workflow which:
+- Builds multi-platform Docker images (amd64, arm64)
+- Pushes images to GitHub Container Registry
+- Creates a GitHub Release with changelog
+
+### Docker Images
+
+Released images are available at:
+- `ghcr.io/<owner>/renfield/backend:latest`
+- `ghcr.io/<owner>/renfield/frontend:latest`
+- `ghcr.io/<owner>/renfield/backend:v1.0.0-gpu` (GPU version)
 
 ## Deployment Notes
 
@@ -784,9 +881,14 @@ renfield/
 │   ├── quick-update.sh        # Quick backend restart
 │   ├── debug.sh               # Debug info and logs
 │   └── deploy.sh              # Deploy to GitHub
+├── .github/workflows/         # CI/CD pipelines
+│   ├── ci.yml                 # Main CI pipeline
+│   ├── pr-check.yml           # PR validation
+│   └── release.yml            # Release and Docker push
 ├── config/                    # Configuration files
 │   └── nginx.conf             # Nginx config for production
 ├── docs/                      # Additional documentation
+├── Makefile                   # Task orchestration
 ├── docker-compose.yml         # Standard Docker setup
 ├── docker-compose.dev.yml     # Development setup (Mac)
 ├── docker-compose.prod.yml    # Production setup (GPU)

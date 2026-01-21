@@ -66,6 +66,8 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
     volumes:
       - ./src/backend:/app
+      - ./tests:/tests
+      - ./pytest.ini:/pytest.ini
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
     depends_on:

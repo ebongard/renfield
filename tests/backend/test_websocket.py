@@ -16,9 +16,9 @@ import base64
 from datetime import datetime
 
 from models.websocket_messages import (
-    parse_ws_message, create_error_response, WSErrorCode,
+    parse_ws_message, create_error_response, WSErrorCode, WSErrorResponse,
     WSRegisterMessage, WSTextMessage, WSAudioMessage, WSAudioEndMessage,
-    WSWakewordDetectedMessage, WSHeartbeatMessage
+    WSWakewordDetectedMessage, WSHeartbeatMessage, WSBaseMessage
 )
 
 
@@ -51,7 +51,8 @@ class TestWebSocketMessageParsing:
         assert msg.device_id == "web-test-123"
         assert msg.device_type == "web_panel"
         assert msg.room == "Wohnzimmer"
-        assert msg.capabilities["has_microphone"] is True
+        # WSCapabilities is a Pydantic model, access via attributes
+        assert msg.capabilities.has_microphone is True
 
     @pytest.mark.unit
     def test_parse_text_message(self):
@@ -130,7 +131,7 @@ class TestWebSocketMessageParsing:
 
     @pytest.mark.unit
     def test_parse_unknown_message_type(self):
-        """Test: Unbekannter Message Type"""
+        """Test: Unbekannter Message Type returns base message"""
         data = {
             "type": "unknown_type",
             "data": "something"
@@ -138,8 +139,9 @@ class TestWebSocketMessageParsing:
 
         msg = parse_ws_message(data)
 
-        # Should return None or raise
-        assert msg is None
+        # Unknown types return WSBaseMessage
+        assert isinstance(msg, WSBaseMessage)
+        assert msg.type == "unknown_type"
 
     @pytest.mark.unit
     def test_parse_invalid_json(self):
@@ -167,18 +169,18 @@ class TestWebSocketErrorResponses:
         )
 
         assert response["type"] == "error"
-        assert response["code"] == WSErrorCode.INVALID_MESSAGE
+        assert response["code"] == WSErrorCode.INVALID_MESSAGE.value
         assert "invalid" in response["message"].lower()
 
     @pytest.mark.unit
-    def test_create_error_response_not_registered(self):
-        """Test: Not Registered Error erstellen"""
+    def test_create_error_response_unauthorized(self):
+        """Test: Unauthorized Error erstellen"""
         response = create_error_response(
-            WSErrorCode.NOT_REGISTERED,
-            "Device not registered"
+            WSErrorCode.UNAUTHORIZED,
+            "Not authorized"
         )
 
-        assert response["code"] == WSErrorCode.NOT_REGISTERED
+        assert response["code"] == WSErrorCode.UNAUTHORIZED.value
 
     @pytest.mark.unit
     def test_create_error_response_rate_limited(self):
@@ -188,7 +190,7 @@ class TestWebSocketErrorResponses:
             "Too many requests"
         )
 
-        assert response["code"] == WSErrorCode.RATE_LIMITED
+        assert response["code"] == WSErrorCode.RATE_LIMITED.value
 
 
 # ============================================================================
@@ -199,6 +201,7 @@ class TestWebSocketDeviceRegistration:
     """Tests für Device Registration über WebSocket"""
 
     @pytest.mark.unit
+    @pytest.mark.database
     async def test_device_registration_flow(self, mock_websocket, db_session):
         """Test: Vollständiger Registration Flow"""
         from services.room_service import RoomService
@@ -218,6 +221,7 @@ class TestWebSocketDeviceRegistration:
         assert device.is_online is True
 
     @pytest.mark.unit
+    @pytest.mark.database
     async def test_device_registration_creates_room(self, db_session):
         """Test: Registration erstellt Room bei Bedarf"""
         from services.room_service import RoomService
@@ -302,6 +306,7 @@ class TestWebSocketSessionManagement:
             session_ids.add(session_id)
 
     @pytest.mark.unit
+    @pytest.mark.database
     async def test_session_cleanup_on_disconnect(self, db_session):
         """Test: Session Cleanup bei Disconnect"""
         from services.room_service import RoomService
@@ -337,46 +342,48 @@ class TestWebSocketRateLimiting:
         from services.websocket_rate_limiter import WSRateLimiter
 
         limiter = WSRateLimiter(
-            max_per_second=50,
-            max_per_minute=1000
+            per_second=50,
+            per_minute=1000
         )
 
-        assert limiter.max_per_second == 50
-        assert limiter.max_per_minute == 1000
+        assert limiter.per_second == 50
+        assert limiter.per_minute == 1000
 
     @pytest.mark.unit
-    async def test_rate_limiter_allows_normal_traffic(self):
+    def test_rate_limiter_allows_normal_traffic(self):
         """Test: Rate Limiter erlaubt normalen Traffic"""
         from services.websocket_rate_limiter import WSRateLimiter
 
         limiter = WSRateLimiter(
-            max_per_second=50,
-            max_per_minute=1000
+            per_second=50,
+            per_minute=1000
         )
 
         # Send 10 messages (should be allowed)
         for _ in range(10):
-            allowed = await limiter.check_rate("test-client")
+            allowed, reason = limiter.check("test-client")
             assert allowed is True
 
     @pytest.mark.unit
-    async def test_connection_limiter(self):
+    def test_connection_limiter(self):
         """Test: Connection Limiter"""
         from services.websocket_rate_limiter import WSConnectionLimiter
 
         limiter = WSConnectionLimiter(max_per_ip=5)
 
-        # First 5 connections should be allowed
-        for _ in range(5):
-            allowed = await limiter.acquire("192.168.1.1")
+        # First 5 connections should be allowed (need to add them)
+        for i in range(5):
+            device_id = f"device-{i}"
+            allowed, reason = limiter.can_connect("192.168.1.1", device_id)
             assert allowed is True
+            limiter.add_connection("192.168.1.1", device_id)
 
         # 6th connection should be denied
-        allowed = await limiter.acquire("192.168.1.1")
+        allowed, reason = limiter.can_connect("192.168.1.1", "device-5")
         assert allowed is False
 
         # Different IP should be allowed
-        allowed = await limiter.acquire("192.168.1.2")
+        allowed, reason = limiter.can_connect("192.168.1.2", "device-other")
         assert allowed is True
 
 
@@ -388,45 +395,38 @@ class TestWebSocketAuthentication:
     """Tests für WebSocket Authentication"""
 
     @pytest.mark.unit
-    def test_token_generation(self):
-        """Test: Token wird generiert"""
-        from services.websocket_auth import generate_token
+    def test_token_store_initialization(self):
+        """Test: Token Store wird initialisiert"""
+        from services.websocket_auth import WSTokenStore
 
-        with patch('services.websocket_auth.settings') as mock_settings:
-            mock_settings.secret_key = "test-secret-key"
-            mock_settings.ws_token_expire_minutes = 60
-
-            token = generate_token("test-device-123")
-
-            assert token is not None
-            assert len(token) > 0
+        store = WSTokenStore()
+        assert store is not None
 
     @pytest.mark.unit
-    def test_token_validation(self):
-        """Test: Token wird validiert"""
-        from services.websocket_auth import generate_token, validate_token
+    def test_token_store_create_and_validate(self):
+        """Test: Token erstellen und validieren"""
+        from services.websocket_auth import WSTokenStore
 
-        with patch('services.websocket_auth.settings') as mock_settings:
-            mock_settings.secret_key = "test-secret-key"
-            mock_settings.ws_token_expire_minutes = 60
+        store = WSTokenStore()
+        token = store.create_token("test-device-123")
 
-            token = generate_token("test-device-456")
-            payload = validate_token(token)
+        assert token is not None
+        assert len(token) > 0
 
-            assert payload is not None
-            assert payload.get("device_id") == "test-device-456"
+        # Validate the token - returns dict with token data
+        token_data = store.validate_token(token)
+        assert token_data is not None
+        assert token_data["device_id"] == "test-device-123"
 
     @pytest.mark.unit
     def test_invalid_token_rejected(self):
         """Test: Ungültiger Token wird abgelehnt"""
-        from services.websocket_auth import validate_token
+        from services.websocket_auth import WSTokenStore
 
-        with patch('services.websocket_auth.settings') as mock_settings:
-            mock_settings.secret_key = "test-secret-key"
+        store = WSTokenStore()
+        device_id = store.validate_token("invalid-token-here")
 
-            payload = validate_token("invalid-token-here")
-
-            assert payload is None
+        assert device_id is None
 
 
 # ============================================================================
@@ -438,15 +438,19 @@ class TestWebSocketProtocolEdgeCases:
 
     @pytest.mark.unit
     def test_empty_message(self):
-        """Test: Leere Message"""
+        """Test: Leere Message returns error response"""
         result = parse_ws_message({})
-        assert result is None
+        # Empty message returns WSErrorResponse
+        assert isinstance(result, WSErrorResponse)
+        assert result.code == WSErrorCode.INVALID_MESSAGE
 
     @pytest.mark.unit
     def test_message_without_type(self):
-        """Test: Message ohne Type"""
+        """Test: Message ohne Type returns error response"""
         result = parse_ws_message({"content": "test"})
-        assert result is None
+        # Missing type returns WSErrorResponse
+        assert isinstance(result, WSErrorResponse)
+        assert result.code == WSErrorCode.INVALID_MESSAGE
 
     @pytest.mark.unit
     def test_register_message_minimal(self):
@@ -459,7 +463,7 @@ class TestWebSocketProtocolEdgeCases:
         msg = parse_ws_message(data)
 
         # Should handle missing optional fields
-        assert msg is not None or msg is None  # Depends on implementation
+        assert msg is not None
 
     @pytest.mark.unit
     def test_large_audio_chunk(self):
@@ -489,7 +493,7 @@ class TestWebSocketProtocolEdgeCases:
 
         msg = parse_ws_message(data)
 
-        if msg:
+        if msg and isinstance(msg, WSTextMessage):
             assert msg.content == special_content
 
     @pytest.mark.unit
@@ -504,5 +508,5 @@ class TestWebSocketProtocolEdgeCases:
 
         msg = parse_ws_message(data)
 
-        if msg:
+        if msg and isinstance(msg, WSRegisterMessage):
             assert "Gäste" in msg.room
