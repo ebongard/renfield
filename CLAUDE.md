@@ -18,13 +18,19 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 ### Quick Start
 ```bash
 # Start entire stack (including model download)
-./start.sh
+./bin/start.sh
 
 # Update system
-./update.sh
+./bin/update.sh
 
 # Debug mode with detailed logging
-./debug.sh
+./bin/debug.sh
+
+# Quick backend restart
+./bin/quick-update.sh
+
+# Deploy to GitHub
+./bin/deploy.sh
 ```
 
 ### Docker Compose Variants
@@ -637,10 +643,13 @@ tests/
 ├── satellite/               # Satellite-specific tests
 │   ├── conftest.py
 │   └── test_satellite.py    # Satellite functionality tests
-└── integration/             # Cross-component E2E tests
-    ├── conftest.py
-    ├── test_e2e_scenarios.py
-    └── test_component_communication.py
+├── integration/             # Cross-component E2E tests
+│   ├── conftest.py
+│   ├── test_e2e_scenarios.py
+│   └── test_component_communication.py
+└── manual/                  # Manual test scripts
+    ├── test_media_player.py      # Media player intent testing
+    └── test_ollama_connection.sh # Ollama connection verification
 ```
 
 ### Running Tests
@@ -680,6 +689,18 @@ docker exec -it renfield-backend pytest tests/backend/ -v
 - `@pytest.mark.backend` - Backend-specific tests
 - `@pytest.mark.frontend` - Frontend-specific tests
 - `@pytest.mark.satellite` - Satellite-specific tests
+
+### Manual Tests
+
+Manual test scripts for interactive testing against running services:
+
+```bash
+# Test Ollama connection and model availability
+./tests/manual/test_ollama_connection.sh
+
+# Test media player intent extraction (requires running backend)
+python tests/manual/test_media_player.py
+```
 
 ## Deployment Notes
 
@@ -755,17 +776,21 @@ renfield/
 │   ├── backend/               # Backend unit tests
 │   ├── frontend/              # Frontend API contract tests
 │   ├── satellite/             # Satellite tests
-│   └── integration/           # Cross-component E2E tests
+│   ├── integration/           # Cross-component E2E tests
+│   └── manual/                # Manual test scripts
+├── bin/                       # Shell scripts
+│   ├── start.sh               # Start all services
+│   ├── update.sh              # Update system with backup
+│   ├── quick-update.sh        # Quick backend restart
+│   ├── debug.sh               # Debug info and logs
+│   └── deploy.sh              # Deploy to GitHub
 ├── config/                    # Configuration files
 │   └── nginx.conf             # Nginx config for production
 ├── docs/                      # Additional documentation
 ├── docker-compose.yml         # Standard Docker setup
 ├── docker-compose.dev.yml     # Development setup (Mac)
 ├── docker-compose.prod.yml    # Production setup (GPU)
-├── pytest.ini                 # Test configuration
-├── start.sh                   # Quick start script
-├── debug.sh                   # Debug mode script
-└── update.sh                  # Update script
+└── pytest.ini                 # Test configuration
 ```
 
 ## Project Documentation
