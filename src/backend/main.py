@@ -20,7 +20,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms
+from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge
 from services.database import init_db, AsyncSessionLocal
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
@@ -209,6 +209,7 @@ app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home As
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
+app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 
 # Helper function for sending WebSocket errors
 async def _send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, request_id: str = None):
@@ -275,11 +276,13 @@ async def websocket_endpoint(
                 message_type = msg.type
                 content = msg.content
                 request_id = msg.request_id
+                use_rag = msg.use_rag
+                knowledge_base_id = msg.knowledge_base_id
             except ValidationError as e:
                 await _send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
 
-            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}'")
+            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag})")
 
             # Ollama Service
             ollama = app.state.ollama
@@ -344,13 +347,67 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 })
 
             else:
-                # Normale Konversation
-                async for chunk in ollama.chat_stream(content):
-                    full_response += chunk
-                    await websocket.send_json({
-                        "type": "stream",
-                        "content": chunk
-                    })
+                # Normale Konversation (optional mit RAG)
+                if use_rag and settings.rag_enabled:
+                    # RAG-erweiterte Konversation
+                    try:
+                        from services.rag_service import RAGService
+
+                        async with AsyncSessionLocal() as db_session:
+                            rag_service = RAGService(db_session)
+
+                            # Kontext aus Wissensdatenbank abrufen
+                            rag_context = await rag_service.get_context(
+                                query=content,
+                                knowledge_base_id=knowledge_base_id
+                            )
+
+                            if rag_context:
+                                logger.info(f"📚 RAG Kontext gefunden ({len(rag_context)} Zeichen)")
+
+                                # Sende Info über verwendeten Kontext
+                                await websocket.send_json({
+                                    "type": "rag_context",
+                                    "has_context": True,
+                                    "knowledge_base_id": knowledge_base_id
+                                })
+
+                                # RAG-erweiterte Antwort streamen
+                                async for chunk in ollama.chat_stream_with_rag(content, rag_context):
+                                    full_response += chunk
+                                    await websocket.send_json({
+                                        "type": "stream",
+                                        "content": chunk
+                                    })
+                            else:
+                                logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                                await websocket.send_json({
+                                    "type": "rag_context",
+                                    "has_context": False,
+                                    "knowledge_base_id": knowledge_base_id
+                                })
+                                async for chunk in ollama.chat_stream(content):
+                                    full_response += chunk
+                                    await websocket.send_json({
+                                        "type": "stream",
+                                        "content": chunk
+                                    })
+                    except Exception as e:
+                        logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
+                        async for chunk in ollama.chat_stream(content):
+                            full_response += chunk
+                            await websocket.send_json({
+                                "type": "stream",
+                                "content": chunk
+                            })
+                else:
+                    # Standard-Konversation ohne RAG
+                    async for chunk in ollama.chat_stream(content):
+                        full_response += chunk
+                        await websocket.send_json({
+                            "type": "stream",
+                            "content": chunk
+                        })
 
             # Check for output routing if we have room context
             tts_handled_by_server = False

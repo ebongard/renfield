@@ -1,7 +1,7 @@
 services:
-  # PostgreSQL Datenbank
+  # PostgreSQL Datenbank mit pgvector für RAG
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: renfield-postgres
     environment:
       POSTGRES_DB: renfield
@@ -65,6 +65,7 @@ services:
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
+      - rag_uploads:/app/data/uploads
     depends_on:
       - postgres
       - redis
@@ -95,6 +96,7 @@ services:
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
+      - rag_uploads:/app/data/uploads
     depends_on:
       - postgres
       - redis
@@ -162,3 +164,4 @@ volumes:
   whisper_models:
   piper_models:
   huggingface_cache:
+  rag_uploads:        # RAG document uploads

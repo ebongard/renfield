@@ -9,6 +9,7 @@ import CameraPage from './pages/CameraPage';
 import HomeAssistantPage from './pages/HomeAssistantPage';
 import SpeakersPage from './pages/SpeakersPage';
 import RoomsPage from './pages/RoomsPage';
+import KnowledgePage from './pages/KnowledgePage';
 import { DeviceProvider } from './context/DeviceContext';
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
             <Route path="/homeassistant" element={<HomeAssistantPage />} />
             <Route path="/speakers" element={<SpeakersPage />} />
             <Route path="/rooms" element={<RoomsPage />} />
+            <Route path="/knowledge" element={<KnowledgePage />} />
           </Routes>
         </Layout>
       </DeviceProvider>

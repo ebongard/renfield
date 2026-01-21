@@ -19,9 +19,9 @@
 #   docker compose -f docker-compose.prod.yml --profile ollama-gpu up -d
 
 services:
-  # PostgreSQL Datenbank
+  # PostgreSQL Datenbank mit pgvector für RAG
   postgres:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
     container_name: renfield-postgres
     environment:
       POSTGRES_DB: renfield
@@ -84,6 +84,7 @@ services:
       - ./pytest.ini:/pytest.ini
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
+      - rag_uploads:/app/data/uploads
     depends_on:
       - postgres
       - redis
@@ -142,3 +143,4 @@ volumes:
   ollama_data:
   whisper_models:
   piper_models:
+  rag_uploads:

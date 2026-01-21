@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings, BookOpen, ChevronDown } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useWakeWord } from '../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../config/wakeword';
@@ -13,6 +13,13 @@ export default function ChatPage() {
   const [wsConnected, setWsConnected] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [silenceTimeRemaining, setSilenceTimeRemaining] = useState(0);
+
+  // RAG State
+  const [useRag, setUseRag] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState([]);
+  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
+  const [ragSources, setRagSources] = useState([]);
+  const [showRagSettings, setShowRagSettings] = useState(false);
 
   const messagesEndRef = useRef(null);
   const wsRef = useRef(null);
@@ -150,6 +157,22 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages]);
 
+  // Load knowledge bases when RAG is enabled
+  useEffect(() => {
+    if (useRag && knowledgeBases.length === 0) {
+      loadKnowledgeBases();
+    }
+  }, [useRag]);
+
+  const loadKnowledgeBases = async () => {
+    try {
+      const response = await apiClient.get('/api/knowledge/bases');
+      setKnowledgeBases(response.data);
+    } catch (error) {
+      console.error('Fehler beim Laden der Knowledge Bases:', error);
+    }
+  };
+
   const connectWebSocket = () => {
     const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
     const ws = new WebSocket(wsUrl);
@@ -166,6 +189,12 @@ export default function ChatPage() {
         // Action wurde ausgeführt - zeige Indikator
         console.log('Action ausgeführt:', data.intent, data.result);
         // Optional: Zeige kurze Notification dass Action ausgeführt wurde
+      } else if (data.type === 'rag_context') {
+        // RAG context info received
+        console.log('RAG Context:', data.has_context ? 'found' : 'not found');
+        if (!data.has_context) {
+          setRagSources([]);
+        }
       } else if (data.type === 'stream') {
         // Streaming-Antwort
         setMessages(prev => {
@@ -293,10 +322,16 @@ export default function ChatPage() {
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // WebSocket nutzen für Streaming
-      wsRef.current.send(JSON.stringify({
+      const message = {
         type: 'text',
-        content: text
-      }));
+        content: text,
+        use_rag: useRag,
+        knowledge_base_id: selectedKnowledgeBase
+      };
+      wsRef.current.send(JSON.stringify(message));
+
+      // Reset RAG sources for new message
+      setRagSources([]);
     } else {
       // Fallback auf HTTP
       try {
@@ -927,6 +962,82 @@ export default function ChatPage() {
 
       {/* Input */}
       <div className="card">
+        {/* RAG Toggle */}
+        <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-700">
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setUseRag(!useRag)}
+              className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                useRag
+                  ? 'bg-primary-600/30 text-primary-300 border border-primary-500/50'
+                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+              }`}
+              title={useRag ? 'Wissensdatenbank deaktivieren' : 'Wissensdatenbank aktivieren'}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>Wissen</span>
+            </button>
+
+            {useRag && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowRagSettings(!showRagSettings)}
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+                >
+                  <span>
+                    {selectedKnowledgeBase
+                      ? knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || 'Alle'
+                      : 'Alle Dokumente'}
+                  </span>
+                  <ChevronDown className={`w-4 h-4 transition-transform ${showRagSettings ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showRagSettings && (
+                  <div className="absolute bottom-full left-0 mb-2 w-48 bg-gray-800 rounded-lg border border-gray-700 shadow-lg z-10">
+                    <div className="p-2">
+                      <button
+                        onClick={() => {
+                          setSelectedKnowledgeBase(null);
+                          setShowRagSettings(false);
+                        }}
+                        className={`w-full text-left px-3 py-2 rounded text-sm ${
+                          selectedKnowledgeBase === null
+                            ? 'bg-primary-600/30 text-primary-300'
+                            : 'text-gray-300 hover:bg-gray-700'
+                        }`}
+                      >
+                        Alle Dokumente
+                      </button>
+                      {knowledgeBases.map(kb => (
+                        <button
+                          key={kb.id}
+                          onClick={() => {
+                            setSelectedKnowledgeBase(kb.id);
+                            setShowRagSettings(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded text-sm ${
+                            selectedKnowledgeBase === kb.id
+                              ? 'bg-primary-600/30 text-primary-300'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          {kb.name}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {useRag && (
+            <span className="text-xs text-gray-500">
+              Sucht in hochgeladenen Dokumenten
+            </span>
+          )}
+        </div>
+
         {/* Audio Waveform Visualizer während der Aufnahme */}
         {recording && (
           <div className="mb-4 p-4 bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl border border-gray-700/50 backdrop-blur-sm">

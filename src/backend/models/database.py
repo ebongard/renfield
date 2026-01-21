@@ -1,10 +1,18 @@
 """
 Datenbank Models
 """
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float, Index
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+
+try:
+    from pgvector.sqlalchemy import Vector
+    PGVECTOR_AVAILABLE = True
+except ImportError:
+    # Fallback für Tests ohne pgvector
+    PGVECTOR_AVAILABLE = False
+    Vector = None
 
 Base = declarative_base()
 
@@ -350,3 +358,131 @@ class RoomOutputDevice(Base):
 
 # Legacy alias for backward compatibility
 RoomSatellite = RoomDevice
+
+
+# =============================================================================
+# RAG (Retrieval-Augmented Generation) Models
+# =============================================================================
+
+class KnowledgeBase(Base):
+    """Gruppierung von Dokumenten für RAG"""
+    __tablename__ = "knowledge_bases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Beziehungen
+    documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
+
+
+class Document(Base):
+    """Hochgeladene Dokumente (Metadaten)"""
+    __tablename__ = "documents"
+
+    id = Column(Integer, primary_key=True, index=True)
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True, index=True)
+
+    # File Info
+    filename = Column(String(255), nullable=False)
+    file_path = Column(String(512), nullable=False)
+    file_type = Column(String(50))  # pdf, docx, txt, etc.
+    file_size = Column(Integer)     # in bytes
+
+    # Processing Status
+    status = Column(String(50), default="pending", index=True)  # pending, processing, completed, failed
+    error_message = Column(Text, nullable=True)
+
+    # Metadata (extrahiert aus Dokument)
+    title = Column(String(512), nullable=True)
+    author = Column(String(255), nullable=True)
+    page_count = Column(Integer, nullable=True)
+    chunk_count = Column(Integer, default=0)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    processed_at = Column(DateTime, nullable=True)
+
+    # Beziehungen
+    knowledge_base = relationship("KnowledgeBase", back_populates="documents")
+    chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
+
+
+# Document Chunk Embedding Dimension (nomic-embed-text = 768)
+EMBEDDING_DIMENSION = 768
+
+
+class DocumentChunk(Base):
+    """
+    Text-Chunks mit Embedding-Vektor für RAG
+
+    Jedes Dokument wird in kleinere Chunks aufgeteilt,
+    die einzeln in der Vektordatenbank indexiert werden.
+    """
+    __tablename__ = "document_chunks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+
+    # Content
+    content = Column(Text, nullable=False)
+
+    # Embedding Vector (768 dimensions for nomic-embed-text)
+    # Uses pgvector extension for vector similarity search
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True
+    )
+
+    # Chunk Metadata
+    chunk_index = Column(Integer)           # Position im Dokument (0-basiert)
+    page_number = Column(Integer, nullable=True)
+    section_title = Column(String(512), nullable=True)
+    chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, etc.
+
+    # Additional Metadata (JSON für Flexibilität)
+    chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Beziehungen
+    document = relationship("Document", back_populates="chunks")
+
+    # Index für Vektor-Suche (wird bei Migration erstellt)
+    # CREATE INDEX idx_document_chunks_embedding ON document_chunks
+    # USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+
+
+# Document Processing Status Constants
+DOC_STATUS_PENDING = "pending"
+DOC_STATUS_PROCESSING = "processing"
+DOC_STATUS_COMPLETED = "completed"
+DOC_STATUS_FAILED = "failed"
+
+DOC_STATUSES = [DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED]
+
+
+# Chunk Type Constants
+CHUNK_TYPE_PARAGRAPH = "paragraph"
+CHUNK_TYPE_TABLE = "table"
+CHUNK_TYPE_CODE = "code"
+CHUNK_TYPE_FORMULA = "formula"
+CHUNK_TYPE_HEADING = "heading"
+CHUNK_TYPE_LIST = "list"
+CHUNK_TYPE_IMAGE_CAPTION = "image_caption"
+
+CHUNK_TYPES = [
+    CHUNK_TYPE_PARAGRAPH,
+    CHUNK_TYPE_TABLE,
+    CHUNK_TYPE_CODE,
+    CHUNK_TYPE_FORMULA,
+    CHUNK_TYPE_HEADING,
+    CHUNK_TYPE_LIST,
+    CHUNK_TYPE_IMAGE_CAPTION,
+]

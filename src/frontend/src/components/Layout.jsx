@@ -11,7 +11,8 @@ import {
   X,
   DoorOpen,
   Settings,
-  ChevronDown
+  ChevronDown,
+  BookOpen
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 
@@ -19,6 +20,7 @@ import DeviceStatus from './DeviceStatus';
 const mainNavigation = [
   { name: 'Home', href: '/', icon: Home },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
+  { name: 'Wissen', href: '/knowledge', icon: BookOpen },
   { name: 'Aufgaben', href: '/tasks', icon: CheckSquare },
   { name: 'Kameras', href: '/camera', icon: Camera },
 ];

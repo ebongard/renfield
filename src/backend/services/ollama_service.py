@@ -12,10 +12,17 @@ from datetime import datetime
 
 class OllamaService:
     """Service für Ollama LLM Interaktion"""
-    
+
     def __init__(self):
         self.client = ollama.AsyncClient(host=settings.ollama_url)
-        self.model = settings.ollama_model
+
+        # Multi-Modell Konfiguration
+        self.model = settings.ollama_model  # Legacy
+        self.chat_model = settings.ollama_chat_model
+        self.rag_model = settings.ollama_rag_model
+        self.embed_model = settings.ollama_embed_model
+        self.intent_model = settings.ollama_intent_model
+
         self.system_prompt = """Du bist Renfield, ein hilfreicher KI-Assistent für Smart Home Steuerung.
 
 Deine Fähigkeiten:
@@ -48,16 +55,17 @@ Du: 'System: Aktion ausgeführt'
         """Stelle sicher, dass das Modell geladen ist"""
         try:
             models = await self.client.list()
-            model_names = [m['name'] for m in models['models']]
-            
+            # ollama>=0.4.0 uses Pydantic models with .model attribute
+            model_names = [m.model for m in models.models]
+
             if self.model not in model_names:
-                logger.info(f"📥 Lade Modell {self.model}...")
+                logger.info(f"Lade Modell {self.model}...")
                 await self.client.pull(self.model)
-                logger.info(f"✅ Modell {self.model} geladen")
+                logger.info(f"Modell {self.model} geladen")
             else:
-                logger.info(f"✅ Modell {self.model} bereits vorhanden")
+                logger.info(f"Modell {self.model} bereits vorhanden")
         except Exception as e:
-            logger.error(f"❌ Fehler beim Laden des Modells: {e}")
+            logger.error(f"Fehler beim Laden des Modells: {e}")
             raise
     
     async def chat(self, message: str, context: List[Dict] = None) -> str:
@@ -74,10 +82,10 @@ Du: 'System: Aktion ausgeführt'
                 model=self.model,
                 messages=messages
             )
-            
-            return response['message']['content']
+            # ollama>=0.4.0 uses Pydantic models
+            return response.message.content
         except Exception as e:
-            logger.error(f"❌ Chat Fehler: {e}")
+            logger.error(f"Chat Fehler: {e}")
             return f"Entschuldigung, es gab einen Fehler: {str(e)}"
     
     async def chat_stream(self, message: str, context: List[Dict] = None) -> AsyncGenerator[str, None]:
@@ -95,10 +103,11 @@ Du: 'System: Aktion ausgeführt'
                 messages=messages,
                 stream=True
             ):
-                if 'message' in chunk and 'content' in chunk['message']:
-                    yield chunk['message']['content']
+                # ollama>=0.4.0 uses Pydantic models
+                if chunk.message and chunk.message.content:
+                    yield chunk.message.content
         except Exception as e:
-            logger.error(f"❌ Streaming Fehler: {e}")
+            logger.error(f"Streaming Fehler: {e}")
             yield f"Fehler: {str(e)}"
     
     async def extract_intent(
@@ -188,8 +197,8 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                     "num_predict": 300   # Etwas mehr Platz für JSON
                 }
             )
-
-            response = response_data['message']['content']
+            # ollama>=0.4.0 uses Pydantic models
+            response = response_data.message.content
 
             # Robuste JSON-Extraktion
             import json
@@ -748,3 +757,184 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                     lines.append(f"  Example: \"{example}\"")
 
         return "\n".join(lines)
+
+    # ==========================================================================
+    # RAG (Retrieval-Augmented Generation) Methods
+    # ==========================================================================
+
+    async def get_embedding(self, text: str) -> List[float]:
+        """
+        Generiert Embedding für Text mit dem konfigurierten Embed-Modell.
+
+        Args:
+            text: Text für Embedding
+
+        Returns:
+            Liste von Floats (768 Dimensionen für nomic-embed-text)
+        """
+        try:
+            response = await self.client.embeddings(
+                model=self.embed_model,
+                prompt=text
+            )
+            # ollama>=0.4.0 uses Pydantic models
+            return response.embedding
+        except Exception as e:
+            logger.error(f"Embedding Fehler: {e}")
+            raise
+
+    async def chat_with_rag(
+        self,
+        message: str,
+        rag_context: Optional[str] = None,
+        history: Optional[List[Dict]] = None
+    ) -> str:
+        """
+        Chat mit optionalem RAG-Kontext (nicht-streamend).
+
+        Nutzt das größere RAG-Modell wenn Kontext vorhanden.
+
+        Args:
+            message: User-Nachricht
+            rag_context: Optional formatierter Kontext aus der Wissensdatenbank
+            history: Optional Chat-Historie
+
+        Returns:
+            Generierte Antwort
+        """
+        try:
+            # Wähle Modell basierend auf RAG-Kontext
+            model = self.rag_model if rag_context else self.chat_model
+
+            # Baue System-Prompt mit RAG-Kontext
+            system_prompt = self._build_rag_system_prompt(rag_context)
+
+            messages = [{"role": "system", "content": system_prompt}]
+
+            if history:
+                messages.extend(history)
+
+            messages.append({"role": "user", "content": message})
+
+            response = await self.client.chat(
+                model=model,
+                messages=messages
+            )
+            # ollama>=0.4.0 uses Pydantic models
+            return response.message.content
+
+        except Exception as e:
+            logger.error(f"RAG Chat Fehler: {e}")
+            return f"Entschuldigung, es gab einen Fehler: {str(e)}"
+
+    async def chat_stream_with_rag(
+        self,
+        message: str,
+        rag_context: Optional[str] = None,
+        history: Optional[List[Dict]] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Streaming Chat mit optionalem RAG-Kontext.
+
+        Nutzt das größere RAG-Modell wenn Kontext vorhanden.
+
+        Args:
+            message: User-Nachricht
+            rag_context: Optional formatierter Kontext aus der Wissensdatenbank
+            history: Optional Chat-Historie
+
+        Yields:
+            Text-Chunks der Antwort
+        """
+        try:
+            # Wähle Modell basierend auf RAG-Kontext
+            model = self.rag_model if rag_context else self.chat_model
+
+            # Baue System-Prompt mit RAG-Kontext
+            system_prompt = self._build_rag_system_prompt(rag_context)
+
+            messages = [{"role": "system", "content": system_prompt}]
+
+            if history:
+                messages.extend(history)
+
+            messages.append({"role": "user", "content": message})
+
+            logger.debug(f"RAG Stream: model={model}, context_len={len(rag_context) if rag_context else 0}")
+
+            async for chunk in await self.client.chat(
+                model=model,
+                messages=messages,
+                stream=True
+            ):
+                # ollama>=0.4.0 uses Pydantic models
+                if chunk.message and chunk.message.content:
+                    yield chunk.message.content
+
+        except Exception as e:
+            logger.error(f"RAG Streaming Fehler: {e}")
+            yield f"Fehler: {str(e)}"
+
+    def _build_rag_system_prompt(self, context: Optional[str] = None) -> str:
+        """
+        Erstellt System-Prompt mit optionalem RAG-Kontext.
+
+        Args:
+            context: Formatierter Kontext aus der Wissensdatenbank
+
+        Returns:
+            System-Prompt für das LLM
+        """
+        base_prompt = """Du bist Renfield, ein hilfreicher KI-Assistent.
+Antworte präzise, freundlich und auf Deutsch."""
+
+        if not context:
+            return base_prompt
+
+        return f"""{base_prompt}
+
+Nutze den folgenden Kontext aus der Wissensdatenbank, um die Frage zu beantworten.
+Wenn der Kontext die Frage nicht beantwortet, sage das ehrlich.
+Zitiere relevante Quellen mit [Quelle X].
+
+KONTEXT AUS WISSENSDATENBANK:
+{context}
+
+WICHTIG:
+- Basiere deine Antwort auf dem Kontext
+- Erfinde keine Informationen
+- Wenn du unsicher bist, sage es
+- Verweise auf die Quelle wenn du daraus zitierst"""
+
+    async def ensure_rag_models_loaded(self) -> Dict[str, bool]:
+        """
+        Stellt sicher, dass alle für RAG benötigten Modelle geladen sind.
+
+        Returns:
+            Dict mit Modell-Namen und ob sie verfügbar sind
+        """
+        result = {}
+        models_to_check = [
+            self.embed_model,
+            self.rag_model,
+        ]
+
+        try:
+            available = await self.client.list()
+            # ollama>=0.4.0 uses Pydantic models with .model attribute
+            available_names = [m.model for m in available.models]
+
+            for model in models_to_check:
+                if model in available_names:
+                    result[model] = True
+                    logger.info(f"Modell {model} verfuegbar")
+                else:
+                    result[model] = False
+                    logger.warning(f"Modell {model} nicht gefunden")
+
+        except Exception as e:
+            logger.error(f"❌ Fehler beim Prüfen der Modelle: {e}")
+            for model in models_to_check:
+                result[model] = False
+
+        return result

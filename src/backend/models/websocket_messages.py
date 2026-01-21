@@ -170,6 +170,9 @@ class WSChatMessage(BaseModel):
     type: Literal["text"] = "text"
     content: str = Field(..., min_length=1, max_length=10000)
     request_id: Optional[str] = Field(None, max_length=64)
+    # RAG options
+    use_rag: bool = Field(default=False, description="Enable RAG context for this query")
+    knowledge_base_id: Optional[int] = Field(None, description="Specific knowledge base to search")
 
 
 # =============================================================================
