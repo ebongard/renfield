@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"  # Legacy: wird als chat_model verwendet
     ollama_chat_model: str = "llama3.2:3b"      # Für normale Konversation
-    ollama_rag_model: str = "llama3.3:latest"   # Für RAG-Antworten (größer = besser)
+    ollama_rag_model: str = "llama3.2:latest"   # Für RAG-Antworten (via .env überschreibbar)
     ollama_embed_model: str = "nomic-embed-text" # Für Embeddings (768 Dimensionen)
     ollama_intent_model: str = "llama3.2:3b"    # Für Intent-Erkennung
     
@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     rag_chunk_size: int = 512           # Token-Limit pro Chunk
     rag_chunk_overlap: int = 50         # Überlappung zwischen Chunks
     rag_top_k: int = 5                  # Anzahl der relevantesten Chunks
-    rag_similarity_threshold: float = 0.5  # Minimum Similarity für Ergebnisse (0-1)
+    rag_similarity_threshold: float = 0.4  # Minimum Similarity für Ergebnisse (0-1)
 
     # Document Upload
     upload_dir: str = "/app/data/uploads"

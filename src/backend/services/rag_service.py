@@ -283,7 +283,7 @@ class RAGService:
                 "similarity": round(similarity, 4)
             })
 
-        logger.debug(f"RAG Search: '{query[:50]}...' -> {len(results)} Ergebnisse")
+        logger.info(f"📚 RAG Search: query='{query[:50]}', kb_id={knowledge_base_id}, threshold={threshold}, found={len(results)} results (raw rows: {len(rows)})")
         return results
 
     async def get_context(
@@ -370,7 +370,11 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Konnte Datei nicht löschen: {e}")
 
-        # Lösche aus DB (Chunks werden durch cascade gelöscht)
+        # Lösche zuerst die Chunks (explizit, falls CASCADE nicht greift)
+        chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
+        await self.db.execute(chunk_stmt)
+
+        # Dann lösche das Dokument
         stmt = delete(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
         await self.db.commit()

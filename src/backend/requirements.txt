@@ -17,9 +17,8 @@ celery>=5.3.6
 ollama>=0.4.0                 # Ollama Python client (async support)
 
 # RAG & Document Processing
-docling>=2.0.0                # IBM Docling for document parsing
+docling>=2.0.0                # IBM Docling for document parsing (includes docling-ibm-models)
 docling-core>=2.0.0           # Docling core functionality
-docling-ibm-models>=3.0.0     # Docling layout analysis models (RT-DETR)
 transformers>=4.47.0          # Required for rt_detr_v2 model support
 pgvector>=0.2.4               # PostgreSQL vector extension for SQLAlchemy
 aiofiles>=23.2.0              # Async file operations
@@ -37,7 +36,6 @@ soundfile>=0.12.0       # Audio file I/O
 # Speaker Recognition (ECAPA-TDNN)
 speechbrain>=1.0.0      # Speaker embedding extraction
 torchaudio>=2.0.0       # Audio processing for SpeechBrain
-huggingface_hub<0.24.0  # SpeechBrain uses deprecated 'use_auth_token' param (removed in 0.24)
 
 # Wake Word Detection (Optional - Server-Side Fallback)
 # Uncomment to enable server-side wake word detection
