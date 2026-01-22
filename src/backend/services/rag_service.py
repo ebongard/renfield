@@ -85,7 +85,8 @@ class RAGService:
         self,
         file_path: str,
         knowledge_base_id: Optional[int] = None,
-        filename: Optional[str] = None
+        filename: Optional[str] = None,
+        file_hash: Optional[str] = None
     ) -> Document:
         """
         Verarbeitet und indexiert ein Dokument.
@@ -99,6 +100,7 @@ class RAGService:
             file_path: Pfad zur Dokumentdatei
             knowledge_base_id: Optional Knowledge Base ID
             filename: Optional Dateiname (falls anders als file_path)
+            file_hash: Optional SHA256 hash for duplicate detection
 
         Returns:
             Document-Objekt mit Status
@@ -110,6 +112,7 @@ class RAGService:
             file_path=file_path,
             filename=actual_filename,
             knowledge_base_id=knowledge_base_id,
+            file_hash=file_hash,
             status=DOC_STATUS_PROCESSING
         )
         self.db.add(doc)

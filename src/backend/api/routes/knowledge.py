@@ -8,13 +8,16 @@ from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, 
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import aiofiles
 import os
+import hashlib
 from pathlib import Path
 from loguru import logger
 
 from services.database import get_db
 from services.rag_service import RAGService
+from models.database import Document
 from utils.config import settings
 
 router = APIRouter()
@@ -143,6 +146,34 @@ async def upload_document(
             detail=f"Datei zu groß ({size // 1024 // 1024}MB). Maximum: {settings.max_file_size_mb}MB"
         )
 
+    # Datei-Inhalt lesen und SHA256-Hash berechnen
+    content = await file.read()
+    file_hash = hashlib.sha256(content).hexdigest()
+    logger.info(f"📄 Datei-Hash berechnet: {file_hash[:16]}... ({file.filename})")
+
+    # Duplikat-Prüfung: Existiert bereits ein Dokument mit diesem Hash in der gleichen Knowledge Base?
+    existing_doc = await rag.db.execute(
+        select(Document).where(
+            Document.file_hash == file_hash,
+            Document.knowledge_base_id == knowledge_base_id
+        )
+    )
+    existing = existing_doc.scalar_one_or_none()
+
+    if existing:
+        logger.warning(f"⚠️ Duplikat erkannt: '{file.filename}' ist identisch mit '{existing.filename}' (ID: {existing.id})")
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"Dieses Dokument existiert bereits in der Knowledge Base",
+                "existing_document": {
+                    "id": existing.id,
+                    "filename": existing.filename,
+                    "uploaded_at": existing.created_at.isoformat() if existing.created_at else None
+                }
+            }
+        )
+
     # Upload-Verzeichnis erstellen
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)
@@ -155,7 +186,6 @@ async def upload_document(
     # Datei speichern
     try:
         async with aiofiles.open(file_path, 'wb') as f:
-            content = await file.read()
             await f.write(content)
 
         logger.info(f"Datei gespeichert: {file_path}")
@@ -169,7 +199,8 @@ async def upload_document(
         document = await rag.ingest_document(
             str(file_path),
             knowledge_base_id=knowledge_base_id,
-            filename=file.filename
+            filename=file.filename,
+            file_hash=file_hash
         )
 
         return DocumentResponse(

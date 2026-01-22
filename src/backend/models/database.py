@@ -393,6 +393,7 @@ class Document(Base):
     file_path = Column(String(512), nullable=False)
     file_type = Column(String(50))  # pdf, docx, txt, etc.
     file_size = Column(Integer)     # in bytes
+    file_hash = Column(String(64), nullable=True, index=True)  # SHA256 hash for duplicate detection
 
     # Processing Status
     status = Column(String(50), default="pending", index=True)  # pending, processing, completed, failed
