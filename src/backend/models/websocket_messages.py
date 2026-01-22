@@ -169,6 +169,7 @@ class WSChatMessage(BaseModel):
     """Chat message for /ws endpoint."""
     type: Literal["text"] = "text"
     content: str = Field(..., min_length=1, max_length=10000)
+    session_id: Optional[str] = Field(None, max_length=128, description="Session ID for conversation persistence")
     request_id: Optional[str] = Field(None, max_length=64)
     # RAG options
     use_rag: bool = Field(default=False, description="Enable RAG context for this query")

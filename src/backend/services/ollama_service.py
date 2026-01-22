@@ -68,14 +68,14 @@ Du: 'System: Aktion ausgeführt'
             logger.error(f"Fehler beim Laden des Modells: {e}")
             raise
     
-    async def chat(self, message: str, context: List[Dict] = None) -> str:
-        """Einfacher Chat (nicht-streamend)"""
+    async def chat(self, message: str, history: List[Dict] = None) -> str:
+        """Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie."""
         try:
             messages = [{"role": "system", "content": self.system_prompt}]
-            
-            if context:
-                messages.extend(context)
-            
+
+            if history:
+                messages.extend(history)
+
             messages.append({"role": "user", "content": message})
             
             response = await self.client.chat(
@@ -88,14 +88,14 @@ Du: 'System: Aktion ausgeführt'
             logger.error(f"Chat Fehler: {e}")
             return f"Entschuldigung, es gab einen Fehler: {str(e)}"
     
-    async def chat_stream(self, message: str, context: List[Dict] = None) -> AsyncGenerator[str, None]:
-        """Streaming Chat"""
+    async def chat_stream(self, message: str, history: List[Dict] = None) -> AsyncGenerator[str, None]:
+        """Streaming Chat with optional conversation history."""
         try:
             messages = [{"role": "system", "content": self.system_prompt}]
-            
-            if context:
-                messages.extend(context)
-            
+
+            if history:
+                messages.extend(history)
+
             messages.append({"role": "user", "content": message})
             
             async for chunk in await self.client.chat(
@@ -114,7 +114,8 @@ Du: 'System: Aktion ausgeführt'
         self,
         message: str,
         plugin_registry=None,
-        room_context: Optional[Dict] = None
+        room_context: Optional[Dict] = None,
+        conversation_history: Optional[List[Dict]] = None
     ) -> Dict:
         """
         Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung.
@@ -127,6 +128,8 @@ Du: 'System: Aktion ausgeführt'
                 - room_id: Datenbank-ID des Raums
                 - device_type: Typ des Geräts (satellite, web_panel, etc.)
                 - speaker_name: Name des erkannten Sprechers (optional)
+            conversation_history: Optional conversation history for resolving
+                pronouns and references like "dort", "es", "das", "dafür"
 
         Returns:
             Dict mit intent, parameters und confidence
@@ -153,8 +156,31 @@ Du: 'System: Aktion ausgeführt'
             if speaker_name:
                 room_context_prompt += f"\nSPRECHER: {speaker_name}"
 
+        # Build conversation history context for reference resolution
+        history_context_prompt = ""
+        if conversation_history:
+            # Take last 4 messages max for context (to keep prompt manageable)
+            recent_history = conversation_history[-4:]
+            if recent_history:
+                history_lines = []
+                for msg in recent_history:
+                    role = "Nutzer" if msg.get("role") == "user" else "Assistent"
+                    content = msg.get("content", "")[:200]  # Truncate long messages
+                    history_lines.append(f"  {role}: {content}")
+
+                history_context_prompt = f"""
+KONVERSATIONS-HISTORIE (für Referenz-Auflösung):
+{chr(10).join(history_lines)}
+
+WICHTIG bei Referenzen:
+- Wenn der Nutzer "dort", "da", "dorthin" sagt, beziehe es auf den letzten genannten ORT in der Historie
+- Wenn der Nutzer "es", "das", "die", "den" sagt, beziehe es auf das letzte OBJEKT/GERÄT
+- Ersetze Referenzen durch die konkreten Werte aus der Historie in den Parametern
+- Beispiel: Wenn vorher "Berlin" erwähnt wurde und der Nutzer "dort" sagt, nutze "Berlin" im Query"""
+
         prompt = f"""Erkenne den Intent für diese Nachricht: "{message}"
 {room_context_prompt}
+{history_context_prompt}
 
 INTENT-TYPEN:
 

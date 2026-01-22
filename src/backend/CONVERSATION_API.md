@@ -6,6 +6,28 @@ Erweiterte API-Endpoints für Konversations-Management und Persistenz.
 
 Die Konversations-API bietet vollständige Persistenz für Chat-Verläufe mit PostgreSQL als Backend. Alle Nachrichten werden automatisch gespeichert und können später abgerufen werden.
 
+### Unterstützte Kanäle
+
+| Kanal | Session-ID Format | Historie | Beschreibung |
+|-------|-------------------|----------|--------------|
+| REST API (`/api/chat/send`) | Client-provided | 20 Nachrichten | Klassischer HTTP-Request |
+| WebSocket (`/ws`) | Client via `session_id` Feld | 10 Nachrichten | Streaming-Chat mit Echtzeit-Persistenz |
+| Satellite (`/ws/satellite`) | `satellite-{id}-{YYYY-MM-DD}` | 5 Nachrichten | Tägliche Sessions für Voice-Commands |
+
+### Follow-up Unterstützung
+
+Durch die Konversationspersistenz versteht Renfield Follow-up-Fragen ohne explizite Referenzen:
+
+```
+Nutzer: "Schalte das Licht im Wohnzimmer an"
+→ Aktion: homeassistant.turn_on, entity_id: light.wohnzimmer
+
+Nutzer: "Mach es wieder aus"
+→ LLM sieht vorherige Nachricht in History
+→ Versteht "es" = light.wohnzimmer
+→ Aktion: homeassistant.turn_off, entity_id: light.wohnzimmer
+```
+
 ## Neue API-Endpoints
 
 ### 1. Liste aller Konversationen
@@ -212,6 +234,64 @@ curl -X DELETE "http://localhost:8000/api/chat/conversations/cleanup?days=60"
   "success": true,
   "deleted_count": 23,
   "cutoff_days": 60
+}
+```
+
+---
+
+## WebSocket Konversations-Persistenz
+
+### Frontend Chat (`/ws`)
+
+Um Konversationspersistenz über WebSocket zu aktivieren, sende die `session_id` mit jeder Nachricht:
+
+**Client → Server:**
+```json
+{
+  "type": "text",
+  "content": "Schalte das Licht an",
+  "session_id": "session-1234567890-abc123def",
+  "use_rag": false,
+  "knowledge_base_id": null
+}
+```
+
+**Verhalten:**
+1. **Erste Nachricht mit `session_id`**: Backend lädt History aus DB (max. 10 Nachrichten)
+2. **Jede Nachricht**: User-Nachricht und Assistant-Antwort werden in DB gespeichert
+3. **LLM-Kontext**: Alle `chat_stream()` Aufrufe erhalten die Konversationshistorie
+
+**Session State (In-Memory):**
+```python
+@dataclass
+class ConversationSessionState:
+    conversation_history: List[dict]  # In-Memory Historie
+    history_loaded: bool              # Ob DB-Historie geladen wurde
+    db_session_id: Optional[str]      # Session-ID für DB-Persistenz
+    last_intent: Optional[dict]       # Letzter erkannter Intent
+    last_action_result: Optional[dict]  # Letztes Action-Ergebnis
+    last_entities: List[str]          # Letzte Entities (für "es" Auflösung)
+```
+
+### Satellite (`/ws/satellite`)
+
+Satellites nutzen automatische tägliche Sessions:
+
+**Session-ID Format:** `satellite-{satellite_id}-{YYYY-MM-DD}`
+
+**Beispiel:** `satellite-sat-wohnzimmer-2024-01-15`
+
+**Verhalten:**
+1. **Nach Registration**: Tägliche Session-ID wird generiert
+2. **Erster Befehl des Tages**: History aus DB laden (max. 5 Nachrichten)
+3. **Jeder Befehl**: Speicherung mit Metadaten (satellite_id, room, speaker)
+
+**Gespeicherte Metadaten:**
+```json
+{
+  "satellite_id": "sat-wohnzimmer",
+  "room": "Wohnzimmer",
+  "speaker": "Erik"
 }
 ```
 

@@ -321,10 +321,11 @@ export default function ChatPage() {
     setLoading(true);
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      // WebSocket nutzen für Streaming
+      // WebSocket nutzen für Streaming (with session_id for conversation persistence)
       const message = {
         type: 'text',
         content: text,
+        session_id: sessionId,
         use_rag: useRag,
         knowledge_base_id: selectedKnowledgeBase
       };

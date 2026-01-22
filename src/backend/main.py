@@ -42,6 +42,143 @@ from models.websocket_messages import (
     WSWakewordDetectedMessage, WSStartSessionMessage, WSHeartbeatMessage, WSChatMessage
 )
 from utils.config import settings
+from dataclasses import dataclass, field
+from time import time
+import re
+
+# =============================================================================
+# RAG Session State - Maintains context across multiple messages
+# =============================================================================
+
+@dataclass
+class ConversationSessionState:
+    """
+    Maintains conversation context across multiple messages in a WebSocket session.
+
+    This state supports:
+    - General conversation history (for follow-up questions like "Mach es aus")
+    - RAG context persistence (for document Q&A)
+    - Last entities/actions (for pronoun resolution)
+    """
+    # General conversation history (for all message types)
+    conversation_history: List[dict] = field(default_factory=list)
+    history_loaded: bool = False  # Whether history was loaded from DB
+    db_session_id: Optional[str] = None  # Session ID for DB persistence
+
+    # RAG-specific state
+    last_rag_context: Optional[str] = None  # Last retrieved document context
+    last_rag_results: Optional[List[dict]] = None  # Raw search results
+    last_query: Optional[str] = None  # Last user query
+    last_rag_timestamp: float = 0  # When last RAG search was performed
+    knowledge_base_id: Optional[int] = None  # Current knowledge base
+
+    # Last action context (for pronoun resolution like "es" referring to last entity)
+    last_intent: Optional[dict] = None
+    last_action_result: Optional[dict] = None
+    last_entities: List[str] = field(default_factory=list)
+
+    # Configuration
+    CONTEXT_TIMEOUT_SECONDS: int = 300  # 5 minutes
+    MAX_HISTORY_MESSAGES: int = 10  # Keep last 10 messages in memory
+
+    def is_rag_context_valid(self) -> bool:
+        """Check if the cached RAG context is still valid."""
+        if not self.last_rag_context:
+            return False
+        return (time() - self.last_rag_timestamp) < self.CONTEXT_TIMEOUT_SECONDS
+
+    def add_to_history(self, role: str, content: str):
+        """Add a message to the conversation history."""
+        self.conversation_history.append({"role": role, "content": content})
+        # Keep only last N messages in memory
+        if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
+            self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES:]
+
+    def update_rag_context(self, context: str, results: List[dict], query: str, kb_id: Optional[int] = None):
+        """Update the RAG context after a successful search."""
+        self.last_rag_context = context
+        self.last_rag_results = results
+        self.last_query = query
+        self.last_rag_timestamp = time()
+        self.knowledge_base_id = kb_id
+
+    def update_action_context(self, intent: dict, result: dict):
+        """Update the last action context for pronoun resolution."""
+        self.last_intent = intent
+        self.last_action_result = result
+        # Extract entity IDs for "es/das" resolution
+        if intent and intent.get("parameters"):
+            entity_id = intent["parameters"].get("entity_id")
+            if entity_id:
+                self.last_entities = [entity_id]
+
+    def clear_rag(self):
+        """Clear RAG-specific state."""
+        self.last_rag_context = None
+        self.last_rag_results = None
+        self.last_query = None
+        self.last_rag_timestamp = 0
+        self.knowledge_base_id = None
+
+    def clear_all(self):
+        """Clear all session state."""
+        self.conversation_history = []
+        self.history_loaded = False
+        self.clear_rag()
+        self.last_intent = None
+        self.last_action_result = None
+        self.last_entities = []
+
+
+# Alias for backwards compatibility
+RAGSessionState = ConversationSessionState
+
+
+def is_followup_question(query: str, previous_query: Optional[str] = None) -> bool:
+    """
+    Detect if a query is likely a follow-up question about previous context.
+
+    Indicators of follow-up questions:
+    - Short queries (typically < 8 words)
+    - Contains pronouns referring to previous context
+    - Starts with question words without new topic
+    - Contains comparative/continuation words
+    """
+    query_lower = query.lower().strip()
+    words = query_lower.split()
+
+    # Very short queries are often follow-ups
+    if len(words) <= 4:
+        return True
+
+    # German pronouns and references to previous context
+    followup_indicators = [
+        r'\b(es|das|dies|dieser|diese|dieses|deren|dessen)\b',  # Demonstrative pronouns
+        r'\b(ihm|ihr|ihnen|ihn|sie)\b',  # Personal pronouns
+        r'\b(welche[rsmn]?|wieviel|wie\s*viel|wann|warum|wieso|weshalb)\b',  # Question words without topic
+        r'\b(mehr|weitere|noch|auch|außerdem|zusätzlich)\b',  # Continuation words
+        r'\b(davon|dazu|darüber|darin|damit|dafür|dagegen)\b',  # Prepositional pronouns
+        r'\b(genauer|details?|einzelheiten)\b',  # Asking for more details
+        r'\b(und\s+was|was\s+noch|sonst\s+noch)\b',  # And what else patterns
+        r'^(und|aber|oder|also)\b',  # Starts with conjunction
+        r'\b(der|die|das)\s+(rechnung|dokument|datei|beleg)\b',  # Referring to "the document"
+    ]
+
+    for pattern in followup_indicators:
+        if re.search(pattern, query_lower):
+            return True
+
+    # If previous query exists, check for topic continuity
+    if previous_query:
+        prev_words = set(previous_query.lower().split())
+        curr_words = set(words)
+        # If very few new content words, likely a follow-up
+        new_words = curr_words - prev_words - {'ist', 'sind', 'war', 'hat', 'haben', 'der', 'die', 'das', 'ein', 'eine', 'und', 'oder', 'aber', 'was', 'wie', 'wann', 'wo', 'wer'}
+        if len(new_words) <= 2:
+            return True
+
+    return False
+
 
 # Track background tasks for graceful shutdown
 _startup_tasks: List[asyncio.Task] = []
@@ -242,6 +379,9 @@ async def websocket_endpoint(
     # Get rate limiter
     rate_limiter = get_rate_limiter()
 
+    # Initialize session state for conversation persistence
+    session_state = ConversationSessionState()
+
     # Try to auto-detect room context from IP address
     room_context = None
     try:
@@ -275,6 +415,7 @@ async def websocket_endpoint(
                 msg = WSChatMessage(**data)
                 message_type = msg.type
                 content = msg.content
+                msg_session_id = msg.session_id
                 request_id = msg.request_id
                 use_rag = msg.use_rag
                 knowledge_base_id = msg.knowledge_base_id
@@ -282,15 +423,37 @@ async def websocket_endpoint(
                 await _send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
 
-            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag})")
+            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id})")
 
-            # Ollama Service
+            # Ollama Service (needed for history loading and intent extraction)
             ollama = app.state.ollama
             plugin_registry = app.state.plugin_registry
 
-            # Intent extrahieren (mit automatischem Raum-Kontext falls verfügbar)
+            # Handle session_id for conversation persistence
+            if msg_session_id:
+                # Load history from DB if this is the first message with this session_id
+                if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
+                    session_state.db_session_id = msg_session_id
+                    try:
+                        async with AsyncSessionLocal() as db_session:
+                            db_history = await ollama.load_conversation_context(
+                                msg_session_id, db_session, max_messages=10
+                            )
+                            if db_history:
+                                session_state.conversation_history = db_history
+                                logger.info(f"📚 Conversation history loaded: {len(db_history)} messages for session {msg_session_id}")
+                            session_state.history_loaded = True
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to load conversation history: {e}")
+
+            # Intent extrahieren (mit automatischem Raum-Kontext und Konversationshistorie)
             logger.info("🔍 Extrahiere Intent...")
-            intent = await ollama.extract_intent(content, plugin_registry, room_context=room_context)
+            intent = await ollama.extract_intent(
+                content,
+                plugin_registry,
+                room_context=room_context,
+                conversation_history=session_state.conversation_history if session_state.conversation_history else None
+            )
             logger.info(f"🎯 Intent erkannt: {intent.get('intent')} | Entity: {intent.get('parameters', {}).get('entity_id', 'none')}")
             
             # Action ausführen falls nötig
@@ -301,7 +464,10 @@ async def websocket_endpoint(
                 executor = ActionExecutor(plugin_registry)
                 action_result = await executor.execute(intent)
                 logger.info(f"✅ Aktion: {action_result.get('success')} - {action_result.get('message')}")
-                
+
+                # Update action context for pronoun resolution (e.g., "es aus")
+                session_state.update_action_context(intent, action_result)
+
                 # Sende Action-Ergebnis an Frontend
                 await websocket.send_json({
                     "type": "action",
@@ -330,8 +496,8 @@ Die Aktion wurde ausgeführt:
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
 
-                # Stream die Antwort
-                async for chunk in ollama.chat_stream(enhanced_prompt):
+                # Stream die Antwort (with conversation history for context)
+                async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history):
                     full_response += chunk
                     await websocket.send_json({
                         "type": "stream",
@@ -349,65 +515,126 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             else:
                 # Normale Konversation (optional mit RAG)
                 if use_rag and settings.rag_enabled:
-                    # RAG-erweiterte Konversation
+                    # RAG-erweiterte Konversation mit Kontext-Persistenz
                     try:
                         from services.rag_service import RAGService
 
-                        async with AsyncSessionLocal() as db_session:
-                            rag_service = RAGService(db_session)
+                        rag_context = None
+                        is_followup = is_followup_question(content, session_state.last_query)
 
-                            # Kontext aus Wissensdatenbank abrufen
-                            rag_context = await rag_service.get_context(
-                                query=content,
-                                knowledge_base_id=knowledge_base_id
-                            )
+                        # Check if this is a follow-up question and we have valid cached context
+                        if is_followup and session_state.is_rag_context_valid():
+                            # Reuse cached context for follow-up questions
+                            rag_context = session_state.last_rag_context
+                            logger.info(f"📚 RAG Follow-up erkannt, nutze gecachten Kontext ({len(rag_context)} Zeichen)")
+                        else:
+                            # New search needed
+                            async with AsyncSessionLocal() as db_session:
+                                rag_service = RAGService(db_session)
 
-                            if rag_context:
-                                logger.info(f"📚 RAG Kontext gefunden ({len(rag_context)} Zeichen)")
+                                logger.info(f"📚 RAG Suche: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
 
-                                # Sende Info über verwendeten Kontext
+                                # Kontext aus Wissensdatenbank abrufen
+                                search_results = await rag_service.search(
+                                    query=content,
+                                    knowledge_base_id=knowledge_base_id
+                                )
+
+                                if search_results:
+                                    rag_context = await rag_service.get_context(
+                                        query=content,
+                                        knowledge_base_id=knowledge_base_id
+                                    )
+                                    # Update session state with new context
+                                    session_state.update_rag_context(
+                                        context=rag_context,
+                                        results=search_results,
+                                        query=content,
+                                        kb_id=knowledge_base_id
+                                    )
+                                    logger.info(f"📚 RAG Kontext gefunden und gecacht ({len(rag_context)} Zeichen)")
+
+                        if rag_context:
+                            # Sende Info über verwendeten Kontext
+                            await websocket.send_json({
+                                "type": "rag_context",
+                                "has_context": True,
+                                "knowledge_base_id": knowledge_base_id,
+                                "is_followup": is_followup
+                            })
+
+                            # RAG-erweiterte Antwort streamen mit Konversationshistorie
+                            async for chunk in ollama.chat_stream_with_rag(
+                                content,
+                                rag_context,
+                                history=session_state.conversation_history if is_followup else None
+                            ):
+                                full_response += chunk
                                 await websocket.send_json({
-                                    "type": "rag_context",
-                                    "has_context": True,
-                                    "knowledge_base_id": knowledge_base_id
+                                    "type": "stream",
+                                    "content": chunk
                                 })
 
-                                # RAG-erweiterte Antwort streamen
-                                async for chunk in ollama.chat_stream_with_rag(content, rag_context):
-                                    full_response += chunk
-                                    await websocket.send_json({
-                                        "type": "stream",
-                                        "content": chunk
-                                    })
-                            else:
-                                logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                            # Add this exchange to conversation history
+                            session_state.add_to_history("user", content)
+                            session_state.add_to_history("assistant", full_response)
+                        else:
+                            logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                            await websocket.send_json({
+                                "type": "rag_context",
+                                "has_context": False,
+                                "knowledge_base_id": knowledge_base_id
+                            })
+                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                                full_response += chunk
                                 await websocket.send_json({
-                                    "type": "rag_context",
-                                    "has_context": False,
-                                    "knowledge_base_id": knowledge_base_id
+                                    "type": "stream",
+                                    "content": chunk
                                 })
-                                async for chunk in ollama.chat_stream(content):
-                                    full_response += chunk
-                                    await websocket.send_json({
-                                        "type": "stream",
-                                        "content": chunk
-                                    })
                     except Exception as e:
                         logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
-                        async for chunk in ollama.chat_stream(content):
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
                             full_response += chunk
                             await websocket.send_json({
                                 "type": "stream",
                                 "content": chunk
                             })
                 else:
-                    # Standard-Konversation ohne RAG
-                    async for chunk in ollama.chat_stream(content):
+                    # Standard-Konversation ohne RAG (with conversation history for context)
+                    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
                         full_response += chunk
                         await websocket.send_json({
                             "type": "stream",
                             "content": chunk
                         })
+
+            # Update conversation history with this exchange (in-memory)
+            session_state.add_to_history("user", content)
+            if full_response:
+                session_state.add_to_history("assistant", full_response)
+
+            # Persist messages to DB if session_id is provided
+            if msg_session_id and full_response:
+                try:
+                    async with AsyncSessionLocal() as db_session:
+                        # Save user message
+                        await ollama.save_message(
+                            msg_session_id, "user", content, db_session,
+                            metadata={"room_context": room_context} if room_context else None
+                        )
+                        # Save assistant response
+                        await ollama.save_message(
+                            msg_session_id, "assistant", full_response, db_session,
+                            metadata={
+                                "intent": intent.get("intent") if intent else None,
+                                "action_success": action_result.get("success") if action_result else None
+                            }
+                        )
+                        logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save messages to DB: {e}")
 
             # Check for output routing if we have room context
             tts_handled_by_server = False
@@ -483,6 +710,11 @@ async def satellite_websocket(
 
     satellite_id = None
 
+    # Conversation history tracking for satellite (in-memory per connection)
+    satellite_conversation_history: List[dict] = []
+    satellite_history_loaded = False
+    satellite_db_session_id = None  # Will be set after registration
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -531,6 +763,11 @@ async def satellite_websocket(
                                 logger.info(f"📍 Satellite {satellite_id} linked to room '{db_room.name}' (id: {room_id})")
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to persist room for satellite: {e}")
+
+                # Generate daily DB session ID for conversation persistence
+                from datetime import date
+                satellite_db_session_id = f"satellite-{satellite_id}-{date.today().isoformat()}"
+                logger.info(f"📚 Satellite DB session: {satellite_db_session_id}")
 
                 await websocket.send_json({
                     "type": "register_ack",
@@ -660,6 +897,20 @@ async def satellite_websocket(
                     ollama = app.state.ollama
                     plugin_registry = app.state.plugin_registry
 
+                    # Load conversation history from DB if not already loaded (once per day)
+                    if satellite_db_session_id and not satellite_history_loaded:
+                        try:
+                            async with AsyncSessionLocal() as db_session:
+                                db_history = await ollama.load_conversation_context(
+                                    satellite_db_session_id, db_session, max_messages=5
+                                )
+                                if db_history:
+                                    satellite_conversation_history.extend(db_history)
+                                    logger.info(f"📚 Satellite conversation history loaded: {len(db_history)} messages")
+                                satellite_history_loaded = True
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to load satellite conversation history: {e}")
+
                     # Build room context for satellite
                     satellite = satellite_manager.get_satellite(satellite_id)
                     room_context = None
@@ -676,8 +927,13 @@ async def satellite_websocket(
 
                         logger.info(f"🏠 Satellite room context: {satellite.room} (ID: {satellite.room_id})")
 
-                    # Extract intent with room context
-                    intent = await ollama.extract_intent(text, plugin_registry, room_context=room_context)
+                    # Extract intent with room context and conversation history
+                    intent = await ollama.extract_intent(
+                        text,
+                        plugin_registry,
+                        room_context=room_context,
+                        conversation_history=satellite_conversation_history if satellite_conversation_history else None
+                    )
                     logger.info(f"🎯 Intent: {intent.get('intent')}")
 
                     # Execute action if needed
@@ -691,7 +947,7 @@ async def satellite_websocket(
                             session_id, intent, action_result.get("success", False)
                         )
 
-                    # Generate response
+                    # Generate response (with conversation history for context)
                     response_text = ""
                     if action_result and action_result.get("success"):
                         result_info = action_result.get("message", "")
@@ -699,16 +955,45 @@ async def satellite_websocket(
 Die Aktion wurde ausgeführt: {result_info}
 Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
-                        async for chunk in ollama.chat_stream(enhanced_prompt):
+                        async for chunk in ollama.chat_stream(enhanced_prompt, history=satellite_conversation_history):
                             response_text += chunk
                     elif action_result and not action_result.get("success"):
                         response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
                     else:
-                        # Normal conversation
-                        async for chunk in ollama.chat_stream(text):
+                        # Normal conversation (with history for follow-up questions)
+                        async for chunk in ollama.chat_stream(text, history=satellite_conversation_history):
                             response_text += chunk
 
                     logger.info(f"💬 Response: '{response_text[:100]}...'")
+
+                    # Update in-memory conversation history (keep max 5 exchanges = 10 messages)
+                    satellite_conversation_history.append({"role": "user", "content": text})
+                    satellite_conversation_history.append({"role": "assistant", "content": response_text})
+                    if len(satellite_conversation_history) > 10:
+                        satellite_conversation_history[:] = satellite_conversation_history[-10:]
+
+                    # Persist messages to DB if we have a session ID
+                    if satellite_db_session_id and response_text:
+                        try:
+                            async with AsyncSessionLocal() as db_session:
+                                await ollama.save_message(
+                                    satellite_db_session_id, "user", text, db_session,
+                                    metadata={
+                                        "satellite_id": satellite_id,
+                                        "room": satellite.room if satellite else None,
+                                        "speaker": speaker_name
+                                    }
+                                )
+                                await ollama.save_message(
+                                    satellite_db_session_id, "assistant", response_text, db_session,
+                                    metadata={
+                                        "intent": intent.get("intent") if intent else None,
+                                        "action_success": action_result.get("success") if action_result else None
+                                    }
+                                )
+                                logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to save satellite messages to DB: {e}")
 
                     # Generate TTS
                     from services.piper_service import PiperService

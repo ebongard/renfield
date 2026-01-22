@@ -20,6 +20,9 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Session Management**: Getrennte Gespräche für verschiedene Themen
 - **Persistente Speicherung**: Alle Nachrichten werden in PostgreSQL gespeichert
 - **Historie-Suche**: Durchsuche frühere Konversationen
+- **WebSocket-Persistenz**: Echtzeit-Speicherung bei jeder Nachricht
+- **Satellite-Sessions**: Tägliche Sessions für Voice-Commands
+- **Follow-up Kontext**: LLM erhält Konversationshistorie für intelligente Antworten
 
 ## Sprach-Interface
 
@@ -252,6 +255,30 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Entity-Resolution**: Versteht "es" und "dort"
 - **Time-Awareness**: Versteht zeitliche Bezüge
 - **Location-Awareness**: Versteht Räume und Orte
+- **Follow-up Fragen**: Versteht "Mach es aus" oder "Und morgen?" ohne explizite Referenzen
+
+### Konversations-Persistenz
+- **WebSocket-Integration**: Kontext bleibt über die gesamte Session erhalten
+- **Satellite-Support**: Tägliche Sessions für Voice-Commands
+- **Datenbank-Speicherung**: Alle Nachrichten werden in PostgreSQL gespeichert
+- **History-Loading**: Kontext wird aus DB geladen bei Reconnect
+
+**Beispiel für Follow-up:**
+```
+Nutzer: "Schalte das Licht im Wohnzimmer an"
+Renfield: "Ich habe das Licht eingeschaltet."
+
+Nutzer: "Mach es wieder aus"
+→ Versteht "es" = Wohnzimmer-Licht
+Renfield: "Ich habe das Licht ausgeschaltet."
+```
+
+**Unterstützte Kanäle:**
+| Kanal | Session-ID | Historie |
+|-------|------------|----------|
+| WebSocket (`/ws`) | Client-provided | 10 Nachrichten |
+| Satellite | Tägliche Sessions | 5 Nachrichten |
+| REST API | Client-provided | 20 Nachrichten |
 
 ## Progressive Web App
 

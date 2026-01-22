@@ -241,18 +241,47 @@ The core of Renfield is the intent recognition system in `src/backend/services/o
 
 ### Conversation Persistence
 
-Renfield implements full conversation persistence with PostgreSQL:
+Renfield implements full conversation persistence with PostgreSQL across **all conversation types** (Chat, WebSocket, Satellite):
 
 **Features:**
 - Automatic message storage for all user/assistant interactions
 - Context loading (last N messages) for conversation continuity
+- **Follow-up question support** - understands "Mach es aus" or "Und morgen?" without explicit references
 - Full-text search across all conversations
 - Conversation statistics and analytics
 - Automatic cleanup of old conversations
 
+**Supported Channels:**
+| Channel | Session ID Format | History Length | Persistence |
+|---------|-------------------|----------------|-------------|
+| REST API (`/api/chat/send`) | Client-provided | 20 messages | Immediate |
+| WebSocket (`/ws`) | Client-provided via `session_id` field | 10 messages | Immediate |
+| Satellite (`/ws/satellite`) | `satellite-{id}-{YYYY-MM-DD}` (daily) | 5 messages | Immediate |
+
+**Key Implementation** (in `src/backend/main.py`):
+- `ConversationSessionState` dataclass maintains in-memory state per WebSocket connection
+- History is loaded from DB on first message with `session_id`
+- All `chat_stream()` calls include conversation history for context
+- Messages are saved to DB after each exchange
+
+**Example Flow:**
+```
+User: "Schalte das Licht im Wohnzimmer an"
+→ Intent: homeassistant.turn_on, entity_id: light.wohnzimmer
+→ Response: "Ich habe das Licht eingeschaltet."
+→ Saved to DB, history updated
+
+User: "Mach es wieder aus"
+→ LLM sees previous exchange in history
+→ Understands "es" = light.wohnzimmer
+→ Intent: homeassistant.turn_off, entity_id: light.wohnzimmer
+→ Response: "Ich habe das Licht ausgeschaltet."
+```
+
 **Key Methods** (in `OllamaService`):
 - `load_conversation_context(session_id, db, max_messages=20)` - Loads previous messages
 - `save_message(session_id, role, content, db, metadata=None)` - Stores single message
+- `chat_stream(message, history=None)` - Streaming chat with optional history
 - `get_all_conversations(db, limit, offset)` - Lists all conversations
 - `search_conversations(query, db, limit)` - Full-text search
 - `delete_conversation(session_id, db)` - Deletes conversation with cascade
@@ -483,12 +512,16 @@ src/frontend/
 **Features:**
 - Automatic room detection via IP address for registered stationary devices
 - Room context passed to intent recognition
+- **Conversation persistence** via `session_id` field for follow-up questions
 
 **Client → Server:**
 ```json
 {
   "type": "text",
-  "content": "Schalte das Licht im Wohnzimmer ein"
+  "content": "Schalte das Licht im Wohnzimmer ein",
+  "session_id": "session-1234567890-abc123def",  // Optional: enables conversation persistence
+  "use_rag": false,                               // Optional: enable RAG context
+  "knowledge_base_id": null                       // Optional: specific knowledge base
 }
 ```
 
@@ -497,8 +530,14 @@ src/frontend/
 {"type": "action", "intent": {...}, "result": {...}}  // Action executed
 {"type": "stream", "content": "Ich habe..."}          // Response chunks
 {"type": "stream", "content": " das Licht..."}
-{"type": "done"}                                       // End of stream
+{"type": "done", "tts_handled": false}                // End of stream
 ```
+
+**Conversation Persistence:**
+When `session_id` is provided:
+1. On first message: History is loaded from DB (up to 10 messages)
+2. After each exchange: User message and assistant response are saved to DB
+3. All LLM calls include conversation history for context understanding
 
 #### Web Devices (`/ws/device`)
 
@@ -547,6 +586,11 @@ src/frontend/
 
 #### Satellite (`/ws/satellite`)
 
+**Features:**
+- Daily conversation persistence for follow-up commands
+- Session ID format: `satellite-{satellite_id}-{YYYY-MM-DD}`
+- Shorter history (5 messages) optimized for voice commands
+
 **Satellite → Server:**
 ```json
 // Registration
@@ -579,6 +623,12 @@ src/frontend/
 // TTS audio response
 {"type": "tts_audio", "session_id": "...", "audio": "<base64 WAV>", "is_final": true}
 ```
+
+**Conversation Persistence:**
+Satellites automatically maintain daily conversation context:
+- History is loaded from DB on first command of the day
+- Each command/response pair is saved with metadata (satellite_id, room, speaker)
+- Enables follow-up commands like "Mach es aus" after "Schalte das Licht an"
 
 ### Key Configuration
 
