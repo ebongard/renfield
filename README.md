@@ -4,14 +4,33 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent für Smart Hom
 
 ## Features
 
-- **Chat-Interface** - Text- und Sprachbasierte Kommunikation
+### Kernfunktionen
+- **Chat-Interface** - Text- und Sprachbasierte Kommunikation mit Streaming-Antworten
 - **Spracheingabe & -ausgabe** - Whisper STT und Piper TTS
 - **Sprechererkennung** - Automatische Identifikation mit SpeechBrain ECAPA-TDNN
 - **Multi-Room Voice Control** - Raspberry Pi Satellite Sprachassistenten
-- **Smart Home Steuerung** - Home Assistant Integration
+- **Konversations-Persistenz** - Follow-up-Fragen verstehen ("Mach es aus", "Und dort?")
+
+### Integrationen
+- **Smart Home Steuerung** - Home Assistant Integration mit Raum-Kontext
 - **Kamera-Überwachung** - Frigate Integration mit Objekterkennung
 - **Workflow-Automation** - n8n Integration
 - **Dynamisches Plugin-System** - Einfache Integration externer APIs (Wetter, News, Musik, Suche)
+
+### Wissensspeicher (RAG)
+- **Dokument-Upload** - PDF, DOCX, PPTX, XLSX, HTML, Markdown
+- **Intelligente Chunking** - Automatische Textaufteilung mit Docling
+- **Vektor-Suche** - Semantische Suche mit pgvector und nomic-embed-text
+- **Duplikat-Erkennung** - SHA256-Hash verhindert doppelte Dokumente
+- **Knowledge Bases** - Organisiere Wissen in thematischen Sammlungen
+
+### Raum-Management
+- **Geräte-Registrierung** - Statische und mobile Geräte pro Raum
+- **IP-basierte Raumerkennung** - Automatischer Raum-Kontext für Befehle
+- **Audio-Output-Routing** - TTS-Ausgabe auf optimales Gerät im Raum
+- **Home Assistant Sync** - Automatischer Import von Räumen und Areas
+
+### Plattform
 - **Progressive Web App** - Funktioniert auf Desktop, Tablet und Smartphone
 - **Vollständig Offline** - Keine Cloud-Abhängigkeiten
 - **GPU-Beschleunigung** - Optional NVIDIA GPU für schnellere Transkription
@@ -19,46 +38,52 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent für Smart Hom
 ## Architektur
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      RENFIELD ECOSYSTEM                              │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐             │
-│  │  Satellite  │    │  Satellite  │    │  Satellite  │             │
-│  │ Wohnzimmer  │    │   Küche     │    │ Schlafzimmer│             │
-│  │ Pi Zero 2 W │    │ Pi Zero 2 W │    │ Pi Zero 2 W │             │
-│  │ + ReSpeaker │    │ + ReSpeaker │    │ + ReSpeaker │             │
-│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘             │
-│         │                  │                  │                     │
-│         └────────┬─────────┴─────────┬────────┘                     │
-│                  │   WebSocket       │                              │
-│                  │ /ws/satellite     │                              │
-│                  ▼                   ▼                              │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │                  Frontend (React PWA)                          │ │
-│  │      - Web Interface mit Chat & Voice                         │ │
-│  │      - PWA für iOS/Android                                    │ │
-│  └────────────────────────┬──────────────────────────────────────┘ │
-│                           │ WebSocket /ws                          │
-│  ┌────────────────────────▼──────────────────────────────────────┐ │
-│  │                   Backend (FastAPI)                            │ │
-│  │  ┌────────────────┐  ┌──────────────┐  ┌───────────────────┐  │ │
-│  │  │SatelliteManager│  │ OllamaService│  │  ActionExecutor   │  │ │
-│  │  └────────────────┘  └──────────────┘  └───────────────────┘  │ │
-│  │  ┌─────────┐ ┌──────────┐ ┌───────────┐ ┌──────────────────┐  │ │
-│  │  │ Whisper │ │  Piper   │ │   Redis   │ │    PostgreSQL    │  │ │
-│  │  │  (STT)  │ │  (TTS)   │ │  (Queue)  │ │   (Database)     │  │ │
-│  │  └─────────┘ └──────────┘ └───────────┘ └──────────────────┘  │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                           │                                        │
-│  ┌────────────────────────▼──────────────────────────────────────┐ │
-│  │               External Integrations                            │ │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │ │
-│  │  │  Ollama  │ │   Home   │ │ Frigate  │ │       n8n        │  │ │
-│  │  │  (LLM)   │ │Assistant │ │  (NVR)   │ │   (Workflows)    │  │ │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘  │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         RENFIELD ECOSYSTEM                                │
+├──────────────────────────────────────────────────────────────────────────┤
+│                                                                           │
+│  ┌─────────────┐    ┌─────────────┐    ┌─────────────┐                   │
+│  │  Satellite  │    │  Satellite  │    │  Web Panel  │                   │
+│  │ Wohnzimmer  │    │   Küche     │    │   Tablet    │                   │
+│  │ Pi Zero 2 W │    │ Pi Zero 2 W │    │  (Browser)  │                   │
+│  │ + ReSpeaker │    │ + ReSpeaker │    │             │                   │
+│  └──────┬──────┘    └──────┬──────┘    └──────┬──────┘                   │
+│         │                  │                  │                          │
+│         └────────┬─────────┴─────────┬────────┘                          │
+│                  │    WebSocket      │                                   │
+│                  │  /ws/satellite    │  /ws/device                       │
+│                  ▼                   ▼                                   │
+│  ┌────────────────────────────────────────────────────────────────────┐  │
+│  │                    Frontend (React PWA)                             │  │
+│  │   - Web Interface mit Chat & Voice    - Raum-Verwaltung            │  │
+│  │   - PWA für iOS/Android               - Wissensspeicher-UI         │  │
+│  └─────────────────────────┬──────────────────────────────────────────┘  │
+│                            │ WebSocket /ws                               │
+│  ┌─────────────────────────▼──────────────────────────────────────────┐  │
+│  │                      Backend (FastAPI)                              │  │
+│  │  ┌────────────────┐  ┌──────────────┐  ┌────────────────────────┐  │  │
+│  │  │SatelliteManager│  │ OllamaService│  │    ActionExecutor      │  │  │
+│  │  │ DeviceManager  │  │  RAGService  │  │    PluginRegistry      │  │  │
+│  │  └────────────────┘  └──────────────┘  └────────────────────────┘  │  │
+│  │  ┌─────────┐ ┌──────────┐ ┌─────────────┐ ┌─────────────────────┐  │  │
+│  │  │ Whisper │ │  Piper   │ │ RoomService │ │ OutputRoutingService│  │  │
+│  │  │  (STT)  │ │  (TTS)   │ │             │ │                     │  │  │
+│  │  └─────────┘ └──────────┘ └─────────────┘ └─────────────────────┘  │  │
+│  │  ┌──────────────────────────────────────────────────────────────┐  │  │
+│  │  │                    PostgreSQL + pgvector                      │  │  │
+│  │  │  Conversations │ Messages │ Documents │ Chunks │ Embeddings  │  │  │
+│  │  │  Rooms │ Devices │ Speakers │ Knowledge Bases                 │  │  │
+│  │  └──────────────────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+│                            │                                             │
+│  ┌─────────────────────────▼──────────────────────────────────────────┐  │
+│  │                    External Integrations                            │  │
+│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐  │  │
+│  │  │  Ollama  │ │   Home   │ │ Frigate  │ │   n8n    │ │ Plugins  │  │  │
+│  │  │  (LLM)   │ │Assistant │ │  (NVR)   │ │(Workflow)│ │(Weather) │  │  │
+│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └──────────┘  │  │
+│  └────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Schnellstart
@@ -440,6 +465,48 @@ SPEAKER_CONTINUOUS_LEARNING=true      # Lernen bei jeder Interaktion
 
 **Vollständige Dokumentation:** [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md)
 
+## Wissensspeicher (RAG)
+
+Renfield kann Dokumente verarbeiten und als Wissensbasis für kontextbasierte Antworten nutzen.
+
+### Unterstützte Formate
+
+- PDF, DOCX, PPTX, XLSX
+- HTML, Markdown, TXT
+
+### Wie es funktioniert
+
+1. **Dokument hochladen** → Automatische Verarbeitung mit IBM Docling
+2. **Chunking** → Text wird in semantische Abschnitte aufgeteilt
+3. **Embedding** → Jeder Chunk wird mit nomic-embed-text vektorisiert
+4. **Suche** → Semantische Ähnlichkeitssuche mit pgvector
+
+### Features
+
+- **Knowledge Bases** - Organisiere Dokumente in thematischen Sammlungen
+- **Duplikat-Erkennung** - SHA256-Hash verhindert doppelte Uploads
+- **Follow-up-Fragen** - RAG-Kontext bleibt für Nachfragen erhalten
+- **Quellen-Zitation** - Antworten verweisen auf Quelldokumente
+
+### Verwendung
+
+1. Navigiere zu **Wissensspeicher** im Menü
+2. Erstelle eine Knowledge Base (z.B. "Handbücher")
+3. Lade Dokumente hoch
+4. Aktiviere RAG im Chat mit dem Toggle
+5. Stelle Fragen zu deinen Dokumenten
+
+### Konfiguration
+
+```bash
+# In .env
+RAG_ENABLED=true
+RAG_CHUNK_SIZE=512
+RAG_CHUNK_OVERLAP=50
+RAG_TOP_K=5
+RAG_SIMILARITY_THRESHOLD=0.4
+```
+
 ## Entwicklung
 
 ### Backend entwickeln
@@ -514,18 +581,42 @@ server:
 
 ## API-Endpunkte
 
-### Chat
+### Chat & Konversationen
 - `POST /api/chat/send` - Nachricht senden
 - `GET /api/chat/history/{session_id}` - Historie abrufen
-- `WS /ws` - WebSocket für Streaming
+- `GET /api/chat/conversations` - Alle Konversationen auflisten
+- `GET /api/chat/conversation/{session_id}/summary` - Zusammenfassung
+- `GET /api/chat/search?q=...` - In Konversationen suchen
+- `GET /api/chat/stats` - Statistiken
+- `DELETE /api/chat/session/{session_id}` - Session löschen
+- `WS /ws` - WebSocket für Streaming (mit session_id für Persistenz)
 
 ### Voice
 - `POST /api/voice/stt` - Speech-to-Text
 - `POST /api/voice/tts` - Text-to-Speech
 - `POST /api/voice/voice-chat` - Kompletter Voice-Flow
 
-### Satellite
+### Satellite & Devices
 - `WS /ws/satellite` - WebSocket für Satellite-Verbindungen
+- `WS /ws/device` - WebSocket für Web-Panels und Tablets
+
+### Knowledge Base (RAG)
+- `POST /api/knowledge/upload` - Dokument hochladen
+- `GET /api/knowledge/documents` - Dokumente auflisten
+- `DELETE /api/knowledge/documents/{id}` - Dokument löschen
+- `POST /api/knowledge/search` - Semantische Suche
+- `GET /api/knowledge/bases` - Knowledge Bases auflisten
+- `POST /api/knowledge/bases` - Knowledge Base erstellen
+- `DELETE /api/knowledge/bases/{id}` - Knowledge Base löschen
+- `GET /api/knowledge/stats` - RAG-Statistiken
+
+### Rooms
+- `GET /api/rooms` - Räume mit Geräten auflisten
+- `POST /api/rooms` - Raum erstellen
+- `GET /api/rooms/{id}/devices` - Geräte im Raum
+- `POST /api/rooms/{id}/devices` - Gerät registrieren
+- `GET /api/rooms/{id}/output-devices` - Audio-Output-Geräte
+- `POST /api/rooms/sync-homeassistant` - Räume aus HA importieren
 
 ### Home Assistant
 - `GET /api/homeassistant/states` - Alle Entities
@@ -576,6 +667,8 @@ MIT License - siehe LICENSE Datei
 - [Whisper](https://github.com/openai/whisper) - Speech-to-Text
 - [Piper](https://github.com/rhasspy/piper) - Text-to-Speech
 - [SpeechBrain](https://speechbrain.github.io/) - Speaker Recognition (ECAPA-TDNN)
+- [IBM Docling](https://github.com/DS4SD/docling) - Document Processing für RAG
+- [pgvector](https://github.com/pgvector/pgvector) - Vector Similarity Search
 - [Home Assistant](https://www.home-assistant.io/) - Smart Home Platform
 - [Frigate](https://frigate.video/) - NVR mit Objekterkennung
 - [n8n](https://n8n.io/) - Workflow Automation
