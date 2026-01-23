@@ -13,6 +13,66 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 - Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
+## Development Guidelines
+
+### Test-Driven Development (TDD)
+
+**WICHTIG: Bei jeder Code-Änderung müssen passende Tests mitgeliefert werden.**
+
+Beim Entwickeln neuer Features oder Bugfixes:
+
+1. **Neue API-Endpoints**: Erstelle Tests in `tests/backend/test_<route>.py`
+   - HTTP Status Codes testen
+   - Request/Response Schemas validieren
+   - Fehlerbehandlung (404, 400, 401, 403) testen
+   - Edge Cases abdecken
+
+2. **Neue Services**: Erstelle Tests in `tests/backend/test_services.py`
+   - Unit-Tests für isolierte Funktionalität
+   - Mocks für externe Dependencies (Ollama, HA, etc.)
+   - Async-Funktionen mit `@pytest.mark.unit` markieren
+
+3. **Datenbank-Änderungen**: Teste in `tests/backend/test_models.py`
+   - Model-Erstellung und Constraints
+   - Beziehungen (Relationships)
+   - Mit `@pytest.mark.database` markieren
+
+4. **Frontend-Komponenten**: Teste in `tests/frontend/react/`
+   - Rendering-Tests mit React Testing Library
+   - User-Interaktionen simulieren
+   - API-Calls mit MSW mocken
+
+**Test-Beispiel für neuen Endpoint:**
+```python
+# tests/backend/test_<feature>.py
+class TestNewFeatureAPI:
+    @pytest.mark.integration
+    async def test_create_item(self, async_client: AsyncClient, db_session):
+        """Testet POST /api/items"""
+        response = await async_client.post("/api/items", json={"name": "Test"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["name"] == "Test"
+        assert "id" in data
+
+    @pytest.mark.integration
+    async def test_create_item_invalid(self, async_client: AsyncClient):
+        """Testet Validierungsfehler"""
+        response = await async_client.post("/api/items", json={})
+
+        assert response.status_code == 422  # Validation error
+```
+
+**Nach dem Entwickeln:**
+```bash
+# Tests ausführen und sicherstellen dass alle bestehen
+make test-backend
+
+# Bei neuem Feature: Coverage prüfen
+make test-coverage
+```
+
 ## Development Commands
 
 ### Quick Start
