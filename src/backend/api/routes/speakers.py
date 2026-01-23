@@ -267,7 +267,14 @@ async def update_speaker(
         speaker.is_admin = update.is_admin
 
     await db.commit()
-    await db.refresh(speaker)
+
+    # Re-query with eager loading to avoid lazy load issue
+    result = await db.execute(
+        select(Speaker)
+        .where(Speaker.id == speaker_id)
+        .options(selectinload(Speaker.embeddings))
+    )
+    speaker = result.scalar_one()
 
     return SpeakerResponse(
         id=speaker.id,
@@ -456,9 +463,13 @@ async def enroll_speaker(
     await db.commit()
     await db.refresh(new_embedding)
 
-    # Get updated embedding count
-    await db.refresh(speaker)
-    embedding_count = len(speaker.embeddings)
+    # Get updated embedding count - count directly to avoid session issues
+    from sqlalchemy import func
+    count_result = await db.execute(
+        select(func.count(SpeakerEmbedding.id))
+        .where(SpeakerEmbedding.speaker_id == speaker_id)
+    )
+    embedding_count = count_result.scalar()
 
     logger.info(f"✅ Voice sample enrolled for {speaker.name} (total: {embedding_count})")
 

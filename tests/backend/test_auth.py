@@ -36,12 +36,22 @@ class TestPermissionEnum:
     def test_permission_values(self):
         """Test that permission values follow the expected format"""
         for perm in Permission:
-            assert "." in perm.value, f"Permission {perm.name} should have format 'resource.action'"
+            # ADMIN is a special standalone permission without resource.action format
+            if perm == Permission.ADMIN:
+                assert perm.value == "admin"
+            else:
+                assert "." in perm.value, f"Permission {perm.name} should have format 'resource.action'"
 
     def test_permission_groups(self):
         """Test that all expected permission groups exist"""
-        prefixes = {perm.value.split(".")[0] for perm in Permission}
-        expected = {"kb", "ha", "cam", "chat", "rooms", "speakers", "tasks", "rag", "admin", "users", "roles", "settings"}
+        # Extract prefixes - ADMIN is standalone so use its value directly
+        prefixes = set()
+        for perm in Permission:
+            if "." in perm.value:
+                prefixes.add(perm.value.split(".")[0])
+            else:
+                prefixes.add(perm.value)  # Standalone permissions like "admin"
+        expected = {"kb", "ha", "cam", "chat", "rooms", "speakers", "tasks", "rag", "admin", "users", "roles", "settings", "plugins"}
         assert expected.issubset(prefixes), f"Missing permission groups: {expected - prefixes}"
 
 
