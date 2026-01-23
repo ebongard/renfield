@@ -534,6 +534,35 @@ docker exec -it renfield-backend alembic revision --autogenerate -m "description
 docker exec -it renfield-backend alembic upgrade head
 ```
 
+### Tests ausführen
+
+Das Projekt verfügt über eine umfassende Test-Suite mit über 450 Backend-Tests:
+
+```bash
+# Alle Tests ausführen
+make test
+
+# Nur Backend-Tests
+make test-backend
+
+# Nur Frontend-Tests (React + Vitest)
+make test-frontend
+
+# Tests mit Coverage-Report
+make test-coverage
+
+# Direkt mit Docker
+docker compose exec -T -e PYTHONPATH=/app backend pytest /tests/backend/ -v
+```
+
+**Testabdeckung:**
+- API-Routen: Chat, Voice, Speakers, Users, HomeAssistant, Camera, Tasks, Settings
+- Services: OllamaService, RAGService, SpeakerService, DeviceManager, RoomService
+- Auth & RBAC: JWT-Tokens, Passwort-Hashing, Berechtigungen, Rollen
+- WebSocket: Protokoll-Parsing, Geräte-Registrierung, Rate-Limiting
+
+Siehe [CLAUDE.md](CLAUDE.md#testing) für detaillierte Test-Dokumentation.
+
 ## Mobile App (iOS)
 
 Das Frontend ist eine Progressive Web App (PWA):

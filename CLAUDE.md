@@ -777,20 +777,42 @@ This reloads the dynamic keyword cache used for intent recognition.
 
 ## Testing
 
-Tests are organized by component in the `tests/` directory at project root:
+Tests are organized by component in the `tests/` directory at project root. The backend test suite covers **450+ tests** across all API routes and services.
 
 ```
 tests/
 ├── conftest.py              # Shared fixtures for all tests
-├── backend/                 # Backend-specific tests
-│   ├── conftest.py          # Backend fixtures (DB, mocks)
+├── backend/                 # Backend-specific tests (450+ tests)
+│   ├── conftest.py          # Backend fixtures (DB, async client, mocks)
+│   │
+│   │   # API Route Tests
+│   ├── test_chat.py         # Chat API, conversations, search, stats
+│   ├── test_voice.py        # STT, TTS, voice-chat endpoints
+│   ├── test_speakers.py     # Speaker CRUD, enrollment, identification
+│   ├── test_users.py        # User CRUD, password reset, speaker linking
+│   ├── test_homeassistant.py # HA states, device control, services
+│   ├── test_camera.py       # Frigate events, snapshots, permissions
+│   ├── test_tasks.py        # Task CRUD, status updates, filtering
+│   ├── test_settings.py     # Wakeword configuration, service status
+│   ├── test_api_rooms.py    # Room management API endpoints
+│   │
+│   │   # Service Tests
+│   ├── test_services.py     # OllamaService, RAGService, SpeakerService,
+│   │                        # ActionExecutor, AudioPreprocessor,
+│   │                        # DeviceManager, RoomService
+│   ├── test_room_service.py # RoomService detailed tests
+│   ├── test_action_executor.py # Intent execution tests
+│   │
+│   │   # Auth & Permissions
+│   ├── test_auth.py         # JWT tokens, password hashing, RBAC,
+│   │                        # permission hierarchy, role management
+│   │
+│   │   # Infrastructure
 │   ├── test_models.py       # Database model tests
-│   ├── test_room_service.py # RoomService tests
-│   ├── test_action_executor.py
-│   ├── test_api_rooms.py    # API endpoint tests
+│   ├── test_websocket.py    # WebSocket protocol, rate limiting
 │   ├── test_integrations.py # HA, Frigate, n8n client tests
-│   ├── test_websocket.py    # WebSocket protocol tests
 │   └── test_utils.py        # Utility function tests
+│
 ├── frontend/                # Frontend-specific tests
 │   ├── conftest.py
 │   ├── test_api_contracts.py # API contract validation (Python)
@@ -803,17 +825,36 @@ tests/
 │       ├── mocks/           # MSW handlers
 │       ├── context/         # Context tests (AuthContext)
 │       └── pages/           # Page component tests
+│
 ├── satellite/               # Satellite-specific tests
 │   ├── conftest.py
 │   └── test_satellite.py    # Satellite functionality tests
+│
 ├── integration/             # Cross-component E2E tests
 │   ├── conftest.py
 │   ├── test_e2e_scenarios.py
 │   └── test_component_communication.py
+│
 └── manual/                  # Manual test scripts
     ├── test_media_player.py      # Media player intent testing
     └── test_ollama_connection.sh # Ollama connection verification
 ```
+
+### Backend Test Coverage
+
+| Test File | Coverage |
+|-----------|----------|
+| `test_chat.py` | Chat API, conversation CRUD, history, search, stats, cleanup |
+| `test_voice.py` | STT endpoint, TTS endpoint, TTS cache, voice-chat flow |
+| `test_speakers.py` | Speaker CRUD, enrollment, identification, verification, merge |
+| `test_users.py` | User CRUD, role assignment, password reset, speaker linking |
+| `test_homeassistant.py` | States, turn_on/off/toggle, service calls, permissions |
+| `test_camera.py` | Events, cameras list, snapshots, latest by label |
+| `test_tasks.py` | Task CRUD, status updates, filtering, queries |
+| `test_settings.py` | Wakeword settings, service status, server fallback |
+| `test_services.py` | OllamaService, RAGService, SpeakerService, DeviceManager |
+| `test_auth.py` | JWT, passwords, permissions, roles, RBAC hierarchy |
+| `test_websocket.py` | Protocol parsing, device registration, rate limiting |
 
 ### Running Tests
 
