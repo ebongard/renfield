@@ -1,18 +1,42 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings, BookOpen, ChevronDown } from 'lucide-react';
+import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings, BookOpen, ChevronDown, Menu } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useWakeWord } from '../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../config/wakeword';
+import ChatSidebar from '../components/ChatSidebar';
+import { useChatSessions } from '../hooks/useChatSessions';
+
+// LocalStorage key for current session
+const SESSION_STORAGE_KEY = 'renfield_current_session';
 
 export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
   const [wsConnected, setWsConnected] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [silenceTimeRemaining, setSilenceTimeRemaining] = useState(0);
+
+  // Session management - restore from localStorage or create new
+  const [sessionId, setSessionId] = useState(() => {
+    return localStorage.getItem(SESSION_STORAGE_KEY) || null;
+  });
+
+  // Sidebar state
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Chat sessions hook for conversation list
+  const {
+    conversations,
+    loading: conversationsLoading,
+    refreshConversations,
+    deleteConversation,
+    loadConversationHistory,
+    addConversation,
+    updateConversationPreview
+  } = useChatSessions();
 
   // RAG State
   const [useRag, setUseRag] = useState(false);
@@ -139,9 +163,12 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
-    // Session ID generieren
-    const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    setSessionId(newSessionId);
+    // If no session ID exists, create a new one
+    if (!sessionId) {
+      const newSessionId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      setSessionId(newSessionId);
+      localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+    }
 
     // WebSocket verbinden
     connectWebSocket();
@@ -152,6 +179,31 @@ export default function ChatPage() {
       }
     };
   }, []);
+
+  // Load history when sessionId changes (and is from localStorage)
+  useEffect(() => {
+    const loadHistory = async () => {
+      if (!sessionId) return;
+
+      // Check if this is an existing conversation
+      const existingConv = conversations.find(c => c.session_id === sessionId);
+      if (existingConv && existingConv.message_count > 0 && messages.length === 0) {
+        setHistoryLoading(true);
+        try {
+          const history = await loadConversationHistory(sessionId);
+          if (history.length > 0) {
+            setMessages(history.map(m => ({ role: m.role, content: m.content })));
+          }
+        } catch (err) {
+          console.error('Failed to load conversation history:', err);
+        } finally {
+          setHistoryLoading(false);
+        }
+      }
+    };
+
+    loadHistory();
+  }, [sessionId, conversations, loadConversationHistory]);
 
   useEffect(() => {
     scrollToBottom();
@@ -301,6 +353,55 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
+  /**
+   * Switch to an existing conversation
+   */
+  const switchConversation = async (newSessionId) => {
+    if (newSessionId === sessionId) {
+      setSidebarOpen(false);
+      return;
+    }
+
+    setHistoryLoading(true);
+    try {
+      const history = await loadConversationHistory(newSessionId);
+      setMessages(history.map(m => ({ role: m.role, content: m.content })));
+      setSessionId(newSessionId);
+      localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
+      setSidebarOpen(false);
+    } catch (err) {
+      console.error('Failed to switch conversation:', err);
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  /**
+   * Start a new chat session
+   */
+  const startNewChat = () => {
+    const newId = `session-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    setSessionId(newId);
+    setMessages([]);
+    localStorage.setItem(SESSION_STORAGE_KEY, newId);
+    setSidebarOpen(false);
+  };
+
+  /**
+   * Handle conversation deletion with confirmation
+   */
+  const handleDeleteConversation = async (id) => {
+    if (!window.confirm('Konversation wirklich löschen?')) {
+      return;
+    }
+
+    const success = await deleteConversation(id);
+    if (success && id === sessionId) {
+      // If we deleted the active conversation, start a new one
+      startNewChat();
+    }
+  };
+
   const sendMessage = async (text = input, fromVoice = false) => {
     if (!text.trim()) return;
 
@@ -319,6 +420,17 @@ export default function ChatPage() {
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setLoading(true);
+
+    // Update conversation list with this message as preview
+    const previewText = text.length > 50 ? text.substring(0, 50) + '...' : text;
+    // Add to conversation list if it's a new conversation
+    addConversation({
+      session_id: sessionId,
+      preview: previewText,
+      message_count: messages.length + 1,
+      updated_at: new Date().toISOString(),
+      created_at: new Date().toISOString()
+    });
 
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       // WebSocket nutzen für Streaming (with session_id for conversation persistence)
@@ -762,14 +874,37 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="h-[calc(100vh-12rem)] flex flex-col">
-      {/* Header */}
-      <div className="card mb-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-white">Chat</h1>
-            <p className="text-gray-400">Unterhalte dich mit Renfield</p>
-          </div>
+    <div className="h-[calc(100vh-8rem)] flex">
+      {/* Mobile Sidebar Toggle Button */}
+      <button
+        onClick={() => setSidebarOpen(true)}
+        className="fixed bottom-24 left-4 z-10 md:hidden p-3 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg transition-colors"
+        aria-label="Konversationen öffnen"
+      >
+        <Menu className="w-5 h-5" aria-hidden="true" />
+      </button>
+
+      {/* Sidebar */}
+      <ChatSidebar
+        conversations={conversations}
+        activeSessionId={sessionId}
+        onSelectConversation={switchConversation}
+        onNewChat={startNewChat}
+        onDeleteConversation={handleDeleteConversation}
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        loading={conversationsLoading}
+      />
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Header */}
+        <div className="card mb-4 mx-4 mt-4 md:mx-0 md:mt-0">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-white">Chat</h1>
+              <p className="text-gray-400">Unterhalte dich mit Renfield</p>
+            </div>
           <div className="flex items-center space-x-4">
             {/* Wake Word Controls */}
             <div className="flex items-center space-x-2">
@@ -904,13 +1039,21 @@ export default function ChatPage() {
 
       {/* Messages */}
       <div
-        className="flex-1 overflow-y-auto card space-y-4 mb-4"
+        className="flex-1 overflow-y-auto card space-y-4 mb-4 mx-4 md:mx-0"
         role="log"
         aria-live="polite"
         aria-label="Chat-Verlauf"
         aria-relevant="additions"
       >
-        {messages.length === 0 && (
+        {/* History Loading State */}
+        {historyLoading && (
+          <div className="flex items-center justify-center py-8">
+            <Loader className="w-6 h-6 text-gray-400 animate-spin mr-2" aria-hidden="true" />
+            <span className="text-gray-400">Lade Konversation...</span>
+          </div>
+        )}
+
+        {!historyLoading && messages.length === 0 && (
           <div className="text-center py-12">
             <p className="text-gray-400 mb-4">Starte ein Gespräch mit Renfield</p>
             <p className="text-sm text-gray-500">
@@ -962,7 +1105,7 @@ export default function ChatPage() {
       </div>
 
       {/* Input */}
-      <div className="card">
+      <div className="card mx-4 mb-4 md:mx-0 md:mb-0">
         {/* RAG Toggle */}
         <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-700">
           <div className="flex items-center space-x-3">
@@ -1144,6 +1287,7 @@ export default function ChatPage() {
           </button>
         </div>
       </div>
+      </div>{/* End Main Chat Area */}
     </div>
   );
 }

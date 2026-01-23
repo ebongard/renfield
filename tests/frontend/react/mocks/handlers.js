@@ -57,6 +57,52 @@ const mockHealth = {
   }
 };
 
+// Mock conversations data
+const mockConversations = [
+  {
+    session_id: 'session-today-1',
+    preview: 'Wie ist das Wetter heute?',
+    message_count: 4,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  },
+  {
+    session_id: 'session-today-2',
+    preview: 'Schalte das Licht an',
+    message_count: 2,
+    created_at: new Date().toISOString(),
+    updated_at: new Date(Date.now() - 3600000).toISOString() // 1 hour ago
+  },
+  {
+    session_id: 'session-yesterday-1',
+    preview: 'Was gibt es Neues?',
+    message_count: 6,
+    created_at: new Date(Date.now() - 86400000).toISOString(),
+    updated_at: new Date(Date.now() - 86400000).toISOString() // Yesterday
+  },
+  {
+    session_id: 'session-old-1',
+    preview: 'Ältere Konversation',
+    message_count: 10,
+    created_at: new Date(Date.now() - 86400000 * 10).toISOString(),
+    updated_at: new Date(Date.now() - 86400000 * 10).toISOString() // 10 days ago
+  }
+];
+
+// Mock conversation history
+const mockConversationHistory = {
+  'session-today-1': [
+    { role: 'user', content: 'Wie ist das Wetter heute?', timestamp: new Date().toISOString() },
+    { role: 'assistant', content: 'Das Wetter ist sonnig mit 22°C.', timestamp: new Date().toISOString() },
+    { role: 'user', content: 'Danke!', timestamp: new Date().toISOString() },
+    { role: 'assistant', content: 'Gerne geschehen!', timestamp: new Date().toISOString() }
+  ],
+  'session-today-2': [
+    { role: 'user', content: 'Schalte das Licht an', timestamp: new Date().toISOString() },
+    { role: 'assistant', content: 'Ich habe das Licht eingeschaltet.', timestamp: new Date().toISOString() }
+  ]
+};
+
 // Default mock data
 const mockPlugins = [
   {
@@ -337,8 +383,32 @@ export const handlers = [
   // Health API
   http.get(`${BASE_URL}/health`, () => {
     return HttpResponse.json(mockHealth);
+  }),
+
+  // Chat Conversations API
+  http.get(`${BASE_URL}/api/chat/conversations`, () => {
+    return HttpResponse.json({
+      conversations: mockConversations,
+      total: mockConversations.length
+    });
+  }),
+
+  http.get(`${BASE_URL}/api/chat/history/:sessionId`, ({ params }) => {
+    const history = mockConversationHistory[params.sessionId];
+    if (!history) {
+      return HttpResponse.json({ messages: [] });
+    }
+    return HttpResponse.json({ messages: history });
+  }),
+
+  http.delete(`${BASE_URL}/api/chat/session/:sessionId`, ({ params }) => {
+    const conv = mockConversations.find(c => c.session_id === params.sessionId);
+    if (!conv) {
+      return HttpResponse.json({ detail: 'Session not found' }, { status: 404 });
+    }
+    return HttpResponse.json({ message: 'Session deleted successfully' });
   })
 ];
 
 // Export BASE_URL for use in tests that need to override handlers
-export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth };
+export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth, mockConversations, mockConversationHistory };
