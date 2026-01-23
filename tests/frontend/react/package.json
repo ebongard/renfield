@@ -1,0 +1,26 @@
+{
+  "name": "renfield-frontend-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "React component tests for Renfield frontend",
+  "scripts": {
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/coverage-v8": "^4.0.18",
+    "jsdom": "^27.4.0",
+    "msw": "^2.12.7",
+    "vitest": "^4.0.18",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.21.0",
+    "axios": "^1.6.5"
+  }
+}

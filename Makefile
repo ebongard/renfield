@@ -15,6 +15,7 @@
 .PHONY: help dev prod stop clean build test lint format \
         backend-dev backend-test backend-lint backend-build \
         frontend-dev frontend-test frontend-lint frontend-build \
+        test-frontend-react \
         docker-build docker-up docker-down docker-logs \
         db-migrate db-upgrade db-downgrade \
         ollama-pull ollama-test \
@@ -139,12 +140,17 @@ test-backend: ## Run backend tests (in Docker)
 	@echo "$(GREEN)✓ Backend tests passed$(NC)"
 
 test-frontend: ## Run frontend API contract tests (in Docker)
-	@echo "$(BLUE)Running frontend tests...$(NC)"
+	@echo "$(BLUE)Running frontend API contract tests...$(NC)"
 	@$(DC) exec -T -e PYTHONPATH=/app backend pytest /tests/frontend/ -v --tb=short || \
 		(echo "$(YELLOW)Container not running. Starting...$(NC)" && \
 		$(DC) up -d backend && sleep 5 && \
 		$(DC) exec -T -e PYTHONPATH=/app backend pytest /tests/frontend/ -v --tb=short)
-	@echo "$(GREEN)✓ Frontend tests passed$(NC)"
+	@echo "$(GREEN)✓ Frontend API contract tests passed$(NC)"
+
+test-frontend-react: ## Run React component tests (Vitest)
+	@echo "$(BLUE)Running React component tests...$(NC)"
+	@cd $(PROJECT_ROOT)/tests/frontend/react && npm test -- --run
+	@echo "$(GREEN)✓ React component tests passed$(NC)"
 
 test-satellite: ## Run satellite tests (in Docker)
 	@echo "$(BLUE)Running satellite tests...$(NC)"

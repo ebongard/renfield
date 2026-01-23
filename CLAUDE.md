@@ -54,7 +54,8 @@ make docker-build     # Build Docker images
 # Testing
 make test             # Run all tests
 make test-backend     # Run backend tests only
-make test-frontend    # Run frontend tests only
+make test-frontend    # Run frontend API contract tests
+make test-frontend-react  # Run React component tests (Vitest)
 make test-coverage    # Run tests with coverage report
 make lint             # Lint all code
 
@@ -410,6 +411,64 @@ The `done` message includes a `tts_handled` flag:
 
 **Documentation:** See `OUTPUT_ROUTING.md` for detailed documentation.
 
+### Authentication & Authorization System (RPBAC)
+
+Renfield implements a **Role-Permission Based Access Control (RPBAC)** system for securing resources:
+
+**Features:**
+- JWT-based authentication (access + refresh tokens)
+- Flexible role system with granular permissions
+- Resource ownership (KnowledgeBase, Conversation)
+- KB-level sharing with explicit permissions
+- Voice authentication via Speaker Recognition
+- **Optional by default** - Set `AUTH_ENABLED=true` to activate
+
+**Permission Hierarchy:**
+```
+kb.all > kb.shared > kb.own > kb.none
+ha.full > ha.control > ha.read > ha.none
+cam.full > cam.view > cam.none
+```
+
+**Default Roles:**
+| Role | Permissions | Use Case |
+|------|-------------|----------|
+| Admin | Full access to everything | System administrators |
+| Familie | ha.full, kb.shared, cam.view | Family members |
+| Gast | ha.read, kb.none, cam.none | Guests, limited access |
+
+**Key Implementation:**
+- `models/permissions.py`: Permission enum with 22+ granular permissions
+- `services/auth_service.py`: JWT handling, password hashing, permission checks
+- `api/routes/auth.py`: Login, register, token refresh, voice auth
+- `api/routes/roles.py`: Role CRUD with permission management
+- `api/routes/users.py`: User management, speaker linking
+
+**Protected Endpoints:**
+| Endpoint Group | Permission Required |
+|----------------|---------------------|
+| `/admin/*`, `/debug/*` | `admin` |
+| `/api/homeassistant/states` | `ha.read` |
+| `/api/homeassistant/turn_*` | `ha.control` |
+| `/api/homeassistant/service` | `ha.full` |
+| `/api/camera/events` | `cam.view` |
+| `/api/camera/snapshot` | `cam.full` |
+| `/api/knowledge/*` | `kb.*` + ownership check |
+| `/api/roles/*` | `roles.view` / `roles.manage` |
+| `/api/users/*` | `users.view` / `users.manage` |
+
+**Configuration:**
+```bash
+AUTH_ENABLED=true                    # Enable authentication
+ACCESS_TOKEN_EXPIRE_MINUTES=1440     # 24 hours
+REFRESH_TOKEN_EXPIRE_DAYS=30
+PASSWORD_MIN_LENGTH=8
+VOICE_AUTH_ENABLED=true              # Enable voice login
+VOICE_AUTH_MIN_CONFIDENCE=0.7
+```
+
+**Documentation:** See `ACCESS_CONTROL.md` for detailed documentation.
+
 ### Backend Structure
 
 ```
@@ -418,14 +477,19 @@ src/backend/
 ├── Dockerfile                 # CPU-only image
 ├── Dockerfile.gpu             # NVIDIA CUDA image for GPU acceleration
 ├── api/routes/                # REST API endpoints
+│   ├── auth.py               # Authentication (login, register, token refresh, voice auth)
+│   ├── roles.py              # Role management (CRUD, permissions)
+│   ├── users.py              # User management (CRUD, speaker linking)
 │   ├── chat.py               # Chat history, non-streaming chat
 │   ├── voice.py              # STT, TTS, voice-chat endpoint
 │   ├── speakers.py           # Speaker recognition management
 │   ├── rooms.py              # Room and device management, HA sync
-│   ├── homeassistant.py      # HA state queries, control endpoints
-│   ├── camera.py             # Frigate events, snapshots
+│   ├── homeassistant.py      # HA state queries, control endpoints (permission-protected)
+│   ├── camera.py             # Frigate events, snapshots (permission-protected)
+│   ├── knowledge.py          # Knowledge base management (ownership + sharing)
 │   └── tasks.py              # Task queue management
 ├── services/                  # Business logic layer
+│   ├── auth_service.py       # JWT tokens, password hashing, permission checks
 │   ├── ollama_service.py     # LLM interaction, intent extraction (with room context)
 │   ├── whisper_service.py    # Speech-to-text (with speaker recognition)
 │   ├── speaker_service.py    # Speaker recognition (SpeechBrain ECAPA-TDNN)
@@ -445,7 +509,8 @@ src/backend/
 │   ├── n8n.py                # n8n webhook trigger client
 │   └── plugins/              # YAML-based plugin system
 ├── models/                    # SQLAlchemy ORM models
-│   └── database.py           # Room, RoomDevice, and other models
+│   ├── database.py           # Room, RoomDevice, User, Role, KBPermission models
+│   └── permissions.py        # Permission enum and hierarchy
 └── utils/
     └── config.py             # Pydantic settings (loads from .env)
 ```
@@ -728,7 +793,16 @@ tests/
 │   └── test_utils.py        # Utility function tests
 ├── frontend/                # Frontend-specific tests
 │   ├── conftest.py
-│   └── test_api_contracts.py # API contract validation
+│   ├── test_api_contracts.py # API contract validation (Python)
+│   └── react/               # React component tests (Vitest) - separate from production
+│       ├── package.json     # Isolated test dependencies (security)
+│       ├── vitest.config.js # Vitest configuration
+│       ├── setup.js         # Test setup with MSW
+│       ├── test-utils.jsx   # Render helpers, mock providers
+│       ├── config.js        # Configurable API base URL
+│       ├── mocks/           # MSW handlers
+│       ├── context/         # Context tests (AuthContext)
+│       └── pages/           # Page component tests
 ├── satellite/               # Satellite-specific tests
 │   ├── conftest.py
 │   └── test_satellite.py    # Satellite functionality tests
@@ -752,6 +826,29 @@ make test-frontend    # Run frontend API contract tests
 make test-unit        # Run only unit tests
 make test-coverage    # Run with coverage report
 ```
+
+**React Component Tests (Vitest):**
+
+React component tests use Vitest with React Testing Library and MSW for API mocking.
+Tests have their own `package.json` in `tests/frontend/react/` to ensure complete separation
+from production dependencies (security best practice).
+
+```bash
+# From tests/frontend/react directory
+cd tests/frontend/react
+npm install           # Install test dependencies (first time only)
+npm test              # Run all React tests
+npm test -- --run     # Run once without watch mode
+
+# Or using make from project root
+make test-frontend-react
+
+# With custom API base URL (for different environments)
+VITE_API_URL=http://localhost:3000 npm test -- --run
+```
+
+The tests are located in `tests/frontend/react/` and can be configured via:
+- `VITE_API_URL` environment variable - Sets the API base URL for mock handlers (default: `http://localhost:8000`)
 
 **Manual Docker execution:**
 
@@ -920,8 +1017,10 @@ renfield/
 │   ├── frontend/              # React frontend
 │   └── satellite/             # Raspberry Pi satellite code
 ├── tests/                     # Test suite
-│   ├── backend/               # Backend unit tests
-│   ├── frontend/              # Frontend API contract tests
+│   ├── backend/               # Backend unit tests (pytest)
+│   ├── frontend/              # Frontend tests
+│   │   ├── test_api_contracts.py  # API contract tests (pytest)
+│   │   └── react/             # React component tests (vitest)
 │   ├── satellite/             # Satellite tests
 │   ├── integration/           # Cross-component E2E tests
 │   └── manual/                # Manual test scripts
