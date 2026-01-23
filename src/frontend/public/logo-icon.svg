@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 70" width="70" height="70">
+  <defs>
+    <linearGradient id="batGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#C41E3A"/>
+      <stop offset="50%" style="stop-color:#9B1B30"/>
+      <stop offset="100%" style="stop-color:#722F37"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <g transform="translate(0, 10)">
+    <!-- Bat body -->
+    <ellipse cx="35" cy="40" rx="12" ry="15" fill="url(#batGradient)"/>
+
+    <!-- Left wing -->
+    <path d="M23 35
+             Q5 20, 2 40
+             Q5 38, 8 42
+             Q6 35, 12 45
+             Q10 40, 15 48
+             Q14 44, 20 50
+             Q18 46, 23 48
+             Z"
+          fill="url(#batGradient)"/>
+
+    <!-- Right wing -->
+    <path d="M47 35
+             Q65 20, 68 40
+             Q65 38, 62 42
+             Q64 35, 58 45
+             Q60 40, 55 48
+             Q56 44, 50 50
+             Q52 46, 47 48
+             Z"
+          fill="url(#batGradient)"/>
+
+    <!-- Ears -->
+    <path d="M28 28 L32 18 L36 28 Z" fill="url(#batGradient)"/>
+    <path d="M34 28 L38 18 L42 28 Z" fill="url(#batGradient)"/>
+
+    <!-- Eyes with glow -->
+    <circle cx="31" cy="38" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
+    <circle cx="39" cy="38" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
+
+    <!-- Inner eyes -->
+    <circle cx="31" cy="38" r="1.5" fill="#FFFFFF"/>
+    <circle cx="39" cy="38" r="1.5" fill="#FFFFFF"/>
+  </g>
+</svg>
