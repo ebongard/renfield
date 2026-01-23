@@ -227,25 +227,25 @@ export default function DeviceSetup({
   };
 
   return (
-    <div className="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-700">
+      <div className="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-3">
             <div className="p-2 bg-primary-500/20 rounded-lg">
               <Settings className="w-5 h-5 text-primary-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-white">Device Setup</h2>
-              <p className="text-sm text-gray-400">Configure your device for voice interaction</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Device Setup</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Configure your device for voice interaction</p>
             </div>
           </div>
           {onCancel && (
             <button
               onClick={onCancel}
-              className="p-2 hover:bg-gray-700 rounded-lg transition-colors"
+              className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
             >
-              <X className="w-5 h-5 text-gray-400" />
+              <X className="w-5 h-5 text-gray-500 dark:text-gray-400" />
             </button>
           )}
         </div>
@@ -255,14 +255,14 @@ export default function DeviceSetup({
       <div className="p-6 space-y-6">
         {/* Error message */}
         {error && (
-          <div className="p-4 bg-red-500/20 border border-red-500/50 rounded-lg text-red-300 text-sm">
+          <div className="p-4 bg-red-100 dark:bg-red-500/20 border border-red-300 dark:border-red-500/50 rounded-lg text-red-700 dark:text-red-300 text-sm">
             {error}
           </div>
         )}
 
         {/* Room Selection */}
         <div>
-          <label htmlFor="room-select" className="block text-sm font-medium text-gray-300 mb-2">
+          <label htmlFor="room-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             <MapPin className="w-4 h-4 inline mr-2" aria-hidden="true" />
             Raum
           </label>
@@ -272,7 +272,7 @@ export default function DeviceSetup({
               value={selectedRoom}
               onChange={(e) => setSelectedRoom(e.target.value)}
               disabled={loadingRooms}
-              className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white focus:border-primary-500 focus:outline-none disabled:opacity-50"
+              className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:outline-none disabled:opacity-50"
               aria-describedby={loadingRooms ? 'room-loading' : undefined}
             >
               <option value="">Raum auswählen...</option>
@@ -285,7 +285,7 @@ export default function DeviceSetup({
             {loadingRooms && <span id="room-loading" className="sr-only">Räume werden geladen</span>}
             <button
               onClick={() => setShowNewRoomInput(!showNewRoomInput)}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors"
+              className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 transition-colors"
               aria-label="Neuen Raum hinzufügen"
               aria-expanded={showNewRoomInput}
             >
@@ -294,7 +294,7 @@ export default function DeviceSetup({
             <button
               onClick={loadRooms}
               disabled={loadingRooms}
-              className="px-3 py-2 bg-gray-700 hover:bg-gray-600 border border-gray-600 rounded-lg text-gray-300 transition-colors disabled:opacity-50"
+              className="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 transition-colors disabled:opacity-50"
               aria-label="Räume aktualisieren"
             >
               <RefreshCw className={`w-4 h-4 ${loadingRooms ? 'animate-spin' : ''}`} aria-hidden="true" />
@@ -311,7 +311,7 @@ export default function DeviceSetup({
                 value={newRoomName}
                 onChange={(e) => setNewRoomName(e.target.value)}
                 placeholder="Name des neuen Raums..."
-                className="flex-1 bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:border-primary-500 focus:outline-none"
+                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -333,7 +333,7 @@ export default function DeviceSetup({
 
         {/* Device Type Selection */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-3">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
             Device Type
           </label>
           <div className="grid grid-cols-2 gap-3">
@@ -350,13 +350,13 @@ export default function DeviceSetup({
                     className={`p-4 rounded-lg border text-left transition-all ${
                       isSelected
                         ? 'border-primary-500 bg-primary-500/20'
-                        : 'border-gray-600 bg-gray-700/50 hover:border-gray-500'
+                        : 'border-gray-300 dark:border-gray-600 bg-gray-100/50 dark:bg-gray-700/50 hover:border-gray-400 dark:hover:border-gray-500'
                     }`}
                   >
                     <div className="flex items-start space-x-3">
-                      <Icon className={`w-5 h-5 ${isSelected ? 'text-primary-400' : 'text-gray-400'}`} />
+                      <Icon className={`w-5 h-5 ${isSelected ? 'text-primary-400' : 'text-gray-500 dark:text-gray-400'}`} />
                       <div>
-                        <div className={`font-medium ${isSelected ? 'text-white' : 'text-gray-300'}`}>
+                        <div className={`font-medium ${isSelected ? 'text-gray-900 dark:text-white' : 'text-gray-700 dark:text-gray-300'}`}>
                           {DEVICE_TYPE_LABELS[type]}
                         </div>
                         <div className="text-xs text-gray-500 mt-1">
@@ -372,7 +372,7 @@ export default function DeviceSetup({
 
         {/* Device Name (optional) */}
         <div>
-          <label htmlFor="device-name" className="block text-sm font-medium text-gray-300 mb-2">
+          <label htmlFor="device-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             Gerätename (optional)
           </label>
           <input
@@ -381,22 +381,22 @@ export default function DeviceSetup({
             value={deviceName}
             onChange={(e) => setDeviceName(e.target.value)}
             placeholder="z.B. Wohnzimmer iPad"
-            className="w-full bg-gray-700 border border-gray-600 rounded-lg px-4 py-2 text-white placeholder-gray-400 focus:border-primary-500 focus:outline-none"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
           />
         </div>
 
         {/* Capabilities */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-3">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
             Capabilities
           </label>
           <div className="space-y-3">
             {/* Microphone */}
-            <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+            <div className="flex items-center justify-between p-3 bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
               <div className="flex items-center space-x-3">
-                <Mic className={`w-4 h-4 ${hasMicrophone ? 'text-green-400' : 'text-gray-500'}`} />
+                <Mic className={`w-4 h-4 ${hasMicrophone ? 'text-green-500 dark:text-green-400' : 'text-gray-500'}`} />
                 <div>
-                  <div className="text-sm text-white">Microphone</div>
+                  <div className="text-sm text-gray-900 dark:text-white">Microphone</div>
                   <div className="text-xs text-gray-500">
                     {micPermission === 'granted' ? 'Permission granted' :
                      micPermission === 'denied' ? 'Permission denied' :
@@ -421,17 +421,17 @@ export default function DeviceSetup({
                     disabled={micPermission !== 'granted'}
                     className="sr-only peer"
                   />
-                  <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
+                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
                 </label>
               </div>
             </div>
 
             {/* Speaker */}
-            <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+            <div className="flex items-center justify-between p-3 bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
               <div className="flex items-center space-x-3">
-                <Speaker className={`w-4 h-4 ${hasSpeaker ? 'text-green-400' : 'text-gray-500'}`} />
+                <Speaker className={`w-4 h-4 ${hasSpeaker ? 'text-green-500 dark:text-green-400' : 'text-gray-500'}`} />
                 <div>
-                  <div className="text-sm text-white">Speaker (TTS)</div>
+                  <div className="text-sm text-gray-900 dark:text-white">Speaker (TTS)</div>
                   <div className="text-xs text-gray-500">Play voice responses</div>
                 </div>
               </div>
@@ -442,17 +442,17 @@ export default function DeviceSetup({
                   onChange={(e) => setHasSpeaker(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
               </label>
             </div>
 
             {/* Wake Word (only for panel/tablet types) */}
             {(deviceType === DEVICE_TYPES.WEB_PANEL || deviceType === DEVICE_TYPES.WEB_TABLET) && (
-              <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+              <div className="flex items-center justify-between p-3 bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
                 <div className="flex items-center space-x-3">
-                  <div className={`w-4 h-4 rounded-full ${hasWakeWord ? 'bg-green-400' : 'bg-gray-500'}`} />
+                  <div className={`w-4 h-4 rounded-full ${hasWakeWord ? 'bg-green-500 dark:bg-green-400' : 'bg-gray-400 dark:bg-gray-500'}`} />
                   <div>
-                    <div className="text-sm text-white">Wake Word</div>
+                    <div className="text-sm text-gray-900 dark:text-white">Wake Word</div>
                     <div className="text-xs text-gray-500">Hands-free activation</div>
                   </div>
                 </div>
@@ -464,7 +464,7 @@ export default function DeviceSetup({
                     disabled={!hasMicrophone}
                     className="sr-only peer"
                   />
-                  <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
+                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
                 </label>
               </div>
             )}
@@ -473,9 +473,9 @@ export default function DeviceSetup({
 
         {/* Stationary toggle (for browser type) */}
         {deviceType === DEVICE_TYPES.WEB_BROWSER && (
-          <div className="flex items-center justify-between p-3 bg-gray-700/50 rounded-lg">
+          <div className="flex items-center justify-between p-3 bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
             <div>
-              <div className="text-sm text-white">Stationary Device</div>
+              <div className="text-sm text-gray-900 dark:text-white">Stationary Device</div>
               <div className="text-xs text-gray-500">
                 This device stays in one room
               </div>
@@ -487,19 +487,19 @@ export default function DeviceSetup({
                 onChange={(e) => setIsStationary(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-9 h-5 bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+              <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
             </label>
           </div>
         )}
       </div>
 
       {/* Footer */}
-      <div className="px-6 py-4 border-t border-gray-700 bg-gray-800/50">
+      <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
         <div className="flex justify-end space-x-3">
           {onCancel && (
             <button
               onClick={onCancel}
-              className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-gray-300 transition-colors"
+              className="btn btn-secondary"
             >
               Cancel
             </button>
@@ -507,7 +507,7 @@ export default function DeviceSetup({
           <button
             onClick={handleComplete}
             disabled={isConnecting || !selectedRoom}
-            className="px-6 py-2 bg-primary-600 hover:bg-primary-500 rounded-lg text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+            className="btn btn-primary flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isConnecting ? (
               <>
