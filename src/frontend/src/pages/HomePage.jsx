@@ -104,7 +104,7 @@ export default function HomePage() {
       </div>
 
       {/* Quick Stats */}
-      {health && (
+      {health?.services && (
         <div className="card">
           <h2 className="text-xl font-semibold text-white mb-4">System Status</h2>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

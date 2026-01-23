@@ -45,6 +45,21 @@ class PluginLoader:
         self.loaded_plugins: Dict[str, PluginDefinition] = {}
         logger.debug(f"🔍 Plugin directory resolved to: {self.plugin_dir.absolute()}")
 
+    def _scan_plugin_files(self) -> List[Path]:
+        """
+        Scan plugin directory for YAML files.
+
+        Returns:
+            List of Path objects for plugin YAML files
+        """
+        if not self.plugin_dir.exists():
+            logger.warning(f"⚠️  Plugin directory not found: {self.plugin_dir}")
+            return []
+
+        yaml_files = list(self.plugin_dir.glob("*.yaml")) + list(self.plugin_dir.glob("*.yml"))
+        logger.debug(f"🔍 Found {len(yaml_files)} plugin files in {self.plugin_dir}")
+        return yaml_files
+
     def load_all_plugins(self) -> Dict[str, PluginDefinition]:
         """
         Load all plugins from plugin directory
@@ -61,7 +76,7 @@ class PluginLoader:
             logger.info(f"📁 Created plugin directory: {self.plugin_dir}")
             return {}
 
-        yaml_files = list(self.plugin_dir.glob("*.yaml")) + list(self.plugin_dir.glob("*.yml"))
+        yaml_files = self._scan_plugin_files()
 
         if not yaml_files:
             logger.info(f"📭 No plugin files found in {self.plugin_dir}")

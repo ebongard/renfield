@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, '../../..');
 const frontendSrc = path.join(projectRoot, 'src/frontend/src');
+const testNodeModules = path.join(__dirname, 'node_modules');
 
 export default defineConfig({
   plugins: [react()],
@@ -13,6 +14,11 @@ export default defineConfig({
     alias: {
       // Map source imports to the frontend src directory
       '@': frontendSrc,
+      // Use single React version from test node_modules to avoid hook errors
+      'react': path.join(testNodeModules, 'react'),
+      'react-dom': path.join(testNodeModules, 'react-dom'),
+      'react-router-dom': path.join(testNodeModules, 'react-router-dom'),
+      'react-router': path.join(testNodeModules, 'react-router'),
     },
   },
   server: {

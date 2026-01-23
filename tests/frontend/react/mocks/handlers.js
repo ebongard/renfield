@@ -4,6 +4,59 @@ import { TEST_CONFIG } from '../config.js';
 // Base URL from configuration (can be overridden via VITE_API_URL env var)
 const BASE_URL = TEST_CONFIG.API_BASE_URL;
 
+// Mock users data
+const mockUsers = [
+  {
+    id: 1,
+    username: 'admin',
+    email: 'admin@example.com',
+    role_id: 1,
+    role_name: 'Admin',
+    is_active: true,
+    speaker_id: null,
+    last_login: '2024-01-15T10:30:00Z',
+    created_at: '2024-01-01T00:00:00Z'
+  },
+  {
+    id: 2,
+    username: 'user1',
+    email: 'user1@example.com',
+    role_id: 2,
+    role_name: 'User',
+    is_active: true,
+    speaker_id: 1,
+    last_login: '2024-01-14T15:00:00Z',
+    created_at: '2024-01-02T00:00:00Z'
+  },
+  {
+    id: 3,
+    username: 'inactive_user',
+    email: null,
+    role_id: 2,
+    role_name: 'User',
+    is_active: false,
+    speaker_id: null,
+    last_login: null,
+    created_at: '2024-01-03T00:00:00Z'
+  }
+];
+
+// Mock speakers data
+const mockSpeakers = [
+  { id: 1, name: 'Speaker 1', embedding_count: 5 },
+  { id: 2, name: 'Speaker 2', embedding_count: 3 }
+];
+
+// Mock health data
+const mockHealth = {
+  status: 'ok',
+  services: {
+    ollama: 'ok',
+    database: 'ok',
+    redis: 'ok'
+  }
+};
+
 // Default mock data
 const mockPlugins = [
   {
@@ -186,8 +239,106 @@ export const handlers = [
       auth_enabled: true,
       allow_registration: false
     });
+  }),
+
+  // Login API
+  http.post(`${BASE_URL}/api/auth/login`, async ({ request }) => {
+    const body = await request.json();
+    if (body.username === 'admin' && body.password === 'password123') {
+      return HttpResponse.json({
+        access_token: 'mock-access-token',
+        refresh_token: 'mock-refresh-token',
+        token_type: 'bearer'
+      });
+    }
+    return HttpResponse.json(
+      { detail: 'Invalid username or password' },
+      { status: 401 }
+    );
+  }),
+
+  // Register API
+  http.post(`${BASE_URL}/api/auth/register`, async ({ request }) => {
+    const body = await request.json();
+    if (body.username === 'existing_user') {
+      return HttpResponse.json(
+        { detail: 'Username already exists' },
+        { status: 400 }
+      );
+    }
+    return HttpResponse.json({
+      id: 4,
+      username: body.username,
+      email: body.email,
+      role_id: 2,
+      role_name: 'User',
+      is_active: true
+    }, { status: 201 });
+  }),
+
+  // Users API
+  http.get(`${BASE_URL}/api/users`, () => {
+    return HttpResponse.json({
+      users: mockUsers,
+      total: mockUsers.length,
+      page: 1,
+      page_size: 20
+    });
+  }),
+
+  http.get(`${BASE_URL}/api/users/:id`, ({ params }) => {
+    const user = mockUsers.find(u => u.id === parseInt(params.id));
+    if (!user) {
+      return HttpResponse.json({ detail: 'User not found' }, { status: 404 });
+    }
+    return HttpResponse.json(user);
+  }),
+
+  http.post(`${BASE_URL}/api/users`, async ({ request }) => {
+    const body = await request.json();
+    const newUser = {
+      id: mockUsers.length + 1,
+      ...body,
+      role_name: mockRoles.find(r => r.id === body.role_id)?.name || 'User',
+      is_active: body.is_active ?? true,
+      speaker_id: null,
+      last_login: null,
+      created_at: new Date().toISOString()
+    };
+    return HttpResponse.json(newUser, { status: 201 });
+  }),
+
+  http.patch(`${BASE_URL}/api/users/:id`, async ({ params, request }) => {
+    const body = await request.json();
+    const user = mockUsers.find(u => u.id === parseInt(params.id));
+    if (!user) {
+      return HttpResponse.json({ detail: 'User not found' }, { status: 404 });
+    }
+    return HttpResponse.json({
+      ...user,
+      ...body,
+      role_name: body.role_id ? mockRoles.find(r => r.id === body.role_id)?.name : user.role_name
+    });
+  }),
+
+  http.delete(`${BASE_URL}/api/users/:id`, ({ params }) => {
+    const user = mockUsers.find(u => u.id === parseInt(params.id));
+    if (!user) {
+      return HttpResponse.json({ detail: 'User not found' }, { status: 404 });
+    }
+    return HttpResponse.json({ message: 'User deleted successfully' });
+  }),
+
+  // Speakers API
+  http.get(`${BASE_URL}/api/speakers`, () => {
+    return HttpResponse.json(mockSpeakers);
+  }),
+
+  // Health API
+  http.get(`${BASE_URL}/health`, () => {
+    return HttpResponse.json(mockHealth);
   })
 ];
 
 // Export BASE_URL for use in tests that need to override handlers
-export { BASE_URL, mockPlugins, mockRoles, mockPermissions };
+export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth };
