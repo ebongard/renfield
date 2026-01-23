@@ -42,7 +42,7 @@ Beim Entwickeln neuer Features oder Bugfixes:
    - User-Interaktionen simulieren
    - API-Calls mit MSW mocken
 
-**Test-Beispiel für neuen Endpoint:**
+**Backend Test-Beispiel für neuen Endpoint:**
 ```python
 # tests/backend/test_<feature>.py
 class TestNewFeatureAPI:
@@ -64,10 +64,103 @@ class TestNewFeatureAPI:
         assert response.status_code == 422  # Validation error
 ```
 
+**Frontend Test-Beispiel für neue Komponente:**
+```jsx
+// tests/frontend/react/components/NewFeature.test.jsx
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { BrowserRouter } from 'react-router-dom'
+import NewFeature from '../../../../src/frontend/src/components/NewFeature'
+
+// Mock API calls
+vi.mock('../../../../src/frontend/src/utils/axios', () => ({
+  default: {
+    get: vi.fn(),
+    post: vi.fn()
+  }
+}))
+
+describe('NewFeature', () => {
+  it('renders correctly', () => {
+    render(
+      <BrowserRouter>
+        <NewFeature />
+      </BrowserRouter>
+    )
+
+    expect(screen.getByText('Feature Title')).toBeInTheDocument()
+  })
+
+  it('handles user interaction', async () => {
+    render(
+      <BrowserRouter>
+        <NewFeature />
+      </BrowserRouter>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Success')).toBeInTheDocument()
+    })
+  })
+
+  it('displays error on API failure', async () => {
+    const axios = await import('../../../../src/frontend/src/utils/axios')
+    axios.default.post.mockRejectedValueOnce(new Error('Network error'))
+
+    render(
+      <BrowserRouter>
+        <NewFeature />
+      </BrowserRouter>
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /submit/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/error/i)).toBeInTheDocument()
+    })
+  })
+})
+```
+
+**Frontend Test-Struktur:**
+```
+tests/frontend/
+├── react/                     # React-Komponenten Tests (Vitest)
+│   ├── setup.js               # Test-Setup mit jsdom, RTL
+│   ├── components/            # Komponenten-Tests
+│   │   ├── Layout.test.jsx
+│   │   ├── DeviceSetup.test.jsx
+│   │   └── NewFeature.test.jsx
+│   ├── pages/                 # Seiten-Tests
+│   │   ├── HomePage.test.jsx
+│   │   ├── ChatPage.test.jsx
+│   │   └── RoomsPage.test.jsx
+│   └── hooks/                 # Custom Hooks Tests
+│       └── useCapabilities.test.jsx
+└── test_api_contracts.py      # API Contract Tests (pytest)
+```
+
+**Frontend-Tests je nach Änderungstyp:**
+
+| Änderung | Test-Datei | Was testen |
+|----------|------------|------------|
+| Neue Komponente | `tests/frontend/react/components/<Name>.test.jsx` | Rendering, Props, Events |
+| Neue Seite | `tests/frontend/react/pages/<Name>.test.jsx` | Routing, API-Calls, State |
+| Neuer Hook | `tests/frontend/react/hooks/<Name>.test.jsx` | Return-Werte, Side-Effects |
+| API-Änderung | `tests/frontend/test_api_contracts.py` | Request/Response Schema |
+
 **Nach dem Entwickeln:**
 ```bash
-# Tests ausführen und sicherstellen dass alle bestehen
+# Backend-Tests ausführen
 make test-backend
+
+# Frontend React-Tests ausführen
+make test-frontend-react
+
+# Alle Tests ausführen
+make test
 
 # Bei neuem Feature: Coverage prüfen
 make test-coverage

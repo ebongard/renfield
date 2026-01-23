@@ -1,6 +1,6 @@
 # Renfield - Persönlicher KI-Assistent
 
-Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent für Smart Home Steuerung, Kamera-Überwachung und mehr.
+Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 
 ## Features
 
