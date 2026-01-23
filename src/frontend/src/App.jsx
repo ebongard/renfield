@@ -17,12 +17,14 @@ import RolesPage from './pages/RolesPage';
 import PluginsPage from './pages/PluginsPage';
 import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 
 function App() {
   return (
     <ErrorBoundary>
-      <AuthProvider>
-        <DeviceProvider>
+      <ThemeProvider>
+        <AuthProvider>
+          <DeviceProvider>
           <Routes>
             {/* Public routes without layout */}
             <Route path="/login" element={<LoginPage />} />
@@ -80,8 +82,9 @@ function App() {
               </Layout>
             } />
           </Routes>
-        </DeviceProvider>
-      </AuthProvider>
+          </DeviceProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </ErrorBoundary>
   );
 }

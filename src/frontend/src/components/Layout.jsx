@@ -20,6 +20,7 @@ import {
   Puzzle
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
+import ThemeToggle from './ThemeToggle';
 import { useAuth } from '../context/AuthContext';
 
 // Hauptnavigation
@@ -151,8 +152,8 @@ export default function Layout({ children }) {
         onClick={onClick}
         className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
           isActive
-            ? 'bg-primary-600/20 text-primary-400 border-l-2 border-primary-400'
-            : 'text-gray-300 hover:bg-gray-700/50 hover:text-white'
+            ? 'bg-primary-600/20 text-primary-600 dark:text-primary-400 border-l-2 border-primary-500 dark:border-primary-400'
+            : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
         }`}
         aria-current={isActive ? 'page' : undefined}
       >
@@ -163,7 +164,7 @@ export default function Layout({ children }) {
   };
 
   return (
-    <div className="min-h-screen bg-gray-900">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
       {/* Skip Link for Accessibility */}
       <a
         href="#main-content"
@@ -173,13 +174,13 @@ export default function Layout({ children }) {
       </a>
 
       {/* Fixed Header */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-gray-800 border-b border-gray-700 z-40">
+      <header className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors">
         <div className="h-full px-4 flex items-center justify-between">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
               aria-label="Menu oeffnen"
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -191,12 +192,13 @@ export default function Layout({ children }) {
               <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
                 <span className="text-white font-bold text-xl">R</span>
               </div>
-              <span className="text-xl font-bold text-white hidden sm:block">Renfield</span>
+              <span className="text-xl font-bold text-gray-900 dark:text-white hidden sm:block">Renfield</span>
             </Link>
           </div>
 
-          {/* Right: Device Status + User */}
-          <div className="flex items-center space-x-3">
+          {/* Right: Theme Toggle + Device Status + User */}
+          <div className="flex items-center space-x-2 sm:space-x-3">
+            <ThemeToggle />
             <DeviceStatus compact />
 
             {/* User/Auth in Header */}
@@ -204,18 +206,18 @@ export default function Layout({ children }) {
               isAuthenticated ? (
                 <button
                   onClick={handleLogout}
-                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
+                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                   title={`Angemeldet als ${user?.username}`}
                 >
                   <div className="w-7 h-7 rounded-full bg-primary-600/30 flex items-center justify-center">
-                    <User className="w-4 h-4 text-primary-400" />
+                    <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                   </div>
                   <span className="hidden sm:block text-sm">{user?.username}</span>
                 </button>
               ) : (
                 <Link
                   to="/login"
-                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
+                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <LogIn className="w-5 h-5" />
                   <span className="hidden sm:block text-sm">Anmelden</span>
@@ -228,7 +230,7 @@ export default function Layout({ children }) {
 
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
           sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         aria-hidden="true"
@@ -239,7 +241,7 @@ export default function Layout({ children }) {
       <aside
         ref={sidebarRef}
         id="sidebar"
-        className={`fixed top-0 left-0 h-full w-72 bg-gray-800 border-r border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
+        className={`fixed top-0 left-0 h-full w-72 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-label="Hauptnavigation"
@@ -247,18 +249,18 @@ export default function Layout({ children }) {
         aria-modal="true"
       >
         {/* Sidebar Header */}
-        <div className="flex items-center justify-between h-16 px-4 border-b border-gray-700">
+        <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700">
           <Link to="/" onClick={handleNavClick} className="flex items-center space-x-2">
             <div className="w-8 h-8 bg-primary-600 rounded-lg flex items-center justify-center">
               <span className="text-white font-bold text-xl">R</span>
             </div>
-            <span className="text-xl font-bold text-white">Renfield</span>
+            <span className="text-xl font-bold text-gray-900 dark:text-white">Renfield</span>
           </Link>
 
           <button
             ref={firstFocusableRef}
             onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded-lg text-gray-400 hover:text-white hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+            className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
             aria-label="Menu schliessen"
           >
             <X className="w-5 h-5" aria-hidden="true" />
@@ -273,7 +275,7 @@ export default function Layout({ children }) {
           ))}
 
           {/* Divider */}
-          <div className="my-4 border-t border-gray-700" />
+          <div className="my-4 border-t border-gray-200 dark:border-gray-700" />
 
           {/* Admin Section - only show if there are visible admin items */}
           {visibleAdminNav.length > 0 && (
@@ -282,8 +284,8 @@ export default function Layout({ children }) {
                 onClick={toggleAdmin}
                 className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                   isAdminRoute
-                    ? 'bg-gray-700/50 text-primary-400'
-                    : 'text-gray-300 hover:bg-gray-700/50 hover:text-white'
+                    ? 'bg-gray-100 dark:bg-gray-700/50 text-primary-600 dark:text-primary-400'
+                    : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
                 }`}
                 aria-expanded={adminExpanded}
                 aria-controls="admin-menu"
@@ -307,7 +309,7 @@ export default function Layout({ children }) {
                   adminExpanded ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'
                 }`}
               >
-                <div className="ml-3 pl-3 border-l border-gray-700 space-y-1 py-1">
+                <div className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-1 py-1">
                   {visibleAdminNav.map((item) => (
                     <NavLink key={item.href} item={item} onClick={handleNavClick} />
                   ))}
@@ -319,19 +321,19 @@ export default function Layout({ children }) {
           {/* Auth Section */}
           {authEnabled && (
             <>
-              <div className="my-4 border-t border-gray-700" />
+              <div className="my-4 border-t border-gray-200 dark:border-gray-700" />
 
               {isAuthenticated ? (
                 <div className="space-y-2">
                   {/* User Info */}
-                  <div className="px-3 py-2 rounded-lg bg-gray-700/30">
+                  <div className="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700/30">
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 rounded-full bg-primary-600/30 flex items-center justify-center">
-                        <User className="w-4 h-4 text-primary-400" />
+                        <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-white truncate">{user?.username}</p>
-                        <p className="text-xs text-gray-400 truncate">{user?.role}</p>
+                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user?.username}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.role}</p>
                       </div>
                     </div>
                   </div>
@@ -339,7 +341,7 @@ export default function Layout({ children }) {
                   {/* Logout Button */}
                   <button
                     onClick={handleLogout}
-                    className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-300 hover:bg-red-900/30 hover:text-red-400 transition-colors"
+                    className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <LogOut className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                     <span>Abmelden</span>
@@ -349,7 +351,7 @@ export default function Layout({ children }) {
                 <Link
                   to="/login"
                   onClick={handleNavClick}
-                  className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors"
+                  className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
                   <LogIn className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
                   <span>Anmelden</span>
@@ -360,7 +362,7 @@ export default function Layout({ children }) {
         </nav>
 
         {/* Sidebar Footer - Device Status */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700 bg-gray-800">
+        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           <DeviceStatus />
         </div>
       </aside>

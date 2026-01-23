@@ -41,7 +41,7 @@ export default function ChatSidebar({
       <aside
         className={`
           fixed md:relative z-30
-          w-72 h-full bg-gray-800 border-r border-gray-700
+          w-72 h-full bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700
           flex flex-col
           transform transition-transform duration-300 ease-in-out
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
@@ -50,14 +50,14 @@ export default function ChatSidebar({
         aria-label="Konversationshistorie"
       >
         {/* Header with New Chat Button */}
-        <div className="p-4 border-b border-gray-700 flex-shrink-0">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <div className="flex items-center justify-between mb-4 md:mb-0">
-            <h2 className="text-lg font-semibold text-white md:hidden">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white md:hidden">
               Konversationen
             </h2>
             <button
               onClick={onClose}
-              className="p-1.5 text-gray-400 hover:text-white rounded md:hidden"
+              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded md:hidden"
               aria-label="Sidebar schließen"
             >
               <X className="w-5 h-5" aria-hidden="true" />
@@ -86,7 +86,7 @@ export default function ChatSidebar({
               <p className="text-sm text-gray-500">
                 Keine Konversationen vorhanden
               </p>
-              <p className="text-xs text-gray-600 mt-1">
+              <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
                 Starte einen neuen Chat
               </p>
             </div>
@@ -94,7 +94,7 @@ export default function ChatSidebar({
             Object.entries(grouped).map(([period, convs]) =>
               convs.length > 0 && (
                 <div key={period} role="group" aria-label={periodLabels[period]}>
-                  <div className="px-4 py-2 text-xs text-gray-500 uppercase tracking-wider font-medium sticky top-0 bg-gray-800">
+                  <div className="px-4 py-2 text-xs text-gray-500 uppercase tracking-wider font-medium sticky top-0 bg-white dark:bg-gray-800">
                     {periodLabels[period]}
                   </div>
                   {convs.map(conv => (

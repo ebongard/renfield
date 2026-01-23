@@ -109,8 +109,9 @@ describe('ChatSidebar', () => {
       render(<ChatSidebar {...defaultProps} activeSessionId="session-today-1" />);
 
       // The active conversation item should have a different background
+      // In light mode it's bg-gray-100, in dark mode it's dark:bg-gray-700
       const activeItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
-      expect(activeItem).toHaveClass('bg-gray-700');
+      expect(activeItem).toHaveClass('bg-gray-100');
     });
   });
 

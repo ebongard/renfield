@@ -20,8 +20,8 @@ export default function ConversationItem({
     <div
       className={`group flex items-center px-4 py-3 cursor-pointer transition-colors ${
         isActive
-          ? 'bg-gray-700'
-          : 'hover:bg-gray-700/50'
+          ? 'bg-gray-100 dark:bg-gray-700'
+          : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'
       }`}
       onClick={onClick}
       role="button"
@@ -41,7 +41,7 @@ export default function ConversationItem({
       />
 
       <div className="flex-1 min-w-0">
-        <p className="text-sm text-gray-200 truncate">
+        <p className="text-sm text-gray-700 dark:text-gray-200 truncate">
           {conversation.preview || 'Neue Konversation'}
         </p>
         <p className="text-xs text-gray-500">
@@ -51,7 +51,7 @@ export default function ConversationItem({
 
       <button
         onClick={handleDelete}
-        className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-400 rounded transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/50"
+        className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/50"
         aria-label={`Konversation löschen: ${conversation.preview || 'Neue Konversation'}`}
         title="Konversation löschen"
       >
