@@ -26,6 +26,7 @@ from models.database import (
     Base, Room, RoomDevice, RoomOutputDevice,
     Speaker, SpeakerEmbedding,
     Conversation, Message, Task, CameraEvent, HomeAssistantEntity,
+    KnowledgeBase, Document, DocumentChunk, Role, User,
     DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER,
     DEFAULT_CAPABILITIES
 )
@@ -239,6 +240,122 @@ async def test_message(db_session: AsyncSession, test_conversation: Conversation
     await db_session.commit()
     await db_session.refresh(message)
     return message
+
+
+@pytest.fixture
+def sample_knowledge_base_data():
+    """Sample knowledge base data for tests"""
+    return {
+        "name": "Test Knowledge Base",
+        "description": "A test knowledge base for unit tests",
+        "is_active": True,
+        "is_public": False
+    }
+
+
+@pytest.fixture
+def sample_document_data():
+    """Sample document data for tests"""
+    return {
+        "filename": "test_document.pdf",
+        "title": "Test Document",
+        "file_path": "/tmp/test_document.pdf",
+        "file_type": "pdf",
+        "file_size": 12345,
+        "file_hash": "abc123def456",
+        "status": "completed",
+        "chunk_count": 5,
+        "page_count": 3
+    }
+
+
+@pytest.fixture
+def sample_role_data():
+    """Sample role data for tests"""
+    return {
+        "name": "TestRole",
+        "description": "A test role",
+        "permissions": ["kb.all", "ha.full", "admin"],
+        "is_system": False
+    }
+
+
+@pytest.fixture
+def sample_user_data():
+    """Sample user data for tests"""
+    return {
+        "username": "testuser",
+        "email": "test@example.com",
+        "password_hash": "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4wPpY/ABCDEFGH",  # Fake hash
+        "is_active": True
+    }
+
+
+@pytest.fixture
+async def test_role(db_session: AsyncSession, sample_role_data) -> Role:
+    """Create a test role in database"""
+    role = Role(**sample_role_data)
+    db_session.add(role)
+    await db_session.commit()
+    await db_session.refresh(role)
+    return role
+
+
+@pytest.fixture
+async def test_user(db_session: AsyncSession, test_role: Role, sample_user_data) -> User:
+    """Create a test user in database"""
+    user = User(
+        role_id=test_role.id,
+        **sample_user_data
+    )
+    db_session.add(user)
+    await db_session.commit()
+    await db_session.refresh(user)
+    return user
+
+
+@pytest.fixture
+async def test_knowledge_base(db_session: AsyncSession, sample_knowledge_base_data) -> KnowledgeBase:
+    """Create a test knowledge base in database"""
+    kb = KnowledgeBase(**sample_knowledge_base_data)
+    db_session.add(kb)
+    await db_session.commit()
+    await db_session.refresh(kb)
+    return kb
+
+
+@pytest.fixture
+async def test_knowledge_base_with_owner(
+    db_session: AsyncSession,
+    test_user: User,
+    sample_knowledge_base_data
+) -> KnowledgeBase:
+    """Create a test knowledge base with an owner"""
+    kb = KnowledgeBase(
+        owner_id=test_user.id,
+        **sample_knowledge_base_data
+    )
+    db_session.add(kb)
+    await db_session.commit()
+    await db_session.refresh(kb)
+    return kb
+
+
+@pytest.fixture
+async def test_document(
+    db_session: AsyncSession,
+    test_knowledge_base: KnowledgeBase,
+    sample_document_data
+) -> Document:
+    """Create a test document in database"""
+    document = Document(
+        knowledge_base_id=test_knowledge_base.id,
+        **sample_document_data
+    )
+    db_session.add(document)
+    await db_session.commit()
+    await db_session.refresh(document)
+    return document
 
 
 # ============================================================================
