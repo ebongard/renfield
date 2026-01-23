@@ -240,12 +240,12 @@ export default function UsersPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-white mb-2">User Management</h1>
-          <p className="text-gray-400">Manage user accounts and permissions</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">User Management</h1>
+          <p className="text-gray-500 dark:text-gray-400">Manage user accounts and permissions</p>
         </div>
         <div className="card text-center py-12">
-          <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-          <p className="text-gray-400">Loading users...</p>
+          <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
+          <p className="text-gray-500 dark:text-gray-400">Loading users...</p>
         </div>
       </div>
     );
@@ -255,25 +255,25 @@ export default function UsersPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-white mb-2">User Management</h1>
-        <p className="text-gray-400">Manage user accounts and permissions</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">User Management</h1>
+        <p className="text-gray-500 dark:text-gray-400">Manage user accounts and permissions</p>
       </div>
 
       {/* Alerts */}
       {error && (
-        <div className="card bg-red-900/20 border-red-700">
+        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
           <div className="flex items-center space-x-3">
             <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-400">{error}</p>
+            <p className="text-red-700 dark:text-red-400">{error}</p>
           </div>
         </div>
       )}
 
       {success && (
-        <div className="card bg-green-900/20 border-green-700">
+        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-400">{success}</p>
+            <p className="text-green-700 dark:text-green-400">{success}</p>
           </div>
         </div>
       )}
@@ -284,7 +284,7 @@ export default function UsersPage() {
           <UserPlus className="w-4 h-4" />
           <span>Create User</span>
         </button>
-        <button onClick={loadData} className="btn bg-gray-700 hover:bg-gray-600 flex items-center space-x-2">
+        <button onClick={loadData} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
           <span>Refresh</span>
         </button>
@@ -294,31 +294,31 @@ export default function UsersPage() {
       <div className="space-y-3">
         {users.length === 0 ? (
           <div className="card text-center py-12">
-            <Users className="w-12 h-12 mx-auto text-gray-600 mb-4" />
-            <p className="text-gray-400">No users found</p>
+            <Users className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400">No users found</p>
           </div>
         ) : (
           users.map((user) => (
-            <div key={user.id} className="card hover:bg-gray-750 transition-colors">
+            <div key={user.id} className="card hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   {/* Avatar */}
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                    user.role_name === 'Admin' ? 'bg-red-900/50' :
-                    user.role_name === 'Familie' ? 'bg-blue-900/50' :
-                    'bg-gray-700'
+                    user.role_name === 'Admin' ? 'bg-red-100 dark:bg-red-900/50' :
+                    user.role_name === 'Familie' ? 'bg-blue-100 dark:bg-blue-900/50' :
+                    'bg-gray-200 dark:bg-gray-700'
                   }`}>
                     {user.role_name === 'Admin' ? (
-                      <Shield className="w-6 h-6 text-red-400" />
+                      <Shield className="w-6 h-6 text-red-600 dark:text-red-400" />
                     ) : (
-                      <User className="w-6 h-6 text-gray-400" />
+                      <User className="w-6 h-6 text-gray-500 dark:text-gray-400" />
                     )}
                   </div>
 
                   {/* Info */}
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-white">{user.username}</h3>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{user.username}</h3>
                       {user.id === currentUser?.id && (
                         <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded">You</span>
                       )}
@@ -326,17 +326,17 @@ export default function UsersPage() {
                         <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded">Inactive</span>
                       )}
                     </div>
-                    <div className="flex items-center space-x-3 text-sm text-gray-400">
+                    <div className="flex items-center space-x-3 text-sm text-gray-500 dark:text-gray-400">
                       <span className={`px-2 py-0.5 rounded ${
-                        user.role_name === 'Admin' ? 'bg-red-900/30 text-red-400' :
-                        user.role_name === 'Familie' ? 'bg-blue-900/30 text-blue-400' :
-                        'bg-gray-700 text-gray-300'
+                        user.role_name === 'Admin' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                        user.role_name === 'Familie' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                        'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
                       }`}>
                         {user.role_name}
                       </span>
                       {user.email && <span>{user.email}</span>}
                       {user.speaker_id && (
-                        <span className="flex items-center space-x-1 text-green-400">
+                        <span className="flex items-center space-x-1 text-green-600 dark:text-green-400">
                           <Mic className="w-3 h-3" />
                           <span>Voice linked</span>
                         </span>
@@ -350,7 +350,7 @@ export default function UsersPage() {
                   {user.speaker_id ? (
                     <button
                       onClick={() => handleUnlinkSpeaker(user.id)}
-                      className="p-2 text-gray-400 hover:text-yellow-400 hover:bg-gray-700 rounded-lg transition-colors"
+                      className="p-2 text-gray-500 hover:text-yellow-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-yellow-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                       title="Unlink speaker"
                     >
                       <Unlink className="w-5 h-5" />
@@ -358,7 +358,7 @@ export default function UsersPage() {
                   ) : (
                     <button
                       onClick={() => handleLinkSpeaker(user.id)}
-                      className="p-2 text-gray-400 hover:text-green-400 hover:bg-gray-700 rounded-lg transition-colors"
+                      className="p-2 text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                       title="Link speaker"
                       disabled={availableSpeakers.length === 0}
                     >
@@ -367,14 +367,14 @@ export default function UsersPage() {
                   )}
                   <button
                     onClick={() => handleEdit(user)}
-                    className="p-2 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     title="Edit user"
                   >
                     <Pencil className="w-5 h-5" />
                   </button>
                   <button
                     onClick={() => handleDelete(user)}
-                    className="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     title="Delete user"
                     disabled={user.id === currentUser?.id}
                   >
@@ -385,7 +385,7 @@ export default function UsersPage() {
 
               {/* Additional info */}
               {user.last_login && (
-                <div className="mt-3 pt-3 border-t border-gray-700 text-sm text-gray-500">
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500">
                   Last login: {new Date(user.last_login).toLocaleString()}
                 </div>
               )}
@@ -403,7 +403,7 @@ export default function UsersPage() {
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Username */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Username <span className="text-red-500">*</span>
             </label>
             <input
@@ -420,7 +420,7 @@ export default function UsersPage() {
 
           {/* Email */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Email
             </label>
             <input
@@ -435,9 +435,9 @@ export default function UsersPage() {
 
           {/* Password */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Password {!editingUser && <span className="text-red-500">*</span>}
-              {editingUser && <span className="text-gray-500">(leave empty to keep current)</span>}
+              {editingUser && <span className="text-gray-400 dark:text-gray-500">(leave empty to keep current)</span>}
             </label>
             <div className="relative">
               <input
@@ -453,7 +453,7 @@ export default function UsersPage() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
               >
                 {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
               </button>
@@ -462,7 +462,7 @@ export default function UsersPage() {
 
           {/* Role */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               Role <span className="text-red-500">*</span>
             </label>
             <select
@@ -488,10 +488,10 @@ export default function UsersPage() {
               id="is_active"
               checked={formData.is_active}
               onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-              className="w-4 h-4 rounded border-gray-600 bg-gray-700 text-primary-600 focus:ring-primary-500"
+              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
               disabled={formLoading}
             />
-            <label htmlFor="is_active" className="text-sm text-gray-300">
+            <label htmlFor="is_active" className="text-sm text-gray-700 dark:text-gray-300">
               Account is active
             </label>
           </div>
@@ -501,7 +501,7 @@ export default function UsersPage() {
             <button
               type="button"
               onClick={() => setShowModal(false)}
-              className="flex-1 btn bg-gray-700 hover:bg-gray-600"
+              className="flex-1 btn btn-secondary"
               disabled={formLoading}
             >
               Cancel
@@ -531,15 +531,15 @@ export default function UsersPage() {
         title="Link Speaker Profile"
       >
         <div className="space-y-4">
-          <p className="text-gray-400">
+          <p className="text-gray-500 dark:text-gray-400">
             Select a speaker profile to link with this user for voice authentication.
           </p>
 
           {availableSpeakers.length === 0 ? (
             <div className="text-center py-6">
-              <Mic className="w-12 h-12 mx-auto text-gray-600 mb-3" />
-              <p className="text-gray-400">No available speaker profiles</p>
-              <p className="text-gray-500 text-sm">All speaker profiles are already linked to users</p>
+              <Mic className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-3" />
+              <p className="text-gray-500 dark:text-gray-400">No available speaker profiles</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm">All speaker profiles are already linked to users</p>
             </div>
           ) : (
             <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -547,12 +547,12 @@ export default function UsersPage() {
                 <button
                   key={speaker.id}
                   onClick={() => handleLinkSpeakerSubmit(speaker.id)}
-                  className="w-full p-3 bg-gray-700 hover:bg-gray-600 rounded-lg text-left transition-colors flex items-center space-x-3"
+                  className="w-full p-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 rounded-lg text-left transition-colors flex items-center space-x-3"
                 >
                   <Mic className="w-5 h-5 text-primary-400" />
                   <div>
-                    <p className="text-white font-medium">{speaker.name}</p>
-                    <p className="text-gray-400 text-sm">{speaker.embedding_count} voice samples</p>
+                    <p className="text-gray-900 dark:text-white font-medium">{speaker.name}</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">{speaker.embedding_count} voice samples</p>
                   </div>
                 </button>
               ))}
@@ -565,7 +565,7 @@ export default function UsersPage() {
                 setShowLinkSpeakerModal(false);
                 setLinkingUserId(null);
               }}
-              className="w-full btn bg-gray-700 hover:bg-gray-600"
+              className="w-full btn btn-secondary"
             >
               Cancel
             </button>

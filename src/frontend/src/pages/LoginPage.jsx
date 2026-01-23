@@ -60,29 +60,29 @@ export default function LoginPage() {
   // Show loading while checking auth status
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
         <Loader className="w-8 h-8 animate-spin text-primary-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex items-center justify-center px-4">
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
       <div className="max-w-md w-full">
         {/* Logo/Title */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white">Renfield</h1>
-          <p className="text-gray-400 mt-2">Sign in to your account</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Renfield</h1>
+          <p className="text-gray-500 dark:text-gray-400 mt-2">Sign in to your account</p>
         </div>
 
         {/* Login Card */}
         <div className="card">
           {/* Error Alert */}
           {error && (
-            <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 mb-6">
+            <div className="bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
               <div className="flex items-center space-x-3">
                 <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-                <p className="text-red-400">{error}</p>
+                <p className="text-red-700 dark:text-red-400">{error}</p>
               </div>
             </div>
           )}
@@ -90,7 +90,7 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Username */}
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Username
               </label>
               <input
@@ -108,7 +108,7 @@ export default function LoginPage() {
 
             {/* Password */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                 Password
               </label>
               <div className="relative">
@@ -125,7 +125,7 @@ export default function LoginPage() {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                   tabIndex={-1}
                 >
                   {showPassword ? (
@@ -156,12 +156,12 @@ export default function LoginPage() {
 
           {/* Registration Link */}
           {allowRegistration && (
-            <div className="mt-6 pt-6 border-t border-gray-700 text-center">
-              <p className="text-gray-400">
+            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
+              <p className="text-gray-600 dark:text-gray-400">
                 Don't have an account?{' '}
                 <Link
                   to="/register"
-                  className="text-primary-500 hover:text-primary-400 font-medium"
+                  className="text-primary-600 hover:text-primary-500 dark:text-primary-500 dark:hover:text-primary-400 font-medium"
                 >
                   Create one
                 </Link>

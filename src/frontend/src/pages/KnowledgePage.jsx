@@ -240,11 +240,11 @@ export default function KnowledgePage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
               <BookOpen className="w-7 h-7 text-primary-400" />
               Wissensdatenbank
             </h1>
-            <p className="text-gray-400">
+            <p className="text-gray-500 dark:text-gray-400">
               Dokumente hochladen und fuer RAG-Anfragen indexieren
             </p>
           </div>
@@ -261,47 +261,47 @@ export default function KnowledgePage() {
       {/* Statistics */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="card bg-gradient-to-br from-blue-900/50 to-blue-800/30">
+          <div className="card bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/50 dark:to-blue-800/30">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-blue-600/30 rounded-lg">
-                <FileText className="w-6 h-6 text-blue-400" />
+              <div className="p-2 bg-blue-200 dark:bg-blue-600/30 rounded-lg">
+                <FileText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">{stats.document_count}</div>
-                <div className="text-sm text-gray-400">Dokumente</div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.document_count}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Dokumente</div>
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-green-900/50 to-green-800/30">
+          <div className="card bg-gradient-to-br from-green-100 to-green-50 dark:from-green-900/50 dark:to-green-800/30">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-green-600/30 rounded-lg">
-                <CheckCircle className="w-6 h-6 text-green-400" />
+              <div className="p-2 bg-green-200 dark:bg-green-600/30 rounded-lg">
+                <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">{stats.completed_documents}</div>
-                <div className="text-sm text-gray-400">Indexiert</div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.completed_documents}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Indexiert</div>
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-purple-900/50 to-purple-800/30">
+          <div className="card bg-gradient-to-br from-purple-100 to-purple-50 dark:from-purple-900/50 dark:to-purple-800/30">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-purple-600/30 rounded-lg">
-                <Layers className="w-6 h-6 text-purple-400" />
+              <div className="p-2 bg-purple-200 dark:bg-purple-600/30 rounded-lg">
+                <Layers className="w-6 h-6 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">{stats.chunk_count}</div>
-                <div className="text-sm text-gray-400">Chunks</div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.chunk_count}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Chunks</div>
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-orange-900/50 to-orange-800/30">
+          <div className="card bg-gradient-to-br from-orange-100 to-orange-50 dark:from-orange-900/50 dark:to-orange-800/30">
             <div className="flex items-center gap-3">
-              <div className="p-2 bg-orange-600/30 rounded-lg">
-                <Database className="w-6 h-6 text-orange-400" />
+              <div className="p-2 bg-orange-200 dark:bg-orange-600/30 rounded-lg">
+                <Database className="w-6 h-6 text-orange-600 dark:text-orange-400" />
               </div>
               <div>
-                <div className="text-2xl font-bold text-white">{stats.knowledge_base_count}</div>
-                <div className="text-sm text-gray-400">Knowledge Bases</div>
+                <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.knowledge_base_count}</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">Knowledge Bases</div>
               </div>
             </div>
           </div>
@@ -311,7 +311,7 @@ export default function KnowledgePage() {
       {/* Knowledge Bases */}
       {knowledgeBases.length > 0 && (
         <div className="card">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-primary-400" />
             Knowledge Bases
           </h2>
@@ -321,7 +321,7 @@ export default function KnowledgePage() {
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 selectedKnowledgeBase === null
                   ? 'bg-primary-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
               }`}
             >
               Alle
@@ -333,7 +333,7 @@ export default function KnowledgePage() {
                   className={`px-4 py-2 rounded-l-lg text-sm font-medium transition-colors ${
                     selectedKnowledgeBase === kb.id
                       ? 'bg-primary-600 text-white'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                      : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
                   }`}
                 >
                   {kb.name}
@@ -343,7 +343,7 @@ export default function KnowledgePage() {
                 </button>
                 <button
                   onClick={() => handleDeleteKnowledgeBase(kb.id, kb.name)}
-                  className="px-2 py-2 rounded-r-lg bg-gray-700 text-gray-400 hover:text-red-400 hover:bg-gray-600 transition-colors"
+                  className="px-2 py-2 rounded-r-lg bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-600 transition-colors"
                   title="Knowledge Base loeschen"
                 >
                   <Trash2 className="w-4 h-4" />
@@ -356,11 +356,11 @@ export default function KnowledgePage() {
 
       {/* Upload Section */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <Upload className="w-5 h-5 text-primary-400" />
           Dokument hochladen
         </h2>
-        <div className="border-2 border-dashed border-gray-600 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
+        <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
           <input
             type="file"
             onChange={handleUpload}
@@ -373,11 +373,11 @@ export default function KnowledgePage() {
             htmlFor="file-upload"
             className={`cursor-pointer ${uploading ? 'opacity-50' : ''}`}
           >
-            <Upload className="w-12 h-12 mx-auto text-gray-500 mb-4" />
-            <p className="text-gray-300 mb-2">
+            <Upload className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
+            <p className="text-gray-700 dark:text-gray-300 mb-2">
               {uploading ? 'Wird verarbeitet...' : 'Klicken oder Datei hierher ziehen'}
             </p>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-gray-500 dark:text-gray-500">
               Unterstuetzte Formate: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
             </p>
           </label>
@@ -385,10 +385,10 @@ export default function KnowledgePage() {
         {uploadProgress && (
           <div className={`mt-4 p-3 rounded-lg ${
             uploadProgress.includes('Fehler')
-              ? 'bg-red-900/50 text-red-300'
+              ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
               : uploadProgress.includes('Erfolgreich')
-              ? 'bg-green-900/50 text-green-300'
-              : 'bg-blue-900/50 text-blue-300'
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300'
+              : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
           }`}>
             {uploadProgress}
           </div>
@@ -397,7 +397,7 @@ export default function KnowledgePage() {
 
       {/* Search Section */}
       <div className="card">
-        <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <Search className="w-5 h-5 text-primary-400" />
           In Dokumenten suchen
         </h2>
@@ -408,7 +408,7 @@ export default function KnowledgePage() {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
             placeholder="Suchbegriff eingeben..."
-            className="flex-1 px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+            className="input flex-1"
           />
           <button
             onClick={handleSearch}
@@ -427,33 +427,33 @@ export default function KnowledgePage() {
         {/* Search Results */}
         {searchResults.length > 0 && (
           <div className="mt-4 space-y-3">
-            <h3 className="text-sm font-medium text-gray-400">
+            <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
               {searchResults.length} Ergebnisse gefunden
             </h3>
             {searchResults.map((result, idx) => (
               <div
                 key={idx}
-                className="p-4 bg-gray-700/50 rounded-lg border border-gray-600"
+                className="p-4 bg-gray-100 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600"
               >
                 <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2 text-sm text-gray-400">
+                  <div className="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
                     {getFileIcon(result.document?.filename?.split('.').pop())}
                     <span>{result.document.filename}</span>
                     {result.chunk.page_number && (
-                      <span className="text-gray-500">
+                      <span className="text-gray-400 dark:text-gray-500">
                         | Seite {result.chunk.page_number}
                       </span>
                     )}
                   </div>
-                  <span className="text-xs px-2 py-1 bg-primary-600/30 text-primary-300 rounded">
+                  <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300 rounded">
                     {Math.round(result.similarity * 100)}% Relevanz
                   </span>
                 </div>
-                <p className="text-gray-300 text-sm line-clamp-3">
+                <p className="text-gray-700 dark:text-gray-300 text-sm line-clamp-3">
                   {result.chunk.content}
                 </p>
                 {result.chunk.section_title && (
-                  <p className="mt-2 text-xs text-gray-500">
+                  <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
                     Abschnitt: {result.chunk.section_title}
                   </p>
                 )}
@@ -472,7 +472,7 @@ export default function KnowledgePage() {
             className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${
               statusFilter === f
                 ? 'bg-primary-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
             {f === 'all' ? 'Alle' : f}
@@ -484,14 +484,14 @@ export default function KnowledgePage() {
       <div className="space-y-4">
         {loading ? (
           <div className="card text-center py-12">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-400">Lade Dokumente...</p>
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
+            <p className="text-gray-500 dark:text-gray-400">Lade Dokumente...</p>
           </div>
         ) : documents.length === 0 ? (
           <div className="card text-center py-12">
-            <FileText className="w-12 h-12 mx-auto text-gray-600 mb-2" />
-            <p className="text-gray-400">Keine Dokumente gefunden</p>
-            <p className="text-sm text-gray-500 mt-2">
+            <FileText className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
+            <p className="text-gray-500 dark:text-gray-400">Keine Dokumente gefunden</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
               Laden Sie ein Dokument hoch, um die Wissensdatenbank zu fuellen.
             </p>
           </div>
@@ -501,10 +501,10 @@ export default function KnowledgePage() {
               <div className="flex items-start space-x-4">
                 <div className="mt-1">{getFileIcon(doc.file_type)}</div>
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-semibold text-white mb-1 truncate">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1 truncate">
                     {doc.title || doc.filename}
                   </h3>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-400">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
                     <span>Typ: {doc.file_type?.toUpperCase()}</span>
                     {doc.page_count && <span>Seiten: {doc.page_count}</span>}
                     <span>Chunks: {doc.chunk_count || 0}</span>
@@ -514,11 +514,11 @@ export default function KnowledgePage() {
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                     Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
                   </p>
                   {doc.error_message && (
-                    <p className="text-xs text-red-400 mt-1">
+                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">
                       Fehler: {doc.error_message}
                     </p>
                   )}
@@ -529,12 +529,12 @@ export default function KnowledgePage() {
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-medium ${
                         doc.status === 'completed'
-                          ? 'bg-green-900 text-green-300'
+                          ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
                           : doc.status === 'failed'
-                          ? 'bg-red-900 text-red-300'
+                          ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
                           : doc.status === 'processing'
-                          ? 'bg-blue-900 text-blue-300'
-                          : 'bg-yellow-900 text-yellow-300'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                          : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
                       }`}
                     >
                       {doc.status}
@@ -542,14 +542,14 @@ export default function KnowledgePage() {
                   </div>
                   <button
                     onClick={() => handleReindexDocument(doc.id)}
-                    className="p-2 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     title="Neu indexieren"
                   >
                     <RefreshCw className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteDocument(doc.id, doc.filename)}
-                    className="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-700 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     title="Loeschen"
                   >
                     <Trash2 className="w-4 h-4" />
@@ -564,13 +564,13 @@ export default function KnowledgePage() {
       {/* New Knowledge Base Modal */}
       {showNewKbModal && (
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 border border-gray-700">
-            <h2 className="text-xl font-bold text-white mb-4">
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 border border-gray-200 dark:border-gray-700">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
               Neue Knowledge Base erstellen
             </h2>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Name *
                 </label>
                 <input
@@ -578,11 +578,11 @@ export default function KnowledgePage() {
                   value={newKbName}
                   onChange={(e) => setNewKbName(e.target.value)}
                   placeholder="z.B. Handbuecher"
-                  className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                  className="input w-full"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Beschreibung
                 </label>
                 <textarea
@@ -590,7 +590,7 @@ export default function KnowledgePage() {
                   onChange={(e) => setNewKbDescription(e.target.value)}
                   placeholder="Optionale Beschreibung..."
                   rows={3}
-                  className="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-primary-500 resize-none"
+                  className="input w-full resize-none"
                 />
               </div>
             </div>
@@ -601,7 +601,7 @@ export default function KnowledgePage() {
                   setNewKbName('');
                   setNewKbDescription('');
                 }}
-                className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+                className="btn btn-secondary"
               >
                 Abbrechen
               </button>

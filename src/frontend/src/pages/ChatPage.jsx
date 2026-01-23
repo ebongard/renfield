@@ -902,8 +902,8 @@ export default function ChatPage() {
         <div className="card mb-4 mx-4 mt-4 md:mx-0 md:mt-0">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-white">Chat</h1>
-              <p className="text-gray-400">Unterhalte dich mit Renfield</p>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Chat</h1>
+              <p className="text-gray-500 dark:text-gray-400">Unterhalte dich mit Renfield</p>
             </div>
           <div className="flex items-center space-x-4">
             {/* Wake Word Controls */}
@@ -915,8 +915,8 @@ export default function ChatPage() {
                   wakeWordEnabled
                     ? 'bg-green-600 hover:bg-green-700 text-white'
                     : wakeWordError
-                      ? 'bg-red-900/50 hover:bg-red-800/50 text-red-300'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      ? 'bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-900/50 dark:hover:bg-red-800/50 dark:text-red-300'
+                      : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
                 } ${wakeWordLoading ? 'opacity-50 cursor-wait' : ''}`}
                 title={wakeWordError
                   ? `Wake word not available: ${wakeWordError.message}`
@@ -938,7 +938,7 @@ export default function ChatPage() {
               {wakeWordEnabled && (
                 <button
                   onClick={() => setShowWakeWordSettings(!showWakeWordSettings)}
-                  className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
+                  className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
                   title="Wake word settings"
                 >
                   <Settings className="w-4 h-4" />
@@ -949,7 +949,7 @@ export default function ChatPage() {
             {/* Connection Status */}
             <div className="flex items-center space-x-2">
               <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
-              <span className="text-sm text-gray-400">
+              <span className="text-sm text-gray-500 dark:text-gray-400">
                 {wsConnected ? 'Verbunden' : 'Getrennt'}
               </span>
             </div>
@@ -958,13 +958,13 @@ export default function ChatPage() {
 
         {/* Wake Word Error Message */}
         {wakeWordError && !wakeWordEnabled && (
-          <div className="mt-3 flex items-center px-3 py-2 bg-red-900/30 rounded-lg border border-red-700/50">
+          <div className="mt-3 flex items-center px-3 py-2 bg-red-100 dark:bg-red-900/30 rounded-lg border border-red-300 dark:border-red-700/50">
             <div className="flex items-center space-x-2">
               <div className="w-2 h-2 rounded-full bg-red-500" />
-              <span className="text-sm text-red-300">
+              <span className="text-sm text-red-700 dark:text-red-300">
                 {wakeWordError.name === 'BrowserNotSupportedError'
                   ? 'Wake word not supported in this browser. Use Chrome/Edge/Safari or the manual mic button.'
-                  : <>Wake word not available. Run: <code className="bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
+                  : <>Wake word not available. Run: <code className="bg-red-200 dark:bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
                 }
               </span>
             </div>
@@ -973,10 +973,10 @@ export default function ChatPage() {
 
         {/* Wake Word Listening Indicator */}
         {wakeWordEnabled && !recording && (
-          <div className="mt-3 flex items-center justify-between px-3 py-2 bg-green-900/30 rounded-lg border border-green-700/50">
+          <div className="mt-3 flex items-center justify-between px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700/50">
             <div className="flex items-center space-x-2">
               <div className={`w-2 h-2 rounded-full ${wakeWordListening ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
-              <span className="text-sm text-green-300">
+              <span className="text-sm text-green-700 dark:text-green-300">
                 {wakeWordListening
                   ? `Listening for "${availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis'}"...`
                   : wakeWordStatus === 'activated'
@@ -986,7 +986,7 @@ export default function ChatPage() {
               </span>
             </div>
             {lastDetection && (
-              <span className="text-xs text-gray-400">
+              <span className="text-xs text-gray-500 dark:text-gray-400">
                 Last: {lastDetection.keyword} ({(lastDetection.score * 100).toFixed(0)}%)
               </span>
             )}
@@ -995,17 +995,17 @@ export default function ChatPage() {
 
         {/* Wake Word Settings Dropdown */}
         {showWakeWordSettings && (
-          <div className="mt-3 p-4 bg-gray-800 rounded-lg border border-gray-700">
-            <h3 className="text-sm font-medium text-white mb-3">Wake Word Settings</h3>
+          <div className="mt-3 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Wake Word Settings</h3>
 
             <div className="space-y-3">
               {/* Keyword Selection */}
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">Wake Word</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">Wake Word</label>
                 <select
                   value={wakeWordSettings.keyword}
                   onChange={(e) => setWakeWordKeyword(e.target.value)}
-                  className="w-full bg-gray-700 text-white text-sm rounded-lg px-3 py-2 border border-gray-600 focus:border-primary-500 focus:outline-none"
+                  className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white text-sm rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-600 focus:border-primary-500 focus:outline-none"
                 >
                   {availableKeywords.map(kw => (
                     <option key={kw.id} value={kw.id}>{kw.label}</option>
@@ -1015,7 +1015,7 @@ export default function ChatPage() {
 
               {/* Threshold Slider */}
               <div>
-                <label className="text-xs text-gray-400 mb-1 block">
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
                   Sensitivity: {(wakeWordSettings.threshold * 100).toFixed(0)}%
                 </label>
                 <input
@@ -1025,7 +1025,7 @@ export default function ChatPage() {
                   step="0.05"
                   value={wakeWordSettings.threshold}
                   onChange={(e) => setWakeWordThreshold(parseFloat(e.target.value))}
-                  className="w-full"
+                  className="w-full accent-primary-600"
                 />
                 <div className="flex justify-between text-xs text-gray-500">
                   <span>More sensitive</span>
@@ -1048,15 +1048,15 @@ export default function ChatPage() {
         {/* History Loading State */}
         {historyLoading && (
           <div className="flex items-center justify-center py-8">
-            <Loader className="w-6 h-6 text-gray-400 animate-spin mr-2" aria-hidden="true" />
-            <span className="text-gray-400">Lade Konversation...</span>
+            <Loader className="w-6 h-6 text-gray-500 dark:text-gray-400 animate-spin mr-2" aria-hidden="true" />
+            <span className="text-gray-500 dark:text-gray-400">Lade Konversation...</span>
           </div>
         )}
 
         {!historyLoading && messages.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-gray-400 mb-4">Starte ein Gespräch mit Renfield</p>
-            <p className="text-sm text-gray-500">
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Starte ein Gespräch mit Renfield</p>
+            <p className="text-sm text-gray-400 dark:text-gray-500">
               Du kannst Text eingeben oder das Mikrofon nutzen
             </p>
           </div>
@@ -1073,7 +1073,7 @@ export default function ChatPage() {
               className={`max-w-[70%] px-4 py-2 rounded-lg ${
                 message.role === 'user'
                   ? 'bg-primary-600 text-white'
-                  : 'bg-gray-700 text-gray-100'
+                  : 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
               }`}
             >
               <p className="whitespace-pre-wrap">{message.content}</p>
@@ -1081,7 +1081,7 @@ export default function ChatPage() {
               {message.role === 'assistant' && !message.streaming && (
                 <button
                   onClick={() => speakText(message.content)}
-                  className="mt-2 text-xs text-gray-400 hover:text-white flex items-center space-x-1"
+                  className="mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white flex items-center space-x-1"
                   aria-label="Nachricht vorlesen"
                 >
                   <Volume2 className="w-3 h-3" aria-hidden="true" />
@@ -1094,8 +1094,8 @@ export default function ChatPage() {
 
         {loading && (
           <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
-            <div className="bg-gray-700 px-4 py-2 rounded-lg">
-              <Loader className="w-5 h-5 animate-spin text-gray-400" aria-hidden="true" />
+            <div className="bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded-lg">
+              <Loader className="w-5 h-5 animate-spin text-gray-500 dark:text-gray-400" aria-hidden="true" />
               <span className="sr-only">Renfield denkt nach...</span>
             </div>
           </div>
@@ -1107,14 +1107,14 @@ export default function ChatPage() {
       {/* Input */}
       <div className="card mx-4 mb-4 md:mx-0 md:mb-0">
         {/* RAG Toggle */}
-        <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-700">
+        <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center space-x-3">
             <button
               onClick={() => setUseRag(!useRag)}
               className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
                 useRag
-                  ? 'bg-primary-600/30 text-primary-300 border border-primary-500/50'
-                  : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                  ? 'bg-primary-100 text-primary-700 border border-primary-300 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/50'
+                  : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
               }`}
               title={useRag ? 'Wissensdatenbank deaktivieren' : 'Wissensdatenbank aktivieren'}
             >
@@ -1126,7 +1126,7 @@ export default function ChatPage() {
               <div className="relative">
                 <button
                   onClick={() => setShowRagSettings(!showRagSettings)}
-                  className="flex items-center space-x-1 px-3 py-1.5 bg-gray-700 rounded-lg text-sm text-gray-300 hover:bg-gray-600 transition-colors"
+                  className="flex items-center space-x-1 px-3 py-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
                 >
                   <span>
                     {selectedKnowledgeBase
@@ -1137,7 +1137,7 @@ export default function ChatPage() {
                 </button>
 
                 {showRagSettings && (
-                  <div className="absolute bottom-full left-0 mb-2 w-48 bg-gray-800 rounded-lg border border-gray-700 shadow-lg z-10">
+                  <div className="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-lg z-10">
                     <div className="p-2">
                       <button
                         onClick={() => {
@@ -1146,8 +1146,8 @@ export default function ChatPage() {
                         }}
                         className={`w-full text-left px-3 py-2 rounded text-sm ${
                           selectedKnowledgeBase === null
-                            ? 'bg-primary-600/30 text-primary-300'
-                            : 'text-gray-300 hover:bg-gray-700'
+                            ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
+                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
                         }`}
                       >
                         Alle Dokumente
@@ -1161,8 +1161,8 @@ export default function ChatPage() {
                           }}
                           className={`w-full text-left px-3 py-2 rounded text-sm ${
                             selectedKnowledgeBase === kb.id
-                              ? 'bg-primary-600/30 text-primary-300'
-                              : 'text-gray-300 hover:bg-gray-700'
+                              ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
+                              : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
                           }`}
                         >
                           {kb.name}
@@ -1184,21 +1184,21 @@ export default function ChatPage() {
 
         {/* Audio Waveform Visualizer während der Aufnahme */}
         {recording && (
-          <div className="mb-4 p-4 bg-gradient-to-br from-gray-800/80 to-gray-900/80 rounded-xl border border-gray-700/50 backdrop-blur-sm">
+          <div className="mb-4 p-4 bg-gradient-to-br from-gray-100/80 to-gray-200/80 dark:from-gray-800/80 dark:to-gray-900/80 rounded-xl border border-gray-300/50 dark:border-gray-700/50 backdrop-blur-sm">
             {/* Header mit Status und Countdown */}
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center space-x-2">
                 <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
-                <span className="text-sm font-medium text-white">
+                <span className="text-sm font-medium text-gray-900 dark:text-white">
                   {audioLevel > 10 ? 'Sprechen erkannt' : silenceTimeRemaining > 0 ? 'Stille erkannt...' : 'Höre zu...'}
                 </span>
               </div>
 
               {/* Countdown Timer */}
               {silenceTimeRemaining > 0 && (
-                <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-500/20 rounded-full border border-yellow-500/30">
-                  <div className="w-1.5 h-1.5 bg-yellow-400 rounded-full animate-pulse"></div>
-                  <span className="text-xs font-mono text-yellow-300">
+                <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-100 dark:bg-yellow-500/20 rounded-full border border-yellow-300 dark:border-yellow-500/30">
+                  <div className="w-1.5 h-1.5 bg-yellow-500 dark:bg-yellow-400 rounded-full animate-pulse"></div>
+                  <span className="text-xs font-mono text-yellow-700 dark:text-yellow-300">
                     Auto-Stop in {(silenceTimeRemaining / 1000).toFixed(1)}s
                   </span>
                 </div>
@@ -1216,7 +1216,7 @@ export default function ChatPage() {
                 // Farbe basierend auf Level
                 const colorClass = audioLevel > 50 ? 'bg-green-500' :
                                    audioLevel > 10 ? 'bg-primary-500' :
-                                   'bg-gray-600';
+                                   'bg-gray-400 dark:bg-gray-600';
 
                 return (
                   <div
@@ -1233,11 +1233,11 @@ export default function ChatPage() {
 
             {/* Info Text */}
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-400">
+              <span className="text-gray-500 dark:text-gray-400">
                 Level: {audioLevel} / 10
               </span>
-              <span className="text-gray-500">
-                Klicke 🔴 zum manuellen Stopp
+              <span className="text-gray-400 dark:text-gray-500">
+                Klicke zum manuellen Stopp
               </span>
             </div>
           </div>
@@ -1267,8 +1267,8 @@ export default function ChatPage() {
             onClick={recording ? stopRecording : startRecording}
             className={`p-3 rounded-lg transition-colors ${
               recording
-                ? 'bg-red-600 hover:bg-red-700 animate-pulse'
-                : 'bg-gray-700 hover:bg-gray-600'
+                ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+                : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
             }`}
             disabled={loading}
             aria-label={recording ? 'Aufnahme stoppen' : 'Sprachaufnahme starten'}

@@ -2,16 +2,17 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  /* Light mode (default) */
-  body {
-    @apply bg-gray-50 text-gray-900 transition-colors duration-200;
-  }
+/* Body base styles - Light mode default */
+body {
+  background-color: #f9fafb; /* gray-50 */
+  color: #111827; /* gray-900 */
+  transition: background-color 0.2s, color 0.2s;
+}
 
-  /* Dark mode */
-  .dark body {
-    @apply bg-gray-900 text-gray-100;
-  }
+/* Dark mode body */
+html.dark body {
+  background-color: #111827; /* gray-900 */
+  color: #f3f4f6; /* gray-100 */
 }
 
 @layer components {
@@ -60,15 +61,15 @@
 }
 
 /* Custom Scrollbar - Dark Mode */
-.dark ::-webkit-scrollbar-track {
+html.dark ::-webkit-scrollbar-track {
   background: #1f2937;
 }
 
-.dark ::-webkit-scrollbar-thumb {
+html.dark ::-webkit-scrollbar-thumb {
   background: #4b5563;
 }
 
-.dark ::-webkit-scrollbar-thumb:hover {
+html.dark ::-webkit-scrollbar-thumb:hover {
   background: #6b7280;
 }
 

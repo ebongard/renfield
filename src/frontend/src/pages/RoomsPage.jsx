@@ -276,11 +276,11 @@ export default function RoomsPage() {
   const getSourceBadge = (source) => {
     switch (source) {
       case 'homeassistant':
-        return <span className="px-2 py-1 bg-blue-600/20 text-blue-400 text-xs rounded">HA</span>;
+        return <span className="px-2 py-1 bg-blue-100 text-blue-600 dark:bg-blue-600/20 dark:text-blue-400 text-xs rounded">HA</span>;
       case 'satellite':
-        return <span className="px-2 py-1 bg-green-600/20 text-green-400 text-xs rounded">Satellite</span>;
+        return <span className="px-2 py-1 bg-green-100 text-green-600 dark:bg-green-600/20 dark:text-green-400 text-xs rounded">Satellite</span>;
       default:
-        return <span className="px-2 py-1 bg-gray-600/20 text-gray-400 text-xs rounded">Renfield</span>;
+        return <span className="px-2 py-1 bg-gray-200 text-gray-600 dark:bg-gray-600/20 dark:text-gray-400 text-xs rounded">Renfield</span>;
     }
   };
 
@@ -290,13 +290,13 @@ export default function RoomsPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-2">Raumverwaltung</h1>
-            <p className="text-gray-400">Verwalte Raeume und synchronisiere mit Home Assistant</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Raumverwaltung</h1>
+            <p className="text-gray-500 dark:text-gray-400">Verwalte Raeume und synchronisiere mit Home Assistant</p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={loadRooms}
-              className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
+              className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
               aria-label="Räume aktualisieren"
             >
               <RefreshCw className="w-5 h-5" aria-hidden="true" />
@@ -307,19 +307,19 @@ export default function RoomsPage() {
 
       {/* Alerts */}
       {error && (
-        <div className="card bg-red-900/20 border-red-700">
+        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
           <div className="flex items-center space-x-3">
             <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-400">{error}</p>
+            <p className="text-red-700 dark:text-red-400">{error}</p>
           </div>
         </div>
       )}
 
       {success && (
-        <div className="card bg-green-900/20 border-green-700">
+        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-400">{success}</p>
+            <p className="text-green-700 dark:text-green-400">{success}</p>
           </div>
         </div>
       )}
@@ -345,19 +345,19 @@ export default function RoomsPage() {
 
       {/* Rooms List */}
       <div>
-        <h2 className="text-xl font-semibold text-white mb-4">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
           Raeume ({rooms.length})
         </h2>
 
         {loading ? (
           <div className="card text-center py-12" role="status" aria-label="Räume werden geladen">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
-            <p className="text-gray-400">Lade Räume...</p>
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" aria-hidden="true" />
+            <p className="text-gray-500 dark:text-gray-400">Lade Räume...</p>
           </div>
         ) : rooms.length === 0 ? (
           <div className="card text-center py-12">
-            <Home className="w-12 h-12 mx-auto text-gray-600 mb-4" />
-            <p className="text-gray-400 mb-4">Noch keine Raeume vorhanden</p>
+            <Home className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Noch keine Raeume vorhanden</p>
             <button
               onClick={() => setShowCreateModal(true)}
               className="btn btn-primary"
@@ -375,8 +375,8 @@ export default function RoomsPage() {
                       <Home className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                      <p className="text-white font-medium">{room.name}</p>
-                      <p className="text-sm text-gray-400">@{room.alias}</p>
+                      <p className="text-gray-900 dark:text-white font-medium">{room.name}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">@{room.alias}</p>
                     </div>
                   </div>
                   {getSourceBadge(room.source)}
@@ -384,9 +384,9 @@ export default function RoomsPage() {
 
                 {/* HA Link Status */}
                 <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-gray-400">Home Assistant:</span>
+                  <span className="text-gray-500 dark:text-gray-400">Home Assistant:</span>
                   {room.ha_area_id ? (
-                    <span className="text-green-400 flex items-center space-x-1">
+                    <span className="text-green-600 dark:text-green-400 flex items-center space-x-1">
                       <LinkIcon className="w-3 h-3" />
                       <span>Verknuepft</span>
                     </span>
@@ -397,11 +397,11 @@ export default function RoomsPage() {
 
                 {/* Devices Summary */}
                 <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-gray-400">Geraete:</span>
-                  <span className="text-gray-300">
+                  <span className="text-gray-500 dark:text-gray-400">Geraete:</span>
+                  <span className="text-gray-600 dark:text-gray-300">
                     {room.device_count || 0}
                     {room.online_count > 0 && (
-                      <span className="text-green-400 ml-1">
+                      <span className="text-green-600 dark:text-green-400 ml-1">
                         ({room.online_count} online)
                       </span>
                     )}
@@ -410,7 +410,7 @@ export default function RoomsPage() {
 
                 {/* Device List */}
                 {room.devices?.length > 0 && (
-                  <div className="mb-4 p-2 bg-gray-800 rounded-lg space-y-1">
+                  <div className="mb-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg space-y-1">
                     {room.devices.map((device) => {
                       const config = DEVICE_TYPE_CONFIG[device.device_type] || DEVICE_TYPE_CONFIG.web_browser;
                       const DeviceIcon = config.icon;
@@ -421,13 +421,13 @@ export default function RoomsPage() {
                         >
                           <div className="flex items-center space-x-2 min-w-0 flex-1">
                             <DeviceIcon className={`w-3 h-3 flex-shrink-0 ${config.color}`} />
-                            <span className="text-gray-400 truncate" title={device.device_id}>
+                            <span className="text-gray-500 dark:text-gray-400 truncate" title={device.device_id}>
                               {device.device_name || device.device_id}
                             </span>
                           </div>
                           <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
                             <span className="text-gray-500 text-[10px]">{config.label}</span>
-                            <span className={device.is_online ? 'text-green-400' : 'text-gray-500'}>
+                            <span className={device.is_online ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}>
                               {device.is_online ? 'online' : 'offline'}
                             </span>
                           </div>
@@ -445,7 +445,7 @@ export default function RoomsPage() {
                   {room.ha_area_id ? (
                     <button
                       onClick={() => unlinkFromHA(room)}
-                      className="flex-1 btn bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-400 text-sm flex items-center justify-center space-x-1"
+                      className="flex-1 btn bg-yellow-100 hover:bg-yellow-200 text-yellow-700 dark:bg-yellow-600/20 dark:hover:bg-yellow-600/40 dark:text-yellow-400 text-sm flex items-center justify-center space-x-1"
                     >
                       <Unlink className="w-4 h-4" />
                       <span>Trennen</span>
@@ -453,7 +453,7 @@ export default function RoomsPage() {
                   ) : (
                     <button
                       onClick={() => openLinkModal(room)}
-                      className="flex-1 btn bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 text-sm flex items-center justify-center space-x-1"
+                      className="flex-1 btn bg-blue-100 hover:bg-blue-200 text-blue-600 dark:bg-blue-600/20 dark:hover:bg-blue-600/40 dark:text-blue-400 text-sm flex items-center justify-center space-x-1"
                     >
                       <LinkIcon className="w-4 h-4" />
                       <span>Verknuepfen</span>
@@ -461,14 +461,14 @@ export default function RoomsPage() {
                   )}
                   <button
                     onClick={() => openEditModal(room)}
-                    className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
+                    className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
                     aria-label={`${room.name} bearbeiten`}
                   >
                     <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteRoom(room)}
-                    className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400"
+                    className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-600/20 dark:hover:bg-red-600/40 dark:text-red-400"
                     aria-label={`${room.name} löschen`}
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
@@ -484,11 +484,11 @@ export default function RoomsPage() {
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Neuen Raum anlegen</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Neuen Raum anlegen</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
                 <input
                   type="text"
                   value={newRoomName}
@@ -499,7 +499,7 @@ export default function RoomsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Icon (optional)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Icon (optional)</label>
                 <input
                   type="text"
                   value={newRoomIcon}
@@ -514,7 +514,7 @@ export default function RoomsPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -533,11 +533,11 @@ export default function RoomsPage() {
       {showEditModal && selectedRoom && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Raum bearbeiten</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Raum bearbeiten</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
                 <input
                   type="text"
                   value={editRoomName}
@@ -548,7 +548,7 @@ export default function RoomsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Icon (optional)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Icon (optional)</label>
                 <input
                   type="text"
                   value={editRoomIcon}
@@ -566,7 +566,7 @@ export default function RoomsPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowEditModal(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -590,21 +590,21 @@ export default function RoomsPage() {
       {showLinkModal && selectedRoom && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-2">Mit HA Area verknuepfen</h2>
-            <p className="text-gray-400 mb-4">Raum: {selectedRoom.name}</p>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Mit HA Area verknuepfen</h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Raum: {selectedRoom.name}</p>
 
             <div className="space-y-4">
               {loadingAreas ? (
                 <div className="text-center py-4">
-                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-400" />
+                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
                 </div>
               ) : haAreas.length === 0 ? (
-                <p className="text-gray-400 text-center py-4">
+                <p className="text-gray-500 dark:text-gray-400 text-center py-4">
                   Keine Home Assistant Areas gefunden
                 </p>
               ) : (
                 <div>
-                  <label className="block text-sm text-gray-400 mb-2">HA Area auswaehlen:</label>
+                  <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">HA Area auswaehlen:</label>
                   <select
                     value={selectedHAArea}
                     onChange={(e) => setSelectedHAArea(e.target.value)}
@@ -621,7 +621,7 @@ export default function RoomsPage() {
                     }
                   </select>
                   {haAreas.filter(a => !a.is_linked).length === 0 && (
-                    <p className="text-yellow-400 text-sm mt-2">
+                    <p className="text-yellow-600 dark:text-yellow-400 text-sm mt-2">
                       Alle HA Areas sind bereits verknuepft
                     </p>
                   )}
@@ -632,7 +632,7 @@ export default function RoomsPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowLinkModal(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -656,11 +656,11 @@ export default function RoomsPage() {
       {showSyncPanel && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-white mb-4">Home Assistant Synchronisation</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Home Assistant Synchronisation</h2>
 
             {/* Conflict Resolution */}
             <div className="mb-6">
-              <label className="block text-sm text-gray-400 mb-2">Konfliktloesung:</label>
+              <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">Konfliktloesung:</label>
               <select
                 value={conflictResolution}
                 onChange={(e) => setConflictResolution(e.target.value)}
@@ -706,15 +706,15 @@ export default function RoomsPage() {
 
             {/* HA Areas List */}
             <div>
-              <h3 className="text-lg font-semibold text-white mb-3">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
                 Home Assistant Areas ({haAreas.length})
               </h3>
               {loadingAreas ? (
                 <div className="text-center py-4">
-                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-400" />
+                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
                 </div>
               ) : haAreas.length === 0 ? (
-                <p className="text-gray-400 text-center py-4">
+                <p className="text-gray-500 dark:text-gray-400 text-center py-4">
                   Keine HA Areas gefunden. Ist Home Assistant verbunden?
                 </p>
               ) : (
@@ -722,14 +722,14 @@ export default function RoomsPage() {
                   {haAreas.map(area => (
                     <div
                       key={area.area_id}
-                      className="flex items-center justify-between p-3 bg-gray-800 rounded-lg"
+                      className="flex items-center justify-between p-3 bg-gray-100 dark:bg-gray-800 rounded-lg"
                     >
                       <div>
-                        <p className="text-white">{area.name}</p>
+                        <p className="text-gray-900 dark:text-white">{area.name}</p>
                         <p className="text-xs text-gray-500">{area.area_id}</p>
                       </div>
                       {area.is_linked ? (
-                        <span className="text-green-400 text-sm flex items-center space-x-1">
+                        <span className="text-green-600 dark:text-green-400 text-sm flex items-center space-x-1">
                           <LinkIcon className="w-3 h-3" />
                           <span>{area.linked_room_name}</span>
                         </span>
@@ -745,7 +745,7 @@ export default function RoomsPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowSyncPanel(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Schließen
               </button>

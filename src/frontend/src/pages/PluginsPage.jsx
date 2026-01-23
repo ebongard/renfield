@@ -94,12 +94,12 @@ export default function PluginsPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-white mb-2">Plugins</h1>
-          <p className="text-gray-400">Manage available plugins and integrations</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Plugins</h1>
+          <p className="text-gray-500 dark:text-gray-400">Manage available plugins and integrations</p>
         </div>
         <div className="card text-center py-12">
-          <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-          <p className="text-gray-400">Loading plugins...</p>
+          <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
+          <p className="text-gray-500 dark:text-gray-400">Loading plugins...</p>
         </div>
       </div>
     );
@@ -109,36 +109,36 @@ export default function PluginsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-white mb-2">Plugins</h1>
-        <p className="text-gray-400">Manage available plugins and integrations</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Plugins</h1>
+        <p className="text-gray-500 dark:text-gray-400">Manage available plugins and integrations</p>
       </div>
 
       {/* Alerts */}
       {error && (
-        <div className="card bg-red-900/20 border-red-700">
+        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
           <div className="flex items-center space-x-3">
             <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-400">{error}</p>
+            <p className="text-red-700 dark:text-red-400">{error}</p>
           </div>
         </div>
       )}
 
       {success && (
-        <div className="card bg-green-900/20 border-green-700">
+        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-400">{success}</p>
+            <p className="text-green-700 dark:text-green-400">{success}</p>
           </div>
         </div>
       )}
 
       {/* Status Banner */}
       {!pluginsEnabled && (
-        <div className="card bg-yellow-900/20 border-yellow-700">
+        <div className="card bg-yellow-100 dark:bg-yellow-900/20 border-yellow-300 dark:border-yellow-700">
           <div className="flex items-center space-x-3">
             <Info className="w-5 h-5 text-yellow-500" />
-            <p className="text-yellow-400">
-              Plugin system is disabled. Set <code className="bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code> to enable plugins.
+            <p className="text-yellow-700 dark:text-yellow-400">
+              Plugin system is disabled. Set <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code> to enable plugins.
             </p>
           </div>
         </div>
@@ -146,7 +146,7 @@ export default function PluginsPage() {
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        <button onClick={loadPlugins} className="btn bg-gray-700 hover:bg-gray-600 flex items-center space-x-2">
+        <button onClick={loadPlugins} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
           <span>Refresh</span>
         </button>
@@ -155,22 +155,22 @@ export default function PluginsPage() {
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="card text-center">
-          <p className="text-3xl font-bold text-white">{plugins.length}</p>
-          <p className="text-gray-400 text-sm">Total Plugins</p>
+          <p className="text-3xl font-bold text-gray-900 dark:text-white">{plugins.length}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Total Plugins</p>
         </div>
         <div className="card text-center">
-          <p className="text-3xl font-bold text-green-400">{plugins.filter(p => p.enabled).length}</p>
-          <p className="text-gray-400 text-sm">Enabled</p>
+          <p className="text-3xl font-bold text-green-600 dark:text-green-400">{plugins.filter(p => p.enabled).length}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Enabled</p>
         </div>
         <div className="card text-center">
-          <p className="text-3xl font-bold text-gray-500">{plugins.filter(p => !p.enabled).length}</p>
-          <p className="text-gray-400 text-sm">Disabled</p>
+          <p className="text-3xl font-bold text-gray-500 dark:text-gray-500">{plugins.filter(p => !p.enabled).length}</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Disabled</p>
         </div>
         <div className="card text-center">
-          <p className="text-3xl font-bold text-primary-400">
+          <p className="text-3xl font-bold text-primary-600 dark:text-primary-400">
             {plugins.reduce((sum, p) => sum + (p.intents?.length || 0), 0)}
           </p>
-          <p className="text-gray-400 text-sm">Total Intents</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">Total Intents</p>
         </div>
       </div>
 
@@ -178,60 +178,60 @@ export default function PluginsPage() {
       <div className="space-y-3">
         {plugins.length === 0 ? (
           <div className="card text-center py-12">
-            <Puzzle className="w-12 h-12 mx-auto text-gray-600 mb-4" />
-            <p className="text-gray-400">No plugins found</p>
-            <p className="text-gray-500 text-sm mt-1">
+            <Puzzle className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400">No plugins found</p>
+            <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
               Add plugin YAML files to the plugins directory
             </p>
           </div>
         ) : (
           plugins.map((plugin) => (
-            <div key={plugin.name} className="card hover:bg-gray-750 transition-colors">
+            <div key={plugin.name} className="card hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
                   {/* Icon */}
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                    plugin.enabled ? 'bg-green-900/50' : 'bg-gray-700'
+                    plugin.enabled ? 'bg-green-100 dark:bg-green-900/50' : 'bg-gray-200 dark:bg-gray-700'
                   }`}>
                     <Puzzle className={`w-6 h-6 ${
-                      plugin.enabled ? 'text-green-400' : 'text-gray-500'
+                      plugin.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-400 dark:text-gray-500'
                     }`} />
                   </div>
 
                   {/* Info */}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-white">{plugin.name}</h3>
-                      <span className="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{plugin.name}</h3>
+                      <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
                         v{plugin.version}
                       </span>
                       {plugin.enabled ? (
-                        <span className="flex items-center space-x-1 text-xs bg-green-900/50 text-green-400 px-2 py-0.5 rounded">
+                        <span className="flex items-center space-x-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-2 py-0.5 rounded">
                           <Power className="w-3 h-3" />
                           <span>Enabled</span>
                         </span>
                       ) : (
-                        <span className="flex items-center space-x-1 text-xs bg-gray-700 text-gray-500 px-2 py-0.5 rounded">
+                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-500 px-2 py-0.5 rounded">
                           <PowerOff className="w-3 h-3" />
                           <span>Disabled</span>
                         </span>
                       )}
                     </div>
-                    <p className="text-gray-400 text-sm truncate">{plugin.description}</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm truncate">{plugin.description}</p>
                     {plugin.author && (
-                      <p className="text-gray-500 text-xs mt-1">by {plugin.author}</p>
+                      <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">by {plugin.author}</p>
                     )}
                     <div className="flex flex-wrap gap-1 mt-2">
                       {plugin.intents?.slice(0, 3).map((intent) => (
                         <span
                           key={intent.name}
-                          className="text-xs bg-gray-700 text-gray-300 px-2 py-0.5 rounded"
+                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded"
                         >
                           {intent.name}
                         </span>
                       ))}
                       {plugin.intents?.length > 3 && (
-                        <span className="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">
+                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
                           +{plugin.intents.length - 3} more
                         </span>
                       )}
@@ -243,7 +243,7 @@ export default function PluginsPage() {
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => setSelectedPlugin(plugin)}
-                    className="p-2 text-gray-400 hover:text-primary-400 hover:bg-gray-700 rounded-lg transition-colors"
+                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
                     title="View details"
                   >
                     <Info className="w-5 h-5" />
@@ -254,8 +254,8 @@ export default function PluginsPage() {
                       disabled={togglingPlugin === plugin.name}
                       className={`p-2 rounded-lg transition-colors ${
                         plugin.enabled
-                          ? 'text-green-400 hover:text-green-300 hover:bg-green-900/20'
-                          : 'text-gray-400 hover:text-green-400 hover:bg-gray-700'
+                          ? 'text-green-600 hover:text-green-500 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-900/20'
+                          : 'text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700'
                       }`}
                       title={plugin.enabled ? 'Disable plugin' : 'Enable plugin'}
                     >
@@ -287,46 +287,46 @@ export default function PluginsPage() {
             {/* Basic Info */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-gray-500 text-sm">Version</p>
-                <p className="text-white">{selectedPlugin.version}</p>
+                <p className="text-gray-400 dark:text-gray-500 text-sm">Version</p>
+                <p className="text-gray-900 dark:text-white">{selectedPlugin.version}</p>
               </div>
               <div>
-                <p className="text-gray-500 text-sm">Status</p>
-                <p className={selectedPlugin.enabled ? 'text-green-400' : 'text-gray-500'}>
+                <p className="text-gray-400 dark:text-gray-500 text-sm">Status</p>
+                <p className={selectedPlugin.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}>
                   {selectedPlugin.enabled ? 'Enabled' : 'Disabled'}
                 </p>
               </div>
               {selectedPlugin.author && (
                 <div>
-                  <p className="text-gray-500 text-sm">Author</p>
-                  <p className="text-white">{selectedPlugin.author}</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">Author</p>
+                  <p className="text-gray-900 dark:text-white">{selectedPlugin.author}</p>
                 </div>
               )}
               {selectedPlugin.rate_limit && (
                 <div>
-                  <p className="text-gray-500 text-sm">Rate Limit</p>
-                  <p className="text-white">{selectedPlugin.rate_limit} req/min</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">Rate Limit</p>
+                  <p className="text-gray-900 dark:text-white">{selectedPlugin.rate_limit} req/min</p>
                 </div>
               )}
             </div>
 
             {/* Description */}
             <div>
-              <p className="text-gray-500 text-sm mb-1">Description</p>
-              <p className="text-gray-300">{selectedPlugin.description}</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">Description</p>
+              <p className="text-gray-700 dark:text-gray-300">{selectedPlugin.description}</p>
             </div>
 
             {/* Configuration */}
             {selectedPlugin.has_config && selectedPlugin.config_vars?.length > 0 && (
               <div>
                 <div className="flex items-center space-x-2 mb-2">
-                  <Settings className="w-4 h-4 text-gray-500" />
-                  <p className="text-gray-500 text-sm">Configuration Variables</p>
+                  <Settings className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">Configuration Variables</p>
                 </div>
-                <div className="bg-gray-850 p-3 rounded-lg">
+                <div className="bg-gray-100 dark:bg-gray-850 p-3 rounded-lg">
                   <div className="flex flex-wrap gap-2">
                     {selectedPlugin.config_vars.map((varName) => (
-                      <code key={varName} className="text-xs bg-gray-700 text-primary-400 px-2 py-1 rounded">
+                      <code key={varName} className="text-xs bg-gray-200 text-primary-600 dark:bg-gray-700 dark:text-primary-400 px-2 py-1 rounded">
                         {varName}
                       </code>
                     ))}
@@ -337,8 +337,8 @@ export default function PluginsPage() {
 
             {/* Enable Variable */}
             <div>
-              <p className="text-gray-500 text-sm mb-1">Enable Variable</p>
-              <code className="text-sm bg-gray-850 text-primary-400 px-2 py-1 rounded">
+              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">Enable Variable</p>
+              <code className="text-sm bg-gray-100 text-primary-600 dark:bg-gray-850 dark:text-primary-400 px-2 py-1 rounded">
                 {selectedPlugin.enabled_var}=true
               </code>
             </div>
@@ -347,57 +347,57 @@ export default function PluginsPage() {
             {selectedPlugin.intents?.length > 0 && (
               <div>
                 <div className="flex items-center space-x-2 mb-2">
-                  <Code className="w-4 h-4 text-gray-500" />
-                  <p className="text-gray-500 text-sm">Intents ({selectedPlugin.intents.length})</p>
+                  <Code className="w-4 h-4 text-gray-400 dark:text-gray-500" />
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">Intents ({selectedPlugin.intents.length})</p>
                 </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {selectedPlugin.intents.map((intent) => (
-                    <div key={intent.name} className="border border-gray-700 rounded-lg overflow-hidden">
+                    <div key={intent.name} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                       <button
                         type="button"
                         onClick={() => toggleIntent(intent.name)}
-                        className="w-full flex items-center justify-between p-3 bg-gray-850 hover:bg-gray-800 transition-colors"
+                        className="w-full flex items-center justify-between p-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-850 dark:hover:bg-gray-800 transition-colors"
                       >
                         <div className="flex items-center space-x-2">
                           {expandedIntents[intent.name] ? (
-                            <ChevronDown className="w-4 h-4 text-gray-400" />
+                            <ChevronDown className="w-4 h-4 text-gray-500 dark:text-gray-400" />
                           ) : (
-                            <ChevronRight className="w-4 h-4 text-gray-400" />
+                            <ChevronRight className="w-4 h-4 text-gray-500 dark:text-gray-400" />
                           )}
-                          <span className="text-white font-medium">{intent.name}</span>
+                          <span className="text-gray-900 dark:text-white font-medium">{intent.name}</span>
                         </div>
                         {intent.parameters?.length > 0 && (
-                          <span className="text-xs bg-gray-700 text-gray-400 px-2 py-0.5 rounded">
+                          <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
                             {intent.parameters.length} params
                           </span>
                         )}
                       </button>
 
                       {expandedIntents[intent.name] && (
-                        <div className="p-3 bg-gray-900 border-t border-gray-700">
-                          <p className="text-gray-400 text-sm mb-3">{intent.description}</p>
+                        <div className="p-3 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
+                          <p className="text-gray-500 dark:text-gray-400 text-sm mb-3">{intent.description}</p>
 
                           {intent.parameters?.length > 0 && (
                             <div className="space-y-2">
-                              <p className="text-gray-500 text-xs uppercase tracking-wider">Parameters</p>
+                              <p className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">Parameters</p>
                               {intent.parameters.map((param) => (
-                                <div key={param.name} className="bg-gray-850 p-2 rounded">
+                                <div key={param.name} className="bg-gray-100 dark:bg-gray-850 p-2 rounded">
                                   <div className="flex items-center space-x-2">
-                                    <code className="text-primary-400 text-sm">{param.name}</code>
-                                    <span className="text-gray-500 text-xs">({param.type})</span>
+                                    <code className="text-primary-600 dark:text-primary-400 text-sm">{param.name}</code>
+                                    <span className="text-gray-400 dark:text-gray-500 text-xs">({param.type})</span>
                                     {param.required && (
-                                      <span className="text-xs bg-red-900/50 text-red-400 px-1 rounded">
+                                      <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 px-1 rounded">
                                         required
                                       </span>
                                     )}
                                   </div>
                                   {param.description && (
-                                    <p className="text-gray-500 text-xs mt-1">{param.description}</p>
+                                    <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">{param.description}</p>
                                   )}
                                   {param.enum && (
                                     <div className="flex flex-wrap gap-1 mt-1">
                                       {param.enum.map((v) => (
-                                        <span key={v} className="text-xs bg-gray-700 text-gray-400 px-1 rounded">
+                                        <span key={v} className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1 rounded">
                                           {v}
                                         </span>
                                       ))}
@@ -416,10 +416,10 @@ export default function PluginsPage() {
             )}
 
             {/* Close button */}
-            <div className="pt-4 border-t border-gray-700">
+            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <button
                 onClick={() => setSelectedPlugin(null)}
-                className="w-full btn bg-gray-700 hover:bg-gray-600"
+                className="w-full btn btn-secondary"
               >
                 Close
               </button>

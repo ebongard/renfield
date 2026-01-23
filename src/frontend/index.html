@@ -8,6 +8,17 @@
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <title>Renfield AI Assistant</title>
+    <script>
+      // Prevent FOUC: Apply theme immediately before page renders
+      (function() {
+        const theme = localStorage.getItem('renfield_theme') || 'system';
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const shouldBeDark = theme === 'dark' || (theme === 'system' && prefersDark);
+        if (shouldBeDark) {
+          document.documentElement.classList.add('dark');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

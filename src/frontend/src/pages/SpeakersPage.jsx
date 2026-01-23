@@ -387,13 +387,13 @@ export default function SpeakersPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-2">Sprechererkennung</h1>
-            <p className="text-gray-400">Verwalte Sprecher und Voice Samples</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Sprechererkennung</h1>
+            <p className="text-gray-500 dark:text-gray-400">Verwalte Sprecher und Voice Samples</p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={loadSpeakers}
-              className="p-2 rounded-lg bg-gray-700 hover:bg-gray-600 text-gray-300"
+              className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
               aria-label="Sprecherliste aktualisieren"
             >
               <RefreshCw className="w-5 h-5" aria-hidden="true" />
@@ -404,7 +404,7 @@ export default function SpeakersPage() {
 
       {/* Service Status */}
       {serviceStatus && (
-        <div className={`card ${serviceStatus.available ? 'bg-green-900/20 border-green-700' : 'bg-red-900/20 border-red-700'}`}>
+        <div className={`card ${serviceStatus.available ? 'bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700' : 'bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700'}`}>
           <div className="flex items-center space-x-3">
             {serviceStatus.available ? (
               <CheckCircle className="w-5 h-5 text-green-500" />
@@ -412,10 +412,10 @@ export default function SpeakersPage() {
               <XCircle className="w-5 h-5 text-red-500" />
             )}
             <div>
-              <p className={`font-medium ${serviceStatus.available ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`font-medium ${serviceStatus.available ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
                 {serviceStatus.available ? 'Speaker Recognition aktiv' : 'Speaker Recognition nicht verfuegbar'}
               </p>
-              <p className="text-sm text-gray-400">{serviceStatus.message}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400">{serviceStatus.message}</p>
             </div>
           </div>
         </div>
@@ -423,19 +423,19 @@ export default function SpeakersPage() {
 
       {/* Alerts */}
       {error && (
-        <div className="card bg-red-900/20 border-red-700">
+        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
           <div className="flex items-center space-x-3">
             <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-400">{error}</p>
+            <p className="text-red-700 dark:text-red-400">{error}</p>
           </div>
         </div>
       )}
 
       {success && (
-        <div className="card bg-green-900/20 border-green-700">
+        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
           <div className="flex items-center space-x-3">
             <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-400">{success}</p>
+            <p className="text-green-700 dark:text-green-400">{success}</p>
           </div>
         </div>
       )}
@@ -463,19 +463,19 @@ export default function SpeakersPage() {
 
       {/* Speakers List */}
       <div>
-        <h2 className="text-xl font-semibold text-white mb-4">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
           Registrierte Sprecher ({speakers.length})
         </h2>
 
         {loading ? (
           <div className="card text-center py-12" role="status" aria-label="Sprecher werden geladen">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
-            <p className="text-gray-400">Lade Sprecher...</p>
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" aria-hidden="true" />
+            <p className="text-gray-500 dark:text-gray-400">Lade Sprecher...</p>
           </div>
         ) : speakers.length === 0 ? (
           <div className="card text-center py-12">
-            <Users className="w-12 h-12 mx-auto text-gray-600 mb-4" />
-            <p className="text-gray-400 mb-4">Noch keine Sprecher registriert</p>
+            <Users className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Noch keine Sprecher registriert</p>
             <button
               onClick={() => setShowCreateModal(true)}
               className="btn btn-primary"
@@ -498,22 +498,22 @@ export default function SpeakersPage() {
                       )}
                     </div>
                     <div>
-                      <p className="text-white font-medium">{speaker.name}</p>
-                      <p className="text-sm text-gray-400">@{speaker.alias}</p>
+                      <p className="text-gray-900 dark:text-white font-medium">{speaker.name}</p>
+                      <p className="text-sm text-gray-500 dark:text-gray-400">@{speaker.alias}</p>
                     </div>
                   </div>
                   {speaker.is_admin && (
-                    <span className="px-2 py-1 bg-yellow-600/20 text-yellow-400 text-xs rounded">
+                    <span className="px-2 py-1 bg-yellow-100 text-yellow-700 dark:bg-yellow-600/20 dark:text-yellow-400 text-xs rounded">
                       Admin
                     </span>
                   )}
                 </div>
 
                 <div className="flex items-center justify-between text-sm mb-4">
-                  <span className="text-gray-400">Voice Samples:</span>
+                  <span className="text-gray-500 dark:text-gray-400">Voice Samples:</span>
                   <span className={`font-medium ${
-                    speaker.embedding_count >= 3 ? 'text-green-400' :
-                    speaker.embedding_count > 0 ? 'text-yellow-400' : 'text-red-400'
+                    speaker.embedding_count >= 3 ? 'text-green-600 dark:text-green-400' :
+                    speaker.embedding_count > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
                   }`}>
                     {speaker.embedding_count} {speaker.embedding_count >= 3 ? '(gut)' : speaker.embedding_count > 0 ? '(mehr empfohlen)' : '(keine)'}
                   </span>
@@ -530,14 +530,14 @@ export default function SpeakersPage() {
                   </button>
                   <button
                     onClick={() => openEditModal(speaker)}
-                    className="p-2 rounded-lg bg-blue-600/20 hover:bg-blue-600/40 text-blue-400"
+                    className="p-2 rounded-lg bg-blue-100 hover:bg-blue-200 text-blue-600 dark:bg-blue-600/20 dark:hover:bg-blue-600/40 dark:text-blue-400"
                     aria-label={`${speaker.name} bearbeiten`}
                   >
                     <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => openMergeModal(speaker)}
-                    className="p-2 rounded-lg bg-purple-600/20 hover:bg-purple-600/40 text-purple-400"
+                    className="p-2 rounded-lg bg-purple-100 hover:bg-purple-200 text-purple-600 dark:bg-purple-600/20 dark:hover:bg-purple-600/40 dark:text-purple-400"
                     aria-label={`${speaker.name} mit anderem Sprecher zusammenführen`}
                     disabled={speakers.length < 2}
                   >
@@ -545,7 +545,7 @@ export default function SpeakersPage() {
                   </button>
                   <button
                     onClick={() => deleteSpeaker(speaker)}
-                    className="p-2 rounded-lg bg-red-600/20 hover:bg-red-600/40 text-red-400"
+                    className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-600/20 dark:hover:bg-red-600/40 dark:text-red-400"
                     aria-label={`${speaker.name} löschen`}
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
@@ -561,11 +561,11 @@ export default function SpeakersPage() {
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Neuen Sprecher anlegen</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Neuen Sprecher anlegen</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
                 <input
                   type="text"
                   value={newSpeakerName}
@@ -576,7 +576,7 @@ export default function SpeakersPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Alias (fuer Ansprache)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Alias (fuer Ansprache)</label>
                 <input
                   type="text"
                   value={newSpeakerAlias}
@@ -594,7 +594,7 @@ export default function SpeakersPage() {
                   onChange={(e) => setNewSpeakerIsAdmin(e.target.checked)}
                   className="w-4 h-4 rounded"
                 />
-                <label htmlFor="isAdmin" className="text-sm text-gray-300 flex items-center space-x-2">
+                <label htmlFor="isAdmin" className="text-sm text-gray-600 dark:text-gray-300 flex items-center space-x-2">
                   <Shield className="w-4 h-4" />
                   <span>Administrator-Berechtigung</span>
                 </label>
@@ -604,7 +604,7 @@ export default function SpeakersPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowCreateModal(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -623,17 +623,17 @@ export default function SpeakersPage() {
       {showEnrollModal && selectedSpeaker && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-2">Voice Sample aufnehmen</h2>
-            <p className="text-gray-400 mb-4">Fuer: {selectedSpeaker.name}</p>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Voice Sample aufnehmen</h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Fuer: {selectedSpeaker.name}</p>
 
-            <div className="bg-gray-800 rounded-lg p-6 mb-4">
+            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-4">
               <div className="text-center">
                 {recording ? (
                   <div>
                     {/* Recording Header */}
                     <div className="flex items-center justify-center space-x-2 mb-4">
                       <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-red-400">
+                      <span className="text-sm font-medium text-red-600 dark:text-red-400">
                         {audioLevel > 10 ? 'Sprechen erkannt' : 'Hoere zu...'}
                       </span>
                     </div>
@@ -646,7 +646,7 @@ export default function SpeakersPage() {
                         const height = Math.min(100, baseHeight);
                         const colorClass = audioLevel > 50 ? 'bg-green-500' :
                                            audioLevel > 10 ? 'bg-primary-500' :
-                                           'bg-gray-600';
+                                           'bg-gray-400 dark:bg-gray-600';
 
                         return (
                           <div
@@ -661,7 +661,7 @@ export default function SpeakersPage() {
                       })}
                     </div>
 
-                    <p className="text-sm text-gray-400">Sprich 3-10 Sekunden deutlich</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Sprich 3-10 Sekunden deutlich</p>
                     <p className="text-xs text-gray-500 mt-1">Level: {audioLevel}</p>
                   </div>
                 ) : audioBlob ? (
@@ -669,17 +669,17 @@ export default function SpeakersPage() {
                     <div className="w-16 h-16 mx-auto mb-4 bg-green-600 rounded-full flex items-center justify-center">
                       <CheckCircle className="w-8 h-8 text-white" />
                     </div>
-                    <p className="text-green-400 font-medium">Aufnahme bereit</p>
-                    <p className="text-sm text-gray-400 mt-2">
+                    <p className="text-green-600 dark:text-green-400 font-medium">Aufnahme bereit</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                       {(audioBlob.size / 1024).toFixed(1)} KB
                     </p>
                   </div>
                 ) : (
                   <div>
-                    <div className="w-16 h-16 mx-auto mb-4 bg-gray-700 rounded-full flex items-center justify-center">
-                      <Mic className="w-8 h-8 text-gray-400" />
+                    <div className="w-16 h-16 mx-auto mb-4 bg-gray-300 dark:bg-gray-700 rounded-full flex items-center justify-center">
+                      <Mic className="w-8 h-8 text-gray-500 dark:text-gray-400" />
                     </div>
-                    <p className="text-gray-400">Bereit zur Aufnahme</p>
+                    <p className="text-gray-500 dark:text-gray-400">Bereit zur Aufnahme</p>
                     <p className="text-sm text-gray-500 mt-2">Sprich einen beliebigen Satz</p>
                   </div>
                 )}
@@ -712,7 +712,7 @@ export default function SpeakersPage() {
                   setShowEnrollModal(false);
                   setAudioBlob(null);
                 }}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -736,17 +736,17 @@ export default function SpeakersPage() {
       {showIdentifyModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-2">Sprecher identifizieren</h2>
-            <p className="text-gray-400 mb-4">Nimm eine Sprachprobe auf um den Sprecher zu erkennen</p>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Sprecher identifizieren</h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">Nimm eine Sprachprobe auf um den Sprecher zu erkennen</p>
 
-            <div className="bg-gray-800 rounded-lg p-6 mb-4">
+            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-6 mb-4">
               <div className="text-center">
                 {recording ? (
                   <div>
                     {/* Recording Header */}
                     <div className="flex items-center justify-center space-x-2 mb-4">
                       <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
-                      <span className="text-sm font-medium text-red-400">
+                      <span className="text-sm font-medium text-red-600 dark:text-red-400">
                         {audioLevel > 10 ? 'Sprechen erkannt' : 'Hoere zu...'}
                       </span>
                     </div>
@@ -759,7 +759,7 @@ export default function SpeakersPage() {
                         const height = Math.min(100, baseHeight);
                         const colorClass = audioLevel > 50 ? 'bg-green-500' :
                                            audioLevel > 10 ? 'bg-purple-500' :
-                                           'bg-gray-600';
+                                           'bg-gray-400 dark:bg-gray-600';
 
                         return (
                           <div
@@ -781,7 +781,7 @@ export default function SpeakersPage() {
                     <div className="w-16 h-16 mx-auto mb-4 bg-green-600 rounded-full flex items-center justify-center">
                       <CheckCircle className="w-8 h-8 text-white" />
                     </div>
-                    <p className="text-green-400 font-medium">Aufnahme bereit</p>
+                    <p className="text-green-600 dark:text-green-400 font-medium">Aufnahme bereit</p>
                   </div>
                 ) : identifyResult ? (
                   <div>
@@ -790,8 +790,8 @@ export default function SpeakersPage() {
                         <div className="w-16 h-16 mx-auto mb-4 bg-green-600 rounded-full flex items-center justify-center">
                           <CheckCircle className="w-8 h-8 text-white" />
                         </div>
-                        <p className="text-green-400 font-medium text-lg">{identifyResult.speaker_name}</p>
-                        <p className="text-gray-400">@{identifyResult.speaker_alias}</p>
+                        <p className="text-green-600 dark:text-green-400 font-medium text-lg">{identifyResult.speaker_name}</p>
+                        <p className="text-gray-500 dark:text-gray-400">@{identifyResult.speaker_alias}</p>
                         <p className="text-sm text-gray-500 mt-2">
                           Konfidenz: {(identifyResult.confidence * 100).toFixed(1)}%
                         </p>
@@ -801,8 +801,8 @@ export default function SpeakersPage() {
                         <div className="w-16 h-16 mx-auto mb-4 bg-yellow-600 rounded-full flex items-center justify-center">
                           <AlertCircle className="w-8 h-8 text-white" />
                         </div>
-                        <p className="text-yellow-400 font-medium">Sprecher nicht erkannt</p>
-                        <p className="text-sm text-gray-400 mt-2">
+                        <p className="text-yellow-600 dark:text-yellow-400 font-medium">Sprecher nicht erkannt</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
                           Kein registrierter Sprecher gefunden
                         </p>
                       </>
@@ -813,7 +813,7 @@ export default function SpeakersPage() {
                     <div className="w-16 h-16 mx-auto mb-4 bg-purple-600 rounded-full flex items-center justify-center">
                       <Volume2 className="w-8 h-8 text-white" />
                     </div>
-                    <p className="text-gray-400">Bereit zur Identifikation</p>
+                    <p className="text-gray-500 dark:text-gray-400">Bereit zur Identifikation</p>
                   </div>
                 )}
               </div>
@@ -849,7 +849,7 @@ export default function SpeakersPage() {
                   setAudioBlob(null);
                   setIdentifyResult(null);
                 }}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Schliessen
               </button>
@@ -873,11 +873,11 @@ export default function SpeakersPage() {
       {showEditModal && selectedSpeaker && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Sprecher bearbeiten</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Sprecher bearbeiten</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
                 <input
                   type="text"
                   value={editSpeakerName}
@@ -888,7 +888,7 @@ export default function SpeakersPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-1">Alias (fuer Ansprache)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Alias (fuer Ansprache)</label>
                 <input
                   type="text"
                   value={editSpeakerAlias}
@@ -906,7 +906,7 @@ export default function SpeakersPage() {
                   onChange={(e) => setEditSpeakerIsAdmin(e.target.checked)}
                   className="w-4 h-4 rounded"
                 />
-                <label htmlFor="editIsAdmin" className="text-sm text-gray-300 flex items-center space-x-2">
+                <label htmlFor="editIsAdmin" className="text-sm text-gray-600 dark:text-gray-300 flex items-center space-x-2">
                   <Shield className="w-4 h-4" />
                   <span>Administrator-Berechtigung</span>
                 </label>
@@ -920,7 +920,7 @@ export default function SpeakersPage() {
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowEditModal(false)}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>
@@ -944,27 +944,27 @@ export default function SpeakersPage() {
       {showMergeModal && selectedSpeaker && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-2">Sprecher zusammenfuehren</h2>
-            <p className="text-gray-400 mb-4">
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Sprecher zusammenfuehren</h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">
               Fuehre "{selectedSpeaker.name}" mit einem anderen Sprecher zusammen.
               Alle Voice Samples werden uebertragen.
             </p>
 
-            <div className="bg-gray-800 rounded-lg p-4 mb-4">
+            <div className="bg-gray-100 dark:bg-gray-800 rounded-lg p-4 mb-4">
               <div className="flex items-center space-x-3 mb-4">
                 <div className="p-2 bg-purple-600 rounded-lg">
                   <GitMerge className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <p className="text-white font-medium">{selectedSpeaker.name}</p>
-                  <p className="text-sm text-gray-400">
+                  <p className="text-gray-900 dark:text-white font-medium">{selectedSpeaker.name}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">
                     {selectedSpeaker.embedding_count} Voice Samples werden uebertragen
                   </p>
                 </div>
               </div>
 
-              <div className="border-t border-gray-700 pt-4">
-                <label className="block text-sm text-gray-400 mb-2">Zusammenfuehren mit:</label>
+              <div className="border-t border-gray-200 dark:border-gray-700 pt-4">
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">Zusammenfuehren mit:</label>
                 <select
                   value={mergeTargetId || ''}
                   onChange={(e) => setMergeTargetId(e.target.value)}
@@ -983,10 +983,10 @@ export default function SpeakersPage() {
               </div>
             </div>
 
-            <div className="bg-yellow-900/20 border border-yellow-700 rounded-lg p-3 mb-4">
+            <div className="bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg p-3 mb-4">
               <div className="flex items-start space-x-2">
-                <AlertCircle className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-yellow-400">
+                <AlertCircle className="w-5 h-5 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-yellow-700 dark:text-yellow-400">
                   <strong>Achtung:</strong> "{selectedSpeaker.name}" wird nach dem Zusammenfuehren geloescht.
                   Diese Aktion kann nicht rueckgaengig gemacht werden.
                 </p>
@@ -1000,7 +1000,7 @@ export default function SpeakersPage() {
                   setSelectedSpeaker(null);
                   setMergeTargetId(null);
                 }}
-                className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
+                className="flex-1 btn btn-secondary"
               >
                 Abbrechen
               </button>

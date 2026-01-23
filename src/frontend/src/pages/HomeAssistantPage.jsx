@@ -89,8 +89,8 @@ export default function HomeAssistantPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-white mb-2">Smart Home</h1>
-        <p className="text-gray-400">Steuere dein Zuhause mit Home Assistant</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Smart Home</h1>
+        <p className="text-gray-500 dark:text-gray-400">Steuere dein Zuhause mit Home Assistant</p>
       </div>
 
       {/* Search */}
@@ -120,7 +120,7 @@ export default function HomeAssistantPage() {
               className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors flex items-center space-x-2 ${
                 selectedDomain === domain.key
                   ? 'bg-primary-600 text-white'
-                  : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
               }`}
             >
               <Icon className="w-4 h-4" />
@@ -133,19 +133,19 @@ export default function HomeAssistantPage() {
       {/* Entities Grid */}
       <div>
         <div className="flex items-center justify-between mb-4">
-          <h2 className="text-xl font-semibold text-white">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
             Geräte ({filteredEntities.length})
           </h2>
         </div>
 
         {loading ? (
           <div className="card text-center py-12" role="status" aria-label="Geräte werden geladen">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" aria-hidden="true" />
-            <p className="text-gray-400">Lade Geräte...</p>
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" aria-hidden="true" />
+            <p className="text-gray-500 dark:text-gray-400">Lade Geräte...</p>
           </div>
         ) : filteredEntities.length === 0 ? (
           <div className="card text-center py-12">
-            <p className="text-gray-400">Keine Geräte gefunden</p>
+            <p className="text-gray-500 dark:text-gray-400">Keine Geräte gefunden</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" role="list">
@@ -154,7 +154,7 @@ export default function HomeAssistantPage() {
                 key={entity.entity_id}
                 type="button"
                 className={`card text-left cursor-pointer transition-all hover:scale-105 w-full ${
-                  isEntityOn(entity) ? 'bg-primary-900/30 border-2 border-primary-600' : ''
+                  isEntityOn(entity) ? 'bg-primary-100 border-2 border-primary-600 dark:bg-primary-900/30' : ''
                 }`}
                 onClick={() => toggleEntity(entity.entity_id)}
                 aria-pressed={isEntityOn(entity)}
@@ -164,20 +164,20 @@ export default function HomeAssistantPage() {
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
                     <div className={`p-2 rounded-lg ${
-                      isEntityOn(entity) ? 'bg-primary-600' : 'bg-gray-700'
+                      isEntityOn(entity) ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
                     }`} aria-hidden="true">
                       {getEntityIcon(entity)}
                     </div>
                     <div>
-                      <p className="text-white font-medium">
+                      <p className="text-gray-900 dark:text-white font-medium">
                         {entity.attributes?.friendly_name || entity.entity_id}
                       </p>
-                      <p className="text-xs text-gray-400">{entity.entity_id}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400">{entity.entity_id}</p>
                     </div>
                   </div>
                   <div
                     className={`w-3 h-3 rounded-full ${
-                      isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-600'
+                      isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
                     }`}
                     aria-hidden="true"
                   />
@@ -185,14 +185,14 @@ export default function HomeAssistantPage() {
 
                 {entity.attributes?.brightness && (
                   <div className="mt-3">
-                    <div className="flex items-center justify-between text-xs text-gray-400 mb-1">
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
                       <span>Helligkeit</span>
                       <span aria-label={`Helligkeit ${Math.round((entity.attributes.brightness / 255) * 100)} Prozent`}>
                         {Math.round((entity.attributes.brightness / 255) * 100)}%
                       </span>
                     </div>
                     <div
-                      className="w-full bg-gray-700 rounded-full h-2"
+                      className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2"
                       role="progressbar"
                       aria-valuenow={Math.round((entity.attributes.brightness / 255) * 100)}
                       aria-valuemin={0}

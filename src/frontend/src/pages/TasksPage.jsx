@@ -44,8 +44,8 @@ export default function TasksPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-white mb-2">Aufgaben</h1>
-        <p className="text-gray-400">Übersicht aller Aufgaben und deren Status</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Aufgaben</h1>
+        <p className="text-gray-500 dark:text-gray-400">Übersicht aller Aufgaben und deren Status</p>
       </div>
 
       {/* Filters */}
@@ -57,7 +57,7 @@ export default function TasksPage() {
             className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${
               filter === f
                 ? 'bg-primary-600 text-white'
-                : 'bg-gray-800 text-gray-300 hover:bg-gray-700'
+                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
             {f === 'all' ? 'Alle' : f}
@@ -69,13 +69,13 @@ export default function TasksPage() {
       <div className="space-y-4">
         {loading ? (
           <div className="card text-center py-12">
-            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-400 mb-2" />
-            <p className="text-gray-400">Lade Aufgaben...</p>
+            <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
+            <p className="text-gray-500 dark:text-gray-400">Lade Aufgaben...</p>
           </div>
         ) : tasks.length === 0 ? (
           <div className="card text-center py-12">
-            <CheckSquare className="w-12 h-12 mx-auto text-gray-600 mb-2" />
-            <p className="text-gray-400">Keine Aufgaben gefunden</p>
+            <CheckSquare className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
+            <p className="text-gray-500 dark:text-gray-400">Keine Aufgaben gefunden</p>
           </div>
         ) : (
           tasks.map((task) => (
@@ -83,10 +83,10 @@ export default function TasksPage() {
               <div className="flex items-start space-x-4">
                 <div className="mt-1">{getStatusIcon(task.status)}</div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-white mb-1">
+                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
                     {task.title}
                   </h3>
-                  <p className="text-sm text-gray-400 mb-2">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
                     Typ: {task.task_type}
                   </p>
                   <p className="text-xs text-gray-500">
@@ -99,10 +99,10 @@ export default function TasksPage() {
                   )}
                 </div>
                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  task.status === 'completed' ? 'bg-green-900 text-green-300' :
-                  task.status === 'failed' ? 'bg-red-900 text-red-300' :
-                  task.status === 'running' ? 'bg-blue-900 text-blue-300' :
-                  'bg-yellow-900 text-yellow-300'
+                  task.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
+                  task.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
+                  task.status === 'running' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
+                  'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
                 }`}>
                   {task.status}
                 </span>
