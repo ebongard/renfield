@@ -1,12 +1,21 @@
 """
 Home Assistant API Routes
+
+With RPBAC permission checks:
+- ha.read: View device states
+- ha.control: Turn devices on/off, set values
+- ha.full: Call arbitrary services
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from loguru import logger
 
 from integrations.homeassistant import HomeAssistantClient
+from services.auth_service import require_permission, get_optional_user
+from models.database import User
+from models.permissions import Permission
+from utils.config import settings
 
 router = APIRouter()
 ha_client = HomeAssistantClient()
@@ -23,8 +32,14 @@ class SetValue(BaseModel):
     attribute: str = "value"
 
 @router.get("/states")
-async def get_all_states():
-    """Alle Entity States abrufen"""
+async def get_all_states(
+    user: User = Depends(require_permission(Permission.HA_READ))
+):
+    """
+    Alle Entity States abrufen.
+
+    Requires: ha.read permission
+    """
     try:
         states = await ha_client.get_states()
         return {"states": states}
@@ -32,9 +47,17 @@ async def get_all_states():
         logger.error(f"❌ Get States Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/state/{entity_id}")
-async def get_entity_state(entity_id: str):
-    """State einer bestimmten Entity"""
+async def get_entity_state(
+    entity_id: str,
+    user: User = Depends(require_permission(Permission.HA_READ))
+):
+    """
+    State einer bestimmten Entity.
+
+    Requires: ha.read permission
+    """
     try:
         state = await ha_client.get_state(entity_id)
         if not state:
@@ -47,8 +70,15 @@ async def get_entity_state(entity_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/turn_on/{entity_id}")
-async def turn_on(entity_id: str):
-    """Gerät einschalten"""
+async def turn_on(
+    entity_id: str,
+    user: User = Depends(require_permission(Permission.HA_CONTROL))
+):
+    """
+    Gerät einschalten.
+
+    Requires: ha.control permission
+    """
     try:
         success = await ha_client.turn_on(entity_id)
         if not success:
@@ -58,9 +88,17 @@ async def turn_on(entity_id: str):
         logger.error(f"❌ Turn On Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/turn_off/{entity_id}")
-async def turn_off(entity_id: str):
-    """Gerät ausschalten"""
+async def turn_off(
+    entity_id: str,
+    user: User = Depends(require_permission(Permission.HA_CONTROL))
+):
+    """
+    Gerät ausschalten.
+
+    Requires: ha.control permission
+    """
     try:
         success = await ha_client.turn_off(entity_id)
         if not success:
@@ -70,9 +108,17 @@ async def turn_off(entity_id: str):
         logger.error(f"❌ Turn Off Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/toggle/{entity_id}")
-async def toggle(entity_id: str):
-    """Gerät umschalten"""
+async def toggle(
+    entity_id: str,
+    user: User = Depends(require_permission(Permission.HA_CONTROL))
+):
+    """
+    Gerät umschalten.
+
+    Requires: ha.control permission
+    """
     try:
         success = await ha_client.toggle(entity_id)
         if not success:
@@ -82,9 +128,17 @@ async def toggle(entity_id: str):
         logger.error(f"❌ Toggle Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/set_value")
-async def set_value(request: SetValue):
-    """Wert setzen (Helligkeit, Temperatur, etc.)"""
+async def set_value(
+    request: SetValue,
+    user: User = Depends(require_permission(Permission.HA_CONTROL))
+):
+    """
+    Wert setzen (Helligkeit, Temperatur, etc.).
+
+    Requires: ha.control permission
+    """
     try:
         success = await ha_client.set_value(
             request.entity_id,
@@ -104,8 +158,15 @@ async def set_value(request: SetValue):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/service")
-async def call_service(request: ServiceCall):
-    """Beliebigen Service aufrufen"""
+async def call_service(
+    request: ServiceCall,
+    user: User = Depends(require_permission(Permission.HA_FULL))
+):
+    """
+    Beliebigen Service aufrufen.
+
+    Requires: ha.full permission (most privileged HA permission)
+    """
     try:
         success = await ha_client.call_service(
             request.domain,
@@ -120,9 +181,17 @@ async def call_service(request: ServiceCall):
         logger.error(f"❌ Call Service Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/search")
-async def search_entities(query: str):
-    """Entities suchen"""
+async def search_entities(
+    query: str,
+    user: User = Depends(require_permission(Permission.HA_READ))
+):
+    """
+    Entities suchen.
+
+    Requires: ha.read permission
+    """
     try:
         results = await ha_client.search_entities(query)
         return {"results": results}
@@ -130,9 +199,17 @@ async def search_entities(query: str):
         logger.error(f"❌ Search Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.get("/domain/{domain}")
-async def get_entities_by_domain(domain: str):
-    """Alle Entities eines Domains"""
+async def get_entities_by_domain(
+    domain: str,
+    user: User = Depends(require_permission(Permission.HA_READ))
+):
+    """
+    Alle Entities eines Domains.
+
+    Requires: ha.read permission
+    """
     try:
         entities = await ha_client.get_entities_by_domain(domain)
         return {"entities": entities}

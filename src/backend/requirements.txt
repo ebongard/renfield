@@ -57,8 +57,10 @@ pillow>=10.2.0
 python-dotenv>=1.0.0
 pydantic>=2.9.0
 pydantic-settings>=2.1.0
+email-validator>=2.1.0
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+bcrypt==4.0.1  # Pin to avoid compatibility issues with passlib
 python-dateutil>=2.8.2
 
 # Monitoring & Logging

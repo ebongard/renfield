@@ -2,13 +2,14 @@
 Knowledge API Routes
 
 Endpoints für Dokument-Upload, Management und RAG-Suche.
+With RPBAC permission checks for secure access control.
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, or_
 import aiofiles
 import os
 import hashlib
@@ -17,7 +18,9 @@ from loguru import logger
 
 from services.database import get_db
 from services.rag_service import RAGService
-from models.database import Document
+from services.auth_service import get_optional_user, require_permission, get_current_user
+from models.database import Document, KnowledgeBase, User, KBPermission
+from models.permissions import Permission, has_permission
 from utils.config import settings
 
 router = APIRouter()
@@ -30,6 +33,14 @@ router = APIRouter()
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = None
+    is_public: bool = False
+
+
+class KnowledgeBaseUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_public: Optional[bool] = None
+    is_active: Optional[bool] = None
 
 
 class KnowledgeBaseResponse(BaseModel):
@@ -37,9 +48,28 @@ class KnowledgeBaseResponse(BaseModel):
     name: str
     description: Optional[str]
     is_active: bool
+    is_public: bool = False
+    owner_id: Optional[int] = None
+    owner_username: Optional[str] = None
     document_count: int = 0
     created_at: str
     updated_at: str
+    permission: Optional[str] = None  # User's permission level on this KB
+
+
+class KBPermissionCreate(BaseModel):
+    user_id: int
+    permission: str = Field(..., pattern="^(read|write|admin)$")
+
+
+class KBPermissionResponse(BaseModel):
+    id: int
+    user_id: int
+    username: str
+    permission: str
+    granted_by: Optional[int]
+    granted_by_username: Optional[str]
+    created_at: str
 
 
 class DocumentResponse(BaseModel):
@@ -109,6 +139,107 @@ def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
     return RAGService(db)
 
 
+async def check_kb_access(
+    kb: KnowledgeBase,
+    user: Optional[User],
+    required_action: str = "read",  # read, write, delete
+    db: AsyncSession = None
+) -> bool:
+    """
+    Check if a user has access to a knowledge base.
+
+    Access rules:
+    1. Auth disabled → full access
+    2. kb.all permission → full access
+    3. Owner → full access
+    4. Public KB → read access for users with kb.shared
+    5. Explicit KBPermission → per-permission access
+    6. kb.own permission → access to own KBs only
+    """
+    # Auth disabled = full access
+    if not settings.auth_enabled:
+        return True
+
+    # No user = no access (when auth is enabled)
+    if not user:
+        return False
+
+    user_perms = user.get_permissions()
+
+    # Admin with kb.all has full access
+    if has_permission(user_perms, Permission.KB_ALL):
+        return True
+
+    # Owner has full access
+    if kb.owner_id == user.id:
+        return True
+
+    # Public KB: users with kb.shared can read
+    if kb.is_public and required_action == "read":
+        if has_permission(user_perms, Permission.KB_SHARED):
+            return True
+
+    # Check explicit KBPermission
+    if db:
+        result = await db.execute(
+            select(KBPermission).where(
+                KBPermission.knowledge_base_id == kb.id,
+                KBPermission.user_id == user.id
+            )
+        )
+        perm = result.scalar_one_or_none()
+        if perm:
+            # Permission levels: read < write < admin
+            perm_levels = {"read": 1, "write": 2, "admin": 3}
+            required_level = perm_levels.get(required_action, 1)
+            user_level = perm_levels.get(perm.permission, 0)
+            if user_level >= required_level:
+                return True
+
+    return False
+
+
+async def get_user_kb_permission(
+    kb: KnowledgeBase,
+    user: Optional[User],
+    db: AsyncSession
+) -> Optional[str]:
+    """
+    Get the user's permission level on a KB.
+
+    Returns: "owner", "admin", "write", "read", or None
+    """
+    if not settings.auth_enabled or not user:
+        return "admin"  # Full access when auth disabled
+
+    user_perms = user.get_permissions()
+
+    # Admin with kb.all = admin level
+    if has_permission(user_perms, Permission.KB_ALL):
+        return "admin"
+
+    # Owner = owner level
+    if kb.owner_id == user.id:
+        return "owner"
+
+    # Check explicit permission
+    result = await db.execute(
+        select(KBPermission).where(
+            KBPermission.knowledge_base_id == kb.id,
+            KBPermission.user_id == user.id
+        )
+    )
+    perm = result.scalar_one_or_none()
+    if perm:
+        return perm.permission
+
+    # Public KB + kb.shared = read
+    if kb.is_public and has_permission(user_perms, Permission.KB_SHARED):
+        return "read"
+
+    return None
+
+
 # =============================================================================
 # Document Upload
 # =============================================================================
@@ -117,13 +248,42 @@ def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
 async def upload_document(
     file: UploadFile = File(...),
     knowledge_base_id: Optional[int] = Query(None, description="Knowledge Base ID"),
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Lädt ein Dokument hoch und indexiert es für RAG.
 
     Unterstützte Formate: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
+
+    Requires: rag.manage permission or write access to KB
     """
+    # Permission check
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perms = user.get_permissions()
+
+        # Check if user can upload to KBs
+        if not has_permission(user_perms, Permission.RAG_MANAGE):
+            # If not general RAG_MANAGE, check specific KB permission
+            if knowledge_base_id:
+                result = await db.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+                )
+                kb = result.scalar_one_or_none()
+                if kb and not await check_kb_access(kb, user, "write", db):
+                    raise HTTPException(
+                        status_code=403,
+                        detail="No write access to this knowledge base"
+                    )
+            else:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Permission required: rag.manage"
+                )
     # Validierung: Dateiformat
     extension = Path(file.filename).suffix.lower().lstrip('.')
     allowed = settings.allowed_extensions_list
@@ -343,20 +503,46 @@ async def reindex_document(
 @router.post("/bases", response_model=KnowledgeBaseResponse)
 async def create_knowledge_base(
     data: KnowledgeBaseCreate,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Erstellt eine neue Knowledge Base"""
+    """
+    Erstellt eine neue Knowledge Base.
+
+    Requires: kb.own or higher permission
+    """
+    # Permission check
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_OWN):
+            raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
+
     try:
         kb = await rag.create_knowledge_base(data.name, data.description)
+
+        # Set owner if authenticated
+        if user:
+            kb.owner_id = user.id
+        kb.is_public = data.is_public
+        await db.commit()
+        await db.refresh(kb)
 
         return KnowledgeBaseResponse(
             id=kb.id,
             name=kb.name,
             description=kb.description,
             is_active=kb.is_active,
+            is_public=kb.is_public,
+            owner_id=kb.owner_id,
+            owner_username=user.username if user else None,
             document_count=0,
             created_at=kb.created_at.isoformat() if kb.created_at else "",
-            updated_at=kb.updated_at.isoformat() if kb.updated_at else ""
+            updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
+            permission="owner" if user else "admin"
         )
 
     except Exception as e:
@@ -367,23 +553,85 @@ async def create_knowledge_base(
 
 @router.get("/bases", response_model=List[KnowledgeBaseResponse])
 async def list_knowledge_bases(
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """Listet alle Knowledge Bases auf"""
-    bases = await rag.list_knowledge_bases()
+    """
+    Listet Knowledge Bases auf, gefiltert nach Benutzer-Berechtigung.
 
-    return [
-        KnowledgeBaseResponse(
+    - kb.all: Alle KBs
+    - kb.shared: Eigene + öffentliche + geteilte
+    - kb.own: Nur eigene
+    - kb.none: Keine
+    """
+    # Get all KBs first
+    all_bases = await rag.list_knowledge_bases()
+
+    # Filter by access if auth is enabled
+    if settings.auth_enabled and user:
+        user_perms = user.get_permissions()
+
+        # kb.all = see everything
+        if has_permission(user_perms, Permission.KB_ALL):
+            accessible_bases = all_bases
+        # kb.none = nothing
+        elif has_permission(user_perms, Permission.KB_NONE):
+            return []
+        else:
+            accessible_bases = []
+            for kb in all_bases:
+                # Own KB
+                if kb.owner_id == user.id:
+                    accessible_bases.append(kb)
+                # Public KB (for kb.shared users)
+                elif kb.is_public and has_permission(user_perms, Permission.KB_SHARED):
+                    accessible_bases.append(kb)
+                else:
+                    # Check explicit permission
+                    result = await db.execute(
+                        select(KBPermission).where(
+                            KBPermission.knowledge_base_id == kb.id,
+                            KBPermission.user_id == user.id
+                        )
+                    )
+                    if result.scalar_one_or_none():
+                        accessible_bases.append(kb)
+    elif settings.auth_enabled and not user:
+        # Auth enabled but no user = no access
+        return []
+    else:
+        # Auth disabled = full access
+        accessible_bases = all_bases
+
+    # Build response with user-specific info
+    response = []
+    for kb in accessible_bases:
+        perm = await get_user_kb_permission(kb, user, db) if user else "admin"
+
+        # Get owner username
+        owner_username = None
+        if kb.owner_id:
+            result = await db.execute(select(User).where(User.id == kb.owner_id))
+            owner = result.scalar_one_or_none()
+            if owner:
+                owner_username = owner.username
+
+        response.append(KnowledgeBaseResponse(
             id=kb.id,
             name=kb.name,
             description=kb.description,
             is_active=kb.is_active,
+            is_public=kb.is_public if hasattr(kb, 'is_public') else False,
+            owner_id=kb.owner_id if hasattr(kb, 'owner_id') else None,
+            owner_username=owner_username,
             document_count=len(kb.documents) if kb.documents else 0,
             created_at=kb.created_at.isoformat() if kb.created_at else "",
-            updated_at=kb.updated_at.isoformat() if kb.updated_at else ""
-        )
-        for kb in bases
-    ]
+            updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
+            permission=perm
+        ))
+
+    return response
 
 
 @router.get("/bases/{kb_id}", response_model=KnowledgeBaseResponse)
@@ -552,3 +800,220 @@ async def get_model_status():
         "models": status,
         "message": "Alle RAG-Modelle verfügbar" if all_ready else "Einige Modelle fehlen"
     }
+
+
+# =============================================================================
+# Knowledge Base Sharing
+# =============================================================================
+
+@router.get("/bases/{kb_id}/permissions", response_model=List[KBPermissionResponse])
+async def list_kb_permissions(
+    kb_id: int,
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    List all permissions for a knowledge base.
+
+    Only owner or admin can view permissions.
+    """
+    kb = await rag.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge Base not found")
+
+    # Check access
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perm = await get_user_kb_permission(kb, user, db)
+        if user_perm not in ("owner", "admin"):
+            raise HTTPException(status_code=403, detail="Only owner or admin can view permissions")
+
+    # Get all permissions
+    result = await db.execute(
+        select(KBPermission).where(KBPermission.knowledge_base_id == kb_id)
+    )
+    permissions = result.scalars().all()
+
+    response = []
+    for perm in permissions:
+        # Get user info
+        user_result = await db.execute(select(User).where(User.id == perm.user_id))
+        perm_user = user_result.scalar_one_or_none()
+
+        # Get granter info
+        granter_username = None
+        if perm.granted_by:
+            granter_result = await db.execute(select(User).where(User.id == perm.granted_by))
+            granter = granter_result.scalar_one_or_none()
+            if granter:
+                granter_username = granter.username
+
+        response.append(KBPermissionResponse(
+            id=perm.id,
+            user_id=perm.user_id,
+            username=perm_user.username if perm_user else "Unknown",
+            permission=perm.permission,
+            granted_by=perm.granted_by,
+            granted_by_username=granter_username,
+            created_at=perm.created_at.isoformat() if perm.created_at else ""
+        ))
+
+    return response
+
+
+@router.post("/bases/{kb_id}/share", response_model=KBPermissionResponse)
+async def share_knowledge_base(
+    kb_id: int,
+    data: KBPermissionCreate,
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Share a knowledge base with another user.
+
+    Only owner or admin can share.
+    """
+    kb = await rag.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge Base not found")
+
+    # Check access
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perm = await get_user_kb_permission(kb, user, db)
+        if user_perm not in ("owner", "admin"):
+            raise HTTPException(status_code=403, detail="Only owner or admin can share")
+
+    # Check target user exists
+    target_result = await db.execute(select(User).where(User.id == data.user_id))
+    target_user = target_result.scalar_one_or_none()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="Target user not found")
+
+    # Can't share with yourself
+    if user and target_user.id == user.id:
+        raise HTTPException(status_code=400, detail="Cannot share with yourself")
+
+    # Can't share with owner
+    if kb.owner_id and target_user.id == kb.owner_id:
+        raise HTTPException(status_code=400, detail="User is already the owner")
+
+    # Check if permission already exists
+    existing_result = await db.execute(
+        select(KBPermission).where(
+            KBPermission.knowledge_base_id == kb_id,
+            KBPermission.user_id == data.user_id
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+
+    if existing:
+        # Update existing permission
+        existing.permission = data.permission
+        existing.granted_by = user.id if user else None
+        await db.commit()
+        await db.refresh(existing)
+        perm = existing
+    else:
+        # Create new permission
+        perm = KBPermission(
+            knowledge_base_id=kb_id,
+            user_id=data.user_id,
+            permission=data.permission,
+            granted_by=user.id if user else None
+        )
+        db.add(perm)
+        await db.commit()
+        await db.refresh(perm)
+
+    return KBPermissionResponse(
+        id=perm.id,
+        user_id=perm.user_id,
+        username=target_user.username,
+        permission=perm.permission,
+        granted_by=perm.granted_by,
+        granted_by_username=user.username if user else None,
+        created_at=perm.created_at.isoformat() if perm.created_at else ""
+    )
+
+
+@router.delete("/bases/{kb_id}/permissions/{permission_id}")
+async def revoke_kb_permission(
+    kb_id: int,
+    permission_id: int,
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Revoke a user's access to a knowledge base.
+
+    Only owner or admin can revoke permissions.
+    """
+    kb = await rag.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge Base not found")
+
+    # Check access
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perm = await get_user_kb_permission(kb, user, db)
+        if user_perm not in ("owner", "admin"):
+            raise HTTPException(status_code=403, detail="Only owner or admin can revoke permissions")
+
+    # Get permission
+    result = await db.execute(
+        select(KBPermission).where(
+            KBPermission.id == permission_id,
+            KBPermission.knowledge_base_id == kb_id
+        )
+    )
+    perm = result.scalar_one_or_none()
+
+    if not perm:
+        raise HTTPException(status_code=404, detail="Permission not found")
+
+    await db.delete(perm)
+    await db.commit()
+
+    return {"message": "Permission revoked"}
+
+
+@router.patch("/bases/{kb_id}/public")
+async def set_kb_public(
+    kb_id: int,
+    is_public: bool = Body(..., embed=True),
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Set a knowledge base as public or private.
+
+    Only owner or admin can change visibility.
+    """
+    kb = await rag.get_knowledge_base(kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge Base not found")
+
+    # Check access
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+
+        user_perm = await get_user_kb_permission(kb, user, db)
+        if user_perm not in ("owner", "admin"):
+            raise HTTPException(status_code=403, detail="Only owner or admin can change visibility")
+
+    kb.is_public = is_public
+    await db.commit()
+
+    return {"message": f"Knowledge Base is now {'public' if is_public else 'private'}", "is_public": is_public}

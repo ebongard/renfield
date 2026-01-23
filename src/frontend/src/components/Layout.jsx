@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Home,
   MessageSquare,
@@ -12,24 +12,34 @@ import {
   DoorOpen,
   Settings,
   ChevronDown,
-  BookOpen
+  BookOpen,
+  LogIn,
+  LogOut,
+  Shield,
+  UserCog,
+  User,
+  Puzzle
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
+import { useAuth } from '../context/AuthContext';
 
 // Hauptnavigation
 const mainNavigation = [
   { name: 'Home', href: '/', icon: Home },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
-  { name: 'Wissen', href: '/knowledge', icon: BookOpen },
+  { name: 'Wissen', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
   { name: 'Aufgaben', href: '/tasks', icon: CheckSquare },
-  { name: 'Kameras', href: '/camera', icon: Camera },
+  { name: 'Kameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },
 ];
 
 // Admin-Navigation (Untermenue)
 const adminNavigation = [
-  { name: 'Raeume', href: '/rooms', icon: DoorOpen },
-  { name: 'Sprecher', href: '/speakers', icon: Users },
-  { name: 'Smart Home', href: '/homeassistant', icon: Lightbulb },
+  { name: 'Raeume', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
+  { name: 'Sprecher', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
+  { name: 'Smart Home', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'] },
+  { name: 'Plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
+  { name: 'Benutzer', href: '/admin/users', icon: UserCog, permission: ['admin'] },
+  { name: 'Rollen', href: '/admin/roles', icon: Shield, permission: ['admin'] },
 ];
 
 export default function Layout({ children }) {
@@ -42,8 +52,31 @@ export default function Layout({ children }) {
   });
 
   const location = useLocation();
+  const navigate = useNavigate();
   const sidebarRef = useRef(null);
   const firstFocusableRef = useRef(null);
+
+  // Auth context
+  const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, loading: authLoading } = useAuth();
+
+  // Filter navigation items based on permissions
+  const filterNavItems = (items) => {
+    if (!authEnabled) return items; // Show all if auth disabled
+    return items.filter(item => {
+      if (!item.permission) return true; // No permission required
+      return hasAnyPermission(item.permission);
+    });
+  };
+
+  const visibleMainNav = filterNavItems(mainNavigation);
+  const visibleAdminNav = filterNavItems(adminNavigation);
+
+  // Handle logout
+  const handleLogout = () => {
+    logout();
+    setSidebarOpen(false);
+    navigate('/login');
+  };
 
   // Admin-Toggle mit localStorage
   const toggleAdmin = () => {
@@ -58,7 +91,7 @@ export default function Layout({ children }) {
   };
 
   // Check ob aktuelle Route im Admin-Bereich ist
-  const isAdminRoute = adminNavigation.some(item => item.href === location.pathname);
+  const isAdminRoute = visibleAdminNav.some(item => item.href === location.pathname);
 
   // Admin automatisch aufklappen wenn Admin-Route aktiv
   useEffect(() => {
@@ -164,9 +197,33 @@ export default function Layout({ children }) {
             </Link>
           </div>
 
-          {/* Right: Device Status */}
-          <div>
+          {/* Right: Device Status + User */}
+          <div className="flex items-center space-x-3">
             <DeviceStatus compact />
+
+            {/* User/Auth in Header */}
+            {authEnabled && (
+              isAuthenticated ? (
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
+                  title={`Angemeldet als ${user?.username}`}
+                >
+                  <div className="w-7 h-7 rounded-full bg-primary-600/30 flex items-center justify-center">
+                    <User className="w-4 h-4 text-primary-400" />
+                  </div>
+                  <span className="hidden sm:block text-sm">{user?.username}</span>
+                </button>
+              ) : (
+                <Link
+                  to="/login"
+                  className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors"
+                >
+                  <LogIn className="w-5 h-5" />
+                  <span className="hidden sm:block text-sm">Anmelden</span>
+                </Link>
+              )
+            )}
           </div>
         </div>
       </header>
@@ -213,49 +270,95 @@ export default function Layout({ children }) {
         {/* Navigation */}
         <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
           {/* Main Navigation */}
-          {mainNavigation.map((item) => (
+          {visibleMainNav.map((item) => (
             <NavLink key={item.href} item={item} onClick={handleNavClick} />
           ))}
 
           {/* Divider */}
           <div className="my-4 border-t border-gray-700" />
 
-          {/* Admin Section */}
-          <button
-            onClick={toggleAdmin}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              isAdminRoute
-                ? 'bg-gray-700/50 text-primary-400'
-                : 'text-gray-300 hover:bg-gray-700/50 hover:text-white'
-            }`}
-            aria-expanded={adminExpanded}
-            aria-controls="admin-menu"
-          >
-            <div className="flex items-center space-x-3">
-              <Settings className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-              <span>Admin</span>
-            </div>
-            <ChevronDown
-              className={`w-4 h-4 transition-transform duration-200 ${
-                adminExpanded ? 'rotate-180' : ''
-              }`}
-              aria-hidden="true"
-            />
-          </button>
+          {/* Admin Section - only show if there are visible admin items */}
+          {visibleAdminNav.length > 0 && (
+            <>
+              <button
+                onClick={toggleAdmin}
+                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                  isAdminRoute
+                    ? 'bg-gray-700/50 text-primary-400'
+                    : 'text-gray-300 hover:bg-gray-700/50 hover:text-white'
+                }`}
+                aria-expanded={adminExpanded}
+                aria-controls="admin-menu"
+              >
+                <div className="flex items-center space-x-3">
+                  <Settings className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                  <span>Admin</span>
+                </div>
+                <ChevronDown
+                  className={`w-4 h-4 transition-transform duration-200 ${
+                    adminExpanded ? 'rotate-180' : ''
+                  }`}
+                  aria-hidden="true"
+                />
+              </button>
 
-          {/* Admin Submenu */}
-          <div
-            id="admin-menu"
-            className={`overflow-hidden transition-all duration-200 ease-in-out ${
-              adminExpanded ? 'max-h-48 opacity-100' : 'max-h-0 opacity-0'
-            }`}
-          >
-            <div className="ml-3 pl-3 border-l border-gray-700 space-y-1 py-1">
-              {adminNavigation.map((item) => (
-                <NavLink key={item.href} item={item} onClick={handleNavClick} />
-              ))}
-            </div>
-          </div>
+              {/* Admin Submenu */}
+              <div
+                id="admin-menu"
+                className={`overflow-hidden transition-all duration-200 ease-in-out ${
+                  adminExpanded ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'
+                }`}
+              >
+                <div className="ml-3 pl-3 border-l border-gray-700 space-y-1 py-1">
+                  {visibleAdminNav.map((item) => (
+                    <NavLink key={item.href} item={item} onClick={handleNavClick} />
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* Auth Section */}
+          {authEnabled && (
+            <>
+              <div className="my-4 border-t border-gray-700" />
+
+              {isAuthenticated ? (
+                <div className="space-y-2">
+                  {/* User Info */}
+                  <div className="px-3 py-2 rounded-lg bg-gray-700/30">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-full bg-primary-600/30 flex items-center justify-center">
+                        <User className="w-4 h-4 text-primary-400" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{user?.username}</p>
+                        <p className="text-xs text-gray-400 truncate">{user?.role}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Logout Button */}
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-300 hover:bg-red-900/30 hover:text-red-400 transition-colors"
+                  >
+                    <LogOut className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                    <span>Abmelden</span>
+                  </button>
+                </div>
+              ) : (
+                <Link
+                  to="/login"
+                  onClick={handleNavClick}
+                  className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-300 hover:bg-gray-700/50 hover:text-white transition-colors"
+                >
+                  <LogIn className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                  <span>Anmelden</span>
+                </Link>
+              )}
+            </>
+          )}
         </nav>
 
         {/* Sidebar Footer - Device Status */}

@@ -107,6 +107,29 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "changeme-in-production-use-strong-random-key"
 
+    # === Authentication ===
+    # Set to True to enable authentication (default: False for development)
+    auth_enabled: bool = False
+
+    # JWT Token settings
+    access_token_expire_minutes: int = 60 * 24  # 24 hours
+    refresh_token_expire_days: int = 30
+
+    # Password policy
+    password_min_length: int = 8
+
+    # Registration settings
+    allow_registration: bool = True  # Allow self-registration
+    require_email_verification: bool = False  # Not implemented yet
+
+    # Voice authentication
+    voice_auth_enabled: bool = False
+    voice_auth_min_confidence: float = 0.7
+
+    # Default admin credentials (only used on first startup)
+    default_admin_username: str = "admin"
+    default_admin_password: str = "changeme"  # MUST be changed in production!
+
     # CORS
     cors_origins: str = "*"  # Comma-separated list or "*" for development
 

@@ -225,6 +225,62 @@ python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 
 ---
 
+### Authentication (RPBAC)
+
+```bash
+# Authentifizierung aktivieren (Standard: deaktiviert für Entwicklung)
+AUTH_ENABLED=false
+
+# JWT Token Gültigkeitsdauer
+ACCESS_TOKEN_EXPIRE_MINUTES=1440       # 24 Stunden
+REFRESH_TOKEN_EXPIRE_DAYS=30
+
+# Passwort-Policy
+PASSWORD_MIN_LENGTH=8
+
+# Registrierung erlauben
+ALLOW_REGISTRATION=true
+
+# Standard-Admin Zugangsdaten (nur beim ersten Start verwendet)
+DEFAULT_ADMIN_USERNAME=admin
+DEFAULT_ADMIN_PASSWORD=changeme
+
+# Voice Authentication
+VOICE_AUTH_ENABLED=false
+VOICE_AUTH_MIN_CONFIDENCE=0.7
+```
+
+**Defaults:**
+- `AUTH_ENABLED`: `false` (für einfache Entwicklung)
+- `ACCESS_TOKEN_EXPIRE_MINUTES`: `1440` (24 Stunden)
+- `REFRESH_TOKEN_EXPIRE_DAYS`: `30`
+- `PASSWORD_MIN_LENGTH`: `8`
+- `ALLOW_REGISTRATION`: `true`
+- `DEFAULT_ADMIN_USERNAME`: `admin`
+- `DEFAULT_ADMIN_PASSWORD`: `changeme`
+- `VOICE_AUTH_ENABLED`: `false`
+- `VOICE_AUTH_MIN_CONFIDENCE`: `0.7`
+
+**Produktion:**
+```bash
+# EMPFOHLEN für Produktion:
+AUTH_ENABLED=true
+SECRET_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(64))")
+DEFAULT_ADMIN_PASSWORD=starkes-zufalls-passwort
+ALLOW_REGISTRATION=false  # Nur Admin erstellt Benutzer
+```
+
+**Hinweis:** Beim ersten Start wird automatisch ein Admin-Benutzer erstellt, wenn noch keine Benutzer existieren. Das Passwort MUSS in Produktion geändert werden!
+
+**Voice Authentication:**
+- Ermöglicht Login per Stimmerkennung
+- Sprecher muss mit einem User-Account verknüpft sein
+- Confidence-Threshold verhindert falsche Identifikation
+
+**Dokumentation:** Siehe `ACCESS_CONTROL.md` für Details zum Berechtigungssystem.
+
+---
+
 ### WebSocket Security
 
 ```bash

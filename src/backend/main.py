@@ -2,7 +2,7 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from contextlib import asynccontextmanager
@@ -21,6 +21,9 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
 from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge
+from api.routes import auth, roles, users, plugins
+from services.auth_service import require_permission, get_optional_user
+from models.permissions import Permission
 from services.database import init_db, AsyncSessionLocal
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
@@ -202,6 +205,27 @@ async def lifespan(app: FastAPI):
     # Datenbank initialisieren
     await init_db()
     logger.info("✅ Datenbank initialisiert")
+
+    # Initialize authentication system (roles and default admin)
+    try:
+        from services.auth_service import ensure_default_roles, ensure_admin_user
+
+        async with AsyncSessionLocal() as db_session:
+            # Ensure default roles exist
+            roles = await ensure_default_roles(db_session)
+            logger.info(f"✅ Auth-Rollen initialisiert: {[r.name for r in roles]}")
+
+            # Ensure default admin user exists (only if no users exist)
+            admin = await ensure_admin_user(db_session)
+            if admin:
+                logger.warning(
+                    f"⚠️  Standard-Admin erstellt: '{admin.username}' - "
+                    f"BITTE PASSWORT SOFORT ÄNDERN!"
+                )
+    except Exception as e:
+        logger.error(f"❌ Auth-Initialisierung fehlgeschlagen: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     
     # Ollama Service starten
     ollama = OllamaService()
@@ -338,6 +362,9 @@ app.add_middleware(
 )
 
 # Router einbinden
+app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
+app.include_router(roles.router, prefix="/api/roles", tags=["Roles"])
+app.include_router(users.router, prefix="/api/users", tags=["Users"])
 app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
@@ -347,6 +374,7 @@ app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settin
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
+app.include_router(plugins.router, prefix="/api/plugins", tags=["Plugins"])
 
 # Helper function for sending WebSocket errors
 async def _send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, request_id: str = None):
@@ -1886,17 +1914,21 @@ async def create_ws_token(
 
 # Admin Endpoint: Refresh HA Keywords
 @app.post("/admin/refresh-keywords")
-async def refresh_keywords():
+async def refresh_keywords(
+    user = Depends(require_permission(Permission.ADMIN))
+):
     """
     Lade Home Assistant Keywords neu
-    
+
     Nützlich nach dem Hinzufügen neuer Geräte in HA
+
+    Requires: admin permission (when auth is enabled)
     """
     try:
         from integrations.homeassistant import HomeAssistantClient
         ha_client = HomeAssistantClient()
         keywords = await ha_client.get_keywords(refresh=True)
-        
+
         return {
             "status": "success",
             "keywords_count": len(keywords),
@@ -1906,18 +1938,24 @@ async def refresh_keywords():
         logger.error(f"❌ Keyword Refresh Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # Debug Endpoint: Test Intent Extraction
 @app.post("/debug/intent")
-async def debug_intent(message: str):
+async def debug_intent(
+    message: str,
+    user = Depends(require_permission(Permission.ADMIN))
+):
     """
     Teste Intent-Extraction für eine Nachricht
-    
+
     Nützlich zum Debuggen von Intent-Erkennungsproblemen
+
+    Requires: admin permission (when auth is enabled)
     """
     try:
         ollama: OllamaService = app.state.ollama
         intent = await ollama.extract_intent(message)
-        
+
         return {
             "message": message,
             "intent": intent,

@@ -10,7 +10,8 @@ from sqlalchemy import select, func
 
 from services.database import get_db
 from services.ollama_service import OllamaService
-from models.database import Conversation, Message
+from services.auth_service import get_current_user
+from models.database import Conversation, Message, User
 from datetime import datetime
 import uuid
 
@@ -29,7 +30,8 @@ class ChatResponse(BaseModel):
 @router.post("/send", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user)
 ):
     """Nachricht senden und Antwort erhalten"""
     try:
@@ -88,8 +90,8 @@ async def send_message(
         if intent.get("intent") != "general.conversation":
             logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
             from services.action_executor import ActionExecutor
-            executor = ActionExecutor()
-            action_result = await executor.execute(intent)
+            executor = ActionExecutor(plugin_registry=app.state.plugin_registry)
+            action_result = await executor.execute(intent, user=current_user)
             logger.info(f"✅ Aktion ausgeführt: {action_result.get('success')} - {action_result.get('message')}")
         
         # Antwort generieren

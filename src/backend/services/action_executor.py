@@ -1,10 +1,13 @@
 """
 Action Executor - Führt erkannte Intents aus
 """
-from typing import Dict, Optional
+from typing import Dict, Optional, TYPE_CHECKING
 from loguru import logger
 from integrations.homeassistant import HomeAssistantClient
 from integrations.n8n import N8NClient
+
+if TYPE_CHECKING:
+    from models.database import User
 
 class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
@@ -15,18 +18,44 @@ class ActionExecutor:
 
         # Plugin system
         self.plugin_registry = plugin_registry
-    
-    async def execute(self, intent_data: Dict) -> Dict:
+
+    def _check_plugin_permission(self, intent: str, user: Optional["User"]) -> tuple[bool, str]:
+        """
+        Check if user has permission to execute a plugin intent.
+
+        Args:
+            intent: The plugin intent (e.g., "weather.get_current")
+            user: The user making the request (None if auth disabled)
+
+        Returns:
+            Tuple of (allowed, error_message)
+        """
+        # If no user context (auth disabled), allow
+        if user is None:
+            return True, ""
+
+        # Extract plugin name from intent (e.g., "weather" from "weather.get_current")
+        plugin_name = intent.split(".")[0] if "." in intent else intent
+
+        # Check if user can use this plugin
+        if not user.can_use_plugin(plugin_name):
+            logger.warning(f"🚫 User {user.username} denied plugin access: {plugin_name}")
+            return False, f"No permission to use plugin: {plugin_name}"
+
+        return True, ""
+
+    async def execute(self, intent_data: Dict, user: Optional["User"] = None) -> Dict:
         """
         Führt einen Intent aus
-        
+
         Args:
             intent_data: {
                 "intent": "homeassistant.turn_on",
                 "parameters": {...},
                 "confidence": 0.9
             }
-        
+            user: Optional user context for permission checks
+
         Returns:
             {
                 "success": bool,
@@ -37,10 +66,10 @@ class ActionExecutor:
         intent = intent_data.get("intent", "general.conversation")
         parameters = intent_data.get("parameters", {})
         confidence = intent_data.get("confidence", 0.0)
-        
+
         logger.info(f"🎯 Executing intent: {intent} (confidence: {confidence:.2f})")
         logger.debug(f"Parameters: {parameters}")
-        
+
         # Routing basierend auf Intent (Core intents first - backward compatibility)
         if intent.startswith("homeassistant."):
             return await self._execute_homeassistant(intent, parameters)
@@ -55,10 +84,20 @@ class ActionExecutor:
                 "action_taken": False
             }
 
-        # Plugin intents (NEW)
+        # Plugin intents - check permission first
         if self.plugin_registry:
             plugin = self.plugin_registry.get_plugin_for_intent(intent)
             if plugin:
+                # Check plugin permission
+                allowed, error = self._check_plugin_permission(intent, user)
+                if not allowed:
+                    return {
+                        "success": False,
+                        "message": error,
+                        "action_taken": False,
+                        "error_code": "permission_denied"
+                    }
+
                 logger.info(f"🔌 Executing plugin intent: {intent}")
                 return await plugin.execute(intent, parameters)
 

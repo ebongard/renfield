@@ -19,14 +19,18 @@ Base = declarative_base()
 class Conversation(Base):
     """Konversationen / Chat-Historie"""
     __tablename__ = "conversations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, unique=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
+    # Ownership (nullable for anonymous/legacy conversations)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     # Beziehungen
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
+    user = relationship("User", back_populates="conversations", foreign_keys=[user_id])
 
 class Message(Base):
     """Einzelne Nachrichten"""
@@ -94,12 +98,15 @@ class Speaker(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)       # "Max Mustermann"
     alias = Column(String(50), unique=True, index=True)  # "max" (für Ansprache)
-    is_admin = Column(Boolean, default=False)        # Admin-Berechtigung
+    is_admin = Column(Boolean, default=False)        # Admin-Berechtigung (legacy, use User.role)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Beziehungen
     embeddings = relationship("SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan")
+
+    # Link to User account (for voice authentication)
+    user = relationship("User", back_populates="speaker", uselist=False, foreign_keys="User.speaker_id")
 
 
 class SpeakerEmbedding(Base):
@@ -373,12 +380,20 @@ class KnowledgeBase(Base):
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, default=True)
 
+    # Ownership (nullable for legacy KBs)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    # Public KBs are visible to all users with at least kb.shared permission
+    is_public = Column(Boolean, default=False, nullable=False)
+
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # Beziehungen
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
+    owner = relationship("User", back_populates="knowledge_bases", foreign_keys=[owner_id])
+    permissions = relationship("KBPermission", back_populates="knowledge_base", cascade="all, delete-orphan")
 
 
 class Document(Base):
@@ -487,3 +502,176 @@ CHUNK_TYPES = [
     CHUNK_TYPE_LIST,
     CHUNK_TYPE_IMAGE_CAPTION,
 ]
+
+
+# =============================================================================
+# Authentication & Authorization Models (RPBAC)
+# =============================================================================
+
+class Role(Base):
+    """
+    User role with associated permissions.
+
+    Roles define a set of permissions that can be assigned to users.
+    System roles (is_system=True) cannot be deleted.
+    """
+    __tablename__ = "roles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(50), unique=True, nullable=False, index=True)
+    description = Column(String(255), nullable=True)
+
+    # Permissions as JSON array of permission strings
+    # Example: ["ha.full", "kb.shared", "cam.view", "chat.own"]
+    permissions = Column(JSON, default=list, nullable=False)
+
+    # Allowed plugins as JSON array of plugin names
+    # Empty array = all plugins allowed (if user has plugins.use permission)
+    # Example: ["weather", "news", "search"]
+    allowed_plugins = Column(JSON, default=list, nullable=False)
+
+    # System roles cannot be deleted
+    is_system = Column(Boolean, default=False, nullable=False)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    users = relationship("User", back_populates="role")
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if this role has a specific permission."""
+        from models.permissions import has_permission, Permission
+        try:
+            perm = Permission(permission)
+            return has_permission(self.permissions or [], perm)
+        except ValueError:
+            return permission in (self.permissions or [])
+
+    def can_use_plugin(self, plugin_name: str) -> bool:
+        """
+        Check if this role can use a specific plugin.
+
+        Returns True if:
+        - Role has plugins.use or plugins.manage permission AND
+        - Either allowed_plugins is empty (all allowed) OR plugin_name is in allowed_plugins
+        """
+        from models.permissions import Permission
+
+        # Check if role has plugin permission
+        if not (self.has_permission(Permission.PLUGINS_USE.value) or
+                self.has_permission(Permission.PLUGINS_MANAGE.value)):
+            return False
+
+        # Empty allowed_plugins = all plugins allowed
+        if not self.allowed_plugins:
+            return True
+
+        return plugin_name in self.allowed_plugins
+
+
+class User(Base):
+    """
+    User account for authentication and authorization.
+
+    Users are assigned a role which determines their permissions.
+    Users can optionally be linked to a Speaker for voice authentication.
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    email = Column(String(255), unique=True, nullable=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+
+    # Role assignment
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+
+    # Account status
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    # Optional link to Speaker for voice authentication
+    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login = Column(DateTime, nullable=True)
+
+    # Relationships
+    role = relationship("Role", back_populates="users")
+    speaker = relationship("Speaker", back_populates="user", foreign_keys=[speaker_id])
+
+    # Owned resources (will be added as relationships are defined)
+    knowledge_bases = relationship("KnowledgeBase", back_populates="owner", foreign_keys="KnowledgeBase.owner_id")
+    conversations = relationship("Conversation", back_populates="user", foreign_keys="Conversation.user_id")
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if this user has a specific permission via their role."""
+        if not self.role:
+            return False
+        return self.role.has_permission(permission)
+
+    def get_permissions(self) -> list:
+        """Get all permissions for this user."""
+        if not self.role:
+            return []
+        return self.role.permissions or []
+
+    def can_use_plugin(self, plugin_name: str) -> bool:
+        """Check if this user can use a specific plugin via their role."""
+        if not self.role:
+            return False
+        return self.role.can_use_plugin(plugin_name)
+
+    def get_allowed_plugins(self) -> list:
+        """Get the list of allowed plugins for this user."""
+        if not self.role:
+            return []
+        return self.role.allowed_plugins or []
+
+
+# =============================================================================
+# Knowledge Base Permissions (for sharing)
+# =============================================================================
+
+class KBPermission(Base):
+    """
+    Per-user permission for a specific Knowledge Base.
+
+    Allows sharing knowledge bases with specific users at different
+    permission levels (read, write, admin).
+    """
+    __tablename__ = "kb_permissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # Permission level: read, write, admin
+    permission = Column(String(20), nullable=False, default="read")
+
+    # Who granted this permission
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Unique constraint: one permission entry per user per KB
+    __table_args__ = (
+        Index('idx_kb_permissions_kb_user', 'knowledge_base_id', 'user_id', unique=True),
+    )
+
+    # Relationships
+    knowledge_base = relationship("KnowledgeBase", back_populates="permissions")
+    user = relationship("User", foreign_keys=[user_id])
+    granter = relationship("User", foreign_keys=[granted_by])
+
+
+# KB Permission Levels
+KB_PERM_READ = "read"      # Can view and use in RAG
+KB_PERM_WRITE = "write"    # Can add/edit documents
+KB_PERM_ADMIN = "admin"    # Can delete, share with others
+
+KB_PERMISSION_LEVELS = [KB_PERM_READ, KB_PERM_WRITE, KB_PERM_ADMIN]

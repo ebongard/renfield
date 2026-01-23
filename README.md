@@ -581,6 +581,26 @@ server:
 
 ## API-Endpunkte
 
+### Authentifizierung
+- `POST /api/auth/login` - Login (Username/Passwort → JWT Tokens)
+- `POST /api/auth/register` - Neuen Benutzer registrieren
+- `POST /api/auth/refresh` - Access Token erneuern
+- `POST /api/auth/voice` - Login per Stimmerkennung
+- `GET /api/auth/me` - Aktueller Benutzer + Berechtigungen
+- `GET /api/auth/status` - Auth-Status (enabled, user info)
+- `POST /api/auth/change-password` - Passwort ändern
+
+### Benutzer & Rollen (Admin)
+- `GET /api/users` - Alle Benutzer auflisten
+- `POST /api/users` - Benutzer erstellen
+- `PATCH /api/users/{id}` - Benutzer bearbeiten
+- `DELETE /api/users/{id}` - Benutzer löschen
+- `POST /api/users/{id}/link-speaker` - Sprecher verknüpfen
+- `GET /api/roles` - Alle Rollen auflisten
+- `POST /api/roles` - Rolle erstellen
+- `PATCH /api/roles/{id}` - Rolle bearbeiten
+- `DELETE /api/roles/{id}` - Rolle löschen
+
 ### Chat & Konversationen
 - `POST /api/chat/send` - Nachricht senden
 - `GET /api/chat/history/{session_id}` - Historie abrufen
@@ -605,10 +625,14 @@ server:
 - `GET /api/knowledge/documents` - Dokumente auflisten
 - `DELETE /api/knowledge/documents/{id}` - Dokument löschen
 - `POST /api/knowledge/search` - Semantische Suche
-- `GET /api/knowledge/bases` - Knowledge Bases auflisten
+- `GET /api/knowledge/bases` - Knowledge Bases auflisten (gefiltert nach Zugriff)
 - `POST /api/knowledge/bases` - Knowledge Base erstellen
 - `DELETE /api/knowledge/bases/{id}` - Knowledge Base löschen
 - `GET /api/knowledge/stats` - RAG-Statistiken
+- `POST /api/knowledge/bases/{id}/share` - KB mit Benutzer teilen
+- `GET /api/knowledge/bases/{id}/permissions` - KB-Berechtigungen auflisten
+- `DELETE /api/knowledge/bases/{id}/permissions/{perm_id}` - Zugriff entziehen
+- `PATCH /api/knowledge/bases/{id}/public` - KB öffentlich/privat setzen
 
 ### Rooms
 - `GET /api/rooms` - Räume mit Geräten auflisten
@@ -641,12 +665,79 @@ server:
 - `POST /api/speakers/identify` - Sprecher identifizieren
 - `DELETE /api/speakers/{id}` - Sprecher löschen
 
+## Zugriffskontrolle (RPBAC)
+
+Renfield bietet ein flexibles **Role-Permission Based Access Control (RPBAC)** System zum Schutz von Ressourcen.
+
+### Features
+
+- **JWT-basierte Authentifizierung** - Access + Refresh Tokens
+- **Flexible Rollen** - Erstelle eigene Rollen mit beliebigen Berechtigungen
+- **Granulare Permissions** - 22+ Berechtigungen für verschiedene Ressourcen
+- **Resource Ownership** - Wissensdatenbanken und Konversationen gehören Benutzern
+- **KB-Sharing** - Teile Wissensdatenbanken mit anderen Nutzern
+- **Voice Authentication** - Login per Stimmerkennung (optional)
+- **Optional** - Standardmäßig deaktiviert für einfache Entwicklung
+
+### Standard-Rollen
+
+| Rolle | Berechtigungen | Verwendung |
+|-------|---------------|------------|
+| Admin | Vollzugriff | Systemadministratoren |
+| Familie | Smart Home voll, eigene+geteilte KBs, Kameras ansehen | Familienmitglieder |
+| Gast | Nur lesen, keine KBs, keine Kameras | Gäste, eingeschränkter Zugriff |
+
+### Berechtigungs-Hierarchie
+
+```
+Knowledge Bases: kb.all > kb.shared > kb.own > kb.none
+Smart Home:      ha.full > ha.control > ha.read > ha.none
+Kameras:         cam.full > cam.view > cam.none
+```
+
+### Aktivierung
+
+```bash
+# In .env
+AUTH_ENABLED=true
+SECRET_KEY=dein-starker-zufalls-key
+
+# Optional: Voice Authentication
+VOICE_AUTH_ENABLED=true
+VOICE_AUTH_MIN_CONFIDENCE=0.7
+```
+
+### Beispiel-Szenario
+
+```
+Benutzer "Erik" (Admin)
+├── Sieht alle Wissensdatenbanken
+├── Volle Smart Home Kontrolle
+├── Kamera-Snapshots
+└── Benutzer verwalten
+
+Benutzer "Partner" (Familie)
+├── Eigene + geteilte Wissensdatenbanken
+├── Volle Smart Home Kontrolle
+└── Kamera-Events ansehen
+
+Benutzer "Handwerker" (Custom-Rolle "Techniker")
+├── Keine Wissensdatenbanken
+├── Volle Smart Home Kontrolle
+└── Keine Kameras
+```
+
+**Vollständige Dokumentation:** [ACCESS_CONTROL.md](ACCESS_CONTROL.md)
+
 ## Sicherheit
 
 - Alle Daten bleiben lokal auf deinem Server
 - Keine Cloud-Verbindungen für Kernfunktionen
 - Home Assistant Token wird sicher gespeichert
 - HTTPS kann über Nginx Reverse Proxy aktiviert werden
+- **JWT-Authentifizierung** für API-Zugriff (optional aktivierbar)
+- **Passwort-Hashing** mit bcrypt
+- **Rate Limiting** für WebSocket-Verbindungen
 
 ## Beitragen
 
