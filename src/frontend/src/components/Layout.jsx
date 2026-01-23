@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
-  Home,
   MessageSquare,
   CheckSquare,
   Camera,
@@ -25,8 +24,7 @@ import { useAuth } from '../context/AuthContext';
 
 // Hauptnavigation
 const mainNavigation = [
-  { name: 'Home', href: '/', icon: Home },
-  { name: 'Chat', href: '/chat', icon: MessageSquare },
+  { name: 'Chat', href: '/', icon: MessageSquare },
   { name: 'Wissen', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
   { name: 'Aufgaben', href: '/tasks', icon: CheckSquare },
   { name: 'Kameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },

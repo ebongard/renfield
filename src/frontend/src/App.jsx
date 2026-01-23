@@ -1,10 +1,9 @@
 import React from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Routes, Route, Navigate } from 'react-router-dom';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
 import ChatPage from './pages/ChatPage';
-import HomePage from './pages/HomePage';
 import TasksPage from './pages/TasksPage';
 import CameraPage from './pages/CameraPage';
 import HomeAssistantPage from './pages/HomeAssistantPage';
@@ -33,8 +32,8 @@ function App() {
             <Route path="/*" element={
               <Layout>
                 <Routes>
-                  <Route path="/" element={<HomePage />} />
-                  <Route path="/chat" element={<ChatPage />} />
+                  <Route path="/" element={<ChatPage />} />
+                  <Route path="/chat" element={<Navigate to="/" replace />} />
                   <Route path="/tasks" element={<TasksPage />} />
                   <Route path="/camera" element={
                     <ProtectedRoute permission={['cam.view', 'cam.full']} requireAny>
