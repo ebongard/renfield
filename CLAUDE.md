@@ -132,13 +132,15 @@ tests/frontend/
 │   ├── components/            # Komponenten-Tests
 │   │   ├── Layout.test.jsx
 │   │   ├── DeviceSetup.test.jsx
+│   │   ├── ChatSidebar.test.jsx
 │   │   └── NewFeature.test.jsx
 │   ├── pages/                 # Seiten-Tests
 │   │   ├── HomePage.test.jsx
 │   │   ├── ChatPage.test.jsx
 │   │   └── RoomsPage.test.jsx
 │   └── hooks/                 # Custom Hooks Tests
-│       └── useCapabilities.test.jsx
+│       ├── useCapabilities.test.jsx
+│       └── useChatSessions.test.jsx
 └── test_api_contracts.py      # API Contract Tests (pytest)
 ```
 
@@ -701,7 +703,7 @@ src/frontend/
 │   ├── App.jsx               # Router setup, main layout
 │   ├── pages/                # Route components
 │   │   ├── HomePage.jsx      # Dashboard/landing
-│   │   ├── ChatPage.jsx      # Chat interface with WebSocket, voice controls
+│   │   ├── ChatPage.jsx      # Chat interface with WebSocket, voice controls, sidebar
 │   │   ├── SpeakersPage.jsx  # Speaker management and enrollment
 │   │   ├── RoomsPage.jsx     # Room management with device list, HA sync
 │   │   ├── HomeAssistantPage.jsx # Device browser and controls
@@ -709,12 +711,15 @@ src/frontend/
 │   │   └── TasksPage.jsx     # Task queue viewer
 │   ├── components/
 │   │   ├── Layout.jsx        # Navigation, responsive layout
+│   │   ├── ChatSidebar.jsx   # Conversation history sidebar with date grouping
+│   │   ├── ConversationItem.jsx # Single conversation row in sidebar
 │   │   ├── DeviceSetup.jsx   # Device registration modal
 │   │   └── DeviceStatus.jsx  # Device/room status indicator for navbar
 │   ├── context/
 │   │   └── DeviceContext.jsx # App-wide device connection state
 │   ├── hooks/
 │   │   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
+│   │   ├── useChatSessions.js      # Conversation list management and API
 │   │   └── useCapabilities.jsx     # Capability-based feature toggles
 │   └── utils/
 │       └── axios.js          # Axios instance with base URL config

@@ -6,6 +6,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 
 ### Kernfunktionen
 - **Chat-Interface** - Text- und Sprachbasierte Kommunikation mit Streaming-Antworten
+- **Konversations-Historie** - Sidebar mit Chatverläufen, Datumsgruppierung, Session-Persistenz
 - **Spracheingabe & -ausgabe** - Whisper STT und Piper TTS
 - **Sprechererkennung** - Automatische Identifikation mit SpeechBrain ECAPA-TDNN
 - **Multi-Room Voice Control** - Raspberry Pi Satellite Sprachassistenten
@@ -220,12 +221,20 @@ python -m renfield_satellite config/satellite.yaml
 ### Chat-Interface
 
 1. Navigiere zu **Chat** im Menü
-2. Gib eine Textnachricht ein oder nutze das Mikrofon
-3. Der Assistent versteht Befehle wie:
+2. Die **Sidebar** zeigt alle bisherigen Konversationen gruppiert nach Datum
+3. Klicke auf eine Konversation um sie zu laden, oder starte einen **neuen Chat**
+4. Gib eine Textnachricht ein oder nutze das Mikrofon
+5. Der Assistent versteht Befehle wie:
    - "Schalte das Licht im Wohnzimmer ein"
    - "Zeige mir die Kamera-Events von heute"
    - "Starte den n8n Workflow 'Backup'"
    - "Was ist die aktuelle Temperatur?"
+
+**Sidebar-Funktionen:**
+- **Datumsgruppierung** - Heute, Gestern, Letzte 7 Tage, Älter
+- **Session-Persistenz** - Konversation wird nach Reload wiederhergestellt
+- **Löschen** - Hover über Konversation und klicke das Papierkorb-Symbol
+- **Mobile** - Sidebar über den Menu-Button unten links öffnen
 
 ### Sprachsteuerung
 
