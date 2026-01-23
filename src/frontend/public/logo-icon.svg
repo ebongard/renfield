@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 70" width="70" height="70">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 70 60" width="70" height="60">
   <defs>
     <linearGradient id="batGradient" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" style="stop-color:#C41E3A"/>
@@ -14,42 +14,42 @@
     </filter>
   </defs>
 
-  <g transform="translate(0, 10)">
+  <g transform="translate(0, 0)">
     <!-- Bat body -->
-    <ellipse cx="35" cy="40" rx="12" ry="15" fill="url(#batGradient)"/>
+    <ellipse cx="35" cy="30" rx="12" ry="15" fill="url(#batGradient)"/>
 
     <!-- Left wing -->
-    <path d="M23 35
-             Q5 20, 2 40
-             Q5 38, 8 42
-             Q6 35, 12 45
-             Q10 40, 15 48
-             Q14 44, 20 50
-             Q18 46, 23 48
+    <path d="M23 25
+             Q5 10, 2 30
+             Q5 28, 8 32
+             Q6 25, 12 35
+             Q10 30, 15 38
+             Q14 34, 20 40
+             Q18 36, 23 38
              Z"
           fill="url(#batGradient)"/>
 
     <!-- Right wing -->
-    <path d="M47 35
-             Q65 20, 68 40
-             Q65 38, 62 42
-             Q64 35, 58 45
-             Q60 40, 55 48
-             Q56 44, 50 50
-             Q52 46, 47 48
+    <path d="M47 25
+             Q65 10, 68 30
+             Q65 28, 62 32
+             Q64 25, 58 35
+             Q60 30, 55 38
+             Q56 34, 50 40
+             Q52 36, 47 38
              Z"
           fill="url(#batGradient)"/>
 
     <!-- Ears -->
-    <path d="M28 28 L32 18 L36 28 Z" fill="url(#batGradient)"/>
-    <path d="M34 28 L38 18 L42 28 Z" fill="url(#batGradient)"/>
+    <path d="M28 18 L32 8 L36 18 Z" fill="url(#batGradient)"/>
+    <path d="M34 18 L38 8 L42 18 Z" fill="url(#batGradient)"/>
 
     <!-- Eyes with glow -->
-    <circle cx="31" cy="38" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
-    <circle cx="39" cy="38" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
+    <circle cx="31" cy="28" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
+    <circle cx="39" cy="28" r="3.5" fill="#00FFD0" filter="url(#glow)"/>
 
     <!-- Inner eyes -->
-    <circle cx="31" cy="38" r="1.5" fill="#FFFFFF"/>
-    <circle cx="39" cy="38" r="1.5" fill="#FFFFFF"/>
+    <circle cx="31" cy="28" r="1.5" fill="#FFFFFF"/>
+    <circle cx="39" cy="28" r="1.5" fill="#FFFFFF"/>
   </g>
 </svg>

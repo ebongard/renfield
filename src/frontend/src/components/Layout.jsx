@@ -177,10 +177,10 @@ export default function Layout({ children }) {
       <header className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors">
         <div className="h-full px-4 flex items-center justify-between">
           {/* Left: Hamburger + Logo */}
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
               aria-label="Menu oeffnen"
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -189,8 +189,8 @@ export default function Layout({ children }) {
             </button>
 
             <Link to="/" className="flex items-center space-x-2">
-              <img src="/logo-icon.svg" alt="Renfield" className="w-8 h-8" />
-              <span className="text-xl font-bold text-gray-900 dark:text-white hidden sm:block">Renfield</span>
+              <img src="/logo-icon.svg" alt="Renfield" className="w-8 h-8 object-contain" />
+              <span className="text-xl font-bold text-gray-900 dark:text-white hidden sm:block leading-none">Renfield</span>
             </Link>
           </div>
 
