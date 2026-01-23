@@ -33,6 +33,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 
 ### Plattform
 - **Progressive Web App** - Funktioniert auf Desktop, Tablet und Smartphone
+- **Dark Mode** - Automatische oder manuelle Umschaltung zwischen Hell/Dunkel/System
 - **Vollständig Offline** - Keine Cloud-Abhängigkeiten
 - **GPU-Beschleunigung** - Optional NVIDIA GPU für schnellere Transkription
 

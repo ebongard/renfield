@@ -710,13 +710,15 @@ src/frontend/
 │   │   ├── CameraPage.jsx    # Frigate events viewer
 │   │   └── TasksPage.jsx     # Task queue viewer
 │   ├── components/
-│   │   ├── Layout.jsx        # Navigation, responsive layout
+│   │   ├── Layout.jsx        # Navigation, responsive layout, ThemeToggle
+│   │   ├── ThemeToggle.jsx   # Dark/Light/System theme dropdown
 │   │   ├── ChatSidebar.jsx   # Conversation history sidebar with date grouping
 │   │   ├── ConversationItem.jsx # Single conversation row in sidebar
 │   │   ├── DeviceSetup.jsx   # Device registration modal
 │   │   └── DeviceStatus.jsx  # Device/room status indicator for navbar
 │   ├── context/
-│   │   └── DeviceContext.jsx # App-wide device connection state
+│   │   ├── DeviceContext.jsx # App-wide device connection state
+│   │   └── ThemeContext.jsx  # Dark Mode state (light/dark/system)
 │   ├── hooks/
 │   │   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
 │   │   ├── useChatSessions.js      # Conversation list management and API
@@ -912,6 +914,47 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
    ```
 
 3. Add navigation link in `src/frontend/src/components/Layout.jsx`
+
+### Dark Mode Styling
+
+All frontend components must support both light and dark mode using Tailwind CSS classes.
+
+**Pattern**: Use light-first with `dark:` variants:
+```jsx
+// Background colors
+className="bg-gray-50 dark:bg-gray-900"       // Page backgrounds
+className="bg-white dark:bg-gray-800"         // Cards, modals
+className="bg-gray-100 dark:bg-gray-700"      // Input backgrounds, hover states
+
+// Text colors
+className="text-gray-900 dark:text-white"     // Primary text
+className="text-gray-600 dark:text-gray-300"  // Secondary text
+className="text-gray-500 dark:text-gray-400"  // Muted text
+
+// Borders
+className="border-gray-200 dark:border-gray-700"  // Standard borders
+className="border-gray-300 dark:border-gray-600"  // Input borders
+
+// Buttons - use component classes from index.css
+className="btn btn-primary"                   // Primary action
+className="btn btn-secondary"                 // Secondary action (auto dark support)
+```
+
+**Component Classes** (defined in `src/frontend/src/index.css`):
+- `.card` - Cards with proper light/dark backgrounds and borders
+- `.input` - Input fields with focus states
+- `.btn-primary` - Primary buttons
+- `.btn-secondary` - Secondary buttons with dark mode support
+
+**Configuration** (`tailwind.config.js`):
+```javascript
+darkMode: ['selector', '[class~="dark"]']
+```
+
+**Theme Context** (`ThemeContext.jsx`):
+- `useTheme()` hook provides `theme`, `isDark`, `setTheme`, `toggleTheme`
+- Theme persisted in localStorage as `renfield_theme`
+- Values: `'light'`, `'dark'`, `'system'`
 
 ### Debugging Intent Recognition
 

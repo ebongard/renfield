@@ -419,6 +419,31 @@ Renfield: "Ich habe das Licht ausgeschaltet."
 - **Desktop-Features**: Volle Features auf Desktop
 - **Adaptive UI**: Passt sich an Gerät an
 
+## Dark Mode
+
+### Theme-Unterstützung
+- **Drei Modi**: Hell, Dunkel und System (folgt OS-Präferenz)
+- **Persistente Einstellung**: Theme wird in localStorage gespeichert
+- **FOUC-Prevention**: Kein Flackern beim Laden durch Pre-Render-Script
+- **Smooth Transitions**: Sanfte Übergänge zwischen den Modi
+
+### Implementierung
+- **Tailwind CSS**: Class-basiertes Dark Mode mit `dark:` Prefix
+- **ThemeContext**: React Context für globale Theme-Verwaltung
+- **ThemeToggle**: Dropdown-Menü im Header für Theme-Auswahl
+- **System-Integration**: Reagiert auf OS Dark Mode Änderungen
+
+### Gestaltung
+- **Light Mode**: Heller Hintergrund (gray-50), dunkler Text (gray-900)
+- **Dark Mode**: Dunkler Hintergrund (gray-900), heller Text (gray-100)
+- **Konsistente Farben**: Alle Komponenten unterstützen beide Modi
+- **Accessible**: Ausreichende Kontrastverhältnisse in beiden Modi
+
+### Verwendung
+1. Klicke auf das Sonne/Mond-Symbol im Header
+2. Wähle zwischen "Hell", "Dunkel" oder "System"
+3. Die Einstellung wird automatisch gespeichert
+
 ---
 
 Diese Features machen Renfield zu einem leistungsstarken, sicheren und benutzerfreundlichen KI-Assistenten für dein Smart Home!
