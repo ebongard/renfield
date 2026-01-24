@@ -101,6 +101,36 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Heartbeat**: Verbindung wird überwacht
 - **Auto-Reconnect**: Automatische Wiederverbindung bei Ausfall
 
+### Verbindungs-Architektur (Frontend)
+
+Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschiedliche Zwecke:
+
+| Verbindung | Endpoint | Zweck | Status-Anzeige |
+|------------|----------|-------|----------------|
+| **Chat WebSocket** | `/ws` | Senden/Empfangen von Chat-Nachrichten | "Verbunden" im Chat-Fenster |
+| **Device WebSocket** | `/ws/device` | Geräte-Registrierung, Raum-Zuweisung, Capabilities | Status im Header |
+
+**Wichtig:** Diese Verbindungen sind unabhängig voneinander:
+- Der Chat kann verbunden sein, während das Gerät nicht registriert ist
+- Der Header zeigt "Offline" oder "Setup" wenn keine Geräte-Registrierung erfolgt ist
+- Das Chat-Fenster zeigt "Verbunden" sobald der Chat-WebSocket aktiv ist
+
+**Unterschied der Funktionen:**
+
+| Feature | Nur Chat WS | Mit Device-Registrierung |
+|---------|-------------|--------------------------|
+| Nachrichten senden/empfangen | ✓ | ✓ |
+| Raum-Kontext für Befehle | ✗ | ✓ |
+| Geräte-Capabilities (Mikrofon, Lautsprecher) | ✗ | ✓ |
+| Persistente Geräte-Identität | ✗ | ✓ |
+| Auto-Raum-Erkennung für "Licht einschalten" | ✗ | ✓ |
+
+**Geräte-Registrierung aktivieren:**
+1. Klicke auf "Setup" oder "Offline" im Header
+2. Wähle einen Raum und Gerätetyp
+3. Optional: Aktiviere Mikrofon/Lautsprecher-Capabilities
+4. Nach erfolgreicher Registrierung zeigt der Header den Raumnamen an
+
 ## Raum-Management
 
 ### Raum-Verwaltung

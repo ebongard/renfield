@@ -118,7 +118,9 @@ renfield/
 - **Single Page Application** mit React Router
 - **Tailwind CSS** für Styling
 - **Progressive Web App** (PWA)
-- **WebSocket** für Live-Updates
+- **Dual WebSocket Architektur**:
+  - `/ws` - Chat-Verbindung für Nachrichten
+  - `/ws/device` - Geräte-Registrierung für Raum-Kontext und Capabilities
 - **Responsive Design** für alle Geräte
 
 ### Satellite (Raspberry Pi)

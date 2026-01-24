@@ -730,6 +730,30 @@ src/frontend/
 └── vite.config.js
 ```
 
+### Frontend Connection Architecture
+
+The frontend uses **two independent WebSocket connections**:
+
+| Connection | Endpoint | Purpose | State Variable | Status Display |
+|------------|----------|---------|----------------|----------------|
+| **Chat WS** | `/ws` | Send/receive chat messages | `wsConnected` in ChatPage | "Verbunden/Getrennt" in chat window |
+| **Device WS** | `/ws/device` | Device registration, room assignment, capabilities | `device.isConnected` in DeviceContext | Header status (room name or "Offline") |
+
+**Key Points:**
+- These connections are **completely independent** - the chat can work without device registration
+- `DeviceStatus` component (header) shows device registration status, not chat connection
+- `ChatPage` shows chat WebSocket status in the message area footer
+- Users can chat without registering their device, but won't have room context for commands
+
+**Features by Connection:**
+
+| Feature | Chat WS Only | With Device Registration |
+|---------|-------------|--------------------------|
+| Send/receive messages | ✓ | ✓ |
+| Room context for "turn on the light" | ✗ | ✓ |
+| Device capabilities (mic, speaker) | ✗ | ✓ |
+| Persistent device identity | ✗ | ✓ |
+
 ### WebSocket Protocol
 
 #### Frontend Chat (`/ws`)
