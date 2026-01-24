@@ -189,7 +189,7 @@ export default function Layout({ children }) {
             </button>
 
             <Link to="/" className="flex items-center">
-              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-10 w-auto" />
+              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-12 w-auto" />
             </Link>
           </div>
 
@@ -248,7 +248,7 @@ export default function Layout({ children }) {
         {/* Sidebar Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700">
           <Link to="/" onClick={handleNavClick} className="flex items-center">
-            <img src="/renfield-logo-header.svg" alt="Renfield" className="h-9 w-auto" />
+            <img src="/renfield-logo-header.svg" alt="Renfield" className="h-11 w-auto" />
           </Link>
 
           <button
