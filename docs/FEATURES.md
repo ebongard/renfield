@@ -385,7 +385,7 @@ Renfield: "Ich habe das Licht ausgeschaltet."
 
 ### Customization
 - **Themes**: UI anpassbar
-- **Languages**: Mehrsprachigkeit vorbereitet
+- **Languages**: Vollständige Mehrsprachigkeit (DE/EN)
 - **Voices**: Verschiedene TTS-Stimmen
 - **Models**: Austauschbare KI-Modelle
 
@@ -473,6 +473,66 @@ Renfield: "Ich habe das Licht ausgeschaltet."
 1. Klicke auf das Sonne/Mond-Symbol im Header
 2. Wähle zwischen "Hell", "Dunkel" oder "System"
 3. Die Einstellung wird automatisch gespeichert
+
+## Mehrsprachigkeit (i18n)
+
+### Unterstützte Sprachen
+- **Deutsch (de)**: Vollständig übersetzt (Standard)
+- **Englisch (en)**: Vollständig übersetzt
+
+### Frontend-Internationalisierung
+- **react-i18next**: Bewährte i18n-Library für React
+- **Automatische Erkennung**: Browsersprache wird erkannt
+- **Persistente Speicherung**: Spracheinstellung in localStorage
+- **Fallback**: Deutsch als Fallback-Sprache
+
+### Sprachwechsel
+- **Header-Dropdown**: Globus-Icon im Header
+- **Sofortige Umschaltung**: Alle Texte wechseln sofort
+- **Benutzer-Präferenz**: Einstellung wird pro Benutzer gespeichert
+- **Datum/Zeit-Formatierung**: Lokalisierte Formatierung
+
+### Übersetzte Bereiche
+| Bereich | Übersetzungen |
+|---------|---------------|
+| Navigation | Menü, Sidebar, Breadcrumbs |
+| Chat | Nachrichten, Placeholder, Aktionen |
+| Dashboard | Widgets, Statistiken, Status |
+| Einstellungen | Alle Formulare und Labels |
+| Geräteverwaltung | Räume, Geräte, Capabilities |
+| Benutzer & Rollen | CRUD-Dialoge, Berechtigungen |
+| Fehler & Validierung | Alle Fehlermeldungen |
+
+### Technische Details
+```javascript
+// Verwendung in Komponenten
+import { useTranslation } from 'react-i18next';
+
+function MyComponent() {
+  const { t } = useTranslation();
+  return <h1>{t('common.welcome')}</h1>;
+}
+
+// Mit Variablen
+{t('users.deleteConfirm', { username: 'Max' })}
+// → "Möchtest du 'Max' wirklich löschen?"
+```
+
+### Sprach-Dateien
+```
+src/frontend/src/i18n/
+├── index.js           # i18next Konfiguration
+└── locales/
+    ├── de.json        # Deutsche Übersetzungen (~400 Keys)
+    └── en.json        # Englische Übersetzungen (~400 Keys)
+```
+
+### Neue Übersetzungen hinzufügen
+1. Key in beide JSON-Dateien einfügen
+2. `t('namespace.key')` in der Komponente verwenden
+3. Für Variablen: `t('key', { var: value })`
+
+**Dokumentation:** Siehe `docs/MULTILANGUAGE.md` für vollständige Anleitung.
 
 ---
 

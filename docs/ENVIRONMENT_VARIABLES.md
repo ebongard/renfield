@@ -98,20 +98,28 @@ OLLAMA_MODEL=gpt-oss:latest
 ### Sprache & Voice
 
 ```bash
-# Standard-Sprache
+# Standard-Sprache für STT/TTS
 DEFAULT_LANGUAGE=de
+
+# Unterstützte Sprachen (kommasepariert)
+SUPPORTED_LANGUAGES=de,en
 
 # Whisper STT Modell
 WHISPER_MODEL=base
 
-# Piper TTS Voice
+# Piper TTS Voice (Standard-Stimme)
 PIPER_VOICE=de_DE-thorsten-high
+
+# Piper Multi-Voice Konfiguration (pro Sprache)
+PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 ```
 
 **Defaults:**
 - `DEFAULT_LANGUAGE`: `de`
+- `SUPPORTED_LANGUAGES`: `de,en`
 - `WHISPER_MODEL`: `base`
 - `PIPER_VOICE`: `de_DE-thorsten-high`
+- `PIPER_VOICES`: (nicht gesetzt, nutzt `PIPER_VOICE` für alle Sprachen)
 
 **Whisper Modelle:**
 - `tiny` - Sehr schnell, niedrige Qualität
@@ -119,6 +127,14 @@ PIPER_VOICE=de_DE-thorsten-high
 - `small` - Langsamer, bessere Qualität
 - `medium` - Langsam, hohe Qualität
 - `large` - Sehr langsam, beste Qualität
+
+**Piper Stimmen (Beispiele):**
+- `de_DE-thorsten-high` - Deutsch, männlich, hohe Qualität
+- `de_DE-eva_k-medium` - Deutsch, weiblich, mittlere Qualität
+- `en_US-amy-medium` - Englisch (US), weiblich, mittlere Qualität
+- `en_GB-cori-medium` - Englisch (UK), weiblich, mittlere Qualität
+
+**Hinweis:** Die Frontend-Sprache wird unabhängig im Browser gespeichert (`localStorage`) und kann über das Globus-Symbol im Header geändert werden.
 
 ---
 
@@ -781,8 +797,10 @@ OLLAMA_MODEL=gpt-oss:latest
 # Sprache & Voice
 # -----------------------------------------------------------------------------
 DEFAULT_LANGUAGE=de
+SUPPORTED_LANGUAGES=de,en
 WHISPER_MODEL=base
 PIPER_VOICE=de_DE-thorsten-high
+# PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium  # Multi-Voice
 
 # -----------------------------------------------------------------------------
 # Integrationen

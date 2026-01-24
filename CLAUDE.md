@@ -723,6 +723,11 @@ src/frontend/
 │   │   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
 │   │   ├── useChatSessions.js      # Conversation list management and API
 │   │   └── useCapabilities.jsx     # Capability-based feature toggles
+│   ├── i18n/                       # Internationalization
+│   │   ├── index.js                # i18next configuration
+│   │   └── locales/
+│   │       ├── de.json             # German translations (~400 keys)
+│   │       └── en.json             # English translations (~400 keys)
 │   └── utils/
 │       └── axios.js          # Axios instance with base URL config
 ├── Dockerfile
@@ -979,6 +984,56 @@ darkMode: ['selector', '[class~="dark"]']
 - `useTheme()` hook provides `theme`, `isDark`, `setTheme`, `toggleTheme`
 - Theme persisted in localStorage as `renfield_theme`
 - Values: `'light'`, `'dark'`, `'system'`
+
+### Internationalization (i18n)
+
+All frontend text must be internationalized using react-i18next. **Never hardcode user-facing strings.**
+
+**Pattern**: Use `useTranslation` hook:
+```jsx
+import { useTranslation } from 'react-i18next';
+
+function MyComponent() {
+  const { t } = useTranslation();
+
+  return (
+    <div>
+      <h1>{t('myFeature.title')}</h1>
+      <button>{t('common.save')}</button>
+    </div>
+  );
+}
+```
+
+**With variables (interpolation):**
+```jsx
+// In de.json: "deleteConfirm": "Möchtest du \"{{name}}\" wirklich löschen?"
+t('users.deleteConfirm', { name: user.username })
+```
+
+**Localized date/time formatting:**
+```jsx
+const { i18n } = useTranslation();
+new Date().toLocaleString(i18n.language);
+// DE: "24.01.2026, 14:30:45"
+// EN: "1/24/2026, 2:30:45 PM"
+```
+
+**Adding translations:**
+1. Add key to `src/frontend/src/i18n/locales/de.json`
+2. Add key to `src/frontend/src/i18n/locales/en.json`
+3. Use `t('namespace.key')` in component
+
+**Translation structure:**
+```json
+{
+  "common": { "save": "Speichern", "cancel": "Abbrechen" },
+  "nav": { "chat": "Chat", "settings": "Einstellungen" },
+  "myFeature": { "title": "Mein Feature", "description": "..." }
+}
+```
+
+**Documentation:** See `docs/MULTILANGUAGE.md` for complete i18n guide.
 
 ### Debugging Intent Recognition
 
@@ -1322,6 +1377,7 @@ Additional documentation files in the repository:
 - `EXTERNAL_OLLAMA.md` - External Ollama instance setup
 - `SPEAKER_RECOGNITION.md` - Speaker recognition system documentation
 - `OUTPUT_ROUTING.md` - Audio output device routing system documentation
+- `docs/MULTILANGUAGE.md` - Multi-language support (i18n) documentation
 - `src/satellite/README.md` - Satellite setup guide
 - `src/backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference

@@ -190,6 +190,7 @@ cat > config/satellite.yaml << 'EOF'
 satellite:
   id: "sat-livingroom"
   room: "Living Room"
+  language: "de"             # Language for STT/TTS (de, en)
 
 # Server connection - auto-discovery is enabled by default
 # The satellite will automatically find the Renfield backend on your network
