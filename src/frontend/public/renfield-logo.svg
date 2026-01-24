@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" width="400" height="120">
+  <defs>
+    <!-- Gradient für Fledermaus - heller für Dark Mode -->
+    <linearGradient id="batGradientDark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#C41E3A"/>
+      <stop offset="50%" style="stop-color:#9B1B30"/>
+      <stop offset="100%" style="stop-color:#722F37"/>
+    </linearGradient>
+    
+    <!-- Stärkerer Glow für Dark Mode -->
+    <filter id="glowDark" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Stilisierte Fledermaus -->
+  <g transform="translate(20, 25)">
+    <!-- Fledermaus-Körper -->
+    <ellipse cx="35" cy="40" rx="12" ry="15" fill="url(#batGradientDark)"/>
+    
+    <!-- Linker Flügel -->
+    <path d="M23 35 
+             Q5 20, 2 40
+             Q5 38, 8 42
+             Q6 35, 12 45
+             Q10 40, 15 48
+             Q14 44, 20 50
+             Q18 46, 23 48
+             Z" 
+          fill="url(#batGradientDark)"/>
+    
+    <!-- Rechter Flügel -->
+    <path d="M47 35 
+             Q65 20, 68 40
+             Q65 38, 62 42
+             Q64 35, 58 45
+             Q60 40, 55 48
+             Q56 44, 50 50
+             Q52 46, 47 48
+             Z" 
+          fill="url(#batGradientDark)"/>
+    
+    <!-- Ohren -->
+    <path d="M28 28 L32 18 L36 28 Z" fill="url(#batGradientDark)"/>
+    <path d="M34 28 L38 18 L42 28 Z" fill="url(#batGradientDark)"/>
+    
+    <!-- Augen - Intensiver Tech-Glow -->
+    <circle cx="31" cy="38" r="3.5" fill="#00FFD0" filter="url(#glowDark)"/>
+    <circle cx="39" cy="38" r="3.5" fill="#00FFD0" filter="url(#glowDark)"/>
+    
+    <!-- Innere Augen -->
+    <circle cx="31" cy="38" r="1.5" fill="#FFFFFF"/>
+    <circle cx="39" cy="38" r="1.5" fill="#FFFFFF"/>
+    
+    <!-- Netzwerk-Punkte -->
+    <circle cx="8" cy="36" r="2" fill="#00FFD0" opacity="0.8" filter="url(#glowDark)"/>
+    <circle cx="15" cy="44" r="1.5" fill="#00FFD0" opacity="0.6"/>
+    <circle cx="62" cy="36" r="2" fill="#00FFD0" opacity="0.8" filter="url(#glowDark)"/>
+    <circle cx="55" cy="44" r="1.5" fill="#00FFD0" opacity="0.6"/>
+    
+    <!-- Verbindungslinien -->
+    <line x1="8" y1="36" x2="15" y2="44" stroke="#00FFD0" stroke-width="0.7" opacity="0.5"/>
+    <line x1="15" y1="44" x2="31" y2="38" stroke="#00FFD0" stroke-width="0.5" opacity="0.3"/>
+    <line x1="62" y1="36" x2="55" y2="44" stroke="#00FFD0" stroke-width="0.7" opacity="0.5"/>
+    <line x1="55" y1="44" x2="39" y2="38" stroke="#00FFD0" stroke-width="0.5" opacity="0.3"/>
+  </g>
+  
+  <!-- Schriftzug -->
+  <g transform="translate(100, 0)">
+    <text x="0" y="72" 
+          font-family="Georgia, 'Times New Roman', serif" 
+          font-size="48" 
+          font-weight="bold"
+          letter-spacing="4"
+          fill="#F0E6D3">
+      RENFIELD
+    </text>
+    
+    <!-- Akzent-Linie mit Glow -->
+    <rect x="0" y="82" width="260" height="2" fill="#C41E3A" rx="1"/>
+    <rect x="0" y="82" width="260" height="2" fill="#00FFD0" rx="1" opacity="0.3"/>
+    
+    <!-- Tagline -->
+    <text x="0" y="102" 
+          font-family="'Segoe UI', Arial, sans-serif" 
+          font-size="12" 
+          font-weight="400"
+          letter-spacing="3"
+          fill="#AAAAAA">
+      PERSONAL AI ASSISTANT
+    </text>
+  </g>
+</svg>
