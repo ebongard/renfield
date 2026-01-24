@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Lightbulb, Power, Search, Loader, Sun, Thermometer } from 'lucide-react';
 import apiClient from '../utils/axios';
 
 export default function HomeAssistantPage() {
+  const { t } = useTranslation();
   const [entities, setEntities] = useState([]);
   const [filteredEntities, setFilteredEntities] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -10,11 +12,11 @@ export default function HomeAssistantPage() {
   const [loading, setLoading] = useState(true);
 
   const domains = [
-    { key: 'all', name: 'Alle', icon: Power },
-    { key: 'light', name: 'Lichter', icon: Lightbulb },
-    { key: 'switch', name: 'Schalter', icon: Power },
-    { key: 'climate', name: 'Klima', icon: Thermometer },
-    { key: 'cover', name: 'Rollläden', icon: Sun },
+    { key: 'all', nameKey: 'common.all', icon: Power },
+    { key: 'light', nameKey: 'homeassistant.lights', icon: Lightbulb },
+    { key: 'switch', nameKey: 'homeassistant.switches', icon: Power },
+    { key: 'climate', nameKey: 'homeassistant.climate', icon: Thermometer },
+    { key: 'cover', nameKey: 'homeassistant.covers', icon: Sun },
   ];
 
   useEffect(() => {
@@ -89,21 +91,21 @@ export default function HomeAssistantPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Smart Home</h1>
-        <p className="text-gray-500 dark:text-gray-400">Steuere dein Zuhause mit Home Assistant</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('homeassistant.title')}</h1>
+        <p className="text-gray-500 dark:text-gray-400">{t('homeassistant.subtitle')}</p>
       </div>
 
       {/* Search */}
       <div className="card">
         <div className="relative">
-          <label htmlFor="device-search" className="sr-only">Geräte suchen</label>
+          <label htmlFor="device-search" className="sr-only">{t('homeassistant.searchDevices')}</label>
           <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" aria-hidden="true" />
           <input
             id="device-search"
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Geräte suchen..."
+            placeholder={t('homeassistant.searchDevicesPlaceholder')}
             className="input pl-10"
           />
         </div>
@@ -124,7 +126,7 @@ export default function HomeAssistantPage() {
               }`}
             >
               <Icon className="w-4 h-4" />
-              <span>{domain.name}</span>
+              <span>{t(domain.nameKey)}</span>
             </button>
           );
         })}
@@ -134,18 +136,18 @@ export default function HomeAssistantPage() {
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-            Geräte ({filteredEntities.length})
+            {t('homeassistant.devicesCount', { count: filteredEntities.length })}
           </h2>
         </div>
 
         {loading ? (
-          <div className="card text-center py-12" role="status" aria-label="Geräte werden geladen">
+          <div className="card text-center py-12" role="status" aria-label={t('homeassistant.loadingDevices')}>
             <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" aria-hidden="true" />
-            <p className="text-gray-500 dark:text-gray-400">Lade Geräte...</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('homeassistant.loadingDevices')}</p>
           </div>
         ) : filteredEntities.length === 0 ? (
           <div className="card text-center py-12">
-            <p className="text-gray-500 dark:text-gray-400">Keine Geräte gefunden</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('homeassistant.noDevices')}</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" role="list">
@@ -158,7 +160,7 @@ export default function HomeAssistantPage() {
                 }`}
                 onClick={() => toggleEntity(entity.entity_id)}
                 aria-pressed={isEntityOn(entity)}
-                aria-label={`${entity.attributes?.friendly_name || entity.entity_id} ${isEntityOn(entity) ? 'eingeschaltet' : 'ausgeschaltet'}`}
+                aria-label={`${entity.attributes?.friendly_name || entity.entity_id} ${isEntityOn(entity) ? t('homeassistant.on') : t('homeassistant.off')}`}
                 role="listitem"
               >
                 <div className="flex items-start justify-between">
@@ -186,8 +188,8 @@ export default function HomeAssistantPage() {
                 {entity.attributes?.brightness && (
                   <div className="mt-3">
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-                      <span>Helligkeit</span>
-                      <span aria-label={`Helligkeit ${Math.round((entity.attributes.brightness / 255) * 100)} Prozent`}>
+                      <span>{t('homeassistant.brightness')}</span>
+                      <span aria-label={t('homeassistant.brightnessPercent', { percent: Math.round((entity.attributes.brightness / 255) * 100) })}>
                         {Math.round((entity.attributes.brightness / 255) * 100)}%
                       </span>
                     </div>
@@ -197,7 +199,7 @@ export default function HomeAssistantPage() {
                       aria-valuenow={Math.round((entity.attributes.brightness / 255) * 100)}
                       aria-valuemin={0}
                       aria-valuemax={100}
-                      aria-label="Helligkeit"
+                      aria-label={t('homeassistant.brightness')}
                     >
                       <div
                         className="bg-primary-500 h-2 rounded-full"

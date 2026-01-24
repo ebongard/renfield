@@ -4,6 +4,7 @@
  * Admin page for managing users: create, edit, delete, assign roles.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -14,6 +15,7 @@ import {
 } from 'lucide-react';
 
 export default function UsersPage() {
+  const { t, i18n } = useTranslation();
   const { user: currentUser, getAccessToken } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
@@ -60,7 +62,7 @@ export default function UsersPage() {
       setRoles(rolesRes.data.roles || rolesRes.data || []);
       setSpeakers(speakersRes.data || []);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load users');
+      setError(err.response?.data?.detail || t('users.failedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -136,7 +138,7 @@ export default function UsersPage() {
           }, { headers });
         }
 
-        setSuccess('User updated successfully');
+        setSuccess(t('users.userUpdated'));
       } else {
         // Create user
         await apiClient.post('/api/users', {
@@ -146,13 +148,13 @@ export default function UsersPage() {
           role_id: parseInt(formData.role_id),
           is_active: formData.is_active
         }, { headers });
-        setSuccess('User created successfully');
+        setSuccess(t('users.userCreated'));
       }
 
       setShowModal(false);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to save user');
+      setError(err.response?.data?.detail || t('users.failedToSave'));
     } finally {
       setFormLoading(false);
     }
@@ -161,14 +163,14 @@ export default function UsersPage() {
   // Delete user
   const handleDelete = async (user) => {
     if (user.id === currentUser?.id) {
-      setError("You cannot delete your own account");
+      setError(t('users.cannotDeleteOwnAccount'));
       return;
     }
 
     const confirmed = await confirm({
-      title: 'Delete User',
-      message: `Are you sure you want to delete "${user.username}"? This action cannot be undone.`,
-      confirmText: 'Delete',
+      title: t('users.deleteUser'),
+      message: t('users.deleteUserConfirm', { username: user.username }),
+      confirmText: t('common.delete'),
       variant: 'danger'
     });
 
@@ -179,10 +181,10 @@ export default function UsersPage() {
       await apiClient.delete(`/api/users/${user.id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess('User deleted successfully');
+      setSuccess(t('users.userDeleted'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to delete user');
+      setError(err.response?.data?.detail || t('users.failedToDelete'));
     }
   };
 
@@ -199,21 +201,21 @@ export default function UsersPage() {
       await apiClient.post(`/api/users/${linkingUserId}/link-speaker/${speakerId}`, {}, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess('Speaker linked successfully');
+      setSuccess(t('users.speakerLinked'));
       setShowLinkSpeakerModal(false);
       setLinkingUserId(null);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to link speaker');
+      setError(err.response?.data?.detail || t('users.failedToLink'));
     }
   };
 
   // Unlink speaker from user
   const handleUnlinkSpeaker = async (userId) => {
     const confirmed = await confirm({
-      title: 'Unlink Speaker',
-      message: 'Are you sure you want to unlink the speaker from this user? Voice authentication will no longer work for this user.',
-      confirmText: 'Unlink',
+      title: t('users.unlinkSpeaker'),
+      message: t('users.unlinkSpeakerConfirm'),
+      confirmText: t('users.unlink'),
       variant: 'warning'
     });
 
@@ -224,10 +226,10 @@ export default function UsersPage() {
       await apiClient.delete(`/api/users/${userId}/unlink-speaker`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess('Speaker unlinked successfully');
+      setSuccess(t('users.speakerUnlinked'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to unlink speaker');
+      setError(err.response?.data?.detail || t('users.failedToUnlink'));
     }
   };
 
@@ -240,12 +242,12 @@ export default function UsersPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">User Management</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage user accounts and permissions</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('users.title')}</h1>
+          <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
         </div>
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
-          <p className="text-gray-500 dark:text-gray-400">Loading users...</p>
+          <p className="text-gray-500 dark:text-gray-400">{t('users.loading')}</p>
         </div>
       </div>
     );
@@ -255,8 +257,8 @@ export default function UsersPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">User Management</h1>
-        <p className="text-gray-500 dark:text-gray-400">Manage user accounts and permissions</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('users.title')}</h1>
+        <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
       </div>
 
       {/* Alerts */}
@@ -282,11 +284,11 @@ export default function UsersPage() {
       <div className="flex flex-wrap gap-3">
         <button onClick={handleCreate} className="btn btn-primary flex items-center space-x-2">
           <UserPlus className="w-4 h-4" />
-          <span>Create User</span>
+          <span>{t('users.createUser')}</span>
         </button>
         <button onClick={loadData} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
-          <span>Refresh</span>
+          <span>{t('common.refresh')}</span>
         </button>
       </div>
 
@@ -295,7 +297,7 @@ export default function UsersPage() {
         {users.length === 0 ? (
           <div className="card text-center py-12">
             <Users className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
-            <p className="text-gray-500 dark:text-gray-400">No users found</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('users.noUsersFound')}</p>
           </div>
         ) : (
           users.map((user) => (
@@ -320,10 +322,10 @@ export default function UsersPage() {
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{user.username}</h3>
                       {user.id === currentUser?.id && (
-                        <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded">You</span>
+                        <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded">{t('users.you')}</span>
                       )}
                       {!user.is_active && (
-                        <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded">Inactive</span>
+                        <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded">{t('users.inactive')}</span>
                       )}
                     </div>
                     <div className="flex items-center space-x-3 text-sm text-gray-500 dark:text-gray-400">
@@ -338,7 +340,7 @@ export default function UsersPage() {
                       {user.speaker_id && (
                         <span className="flex items-center space-x-1 text-green-600 dark:text-green-400">
                           <Mic className="w-3 h-3" />
-                          <span>Voice linked</span>
+                          <span>{t('users.voiceLinked')}</span>
                         </span>
                       )}
                     </div>
@@ -351,7 +353,7 @@ export default function UsersPage() {
                     <button
                       onClick={() => handleUnlinkSpeaker(user.id)}
                       className="p-2 text-gray-500 hover:text-yellow-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-yellow-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                      title="Unlink speaker"
+                      title={t('users.unlinkSpeaker')}
                     >
                       <Unlink className="w-5 h-5" />
                     </button>
@@ -359,7 +361,7 @@ export default function UsersPage() {
                     <button
                       onClick={() => handleLinkSpeaker(user.id)}
                       className="p-2 text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                      title="Link speaker"
+                      title={t('users.linkSpeaker')}
                       disabled={availableSpeakers.length === 0}
                     >
                       <Link2 className="w-5 h-5" />
@@ -368,14 +370,14 @@ export default function UsersPage() {
                   <button
                     onClick={() => handleEdit(user)}
                     className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Edit user"
+                    title={t('users.editUser')}
                   >
                     <Pencil className="w-5 h-5" />
                   </button>
                   <button
                     onClick={() => handleDelete(user)}
                     className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Delete user"
+                    title={t('users.deleteUser')}
                     disabled={user.id === currentUser?.id}
                   >
                     <Trash2 className="w-5 h-5" />
@@ -386,7 +388,7 @@ export default function UsersPage() {
               {/* Additional info */}
               {user.last_login && (
                 <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500">
-                  Last login: {new Date(user.last_login).toLocaleString()}
+                  {t('users.lastLogin')}: {new Date(user.last_login).toLocaleString(i18n.language)}
                 </div>
               )}
             </div>
@@ -398,20 +400,20 @@ export default function UsersPage() {
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        title={editingUser ? 'Edit User' : 'Create User'}
+        title={editingUser ? t('users.editUser') : t('users.createUser')}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
           {/* Username */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Username <span className="text-red-500">*</span>
+              {t('auth.username')} <span className="text-red-500">*</span>
             </label>
             <input
               type="text"
               value={formData.username}
               onChange={(e) => setFormData({ ...formData, username: e.target.value })}
               className="input w-full"
-              placeholder="Enter username"
+              placeholder={t('auth.enterUsername')}
               required
               minLength={3}
               disabled={formLoading}
@@ -421,14 +423,14 @@ export default function UsersPage() {
           {/* Email */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Email
+              {t('auth.email')}
             </label>
             <input
               type="email"
               value={formData.email}
               onChange={(e) => setFormData({ ...formData, email: e.target.value })}
               className="input w-full"
-              placeholder="user@example.com"
+              placeholder={t('auth.emailPlaceholder')}
               disabled={formLoading}
             />
           </div>
@@ -436,8 +438,8 @@ export default function UsersPage() {
           {/* Password */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Password {!editingUser && <span className="text-red-500">*</span>}
-              {editingUser && <span className="text-gray-400 dark:text-gray-500">(leave empty to keep current)</span>}
+              {t('auth.password')} {!editingUser && <span className="text-red-500">*</span>}
+              {editingUser && <span className="text-gray-400 dark:text-gray-500">({t('users.leaveEmptyToKeep')})</span>}
             </label>
             <div className="relative">
               <input
@@ -445,7 +447,7 @@ export default function UsersPage() {
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                 className="input w-full pr-10"
-                placeholder={editingUser ? '••••••••' : 'Enter password'}
+                placeholder={editingUser ? '••••••••' : t('auth.enterPassword')}
                 required={!editingUser}
                 minLength={8}
                 disabled={formLoading}
@@ -463,7 +465,7 @@ export default function UsersPage() {
           {/* Role */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-              Role <span className="text-red-500">*</span>
+              {t('users.role')} <span className="text-red-500">*</span>
             </label>
             <select
               value={formData.role_id}
@@ -472,7 +474,7 @@ export default function UsersPage() {
               required
               disabled={formLoading}
             >
-              <option value="">Select a role</option>
+              <option value="">{t('users.selectRole')}</option>
               {roles.map((role) => (
                 <option key={role.id} value={role.id}>
                   {role.name} - {role.description}
@@ -492,7 +494,7 @@ export default function UsersPage() {
               disabled={formLoading}
             />
             <label htmlFor="is_active" className="text-sm text-gray-700 dark:text-gray-300">
-              Account is active
+              {t('users.accountActive')}
             </label>
           </div>
 
@@ -504,7 +506,7 @@ export default function UsersPage() {
               className="flex-1 btn btn-secondary"
               disabled={formLoading}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -514,7 +516,7 @@ export default function UsersPage() {
               {formLoading ? (
                 <Loader className="w-5 h-5 animate-spin mx-auto" />
               ) : (
-                editingUser ? 'Update User' : 'Create User'
+                editingUser ? t('users.updateUser') : t('users.createUser')
               )}
             </button>
           </div>
@@ -528,18 +530,18 @@ export default function UsersPage() {
           setShowLinkSpeakerModal(false);
           setLinkingUserId(null);
         }}
-        title="Link Speaker Profile"
+        title={t('users.linkSpeakerProfile')}
       >
         <div className="space-y-4">
           <p className="text-gray-500 dark:text-gray-400">
-            Select a speaker profile to link with this user for voice authentication.
+            {t('users.selectSpeakerForVoice')}
           </p>
 
           {availableSpeakers.length === 0 ? (
             <div className="text-center py-6">
               <Mic className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-3" />
-              <p className="text-gray-500 dark:text-gray-400">No available speaker profiles</p>
-              <p className="text-gray-400 dark:text-gray-500 text-sm">All speaker profiles are already linked to users</p>
+              <p className="text-gray-500 dark:text-gray-400">{t('users.noAvailableSpeakers')}</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm">{t('users.allSpeakersLinked')}</p>
             </div>
           ) : (
             <div className="space-y-2 max-h-64 overflow-y-auto">
@@ -552,7 +554,7 @@ export default function UsersPage() {
                   <Mic className="w-5 h-5 text-primary-400" />
                   <div>
                     <p className="text-gray-900 dark:text-white font-medium">{speaker.name}</p>
-                    <p className="text-gray-500 dark:text-gray-400 text-sm">{speaker.embedding_count} voice samples</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-sm">{t('users.voiceSamplesCount', { count: speaker.embedding_count })}</p>
                   </div>
                 </button>
               ))}
@@ -567,7 +569,7 @@ export default function UsersPage() {
               }}
               className="w-full btn btn-secondary"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>

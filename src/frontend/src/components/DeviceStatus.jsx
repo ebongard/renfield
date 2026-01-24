@@ -6,6 +6,7 @@
  */
 
 import React, { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   MapPin,
   Wifi,
@@ -44,6 +45,7 @@ const STATE_COLORS = {
 };
 
 export default function DeviceStatus({ compact = false }) {
+  const { t } = useTranslation();
   const device = useDevice();
   const { features, hasMicrophone, hasSpeaker } = useCapabilities();
   const [showSetup, setShowSetup] = useState(false);
@@ -75,22 +77,22 @@ export default function DeviceStatus({ compact = false }) {
             <>
               <div className={`w-2 h-2 rounded-full ${stateColor}`} />
               <MapPin className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
-              <span className="text-sm text-green-700 dark:text-green-300">{device.roomName || 'Connected'}</span>
+              <span className="text-sm text-green-700 dark:text-green-300">{device.roomName || t('common.connected')}</span>
             </>
           ) : device.isConnecting ? (
             <>
               <Loader className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 animate-spin" />
-              <span className="text-sm text-yellow-700 dark:text-yellow-300">Connecting...</span>
+              <span className="text-sm text-yellow-700 dark:text-yellow-300">{t('device.connecting')}</span>
             </>
           ) : device.isSetupComplete ? (
             <>
               <WifiOff className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400" />
-              <span className="text-sm text-yellow-700 dark:text-yellow-300">Offline</span>
+              <span className="text-sm text-yellow-700 dark:text-yellow-300">{t('common.offline')}</span>
             </>
           ) : (
             <>
               <Settings className="w-3.5 h-3.5 text-gray-500 dark:text-gray-400" />
-              <span className="text-sm text-gray-700 dark:text-gray-300">Setup</span>
+              <span className="text-sm text-gray-700 dark:text-gray-300">{t('device.setup')}</span>
             </>
           )}
         </button>
@@ -122,10 +124,10 @@ export default function DeviceStatus({ compact = false }) {
           </div>
           <div>
             <h3 className="font-medium text-gray-900 dark:text-white">
-              {device.deviceName || 'This Device'}
+              {device.deviceName || t('device.thisDevice')}
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400">
-              {device.isConnected ? 'Connected' : device.isConnecting ? 'Connecting...' : 'Not connected'}
+              {device.isConnected ? t('common.connected') : device.isConnecting ? t('device.connecting') : t('device.notConnected')}
             </p>
           </div>
         </div>
@@ -142,7 +144,7 @@ export default function DeviceStatus({ compact = false }) {
       <div className="p-4 space-y-3">
         {/* Connection Status */}
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Status</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">{t('common.status')}</span>
           <div className="flex items-center space-x-2">
             <div className={`w-2 h-2 rounded-full ${stateColor}`} />
             <span className="text-sm text-gray-900 dark:text-white capitalize">{device.deviceState}</span>
@@ -152,7 +154,7 @@ export default function DeviceStatus({ compact = false }) {
         {/* Room */}
         {device.roomName && (
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-500 dark:text-gray-400">Room</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.room')}</span>
             <div className="flex items-center space-x-2">
               <MapPin className="w-4 h-4 text-gray-400 dark:text-gray-500" />
               <span className="text-sm text-gray-900 dark:text-white">{device.roomName}</span>
@@ -162,7 +164,7 @@ export default function DeviceStatus({ compact = false }) {
 
         {/* Capabilities */}
         <div className="flex items-center justify-between">
-          <span className="text-sm text-gray-500 dark:text-gray-400">Capabilities</span>
+          <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.capabilities')}</span>
           <div className="flex items-center space-x-2">
             {hasMicrophone ? (
               <Mic className="w-4 h-4 text-green-500 dark:text-green-400" />
@@ -180,7 +182,7 @@ export default function DeviceStatus({ compact = false }) {
         {/* Device ID */}
         {device.deviceId && (
           <div className="flex items-center justify-between">
-            <span className="text-sm text-gray-500 dark:text-gray-400">Device ID</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.deviceId')}</span>
             <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">{device.deviceId}</span>
           </div>
         )}
@@ -193,21 +195,21 @@ export default function DeviceStatus({ compact = false }) {
             onClick={() => device.disconnect()}
             className="w-full px-4 py-2 bg-red-100 dark:bg-red-600/20 hover:bg-red-200 dark:hover:bg-red-600/30 border border-red-300 dark:border-red-600/50 rounded-lg text-red-600 dark:text-red-400 text-sm transition-colors"
           >
-            Disconnect
+            {t('device.disconnect')}
           </button>
         ) : device.isSetupComplete ? (
           <button
             onClick={() => device.autoConnect()}
             className="w-full btn btn-primary text-sm"
           >
-            Connect
+            {t('device.connect')}
           </button>
         ) : (
           <button
             onClick={() => setShowSetup(true)}
             className="w-full btn btn-primary text-sm"
           >
-            Setup Device
+            {t('device.setup')}
           </button>
         )}
       </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Send, Mic, MicOff, Volume2, Loader, Ear, EarOff, Settings, BookOpen, ChevronDown, Menu } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useWakeWord } from '../hooks/useWakeWord';
@@ -10,6 +11,7 @@ import { useChatSessions } from '../hooks/useChatSessions';
 const SESSION_STORAGE_KEY = 'renfield_current_session';
 
 export default function ChatPage() {
+  const { t } = useTranslation();
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -391,7 +393,7 @@ export default function ChatPage() {
    * Handle conversation deletion with confirmation
    */
   const handleDeleteConversation = async (id) => {
-    if (!window.confirm('Konversation wirklich löschen?')) {
+    if (!window.confirm(t('chat.deleteConversation'))) {
       return;
     }
 
@@ -458,10 +460,10 @@ export default function ChatPage() {
           content: response.data.message
         }]);
       } catch (error) {
-        console.error('Chat Fehler:', error);
+        console.error('Chat error:', error);
         setMessages(prev => [...prev, {
           role: 'assistant',
-          content: 'Entschuldigung, es gab einen Fehler bei der Verarbeitung deiner Anfrage.'
+          content: t('errors.couldNotProcess')
         }]);
       } finally {
         setLoading(false);
@@ -672,7 +674,7 @@ export default function ChatPage() {
           console.warn('⚠️  Audio zu kurz (', audioBlob.size, 'bytes), wird nicht verarbeitet');
           setMessages(prev => [...prev, {
             role: 'assistant',
-            content: 'Aufnahme war zu kurz. Bitte spreche mindestens 1 Sekunde.'
+            content: t('voice.recordingTooShort')
           }]);
           setLoading(false);
         }
@@ -691,7 +693,7 @@ export default function ChatPage() {
       
     } catch (error) {
       console.error('❌ Mikrofon-Fehler:', error);
-      alert('Konnte nicht auf das Mikrofon zugreifen: ' + error.message);
+      alert(t('voice.microphoneError') + ': ' + error.message);
 
       // Resume wake word on error
       if (wakeWordEnabled) {
@@ -764,7 +766,7 @@ export default function ChatPage() {
       const transcribedText = sttResponse.data.text;
       
       if (!transcribedText || transcribedText.trim() === '') {
-        throw new Error('Keine Sprache erkannt');
+        throw new Error(t('voice.noSpeechRecognized'));
       }
       
       console.log('📝 Transkribierter Text:', transcribedText);
@@ -775,11 +777,11 @@ export default function ChatPage() {
       console.error('❌ Spracheingabe Fehler:', error);
       console.error('Error Details:', error.response?.data);
       
-      let errorMessage = 'Entschuldigung, ich konnte die Spracheingabe nicht verarbeiten.';
+      let errorMessage = t('voice.processingError');
       if (error.response?.data?.detail) {
         errorMessage += ' (' + error.response.data.detail + ')';
       }
-      
+
       setMessages(prev => [...prev, {
         role: 'assistant',
         content: errorMessage
@@ -879,7 +881,7 @@ export default function ChatPage() {
       <button
         onClick={() => setSidebarOpen(true)}
         className="fixed bottom-24 left-4 z-10 md:hidden p-3 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg transition-colors"
-        aria-label="Konversationen öffnen"
+        aria-label={t('chat.openConversations')}
       >
         <Menu className="w-5 h-5" aria-hidden="true" />
       </button>
@@ -902,8 +904,8 @@ export default function ChatPage() {
         <div className="card mb-4 mx-4 mt-4 md:mx-0 md:mt-0">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Chat</h1>
-              <p className="text-gray-500 dark:text-gray-400">Unterhalte dich mit Renfield</p>
+              <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t('chat.title')}</h1>
+              <p className="text-gray-500 dark:text-gray-400">{t('chat.subtitle')}</p>
             </div>
           <div className="flex items-center space-x-4">
             {/* Wake Word Controls */}
@@ -919,10 +921,10 @@ export default function ChatPage() {
                       : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
                 } ${wakeWordLoading ? 'opacity-50 cursor-wait' : ''}`}
                 title={wakeWordError
-                  ? `Wake word not available: ${wakeWordError.message}`
+                  ? `${t('wakeword.notAvailable')}: ${wakeWordError.message}`
                   : wakeWordEnabled
-                    ? `Wake word active - say "${availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis'}"`
-                    : 'Enable wake word detection'
+                    ? t('wakeword.listening', { keyword: availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis' })
+                    : t('wakeword.enable')
                 }
               >
                 {wakeWordLoading ? (
@@ -939,7 +941,7 @@ export default function ChatPage() {
                 <button
                   onClick={() => setShowWakeWordSettings(!showWakeWordSettings)}
                   className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
-                  title="Wake word settings"
+                  title={t('wakeword.settings')}
                 >
                   <Settings className="w-4 h-4" />
                 </button>
@@ -950,7 +952,7 @@ export default function ChatPage() {
             <div className="flex items-center space-x-2">
               <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                {wsConnected ? 'Verbunden' : 'Getrennt'}
+                {wsConnected ? t('common.connected') : t('common.disconnected')}
               </span>
             </div>
           </div>
@@ -963,8 +965,8 @@ export default function ChatPage() {
               <div className="w-2 h-2 rounded-full bg-red-500" />
               <span className="text-sm text-red-700 dark:text-red-300">
                 {wakeWordError.name === 'BrowserNotSupportedError'
-                  ? 'Wake word not supported in this browser. Use Chrome/Edge/Safari or the manual mic button.'
-                  : <>Wake word not available. Run: <code className="bg-red-200 dark:bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
+                  ? t('wakeword.browserNotSupported')
+                  : <>{t('wakeword.notAvailable')}. Run: <code className="bg-red-200 dark:bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
                 }
               </span>
             </div>
@@ -978,16 +980,16 @@ export default function ChatPage() {
               <div className={`w-2 h-2 rounded-full ${wakeWordListening ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
               <span className="text-sm text-green-700 dark:text-green-300">
                 {wakeWordListening
-                  ? `Listening for "${availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis'}"...`
+                  ? t('wakeword.listening', { keyword: availableKeywords.find(k => k.id === wakeWordSettings.keyword)?.label || 'Hey Jarvis' })
                   : wakeWordStatus === 'activated'
-                    ? 'Wake word detected! Starting recording...'
-                    : 'Wake word paused'
+                    ? t('wakeword.detected')
+                    : t('wakeword.paused')
                 }
               </span>
             </div>
             {lastDetection && (
               <span className="text-xs text-gray-500 dark:text-gray-400">
-                Last: {lastDetection.keyword} ({(lastDetection.score * 100).toFixed(0)}%)
+                {t('wakeword.lastDetection')}: {lastDetection.keyword} ({(lastDetection.score * 100).toFixed(0)}%)
               </span>
             )}
           </div>
@@ -996,12 +998,12 @@ export default function ChatPage() {
         {/* Wake Word Settings Dropdown */}
         {showWakeWordSettings && (
           <div className="mt-3 p-4 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700">
-            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">Wake Word Settings</h3>
+            <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-3">{t('wakeword.settings')}</h3>
 
             <div className="space-y-3">
               {/* Keyword Selection */}
               <div>
-                <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">Wake Word</label>
+                <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">{t('wakeword.keyword')}</label>
                 <select
                   value={wakeWordSettings.keyword}
                   onChange={(e) => setWakeWordKeyword(e.target.value)}
@@ -1016,7 +1018,7 @@ export default function ChatPage() {
               {/* Threshold Slider */}
               <div>
                 <label className="text-xs text-gray-500 dark:text-gray-400 mb-1 block">
-                  Sensitivity: {(wakeWordSettings.threshold * 100).toFixed(0)}%
+                  {t('wakeword.sensitivity')}: {(wakeWordSettings.threshold * 100).toFixed(0)}%
                 </label>
                 <input
                   type="range"
@@ -1028,8 +1030,8 @@ export default function ChatPage() {
                   className="w-full accent-primary-600"
                 />
                 <div className="flex justify-between text-xs text-gray-500">
-                  <span>More sensitive</span>
-                  <span>Less false positives</span>
+                  <span>{t('wakeword.moreSensitive')}</span>
+                  <span>{t('wakeword.lessFalsePositives')}</span>
                 </div>
               </div>
             </div>
@@ -1042,22 +1044,22 @@ export default function ChatPage() {
         className="flex-1 overflow-y-auto card space-y-4 mb-4 mx-4 md:mx-0"
         role="log"
         aria-live="polite"
-        aria-label="Chat-Verlauf"
+        aria-label={t('chat.conversations')}
         aria-relevant="additions"
       >
         {/* History Loading State */}
         {historyLoading && (
           <div className="flex items-center justify-center py-8">
             <Loader className="w-6 h-6 text-gray-500 dark:text-gray-400 animate-spin mr-2" aria-hidden="true" />
-            <span className="text-gray-500 dark:text-gray-400">Lade Konversation...</span>
+            <span className="text-gray-500 dark:text-gray-400">{t('chat.loadingConversation')}</span>
           </div>
         )}
 
         {!historyLoading && messages.length === 0 && (
           <div className="text-center py-12">
-            <p className="text-gray-500 dark:text-gray-400 mb-4">Starte ein Gespräch mit Renfield</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">{t('chat.startConversation')}</p>
             <p className="text-sm text-gray-400 dark:text-gray-500">
-              Du kannst Text eingeben oder das Mikrofon nutzen
+              {t('chat.useTextOrMic')}
             </p>
           </div>
         )}
@@ -1067,7 +1069,7 @@ export default function ChatPage() {
             key={index}
             className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
             role="article"
-            aria-label={message.role === 'user' ? 'Deine Nachricht' : 'Antwort von Renfield'}
+            aria-label={message.role === 'user' ? t('chat.yourMessage') : t('chat.assistantResponse')}
           >
             <div
               className={`max-w-[70%] px-4 py-2 rounded-lg ${
@@ -1082,10 +1084,10 @@ export default function ChatPage() {
                 <button
                   onClick={() => speakText(message.content)}
                   className="mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white flex items-center space-x-1"
-                  aria-label="Nachricht vorlesen"
+                  aria-label={t('chat.readAloud')}
                 >
                   <Volume2 className="w-3 h-3" aria-hidden="true" />
-                  <span>Vorlesen</span>
+                  <span>{t('chat.readAloud')}</span>
                 </button>
               )}
             </div>
@@ -1096,7 +1098,7 @@ export default function ChatPage() {
           <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
             <div className="bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded-lg">
               <Loader className="w-5 h-5 animate-spin text-gray-500 dark:text-gray-400" aria-hidden="true" />
-              <span className="sr-only">Renfield denkt nach...</span>
+              <span className="sr-only">{t('chat.thinkingStatus')}</span>
             </div>
           </div>
         )}
@@ -1116,10 +1118,10 @@ export default function ChatPage() {
                   ? 'bg-primary-100 text-primary-700 border border-primary-300 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/50'
                   : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
               }`}
-              title={useRag ? 'Wissensdatenbank deaktivieren' : 'Wissensdatenbank aktivieren'}
+              title={useRag ? t('rag.disableKnowledge') : t('rag.enableKnowledge')}
             >
               <BookOpen className="w-4 h-4" />
-              <span>Wissen</span>
+              <span>{t('rag.knowledge')}</span>
             </button>
 
             {useRag && (
@@ -1130,8 +1132,8 @@ export default function ChatPage() {
                 >
                   <span>
                     {selectedKnowledgeBase
-                      ? knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || 'Alle'
-                      : 'Alle Dokumente'}
+                      ? knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || t('common.all')
+                      : t('rag.allDocuments')}
                   </span>
                   <ChevronDown className={`w-4 h-4 transition-transform ${showRagSettings ? 'rotate-180' : ''}`} />
                 </button>
@@ -1150,7 +1152,7 @@ export default function ChatPage() {
                             : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
                         }`}
                       >
-                        Alle Dokumente
+                        {t('rag.allDocuments')}
                       </button>
                       {knowledgeBases.map(kb => (
                         <button
@@ -1177,7 +1179,7 @@ export default function ChatPage() {
 
           {useRag && (
             <span className="text-xs text-gray-500">
-              Sucht in hochgeladenen Dokumenten
+              {t('rag.searchesInDocuments')}
             </span>
           )}
         </div>
@@ -1190,7 +1192,7 @@ export default function ChatPage() {
               <div className="flex items-center space-x-2">
                 <div className="w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse"></div>
                 <span className="text-sm font-medium text-gray-900 dark:text-white">
-                  {audioLevel > 10 ? 'Sprechen erkannt' : silenceTimeRemaining > 0 ? 'Stille erkannt...' : 'Höre zu...'}
+                  {audioLevel > 10 ? t('voice.speechDetected') : silenceTimeRemaining > 0 ? t('voice.silenceDetected') : t('voice.listening')}
                 </span>
               </div>
 
@@ -1199,7 +1201,7 @@ export default function ChatPage() {
                 <div className="flex items-center space-x-2 px-3 py-1 bg-yellow-100 dark:bg-yellow-500/20 rounded-full border border-yellow-300 dark:border-yellow-500/30">
                   <div className="w-1.5 h-1.5 bg-yellow-500 dark:bg-yellow-400 rounded-full animate-pulse"></div>
                   <span className="text-xs font-mono text-yellow-700 dark:text-yellow-300">
-                    Auto-Stop in {(silenceTimeRemaining / 1000).toFixed(1)}s
+                    {t('voice.autoStopIn', { seconds: (silenceTimeRemaining / 1000).toFixed(1) })}
                   </span>
                 </div>
               )}
@@ -1234,17 +1236,17 @@ export default function ChatPage() {
             {/* Info Text */}
             <div className="flex items-center justify-between text-xs">
               <span className="text-gray-500 dark:text-gray-400">
-                Level: {audioLevel} / 10
+                {t('voice.level')}: {audioLevel} / 10
               </span>
               <span className="text-gray-400 dark:text-gray-500">
-                Klicke zum manuellen Stopp
+                {t('voice.clickToStop')}
               </span>
             </div>
           </div>
         )}
         
         <div className="flex items-center space-x-2">
-          <label htmlFor="chat-input" className="sr-only">Nachricht eingeben</label>
+          <label htmlFor="chat-input" className="sr-only">{t('chat.placeholder')}</label>
           <input
             id="chat-input"
             type="text"
@@ -1256,12 +1258,12 @@ export default function ChatPage() {
                 sendMessage(input, false);
               }
             }}
-            placeholder="Nachricht eingeben..."
+            placeholder={t('chat.placeholder')}
             className="input flex-1"
             disabled={loading || recording}
             aria-describedby={loading ? 'chat-loading-hint' : undefined}
           />
-          {loading && <span id="chat-loading-hint" className="sr-only">Bitte warten, Nachricht wird verarbeitet</span>}
+          {loading && <span id="chat-loading-hint" className="sr-only">{t('chat.processingMessage')}</span>}
 
           <button
             onClick={recording ? stopRecording : startRecording}
@@ -1271,7 +1273,7 @@ export default function ChatPage() {
                 : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
             }`}
             disabled={loading}
-            aria-label={recording ? 'Aufnahme stoppen' : 'Sprachaufnahme starten'}
+            aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
             aria-pressed={recording}
           >
             {recording ? <MicOff className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
@@ -1281,7 +1283,7 @@ export default function ChatPage() {
             onClick={() => sendMessage(input, false)}
             disabled={loading || !input.trim()}
             className="btn btn-primary"
-            aria-label="Nachricht senden"
+            aria-label={t('chat.sendMessage')}
           >
             <Send className="w-5 h-5" aria-hidden="true" />
           </button>

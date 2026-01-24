@@ -1,6 +1,11 @@
 import { render } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { createContext, useContext } from 'react';
+import { I18nextProvider } from 'react-i18next';
+import i18n from '../../../src/frontend/src/i18n';
+
+// Set default language to German for tests (matching production default)
+i18n.changeLanguage('de');
 
 // Create a mock auth context for testing
 const MockAuthContext = createContext(null);
@@ -58,11 +63,13 @@ export function renderWithProviders(ui, options = {}) {
 
   function Wrapper({ children }) {
     return (
-      <BrowserRouter>
-        <MockAuthProvider authValues={authValues}>
-          {children}
-        </MockAuthProvider>
-      </BrowserRouter>
+      <I18nextProvider i18n={i18n}>
+        <BrowserRouter>
+          <MockAuthProvider authValues={authValues}>
+            {children}
+          </MockAuthProvider>
+        </BrowserRouter>
+      </I18nextProvider>
     );
   }
 
@@ -77,7 +84,17 @@ export function renderWithProviders(ui, options = {}) {
 export function renderWithRouter(ui, { route = '/' } = {}) {
   window.history.pushState({}, 'Test page', route);
 
-  return render(ui, { wrapper: BrowserRouter });
+  function Wrapper({ children }) {
+    return (
+      <I18nextProvider i18n={i18n}>
+        <BrowserRouter>
+          {children}
+        </BrowserRouter>
+      </I18nextProvider>
+    );
+  }
+
+  return render(ui, { wrapper: Wrapper });
 }
 
 /**

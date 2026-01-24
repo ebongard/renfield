@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
 import apiClient from '../utils/axios';
 
 export default function TasksPage() {
+  const { t } = useTranslation();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
@@ -44,8 +46,8 @@ export default function TasksPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Aufgaben</h1>
-        <p className="text-gray-500 dark:text-gray-400">Übersicht aller Aufgaben und deren Status</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('tasks.title')}</h1>
+        <p className="text-gray-500 dark:text-gray-400">{t('tasks.subtitle')}</p>
       </div>
 
       {/* Filters */}
@@ -60,7 +62,7 @@ export default function TasksPage() {
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
-            {f === 'all' ? 'Alle' : f}
+            {f === 'all' ? t('common.all') : t(`tasks.${f}`)}
           </button>
         ))}
       </div>
@@ -70,12 +72,12 @@ export default function TasksPage() {
         {loading ? (
           <div className="card text-center py-12">
             <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">Lade Aufgaben...</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('tasks.loadingTasks')}</p>
           </div>
         ) : tasks.length === 0 ? (
           <div className="card text-center py-12">
             <CheckSquare className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">Keine Aufgaben gefunden</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('tasks.noTasks')}</p>
           </div>
         ) : (
           tasks.map((task) => (
@@ -87,14 +89,14 @@ export default function TasksPage() {
                     {task.title}
                   </h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
-                    Typ: {task.task_type}
+                    {t('tasks.taskType', { type: task.task_type })}
                   </p>
                   <p className="text-xs text-gray-500">
-                    Erstellt: {new Date(task.created_at).toLocaleString('de-DE')}
+                    {t('tasks.created')}: {new Date(task.created_at).toLocaleString()}
                   </p>
                   {task.completed_at && (
                     <p className="text-xs text-gray-500">
-                      Abgeschlossen: {new Date(task.completed_at).toLocaleString('de-DE')}
+                      {t('tasks.completed')}: {new Date(task.completed_at).toLocaleString()}
                     </p>
                   )}
                 </div>
@@ -104,7 +106,7 @@ export default function TasksPage() {
                   task.status === 'running' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
                   'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
                 }`}>
-                  {task.status}
+                  {t(`tasks.${task.status}`)}
                 </span>
               </div>
             </div>

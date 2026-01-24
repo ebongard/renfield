@@ -6,6 +6,7 @@
  */
 
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Monitor,
   Tablet,
@@ -35,19 +36,20 @@ const DEVICE_TYPE_ICONS = {
   [DEVICE_TYPES.WEB_KIOSK]: Tv,
 };
 
-// Device type descriptions
-const DEVICE_TYPE_DESCRIPTIONS = {
-  [DEVICE_TYPES.WEB_PANEL]: 'Stationary display (wall-mounted iPad/tablet)',
-  [DEVICE_TYPES.WEB_TABLET]: 'Mobile tablet that can move between rooms',
-  [DEVICE_TYPES.WEB_BROWSER]: 'Desktop or laptop browser',
-  [DEVICE_TYPES.WEB_KIOSK]: 'Touch-screen kiosk or terminal',
-};
-
 export default function DeviceSetup({
   onSetupComplete,
   onCancel,
   existingConfig = null,
 }) {
+  const { t } = useTranslation();
+
+  // Device type descriptions (moved inside component for i18n)
+  const DEVICE_TYPE_DESCRIPTIONS = {
+    [DEVICE_TYPES.WEB_PANEL]: t('device.descriptionPanel'),
+    [DEVICE_TYPES.WEB_TABLET]: t('device.descriptionTablet'),
+    [DEVICE_TYPES.WEB_BROWSER]: t('device.descriptionBrowser'),
+    [DEVICE_TYPES.WEB_KIOSK]: t('device.descriptionKiosk'),
+  };
   // Form state
   const [deviceType, setDeviceType] = useState(existingConfig?.type || DEVICE_TYPES.WEB_BROWSER);
   const [selectedRoom, setSelectedRoom] = useState(existingConfig?.room || '');
@@ -119,7 +121,7 @@ export default function DeviceSetup({
       }
     } catch (err) {
       console.error('Failed to load rooms:', err);
-      setError('Could not load rooms');
+      setError(t('device.couldNotLoadRooms'));
     } finally {
       setLoadingRooms(false);
     }
@@ -182,14 +184,14 @@ export default function DeviceSetup({
       setShowNewRoomInput(false);
     } catch (err) {
       console.error('Failed to create room:', err);
-      setError(err.response?.data?.detail || 'Could not create room');
+      setError(err.response?.data?.detail || t('device.couldNotCreateRoom'));
     }
   };
 
   // Handle setup completion
   const handleComplete = useCallback(async () => {
     if (!selectedRoom) {
-      setError('Please select a room');
+      setError(t('device.pleaseSelectRoom'));
       return;
     }
 
@@ -236,8 +238,8 @@ export default function DeviceSetup({
               <Settings className="w-5 h-5 text-primary-400" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Device Setup</h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Configure your device for voice interaction</p>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">{t('device.setup')}</h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">{t('device.configureVoice')}</p>
             </div>
           </div>
           {onCancel && (
@@ -264,7 +266,7 @@ export default function DeviceSetup({
         <div>
           <label htmlFor="room-select" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             <MapPin className="w-4 h-4 inline mr-2" aria-hidden="true" />
-            Raum
+            {t('device.room')}
           </label>
           <div className="flex space-x-2">
             <select
@@ -275,18 +277,18 @@ export default function DeviceSetup({
               className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:outline-none disabled:opacity-50"
               aria-describedby={loadingRooms ? 'room-loading' : undefined}
             >
-              <option value="">Raum auswählen...</option>
+              <option value="">{t('device.selectRoom')}</option>
               {rooms.map(room => (
                 <option key={room.id} value={room.name}>
                   {room.name}
                 </option>
               ))}
             </select>
-            {loadingRooms && <span id="room-loading" className="sr-only">Räume werden geladen</span>}
+            {loadingRooms && <span id="room-loading" className="sr-only">{t('rooms.loadingRooms')}</span>}
             <button
               onClick={() => setShowNewRoomInput(!showNewRoomInput)}
               className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 transition-colors"
-              aria-label="Neuen Raum hinzufügen"
+              aria-label={t('device.addNewRoom')}
               aria-expanded={showNewRoomInput}
             >
               +
@@ -295,7 +297,7 @@ export default function DeviceSetup({
               onClick={loadRooms}
               disabled={loadingRooms}
               className="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 transition-colors disabled:opacity-50"
-              aria-label="Räume aktualisieren"
+              aria-label={t('device.refreshRooms')}
             >
               <RefreshCw className={`w-4 h-4 ${loadingRooms ? 'animate-spin' : ''}`} aria-hidden="true" />
             </button>
@@ -304,13 +306,13 @@ export default function DeviceSetup({
           {/* New room input */}
           {showNewRoomInput && (
             <div className="mt-2 flex space-x-2">
-              <label htmlFor="new-room-name" className="sr-only">Name des neuen Raums</label>
+              <label htmlFor="new-room-name" className="sr-only">{t('device.newRoomName')}</label>
               <input
                 id="new-room-name"
                 type="text"
                 value={newRoomName}
                 onChange={(e) => setNewRoomName(e.target.value)}
-                placeholder="Name des neuen Raums..."
+                placeholder={t('device.newRoomPlaceholder')}
                 className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
@@ -323,7 +325,7 @@ export default function DeviceSetup({
                 onClick={createRoom}
                 disabled={!newRoomName.trim()}
                 className="px-4 py-2 bg-primary-600 hover:bg-primary-500 rounded-lg text-white transition-colors disabled:opacity-50"
-                aria-label="Raum erstellen"
+                aria-label={t('device.createRoom')}
               >
                 <Check className="w-4 h-4" aria-hidden="true" />
               </button>
@@ -334,7 +336,7 @@ export default function DeviceSetup({
         {/* Device Type Selection */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-            Device Type
+            {t('device.deviceType')}
           </label>
           <div className="grid grid-cols-2 gap-3">
             {Object.entries(DEVICE_TYPES)
@@ -373,14 +375,14 @@ export default function DeviceSetup({
         {/* Device Name (optional) */}
         <div>
           <label htmlFor="device-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-            Gerätename (optional)
+            {t('device.deviceNameOptional')}
           </label>
           <input
             id="device-name"
             type="text"
             value={deviceName}
             onChange={(e) => setDeviceName(e.target.value)}
-            placeholder="z.B. Wohnzimmer iPad"
+            placeholder={t('device.deviceNamePlaceholder')}
             className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
           />
         </div>
@@ -388,7 +390,7 @@ export default function DeviceSetup({
         {/* Capabilities */}
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-            Capabilities
+            {t('device.capabilities')}
           </label>
           <div className="space-y-3">
             {/* Microphone */}
@@ -396,11 +398,11 @@ export default function DeviceSetup({
               <div className="flex items-center space-x-3">
                 <Mic className={`w-4 h-4 ${hasMicrophone ? 'text-green-500 dark:text-green-400' : 'text-gray-500'}`} />
                 <div>
-                  <div className="text-sm text-gray-900 dark:text-white">Microphone</div>
+                  <div className="text-sm text-gray-900 dark:text-white">{t('device.microphone')}</div>
                   <div className="text-xs text-gray-500">
-                    {micPermission === 'granted' ? 'Permission granted' :
-                     micPermission === 'denied' ? 'Permission denied' :
-                     'Permission required'}
+                    {micPermission === 'granted' ? t('device.permissionGranted') :
+                     micPermission === 'denied' ? t('device.permissionDenied') :
+                     t('device.permissionRequired')}
                   </div>
                 </div>
               </div>
@@ -410,7 +412,7 @@ export default function DeviceSetup({
                     onClick={requestMicrophonePermission}
                     className="text-xs px-2 py-1 bg-primary-600 hover:bg-primary-500 rounded text-white"
                   >
-                    Allow
+                    {t('device.allow')}
                   </button>
                 )}
                 <label className="relative inline-flex items-center cursor-pointer">
@@ -431,8 +433,8 @@ export default function DeviceSetup({
               <div className="flex items-center space-x-3">
                 <Speaker className={`w-4 h-4 ${hasSpeaker ? 'text-green-500 dark:text-green-400' : 'text-gray-500'}`} />
                 <div>
-                  <div className="text-sm text-gray-900 dark:text-white">Speaker (TTS)</div>
-                  <div className="text-xs text-gray-500">Play voice responses</div>
+                  <div className="text-sm text-gray-900 dark:text-white">{t('device.speakerTts')}</div>
+                  <div className="text-xs text-gray-500">{t('device.playVoiceResponses')}</div>
                 </div>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
@@ -452,8 +454,8 @@ export default function DeviceSetup({
                 <div className="flex items-center space-x-3">
                   <div className={`w-4 h-4 rounded-full ${hasWakeWord ? 'bg-green-500 dark:bg-green-400' : 'bg-gray-400 dark:bg-gray-500'}`} />
                   <div>
-                    <div className="text-sm text-gray-900 dark:text-white">Wake Word</div>
-                    <div className="text-xs text-gray-500">Hands-free activation</div>
+                    <div className="text-sm text-gray-900 dark:text-white">{t('device.wakeword')}</div>
+                    <div className="text-xs text-gray-500">{t('device.handsfreActivation')}</div>
                   </div>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
@@ -475,9 +477,9 @@ export default function DeviceSetup({
         {deviceType === DEVICE_TYPES.WEB_BROWSER && (
           <div className="flex items-center justify-between p-3 bg-gray-100/50 dark:bg-gray-700/50 rounded-lg">
             <div>
-              <div className="text-sm text-gray-900 dark:text-white">Stationary Device</div>
+              <div className="text-sm text-gray-900 dark:text-white">{t('device.stationaryDevice')}</div>
               <div className="text-xs text-gray-500">
-                This device stays in one room
+                {t('device.staysInOneRoom')}
               </div>
             </div>
             <label className="relative inline-flex items-center cursor-pointer">
@@ -501,7 +503,7 @@ export default function DeviceSetup({
               onClick={onCancel}
               className="btn btn-secondary"
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           )}
           <button
@@ -512,12 +514,12 @@ export default function DeviceSetup({
             {isConnecting ? (
               <>
                 <Loader className="w-4 h-4 animate-spin" />
-                <span>Connecting...</span>
+                <span>{t('device.connecting')}</span>
               </>
             ) : (
               <>
                 <Check className="w-4 h-4" />
-                <span>Connect</span>
+                <span>{t('device.connect')}</span>
               </>
             )}
           </button>

@@ -2,7 +2,7 @@
 Konfiguration und Settings
 """
 from pydantic_settings import BaseSettings
-from typing import Optional, List
+from typing import Optional, List, Dict
 from functools import lru_cache
 
 class Settings(BaseSettings):
@@ -59,9 +59,11 @@ class Settings(BaseSettings):
 
     # Sprache
     default_language: str = "de"
+    supported_languages: str = "de,en"  # Comma-separated list of supported languages
     whisper_model: str = "base"
     whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
-    piper_voice: str = "de_DE-thorsten-high"
+    piper_voice: str = "de_DE-thorsten-high"  # Default voice (legacy)
+    piper_voices: str = "de:de_DE-thorsten-high,en:en_US-amy-medium"  # Language:Voice mapping
 
     # Audio Preprocessing (for better STT quality)
     whisper_preprocess_enabled: bool = True       # Enable audio preprocessing before Whisper
@@ -155,6 +157,27 @@ class Settings(BaseSettings):
     def allowed_extensions_list(self) -> List[str]:
         """Gibt allowed_extensions als Liste zurück"""
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",")]
+
+    @property
+    def supported_languages_list(self) -> List[str]:
+        """Returns supported_languages as a list"""
+        return [lang.strip().lower() for lang in self.supported_languages.split(",")]
+
+    @property
+    def piper_voice_map(self) -> Dict[str, str]:
+        """
+        Returns piper_voices as a dictionary mapping language code to voice name.
+        Example: {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
+        """
+        voice_map = {}
+        for pair in self.piper_voices.split(","):
+            if ":" in pair:
+                lang, voice = pair.strip().split(":", 1)
+                voice_map[lang.strip().lower()] = voice.strip()
+        # Ensure default language has a voice (fallback to piper_voice)
+        if self.default_language not in voice_map:
+            voice_map[self.default_language] = self.piper_voice
+        return voice_map
 
     class Config:
         env_file = ".env"

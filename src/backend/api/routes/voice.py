@@ -1,9 +1,14 @@
 """
 Voice API Routes (Speech-to-Text & Text-to-Speech)
+
+Multi-language support:
+- STT: Pass ?language=en to transcribe in a specific language
+- TTS: Pass {"language": "en"} to synthesize in a specific language
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import Optional
 from loguru import logger
 from io import BytesIO
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,18 +23,31 @@ router = APIRouter()
 whisper_service = WhisperService()
 piper_service = PiperService()
 
+
 class TTSRequest(BaseModel):
     text: str
-    voice: str = "de_DE-thorsten-high"
+    voice: Optional[str] = None  # Deprecated: use language instead
+    language: Optional[str] = None  # Language code (e.g., 'de', 'en')
 
 @router.post("/stt")
 async def speech_to_text(
     audio: UploadFile = File(...),
+    language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)
 ):
-    """Speech-to-Text: Audio zu Text konvertieren mit optionaler Sprechererkennung"""
+    """
+    Speech-to-Text: Audio zu Text konvertieren mit optionaler Sprechererkennung.
+
+    Multi-language support: Pass ?language=en to transcribe in English, etc.
+    """
     try:
-        logger.info(f"🎤 STT-Anfrage erhalten: {audio.filename}, Content-Type: {audio.content_type}")
+        # Validate language if provided
+        if language and language.lower() not in settings.supported_languages_list:
+            logger.warning(f"⚠️ Unsupported language '{language}', falling back to default")
+            language = None
+
+        effective_language = language or settings.default_language
+        logger.info(f"🎤 STT-Anfrage erhalten: {audio.filename}, Content-Type: {audio.content_type}, Language: {effective_language}")
 
         # Audio-Bytes lesen
         audio_bytes = await audio.read()
@@ -43,7 +61,8 @@ async def speech_to_text(
             result = await whisper_service.transcribe_bytes_with_speaker(
                 audio_bytes,
                 filename=audio.filename,
-                db_session=db
+                db_session=db,
+                language=language
             )
             text = result.get("text", "")
             speaker_id = result.get("speaker_id")
@@ -59,7 +78,8 @@ async def speech_to_text(
             # Transkription OHNE Sprechererkennung
             text = await whisper_service.transcribe_bytes(
                 audio_bytes,
-                filename=audio.filename
+                filename=audio.filename,
+                language=language
             )
             speaker_id = None
             speaker_name = None
@@ -74,7 +94,7 @@ async def speech_to_text(
 
         return {
             "text": text,
-            "language": "de",
+            "language": effective_language,
             "speaker_id": speaker_id,
             "speaker_name": speaker_name,
             "speaker_alias": speaker_alias,
@@ -88,14 +108,27 @@ async def speech_to_text(
 
 @router.post("/tts")
 async def text_to_speech(request: TTSRequest):
-    """Text-to-Speech: Text zu Audio konvertieren"""
+    """
+    Text-to-Speech: Text zu Audio konvertieren.
+
+    Multi-language support: Pass {"language": "en"} to synthesize in English, etc.
+    """
     try:
-        # TTS generieren
-        audio_bytes = await piper_service.synthesize_to_bytes(request.text)
-        
+        # Validate language if provided
+        language = request.language
+        if language and language.lower() not in settings.supported_languages_list:
+            logger.warning(f"⚠️ Unsupported language '{language}', falling back to default")
+            language = None
+
+        effective_language = language or settings.default_language
+        logger.info(f"🔊 TTS request: {len(request.text)} chars, language: {effective_language}")
+
+        # TTS generieren with language support
+        audio_bytes = await piper_service.synthesize_to_bytes(request.text, language=language)
+
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="TTS-Generierung fehlgeschlagen")
-        
+
         # Als WAV-Stream zurückgeben
         return StreamingResponse(
             BytesIO(audio_bytes),
@@ -139,6 +172,7 @@ async def get_tts_cache(audio_id: str):
 @router.post("/voice-chat")
 async def voice_chat(
     audio: UploadFile = File(...),
+    language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -146,8 +180,18 @@ async def voice_chat(
     1. Audio zu Text (STT) mit Sprechererkennung
     2. Text an Ollama
     3. Antwort zu Audio (TTS)
+
+    Multi-language support: Pass ?language=en to use English for both STT and TTS.
     """
     try:
+        # Validate language if provided
+        if language and language.lower() not in settings.supported_languages_list:
+            logger.warning(f"⚠️ Unsupported language '{language}', falling back to default")
+            language = None
+
+        effective_language = language or settings.default_language
+        logger.info(f"🎤 Voice-Chat request, language: {effective_language}")
+
         # 1. Speech-to-Text mit Sprechererkennung
         audio_bytes = await audio.read()
 
@@ -155,7 +199,8 @@ async def voice_chat(
             result = await whisper_service.transcribe_bytes_with_speaker(
                 audio_bytes,
                 filename=audio.filename,
-                db_session=db
+                db_session=db,
+                language=language
             )
             user_text = result.get("text", "")
             speaker_name = result.get("speaker_name")
@@ -165,7 +210,7 @@ async def voice_chat(
             if speaker_name:
                 logger.info(f"🎤 Voice-Chat von: {speaker_name} (@{speaker_alias})")
         else:
-            user_text = await whisper_service.transcribe_bytes(audio_bytes, audio.filename)
+            user_text = await whisper_service.transcribe_bytes(audio_bytes, audio.filename, language=language)
             speaker_name = None
             speaker_alias = None
             speaker_confidence = 0.0
@@ -180,13 +225,14 @@ async def voice_chat(
         ollama: OllamaService = app.state.ollama
         response_text = await ollama.chat(user_text)
 
-        # 3. Text-to-Speech
-        response_audio = await piper_service.synthesize_to_bytes(response_text)
+        # 3. Text-to-Speech (using same language)
+        response_audio = await piper_service.synthesize_to_bytes(response_text, language=language)
 
         return {
             "user_text": user_text,
             "assistant_text": response_text,
             "audio": response_audio.hex() if response_audio else None,
+            "language": effective_language,
             "speaker_name": speaker_name,
             "speaker_alias": speaker_alias,
             "speaker_confidence": speaker_confidence

@@ -5,6 +5,7 @@
 satellite:
   id: "sat-wohnzimmer"      # Unique ID for this satellite
   room: "Wohnzimmer"        # Human-readable room name
+  language: "de"            # Language for STT/TTS (e.g., 'de', 'en')
 
 # Renfield server connection
 # If url is not specified, auto-discovery will find the server automatically

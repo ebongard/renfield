@@ -137,6 +137,7 @@ class Satellite:
             server_url=self.config.server.url,  # May be None if using auto-discovery
             reconnect_interval=self.config.server.reconnect_interval,
             heartbeat_interval=self.config.server.heartbeat_interval,
+            language=self.config.satellite.language,
         )
 
         # Service discovery for auto-finding server

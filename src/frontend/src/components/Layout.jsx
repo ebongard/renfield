@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   MessageSquare,
   CheckSquare,
@@ -21,27 +22,29 @@ import {
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
+import LanguageSwitcher from './LanguageSwitcher';
 import { useAuth } from '../context/AuthContext';
 
-// Hauptnavigation
-const mainNavigation = [
-  { name: 'Chat', href: '/', icon: MessageSquare },
-  { name: 'Wissen', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
-  { name: 'Aufgaben', href: '/tasks', icon: CheckSquare },
-  { name: 'Kameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },
+// Navigation items with translation keys
+const mainNavigationConfig = [
+  { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
+  { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
+  { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare },
+  { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },
 ];
 
-// Admin-Navigation (Untermenue)
-const adminNavigation = [
-  { name: 'Raeume', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
-  { name: 'Sprecher', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
-  { name: 'Smart Home', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'] },
-  { name: 'Plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
-  { name: 'Benutzer', href: '/admin/users', icon: UserCog, permission: ['admin'] },
-  { name: 'Rollen', href: '/admin/roles', icon: Shield, permission: ['admin'] },
+// Admin navigation with translation keys
+const adminNavigationConfig = [
+  { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
+  { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
+  { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'] },
+  { nameKey: 'nav.plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
+  { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
+  { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
 ];
 
 export default function Layout({ children }) {
+  const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -57,6 +60,17 @@ export default function Layout({ children }) {
 
   // Auth context
   const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, loading: authLoading } = useAuth();
+
+  // Translate navigation items
+  const mainNavigation = mainNavigationConfig.map(item => ({
+    ...item,
+    name: t(item.nameKey)
+  }));
+
+  const adminNavigation = adminNavigationConfig.map(item => ({
+    ...item,
+    name: t(item.nameKey)
+  }));
 
   // Filter navigation items based on permissions
   const filterNavItems = (items) => {
@@ -170,7 +184,7 @@ export default function Layout({ children }) {
         href="#main-content"
         className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-2 focus:bg-primary-600 focus:text-white focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400"
       >
-        Zum Inhalt springen
+        {t('nav.skipToContent')}
       </a>
 
       {/* Fixed Header */}
@@ -181,7 +195,7 @@ export default function Layout({ children }) {
             <button
               onClick={() => setSidebarOpen(true)}
               className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
-              aria-label="Menu oeffnen"
+              aria-label={t('nav.openMenu')}
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
             >
@@ -193,8 +207,9 @@ export default function Layout({ children }) {
             </Link>
           </div>
 
-          {/* Right: Theme Toggle + Device Status + User */}
+          {/* Right: Language + Theme Toggle + Device Status + User */}
           <div className="flex items-center space-x-2 sm:space-x-3">
+            <LanguageSwitcher compact />
             <ThemeToggle />
             <DeviceStatus compact />
 
@@ -204,7 +219,7 @@ export default function Layout({ children }) {
                 <button
                   onClick={handleLogout}
                   className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                  title={`Angemeldet als ${user?.username}`}
+                  title={`${t('auth.loggedInAs')} ${user?.username}`}
                 >
                   <div className="w-7 h-7 rounded-full bg-primary-600/30 flex items-center justify-center">
                     <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
@@ -217,7 +232,7 @@ export default function Layout({ children }) {
                   className="flex items-center space-x-2 px-3 py-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                 >
                   <LogIn className="w-5 h-5" />
-                  <span className="hidden sm:block text-sm">Anmelden</span>
+                  <span className="hidden sm:block text-sm">{t('auth.login')}</span>
                 </Link>
               )
             )}
@@ -241,7 +256,7 @@ export default function Layout({ children }) {
         className={`fixed top-0 left-0 h-full w-72 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
-        aria-label="Hauptnavigation"
+        aria-label={t('nav.mainNavigation')}
         role="dialog"
         aria-modal="true"
       >
@@ -255,7 +270,7 @@ export default function Layout({ children }) {
             ref={firstFocusableRef}
             onClick={() => setSidebarOpen(false)}
             className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
-            aria-label="Menu schliessen"
+            aria-label={t('nav.closeMenu')}
           >
             <X className="w-5 h-5" aria-hidden="true" />
           </button>
@@ -286,7 +301,7 @@ export default function Layout({ children }) {
               >
                 <div className="flex items-center space-x-3">
                   <Settings className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                  <span>Admin</span>
+                  <span>{t('nav.admin')}</span>
                 </div>
                 <ChevronDown
                   className={`w-4 h-4 transition-transform duration-200 ${
@@ -338,7 +353,7 @@ export default function Layout({ children }) {
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <LogOut className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                    <span>Abmelden</span>
+                    <span>{t('auth.logout')}</span>
                   </button>
                 </div>
               ) : (
@@ -348,7 +363,7 @@ export default function Layout({ children }) {
                   className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
                   <LogIn className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
-                  <span>Anmelden</span>
+                  <span>{t('auth.login')}</span>
                 </Link>
               )}
             </>

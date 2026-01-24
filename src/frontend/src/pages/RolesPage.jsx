@@ -4,6 +4,7 @@
  * Admin page for managing roles and permissions.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -75,6 +76,7 @@ const PERMISSION_DESCRIPTIONS = {
 };
 
 export default function RolesPage() {
+  const { t } = useTranslation();
   const { getAccessToken } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
@@ -116,7 +118,7 @@ export default function RolesPage() {
       setAllPermissions(Array.isArray(permsRes.data) ? permsRes.data : []);
       setAvailablePlugins(pluginsRes.data?.plugins || []);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load roles');
+      setError(err.response?.data?.detail || t('roles.failedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -246,16 +248,16 @@ export default function RolesPage() {
 
       if (editingRole) {
         await apiClient.patch(`/api/roles/${editingRole.id}`, data, { headers });
-        setSuccess('Role updated successfully');
+        setSuccess(t('roles.roleUpdated'));
       } else {
         await apiClient.post('/api/roles', data, { headers });
-        setSuccess('Role created successfully');
+        setSuccess(t('roles.roleCreated'));
       }
 
       setShowModal(false);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to save role');
+      setError(err.response?.data?.detail || t('roles.failedToSave'));
     } finally {
       setFormLoading(false);
     }
@@ -264,14 +266,14 @@ export default function RolesPage() {
   // Delete role
   const handleDelete = async (role) => {
     if (role.is_system) {
-      setError('System roles cannot be deleted');
+      setError(t('roles.systemRoleCannotDelete'));
       return;
     }
 
     const confirmed = await confirm({
-      title: 'Delete Role',
-      message: `Are you sure you want to delete the role "${role.name}"? Users with this role will need to be reassigned.`,
-      confirmText: 'Delete',
+      title: t('roles.deleteRole'),
+      message: t('roles.deleteRoleConfirm', { name: role.name }),
+      confirmText: t('common.delete'),
       variant: 'danger'
     });
 
@@ -282,10 +284,10 @@ export default function RolesPage() {
       await apiClient.delete(`/api/roles/${role.id}`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setSuccess('Role deleted successfully');
+      setSuccess(t('roles.roleDeleted'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to delete role');
+      setError(err.response?.data?.detail || t('roles.failedToDelete'));
     }
   };
 
@@ -299,12 +301,12 @@ export default function RolesPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Role Management</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage roles and their permissions</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('roles.title')}</h1>
+          <p className="text-gray-500 dark:text-gray-400">{t('roles.subtitle')}</p>
         </div>
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
-          <p className="text-gray-500 dark:text-gray-400">Loading roles...</p>
+          <p className="text-gray-500 dark:text-gray-400">{t('roles.loading')}</p>
         </div>
       </div>
     );
@@ -314,8 +316,8 @@ export default function RolesPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Role Management</h1>
-        <p className="text-gray-500 dark:text-gray-400">Manage roles and their permissions</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('roles.title')}</h1>
+        <p className="text-gray-500 dark:text-gray-400">{t('roles.subtitle')}</p>
       </div>
 
       {/* Alerts */}
@@ -341,11 +343,11 @@ export default function RolesPage() {
       <div className="flex flex-wrap gap-3">
         <button onClick={handleCreate} className="btn btn-primary flex items-center space-x-2">
           <Plus className="w-4 h-4" />
-          <span>Create Role</span>
+          <span>{t('roles.createRole')}</span>
         </button>
         <button onClick={loadData} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
-          <span>Refresh</span>
+          <span>{t('common.refresh')}</span>
         </button>
       </div>
 
@@ -354,7 +356,7 @@ export default function RolesPage() {
         {roles.length === 0 ? (
           <div className="card text-center py-12">
             <Shield className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
-            <p className="text-gray-500 dark:text-gray-400">No roles found</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('roles.noRolesFound')}</p>
           </div>
         ) : (
           roles.map((role) => (
@@ -381,7 +383,7 @@ export default function RolesPage() {
                       {role.is_system && (
                         <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded">
                           <Lock className="w-3 h-3" />
-                          <span>System</span>
+                          <span>{t('roles.system')}</span>
                         </span>
                       )}
                     </div>
@@ -400,7 +402,7 @@ export default function RolesPage() {
                       ))}
                       {role.permissions.length > 5 && (
                         <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
-                          +{role.permissions.length - 5} more
+                          {t('roles.more', { count: role.permissions.length - 5 })}
                         </span>
                       )}
                     </div>
@@ -412,7 +414,7 @@ export default function RolesPage() {
                   <button
                     onClick={() => handleEdit(role)}
                     className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Edit role"
+                    title={t('roles.editRole')}
                   >
                     <Pencil className="w-5 h-5" />
                   </button>
@@ -420,7 +422,7 @@ export default function RolesPage() {
                     <button
                       onClick={() => handleDelete(role)}
                       className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                      title="Delete role"
+                      title={t('roles.deleteRole')}
                     >
                       <Trash2 className="w-5 h-5" />
                     </button>
@@ -436,7 +438,7 @@ export default function RolesPage() {
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        title={editingRole ? 'Edit Role' : 'Create Role'}
+        title={editingRole ? t('roles.editRole') : t('roles.createRole')}
         maxWidth="max-w-2xl"
       >
         <form onSubmit={handleSubmit} className="space-y-6">
@@ -444,28 +446,28 @@ export default function RolesPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Role Name <span className="text-red-500">*</span>
+                {t('roles.roleName')} <span className="text-red-500">*</span>
               </label>
               <input
                 type="text"
                 value={formData.name}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 className="input w-full"
-                placeholder="e.g., Technician"
+                placeholder={t('roles.roleNamePlaceholder')}
                 required
                 disabled={formLoading || editingRole?.is_system}
               />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                Description
+                {t('common.description')}
               </label>
               <input
                 type="text"
                 value={formData.description}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 className="input w-full"
-                placeholder="Brief description of the role"
+                placeholder={t('roles.descriptionPlaceholder')}
                 disabled={formLoading}
               />
             </div>
@@ -474,9 +476,9 @@ export default function RolesPage() {
           {/* Permissions */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">Permissions</h3>
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('roles.permissions')}</h3>
               <span className="text-sm text-gray-500 dark:text-gray-400">
-                {formData.permissions.length} selected
+                {t('roles.selected', { count: formData.permissions.length })}
               </span>
             </div>
 
@@ -521,7 +523,7 @@ export default function RolesPage() {
                             onClick={() => selectAllInCategory(category)}
                             className="text-xs text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
                           >
-                            Select all
+                            {t('roles.selectAll')}
                           </button>
                           <span className="text-gray-300 dark:text-gray-600">|</span>
                           <button
@@ -529,7 +531,7 @@ export default function RolesPage() {
                             onClick={() => clearCategory(category)}
                             className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                           >
-                            Clear
+                            {t('roles.clear')}
                           </button>
                         </div>
 
@@ -570,12 +572,12 @@ export default function RolesPage() {
               <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center space-x-2">
                   <Puzzle className="w-5 h-5 text-primary-400" />
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">Allowed Plugins</h3>
+                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('roles.allowedPlugins')}</h3>
                 </div>
                 <span className="text-sm text-gray-500 dark:text-gray-400">
                   {formData.allowed_plugins.length === 0
-                    ? 'All plugins'
-                    : `${formData.allowed_plugins.length} selected`}
+                    ? t('roles.allPlugins')
+                    : t('roles.selected', { count: formData.allowed_plugins.length })}
                 </span>
               </div>
 
@@ -583,7 +585,7 @@ export default function RolesPage() {
                 <div className="flex items-start space-x-2 mb-3 text-sm">
                   <Info className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0 mt-0.5" />
                   <p className="text-gray-500 dark:text-gray-400">
-                    Select specific plugins this role can use. Leave empty to allow all plugins.
+                    {t('roles.pluginSelectionHint')}
                   </p>
                 </div>
 
@@ -597,7 +599,7 @@ export default function RolesPage() {
                     }))}
                     className="text-xs text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
                   >
-                    Select all
+                    {t('roles.selectAll')}
                   </button>
                   <span className="text-gray-300 dark:text-gray-600">|</span>
                   <button
@@ -605,7 +607,7 @@ export default function RolesPage() {
                     onClick={() => setFormData(prev => ({ ...prev, allowed_plugins: [] }))}
                     className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
                   >
-                    Clear (allow all)
+                    {t('roles.clearAllowAll')}
                   </button>
                 </div>
 
@@ -635,11 +637,11 @@ export default function RolesPage() {
                           <p className="text-gray-900 dark:text-white text-sm font-medium truncate">{plugin.name}</p>
                           {plugin.enabled ? (
                             <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded">
-                              enabled
+                              {t('plugins.enabled')}
                             </span>
                           ) : (
                             <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1.5 py-0.5 rounded">
-                              disabled
+                              {t('plugins.disabled')}
                             </span>
                           )}
                         </div>
@@ -657,9 +659,9 @@ export default function RolesPage() {
             <div className="flex items-start space-x-3 p-3 bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
               <Info className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
               <div>
-                <p className="text-yellow-700 dark:text-yellow-400 font-medium">System Role</p>
+                <p className="text-yellow-700 dark:text-yellow-400 font-medium">{t('roles.systemRole')}</p>
                 <p className="text-yellow-600 dark:text-yellow-400/70 text-sm">
-                  This is a system role. You can modify its permissions but cannot rename or delete it.
+                  {t('roles.systemRoleInfo')}
                 </p>
               </div>
             </div>
@@ -673,7 +675,7 @@ export default function RolesPage() {
               className="flex-1 btn btn-secondary"
               disabled={formLoading}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -683,7 +685,7 @@ export default function RolesPage() {
               {formLoading ? (
                 <Loader className="w-5 h-5 animate-spin mx-auto" />
               ) : (
-                editingRole ? 'Update Role' : 'Create Role'
+                editingRole ? t('roles.updateRole') : t('roles.createRole')
               )}
             </button>
           </div>

@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
 import apiClient from '../utils/axios';
 
 export default function CameraPage() {
+  const { t, i18n } = useTranslation();
   const [cameras, setCameras] = useState([]);
   const [events, setEvents] = useState([]);
   const [selectedLabel, setSelectedLabel] = useState('all');
@@ -56,13 +58,13 @@ export default function CameraPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Kamera-Überwachung</h1>
-            <p className="text-gray-500 dark:text-gray-400">Überwache deine Kameras und Events</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('cameras.title')}</h1>
+            <p className="text-gray-500 dark:text-gray-400">{t('cameras.subtitle')}</p>
           </div>
           <button
             onClick={() => { loadCameras(); loadEvents(); }}
             className="btn btn-secondary"
-            aria-label="Kameras und Events aktualisieren"
+            aria-label={t('cameras.refreshCameras')}
           >
             <RefreshCw className="w-5 h-5" aria-hidden="true" />
           </button>
@@ -71,7 +73,7 @@ export default function CameraPage() {
 
       {/* Cameras Overview */}
       <div className="card">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Kameras</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{t('cameras.cameras')}</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {cameras.map((camera) => (
             <div key={camera} className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
@@ -98,23 +100,23 @@ export default function CameraPage() {
             }`}
           >
             {label !== 'all' && getLabelIcon(label)}
-            <span>{label === 'all' ? 'Alle' : label}</span>
+            <span>{label === 'all' ? t('common.all') : t(`cameras.${label}`)}</span>
           </button>
         ))}
       </div>
 
       {/* Events */}
       <div className="space-y-4">
-        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Letzte Events</h2>
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('cameras.latestEvents')}</h2>
 
         {loading ? (
-          <div className="card text-center py-12" role="status" aria-label="Events werden geladen">
-            <p className="text-gray-500 dark:text-gray-400">Lade Events...</p>
+          <div className="card text-center py-12" role="status" aria-label={t('cameras.loadingEvents')}>
+            <p className="text-gray-500 dark:text-gray-400">{t('cameras.loadingEvents')}</p>
           </div>
         ) : events.length === 0 ? (
           <div className="card text-center py-12">
             <Camera className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">Keine Events gefunden</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('cameras.noEvents')}</p>
           </div>
         ) : (
           events.map((event, index) => (
@@ -129,11 +131,11 @@ export default function CameraPage() {
                 </div>
                 <div className="text-right">
                   <p className="text-sm text-gray-500 dark:text-gray-400">
-                    {new Date(event.start_time * 1000).toLocaleString('de-DE')}
+                    {new Date(event.start_time * 1000).toLocaleString(i18n.language === 'de' ? 'de-DE' : 'en-US')}
                   </p>
                   {event.score && (
                     <p className="text-xs text-gray-400 dark:text-gray-500">
-                      Konfidenz: {Math.round(event.score * 100)}%
+                      {t('cameras.confidence')}: {Math.round(event.score * 100)}%
                     </p>
                   )}
                 </div>

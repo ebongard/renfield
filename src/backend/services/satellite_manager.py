@@ -55,6 +55,7 @@ class SatelliteInfo:
     last_heartbeat: float = field(default_factory=time.time)
     current_session_id: Optional[str] = None
     room_id: Optional[int] = None  # Database room ID (populated after DB sync)
+    language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
 
 
 @dataclass
@@ -104,7 +105,8 @@ class SatelliteManager:
         satellite_id: str,
         room: str,
         websocket: WebSocket,
-        capabilities: Dict[str, Any]
+        capabilities: Dict[str, Any],
+        language: str = "de"
     ) -> bool:
         """
         Register a new satellite connection.
@@ -114,6 +116,7 @@ class SatelliteManager:
             room: Room name where satellite is located
             websocket: WebSocket connection to satellite
             capabilities: Hardware capabilities dict
+            language: Language code for STT/TTS (e.g., 'de', 'en')
 
         Returns:
             True if registration successful
@@ -142,7 +145,8 @@ class SatelliteManager:
                 satellite_id=satellite_id,
                 room=room,
                 websocket=websocket,
-                capabilities=caps
+                capabilities=caps,
+                language=language
             )
 
             logger.info(f"✅ Satellite registered: {satellite_id} in {room}")

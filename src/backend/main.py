@@ -21,7 +21,7 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
 from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge
-from api.routes import auth, roles, users, plugins
+from api.routes import auth, roles, users, plugins, preferences
 from services.auth_service import require_permission, get_optional_user
 from models.permissions import Permission
 from services.database import init_db, AsyncSessionLocal
@@ -375,6 +375,7 @@ app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(plugins.router, prefix="/api/plugins", tags=["Plugins"])
+app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 
 # Helper function for sending WebSocket errors
 async def _send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, request_id: str = None):
@@ -761,6 +762,7 @@ async def satellite_websocket(
                 satellite_id = data.get("satellite_id", "unknown")
                 room = data.get("room", "Unknown Room")
                 capabilities = data.get("capabilities", {})
+                language = data.get("language", settings.default_language)
 
                 # Update connection limiter with actual satellite_id
                 connection_limiter.add_connection(ip_address, satellite_id)
@@ -769,7 +771,8 @@ async def satellite_websocket(
                     satellite_id=satellite_id,
                     room=room,
                     websocket=websocket,
-                    capabilities=capabilities
+                    capabilities=capabilities,
+                    language=language
                 )
 
                 # Persist room assignment to database
@@ -863,6 +866,11 @@ async def satellite_websocket(
 
                 logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
 
+                # Get satellite's configured language
+                satellite_info = satellite_manager.get_satellite_by_session(session_id)
+                satellite_language = satellite_info.language if satellite_info else settings.default_language
+                logger.info(f"🌐 Using language: {satellite_language}")
+
                 # Transcribe with Whisper (with speaker recognition)
                 try:
                     whisper = get_whisper_service()
@@ -891,7 +899,8 @@ async def satellite_websocket(
                             result = await whisper.transcribe_bytes_with_speaker(
                                 wav_bytes,
                                 filename="satellite_audio.wav",
-                                db_session=db_session
+                                db_session=db_session,
+                                language=satellite_language
                             )
                             text = result.get("text", "")
                             speaker_name = result.get("speaker_name")
@@ -903,7 +912,7 @@ async def satellite_websocket(
                             else:
                                 logger.info("🎤 Satellite Sprecher nicht erkannt")
                     else:
-                        text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav")
+                        text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav", language=satellite_language)
 
                     if not text or not text.strip():
                         logger.warning(f"⚠️ Empty transcription for session {session_id}")
@@ -1023,10 +1032,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to save satellite messages to DB: {e}")
 
-                    # Generate TTS
+                    # Generate TTS with satellite's language
                     from services.piper_service import PiperService
                     piper = PiperService()
-                    tts_audio = await piper.synthesize_to_bytes(response_text)
+                    tts_audio = await piper.synthesize_to_bytes(response_text, language=satellite_language)
 
                     if tts_audio:
                         # Route TTS to the best available output device

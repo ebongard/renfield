@@ -96,7 +96,7 @@ describe('RoomsPage', () => {
       renderWithProviders(<RoomsPage />);
 
       expect(screen.getByText('Raumverwaltung')).toBeInTheDocument();
-      expect(screen.getByText('Verwalte Raeume und synchronisiere mit Home Assistant')).toBeInTheDocument();
+      expect(screen.getByText('Verwalte Räume und synchronisiere mit Home Assistant')).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {
@@ -119,7 +119,7 @@ describe('RoomsPage', () => {
       renderWithProviders(<RoomsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Raeume (2)')).toBeInTheDocument();
+        expect(screen.getByText(/Raeume \(2\)/)).toBeInTheDocument();
       });
     });
 

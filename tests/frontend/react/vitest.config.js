@@ -19,6 +19,12 @@ export default defineConfig({
       'react-dom': path.join(testNodeModules, 'react-dom'),
       'react-router-dom': path.join(testNodeModules, 'react-router-dom'),
       'react-router': path.join(testNodeModules, 'react-router'),
+      // i18next packages - use test node_modules versions
+      'i18next': path.join(testNodeModules, 'i18next'),
+      'react-i18next': path.join(testNodeModules, 'react-i18next'),
+      'i18next-browser-languagedetector': path.join(testNodeModules, 'i18next-browser-languagedetector'),
+      // lucide icons
+      'lucide-react': path.join(testNodeModules, 'lucide-react'),
     },
   },
   server: {

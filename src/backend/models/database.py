@@ -591,6 +591,9 @@ class User(Base):
     # Account status
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # User preferences
+    preferred_language = Column(String(10), default="de", nullable=False)
+
     # Optional link to Speaker for voice authentication
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)
 

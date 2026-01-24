@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   BookOpen,
   Upload,
@@ -20,6 +21,7 @@ import {
 import apiClient from '../utils/axios';
 
 export default function KnowledgePage() {
+  const { t } = useTranslation();
   // State
   const [documents, setDocuments] = useState([]);
   const [knowledgeBases, setKnowledgeBases] = useState([]);
@@ -52,7 +54,7 @@ export default function KnowledgePage() {
       const response = await apiClient.get('/api/knowledge/documents', { params });
       setDocuments(response.data);
     } catch (error) {
-      console.error('Fehler beim Laden der Dokumente:', error);
+      console.error('Failed to load documents:', error);
     }
   }, [selectedKnowledgeBase, statusFilter]);
 
@@ -61,7 +63,7 @@ export default function KnowledgePage() {
       const response = await apiClient.get('/api/knowledge/bases');
       setKnowledgeBases(response.data);
     } catch (error) {
-      console.error('Fehler beim Laden der Knowledge Bases:', error);
+      console.error('Failed to load knowledge bases:', error);
     }
   }, []);
 
@@ -70,7 +72,7 @@ export default function KnowledgePage() {
       const response = await apiClient.get('/api/knowledge/stats');
       setStats(response.data);
     } catch (error) {
-      console.error('Fehler beim Laden der Statistiken:', error);
+      console.error('Failed to load stats:', error);
     }
   }, []);
 
@@ -89,7 +91,7 @@ export default function KnowledgePage() {
     if (!file) return;
 
     setUploading(true);
-    setUploadProgress(`Verarbeite ${file.name}...`);
+    setUploadProgress(t('knowledge.processing', { filename: file.name }));
 
     const formData = new FormData();
     formData.append('file', file);
@@ -104,14 +106,14 @@ export default function KnowledgePage() {
         params
       });
 
-      setUploadProgress('Erfolgreich hochgeladen!');
+      setUploadProgress(t('knowledge.uploadSuccess'));
       await loadDocuments();
       await loadStats();
 
       setTimeout(() => setUploadProgress(null), 2000);
     } catch (error) {
-      console.error('Upload-Fehler:', error);
-      setUploadProgress(`Fehler: ${error.response?.data?.detail || 'Upload fehlgeschlagen'}`);
+      console.error('Upload error:', error);
+      setUploadProgress(`${t('knowledge.errorLabel')}: ${error.response?.data?.detail || t('knowledge.uploadFailed')}`);
       setTimeout(() => setUploadProgress(null), 5000);
     } finally {
       setUploading(false);
@@ -121,15 +123,15 @@ export default function KnowledgePage() {
 
   // Delete document
   const handleDeleteDocument = async (id, filename) => {
-    if (!confirm(`Dokument "${filename}" wirklich loeschen?`)) return;
+    if (!confirm(t('knowledge.deleteDocument', { filename }))) return;
 
     try {
       await apiClient.delete(`/api/knowledge/documents/${id}`);
       await loadDocuments();
       await loadStats();
     } catch (error) {
-      console.error('Loeschfehler:', error);
-      alert('Fehler beim Loeschen des Dokuments');
+      console.error('Delete error:', error);
+      alert(t('knowledge.deleteFailed'));
     }
   };
 
@@ -140,8 +142,8 @@ export default function KnowledgePage() {
       await loadDocuments();
       await loadStats();
     } catch (error) {
-      console.error('Reindex-Fehler:', error);
-      alert('Fehler beim Re-Indexieren des Dokuments');
+      console.error('Reindex error:', error);
+      alert(t('knowledge.reindexFailed'));
     }
   };
 
@@ -158,7 +160,7 @@ export default function KnowledgePage() {
       });
       setSearchResults(response.data.results);
     } catch (error) {
-      console.error('Suchfehler:', error);
+      console.error('Search error:', error);
     } finally {
       setSearching(false);
     }
@@ -179,14 +181,14 @@ export default function KnowledgePage() {
       setNewKbName('');
       setNewKbDescription('');
     } catch (error) {
-      console.error('Fehler beim Erstellen:', error);
-      alert(error.response?.data?.detail || 'Fehler beim Erstellen der Knowledge Base');
+      console.error('Create error:', error);
+      alert(error.response?.data?.detail || t('common.error'));
     }
   };
 
   // Delete Knowledge Base
   const handleDeleteKnowledgeBase = async (id, name) => {
-    if (!confirm(`Knowledge Base "${name}" und alle zugehoerigen Dokumente wirklich loeschen?`)) return;
+    if (!confirm(t('knowledge.deleteKnowledgeBaseConfirm', { name }))) return;
 
     try {
       await apiClient.delete(`/api/knowledge/bases/${id}`);
@@ -195,8 +197,8 @@ export default function KnowledgePage() {
       await loadDocuments();
       await loadStats();
     } catch (error) {
-      console.error('Loeschfehler:', error);
-      alert('Fehler beim Loeschen der Knowledge Base');
+      console.error('Delete error:', error);
+      alert(t('common.error'));
     }
   };
 
@@ -242,10 +244,10 @@ export default function KnowledgePage() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
               <BookOpen className="w-7 h-7 text-primary-400" />
-              Wissensdatenbank
+              {t('knowledge.title')}
             </h1>
             <p className="text-gray-500 dark:text-gray-400">
-              Dokumente hochladen und fuer RAG-Anfragen indexieren
+              {t('knowledge.subtitle')}
             </p>
           </div>
           <button
@@ -253,7 +255,7 @@ export default function KnowledgePage() {
             className="btn-primary flex items-center gap-2"
           >
             <Plus className="w-4 h-4" />
-            Neue Knowledge Base
+            {t('knowledge.newKnowledgeBase')}
           </button>
         </div>
       </div>
@@ -268,7 +270,7 @@ export default function KnowledgePage() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.document_count}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">Dokumente</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">{t('knowledge.documents')}</div>
               </div>
             </div>
           </div>
@@ -279,7 +281,7 @@ export default function KnowledgePage() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.completed_documents}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">Indexiert</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">{t('knowledge.indexed')}</div>
               </div>
             </div>
           </div>
@@ -290,7 +292,7 @@ export default function KnowledgePage() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.chunk_count}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">Chunks</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">{t('knowledge.chunks')}</div>
               </div>
             </div>
           </div>
@@ -324,7 +326,7 @@ export default function KnowledgePage() {
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
               }`}
             >
-              Alle
+              {t('common.all')}
             </button>
             {knowledgeBases.map((kb) => (
               <div key={kb.id} className="flex items-center gap-1">
@@ -344,7 +346,7 @@ export default function KnowledgePage() {
                 <button
                   onClick={() => handleDeleteKnowledgeBase(kb.id, kb.name)}
                   className="px-2 py-2 rounded-r-lg bg-gray-200 text-gray-500 hover:text-red-500 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-600 transition-colors"
-                  title="Knowledge Base loeschen"
+                  title={t('knowledge.deleteKnowledgeBase')}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -358,7 +360,7 @@ export default function KnowledgePage() {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <Upload className="w-5 h-5 text-primary-400" />
-          Dokument hochladen
+          {t('knowledge.uploadDocument')}
         </h2>
         <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
           <input
@@ -375,10 +377,10 @@ export default function KnowledgePage() {
           >
             <Upload className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-500 mb-4" />
             <p className="text-gray-700 dark:text-gray-300 mb-2">
-              {uploading ? 'Wird verarbeitet...' : 'Klicken oder Datei hierher ziehen'}
+              {uploading ? t('knowledge.uploadProcessing') : t('knowledge.uploadDragDrop')}
             </p>
             <p className="text-sm text-gray-500 dark:text-gray-500">
-              Unterstuetzte Formate: PDF, DOCX, TXT, MD, HTML, PPTX, XLSX
+              {t('knowledge.supportedFormats')}
             </p>
           </label>
         </div>
@@ -399,7 +401,7 @@ export default function KnowledgePage() {
       <div className="card">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
           <Search className="w-5 h-5 text-primary-400" />
-          In Dokumenten suchen
+          {t('knowledge.searchInDocuments')}
         </h2>
         <div className="flex gap-2">
           <input
@@ -407,7 +409,7 @@ export default function KnowledgePage() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            placeholder="Suchbegriff eingeben..."
+            placeholder={t('knowledge.searchPlaceholder')}
             className="input flex-1"
           />
           <button
@@ -420,7 +422,7 @@ export default function KnowledgePage() {
             ) : (
               <Search className="w-4 h-4" />
             )}
-            Suchen
+            {t('common.search')}
           </button>
         </div>
 
@@ -428,7 +430,7 @@ export default function KnowledgePage() {
         {searchResults.length > 0 && (
           <div className="mt-4 space-y-3">
             <h3 className="text-sm font-medium text-gray-500 dark:text-gray-400">
-              {searchResults.length} Ergebnisse gefunden
+              {t('knowledge.resultsFound', { count: searchResults.length })}
             </h3>
             {searchResults.map((result, idx) => (
               <div
@@ -441,12 +443,12 @@ export default function KnowledgePage() {
                     <span>{result.document.filename}</span>
                     {result.chunk.page_number && (
                       <span className="text-gray-400 dark:text-gray-500">
-                        | Seite {result.chunk.page_number}
+                        | {t('knowledge.page')} {result.chunk.page_number}
                       </span>
                     )}
                   </div>
                   <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300 rounded">
-                    {Math.round(result.similarity * 100)}% Relevanz
+                    {t('knowledge.relevance', { percent: Math.round(result.similarity * 100) })}
                   </span>
                 </div>
                 <p className="text-gray-700 dark:text-gray-300 text-sm line-clamp-3">
@@ -454,7 +456,7 @@ export default function KnowledgePage() {
                 </p>
                 {result.chunk.section_title && (
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-500">
-                    Abschnitt: {result.chunk.section_title}
+                    {t('knowledge.section')}: {result.chunk.section_title}
                   </p>
                 )}
               </div>
@@ -475,7 +477,7 @@ export default function KnowledgePage() {
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
-            {f === 'all' ? 'Alle' : f}
+            {f === 'all' ? t('common.all') : f}
           </button>
         ))}
       </div>
@@ -485,14 +487,14 @@ export default function KnowledgePage() {
         {loading ? (
           <div className="card text-center py-12">
             <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">Lade Dokumente...</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('knowledge.loadingDocuments')}</p>
           </div>
         ) : documents.length === 0 ? (
           <div className="card text-center py-12">
             <FileText className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">Keine Dokumente gefunden</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('knowledge.noDocuments')}</p>
             <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
-              Laden Sie ein Dokument hoch, um die Wissensdatenbank zu fuellen.
+              {t('knowledge.uploadToFill')}
             </p>
           </div>
         ) : (
@@ -505,12 +507,12 @@ export default function KnowledgePage() {
                     {doc.title || doc.filename}
                   </h3>
                   <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
-                    <span>Typ: {doc.file_type?.toUpperCase()}</span>
-                    {doc.page_count && <span>Seiten: {doc.page_count}</span>}
-                    <span>Chunks: {doc.chunk_count || 0}</span>
+                    <span>{t('common.type')}: {doc.file_type?.toUpperCase()}</span>
+                    {doc.page_count && <span>{t('knowledge.pages')}: {doc.page_count}</span>}
+                    <span>{t('knowledge.chunks')}: {doc.chunk_count || 0}</span>
                     {doc.file_size && (
                       <span>
-                        Groesse: {(doc.file_size / 1024 / 1024).toFixed(2)} MB
+                        {t('knowledge.size')}: {(doc.file_size / 1024 / 1024).toFixed(2)} MB
                       </span>
                     )}
                   </div>
@@ -519,7 +521,7 @@ export default function KnowledgePage() {
                   </p>
                   {doc.error_message && (
                     <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                      Fehler: {doc.error_message}
+                      {t('knowledge.errorLabel')}: {doc.error_message}
                     </p>
                   )}
                 </div>
@@ -543,14 +545,14 @@ export default function KnowledgePage() {
                   <button
                     onClick={() => handleReindexDocument(doc.id)}
                     className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Neu indexieren"
+                    title={t('knowledge.reindex')}
                   >
                     <RefreshCw className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteDocument(doc.id, doc.filename)}
                     className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="Loeschen"
+                    title={t('common.delete')}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -566,24 +568,24 @@ export default function KnowledgePage() {
         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 border border-gray-200 dark:border-gray-700">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
-              Neue Knowledge Base erstellen
+              {t('knowledge.createKnowledgeBase')}
             </h2>
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Name *
+                  {t('common.name')} *
                 </label>
                 <input
                   type="text"
                   value={newKbName}
                   onChange={(e) => setNewKbName(e.target.value)}
-                  placeholder="z.B. Handbuecher"
+                  placeholder={t('knowledge.knowledgeBases')}
                   className="input w-full"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Beschreibung
+                  {t('common.description')}
                 </label>
                 <textarea
                   value={newKbDescription}
@@ -603,14 +605,14 @@ export default function KnowledgePage() {
                 }}
                 className="btn btn-secondary"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleCreateKnowledgeBase}
                 disabled={!newKbName.trim()}
                 className="btn-primary"
               >
-                Erstellen
+                {t('common.create')}
               </button>
             </div>
           </div>

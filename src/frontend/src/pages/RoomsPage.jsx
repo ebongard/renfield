@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Home, Plus, Edit3, Trash2, Loader, CheckCircle, XCircle,
   AlertCircle, RefreshCw, Link as LinkIcon, Unlink, Radio,
@@ -20,6 +21,7 @@ const DEVICE_TYPE_CONFIG = {
 };
 
 export default function RoomsPage() {
+  const { t } = useTranslation();
   // Confirm dialog hook
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
@@ -69,7 +71,7 @@ export default function RoomsPage() {
       setRooms(response.data);
     } catch (err) {
       console.error('Failed to load rooms:', err);
-      setError('Raeume konnten nicht geladen werden');
+      setError(t('rooms.couldNotLoad'));
     } finally {
       setLoading(false);
     }
@@ -82,7 +84,7 @@ export default function RoomsPage() {
       setHAAreas(response.data);
     } catch (err) {
       console.error('Failed to load HA areas:', err);
-      setError('Home Assistant Areas konnten nicht geladen werden');
+      setError(t('rooms.couldNotLoadAreas'));
     } finally {
       setLoadingAreas(false);
     }
@@ -90,7 +92,7 @@ export default function RoomsPage() {
 
   const createRoom = async () => {
     if (!newRoomName.trim()) {
-      setError('Name ist erforderlich');
+      setError(t('rooms.nameRequired'));
       return;
     }
 
@@ -100,20 +102,20 @@ export default function RoomsPage() {
         icon: newRoomIcon || null
       });
 
-      setSuccess(`Raum "${newRoomName}" erstellt`);
+      setSuccess(t('rooms.roomCreated', { name: newRoomName }));
       setShowCreateModal(false);
       setNewRoomName('');
       setNewRoomIcon('');
       loadRooms();
     } catch (err) {
       console.error('Failed to create room:', err);
-      setError(err.response?.data?.detail || 'Raum konnte nicht erstellt werden');
+      setError(err.response?.data?.detail || t('common.error'));
     }
   };
 
   const updateRoom = async () => {
     if (!selectedRoom || !editRoomName.trim()) {
-      setError('Name ist erforderlich');
+      setError(t('rooms.nameRequired'));
       return;
     }
 
@@ -124,12 +126,12 @@ export default function RoomsPage() {
         icon: editRoomIcon || null
       });
 
-      setSuccess(`Raum "${editRoomName}" aktualisiert`);
+      setSuccess(t('rooms.roomUpdated', { name: editRoomName }));
       setShowEditModal(false);
       loadRooms();
     } catch (err) {
       console.error('Failed to update room:', err);
-      setError(err.response?.data?.detail || 'Raum konnte nicht aktualisiert werden');
+      setError(err.response?.data?.detail || t('common.error'));
     } finally {
       setUpdating(false);
     }
@@ -137,10 +139,10 @@ export default function RoomsPage() {
 
   const deleteRoom = async (room) => {
     const confirmed = await confirm({
-      title: 'Raum löschen?',
-      message: `Möchtest du "${room.name}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`,
-      confirmLabel: 'Löschen',
-      cancelLabel: 'Abbrechen',
+      title: t('rooms.deleteRoom'),
+      message: t('rooms.deleteRoomConfirm', { name: room.name }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
       variant: 'danger',
     });
 
@@ -148,30 +150,30 @@ export default function RoomsPage() {
 
     try {
       await apiClient.delete(`/api/rooms/${room.id}`);
-      setSuccess(`Raum "${room.name}" gelöscht`);
+      setSuccess(t('rooms.roomDeleted', { name: room.name }));
       loadRooms();
     } catch (err) {
       console.error('Failed to delete room:', err);
-      setError('Raum konnte nicht gelöscht werden');
+      setError(t('common.error'));
     }
   };
 
   const linkToHAArea = async () => {
     if (!selectedRoom || !selectedHAArea) {
-      setError('Bitte einen Area auswaehlen');
+      setError(t('rooms.pleaseSelectArea'));
       return;
     }
 
     try {
       setUpdating(true);
       await apiClient.post(`/api/rooms/${selectedRoom.id}/link/${selectedHAArea}`);
-      setSuccess(`Raum mit HA Area verknuepft`);
+      setSuccess(t('rooms.linkedWith'));
       setShowLinkModal(false);
       setSelectedHAArea('');
       loadRooms();
     } catch (err) {
       console.error('Failed to link room:', err);
-      setError(err.response?.data?.detail || 'Verknuepfung fehlgeschlagen');
+      setError(err.response?.data?.detail || t('rooms.linkFailed'));
     } finally {
       setUpdating(false);
     }
@@ -179,10 +181,10 @@ export default function RoomsPage() {
 
   const unlinkFromHA = async (room) => {
     const confirmed = await confirm({
-      title: 'Verknüpfung aufheben?',
-      message: `Möchtest du die Home Assistant Verknüpfung von "${room.name}" wirklich aufheben?`,
-      confirmLabel: 'Trennen',
-      cancelLabel: 'Abbrechen',
+      title: t('rooms.unlinkTitle'),
+      message: t('rooms.unlinkConfirm', { name: room.name }),
+      confirmLabel: t('rooms.unlinkFromHA'),
+      cancelLabel: t('common.cancel'),
       variant: 'warning',
     });
 
@@ -190,11 +192,11 @@ export default function RoomsPage() {
 
     try {
       await apiClient.delete(`/api/rooms/${room.id}/link`);
-      setSuccess(`Verknüpfung aufgehoben`);
+      setSuccess(t('rooms.linkUnlinked'));
       loadRooms();
     } catch (err) {
       console.error('Failed to unlink room:', err);
-      setError('Verknüpfung konnte nicht aufgehoben werden');
+      setError(t('rooms.unlinkFailed'));
     }
   };
 
@@ -206,12 +208,12 @@ export default function RoomsPage() {
       });
 
       const { imported, linked, skipped } = response.data;
-      setSuccess(`Import: ${imported} neu, ${linked} verknuepft, ${skipped} uebersprungen`);
+      setSuccess(t('rooms.importResult', { imported, linked, skipped }));
       loadRooms();
       loadHAAreas();
     } catch (err) {
       console.error('Failed to import from HA:', err);
-      setError(err.response?.data?.detail || 'Import fehlgeschlagen');
+      setError(err.response?.data?.detail || t('rooms.importFailed'));
     } finally {
       setSyncing(false);
     }
@@ -223,12 +225,12 @@ export default function RoomsPage() {
       const response = await apiClient.post('/api/rooms/ha/export');
 
       const { exported, linked } = response.data;
-      setSuccess(`Export: ${exported} neu erstellt, ${linked} verknuepft`);
+      setSuccess(t('rooms.exportResult', { exported, linked }));
       loadRooms();
       loadHAAreas();
     } catch (err) {
       console.error('Failed to export to HA:', err);
-      setError(err.response?.data?.detail || 'Export fehlgeschlagen');
+      setError(err.response?.data?.detail || t('rooms.exportFailed'));
     } finally {
       setSyncing(false);
     }
@@ -240,15 +242,14 @@ export default function RoomsPage() {
       const response = await apiClient.post(`/api/rooms/ha/sync?conflict_resolution=${conflictResolution}`);
 
       const { import_results, export_results } = response.data;
-      setSuccess(
-        `Sync: ${import_results.imported + import_results.linked} importiert, ` +
-        `${export_results.exported + export_results.linked} exportiert`
-      );
+      const imported = import_results.imported + import_results.linked;
+      const exported = export_results.exported + export_results.linked;
+      setSuccess(t('rooms.syncResult', { imported, exported }));
       loadRooms();
       loadHAAreas();
     } catch (err) {
       console.error('Failed to sync with HA:', err);
-      setError(err.response?.data?.detail || 'Sync fehlgeschlagen');
+      setError(err.response?.data?.detail || t('rooms.syncFailed'));
     } finally {
       setSyncing(false);
     }
@@ -290,14 +291,14 @@ export default function RoomsPage() {
       <div className="card">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Raumverwaltung</h1>
-            <p className="text-gray-500 dark:text-gray-400">Verwalte Raeume und synchronisiere mit Home Assistant</p>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('rooms.title')}</h1>
+            <p className="text-gray-500 dark:text-gray-400">{t('rooms.subtitle')}</p>
           </div>
           <div className="flex items-center space-x-2">
             <button
               onClick={loadRooms}
               className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
-              aria-label="Räume aktualisieren"
+              aria-label={t('rooms.refreshRooms')}
             >
               <RefreshCw className="w-5 h-5" aria-hidden="true" />
             </button>
@@ -331,7 +332,7 @@ export default function RoomsPage() {
           className="btn btn-primary flex items-center space-x-2"
         >
           <Plus className="w-4 h-4" />
-          <span>Neuer Raum</span>
+          <span>{t('rooms.newRoom')}</span>
         </button>
 
         <button
@@ -346,23 +347,23 @@ export default function RoomsPage() {
       {/* Rooms List */}
       <div>
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
-          Raeume ({rooms.length})
+          {t('rooms.roomsCount', { count: rooms.length })}
         </h2>
 
         {loading ? (
-          <div className="card text-center py-12" role="status" aria-label="Räume werden geladen">
+          <div className="card text-center py-12" role="status" aria-label={t('rooms.loadingRooms')}>
             <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" aria-hidden="true" />
-            <p className="text-gray-500 dark:text-gray-400">Lade Räume...</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('rooms.loadingRooms')}</p>
           </div>
         ) : rooms.length === 0 ? (
           <div className="card text-center py-12">
             <Home className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
-            <p className="text-gray-500 dark:text-gray-400 mb-4">Noch keine Raeume vorhanden</p>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">{t('rooms.noRooms')}</p>
             <button
               onClick={() => setShowCreateModal(true)}
               className="btn btn-primary"
             >
-              Ersten Raum anlegen
+              {t('rooms.createFirstRoom')}
             </button>
           </div>
         ) : (
@@ -388,21 +389,21 @@ export default function RoomsPage() {
                   {room.ha_area_id ? (
                     <span className="text-green-600 dark:text-green-400 flex items-center space-x-1">
                       <LinkIcon className="w-3 h-3" />
-                      <span>Verknuepft</span>
+                      <span>{t('rooms.haLinked')}</span>
                     </span>
                   ) : (
-                    <span className="text-gray-500">Nicht verknuepft</span>
+                    <span className="text-gray-500">{t('rooms.haNotLinked')}</span>
                   )}
                 </div>
 
                 {/* Devices Summary */}
                 <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-gray-500 dark:text-gray-400">Geraete:</span>
+                  <span className="text-gray-500 dark:text-gray-400">{t('rooms.devices')}:</span>
                   <span className="text-gray-600 dark:text-gray-300">
                     {room.device_count || 0}
                     {room.online_count > 0 && (
                       <span className="text-green-600 dark:text-green-400 ml-1">
-                        ({room.online_count} online)
+                        ({room.online_count} {t('common.online')})
                       </span>
                     )}
                   </span>
@@ -428,7 +429,7 @@ export default function RoomsPage() {
                           <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
                             <span className="text-gray-500 text-[10px]">{config.label}</span>
                             <span className={device.is_online ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}>
-                              {device.is_online ? 'online' : 'offline'}
+                              {device.is_online ? t('common.online') : t('common.offline')}
                             </span>
                           </div>
                         </div>
@@ -448,7 +449,7 @@ export default function RoomsPage() {
                       className="flex-1 btn bg-yellow-100 hover:bg-yellow-200 text-yellow-700 dark:bg-yellow-600/20 dark:hover:bg-yellow-600/40 dark:text-yellow-400 text-sm flex items-center justify-center space-x-1"
                     >
                       <Unlink className="w-4 h-4" />
-                      <span>Trennen</span>
+                      <span>{t('rooms.unlinkFromHA')}</span>
                     </button>
                   ) : (
                     <button
@@ -456,20 +457,20 @@ export default function RoomsPage() {
                       className="flex-1 btn bg-blue-100 hover:bg-blue-200 text-blue-600 dark:bg-blue-600/20 dark:hover:bg-blue-600/40 dark:text-blue-400 text-sm flex items-center justify-center space-x-1"
                     >
                       <LinkIcon className="w-4 h-4" />
-                      <span>Verknuepfen</span>
+                      <span>{t('rooms.linkToHA')}</span>
                     </button>
                   )}
                   <button
                     onClick={() => openEditModal(room)}
                     className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
-                    aria-label={`${room.name} bearbeiten`}
+                    aria-label={`${room.name} ${t('common.edit').toLowerCase()}`}
                   >
                     <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteRoom(room)}
                     className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-600/20 dark:hover:bg-red-600/40 dark:text-red-400"
-                    aria-label={`${room.name} löschen`}
+                    aria-label={`${room.name} ${t('common.delete').toLowerCase()}`}
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
                   </button>
@@ -484,11 +485,11 @@ export default function RoomsPage() {
       {showCreateModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Neuen Raum anlegen</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.createRoom')}</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
                 <input
                   type="text"
                   value={newRoomName}
@@ -499,7 +500,7 @@ export default function RoomsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Icon (optional)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
                 <input
                   type="text"
                   value={newRoomIcon}
@@ -507,7 +508,7 @@ export default function RoomsPage() {
                   placeholder="mdi:sofa"
                   className="input w-full"
                 />
-                <p className="text-xs text-gray-500 mt-1">Material Design Icon (z.B. mdi:sofa)</p>
+                <p className="text-xs text-gray-500 mt-1">{t('rooms.iconHint')}</p>
               </div>
             </div>
 
@@ -516,13 +517,13 @@ export default function RoomsPage() {
                 onClick={() => setShowCreateModal(false)}
                 className="flex-1 btn btn-secondary"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
               <button
                 onClick={createRoom}
                 className="flex-1 btn btn-primary"
               >
-                Erstellen
+                {t('common.create')}
               </button>
             </div>
           </div>
@@ -533,11 +534,11 @@ export default function RoomsPage() {
       {showEditModal && selectedRoom && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Raum bearbeiten</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.editRoom')}</h2>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Name</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
                 <input
                   type="text"
                   value={editRoomName}
@@ -548,7 +549,7 @@ export default function RoomsPage() {
               </div>
 
               <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">Icon (optional)</label>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
                 <input
                   type="text"
                   value={editRoomIcon}
@@ -559,7 +560,7 @@ export default function RoomsPage() {
               </div>
 
               <div className="text-sm text-gray-500">
-                Alias: @{selectedRoom.alias}
+                {t('rooms.alias')}: @{selectedRoom.alias}
               </div>
             </div>
 
@@ -568,7 +569,7 @@ export default function RoomsPage() {
                 onClick={() => setShowEditModal(false)}
                 className="flex-1 btn btn-secondary"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
               <button
                 onClick={updateRoom}
@@ -578,7 +579,7 @@ export default function RoomsPage() {
                 {updating ? (
                   <Loader className="w-4 h-4 animate-spin mx-auto" />
                 ) : (
-                  'Speichern'
+                  t('common.save')
                 )}
               </button>
             </div>
@@ -590,8 +591,8 @@ export default function RoomsPage() {
       {showLinkModal && selectedRoom && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Mit HA Area verknuepfen</h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">Raum: {selectedRoom.name}</p>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{t('rooms.linkToHAArea')}</h2>
+            <p className="text-gray-500 dark:text-gray-400 mb-4">{t('device.room')}: {selectedRoom.name}</p>
 
             <div className="space-y-4">
               {loadingAreas ? (
@@ -600,17 +601,17 @@ export default function RoomsPage() {
                 </div>
               ) : haAreas.length === 0 ? (
                 <p className="text-gray-500 dark:text-gray-400 text-center py-4">
-                  Keine Home Assistant Areas gefunden
+                  {t('rooms.noHAAreas')}
                 </p>
               ) : (
                 <div>
-                  <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">HA Area auswaehlen:</label>
+                  <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.selectArea')}:</label>
                   <select
                     value={selectedHAArea}
                     onChange={(e) => setSelectedHAArea(e.target.value)}
                     className="input w-full"
                   >
-                    <option value="">-- Area auswaehlen --</option>
+                    <option value="">{t('rooms.selectAreaPlaceholder')}</option>
                     {haAreas
                       .filter(a => !a.is_linked)
                       .map(area => (
@@ -622,7 +623,7 @@ export default function RoomsPage() {
                   </select>
                   {haAreas.filter(a => !a.is_linked).length === 0 && (
                     <p className="text-yellow-600 dark:text-yellow-400 text-sm mt-2">
-                      Alle HA Areas sind bereits verknuepft
+                      {t('rooms.allAreasLinked')}
                     </p>
                   )}
                 </div>
@@ -634,7 +635,7 @@ export default function RoomsPage() {
                 onClick={() => setShowLinkModal(false)}
                 className="flex-1 btn btn-secondary"
               >
-                Abbrechen
+                {t('common.cancel')}
               </button>
               <button
                 onClick={linkToHAArea}
@@ -644,7 +645,7 @@ export default function RoomsPage() {
                 {updating ? (
                   <Loader className="w-4 h-4 animate-spin mx-auto" />
                 ) : (
-                  'Verknuepfen'
+                  t('rooms.linkToHA')
                 )}
               </button>
             </div>
@@ -656,19 +657,19 @@ export default function RoomsPage() {
       {showSyncPanel && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">Home Assistant Synchronisation</h2>
+            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.haSyncTitle')}</h2>
 
             {/* Conflict Resolution */}
             <div className="mb-6">
-              <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">Konfliktloesung:</label>
+              <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.conflictResolution')}:</label>
               <select
                 value={conflictResolution}
                 onChange={(e) => setConflictResolution(e.target.value)}
                 className="input w-full"
               >
-                <option value="skip">Ueberspringen (bei Namenskollision)</option>
-                <option value="link">Verknuepfen (vorhandenen Raum mit HA verbinden)</option>
-                <option value="overwrite">Ueberschreiben (HA-Verknuepfung ersetzen)</option>
+                <option value="skip">{t('rooms.conflictSkip')}</option>
+                <option value="link">{t('rooms.conflictLink')}</option>
+                <option value="overwrite">{t('rooms.conflictOverwrite')}</option>
               </select>
             </div>
 
@@ -680,7 +681,7 @@ export default function RoomsPage() {
                 className="btn bg-green-600 hover:bg-green-700 text-white flex flex-col items-center py-4"
               >
                 <ArrowDownToLine className="w-6 h-6 mb-2" />
-                <span className="text-sm">Import</span>
+                <span className="text-sm">{t('rooms.import')}</span>
               </button>
               <button
                 onClick={exportToHA}
@@ -688,7 +689,7 @@ export default function RoomsPage() {
                 className="btn bg-blue-600 hover:bg-blue-700 text-white flex flex-col items-center py-4"
               >
                 <ArrowUpFromLine className="w-6 h-6 mb-2" />
-                <span className="text-sm">Export</span>
+                <span className="text-sm">{t('rooms.export')}</span>
               </button>
               <button
                 onClick={syncWithHA}
@@ -700,14 +701,14 @@ export default function RoomsPage() {
                 ) : (
                   <ArrowLeftRight className="w-6 h-6 mb-2" />
                 )}
-                <span className="text-sm">Sync</span>
+                <span className="text-sm">{t('rooms.sync')}</span>
               </button>
             </div>
 
             {/* HA Areas List */}
             <div>
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
-                Home Assistant Areas ({haAreas.length})
+                {t('rooms.haAreasCount', { count: haAreas.length })}
               </h3>
               {loadingAreas ? (
                 <div className="text-center py-4">
@@ -715,7 +716,7 @@ export default function RoomsPage() {
                 </div>
               ) : haAreas.length === 0 ? (
                 <p className="text-gray-500 dark:text-gray-400 text-center py-4">
-                  Keine HA Areas gefunden. Ist Home Assistant verbunden?
+                  {t('rooms.haNotConnected')}
                 </p>
               ) : (
                 <div className="space-y-2 max-h-60 overflow-y-auto">
@@ -734,7 +735,7 @@ export default function RoomsPage() {
                           <span>{area.linked_room_name}</span>
                         </span>
                       ) : (
-                        <span className="text-gray-500 text-sm">Nicht verknuepft</span>
+                        <span className="text-gray-500 text-sm">{t('rooms.haNotLinked')}</span>
                       )}
                     </div>
                   ))}
@@ -747,7 +748,7 @@ export default function RoomsPage() {
                 onClick={() => setShowSyncPanel(false)}
                 className="flex-1 btn btn-secondary"
               >
-                Schließen
+                {t('common.close')}
               </button>
             </div>
           </div>

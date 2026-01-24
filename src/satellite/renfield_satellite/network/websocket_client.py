@@ -59,6 +59,7 @@ class WebSocketClient:
         server_url: Optional[str] = None,
         reconnect_interval: int = 5,
         heartbeat_interval: int = 30,
+        language: str = "de",
     ):
         """
         Initialize WebSocket client.
@@ -69,12 +70,14 @@ class WebSocketClient:
             server_url: WebSocket URL (ws://...) - optional if using auto-discovery
             reconnect_interval: Seconds between reconnect attempts
             heartbeat_interval: Seconds between heartbeats
+            language: Language code for STT/TTS (e.g., 'de', 'en')
         """
         self.server_url = server_url
         self.satellite_id = satellite_id
         self.room = room
         self.reconnect_interval = reconnect_interval
         self.heartbeat_interval = heartbeat_interval
+        self.language = language
 
         self._ws: Optional["WebSocketClientProtocol"] = None
         self._state = ConnectionState.DISCONNECTED
@@ -253,6 +256,7 @@ class WebSocketClient:
             "type": "register",
             "satellite_id": self.satellite_id,
             "room": self.room,
+            "language": self.language,
             "capabilities": {
                 "local_wakeword": True,
                 "speaker": True,

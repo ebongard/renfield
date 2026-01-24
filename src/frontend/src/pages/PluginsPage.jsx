@@ -4,6 +4,7 @@
  * Admin page for viewing and managing plugins.
  */
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -13,6 +14,7 @@ import {
 } from 'lucide-react';
 
 export default function PluginsPage() {
+  const { t } = useTranslation();
   const { getAccessToken, hasPermission } = useAuth();
 
   const [plugins, setPlugins] = useState([]);
@@ -39,7 +41,7 @@ export default function PluginsPage() {
       setPlugins(response.data?.plugins || []);
       setPluginsEnabled(response.data?.plugins_enabled ?? true);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to load plugins');
+      setError(err.response?.data?.detail || t('plugins.failedToLoad'));
     } finally {
       setLoading(false);
     }
@@ -76,7 +78,7 @@ export default function PluginsPage() {
       setSuccess(response.data.message);
       loadPlugins();
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to toggle plugin');
+      setError(err.response?.data?.detail || t('plugins.failedToToggle'));
     } finally {
       setTogglingPlugin(null);
     }
@@ -94,12 +96,12 @@ export default function PluginsPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Plugins</h1>
-          <p className="text-gray-500 dark:text-gray-400">Manage available plugins and integrations</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('plugins.title')}</h1>
+          <p className="text-gray-500 dark:text-gray-400">{t('plugins.subtitle')}</p>
         </div>
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
-          <p className="text-gray-500 dark:text-gray-400">Loading plugins...</p>
+          <p className="text-gray-500 dark:text-gray-400">{t('plugins.loading')}</p>
         </div>
       </div>
     );
@@ -109,8 +111,8 @@ export default function PluginsPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Plugins</h1>
-        <p className="text-gray-500 dark:text-gray-400">Manage available plugins and integrations</p>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('plugins.title')}</h1>
+        <p className="text-gray-500 dark:text-gray-400">{t('plugins.subtitle')}</p>
       </div>
 
       {/* Alerts */}
@@ -138,7 +140,7 @@ export default function PluginsPage() {
           <div className="flex items-center space-x-3">
             <Info className="w-5 h-5 text-yellow-500" />
             <p className="text-yellow-700 dark:text-yellow-400">
-              Plugin system is disabled. Set <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code> to enable plugins.
+              {t('plugins.systemDisabled')} <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code>
             </p>
           </div>
         </div>
@@ -148,7 +150,7 @@ export default function PluginsPage() {
       <div className="flex flex-wrap gap-3">
         <button onClick={loadPlugins} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
-          <span>Refresh</span>
+          <span>{t('common.refresh')}</span>
         </button>
       </div>
 
@@ -156,21 +158,21 @@ export default function PluginsPage() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <div className="card text-center">
           <p className="text-3xl font-bold text-gray-900 dark:text-white">{plugins.length}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Total Plugins</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('plugins.totalPlugins')}</p>
         </div>
         <div className="card text-center">
           <p className="text-3xl font-bold text-green-600 dark:text-green-400">{plugins.filter(p => p.enabled).length}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Enabled</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('plugins.enabled')}</p>
         </div>
         <div className="card text-center">
           <p className="text-3xl font-bold text-gray-500 dark:text-gray-500">{plugins.filter(p => !p.enabled).length}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Disabled</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('plugins.disabled')}</p>
         </div>
         <div className="card text-center">
           <p className="text-3xl font-bold text-primary-600 dark:text-primary-400">
             {plugins.reduce((sum, p) => sum + (p.intents?.length || 0), 0)}
           </p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">Total Intents</p>
+          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('plugins.totalIntents')}</p>
         </div>
       </div>
 
@@ -179,9 +181,9 @@ export default function PluginsPage() {
         {plugins.length === 0 ? (
           <div className="card text-center py-12">
             <Puzzle className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
-            <p className="text-gray-500 dark:text-gray-400">No plugins found</p>
+            <p className="text-gray-500 dark:text-gray-400">{t('plugins.noPluginsFound')}</p>
             <p className="text-gray-400 dark:text-gray-500 text-sm mt-1">
-              Add plugin YAML files to the plugins directory
+              {t('plugins.addPluginYaml')}
             </p>
           </div>
         ) : (
@@ -208,18 +210,18 @@ export default function PluginsPage() {
                       {plugin.enabled ? (
                         <span className="flex items-center space-x-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-2 py-0.5 rounded">
                           <Power className="w-3 h-3" />
-                          <span>Enabled</span>
+                          <span>{t('plugins.enabled')}</span>
                         </span>
                       ) : (
                         <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-500 px-2 py-0.5 rounded">
                           <PowerOff className="w-3 h-3" />
-                          <span>Disabled</span>
+                          <span>{t('plugins.disabled')}</span>
                         </span>
                       )}
                     </div>
                     <p className="text-gray-500 dark:text-gray-400 text-sm truncate">{plugin.description}</p>
                     {plugin.author && (
-                      <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">by {plugin.author}</p>
+                      <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">{t('plugins.by', { author: plugin.author })}</p>
                     )}
                     <div className="flex flex-wrap gap-1 mt-2">
                       {plugin.intents?.slice(0, 3).map((intent) => (
@@ -232,7 +234,7 @@ export default function PluginsPage() {
                       ))}
                       {plugin.intents?.length > 3 && (
                         <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
-                          +{plugin.intents.length - 3} more
+                          {t('plugins.more', { count: plugin.intents.length - 3 })}
                         </span>
                       )}
                     </div>
@@ -244,7 +246,7 @@ export default function PluginsPage() {
                   <button
                     onClick={() => setSelectedPlugin(plugin)}
                     className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title="View details"
+                    title={t('plugins.viewDetails')}
                   >
                     <Info className="w-5 h-5" />
                   </button>
@@ -257,7 +259,7 @@ export default function PluginsPage() {
                           ? 'text-green-600 hover:text-green-500 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-900/20'
                           : 'text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700'
                       }`}
-                      title={plugin.enabled ? 'Disable plugin' : 'Enable plugin'}
+                      title={plugin.enabled ? t('plugins.disablePlugin') : t('plugins.enablePlugin')}
                     >
                       {togglingPlugin === plugin.name ? (
                         <Loader className="w-5 h-5 animate-spin" />
@@ -279,7 +281,7 @@ export default function PluginsPage() {
       <Modal
         isOpen={!!selectedPlugin}
         onClose={() => setSelectedPlugin(null)}
-        title={selectedPlugin?.name || 'Plugin Details'}
+        title={selectedPlugin?.name || t('plugins.pluginDetails')}
         maxWidth="max-w-2xl"
       >
         {selectedPlugin && (
@@ -287,24 +289,24 @@ export default function PluginsPage() {
             {/* Basic Info */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <p className="text-gray-400 dark:text-gray-500 text-sm">Version</p>
+                <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.version')}</p>
                 <p className="text-gray-900 dark:text-white">{selectedPlugin.version}</p>
               </div>
               <div>
-                <p className="text-gray-400 dark:text-gray-500 text-sm">Status</p>
+                <p className="text-gray-400 dark:text-gray-500 text-sm">{t('common.status')}</p>
                 <p className={selectedPlugin.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}>
-                  {selectedPlugin.enabled ? 'Enabled' : 'Disabled'}
+                  {selectedPlugin.enabled ? t('plugins.enabled') : t('plugins.disabled')}
                 </p>
               </div>
               {selectedPlugin.author && (
                 <div>
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">Author</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.author')}</p>
                   <p className="text-gray-900 dark:text-white">{selectedPlugin.author}</p>
                 </div>
               )}
               {selectedPlugin.rate_limit && (
                 <div>
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">Rate Limit</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.rateLimit')}</p>
                   <p className="text-gray-900 dark:text-white">{selectedPlugin.rate_limit} req/min</p>
                 </div>
               )}
@@ -312,7 +314,7 @@ export default function PluginsPage() {
 
             {/* Description */}
             <div>
-              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">Description</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">{t('common.description')}</p>
               <p className="text-gray-700 dark:text-gray-300">{selectedPlugin.description}</p>
             </div>
 
@@ -321,7 +323,7 @@ export default function PluginsPage() {
               <div>
                 <div className="flex items-center space-x-2 mb-2">
                   <Settings className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">Configuration Variables</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.configVariables')}</p>
                 </div>
                 <div className="bg-gray-100 dark:bg-gray-850 p-3 rounded-lg">
                   <div className="flex flex-wrap gap-2">
@@ -337,7 +339,7 @@ export default function PluginsPage() {
 
             {/* Enable Variable */}
             <div>
-              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">Enable Variable</p>
+              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">{t('plugins.enableVariable')}</p>
               <code className="text-sm bg-gray-100 text-primary-600 dark:bg-gray-850 dark:text-primary-400 px-2 py-1 rounded">
                 {selectedPlugin.enabled_var}=true
               </code>
@@ -348,7 +350,7 @@ export default function PluginsPage() {
               <div>
                 <div className="flex items-center space-x-2 mb-2">
                   <Code className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">Intents ({selectedPlugin.intents.length})</p>
+                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.intents')} ({selectedPlugin.intents.length})</p>
                 </div>
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {selectedPlugin.intents.map((intent) => (
@@ -368,7 +370,7 @@ export default function PluginsPage() {
                         </div>
                         {intent.parameters?.length > 0 && (
                           <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
-                            {intent.parameters.length} params
+                            {t('plugins.paramsCount', { count: intent.parameters.length })}
                           </span>
                         )}
                       </button>
@@ -379,7 +381,7 @@ export default function PluginsPage() {
 
                           {intent.parameters?.length > 0 && (
                             <div className="space-y-2">
-                              <p className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">Parameters</p>
+                              <p className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">{t('plugins.parameters')}</p>
                               {intent.parameters.map((param) => (
                                 <div key={param.name} className="bg-gray-100 dark:bg-gray-850 p-2 rounded">
                                   <div className="flex items-center space-x-2">
@@ -387,7 +389,7 @@ export default function PluginsPage() {
                                     <span className="text-gray-400 dark:text-gray-500 text-xs">({param.type})</span>
                                     {param.required && (
                                       <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 px-1 rounded">
-                                        required
+                                        {t('plugins.required')}
                                       </span>
                                     )}
                                   </div>
@@ -421,7 +423,7 @@ export default function PluginsPage() {
                 onClick={() => setSelectedPlugin(null)}
                 className="w-full btn btn-secondary"
               >
-                Close
+                {t('common.close')}
               </button>
             </div>
           </div>

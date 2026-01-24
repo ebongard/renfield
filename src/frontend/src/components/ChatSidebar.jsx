@@ -1,4 +1,5 @@
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { Plus, X, Loader } from 'lucide-react';
 import ConversationItem from './ConversationItem';
 import { groupConversationsByDate } from '../hooks/useChatSessions';
@@ -17,13 +18,14 @@ export default function ChatSidebar({
   onClose,
   loading
 }) {
+  const { t } = useTranslation();
   const grouped = groupConversationsByDate(conversations);
 
   const periodLabels = {
-    today: 'Heute',
-    yesterday: 'Gestern',
-    lastWeek: 'Letzte 7 Tage',
-    older: 'Älter'
+    today: t('chat.today'),
+    yesterday: t('chat.yesterday'),
+    lastWeek: t('chat.thisWeek'),
+    older: t('chat.older')
   };
 
   return (
@@ -47,18 +49,18 @@ export default function ChatSidebar({
           ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
         role="navigation"
-        aria-label="Konversationshistorie"
+        aria-label={t('chat.openConversations')}
       >
         {/* Header with New Chat Button */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <div className="flex items-center justify-between mb-4 md:mb-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white md:hidden">
-              Konversationen
+              {t('chat.conversations')}
             </h2>
             <button
               onClick={onClose}
               className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded md:hidden"
-              aria-label="Sidebar schließen"
+              aria-label={t('nav.closeMenu')}
             >
               <X className="w-5 h-5" aria-hidden="true" />
             </button>
@@ -67,27 +69,27 @@ export default function ChatSidebar({
           <button
             onClick={onNewChat}
             className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors font-medium"
-            aria-label="Neuen Chat starten"
+            aria-label={t('chat.newChat')}
           >
             <Plus className="w-4 h-4" aria-hidden="true" />
-            <span>Neuer Chat</span>
+            <span>{t('chat.newChat')}</span>
           </button>
         </div>
 
         {/* Conversation List */}
-        <div className="flex-1 overflow-y-auto" role="list" aria-label="Konversationsliste">
+        <div className="flex-1 overflow-y-auto" role="list" aria-label={t('chat.conversations')}>
           {loading ? (
             <div className="flex items-center justify-center py-8">
               <Loader className="w-6 h-6 text-gray-400 animate-spin" aria-hidden="true" />
-              <span className="sr-only">Lade Konversationen...</span>
+              <span className="sr-only">{t('chat.loadingConversation')}</span>
             </div>
           ) : conversations.length === 0 ? (
             <div className="px-4 py-8 text-center">
               <p className="text-sm text-gray-500">
-                Keine Konversationen vorhanden
+                {t('chat.noConversations')}
               </p>
               <p className="text-xs text-gray-400 dark:text-gray-600 mt-1">
-                Starte einen neuen Chat
+                {t('chat.startConversation')}
               </p>
             </div>
           ) : (

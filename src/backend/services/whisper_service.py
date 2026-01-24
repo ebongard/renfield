@@ -58,10 +58,19 @@ class WhisperService:
                 logger.error(f"❌ Fehler beim Laden des Whisper Modells: {e}")
                 raise
     
-    async def transcribe_file(self, audio_path: str) -> str:
-        """Audio-Datei transkribieren mit optionalem Preprocessing"""
+    async def transcribe_file(self, audio_path: str, language: str = None) -> str:
+        """
+        Audio-Datei transkribieren mit optionalem Preprocessing.
+
+        Args:
+            audio_path: Path to the audio file
+            language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
+        """
         if self.model is None:
             self.load_model()
+
+        # Use provided language or fall back to default
+        transcribe_language = language or self.language
 
         processed_path = None
         try:
@@ -77,7 +86,7 @@ class WhisperService:
             # fp16=False verhindert die Warnung auf CPU-only Systemen
             # beam_size=5 und best_of=5 für bessere Genauigkeit
             transcribe_opts = {
-                "language": self.language,
+                "language": transcribe_language,
                 "fp16": False,
                 "beam_size": 5,
                 "best_of": 5,
@@ -89,7 +98,7 @@ class WhisperService:
 
             text = result["text"]
 
-            logger.info(f"✅ Transkription erfolgreich: {len(text)} Zeichen")
+            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
             return text.strip()
         except Exception as e:
             logger.error(f"❌ Transkriptions-Fehler: {e}")
@@ -143,15 +152,22 @@ class WhisperService:
             logger.warning(f"⚠️ Preprocessing failed, using original audio: {e}")
             return None
     
-    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav") -> str:
-        """Audio aus Bytes transkribieren"""
+    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None) -> str:
+        """
+        Audio aus Bytes transkribieren.
+
+        Args:
+            audio_bytes: Raw audio bytes
+            filename: Original filename (used for extension)
+            language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
+        """
         # Temporäre Datei erstellen
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
 
         try:
-            return await self.transcribe_file(tmp_path)
+            return await self.transcribe_file(tmp_path, language=language)
         finally:
             # Temporäre Datei löschen
             Path(tmp_path).unlink(missing_ok=True)
@@ -159,7 +175,8 @@ class WhisperService:
     async def transcribe_with_speaker(
         self,
         audio_path: str,
-        db_session=None
+        db_session=None,
+        language: str = None
     ) -> dict:
         """
         Transcribe audio and identify speaker.
@@ -173,6 +190,7 @@ class WhisperService:
         Args:
             audio_path: Path to audio file
             db_session: Optional async database session for speaker lookup
+            language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
 
         Returns:
             {
@@ -187,6 +205,9 @@ class WhisperService:
         if self.model is None:
             self.load_model()
 
+        # Use provided language or fall back to default
+        transcribe_language = language or self.language
+
         # Preprocess audio FIRST (for both transcription and speaker recognition)
         processed_path = None
         transcribe_path = audio_path
@@ -199,7 +220,7 @@ class WhisperService:
         try:
             # Transcribe using preprocessed audio
             transcribe_opts = {
-                "language": self.language,
+                "language": transcribe_language,
                 "fp16": False,
                 "beam_size": 5,
                 "best_of": 5,
@@ -209,7 +230,7 @@ class WhisperService:
 
             result = self.model.transcribe(transcribe_path, **transcribe_opts)
             text = result["text"].strip()
-            logger.info(f"✅ Transkription erfolgreich: {len(text)} Zeichen")
+            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
 
             # Default speaker info
             speaker_info = {
@@ -398,7 +419,8 @@ class WhisperService:
         self,
         audio_bytes: bytes,
         filename: str = "audio.wav",
-        db_session=None
+        db_session=None,
+        language: str = None
     ) -> dict:
         """
         Transcribe audio bytes and identify speaker.
@@ -407,6 +429,7 @@ class WhisperService:
             audio_bytes: Raw audio bytes
             filename: Original filename
             db_session: Optional async database session
+            language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
 
         Returns:
             Same as transcribe_with_speaker
@@ -416,6 +439,6 @@ class WhisperService:
             tmp_path = tmp.name
 
         try:
-            return await self.transcribe_with_speaker(tmp_path, db_session)
+            return await self.transcribe_with_speaker(tmp_path, db_session, language=language)
         finally:
             Path(tmp_path).unlink(missing_ok=True)

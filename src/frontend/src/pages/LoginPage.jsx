@@ -4,11 +4,13 @@
  * Provides login form and optional registration link.
  */
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, UserPlus, Loader, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const { login, isAuthenticated, authEnabled, allowRegistration, loading: authLoading } = useAuth();
@@ -40,7 +42,7 @@ export default function LoginPage() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!username || !password) {
-      setError('Please enter username and password');
+      setError(t('auth.enterCredentials'));
       return;
     }
 
@@ -51,7 +53,7 @@ export default function LoginPage() {
       await login(username, password);
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');
+      setError(err.response?.data?.detail || t('auth.loginFailed'));
     } finally {
       setLoading(false);
     }
@@ -72,7 +74,7 @@ export default function LoginPage() {
         {/* Logo/Title */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Renfield</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2">Sign in to your account</p>
+          <p className="text-gray-500 dark:text-gray-400 mt-2">{t('auth.signInToAccount')}</p>
         </div>
 
         {/* Login Card */}
@@ -91,14 +93,14 @@ export default function LoginPage() {
             {/* Username */}
             <div>
               <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Username
+                {t('auth.username')}
               </label>
               <input
                 id="username"
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
-                placeholder="Enter your username"
+                placeholder={t('auth.enterUsername')}
                 className="input w-full"
                 autoComplete="username"
                 autoFocus
@@ -109,7 +111,7 @@ export default function LoginPage() {
             {/* Password */}
             <div>
               <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                Password
+                {t('auth.password')}
               </label>
               <div className="relative">
                 <input
@@ -117,7 +119,7 @@ export default function LoginPage() {
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
+                  placeholder={t('auth.enterPassword')}
                   className="input w-full pr-10"
                   autoComplete="current-password"
                   disabled={loading}
@@ -148,7 +150,7 @@ export default function LoginPage() {
               ) : (
                 <>
                   <LogIn className="w-5 h-5" />
-                  <span>Sign In</span>
+                  <span>{t('auth.signIn')}</span>
                 </>
               )}
             </button>
@@ -158,12 +160,12 @@ export default function LoginPage() {
           {allowRegistration && (
             <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
               <p className="text-gray-600 dark:text-gray-400">
-                Don't have an account?{' '}
+                {t('auth.dontHaveAccount')}{' '}
                 <Link
                   to="/register"
                   className="text-primary-600 hover:text-primary-500 dark:text-primary-500 dark:hover:text-primary-400 font-medium"
                 >
-                  Create one
+                  {t('auth.createOne')}
                 </Link>
               </p>
             </div>
@@ -172,7 +174,7 @@ export default function LoginPage() {
 
         {/* Footer */}
         <p className="text-center text-gray-500 text-sm mt-8">
-          Renfield - Personal AI Assistant
+          Renfield - {t('auth.personalAssistant')}
         </p>
       </div>
     </div>

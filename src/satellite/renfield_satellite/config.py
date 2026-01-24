@@ -20,6 +20,7 @@ class SatelliteConfig:
     """Satellite identification"""
     id: str = "sat-default"
     room: str = "Default Room"
+    language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
 
 
 @dataclass
@@ -136,6 +137,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         sat = config_data["satellite"]
         config.satellite.id = sat.get("id", config.satellite.id)
         config.satellite.room = sat.get("room", config.satellite.room)
+        config.satellite.language = sat.get("language", config.satellite.language)
 
     if "server" in config_data:
         srv = config_data["server"]
@@ -190,6 +192,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.satellite.id = os.environ["RENFIELD_SATELLITE_ID"]
     if os.environ.get("RENFIELD_SATELLITE_ROOM"):
         config.satellite.room = os.environ["RENFIELD_SATELLITE_ROOM"]
+    if os.environ.get("RENFIELD_SATELLITE_LANGUAGE"):
+        config.satellite.language = os.environ["RENFIELD_SATELLITE_LANGUAGE"]
     if os.environ.get("RENFIELD_SERVER_URL"):
         config.server.url = os.environ["RENFIELD_SERVER_URL"]
     if os.environ.get("RENFIELD_AUTO_DISCOVER"):
