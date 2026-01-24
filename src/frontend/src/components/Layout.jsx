@@ -188,9 +188,8 @@ export default function Layout({ children }) {
               <Menu className="w-6 h-6" aria-hidden="true" />
             </button>
 
-            <Link to="/" className="flex items-center space-x-2">
-              <img src="/logo-icon.svg" alt="Renfield" className="w-8 h-8 object-contain" />
-              <span className="text-xl font-bold text-gray-900 dark:text-white hidden sm:block leading-none">Renfield</span>
+            <Link to="/" className="flex items-center">
+              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-10 w-auto" />
             </Link>
           </div>
 
@@ -248,9 +247,8 @@ export default function Layout({ children }) {
       >
         {/* Sidebar Header */}
         <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700">
-          <Link to="/" onClick={handleNavClick} className="flex items-center space-x-2">
-            <img src="/logo-icon.svg" alt="Renfield" className="w-8 h-8" />
-            <span className="text-xl font-bold text-gray-900 dark:text-white">Renfield</span>
+          <Link to="/" onClick={handleNavClick} className="flex items-center">
+            <img src="/renfield-logo-header.svg" alt="Renfield" className="h-9 w-auto" />
           </Link>
 
           <button

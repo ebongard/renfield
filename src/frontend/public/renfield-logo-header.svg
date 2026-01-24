@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 70" width="280" height="70">
+  <defs>
+    <linearGradient id="batGradientHeader" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#C41E3A"/>
+      <stop offset="50%" style="stop-color:#9B1B30"/>
+      <stop offset="100%" style="stop-color:#722F37"/>
+    </linearGradient>
+
+    <filter id="glowHeader" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Fledermaus -->
+  <g transform="translate(5, 5)">
+    <ellipse cx="30" cy="30" rx="10" ry="12" fill="url(#batGradientHeader)"/>
+
+    <!-- Linker Flügel -->
+    <path d="M20 26
+             Q5 14, 2 30
+             Q5 28, 7 32
+             Q5 26, 10 34
+             Q8 30, 13 37
+             Q12 34, 17 39
+             Q15 36, 20 38
+             Z"
+          fill="url(#batGradientHeader)"/>
+
+    <!-- Rechter Flügel -->
+    <path d="M40 26
+             Q55 14, 58 30
+             Q55 28, 53 32
+             Q55 26, 50 34
+             Q52 30, 47 37
+             Q48 34, 43 39
+             Q45 36, 40 38
+             Z"
+          fill="url(#batGradientHeader)"/>
+
+    <!-- Ohren -->
+    <path d="M24 20 L27 12 L30 20 Z" fill="url(#batGradientHeader)"/>
+    <path d="M30 20 L33 12 L36 20 Z" fill="url(#batGradientHeader)"/>
+
+    <!-- Augen -->
+    <circle cx="27" cy="29" r="3" fill="#00FFD0" filter="url(#glowHeader)"/>
+    <circle cx="33" cy="29" r="3" fill="#00FFD0" filter="url(#glowHeader)"/>
+    <circle cx="27" cy="29" r="1.2" fill="#FFFFFF"/>
+    <circle cx="33" cy="29" r="1.2" fill="#FFFFFF"/>
+  </g>
+
+  <!-- Schriftzug -->
+  <text x="70" y="46"
+        font-family="Georgia, 'Times New Roman', serif"
+        font-size="36"
+        font-weight="bold"
+        letter-spacing="3"
+        fill="#F0E6D3">
+    RENFIELD
+  </text>
+
+  <!-- Akzent-Linie -->
+  <rect x="70" y="54" width="200" height="2" fill="#C41E3A" rx="1"/>
+  <rect x="70" y="54" width="200" height="2" fill="#00FFD0" rx="1" opacity="0.3"/>
+</svg>
