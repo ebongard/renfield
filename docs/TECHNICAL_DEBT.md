@@ -22,9 +22,9 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 ### 🔴 Kritisch
 
-#### 1. God Class: main.py (2130 Zeilen)
+#### 1. God Class: main.py (2130 → 1986 Zeilen) 🔄 In Arbeit
 
-**Problem:** Die Datei `src/backend/main.py` enthält 2130 Zeilen Code und vereint zu viele Verantwortlichkeiten:
+**Problem:** Die Datei `src/backend/main.py` enthält zu viele Verantwortlichkeiten:
 - FastAPI App-Konfiguration
 - WebSocket-Handler (Chat, Device, Satellite)
 - Lifecycle-Management
@@ -32,18 +32,27 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 **Auswirkung:** Schwer zu warten, testen und erweitern.
 
-**Empfehlung:** Refactoring in separate Module:
+**Fortschritt:**
+- ✅ Phase 1: Shared Utilities extrahiert (2026-01-25)
+  - `api/websocket/shared.py` erstellt
+  - `ConversationSessionState`, `is_followup_question()`, `get_whisper_service()` ausgelagert
+  - 144 Zeilen reduziert (2130 → 1986)
+- ⬜ Phase 2: WebSocket-Handler extrahieren
+- ⬜ Phase 3: Lifecycle-Management extrahieren
+
+**Zielstruktur:**
 ```
 api/
 ├── websocket/
+│   ├── __init__.py      ✅
+│   ├── shared.py        ✅
 │   ├── chat_handler.py
 │   ├── device_handler.py
 │   └── satellite_handler.py
-├── middleware/
 └── lifecycle.py
 ```
 
-**Aufwand:** ~2-3 Tage
+**Aufwand:** ~2-3 Tage (Phase 1 abgeschlossen)
 
 ---
 
@@ -388,5 +397,6 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | main.py Refactoring Phase 1: Shared Utilities extrahiert (#27) |
 | 2026-01-25 | Bare Except Clauses im Backend behoben (#27) |
 | 2026-01-25 | Initial Technical Debt Analyse |
