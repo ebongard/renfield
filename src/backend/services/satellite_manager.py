@@ -58,6 +58,14 @@ class SatelliteMetrics:
     updated_at: float = field(default_factory=time.time)
 
 
+class UpdateStatus(str, Enum):
+    """Satellite update states"""
+    NONE = "none"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 @dataclass
 class SatelliteInfo:
     """Information about a connected satellite"""
@@ -72,6 +80,12 @@ class SatelliteInfo:
     room_id: Optional[int] = None  # Database room ID (populated after DB sync)
     language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
     metrics: Dict[str, Any] = field(default_factory=dict)  # Live metrics from heartbeat
+    # Version and update tracking
+    version: str = "unknown"
+    update_status: UpdateStatus = UpdateStatus.NONE
+    update_stage: Optional[str] = None  # downloading, verifying, backing_up, etc.
+    update_progress: int = 0  # 0-100
+    update_error: Optional[str] = None
 
 
 @dataclass
@@ -122,7 +136,8 @@ class SatelliteManager:
         room: str,
         websocket: WebSocket,
         capabilities: Dict[str, Any],
-        language: str = "de"
+        language: str = "de",
+        version: str = "unknown"
     ) -> bool:
         """
         Register a new satellite connection.
@@ -133,6 +148,7 @@ class SatelliteManager:
             websocket: WebSocket connection to satellite
             capabilities: Hardware capabilities dict
             language: Language code for STT/TTS (e.g., 'de', 'en')
+            version: Satellite software version
 
         Returns:
             True if registration successful
@@ -162,10 +178,11 @@ class SatelliteManager:
                 room=room,
                 websocket=websocket,
                 capabilities=caps,
-                language=language
+                language=language,
+                version=version
             )
 
-            logger.info(f"✅ Satellite registered: {satellite_id} in {room}")
+            logger.info(f"✅ Satellite registered: {satellite_id} in {room} (v{version})")
             logger.info(f"   Capabilities: wakeword={caps.local_wakeword}, speaker={caps.speaker}, leds={caps.led_count}")
 
             # Track event
@@ -483,17 +500,22 @@ class SatelliteManager:
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
 
-    def update_heartbeat(self, satellite_id: str, metrics: Optional[Dict[str, Any]] = None):
+    def update_heartbeat(self, satellite_id: str, metrics: Optional[Dict[str, Any]] = None, version: Optional[str] = None):
         """
         Update satellite heartbeat timestamp and optional metrics.
 
         Args:
             satellite_id: ID of the satellite
             metrics: Optional metrics dict from heartbeat message
+            version: Optional version from heartbeat message
         """
         if satellite_id in self.satellites:
             sat = self.satellites[satellite_id]
             sat.last_heartbeat = time.time()
+
+            # Update version if provided
+            if version and version != "unknown":
+                sat.version = version
 
             # Update metrics if provided
             if metrics:
@@ -589,7 +611,13 @@ class SatelliteManager:
                     "local_wakeword": sat.capabilities.local_wakeword,
                     "speaker": sat.capabilities.speaker,
                     "led_count": sat.capabilities.led_count
-                }
+                },
+                # Version and update info
+                "version": sat.version,
+                "update_status": sat.update_status.value if sat.update_status else None,
+                "update_stage": sat.update_stage,
+                "update_progress": sat.update_progress,
+                "update_error": sat.update_error
             })
         return result
 
@@ -597,6 +625,41 @@ class SatelliteManager:
         """Set the database room ID for a satellite after DB sync"""
         if satellite_id in self.satellites:
             self.satellites[satellite_id].room_id = room_id
+
+    def set_update_status(
+        self,
+        satellite_id: str,
+        status: UpdateStatus,
+        stage: Optional[str] = None,
+        progress: int = 0,
+        error: Optional[str] = None
+    ):
+        """
+        Update the update status for a satellite.
+
+        Args:
+            satellite_id: ID of the satellite
+            status: Current update status
+            stage: Current update stage (downloading, verifying, etc.)
+            progress: Progress percentage (0-100)
+            error: Error message if update failed
+        """
+        if satellite_id in self.satellites:
+            sat = self.satellites[satellite_id]
+            sat.update_status = status
+            sat.update_stage = stage
+            sat.update_progress = progress
+            sat.update_error = error
+            logger.info(f"📡 Satellite {satellite_id} update: {status.value} - {stage} ({progress}%)")
+
+    def clear_update_status(self, satellite_id: str):
+        """Clear the update status for a satellite after completion or reset"""
+        if satellite_id in self.satellites:
+            sat = self.satellites[satellite_id]
+            sat.update_status = UpdateStatus.NONE
+            sat.update_stage = None
+            sat.update_progress = 0
+            sat.update_error = None
 
     def get_satellite(self, satellite_id: str) -> Optional[SatelliteInfo]:
         """Get satellite info by ID"""

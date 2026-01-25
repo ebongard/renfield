@@ -216,6 +216,9 @@ make test-coverage
 
 # Deploy to GitHub
 ./bin/deploy.sh
+
+# Deploy satellite code to Raspberry Pi
+./bin/deploy-satellite.sh [hostname] [user]
 ```
 
 ### Makefile Commands
@@ -718,10 +721,32 @@ src/satellite/
 │   ├── hardware/
 │   │   ├── led.py            # APA102 RGB LED control
 │   │   └── button.py         # GPIO button
-│   └── network/
-│       └── websocket_client.py
+│   ├── network/
+│   │   └── websocket_client.py
+│   └── update/
+│       └── update_manager.py # OTA update handling
 └── config/
     └── satellite.yaml        # Example configuration
+```
+
+### Satellite OTA Updates
+
+Satellites support Over-the-Air (OTA) updates via the Web-UI. See `docs/SATELLITE_OTA_UPDATES.md` for full documentation.
+
+**Key Components:**
+- `src/backend/services/satellite_update_service.py` - Backend update service
+- `src/satellite/renfield_satellite/update/update_manager.py` - Satellite update manager
+- `src/frontend/src/pages/SatellitesPage.jsx` - Update UI
+
+**Configuration:**
+```bash
+# .env
+SATELLITE_LATEST_VERSION=1.1.0
+```
+
+**Manual Deployment:**
+```bash
+./bin/deploy-satellite.sh [hostname] [user]
 ```
 
 ### Frontend Structure

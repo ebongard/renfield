@@ -531,6 +531,28 @@
       "processing": "PROCESSING",
       "speaking": "SPEAKING",
       "error": "ERROR"
+    },
+    "software": "Software",
+    "currentVersion": "Current Version",
+    "latestVersion": "Latest Version",
+    "updateAvailable": "Update",
+    "updating": "Updating...",
+    "updateNow": "Update Now",
+    "upToDate": "Up to date",
+    "updateInProgress": "Update in progress...",
+    "updateFailed": "Update Failed",
+    "updateError": "Failed to trigger update",
+    "updateStage": {
+      "idle": "Ready",
+      "downloading": "Downloading package...",
+      "verifying": "Verifying integrity...",
+      "backing_up": "Creating backup...",
+      "extracting": "Extracting files...",
+      "installing": "Installing update...",
+      "restarting": "Restarting service...",
+      "completed": "Completed",
+      "failed": "Failed",
+      "rolling_back": "Restoring backup..."
     }
   },
   "settings": {

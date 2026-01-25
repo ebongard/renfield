@@ -531,6 +531,28 @@
       "processing": "VERARBEITET",
       "speaking": "SPRICHT",
       "error": "FEHLER"
+    },
+    "software": "Software",
+    "currentVersion": "Aktuelle Version",
+    "latestVersion": "Neueste Version",
+    "updateAvailable": "Update verfügbar",
+    "updating": "Wird aktualisiert...",
+    "updateNow": "Jetzt aktualisieren",
+    "upToDate": "Aktuell",
+    "updateInProgress": "Update wird durchgeführt...",
+    "updateFailed": "Update fehlgeschlagen",
+    "updateError": "Update konnte nicht gestartet werden",
+    "updateStage": {
+      "idle": "Bereit",
+      "downloading": "Lade Paket herunter...",
+      "verifying": "Prüfe Integrität...",
+      "backing_up": "Erstelle Backup...",
+      "extracting": "Entpacke Dateien...",
+      "installing": "Installiere Update...",
+      "restarting": "Starte Dienst neu...",
+      "completed": "Abgeschlossen",
+      "failed": "Fehlgeschlagen",
+      "rolling_back": "Stelle Backup wieder her..."
     }
   },
   "settings": {

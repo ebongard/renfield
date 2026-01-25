@@ -13,6 +13,7 @@ Raspberry Pi-based satellite voice assistant for the Renfield ecosystem. Enables
 ## Features
 
 - **Auto-discovery**: Automatically finds Renfield backend on the network (no manual URL needed)
+- **OTA Updates**: Over-the-air software updates via Web-UI (see [docs/SATELLITE_OTA_UPDATES.md](../../docs/SATELLITE_OTA_UPDATES.md))
 - Local wake word detection (openwakeword with ONNX)
 - WebSocket streaming to Renfield backend
 - Visual feedback via RGB LEDs

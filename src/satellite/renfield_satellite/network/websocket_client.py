@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from renfield_satellite import __version__
+
 try:
     import websockets
     from websockets.client import WebSocketClientProtocol
@@ -101,6 +103,7 @@ class WebSocketClient:
         self._on_disconnected: Optional[Callable[[], None]] = None
         self._on_error: Optional[Callable[[str], None]] = None
         self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
+        self._on_update_request: Optional[Callable[[str, str, str, int], None]] = None  # version, url, checksum, size
 
         # Tasks
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -175,6 +178,10 @@ class WebSocketClient:
     def on_config_update(self, callback: Callable[["ServerConfig"], None]):
         """Register callback for server config updates (wake word settings)"""
         self._on_config_update = callback
+
+    def on_update_request(self, callback: Callable[[str, str, str, int], None]):
+        """Register callback for OTA update requests (version, url, checksum, size)"""
+        self._on_update_request = callback
 
     def set_metrics_callback(self, callback: Callable[[], Dict[str, Any]]):
         """Register callback to get current metrics for heartbeat"""
@@ -268,6 +275,7 @@ class WebSocketClient:
             "satellite_id": self.satellite_id,
             "room": self.room,
             "language": self.language,
+            "version": __version__,
             "capabilities": {
                 "local_wakeword": True,
                 "speaker": True,
@@ -454,6 +462,16 @@ class WebSocketClient:
             if self._on_disconnected:
                 self._on_disconnected()
 
+        elif msg_type == "update_request":
+            # OTA update request from server
+            target_version = data.get("target_version", "unknown")
+            package_url = data.get("package_url", "")
+            checksum = data.get("checksum", "")
+            size_bytes = data.get("size_bytes", 0)
+            print(f"📥 Update request received: v{target_version}")
+            if self._on_update_request:
+                self._on_update_request(target_version, package_url, checksum, size_bytes)
+
     async def _heartbeat_loop(self):
         """Background task sending periodic heartbeats with metrics"""
         while self._running and self._ws:
@@ -467,7 +485,8 @@ class WebSocketClient:
                     heartbeat = {
                         "type": "heartbeat",
                         "status": "idle",  # Could be more dynamic
-                        "uptime_seconds": uptime
+                        "uptime_seconds": uptime,
+                        "version": __version__
                     }
 
                     # Add metrics if callback is set
@@ -594,3 +613,78 @@ class WebSocketClient:
 
         status_emoji = "✅" if success else "⚠️"
         print(f"{status_emoji} Config ack sent: active={active_keywords}, failed={failed_keywords or []}")
+
+    async def send_update_progress(
+        self,
+        stage: str,
+        progress: int,
+        message: str = ""
+    ):
+        """
+        Send update progress to server.
+
+        Args:
+            stage: Current update stage (downloading, verifying, etc.)
+            progress: Progress percentage (0-100)
+            message: Optional status message
+        """
+        if not self.is_connected:
+            return
+
+        await self._send({
+            "type": "update_progress",
+            "stage": stage,
+            "progress": progress,
+            "message": message
+        })
+
+    async def send_update_complete(
+        self,
+        success: bool,
+        old_version: str,
+        new_version: str,
+        error: Optional[str] = None
+    ):
+        """
+        Send update completion status to server.
+
+        Args:
+            success: Whether the update succeeded
+            old_version: Previous version
+            new_version: New version (if successful)
+            error: Error message (if failed)
+        """
+        if not self.is_connected:
+            return
+
+        await self._send({
+            "type": "update_complete",
+            "success": success,
+            "old_version": old_version,
+            "new_version": new_version,
+            "error": error
+        })
+
+    async def send_update_failed(
+        self,
+        stage: str,
+        error: str,
+        rolled_back: bool = False
+    ):
+        """
+        Send update failure notification to server.
+
+        Args:
+            stage: Stage where failure occurred
+            error: Error message
+            rolled_back: Whether rollback was performed
+        """
+        if not self.is_connected:
+            return
+
+        await self._send({
+            "type": "update_failed",
+            "stage": stage,
+            "error": error,
+            "rolled_back": rolled_back
+        })

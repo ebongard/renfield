@@ -90,6 +90,9 @@ class Settings(BaseSettings):
     wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)
     wake_word_threshold: float = 0.5
     wake_word_cooldown_ms: int = 2000
+
+    # Satellite OTA Updates
+    satellite_latest_version: str = "1.0.0"  # Latest available satellite version
     
     # RAG (Retrieval-Augmented Generation)
     rag_enabled: bool = True

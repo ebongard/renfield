@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from services.satellite_manager import get_satellite_manager, SatelliteState
+from utils.config import settings
 
 
 router = APIRouter()
@@ -67,6 +68,13 @@ class SatelliteResponse(BaseModel):
     capabilities: SatelliteCapabilitiesResponse
     metrics: SatelliteMetricsResponse
     language: str = "de"
+    # Version and update info
+    version: str = "unknown"
+    update_available: bool = False
+    update_status: Optional[str] = None  # none, in_progress, completed, failed
+    update_stage: Optional[str] = None  # downloading, verifying, backing_up, etc.
+    update_progress: int = 0
+    update_error: Optional[str] = None
 
 
 class SatelliteListResponse(BaseModel):
@@ -75,6 +83,7 @@ class SatelliteListResponse(BaseModel):
     total_count: int
     online_count: int
     active_sessions: int
+    latest_version: str  # Latest available satellite version
 
 
 class SatelliteEventResponse(BaseModel):
@@ -97,6 +106,28 @@ class SatelliteHistoryResponse(BaseModel):
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+def _is_update_available(current_version: str, latest_version: str) -> bool:
+    """Check if an update is available by comparing version strings"""
+    if current_version == "unknown":
+        return False
+
+    try:
+        # Parse version strings (e.g., "1.0.0" -> [1, 0, 0])
+        current_parts = [int(x) for x in current_version.split(".")]
+        latest_parts = [int(x) for x in latest_version.split(".")]
+
+        # Pad shorter version with zeros
+        while len(current_parts) < len(latest_parts):
+            current_parts.append(0)
+        while len(latest_parts) < len(current_parts):
+            latest_parts.append(0)
+
+        # Compare version parts
+        return latest_parts > current_parts
+    except (ValueError, AttributeError):
+        return False
+
 
 def _satellite_to_response(sat_id: str, sat_data: Dict[str, Any]) -> SatelliteResponse:
     """Convert satellite data to response model"""
@@ -127,6 +158,10 @@ def _satellite_to_response(sat_id: str, sat_data: Dict[str, Any]) -> SatelliteRe
                 transcription=session.transcription
             )
 
+    # Get version info
+    version = sat_data.get("version", "unknown")
+    update_available = _is_update_available(version, settings.satellite_latest_version)
+
     return SatelliteResponse(
         satellite_id=sat_id,
         room=sat_data["room"],
@@ -140,7 +175,14 @@ def _satellite_to_response(sat_id: str, sat_data: Dict[str, Any]) -> SatelliteRe
         current_session=current_session,
         capabilities=SatelliteCapabilitiesResponse(**sat_data["capabilities"]),
         metrics=SatelliteMetricsResponse(**metrics_data),
-        language=getattr(sat, "language", "de") if sat else "de"
+        language=getattr(sat, "language", "de") if sat else "de",
+        # Version and update info
+        version=version,
+        update_available=update_available,
+        update_status=sat_data.get("update_status"),
+        update_stage=sat_data.get("update_stage"),
+        update_progress=sat_data.get("update_progress", 0),
+        update_error=sat_data.get("update_error")
     )
 
 
@@ -172,9 +214,106 @@ async def list_satellites():
         satellites=responses,
         total_count=len(responses),
         online_count=len(responses),  # All returned are online
-        active_sessions=active_sessions
+        active_sessions=active_sessions,
+        latest_version=settings.satellite_latest_version
     )
 
+
+# =============================================================================
+# OTA Update Endpoints (MUST be before /{satellite_id} to avoid path conflicts)
+# =============================================================================
+
+class VersionInfoResponse(BaseModel):
+    """Version information response"""
+    latest_version: str
+    satellites: List[Dict[str, Any]]  # List of satellite version summaries
+
+
+class UpdateInitiateResponse(BaseModel):
+    """Response for update initiation"""
+    success: bool
+    message: str
+    target_version: Optional[str] = None
+
+
+class UpdateStatusResponse(BaseModel):
+    """Response for update status query"""
+    satellite_id: str
+    version: str
+    update_available: bool
+    update_status: Optional[str] = None
+    update_stage: Optional[str] = None
+    update_progress: int = 0
+    update_error: Optional[str] = None
+
+
+@router.get("/versions", response_model=VersionInfoResponse)
+async def get_versions():
+    """
+    Get version information for all satellites.
+
+    Returns the latest available version and version status of all satellites.
+    """
+    from services.satellite_update_service import get_satellite_update_service
+
+    update_service = get_satellite_update_service()
+    manager = get_satellite_manager()
+
+    satellites_data = manager.get_all_satellites()
+    satellite_versions = []
+
+    for sat_data in satellites_data:
+        version = sat_data.get("version", "unknown")
+        satellite_versions.append({
+            "satellite_id": sat_data["satellite_id"],
+            "version": version,
+            "update_available": update_service.is_update_available(version),
+            "update_status": sat_data.get("update_status")
+        })
+
+    return VersionInfoResponse(
+        latest_version=update_service.get_latest_version(),
+        satellites=satellite_versions
+    )
+
+
+@router.get("/update-package")
+async def get_update_package():
+    """
+    Download the satellite update package.
+
+    Returns the tarball containing the latest satellite code.
+    """
+    from fastapi.responses import FileResponse
+    from services.satellite_update_service import get_satellite_update_service
+
+    update_service = get_satellite_update_service()
+    package_info = update_service.get_package_info()
+
+    if not package_info or not package_info.get("path"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Update package not available"
+        )
+
+    package_path = package_info["path"]
+    version = package_info["version"]
+
+    return FileResponse(
+        path=package_path,
+        media_type="application/gzip",
+        filename=f"renfield-satellite-{version}.tar.gz",
+        headers={
+            "X-Package-Version": version,
+            "X-Package-Checksum": package_info["checksum"],
+            "X-Package-Size": str(package_info["size"])
+        }
+    )
+
+
+# =============================================================================
+# Satellite-specific Endpoints
+# =============================================================================
 
 @router.get("/{satellite_id}", response_model=SatelliteResponse)
 async def get_satellite(satellite_id: str):
@@ -332,3 +471,60 @@ async def ping_satellite(satellite_id: str):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to ping satellite: {str(e)}"
         )
+
+
+@router.post("/{satellite_id}/update", response_model=UpdateInitiateResponse)
+async def initiate_update(satellite_id: str):
+    """
+    Initiate an OTA update for a specific satellite.
+
+    Sends an update request to the satellite which will then download,
+    install, and restart with the new version.
+    """
+    from services.satellite_update_service import get_satellite_update_service
+
+    update_service = get_satellite_update_service()
+    result = await update_service.initiate_update(satellite_id)
+
+    if not result["success"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=result["message"]
+        )
+
+    return UpdateInitiateResponse(
+        success=result["success"],
+        message=result["message"],
+        target_version=result.get("target_version")
+    )
+
+
+@router.get("/{satellite_id}/update-status", response_model=UpdateStatusResponse)
+async def get_update_status(satellite_id: str):
+    """
+    Get the current update status for a satellite.
+
+    Returns version info and update progress if an update is in progress.
+    """
+    from services.satellite_update_service import get_satellite_update_service
+
+    manager = get_satellite_manager()
+    sat = manager.get_satellite(satellite_id)
+
+    if not sat:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Satellite '{satellite_id}' not found or not connected"
+        )
+
+    update_service = get_satellite_update_service()
+
+    return UpdateStatusResponse(
+        satellite_id=satellite_id,
+        version=sat.version,
+        update_available=update_service.is_update_available(sat.version),
+        update_status=sat.update_status.value if sat.update_status else None,
+        update_stage=sat.update_stage,
+        update_progress=sat.update_progress,
+        update_error=sat.update_error
+    )

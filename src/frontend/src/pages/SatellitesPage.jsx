@@ -10,7 +10,7 @@ import apiClient from '../utils/axios';
 import {
   Satellite, Wifi, WifiOff, Mic, Volume2, Cpu, Thermometer,
   Activity, Clock, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
-  ChevronUp, Radio, Zap, MemoryStick
+  ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package
 } from 'lucide-react';
 
 // Audio level visualization component
@@ -61,9 +61,22 @@ function StateBadge({ state }) {
   );
 }
 
+// Progress bar for update
+function UpdateProgressBar({ progress, className = '' }) {
+  return (
+    <div className={`w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden ${className}`}>
+      <div
+        className="h-full bg-blue-500 transition-all duration-300"
+        style={{ width: `${progress}%` }}
+      />
+    </div>
+  );
+}
+
 // Single satellite card
-function SatelliteCard({ satellite, expanded, onToggle }) {
+function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate }) {
   const { t } = useTranslation();
+  const [updating, setUpdating] = useState(false);
 
   const formatDuration = (seconds) => {
     if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -78,8 +91,19 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
     return t('satellites.hoursAgo', '{{count}}h ago', { count: Math.floor(seconds / 3600) });
   };
 
+  const handleUpdate = async () => {
+    setUpdating(true);
+    try {
+      await onUpdate(satellite.satellite_id);
+    } finally {
+      setUpdating(false);
+    }
+  };
+
   const metrics = satellite.metrics || {};
   const hasActiveSession = satellite.has_active_session;
+  const hasUpdate = satellite.update_available && satellite.update_status !== 'in_progress';
+  const isUpdating = satellite.update_status === 'in_progress';
 
   return (
     <div className="card">
@@ -103,6 +127,27 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Version badge */}
+          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-1 rounded">
+            v{satellite.version || 'unknown'}
+          </span>
+
+          {/* Update available indicator */}
+          {hasUpdate && !isUpdating && (
+            <span className="inline-flex items-center gap-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-1 rounded">
+              <ArrowUpCircle className="w-3 h-3" />
+              {t('satellites.updateAvailable', 'Update')}
+            </span>
+          )}
+
+          {/* Updating indicator */}
+          {isUpdating && (
+            <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 px-2 py-1 rounded">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {t('satellites.updating', 'Updating...')}
+            </span>
+          )}
+
           <StateBadge state={satellite.state} />
           {expanded ? (
             <ChevronUp className="w-5 h-5 text-gray-400" />
@@ -259,6 +304,81 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
               </span>
             )}
           </div>
+
+          {/* Software / Update section */}
+          <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
+            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2 mb-3">
+              <Package className="w-4 h-4" />
+              {t('satellites.software', 'Software')}
+            </h4>
+
+            <div className="flex items-center justify-between text-sm mb-3">
+              <div>
+                <span className="text-gray-500 dark:text-gray-400">{t('satellites.currentVersion', 'Current Version')}:</span>
+                <span className="ml-2 font-medium text-gray-900 dark:text-white">v{satellite.version || 'unknown'}</span>
+              </div>
+              {hasUpdate && (
+                <div>
+                  <span className="text-gray-500 dark:text-gray-400">{t('satellites.latestVersion', 'Latest')}:</span>
+                  <span className="ml-2 font-medium text-green-600 dark:text-green-400">v{latestVersion}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Update progress */}
+            {isUpdating && (
+              <div className="mb-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
+                  <span className="text-sm font-medium text-blue-800 dark:text-blue-400">
+                    {t(`satellites.updateStage.${satellite.update_stage}`, satellite.update_stage || 'Updating...')}
+                  </span>
+                </div>
+                <UpdateProgressBar progress={satellite.update_progress || 0} />
+                <p className="mt-1 text-xs text-blue-600 dark:text-blue-400">{satellite.update_progress || 0}%</p>
+              </div>
+            )}
+
+            {/* Update failed */}
+            {satellite.update_status === 'failed' && satellite.update_error && (
+              <div className="mb-3 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
+                <div className="flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  <span className="text-sm font-medium text-red-800 dark:text-red-400">
+                    {t('satellites.updateFailed', 'Update Failed')}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-red-600 dark:text-red-400">{satellite.update_error}</p>
+              </div>
+            )}
+
+            {/* Update button or status */}
+            <div className="flex items-center gap-2">
+              {isUpdating ? (
+                <span className="text-sm text-gray-500 dark:text-gray-400">
+                  {t('satellites.updateInProgress', 'Update in progress...')}
+                </span>
+              ) : hasUpdate ? (
+                <button
+                  onClick={handleUpdate}
+                  disabled={updating}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                >
+                  {updating ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <ArrowUpCircle className="w-4 h-4" />
+                  )}
+                  {t('satellites.updateNow', 'Update Now')}
+                </button>
+              ) : (
+                <span className="inline-flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
+                  <CheckCircle className="w-4 h-4" />
+                  {t('satellites.upToDate', 'Up to date')}
+                </span>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
@@ -269,6 +389,7 @@ export default function SatellitesPage() {
   const { t } = useTranslation();
 
   const [satellites, setSatellites] = useState([]);
+  const [latestVersion, setLatestVersion] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [expandedIds, setExpandedIds] = useState(new Set());
@@ -280,6 +401,7 @@ export default function SatellitesPage() {
     try {
       const response = await apiClient.get('/api/satellites');
       setSatellites(response.data.satellites || []);
+      setLatestVersion(response.data.latest_version || '');
       setError(null);
     } catch (err) {
       console.error('Failed to load satellites:', err);
@@ -288,6 +410,17 @@ export default function SatellitesPage() {
       setLoading(false);
     }
   }, [t]);
+
+  const triggerUpdate = useCallback(async (satelliteId) => {
+    try {
+      await apiClient.post(`/api/satellites/${satelliteId}/update`);
+      // Refresh to see update status
+      await loadSatellites();
+    } catch (err) {
+      console.error('Failed to trigger update:', err);
+      setError(t('satellites.updateError', 'Failed to trigger update'));
+    }
+  }, [loadSatellites, t]);
 
   useEffect(() => {
     loadSatellites();
@@ -428,6 +561,8 @@ export default function SatellitesPage() {
               satellite={satellite}
               expanded={expandedIds.has(satellite.satellite_id)}
               onToggle={() => toggleExpanded(satellite.satellite_id)}
+              latestVersion={latestVersion}
+              onUpdate={triggerUpdate}
             />
           ))}
         </div>

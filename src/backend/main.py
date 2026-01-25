@@ -765,6 +765,7 @@ async def satellite_websocket(
                 room = data.get("room", "Unknown Room")
                 capabilities = data.get("capabilities", {})
                 language = data.get("language", settings.default_language)
+                version = data.get("version", "unknown")
 
                 # Update connection limiter with actual satellite_id
                 connection_limiter.add_connection(ip_address, satellite_id)
@@ -774,7 +775,8 @@ async def satellite_websocket(
                     room=room,
                     websocket=websocket,
                     capabilities=capabilities,
-                    language=language
+                    language=language,
+                    version=version
                 )
 
                 # Persist room assignment to database
@@ -1087,11 +1089,74 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle heartbeat with optional metrics
             elif msg_type == "heartbeat":
                 if satellite_id:
-                    # Extract metrics from heartbeat if present
+                    # Extract metrics and version from heartbeat if present
                     metrics = data.get("metrics")
-                    satellite_manager.update_heartbeat(satellite_id, metrics)
+                    version = data.get("version")
+                    satellite_manager.update_heartbeat(satellite_id, metrics, version)
                     # Send heartbeat ack
                     await websocket.send_json({"type": "heartbeat_ack"})
+
+            # Handle OTA update progress
+            elif msg_type == "update_progress":
+                if satellite_id:
+                    from services.satellite_manager import UpdateStatus
+                    stage = data.get("stage", "unknown")
+                    progress = data.get("progress", 0)
+                    message = data.get("message", "")
+                    logger.info(f"📥 Update progress from {satellite_id}: {stage} ({progress}%) - {message}")
+                    satellite_manager.set_update_status(
+                        satellite_id,
+                        UpdateStatus.IN_PROGRESS,
+                        stage=stage,
+                        progress=progress
+                    )
+
+            # Handle OTA update complete
+            elif msg_type == "update_complete":
+                if satellite_id:
+                    from services.satellite_manager import UpdateStatus
+                    success = data.get("success", False)
+                    old_version = data.get("old_version", "unknown")
+                    new_version = data.get("new_version", "unknown")
+
+                    if success:
+                        logger.info(f"✅ Satellite {satellite_id} updated: {old_version} → {new_version}")
+                        satellite_manager.set_update_status(
+                            satellite_id,
+                            UpdateStatus.COMPLETED,
+                            stage="completed",
+                            progress=100
+                        )
+                        # Update the stored version
+                        sat = satellite_manager.get_satellite(satellite_id)
+                        if sat:
+                            sat.version = new_version
+                    else:
+                        error = data.get("error", "Unknown error")
+                        logger.error(f"❌ Satellite {satellite_id} update failed: {error}")
+                        satellite_manager.set_update_status(
+                            satellite_id,
+                            UpdateStatus.FAILED,
+                            stage="failed",
+                            progress=0,
+                            error=error
+                        )
+
+            # Handle OTA update failed
+            elif msg_type == "update_failed":
+                if satellite_id:
+                    from services.satellite_manager import UpdateStatus
+                    stage = data.get("stage", "unknown")
+                    error = data.get("error", "Unknown error")
+                    rolled_back = data.get("rolled_back", False)
+                    logger.error(f"❌ Satellite {satellite_id} update failed at {stage}: {error} (rolled_back: {rolled_back})")
+                    satellite_manager.set_update_status(
+                        satellite_id,
+                        UpdateStatus.FAILED,
+                        stage=stage,
+                        progress=0,
+                        error=error
+                    )
 
     except WebSocketDisconnect:
         logger.info(f"👋 Satellite WebSocket disconnected: {satellite_id}")

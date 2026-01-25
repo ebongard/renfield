@@ -60,6 +60,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
     volumes:
       - ./src/backend:/app
+      - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
       - whisper_models:/root/.cache/whisper
@@ -91,6 +92,7 @@ services:
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ./src/backend:/app
+      - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
       - whisper_models:/root/.cache/whisper

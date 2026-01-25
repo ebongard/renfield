@@ -57,9 +57,10 @@
   - Custom Wake Words trainieren
   - OpenWakeWord Training Pipeline
 
-- [ ] **OTA Updates für Satellites**
-  - Automatische Software-Updates
+- [x] **OTA Updates für Satellites** ✅ (Implementiert in #26)
+  - Automatische Software-Updates via Web-UI
   - Rollback bei Fehlern
+  - Siehe: `docs/SATELLITE_OTA_UPDATES.md`
 
 ---
 

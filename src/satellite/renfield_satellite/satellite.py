@@ -27,6 +27,7 @@ from .network.discovery import ServiceDiscovery
 from .network.auth import fetch_ws_token, http_url_from_ws
 from .network.model_downloader import get_model_downloader, ModelDownloader
 from .wakeword.detector import MICRO_BUILTIN_MODELS
+from .update import UpdateManager, UpdateStage
 
 
 class SatelliteState(str, Enum):
@@ -155,6 +156,9 @@ class Satellite:
         # Service discovery for auto-finding server
         self.discovery = ServiceDiscovery()
 
+        # OTA Update manager
+        self.update_manager = UpdateManager()
+
         # Wire up callbacks
         self._setup_callbacks()
 
@@ -169,7 +173,11 @@ class Satellite:
         self.ws_client.on_disconnected(self._on_disconnected)
         self.ws_client.on_error(self._on_error)
         self.ws_client.on_config_update(self._on_config_update)
+        self.ws_client.on_update_request(self._on_update_request)
         self.ws_client.set_metrics_callback(self._get_metrics)
+
+        # Update manager progress callback
+        self.update_manager.on_progress(self._on_update_progress)
 
         # Button callbacks
         self.button.on_press(self._on_button_press)
@@ -799,3 +807,69 @@ class Satellite:
             print(f"✅ Wake word configuration applied successfully: {active_keywords}")
         else:
             print(f"⚠️ Wake word configuration partially applied: active={active_keywords}, failed={failed_keywords}")
+
+    def _on_update_request(self, target_version: str, package_url: str, checksum: str, size_bytes: int):
+        """
+        Handle OTA update request from server.
+
+        Args:
+            target_version: Version to update to
+            package_url: URL path to download package
+            checksum: Expected checksum (sha256:hexdigest)
+            size_bytes: Expected package size
+        """
+        print(f"📦 OTA Update requested: v{target_version}")
+
+        # Get base URL from WebSocket URL
+        ws_url = self.ws_client.server_url
+        if ws_url:
+            # Convert ws://host:port/ws/satellite to http://host:port
+            base_url = ws_url.replace("ws://", "http://").replace("wss://", "https://")
+            base_url = base_url.split("/ws")[0]  # Remove /ws path
+        else:
+            print("⚠️ Cannot start update: no server URL")
+            return
+
+        # Start update asynchronously
+        self._schedule_async(self._start_update(target_version, package_url, checksum, size_bytes, base_url))
+
+    async def _start_update(self, target_version: str, package_url: str, checksum: str, size_bytes: int, base_url: str):
+        """Start the OTA update process"""
+        from . import __version__
+        old_version = __version__
+
+        print(f"🚀 Starting update: {old_version} → {target_version}")
+
+        success = await self.update_manager.start_update(
+            target_version=target_version,
+            package_url=package_url,
+            checksum=checksum,
+            size_bytes=size_bytes,
+            base_url=base_url
+        )
+
+        if success:
+            # Send completion message (may not be sent if service restarts immediately)
+            await self.ws_client.send_update_complete(
+                success=True,
+                old_version=old_version,
+                new_version=target_version
+            )
+        else:
+            # Send failure message
+            await self.ws_client.send_update_failed(
+                stage=self.update_manager.current_stage.value,
+                error="Update failed - check satellite logs",
+                rolled_back=True
+            )
+
+    def _on_update_progress(self, stage: UpdateStage, progress: int, message: str):
+        """
+        Handle update progress callback from UpdateManager.
+
+        Sends progress to server via WebSocket.
+        """
+        # Send progress to server asynchronously
+        self._schedule_async(
+            self.ws_client.send_update_progress(stage.value, progress, message)
+        )
