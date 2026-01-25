@@ -22,7 +22,7 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 ### ~~🔴 Kritisch~~ → ✅ Behoben
 
-#### ~~1. God Class: main.py (2130 → 493 Zeilen)~~ ✅ Behoben
+#### ~~1. God Class: main.py (2130 → 337 Zeilen)~~ ✅ Behoben
 
 **Status:** Behoben am 2026-01-25
 
@@ -43,12 +43,13 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 - ✅ Phase 3: Alte Handler entfernt
 
 **Ergebnis:**
-- main.py: 2130 → 493 Zeilen (**77% Reduktion**)
+- main.py: 2130 → 337 Zeilen (**84% Reduktion**)
 - Alle 558 Tests bestanden
 
 **Neue Struktur:**
 ```
 api/
+├── lifecycle.py         ✅ Startup/Shutdown management
 ├── websocket/
 │   ├── __init__.py      ✅ Router exports
 │   ├── shared.py        ✅ Shared utilities
@@ -402,7 +403,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
-| 2026-01-25 | main.py Refactoring abgeschlossen: 2130 → 493 Zeilen (77% Reduktion) (#27) |
+| 2026-01-25 | Lifecycle-Management extrahiert nach api/lifecycle.py (#27) |
+| 2026-01-25 | main.py Refactoring abgeschlossen: 2130 → 337 Zeilen (84% Reduktion) (#27) |
 | 2026-01-25 | WebSocket-Handler extrahiert: chat, satellite, device (#27) |
 | 2026-01-25 | main.py Refactoring Phase 1: Shared Utilities extrahiert (#27) |
 | 2026-01-25 | Bare Except Clauses im Backend behoben (#27) |

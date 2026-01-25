@@ -5,13 +5,10 @@ Hauptanwendung mit FastAPI
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from contextlib import asynccontextmanager
 from loguru import logger
 from datetime import datetime
-import asyncio
 import os
 import sys
-from typing import List
 
 # Logging konfigurieren
 logger.remove()
@@ -20,170 +17,15 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 # Lokale Imports
 from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge, satellites
 from api.routes import auth, roles, users, plugins, preferences
+from api.lifecycle import lifespan
+from api.websocket import chat_router, satellite_router, device_router
 from services.auth_service import require_permission
 from models.permissions import Permission
-from services.database import init_db, AsyncSessionLocal
+from services.database import AsyncSessionLocal
 from services.ollama_service import OllamaService
-from services.task_queue import TaskQueue
 from services.device_manager import get_device_manager
-from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import get_token_store
 from utils.config import settings
-
-# Import WebSocket routers and shared utilities
-from api.websocket import (
-    chat_router,
-    satellite_router,
-    device_router,
-    get_whisper_service,
-)
-
-# Track background tasks for graceful shutdown
-_startup_tasks: List[asyncio.Task] = []
-
-# Lifecycle Management
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Startup und Shutdown Events"""
-    logger.info("🚀 Renfield startet...")
-
-    # Datenbank initialisieren
-    await init_db()
-    logger.info("✅ Datenbank initialisiert")
-
-    # Initialize authentication system (roles and default admin)
-    try:
-        from services.auth_service import ensure_default_roles, ensure_admin_user
-
-        async with AsyncSessionLocal() as db_session:
-            # Ensure default roles exist
-            roles = await ensure_default_roles(db_session)
-            logger.info(f"✅ Auth-Rollen initialisiert: {[r.name for r in roles]}")
-
-            # Ensure default admin user exists (only if no users exist)
-            admin = await ensure_admin_user(db_session)
-            if admin:
-                logger.warning(
-                    f"⚠️  Standard-Admin erstellt: '{admin.username}' - "
-                    f"BITTE PASSWORT SOFORT ÄNDERN!"
-                )
-    except Exception as e:
-        logger.error(f"❌ Auth-Initialisierung fehlgeschlagen: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-
-    # Ollama Service starten
-    ollama = OllamaService()
-    await ollama.ensure_model_loaded()
-    app.state.ollama = ollama
-    logger.info("✅ Ollama Service bereit")
-
-    # Task Queue initialisieren
-    task_queue = TaskQueue()
-    app.state.task_queue = task_queue
-    logger.info("✅ Task Queue bereit")
-
-    # Plugin System (NEW)
-    if settings.plugins_enabled:
-        try:
-            from integrations.core.plugin_loader import PluginLoader
-            from integrations.core.plugin_registry import PluginRegistry
-
-            loader = PluginLoader(settings.plugins_dir)
-            plugins = loader.load_all_plugins()
-
-            plugin_registry = PluginRegistry()
-            plugin_registry.register_plugins(plugins)
-
-            app.state.plugin_registry = plugin_registry
-            logger.info(f"✅ Plugin System bereit: {len(plugins)} plugins geladen")
-        except Exception as e:
-            logger.error(f"❌ Plugin System konnte nicht geladen werden: {e}")
-            app.state.plugin_registry = None
-    else:
-        app.state.plugin_registry = None
-        logger.info("⏭️  Plugin System deaktiviert")
-
-    # Whisper Service vorladen (für STT)
-    try:
-        async def preload_whisper():
-            """Lade Whisper-Modell im Hintergrund"""
-            try:
-                whisper_service = get_whisper_service()
-                whisper_service.load_model()
-                logger.info("✅ Whisper Service bereit (STT aktiviert)")
-            except Exception as e:
-                logger.warning(f"⚠️  Whisper konnte nicht vorgeladen werden: {e}")
-                logger.warning("💡 Spracheingabe wird beim ersten Gebrauch geladen")
-
-        # Starte im Hintergrund und tracke Task
-        task = asyncio.create_task(preload_whisper())
-        _startup_tasks.append(task)
-    except Exception as e:
-        logger.warning(f"⚠️  Whisper-Preloading fehlgeschlagen: {e}")
-
-    # Home Assistant Keywords vorladen (optional, im Hintergrund)
-    try:
-        from integrations.homeassistant import HomeAssistantClient
-
-        async def preload_keywords():
-            """Lade HA Keywords im Hintergrund"""
-            try:
-                ha_client = HomeAssistantClient()
-                keywords = await ha_client.get_keywords()
-                logger.info(f"✅ Home Assistant Keywords vorgeladen: {len(keywords)} Keywords")
-            except Exception as e:
-                logger.warning(f"⚠️  Keywords konnten nicht vorgeladen werden: {e}")
-
-        # Starte im Hintergrund und tracke Task
-        task = asyncio.create_task(preload_keywords())
-        _startup_tasks.append(task)
-    except Exception as e:
-        logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
-
-    # Zeroconf Service für Satellite Auto-Discovery
-    zeroconf_service = None
-    try:
-        from services.zeroconf_service import get_zeroconf_service
-        zeroconf_service = get_zeroconf_service(port=8000)
-        await zeroconf_service.start()
-        app.state.zeroconf_service = zeroconf_service
-    except Exception as e:
-        logger.warning(f"⚠️  Zeroconf Service konnte nicht gestartet werden: {e}")
-
-    yield
-
-    # Graceful Shutdown
-    logger.info("👋 Renfield wird heruntergefahren...")
-
-    # Cancel pending startup tasks
-    for task in _startup_tasks:
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-
-    # Notify all connected devices about shutdown
-    try:
-        device_manager = get_device_manager()
-        shutdown_msg = {"type": "server_shutdown", "message": "Server is shutting down"}
-        for device in list(device_manager.devices.values()):
-            try:
-                await device.websocket.send_json(shutdown_msg)
-                await device.websocket.close(code=1001, reason="Server shutdown")
-            except Exception:
-                pass
-        logger.info(f"👋 Notified {len(device_manager.devices)} devices about shutdown")
-    except Exception as e:
-        logger.warning(f"⚠️ Error notifying devices: {e}")
-
-    # Zeroconf Service stoppen
-    if zeroconf_service:
-        await zeroconf_service.stop()
-
-    logger.info("✅ Shutdown complete")
 
 # FastAPI App erstellen
 app = FastAPI(
@@ -206,7 +48,7 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
 
-# Router einbinden
+# REST API Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(roles.router, prefix="/api/roles", tags=["Roles"])
 app.include_router(users.router, prefix="/api/users", tags=["Users"])
@@ -223,7 +65,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"]
 app.include_router(plugins.router, prefix="/api/plugins", tags=["Plugins"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 
-# WebSocket routers (extracted from main.py)
+# WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
 app.include_router(satellite_router, tags=["WebSocket Satellite"])
 app.include_router(device_router, tags=["WebSocket Device"])
@@ -385,6 +227,7 @@ async def liveness_check():
     """Kubernetes liveness probe - just checks if app is running."""
     return {"status": "alive", "timestamp": datetime.utcnow().isoformat()}
 
+
 # WebSocket Token Generation Endpoint
 @app.post("/api/ws/token")
 async def create_ws_token(
@@ -470,6 +313,7 @@ async def debug_intent(
         logger.error(f"❌ Intent Debug Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 # Root Endpoint
 @app.get("/")
 async def root():
@@ -480,6 +324,7 @@ async def root():
         "status": "online",
         "docs": "/docs"
     }
+
 
 if __name__ == "__main__":
     import uvicorn
