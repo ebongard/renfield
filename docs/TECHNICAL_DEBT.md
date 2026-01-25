@@ -389,18 +389,18 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 ## Test-Coverage
 
-| Bereich | Test Files | Source Files | Ratio |
-|---------|------------|--------------|-------|
-| Backend | 29 | 72 | 40% |
-| Frontend | 10 | ~40 | 25% |
-| Satellite | 1 | 15 | 7% |
+| Bereich | Test Files | Tests | Source Files | Ratio |
+|---------|------------|-------|--------------|-------|
+| Backend | 29 | 558 | 72 | 40% |
+| Frontend | 16 | 262 | ~40 | 40% |
+| Satellite | 1 | - | 15 | 7% |
 
 ### Fehlende Tests
 
 - [ ] `services/audio_output_service.py` - kein Test
 - [ ] `services/output_routing_service.py` - kein Test
 - [ ] `integrations/frigate.py` - nur Mock-Tests
-- [ ] Frontend Hooks - keine Unit Tests
+- [x] Frontend Hooks - Tests vorhanden (`useChatSessions.test.jsx`, `useCapabilities.test.jsx`)
 - [ ] Satellite Hardware - keine Tests möglich ohne Mocks
 
 ---
@@ -439,6 +439,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | Frontend-Tests auf deutsche Übersetzungen aktualisiert (262 Tests, alle bestanden) |
 | 2026-01-25 | Debug-Logger utils/debug.js erstellt, 80 console.log → debug.log ersetzt (#31) |
 | 2026-01-25 | lucide-react 0.307.0 → 0.563.0 aktualisiert (#31) |
 | 2026-01-25 | ESLint-disable Kommentar in useDeviceConnection.js dokumentiert (#31) |
