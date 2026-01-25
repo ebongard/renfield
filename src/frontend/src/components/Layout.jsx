@@ -41,6 +41,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
+  { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
 ];
 
 export default function Layout({ children }) {

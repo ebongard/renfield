@@ -36,6 +36,7 @@
     "plugins": "Plugins",
     "users": "Benutzer",
     "roles": "Rollen",
+    "settings": "Einstellungen",
     "admin": "Admin",
     "skipToContent": "Zum Inhalt springen",
     "openMenu": "Menü öffnen",
@@ -496,6 +497,30 @@
     "label": "Sprache",
     "german": "Deutsch",
     "english": "English"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "subtitle": "Systemweite Einstellungen verwalten",
+    "failedToLoad": "Einstellungen konnten nicht geladen werden",
+    "failedToSave": "Einstellungen konnten nicht gespeichert werden",
+    "settingsSaved": "Einstellungen gespeichert. Alle verbundenen Geräte wurden aktualisiert.",
+    "unsavedChanges": "Ungespeicherte Änderungen",
+    "wakeword": {
+      "title": "Wake Word Einstellungen",
+      "description": "Konfiguriere das Wake Word für alle verbundenen Geräte (Satellites, Web-Panels, Browser).",
+      "keyword": "Wake Word",
+      "threshold": "Erkennungsempfindlichkeit",
+      "moreSensitive": "Empfindlicher",
+      "lessFalsePositives": "Weniger Fehlalarme",
+      "thresholdHint": "Niedrigere Werte erkennen das Wake Word leichter, können aber zu mehr Fehlalarmen führen.",
+      "cooldown": "Cooldown zwischen Erkennungen",
+      "cooldownHint": "Zeit die nach einer Erkennung vergehen muss, bevor das Wake Word erneut erkannt werden kann.",
+      "connectedDevices": "{{count}} Geräte verbunden, die diese Einstellungen empfangen",
+      "broadcastHint": "Änderungen werden automatisch an alle verbundenen Geräte gesendet.",
+      "syncStatus": "Geräte-Synchronisation",
+      "pending": "Ausstehend",
+      "syncWarning": "{{count}} Gerät(e) konnten nicht synchronisiert werden"
+    }
   },
   "errors": {
     "generic": "Ein Fehler ist aufgetreten",

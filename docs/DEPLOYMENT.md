@@ -71,7 +71,7 @@ sudo systemctl restart docker
 ### 2.1 GPU-Zugriff in Docker testen
 
 ```bash
-docker run --rm --gpus all nvidia/cuda:12.0-base nvidia-smi
+   docker run  --rm --gpus all nvidia/cuda:12.9.0-runtime-ubuntu22.04  nvidia-smi
 ```
 
 Sollte die GPU-Informationen anzeigen.

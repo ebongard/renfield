@@ -339,6 +339,32 @@ export function useWakeWord({
     }
   }, []); // Only run once on mount
 
+  // Listen for config updates from server (via WebSocket)
+  useEffect(() => {
+    const handleConfigUpdate = (event) => {
+      const config = event.detail;
+      console.log('🔄 Wake word config update from server:', config);
+
+      // Update keyword if provided
+      if (config.wake_words && config.wake_words[0]) {
+        const newKeyword = config.wake_words[0];
+        if (newKeyword !== settings.keyword) {
+          console.log(`🎤 Updating wake word: ${settings.keyword} -> ${newKeyword}`);
+          setKeyword(newKeyword);
+        }
+      }
+
+      // Update threshold if provided
+      if (config.threshold !== undefined && config.threshold !== settings.threshold) {
+        console.log(`🎚️ Updating threshold: ${settings.threshold} -> ${config.threshold}`);
+        setThreshold(config.threshold);
+      }
+    };
+
+    window.addEventListener('wakeword-config-update', handleConfigUpdate);
+    return () => window.removeEventListener('wakeword-config-update', handleConfigUpdate);
+  }, [settings.keyword, settings.threshold, setKeyword, setThreshold]);
+
   return {
     // State
     isEnabled,

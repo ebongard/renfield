@@ -15,6 +15,7 @@ import RegisterPage from './pages/RegisterPage';
 import UsersPage from './pages/UsersPage';
 import RolesPage from './pages/RolesPage';
 import PluginsPage from './pages/PluginsPage';
+import SettingsPage from './pages/SettingsPage';
 import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -76,6 +77,11 @@ function App() {
                   <Route path="/admin/roles" element={
                     <AdminRoute>
                       <RolesPage />
+                    </AdminRoute>
+                  } />
+                  <Route path="/admin/settings" element={
+                    <AdminRoute>
+                      <SettingsPage />
                     </AdminRoute>
                   } />
                 </Routes>

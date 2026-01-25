@@ -349,6 +349,15 @@ export function useDeviceConnection({
             // Heartbeat acknowledged
             break;
 
+          case 'config_update':
+            // Server pushed new wake word configuration
+            console.log('🔄 Config update received:', data.config);
+            // Dispatch custom event for useWakeWord hook to handle
+            window.dispatchEvent(new CustomEvent('wakeword-config-update', {
+              detail: data.config
+            }));
+            break;
+
           case 'error':
             setError(new Error(data.message));
             onError(data);

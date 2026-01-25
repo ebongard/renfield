@@ -29,6 +29,7 @@ from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from services.whisper_service import WhisperService
 from services.device_manager import get_device_manager, DeviceState, DeviceManager
+from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import (
     get_token_store, authenticate_websocket, close_unauthorized, WSAuthError
 )
@@ -800,17 +801,43 @@ async def satellite_websocket(
                 satellite_db_session_id = f"satellite-{satellite_id}-{date.today().isoformat()}"
                 logger.info(f"📚 Satellite DB session: {satellite_db_session_id}")
 
+                # Load wake word config from config manager
+                wakeword_config_manager = get_wakeword_config_manager()
+                async with AsyncSessionLocal() as db_session:
+                    wakeword_config = await wakeword_config_manager.get_config(db_session)
+
+                # Subscribe to config updates with device info for tracking
+                wakeword_config_manager.subscribe(
+                    websocket=websocket,
+                    device_id=satellite_id,
+                    device_type="satellite"
+                )
+
                 await websocket.send_json({
                     "type": "register_ack",
                     "success": success,
-                    "config": {
-                        "wake_words": satellite_manager.default_wake_words,
-                        "threshold": satellite_manager.default_threshold
-                    },
+                    "config": wakeword_config.to_satellite_config(),
                     "room_id": room_id,
-                    "protocol_version": settings.ws_protocol_version
+                    "protocol_version": settings.ws_protocol_version,
+                    "model_download_url": "/api/settings/wakeword/models",
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
+
+            # Handle config acknowledgment from satellite
+            elif msg_type == "config_ack":
+                ack_success = data.get("success", False)
+                active_keywords = data.get("active_keywords", [])
+                failed_keywords = data.get("failed_keywords", [])
+                ack_error = data.get("error")
+
+                wakeword_config_manager = get_wakeword_config_manager()
+                wakeword_config_manager.handle_config_ack(
+                    device_id=satellite_id,
+                    success=ack_success,
+                    active_keywords=active_keywords,
+                    failed_keywords=failed_keywords,
+                    error=ack_error,
+                )
 
             # Handle wake word detection
             elif msg_type == "wakeword_detected":
@@ -1082,6 +1109,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             except Exception as e:
                 logger.warning(f"⚠️ Failed to mark satellite offline: {e}")
 
+            # Unsubscribe from wake word config updates
+            wakeword_config_manager = get_wakeword_config_manager()
+            wakeword_config_manager.unsubscribe(websocket)
+
             await satellite_manager.unregister(satellite_id)
 
 
@@ -1232,15 +1263,24 @@ async def device_websocket(
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to persist device to database: {e}")
 
+                # Load wake word config from config manager
+                wakeword_config_manager = get_wakeword_config_manager()
+                async with AsyncSessionLocal() as db_session:
+                    wakeword_config = await wakeword_config_manager.get_config(db_session)
+
+                # Subscribe to config updates with device info for tracking
+                wakeword_config_manager.subscribe(
+                    websocket=websocket,
+                    device_id=device_id,
+                    device_type="web_device"
+                )
+
                 # Send registration acknowledgement with protocol version
                 await websocket.send_json({
                     "type": "register_ack",
                     "success": success,
                     "device_id": device_id,
-                    "config": {
-                        "wake_words": device_manager.default_wake_words,
-                        "threshold": device_manager.default_threshold
-                    },
+                    "config": wakeword_config.to_satellite_config(),
                     "room_id": room_id,
                     "capabilities": capabilities,
                     "protocol_version": settings.ws_protocol_version
@@ -1248,6 +1288,22 @@ async def device_websocket(
 
                 type_emoji = "📡" if device_type == DEVICE_TYPE_SATELLITE else "📱"
                 logger.info(f"{type_emoji} Device {device_id} ({device_type}) registered in '{room}'")
+
+            # === CONFIG ACK (after config_update is applied) ===
+            elif msg_type == "config_ack":
+                ack_success = data.get("success", False)
+                active_keywords = data.get("active_keywords", [])
+                failed_keywords = data.get("failed_keywords", [])
+                ack_error = data.get("error")
+
+                wakeword_config_manager = get_wakeword_config_manager()
+                wakeword_config_manager.handle_config_ack(
+                    device_id=device_id,
+                    success=ack_success,
+                    active_keywords=active_keywords,
+                    failed_keywords=failed_keywords,
+                    error=ack_error,
+                )
 
             # === WAKE WORD DETECTION (satellites and web clients with wakeword) ===
             elif msg_type == "wakeword_detected":
@@ -1362,6 +1418,10 @@ async def device_websocket(
                     await room_service.set_device_online(device_id, False)
             except Exception as e:
                 logger.warning(f"⚠️ Failed to mark device offline: {e}")
+
+            # Unsubscribe from wake word config updates
+            wakeword_config_manager = get_wakeword_config_manager()
+            wakeword_config_manager.unsubscribe(websocket)
 
             await device_manager.unregister(device_id)
 

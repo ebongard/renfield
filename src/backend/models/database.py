@@ -678,3 +678,40 @@ KB_PERM_WRITE = "write"    # Can add/edit documents
 KB_PERM_ADMIN = "admin"    # Can delete, share with others
 
 KB_PERMISSION_LEVELS = [KB_PERM_READ, KB_PERM_WRITE, KB_PERM_ADMIN]
+
+
+# =============================================================================
+# System Settings (Key-Value Store)
+# =============================================================================
+
+class SystemSetting(Base):
+    """
+    Key-Value Store for runtime system settings.
+
+    Used for settings that can be changed at runtime without restarting
+    the server, like wake word configuration.
+
+    Keys follow a namespace pattern: "category.setting_name"
+    Values are stored as JSON strings for type flexibility.
+    """
+    __tablename__ = "system_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)  # JSON-encoded value
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    # Relationship to user who last updated
+    updater = relationship("User", foreign_keys=[updated_by])
+
+
+# System Setting Keys
+SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
+SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"
+SETTING_WAKEWORD_COOLDOWN_MS = "wakeword.cooldown_ms"
+
+SYSTEM_SETTING_KEYS = [
+    SETTING_WAKEWORD_KEYWORD,
+    SETTING_WAKEWORD_THRESHOLD,
+    SETTING_WAKEWORD_COOLDOWN_MS,
+]

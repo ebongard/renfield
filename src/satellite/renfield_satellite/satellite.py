@@ -25,6 +25,8 @@ from .hardware.button import ButtonHandler
 from .network.websocket_client import WebSocketClient, ServerConfig
 from .network.discovery import ServiceDiscovery
 from .network.auth import fetch_ws_token, http_url_from_ws
+from .network.model_downloader import get_model_downloader, ModelDownloader
+from .wakeword.detector import MICRO_BUILTIN_MODELS
 
 
 class SatelliteState(str, Enum):
@@ -156,6 +158,7 @@ class Satellite:
         self.ws_client.on_connected(self._on_connected)
         self.ws_client.on_disconnected(self._on_disconnected)
         self.ws_client.on_error(self._on_error)
+        self.ws_client.on_config_update(self._on_config_update)
 
         # Button callbacks
         self.button.on_press(self._on_button_press)
@@ -584,11 +587,15 @@ class Satellite:
         """Handle successful connection"""
         print(f"Connected to server. Wake words: {config.wake_words}")
 
-        # Update wake word config if server provides different settings
-        if config.wake_words:
-            self.wakeword.set_keywords(config.wake_words)
-        if config.threshold:
-            self.wakeword.set_threshold(config.threshold)
+        # Setup model downloader with server URL
+        model_downloader = get_model_downloader()
+        if self.ws_client.server_url:
+            model_downloader.set_server_url(self.ws_client.server_url)
+        if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
+            model_downloader.set_auth_token(self.ws_client._auth_token)
+
+        # Apply config and send acknowledgment asynchronously
+        self._schedule_async(self._apply_config_and_ack(config))
 
         self._set_state(SatelliteState.IDLE)
 
@@ -618,3 +625,99 @@ class Satellite:
         if self._session_id or self._state in (SatelliteState.LISTENING, SatelliteState.PROCESSING, SatelliteState.SPEAKING):
             print("Resetting due to server error")
             self._schedule_async(self._reset_session("server_error"))
+
+    def _on_config_update(self, config: ServerConfig):
+        """
+        Handle wake word configuration update from server.
+
+        This is called when an admin changes wake word settings
+        via the settings API, and the change is broadcast to all devices.
+        """
+        print(f"Config update received from server: wake_words={config.wake_words}, threshold={config.threshold}")
+
+        # Apply config and send acknowledgment asynchronously
+        self._schedule_async(self._apply_config_and_ack(config))
+
+    async def _apply_config_and_ack(self, config: ServerConfig):
+        """
+        Apply wake word configuration and send acknowledgment to server.
+
+        This method:
+        1. Checks which keywords are available (built-in or local file)
+        2. Downloads missing models from server if needed
+        3. Updates the wake word detector
+        4. Sends config_ack with the result
+
+        Args:
+            config: Server configuration to apply
+        """
+        keywords = config.wake_words or []
+        active_keywords = []
+        failed_keywords = []
+        error_msg = None
+
+        if not keywords:
+            # No keywords requested, just update other settings
+            self.wakeword.update_config(
+                threshold=config.threshold,
+                cooldown_ms=config.cooldown_ms,
+            )
+            active_keywords = self.wakeword.active_keywords
+        else:
+            # Check each keyword for availability
+            for keyword in keywords:
+                keyword_normalized = keyword.lower().replace("-", "_")
+
+                # Check if it's a built-in model
+                if keyword_normalized in MICRO_BUILTIN_MODELS:
+                    print(f"✓ Keyword '{keyword}' available as built-in model")
+                    active_keywords.append(keyword)
+                    continue
+
+                # Check if model file exists locally
+                model_downloader = get_model_downloader()
+                if model_downloader.is_model_available(keyword):
+                    print(f"✓ Keyword '{keyword}' available locally")
+                    active_keywords.append(keyword)
+                    continue
+
+                # Try to download from server
+                print(f"⬇️ Keyword '{keyword}' not available locally, attempting download...")
+                success, download_error = await model_downloader.download_model(keyword)
+                if success:
+                    print(f"✓ Keyword '{keyword}' downloaded successfully")
+                    active_keywords.append(keyword)
+                else:
+                    print(f"✗ Keyword '{keyword}' unavailable: {download_error}")
+                    failed_keywords.append(keyword)
+                    if not error_msg:
+                        error_msg = download_error
+
+            # Apply the configuration with available keywords
+            if active_keywords:
+                success = self.wakeword.update_config(
+                    keywords=active_keywords,
+                    threshold=config.threshold,
+                    cooldown_ms=config.cooldown_ms,
+                )
+                if not success:
+                    error_msg = "Failed to load wake word models"
+            else:
+                # No keywords available - this is an error
+                error_msg = "No wake word models available"
+                # Keep existing keywords active
+                active_keywords = self.wakeword.active_keywords
+
+        # Send config acknowledgment to server
+        config_success = len(failed_keywords) == 0 and len(active_keywords) > 0
+        await self.ws_client.send_config_ack(
+            success=config_success,
+            active_keywords=active_keywords,
+            failed_keywords=failed_keywords,
+            error=error_msg
+        )
+
+        if config_success:
+            print(f"✅ Wake word configuration applied successfully: {active_keywords}")
+        else:
+            print(f"⚠️ Wake word configuration partially applied: active={active_keywords}, failed={failed_keywords}")

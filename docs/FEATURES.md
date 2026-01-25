@@ -80,6 +80,15 @@ Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für S
 - **Refractory Period**: Verhindert Doppel-Auslösungen
 - **Stop-Word Support**: Laufende Interaktionen abbrechen
 
+### Zentrale Wake-Word-Verwaltung
+- **Admin-UI**: Wake-Word-Einstellungen zentral verwalten
+- **Automatische Synchronisation**: Änderungen werden per WebSocket an alle Geräte gepusht
+- **Geräte-Sync-Status**: Echtzeit-Übersicht welche Geräte aktualisiert wurden
+- **Automatischer Model-Download**: Satellites laden fehlende TFLite-Modelle automatisch
+- **Datenbankpersistenz**: Einstellungen überleben Neustarts
+
+Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
+
 ### Multi-Room Features
 - **Auto-Discovery**: Satellites finden Backend automatisch via Zeroconf/mDNS
 - **Parallele Verarbeitung**: Mehrere Räume gleichzeitig bedienen

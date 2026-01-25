@@ -524,3 +524,69 @@ class WakeWordDetector:
     def active_stop_words(self) -> List[str]:
         """Get list of active stop words"""
         return list(self._stop_models.keys())
+
+    def update_config(
+        self,
+        keywords: Optional[List[str]] = None,
+        threshold: Optional[float] = None,
+        cooldown_ms: Optional[int] = None,
+    ) -> bool:
+        """
+        Update wake word configuration at runtime.
+
+        This method is called when the server pushes new configuration.
+
+        Args:
+            keywords: New list of wake words to detect (replaces existing)
+            threshold: New detection threshold (0.0 - 1.0)
+            cooldown_ms: New cooldown between detections in milliseconds
+
+        Returns:
+            True if at least one keyword is active after update
+        """
+        changed = False
+
+        # Update threshold if provided
+        if threshold is not None:
+            old_threshold = self.default_threshold
+            self.set_threshold(threshold)
+            if old_threshold != threshold:
+                print(f"Wake word threshold updated: {old_threshold} -> {threshold}")
+                changed = True
+
+        # Update cooldown/refractory period if provided
+        if cooldown_ms is not None:
+            old_refractory = self.refractory_seconds
+            new_refractory = cooldown_ms / 1000.0
+            self.set_refractory_period(new_refractory)
+            if old_refractory != new_refractory:
+                print(f"Wake word cooldown updated: {old_refractory}s -> {new_refractory}s")
+                changed = True
+
+        # Update keywords if provided
+        if keywords is not None:
+            old_keywords = set(self._wake_models.keys())
+            new_keywords = set(keywords)
+
+            # Find keywords to add and remove
+            to_add = new_keywords - old_keywords
+            to_remove = old_keywords - new_keywords
+
+            # Remove old keywords
+            for keyword in to_remove:
+                self.remove_keyword(keyword)
+                print(f"Removed wake word: {keyword}")
+                changed = True
+
+            # Add new keywords
+            for keyword in to_add:
+                if self.add_keyword(keyword):
+                    print(f"Added wake word: {keyword}")
+                    changed = True
+                else:
+                    print(f"Failed to add wake word (model not found): {keyword}")
+
+            if changed:
+                print(f"Active wake words: {list(self._wake_models.keys())}")
+
+        return len(self._wake_models) > 0

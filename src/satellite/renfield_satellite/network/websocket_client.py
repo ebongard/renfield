@@ -37,6 +37,7 @@ class ServerConfig:
     """Configuration received from server"""
     wake_words: List[str]
     threshold: float
+    cooldown_ms: int = 2000
     protocol_version: str = "1.0"
     room_id: Optional[int] = None
 
@@ -98,6 +99,7 @@ class WebSocketClient:
         self._on_connected: Optional[Callable[[ServerConfig], None]] = None
         self._on_disconnected: Optional[Callable[[], None]] = None
         self._on_error: Optional[Callable[[str], None]] = None
+        self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
 
         # Tasks
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -168,6 +170,10 @@ class WebSocketClient:
     def on_error(self, callback: Callable[[str], None]):
         """Register callback for errors"""
         self._on_error = callback
+
+    def on_config_update(self, callback: Callable[["ServerConfig"], None]):
+        """Register callback for server config updates (wake word settings)"""
+        self._on_config_update = callback
 
     async def connect(self) -> bool:
         """
@@ -281,6 +287,7 @@ class WebSocketClient:
                 self._server_config = ServerConfig(
                     wake_words=config.get("wake_words", ["hey_jarvis"]),
                     threshold=config.get("threshold", 0.5),
+                    cooldown_ms=config.get("cooldown_ms", 2000),
                     protocol_version=server_protocol,
                     room_id=room_id
                 )
@@ -419,6 +426,21 @@ class WebSocketClient:
             if self._on_error:
                 self._on_error(f"{error_code}: {error_msg}")
 
+        elif msg_type == "config_update":
+            # Server pushed new wake word configuration
+            config_data = data.get("config", {})
+            new_config = ServerConfig(
+                wake_words=config_data.get("wake_words", self._server_config.wake_words if self._server_config else ["alexa"]),
+                threshold=config_data.get("threshold", self._server_config.threshold if self._server_config else 0.5),
+                cooldown_ms=config_data.get("cooldown_ms", self._server_config.cooldown_ms if self._server_config else 2000),
+                protocol_version=self._server_config.protocol_version if self._server_config else "1.0",
+                room_id=self._server_config.room_id if self._server_config else None,
+            )
+            self._server_config = new_config
+            print(f"Config update received: wake_words={new_config.wake_words}, threshold={new_config.threshold}")
+            if self._on_config_update:
+                self._on_config_update(new_config)
+
         elif msg_type == "server_shutdown":
             # Server is shutting down gracefully
             shutdown_msg = data.get("message", "Server is shutting down")
@@ -524,3 +546,33 @@ class WebSocketClient:
         })
 
         self._current_session_id = None
+
+    async def send_config_ack(
+        self,
+        success: bool,
+        active_keywords: List[str],
+        failed_keywords: Optional[List[str]] = None,
+        error: Optional[str] = None
+    ):
+        """
+        Send config acknowledgment to server after applying config_update.
+
+        Args:
+            success: Whether the config was applied successfully
+            active_keywords: List of keywords currently active on this satellite
+            failed_keywords: List of keywords that failed to load
+            error: Error message if something went wrong
+        """
+        if not self.is_connected:
+            return
+
+        await self._send({
+            "type": "config_ack",
+            "success": success,
+            "active_keywords": active_keywords,
+            "failed_keywords": failed_keywords or [],
+            "error": error
+        })
+
+        status_emoji = "✅" if success else "⚠️"
+        print(f"{status_emoji} Config ack sent: active={active_keywords}, failed={failed_keywords or []}")

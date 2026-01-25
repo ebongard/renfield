@@ -36,6 +36,7 @@
     "plugins": "Plugins",
     "users": "Users",
     "roles": "Roles",
+    "settings": "Settings",
     "admin": "Admin",
     "skipToContent": "Skip to content",
     "openMenu": "Open menu",
@@ -496,6 +497,30 @@
     "label": "Language",
     "german": "Deutsch",
     "english": "English"
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Manage system-wide settings",
+    "failedToLoad": "Failed to load settings",
+    "failedToSave": "Failed to save settings",
+    "settingsSaved": "Settings saved. All connected devices have been updated.",
+    "unsavedChanges": "Unsaved changes",
+    "wakeword": {
+      "title": "Wake Word Settings",
+      "description": "Configure the wake word for all connected devices (satellites, web panels, browsers).",
+      "keyword": "Wake Word",
+      "threshold": "Detection Sensitivity",
+      "moreSensitive": "More sensitive",
+      "lessFalsePositives": "Less false positives",
+      "thresholdHint": "Lower values detect the wake word more easily but may cause more false positives.",
+      "cooldown": "Cooldown between detections",
+      "cooldownHint": "Time that must pass after a detection before the wake word can be detected again.",
+      "connectedDevices": "{{count}} devices connected receiving these settings",
+      "broadcastHint": "Changes are automatically sent to all connected devices.",
+      "syncStatus": "Device Synchronization",
+      "pending": "Pending",
+      "syncWarning": "{{count}} device(s) could not be synchronized"
+    }
   },
   "errors": {
     "generic": "An error occurred",
