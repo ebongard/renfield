@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { debug } from '../../../utils/debug';
 
 /**
  * Custom hook for managing WebSocket connection to the chat endpoint.
@@ -32,7 +33,7 @@ export function useChatWebSocket({
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
-      console.log('WebSocket verbunden');
+      debug.log('WebSocket verbunden');
       setWsConnected(true);
     };
 
@@ -41,11 +42,11 @@ export function useChatWebSocket({
 
       if (data.type === 'action') {
         // Action wurde ausgeführt
-        console.log('Action ausgeführt:', data.intent, data.result);
+        debug.log('Action ausgeführt:', data.intent, data.result);
         onAction?.(data);
       } else if (data.type === 'rag_context') {
         // RAG context info received
-        console.log('RAG Context:', data.has_context ? 'found' : 'not found');
+        debug.log('RAG Context:', data.has_context ? 'found' : 'not found');
         onRagContext?.(data);
       } else if (data.type === 'stream') {
         // Streaming-Antwort
@@ -57,7 +58,7 @@ export function useChatWebSocket({
     };
 
     ws.onclose = () => {
-      console.log('WebSocket getrennt');
+      debug.log('WebSocket getrennt');
       setWsConnected(false);
       // Automatisch wieder verbinden nach 3 Sekunden
       reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);

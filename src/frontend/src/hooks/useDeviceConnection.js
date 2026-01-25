@@ -8,6 +8,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { debug } from '../utils/debug';
 
 // Module-level storage for WebSocket connection (survives React remounts)
 let _activeWebSocket = null;
@@ -183,7 +184,7 @@ export function useDeviceConnection({
 
     // If there's already an active connection attempt, return its promise
     if (_activeConnectionPromise && _activeWebSocket && _activeWebSocket.readyState <= WebSocket.OPEN) {
-      console.log('🔄 Reusing existing connection attempt');
+      debug.log('🔄 Reusing existing connection attempt');
       return _activeConnectionPromise;
     }
 
@@ -207,7 +208,7 @@ export function useDeviceConnection({
     setError(null);
 
     const wsUrl = getWsUrl();
-    console.log('🔌 Connecting to device WebSocket:', wsUrl);
+    debug.log('🔌 Connecting to device WebSocket:', wsUrl);
 
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -241,7 +242,7 @@ export function useDeviceConnection({
     });
 
     ws.onopen = () => {
-      console.log('✅ Device WebSocket connected');
+      debug.log('✅ Device WebSocket connected');
       setConnectionState(CONNECTION_STATES.CONNECTED);
 
       // Register device
@@ -264,7 +265,7 @@ export function useDeviceConnection({
         capabilities: mergedCaps,
       };
 
-      console.log('📝 Registering device:', registerMsg);
+      debug.log('📝 Registering device:', registerMsg);
       ws.send(JSON.stringify(registerMsg));
 
       // Save config for reconnection
@@ -274,7 +275,7 @@ export function useDeviceConnection({
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('📩 Device message:', data.type, data);
+        debug.log('📩 Device message:', data.type, data);
 
         // Handle message types
         switch (data.type) {
@@ -285,7 +286,7 @@ export function useDeviceConnection({
               if (data.capabilities) {
                 setCapabilities(data.capabilities);
               }
-              console.log('✅ Device registered:', data.device_id, 'in room', data.room_id);
+              debug.log('✅ Device registered:', data.device_id, 'in room', data.room_id);
 
               // Start heartbeat
               startHeartbeat();
@@ -351,7 +352,7 @@ export function useDeviceConnection({
 
           case 'config_update':
             // Server pushed new wake word configuration
-            console.log('🔄 Config update received:', data.config);
+            debug.log('🔄 Config update received:', data.config);
             // Dispatch custom event for useWakeWord hook to handle
             window.dispatchEvent(new CustomEvent('wakeword-config-update', {
               detail: data.config
@@ -372,7 +373,7 @@ export function useDeviceConnection({
     };
 
     ws.onclose = (event) => {
-      console.log('👋 Device WebSocket closed:', event.code, event.reason);
+      debug.log('👋 Device WebSocket closed:', event.code, event.reason);
 
       // Only update state if this is the active WebSocket
       if (_activeWebSocket === ws || wsRef.current === ws) {
@@ -397,7 +398,7 @@ export function useDeviceConnection({
       // Auto-reconnect after delay (only for unexpected closures and only if this is still the active connection)
       if (!event.wasClean && event.code !== 1000 && _activeWebSocket === null) {
         reconnectTimeoutRef.current = setTimeout(() => {
-          console.log('🔄 Attempting to reconnect...');
+          debug.log('🔄 Attempting to reconnect...');
           const storedConfig = getStoredConfig();
           if (storedConfig) {
             connect(storedConfig);
@@ -539,8 +540,11 @@ export function useDeviceConnection({
         connect(storedConfig);
       }
     }
+    // NOTE: Intentionally omitting 'connect' from deps to prevent reconnection loops.
+    // connect() is a useCallback that may change when its deps change, but we only
+    // want this effect to run on mount or when autoConnect changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoConnect]); // Only run on mount and when autoConnect changes
+  }, [autoConnect]);
 
   // Cleanup on unmount only
   // NOTE: We do NOT close the WebSocket here because it may be reused

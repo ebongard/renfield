@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Menu } from 'lucide-react';
 import apiClient from '../../utils/axios';
+import { debug } from '../../utils/debug';
 import { useWakeWord } from '../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../config/wakeword';
 import ChatSidebar from '../../components/ChatSidebar';
@@ -70,7 +71,7 @@ export default function ChatPage() {
     try {
       if (!audioContextUnlockedRef.current || audioContextUnlockedRef.current.state === 'closed') {
         audioContextUnlockedRef.current = new (window.AudioContext || window.webkitAudioContext)();
-        console.log('AudioContext created and unlocked for TTS');
+        debug.log('AudioContext created and unlocked for TTS');
       }
       const audioContext = audioContextUnlockedRef.current;
 
@@ -117,7 +118,7 @@ export default function ChatPage() {
         console.warn('Long message detected, TTS may take time:', text.length, 'chars');
       }
 
-      console.log('Requesting TTS for:', text.substring(0, 50) + '...');
+      debug.log('Requesting TTS for:', text.substring(0, 50) + '...');
 
       const response = await apiClient.post('/api/voice/tts',
         { text },
@@ -132,16 +133,16 @@ export default function ChatPage() {
       if (!audioContext || audioContext.state === 'closed') {
         audioContext = new (window.AudioContext || window.webkitAudioContext)();
         audioContextUnlockedRef.current = audioContext;
-        console.log('Created new AudioContext for TTS');
+        debug.log('Created new AudioContext for TTS');
       }
 
       if (audioContext.state === 'suspended') {
         await audioContext.resume();
-        console.log('AudioContext resumed');
+        debug.log('AudioContext resumed');
       }
 
       const audioBuffer = await audioContext.decodeAudioData(response.data.slice(0));
-      console.log('Audio decoded:', audioBuffer.duration.toFixed(2), 'seconds');
+      debug.log('Audio decoded:', audioBuffer.duration.toFixed(2), 'seconds');
 
       const source = audioContext.createBufferSource();
       source.buffer = audioBuffer;
@@ -152,12 +153,12 @@ export default function ChatPage() {
       return new Promise((resolve) => {
         source.onended = () => {
           audioRef.current = null;
-          console.log('TTS playback completed');
+          debug.log('TTS playback completed');
           resolve();
         };
 
         source.start(0);
-        console.log('TTS playback started');
+        debug.log('TTS playback started');
       });
 
     } catch (error) {
@@ -175,7 +176,7 @@ export default function ChatPage() {
 
   // Handle wake word detection
   const handleWakeWordDetected = useCallback(async (keyword, score) => {
-    console.log(`Wake word detected: ${keyword} (score: ${score.toFixed(2)})`);
+    debug.log(`Wake word detected: ${keyword} (score: ${score.toFixed(2)})`);
     setWakeWordStatus('activated');
     wakeWordActivatedRef.current = true;
 
@@ -189,7 +190,7 @@ export default function ChatPage() {
   }, [playActivationSound]);
 
   const handleWakeWordSpeechEnd = useCallback(() => {
-    console.log('Wake word VAD: Speech ended');
+    debug.log('Wake word VAD: Speech ended');
   }, []);
 
   const handleWakeWordError = useCallback((error) => {
@@ -220,14 +221,14 @@ export default function ChatPage() {
       if (lastMsg && lastMsg.streaming) {
         const completedMessage = { ...lastMsg, streaming: false };
 
-        console.log('Check Auto-TTS: Channel =', lastInputChannelRef.current, ', ServerHandled =', ttsHandledByServer);
+        debug.log('Check Auto-TTS: Channel =', lastInputChannelRef.current, ', ServerHandled =', ttsHandledByServer);
 
         if (ttsHandledByServer) {
-          console.log('TTS handled by server - skipping local playback');
+          debug.log('TTS handled by server - skipping local playback');
 
           if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
             setTimeout(() => {
-              console.log('Resuming wake word detection after server TTS...');
+              debug.log('Resuming wake word detection after server TTS...');
               resumeWakeWord();
               setWakeWordStatus('listening');
               wakeWordActivatedRef.current = false;
@@ -235,11 +236,11 @@ export default function ChatPage() {
           }
         } else if (lastInputChannelRef.current === 'voice' && completedMessage.role === 'assistant') {
           if (autoTTSPendingRef.current) {
-            console.log('Auto-TTS skipped: Request already active');
+            debug.log('Auto-TTS skipped: Request already active');
           } else if (lastAutoTTSTextRef.current === completedMessage.content) {
-            console.log('Auto-TTS skipped: Same text already played');
+            debug.log('Auto-TTS skipped: Same text already played');
           } else {
-            console.log('Auto-playing TTS response (voice input detected)');
+            debug.log('Auto-playing TTS response (voice input detected)');
             autoTTSPendingRef.current = true;
             lastAutoTTSTextRef.current = completedMessage.content;
 
@@ -248,7 +249,7 @@ export default function ChatPage() {
                 autoTTSPendingRef.current = false;
 
                 if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
-                  console.log('Resuming wake word detection after TTS...');
+                  debug.log('Resuming wake word detection after TTS...');
                   resumeWakeWord();
                   setWakeWordStatus('listening');
                   wakeWordActivatedRef.current = false;
@@ -257,10 +258,10 @@ export default function ChatPage() {
             }, 200);
           }
         } else {
-          console.log('No Auto-TTS: Channel is', lastInputChannelRef.current);
+          debug.log('No Auto-TTS: Channel is', lastInputChannelRef.current);
 
           if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
-            console.log('Resuming wake word detection (no TTS)...');
+            debug.log('Resuming wake word detection (no TTS)...');
             resumeWakeWord();
             setWakeWordStatus('listening');
             wakeWordActivatedRef.current = false;
@@ -305,7 +306,7 @@ export default function ChatPage() {
 
   // Handle transcription from audio recording
   const handleTranscription = useCallback((text) => {
-    console.log('Transcription received:', text);
+    debug.log('Transcription received:', text);
     sendMessageInternal(text, true);
   }, []);
 
@@ -323,10 +324,10 @@ export default function ChatPage() {
     lastInputChannelRef.current = 'voice';
     lastAutoTTSTextRef.current = '';
     autoTTSPendingRef.current = false;
-    console.log('Channel set to: voice');
+    debug.log('Channel set to: voice');
 
     if (wakeWordEnabled) {
-      console.log('Pausing wake word detection for recording...');
+      debug.log('Pausing wake word detection for recording...');
       await pauseWakeWord();
     }
     setWakeWordStatus('recording');
@@ -335,7 +336,7 @@ export default function ChatPage() {
   // Handle recording stop
   const handleRecordingStop = useCallback(() => {
     if (wakeWordEnabled && !wakeWordActivatedRef.current) {
-      console.log('Resuming wake word detection after recording...');
+      debug.log('Resuming wake word detection after recording...');
       resumeWakeWord();
       setWakeWordStatus('listening');
     }
@@ -366,7 +367,7 @@ export default function ChatPage() {
     if (!fromVoice) {
       lastInputChannelRef.current = 'text';
       lastAutoTTSTextRef.current = '';
-      console.log('Channel set to: text');
+      debug.log('Channel set to: text');
     }
 
     const userMessage = { role: 'user', content: text };

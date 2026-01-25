@@ -11,10 +11,10 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
 | Backend | 0 | 1 | 4 | 7 | 6 |
-| Frontend | 0 | 4 | 3 | 7 | 1 |
+| Frontend | 0 | 1 | 3 | 7 | 4 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **11** | **11** | **24** | **8** |
+| **Gesamt** | **0** | **8** | **11** | **24** | **11** |
 
 ---
 
@@ -201,11 +201,18 @@ pages/ChatPage/
 
 ### 🟡 Mittel
 
-#### 2. Console.log Statements (30+)
+#### ~~2. Console.log Statements (30+)~~ ✅ Behoben
 
-**Problem:** Viele `console.log` Statements, besonders in `useWakeWord.js`.
+**Status:** Behoben am 2026-01-25
 
-**Empfehlung:** Debug-Logs entfernen oder hinter Feature-Flag.
+**Lösung:**
+- `utils/debug.js` erstellt - Debug-Logger der nur im Dev-Modus loggt
+- 80 `console.log` → `debug.log` ersetzt in:
+  - `hooks/useWakeWord.js` (15)
+  - `hooks/useDeviceConnection.js` (9)
+  - `pages/ChatPage/hooks/useAudioRecording.js` (29)
+  - `pages/ChatPage/hooks/useChatWebSocket.js` (4)
+  - `pages/ChatPage/index.jsx` (23)
 
 ---
 
@@ -217,29 +224,31 @@ pages/ChatPage/
 
 ---
 
-#### 4. Outdated Dependencies
+#### 4. Outdated Dependencies (teilweise behoben)
 
-| Package | Current | Latest | Breaking |
-|---------|---------|--------|----------|
-| react | 18.3.1 | 19.x | ⚠️ Major |
-| react-router-dom | 6.30.3 | 7.x | ⚠️ Major |
-| tailwindcss | 3.4.19 | 4.x | ⚠️ Major |
-| vite | 5.4.21 | 7.x | ⚠️ Major |
-| @headlessui/react | 1.7.19 | 2.x | ⚠️ Major |
-| lucide-react | 0.307.0 | 0.563.0 | ✅ Minor |
+| Package | Current | Latest | Breaking | Status |
+|---------|---------|--------|----------|--------|
+| react | 18.3.1 | 19.x | ⚠️ Major | ⏳ |
+| react-router-dom | 6.30.3 | 7.x | ⚠️ Major | ⏳ |
+| tailwindcss | 3.4.19 | 4.x | ⚠️ Major | ⏳ |
+| vite | 5.4.21 | 7.x | ⚠️ Major | ⏳ |
+| @headlessui/react | 1.7.19 | 2.x | ⚠️ Major | ⏳ |
+| lucide-react | 0.307.0 | 0.563.0 | ✅ Minor | ✅ |
 
-**Empfehlung:** Minor-Updates zeitnah, Major-Updates planen.
+**Änderungen (2026-01-25):**
+- lucide-react 0.307.0 → 0.563.0 aktualisiert
+
+**Empfehlung:** Major-Updates einzeln planen und testen.
 
 ---
 
-#### 5. ESLint-Disable Kommentare
+#### ~~5. ESLint-Disable Kommentare~~ ✅ Dokumentiert
 
-```javascript
-// useDeviceConnection.js:542
-// eslint-disable-next-line react-hooks/exhaustive-deps
-```
+**Status:** Dokumentiert am 2026-01-25
 
-**Empfehlung:** Dependencies prüfen und korrekt angeben.
+**Lösung:** Der ESLint-disable Kommentar in `useDeviceConnection.js` ist berechtigt.
+Das `connect` wird absichtlich aus den Dependencies ausgelassen, um Reconnection-Loops zu verhindern.
+Kommentar wurde erweitert um die Begründung zu dokumentieren.
 
 ---
 
@@ -402,7 +411,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 1. ✅ ~~Bare except → Exception ersetzen~~ (2026-01-25)
 2. ✅ ~~Docker :latest → gepinnte Versionen~~ (2026-01-25)
-3. ⬜ Console.log Statements entfernen
+3. ✅ ~~Console.log → Debug-Logger~~ (2026-01-25)
 
 ### Kurzfristig (1-4 Wochen)
 
@@ -430,6 +439,9 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | Debug-Logger utils/debug.js erstellt, 80 console.log → debug.log ersetzt (#31) |
+| 2026-01-25 | lucide-react 0.307.0 → 0.563.0 aktualisiert (#31) |
+| 2026-01-25 | ESLint-disable Kommentar in useDeviceConnection.js dokumentiert (#31) |
 | 2026-01-25 | ConversationService extrahiert aus OllamaService: 966 → 773 Zeilen (20% Reduktion) (#28) |
 | 2026-01-25 | Type Hints hinzugefügt: ollama_service.py, audio_output_service.py (#28) |
 | 2026-01-25 | Schemas extrahiert: rooms_schemas.py, knowledge_schemas.py (#28) |

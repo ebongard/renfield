@@ -4,6 +4,7 @@ import {
   loadWakeWordSettings,
   saveWakeWordSettings,
 } from '../config/wakeword';
+import { debug } from '../utils/debug';
 
 // Lazy-loaded wake word engine class
 let WakeWordEngineClass = null;
@@ -34,11 +35,11 @@ async function loadWakeWordEngine() {
     // Set explicit WASM file paths to avoid Vite module interception
     ort.env.wasm.wasmPaths = '/ort/';
 
-    console.log('✅ ONNX Runtime (WASM) configured with paths:', ort.env.wasm.wasmPaths);
+    debug.log('✅ ONNX Runtime (WASM) configured with paths:', ort.env.wasm.wasmPaths);
 
     const module = await import('openwakeword-wasm-browser');
     WakeWordEngineClass = module.default || module.WakeWordEngine;
-    console.log('✅ Wake word engine loaded successfully');
+    debug.log('✅ Wake word engine loaded successfully');
     return true;
   } catch (e) {
     loadError = e;
@@ -90,7 +91,7 @@ export function useWakeWord({
   // Keep isEnabledRef in sync with state
   useEffect(() => {
     isEnabledRef.current = isEnabled;
-    console.log('🔄 isEnabledRef updated to:', isEnabled);
+    debug.log('🔄 isEnabledRef updated to:', isEnabled);
   }, [isEnabled]);
 
   // Initialize engine
@@ -236,17 +237,17 @@ export function useWakeWord({
 
   // Pause listening temporarily (e.g., while recording)
   const pause = useCallback(async () => {
-    console.log('⏸️ pause() called - isListening:', isListening, 'hasEngine:', !!engineRef.current);
+    debug.log('⏸️ pause() called - isListening:', isListening, 'hasEngine:', !!engineRef.current);
 
     if (!isListening || !engineRef.current) {
-      console.log('⚠️ pause() skipped: not listening or no engine');
+      debug.log('⚠️ pause() skipped: not listening or no engine');
       return;
     }
 
     try {
       await engineRef.current.stop();
       setIsListening(false);
-      console.log('✅ Wake word paused (isEnabled stays true)');
+      debug.log('✅ Wake word paused (isEnabled stays true)');
     } catch (err) {
       console.error('Failed to pause wake word:', err);
     }
@@ -257,7 +258,7 @@ export function useWakeWord({
     // Use refs to avoid stale closure issues
     const currentIsEnabled = isEnabledRef.current;
 
-    console.log('🔄 resume() called - checking conditions:', {
+    debug.log('🔄 resume() called - checking conditions:', {
       isListening,
       isEnabled: currentIsEnabled,
       isEnabledRef: isEnabledRef.current,
@@ -265,25 +266,25 @@ export function useWakeWord({
     });
 
     if (isListening) {
-      console.log('⚠️ resume() skipped: already listening');
+      debug.log('⚠️ resume() skipped: already listening');
       return;
     }
     if (!currentIsEnabled) {
-      console.log('⚠️ resume() skipped: wake word not enabled (using ref)');
+      debug.log('⚠️ resume() skipped: wake word not enabled (using ref)');
       return;
     }
     if (!engineRef.current) {
-      console.log('⚠️ resume() skipped: no engine');
+      debug.log('⚠️ resume() skipped: no engine');
       return;
     }
 
     try {
-      console.log('▶️ Starting wake word engine...');
+      debug.log('▶️ Starting wake word engine...');
       await engineRef.current.start({
         gain: WAKEWORD_CONFIG.defaults.gain,
       });
       setIsListening(true);
-      console.log('✅ Wake word engine resumed successfully');
+      debug.log('✅ Wake word engine resumed successfully');
     } catch (err) {
       console.error('Failed to resume wake word:', err);
       setError(err);
@@ -343,20 +344,20 @@ export function useWakeWord({
   useEffect(() => {
     const handleConfigUpdate = (event) => {
       const config = event.detail;
-      console.log('🔄 Wake word config update from server:', config);
+      debug.log('🔄 Wake word config update from server:', config);
 
       // Update keyword if provided
       if (config.wake_words && config.wake_words[0]) {
         const newKeyword = config.wake_words[0];
         if (newKeyword !== settings.keyword) {
-          console.log(`🎤 Updating wake word: ${settings.keyword} -> ${newKeyword}`);
+          debug.log(`🎤 Updating wake word: ${settings.keyword} -> ${newKeyword}`);
           setKeyword(newKeyword);
         }
       }
 
       // Update threshold if provided
       if (config.threshold !== undefined && config.threshold !== settings.threshold) {
-        console.log(`🎚️ Updating threshold: ${settings.threshold} -> ${config.threshold}`);
+        debug.log(`🎚️ Updating threshold: ${settings.threshold} -> ${config.threshold}`);
         setThreshold(config.threshold);
       }
     };

@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import apiClient from '../../../utils/axios';
+import { debug } from '../../../utils/debug';
 
 // VAD Configuration Constants
 const VAD_CONFIG = {
@@ -50,26 +51,26 @@ export function useAudioRecording({
    * Process voice input - send to STT endpoint
    */
   const processVoiceInput = useCallback(async (audioBlob) => {
-    console.log('Processing voice input...');
+    debug.log('Processing voice input...');
     setProcessing(true);
 
     try {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'recording.webm');
 
-      console.log('Sending audio to backend...');
+      debug.log('Sending audio to backend...');
       const sttResponse = await apiClient.post('/api/voice/stt', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       });
 
-      console.log('STT Response:', sttResponse.data);
+      debug.log('STT Response:', sttResponse.data);
       const transcribedText = sttResponse.data.text;
 
       if (!transcribedText || transcribedText.trim() === '') {
         throw new Error(t('voice.noSpeechRecognized'));
       }
 
-      console.log('Transcribed text:', transcribedText);
+      debug.log('Transcribed text:', transcribedText);
       onTranscription?.(transcribedText);
     } catch (error) {
       console.error('Voice input error:', error);
@@ -102,8 +103,8 @@ export function useAudioRecording({
     }
 
     const mrState = mediaRecorderRef.current.state;
-    console.log('Stopping recording...');
-    console.log('MediaRecorder State:', mrState);
+    debug.log('Stopping recording...');
+    debug.log('MediaRecorder State:', mrState);
 
     // Only stop if MediaRecorder is in 'recording' state
     if (mrState !== 'recording') {
@@ -119,7 +120,7 @@ export function useAudioRecording({
     try {
       mediaRecorderRef.current.stop();
       setRecording(false);
-      console.log('stop() called, waiting for onstop handler...');
+      debug.log('stop() called, waiting for onstop handler...');
     } catch (error) {
       console.error('Error stopping recording:', error);
       setRecording(false);
@@ -136,11 +137,11 @@ export function useAudioRecording({
     onRecordingStart?.();
 
     try {
-      console.log('Starting recording with Voice Activity Detection...');
+      debug.log('Starting recording with Voice Activity Detection...');
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
-      console.log('Microphone access granted');
-      console.log('Stream Tracks:', stream.getTracks().map(t => ({
+      debug.log('Microphone access granted');
+      debug.log('Stream Tracks:', stream.getTracks().map(t => ({
         kind: t.kind,
         enabled: t.enabled,
         muted: t.muted,
@@ -156,12 +157,12 @@ export function useAudioRecording({
       try {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         audioContextRef.current = audioContext;
-        console.log('AudioContext created, State:', audioContext.state);
+        debug.log('AudioContext created, State:', audioContext.state);
 
         // Resume AudioContext if suspended
         if (audioContext.state === 'suspended') {
           await audioContext.resume();
-          console.log('AudioContext resumed, new State:', audioContext.state);
+          debug.log('AudioContext resumed, new State:', audioContext.state);
         }
 
         const source = audioContext.createMediaStreamSource(stream);
@@ -171,14 +172,14 @@ export function useAudioRecording({
         source.connect(analyser);
         analyserRef.current = analyser;
 
-        console.log('Analyser configured:', {
+        debug.log('Analyser configured:', {
           fftSize: analyser.fftSize,
           frequencyBinCount: analyser.frequencyBinCount,
           smoothingTimeConstant: analyser.smoothingTimeConstant
         });
       } catch (audioError) {
         console.error('AudioContext error:', audioError);
-        console.log('Continuing without audio level monitoring');
+        debug.log('Continuing without audio level monitoring');
       }
 
       // Voice Activity Detection
@@ -218,7 +219,7 @@ export function useAudioRecording({
         // Log every 15 frames (~250ms) for debugging
         if (checkCount % 15 === 0) {
           const silenceDurationNow = Date.now() - lastSoundTime;
-          console.log('Audio Level:', Math.round(average),
+          debug.log('Audio Level:', Math.round(average),
             '| Threshold:', VAD_CONFIG.SILENCE_THRESHOLD,
             '| Sound detected:', hasSoundDetected,
             '| Silence:', Math.round(silenceDurationNow / 1000), 'sec');
@@ -240,7 +241,7 @@ export function useAudioRecording({
           }
 
           if (checkCount % 30 === 0) {
-            console.log('Sound detected, Level:', Math.round(average));
+            debug.log('Sound detected, Level:', Math.round(average));
           }
         } else {
           // Silence detected
@@ -259,8 +260,8 @@ export function useAudioRecording({
             hasSoundDetected &&
             silenceDuration > VAD_CONFIG.SILENCE_DURATION) {
 
-            console.log('Silence detected for', Math.round(silenceDuration), 'ms - auto-stopping');
-            console.log('Recording Stats: Time:', Math.round(recordingTime), 'ms, Sound detected:', hasSoundDetected);
+            debug.log('Silence detected for', Math.round(silenceDuration), 'ms - auto-stopping');
+            debug.log('Recording Stats: Time:', Math.round(recordingTime), 'ms, Sound detected:', hasSoundDetected);
             isStillRecording = false;
             setSilenceTimeRemaining(0);
             stopRecording();
@@ -275,27 +276,27 @@ export function useAudioRecording({
       };
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log('Audio data received:', event.data.size, 'bytes');
+        debug.log('Audio data received:', event.data.size, 'bytes');
         audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = async () => {
-        console.log('====== ONSTOP HANDLER STARTED ======');
-        console.log('Chunks received:', audioChunksRef.current.length);
+        debug.log('====== ONSTOP HANDLER STARTED ======');
+        debug.log('Chunks received:', audioChunksRef.current.length);
 
         // Cleanup
         if (animationFrameRef.current) {
           cancelAnimationFrame(animationFrameRef.current);
-          console.log('AnimationFrame stopped');
+          debug.log('AnimationFrame stopped');
         }
         if (silenceTimerRef.current) {
           clearTimeout(silenceTimerRef.current);
-          console.log('Silence Timer cleared');
+          debug.log('Silence Timer cleared');
         }
         if (audioContextRef.current) {
           try {
             await audioContextRef.current.close();
-            console.log('AudioContext closed');
+            debug.log('AudioContext closed');
           } catch (e) {
             console.warn('AudioContext close error:', e);
           }
@@ -304,13 +305,13 @@ export function useAudioRecording({
         setAudioLevel(0);
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        console.log('Audio Blob created:', audioBlob.size, 'bytes, Type:', audioBlob.type);
+        debug.log('Audio Blob created:', audioBlob.size, 'bytes, Type:', audioBlob.type);
 
         // Stop stream
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => {
             track.stop();
-            console.log('Stream Track stopped:', track.kind);
+            debug.log('Stream Track stopped:', track.kind);
           });
         }
 
@@ -318,7 +319,7 @@ export function useAudioRecording({
 
         // Only process if enough data
         if (audioBlob.size > 1000) {
-          console.log('Blob large enough, starting processing...');
+          debug.log('Blob large enough, starting processing...');
           await processVoiceInput(audioBlob);
         } else {
           console.warn('Audio too short (', audioBlob.size, 'bytes), not processing');
@@ -327,12 +328,12 @@ export function useAudioRecording({
 
         // Reset stopping flag
         isStoppingRef.current = false;
-        console.log('====== ONSTOP HANDLER COMPLETED ======');
+        debug.log('====== ONSTOP HANDLER COMPLETED ======');
       };
 
       mediaRecorder.start();
       setRecording(true);
-      console.log('Recording started... (auto-stop on silence)');
+      debug.log('Recording started... (auto-stop on silence)');
 
       // Start audio level monitoring
       checkAudioLevel();
