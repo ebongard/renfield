@@ -22,6 +22,7 @@ setup(
     entry_points={
         "console_scripts": [
             "renfield-satellite=renfield_satellite.main:run",
+            "renfield-monitor=renfield_satellite.cli.monitor:main",
         ],
     },
     classifiers=[
