@@ -93,6 +93,7 @@ class WebSocketClient:
 
         # Callbacks
         self._on_state_change: Optional[Callable[[str], None]] = None
+        self._get_metrics: Optional[Callable[[], Dict[str, Any]]] = None  # Callback to get current metrics
         self._on_transcription: Optional[Callable[[str, str], None]] = None
         self._on_action: Optional[Callable[[str, Dict, bool], None]] = None
         self._on_tts_audio: Optional[Callable[[str, bytes, bool], None]] = None
@@ -174,6 +175,10 @@ class WebSocketClient:
     def on_config_update(self, callback: Callable[["ServerConfig"], None]):
         """Register callback for server config updates (wake word settings)"""
         self._on_config_update = callback
+
+    def set_metrics_callback(self, callback: Callable[[], Dict[str, Any]]):
+        """Register callback to get current metrics for heartbeat"""
+        self._get_metrics = callback
 
     async def connect(self) -> bool:
         """
@@ -450,18 +455,31 @@ class WebSocketClient:
                 self._on_disconnected()
 
     async def _heartbeat_loop(self):
-        """Background task sending periodic heartbeats"""
+        """Background task sending periodic heartbeats with metrics"""
         while self._running and self._ws:
             try:
                 await asyncio.sleep(self.heartbeat_interval)
 
                 if self._running and self._ws:
                     uptime = int(time.time() - self._start_time)
-                    await self._send({
+
+                    # Build heartbeat message
+                    heartbeat = {
                         "type": "heartbeat",
                         "status": "idle",  # Could be more dynamic
                         "uptime_seconds": uptime
-                    })
+                    }
+
+                    # Add metrics if callback is set
+                    if self._get_metrics:
+                        try:
+                            metrics = self._get_metrics()
+                            if metrics:
+                                heartbeat["metrics"] = metrics
+                        except Exception as e:
+                            print(f"Error getting metrics: {e}")
+
+                    await self._send(heartbeat)
 
             except asyncio.CancelledError:
                 break

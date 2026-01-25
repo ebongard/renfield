@@ -12,7 +12,7 @@ Orchestrates all satellite components:
 import asyncio
 import time
 from enum import Enum
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from .config import Config
 from .audio.capture import AudioCapture
@@ -67,6 +67,11 @@ class Satellite:
         self._processing_timeout: float = 30.0  # Max time to wait for server response
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
         self._wakeword_pending: bool = False  # Prevent duplicate wakeword processing
+
+        # Metrics tracking
+        self._last_wakeword: Optional[Dict[str, Any]] = None
+        self._session_count_1h: int = 0
+        self._error_count_1h: int = 0
 
         # Initialize components
         self._init_components()
@@ -159,6 +164,7 @@ class Satellite:
         self.ws_client.on_disconnected(self._on_disconnected)
         self.ws_client.on_error(self._on_error)
         self.ws_client.on_config_update(self._on_config_update)
+        self.ws_client.set_metrics_callback(self._get_metrics)
 
         # Button callbacks
         self.button.on_press(self._on_button_press)
@@ -444,6 +450,17 @@ class Satellite:
         """Handle wake word detection"""
         print(f"Wake word detected: {keyword} ({confidence:.2f})")
 
+        # Track last wake word detection for metrics
+        import time
+        self._last_wakeword = {
+            "keyword": keyword,
+            "confidence": confidence,
+            "timestamp": time.time()
+        }
+
+        # Increment session counter
+        self._session_count_1h = getattr(self, "_session_count_1h", 0) + 1
+
         if self._state != SatelliteState.IDLE:
             print("Ignoring - not in idle state")
             self._wakeword_pending = False
@@ -618,6 +635,9 @@ class Satellite:
         """Handle error from server"""
         print(f"Server error: {message}")
 
+        # Increment error counter for metrics
+        self._error_count_1h = getattr(self, "_error_count_1h", 0) + 1
+
         # Show error LED briefly
         self.leds.set_pattern(LEDPattern.ERROR)
 
@@ -625,6 +645,65 @@ class Satellite:
         if self._session_id or self._state in (SatelliteState.LISTENING, SatelliteState.PROCESSING, SatelliteState.SPEAKING):
             print("Resetting due to server error")
             self._schedule_async(self._reset_session("server_error"))
+
+    def _get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current metrics for heartbeat message.
+
+        Returns metrics about audio levels, system stats, and session counters.
+        """
+        import math
+
+        metrics = {}
+
+        # Audio metrics from capture buffer
+        try:
+            if self.audio_capture and self._audio_buffer:
+                # Calculate RMS from recent audio
+                recent_audio = b"".join(self._audio_buffer[-5:]) if self._audio_buffer else b""
+                if len(recent_audio) >= 2:
+                    import struct
+                    samples = struct.unpack(f"<{len(recent_audio)//2}h", recent_audio)
+                    if samples:
+                        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+                        metrics["audio_rms"] = round(rms, 1)
+                        metrics["audio_db"] = round(20 * math.log10(max(rms, 1) / 32768.0), 1)
+        except Exception as e:
+            pass
+
+        # VAD status (if we have recent audio)
+        try:
+            if hasattr(self, 'vad') and self.vad and self._audio_buffer:
+                recent = self._audio_buffer[-1] if self._audio_buffer else None
+                if recent:
+                    metrics["is_speech"] = self.vad.is_speech(recent)
+        except:
+            pass
+
+        # System metrics
+        try:
+            import psutil
+            metrics["cpu_percent"] = round(psutil.cpu_percent(interval=None), 1)
+            metrics["memory_percent"] = round(psutil.virtual_memory().percent, 1)
+
+            # Raspberry Pi temperature
+            try:
+                with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                    metrics["temperature"] = round(float(f.read().strip()) / 1000.0, 1)
+            except:
+                pass
+        except ImportError:
+            pass
+
+        # Last wake word detection
+        if self._last_wakeword:
+            metrics["last_wakeword"] = self._last_wakeword
+
+        # Session counters (track in instance variables)
+        metrics["session_count_1h"] = getattr(self, "_session_count_1h", 0)
+        metrics["error_count_1h"] = getattr(self, "_error_count_1h", 0)
+
+        return metrics
 
     def _on_config_update(self, config: ServerConfig):
         """

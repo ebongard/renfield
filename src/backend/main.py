@@ -20,7 +20,7 @@ logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge
+from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge, satellites
 from api.routes import auth, roles, users, plugins, preferences
 from services.auth_service import require_permission, get_optional_user
 from models.permissions import Permission
@@ -372,6 +372,7 @@ app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
 app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
 app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(satellites.router, prefix="/api/satellites", tags=["Satellites"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
@@ -1080,11 +1081,13 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                 # End session
                 await satellite_manager.end_session(session_id, reason="completed")
 
-            # Handle heartbeat
+            # Handle heartbeat with optional metrics
             elif msg_type == "heartbeat":
                 if satellite_id:
-                    satellite_manager.update_heartbeat(satellite_id)
-                    # Optionally send heartbeat ack
+                    # Extract metrics from heartbeat if present
+                    metrics = data.get("metrics")
+                    satellite_manager.update_heartbeat(satellite_id, metrics)
+                    # Send heartbeat ack
                     await websocket.send_json({"type": "heartbeat_ack"})
 
     except WebSocketDisconnect:

@@ -87,6 +87,12 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 │  └────────────────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
+## Haftungsausschluss
+
+renfield ist ein unabhängiges Open-Source-Projekt.
+Es besteht keine Verbindung zu Dritten, Organisationen, Unternehmen
+oder Marken mit gleichem oder ähnlichem Namen, und es erfolgt keine
+Unterstützung oder Billigung durch solche Dritte.
 
 ## Schnellstart
 

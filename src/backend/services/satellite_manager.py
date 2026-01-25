@@ -44,6 +44,21 @@ class SatelliteCapabilities:
 
 
 @dataclass
+class SatelliteMetrics:
+    """Live metrics from satellite heartbeat"""
+    audio_rms: Optional[float] = None
+    audio_db: Optional[float] = None
+    is_speech: Optional[bool] = None
+    cpu_percent: Optional[float] = None
+    memory_percent: Optional[float] = None
+    temperature: Optional[float] = None
+    last_wakeword: Optional[Dict[str, Any]] = None
+    session_count_1h: int = 0
+    error_count_1h: int = 0
+    updated_at: float = field(default_factory=time.time)
+
+
+@dataclass
 class SatelliteInfo:
     """Information about a connected satellite"""
     satellite_id: str
@@ -56,6 +71,7 @@ class SatelliteInfo:
     current_session_id: Optional[str] = None
     room_id: Optional[int] = None  # Database room ID (populated after DB sync)
     language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
+    metrics: Dict[str, Any] = field(default_factory=dict)  # Live metrics from heartbeat
 
 
 @dataclass
@@ -152,6 +168,12 @@ class SatelliteManager:
             logger.info(f"✅ Satellite registered: {satellite_id} in {room}")
             logger.info(f"   Capabilities: wakeword={caps.local_wakeword}, speaker={caps.speaker}, leds={caps.led_count}")
 
+            # Track event
+            self._add_event(satellite_id, "connected", {
+                "room": room,
+                "capabilities": capabilities
+            })
+
             return True
 
     async def unregister(self, satellite_id: str):
@@ -216,6 +238,13 @@ class SatelliteManager:
 
             logger.info(f"🎙️ Session started: {session_id}")
             logger.info(f"   Room: {sat.room}, Wake word: {keyword} ({confidence:.2f})")
+
+            # Track event
+            self._add_event(satellite_id, "session_start", {
+                "session_id": session_id,
+                "keyword": keyword,
+                "confidence": confidence
+            })
 
             return session_id
 
@@ -438,15 +467,99 @@ class SatelliteManager:
         # Calculate duration
         duration = time.time() - session.started_at
 
+        # Track event and stats
+        success = reason in ["completed", "silence"]
+        self._add_event(session.satellite_id, "session_end", {
+            "session_id": session_id,
+            "reason": reason,
+            "duration": duration,
+            "success": success,
+            "transcription": session.transcription
+        })
+        self._update_stats(session.satellite_id, duration, success)
+
         # Remove session
         del self.sessions[session_id]
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
 
-    def update_heartbeat(self, satellite_id: str):
-        """Update satellite heartbeat timestamp"""
+    def update_heartbeat(self, satellite_id: str, metrics: Optional[Dict[str, Any]] = None):
+        """
+        Update satellite heartbeat timestamp and optional metrics.
+
+        Args:
+            satellite_id: ID of the satellite
+            metrics: Optional metrics dict from heartbeat message
+        """
         if satellite_id in self.satellites:
-            self.satellites[satellite_id].last_heartbeat = time.time()
+            sat = self.satellites[satellite_id]
+            sat.last_heartbeat = time.time()
+
+            # Update metrics if provided
+            if metrics:
+                sat.metrics = {
+                    "audio_rms": metrics.get("audio_rms"),
+                    "audio_db": metrics.get("audio_db"),
+                    "is_speech": metrics.get("is_speech"),
+                    "cpu_percent": metrics.get("cpu_percent"),
+                    "memory_percent": metrics.get("memory_percent"),
+                    "temperature": metrics.get("temperature"),
+                    "last_wakeword": metrics.get("last_wakeword"),
+                    "session_count_1h": metrics.get("session_count_1h", 0),
+                    "error_count_1h": metrics.get("error_count_1h", 0),
+                }
+
+                # Track history
+                self._add_event(satellite_id, "heartbeat", {
+                    "state": sat.state.value,
+                    "audio_rms": metrics.get("audio_rms"),
+                    "is_speech": metrics.get("is_speech"),
+                })
+
+    def _add_event(self, satellite_id: str, event_type: str, details: Dict[str, Any] = None):
+        """Add an event to satellite history"""
+        if not hasattr(self, "_satellite_history"):
+            self._satellite_history: Dict[str, List[Dict[str, Any]]] = {}
+
+        if satellite_id not in self._satellite_history:
+            self._satellite_history[satellite_id] = []
+
+        event = {
+            "timestamp": time.time(),
+            "type": event_type,
+            "details": details or {}
+        }
+
+        self._satellite_history[satellite_id].append(event)
+
+        # Keep only last 1000 events per satellite
+        if len(self._satellite_history[satellite_id]) > 1000:
+            self._satellite_history[satellite_id] = self._satellite_history[satellite_id][-1000:]
+
+    def _update_stats(self, satellite_id: str, session_duration: float, success: bool):
+        """Update session statistics for a satellite"""
+        if not hasattr(self, "_satellite_stats"):
+            self._satellite_stats: Dict[str, Dict[str, Any]] = {}
+
+        if satellite_id not in self._satellite_stats:
+            self._satellite_stats[satellite_id] = {
+                "total_sessions": 0,
+                "successful_sessions": 0,
+                "failed_sessions": 0,
+                "total_duration": 0.0,
+                "avg_duration": 0.0
+            }
+
+        stats = self._satellite_stats[satellite_id]
+        stats["total_sessions"] += 1
+
+        if success:
+            stats["successful_sessions"] += 1
+        else:
+            stats["failed_sessions"] += 1
+
+        stats["total_duration"] += session_duration
+        stats["avg_duration"] = stats["total_duration"] / stats["total_sessions"]
 
     def get_satellite_by_session(self, session_id: str) -> Optional[SatelliteInfo]:
         """Get satellite info for a session"""

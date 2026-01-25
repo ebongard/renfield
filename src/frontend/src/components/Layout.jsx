@@ -18,7 +18,8 @@ import {
   Shield,
   UserCog,
   User,
-  Puzzle
+  Puzzle,
+  Satellite
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -41,6 +42,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
+  { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
 ];
 
