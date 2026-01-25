@@ -198,7 +198,7 @@ export default function UsersPage() {
   const handleLinkSpeakerSubmit = async (speakerId) => {
     try {
       const token = getAccessToken();
-      await apiClient.post(`/api/users/${linkingUserId}/link-speaker/${speakerId}`, {}, {
+      await apiClient.post(`/api/users/${linkingUserId}/link-speaker`, { speaker_id: speakerId }, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setSuccess(t('users.speakerLinked'));
