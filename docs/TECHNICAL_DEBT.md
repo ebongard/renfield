@@ -8,13 +8,13 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 ## Übersicht
 
-| Bereich | Kritisch | Mittel | Niedrig | Gesamt |
-|---------|----------|--------|---------|--------|
-| Backend | 2 | 5 | 4 | 11 |
-| Frontend | 1 | 4 | 3 | 8 |
-| Satellite | 0 | 3 | 2 | 5 |
-| Infrastruktur | 1 | 3 | 2 | 6 |
-| **Gesamt** | **4** | **15** | **11** | **30** |
+| Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
+|---------|----------|--------|---------|--------|---------|
+| Backend | 1 | 5 | 4 | 10 | 1 |
+| Frontend | 1 | 4 | 3 | 8 | 0 |
+| Satellite | 0 | 3 | 2 | 5 | 0 |
+| Infrastruktur | 1 | 3 | 2 | 6 | 0 |
+| **Gesamt** | **3** | **15** | **11** | **29** | **1** |
 
 ---
 
@@ -47,28 +47,15 @@ api/
 
 ---
 
-#### 2. Bare Except Clauses (6 Stellen)
+#### 2. ~~Bare Except Clauses (6 Stellen)~~ ✅ Behoben
 
-**Problem:** Nackte `except:` Anweisungen unterdrücken alle Exceptions inkl. SystemExit und KeyboardInterrupt.
+**Status:** Behoben am 2026-01-25
 
-**Betroffene Dateien:**
-- `main.py:1945`
-- `output_routing_service.py:305`
-- `device_manager.py:211, 573`
-- `satellite_manager.py:164, 481`
-
-**Empfehlung:** Spezifische Exceptions fangen:
-```python
-# Vorher
-except:
-    pass
-
-# Nachher
-except Exception as e:
-    logger.warning(f"Non-critical error: {e}")
-```
-
-**Aufwand:** ~2 Stunden
+**Änderungen:**
+- `main.py:1945` → `except Exception:`
+- `output_routing_service.py:305` → `except Exception:`
+- `device_manager.py:211, 573` → `except Exception:`
+- `satellite_manager.py:164, 481` → `except Exception:`
 
 ---
 
@@ -372,7 +359,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 ### Sofort (< 1 Woche)
 
-1. ⬜ Bare except → Exception ersetzen
+1. ✅ ~~Bare except → Exception ersetzen~~ (2026-01-25)
 2. ⬜ Docker :latest → gepinnte Versionen
 3. ⬜ Console.log Statements entfernen
 
@@ -401,4 +388,5 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | Bare Except Clauses im Backend behoben (#27) |
 | 2026-01-25 | Initial Technical Debt Analyse |

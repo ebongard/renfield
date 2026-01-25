@@ -302,8 +302,8 @@ class OutputRoutingService:
                 try:
                     state = await self.ha_client.get_state(ha_entity_id)
                     device_name = state.get("attributes", {}).get("friendly_name", ha_entity_id)
-                except:
-                    device_name = ha_entity_id
+                except Exception:
+                    device_name = ha_entity_id  # Fallback if HA unavailable
 
         output_device = RoomOutputDevice(
             room_id=room_id,

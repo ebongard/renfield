@@ -208,8 +208,8 @@ class DeviceManager:
                 # Close old connection if still open
                 try:
                     await old_device.websocket.close()
-                except:
-                    pass
+                except Exception:
+                    pass  # Connection may already be closed
 
             # Create capability object
             caps = DeviceCapabilities.from_dict(capabilities)
@@ -570,8 +570,8 @@ class DeviceManager:
                     "type": "state",
                     "state": "idle"
                 })
-            except:
-                pass
+            except Exception:
+                pass  # Device may have disconnected
 
         # Calculate duration
         duration = time.time() - session.started_at

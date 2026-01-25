@@ -161,8 +161,8 @@ class SatelliteManager:
                 # Close old connection if still open
                 try:
                     await old_sat.websocket.close()
-                except:
-                    pass
+                except Exception:
+                    pass  # Connection may already be closed
 
             # Create capability object
             caps = SatelliteCapabilities(
@@ -478,8 +478,8 @@ class SatelliteManager:
                     "type": "state",
                     "state": "idle"
                 })
-            except:
-                pass
+            except Exception:
+                pass  # Satellite may have disconnected
 
         # Calculate duration
         duration = time.time() - session.started_at

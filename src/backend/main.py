@@ -1942,8 +1942,8 @@ async def wakeword_websocket(websocket: WebSocket):
                 "type": "error",
                 "message": str(e)
             })
-        except:
-            pass
+        except Exception:
+            pass  # WebSocket may already be closed
         await websocket.close()
 
 
