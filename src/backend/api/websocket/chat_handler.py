@@ -1,0 +1,394 @@
+"""
+WebSocket handler for real-time chat (/ws endpoint).
+
+This module handles:
+- Real-time chat with streaming responses
+- Intent extraction and action execution
+- RAG (Retrieval-Augmented Generation) support
+- Conversation persistence
+- Room context auto-detection
+"""
+
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from pydantic import ValidationError
+from loguru import logger
+
+from services.database import AsyncSessionLocal
+from services.websocket_auth import authenticate_websocket, WSAuthError
+from services.websocket_rate_limiter import get_rate_limiter
+from models.websocket_messages import WSChatMessage, WSErrorCode, create_error_response
+from utils.config import settings
+
+from .shared import (
+    ConversationSessionState,
+    is_followup_question,
+    send_ws_error,
+)
+
+router = APIRouter()
+
+
+async def _route_chat_tts_output(
+    room_context: dict,
+    response_text: str,
+    websocket: WebSocket
+) -> bool:
+    """
+    Route TTS audio for chat WebSocket to the best available output device.
+
+    Returns True if TTS was handled server-side (sent to HA media player),
+    False if frontend should handle TTS.
+    """
+    room_id = room_context.get("room_id")
+    device_id = room_context.get("device_id")
+
+    if not room_id:
+        return False
+
+    try:
+        from services.output_routing_service import OutputRoutingService
+        from services.audio_output_service import get_audio_output_service
+
+        async with AsyncSessionLocal() as db_session:
+            routing_service = OutputRoutingService(db_session)
+
+            # Get the best audio output device for this room
+            decision = await routing_service.get_audio_output_for_room(
+                room_id=room_id,
+                input_device_id=device_id
+            )
+
+            logger.info(f"🔊 Chat output routing: {decision.reason} → {decision.target_type}:{decision.target_id}")
+
+            # Only handle server-side if we have a configured HA output device
+            # (Renfield devices would be the input device itself in this case)
+            if decision.output_device and not decision.fallback_to_input and decision.target_type == "homeassistant":
+                # Generate TTS
+                from services.piper_service import PiperService
+                piper = PiperService()
+                tts_audio = await piper.synthesize_to_bytes(response_text)
+
+                if tts_audio:
+                    audio_output_service = get_audio_output_service()
+                    success = await audio_output_service.play_audio(
+                        audio_bytes=tts_audio,
+                        output_device=decision.output_device,
+                        session_id=f"chat-{room_id}-{device_id}"
+                    )
+
+                    if success:
+                        logger.info(f"🔊 TTS sent to HA media player: {decision.target_id}")
+                        return True
+                    else:
+                        logger.warning(f"Failed to send TTS to {decision.target_id}, frontend will handle")
+
+            return False
+
+    except Exception as e:
+        logger.error(f"❌ Chat TTS routing failed: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        return False
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(
+    websocket: WebSocket,
+    token: str = Query(None, description="Authentication token")
+):
+    """WebSocket connection for real-time chat."""
+    # Get client IP for rate limiting
+    ip_address = websocket.client.host if websocket.client else "unknown"
+
+    # Check authentication if enabled
+    auth_result = await authenticate_websocket(websocket, token)
+    if not auth_result:
+        await websocket.close(code=WSAuthError.UNAUTHORIZED, reason="Authentication required")
+        return
+
+    await websocket.accept()
+    logger.info(f"✅ WebSocket Verbindung hergestellt (IP: {ip_address})")
+
+    # Get rate limiter
+    rate_limiter = get_rate_limiter()
+
+    # Initialize session state for conversation persistence
+    session_state = ConversationSessionState()
+
+    # Access app state through websocket.app
+    app = websocket.app
+    ollama = app.state.ollama
+    plugin_registry = app.state.plugin_registry
+
+    # Try to auto-detect room context from IP address
+    room_context = None
+    try:
+        if ip_address and ip_address != "unknown":
+            from services.room_service import RoomService
+
+            async with AsyncSessionLocal() as db_session:
+                room_service = RoomService(db_session)
+                room_context = await room_service.get_room_context_by_ip(ip_address)
+
+            if room_context:
+                logger.info(f"🏠 Auto-detected room from IP {ip_address}: {room_context.get('room_name')} (device: {room_context.get('device_name', room_context.get('device_id'))})")
+            else:
+                logger.debug(f"📍 No room context for IP {ip_address}")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to detect room context: {e}")
+
+    try:
+        while True:
+            # Receive message
+            data = await websocket.receive_json()
+
+            # Rate limiting check
+            allowed, reason = rate_limiter.check(ip_address)
+            if not allowed:
+                await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
+                continue
+
+            # Validate message
+            try:
+                msg = WSChatMessage(**data)
+                message_type = msg.type
+                content = msg.content
+                msg_session_id = msg.session_id
+                request_id = msg.request_id
+                use_rag = msg.use_rag
+                knowledge_base_id = msg.knowledge_base_id
+            except ValidationError as e:
+                await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
+                continue
+
+            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id})")
+
+            # Handle session_id for conversation persistence
+            if msg_session_id:
+                # Load history from DB if this is the first message with this session_id
+                if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
+                    session_state.db_session_id = msg_session_id
+                    try:
+                        async with AsyncSessionLocal() as db_session:
+                            db_history = await ollama.load_conversation_context(
+                                msg_session_id, db_session, max_messages=10
+                            )
+                            if db_history:
+                                session_state.conversation_history = db_history
+                                logger.info(f"📚 Conversation history loaded: {len(db_history)} messages for session {msg_session_id}")
+                            session_state.history_loaded = True
+                    except Exception as e:
+                        logger.warning(f"⚠️ Failed to load conversation history: {e}")
+
+            # Extract intent (with automatic room context and conversation history)
+            logger.info("🔍 Extrahiere Intent...")
+            intent = await ollama.extract_intent(
+                content,
+                plugin_registry,
+                room_context=room_context,
+                conversation_history=session_state.conversation_history if session_state.conversation_history else None
+            )
+            logger.info(f"🎯 Intent erkannt: {intent.get('intent')} | Entity: {intent.get('parameters', {}).get('entity_id', 'none')}")
+
+            # Execute action if needed
+            action_result = None
+            if intent.get("intent") != "general.conversation":
+                logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
+                from services.action_executor import ActionExecutor
+                executor = ActionExecutor(plugin_registry)
+                action_result = await executor.execute(intent)
+                logger.info(f"✅ Aktion: {action_result.get('success')} - {action_result.get('message')}")
+
+                # Update action context for pronoun resolution (e.g., "es aus")
+                session_state.update_action_context(intent, action_result)
+
+                # Send action result to frontend
+                await websocket.send_json({
+                    "type": "action",
+                    "intent": intent,
+                    "result": action_result
+                })
+
+            # Generate response and collect text for TTS
+            full_response = ""
+
+            if action_result and action_result.get("success"):
+                # Successful action - use result
+                result_info = action_result.get('message', '')
+
+                # Add data if available
+                if action_result.get('data'):
+                    import json
+                    data_str = json.dumps(action_result['data'], ensure_ascii=False, indent=2)
+                    result_info = f"{result_info}\n\nDaten:\n{data_str}"
+
+                enhanced_prompt = f"""Der Nutzer hat gefragt: "{content}"
+
+Die Aktion wurde ausgeführt:
+{result_info}
+
+Gib eine kurze, natürliche Antwort basierend auf den Daten.
+WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
+
+                # Stream the response (with conversation history for context)
+                async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history):
+                    full_response += chunk
+                    await websocket.send_json({
+                        "type": "stream",
+                        "content": chunk
+                    })
+
+            elif action_result and not action_result.get("success"):
+                # Action failed
+                full_response = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
+                await websocket.send_json({
+                    "type": "stream",
+                    "content": full_response
+                })
+
+            else:
+                # Normal conversation (optionally with RAG)
+                if use_rag and settings.rag_enabled:
+                    # RAG-enhanced conversation with context persistence
+                    try:
+                        from services.rag_service import RAGService
+
+                        rag_context = None
+                        is_followup = is_followup_question(content, session_state.last_query)
+
+                        # Check if this is a follow-up question and we have valid cached context
+                        if is_followup and session_state.is_rag_context_valid():
+                            # Reuse cached context for follow-up questions
+                            rag_context = session_state.last_rag_context
+                            logger.info(f"📚 RAG Follow-up erkannt, nutze gecachten Kontext ({len(rag_context)} Zeichen)")
+                        else:
+                            # New search needed
+                            async with AsyncSessionLocal() as db_session:
+                                rag_service = RAGService(db_session)
+
+                                logger.info(f"📚 RAG Suche: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
+
+                                # Get context from knowledge base
+                                search_results = await rag_service.search(
+                                    query=content,
+                                    knowledge_base_id=knowledge_base_id
+                                )
+
+                                if search_results:
+                                    rag_context = await rag_service.get_context(
+                                        query=content,
+                                        knowledge_base_id=knowledge_base_id
+                                    )
+                                    # Update session state with new context
+                                    session_state.update_rag_context(
+                                        context=rag_context,
+                                        results=search_results,
+                                        query=content,
+                                        kb_id=knowledge_base_id
+                                    )
+                                    logger.info(f"📚 RAG Kontext gefunden und gecacht ({len(rag_context)} Zeichen)")
+
+                        if rag_context:
+                            # Send info about used context
+                            await websocket.send_json({
+                                "type": "rag_context",
+                                "has_context": True,
+                                "knowledge_base_id": knowledge_base_id,
+                                "is_followup": is_followup
+                            })
+
+                            # Stream RAG-enhanced response with conversation history
+                            async for chunk in ollama.chat_stream_with_rag(
+                                content,
+                                rag_context,
+                                history=session_state.conversation_history if is_followup else None
+                            ):
+                                full_response += chunk
+                                await websocket.send_json({
+                                    "type": "stream",
+                                    "content": chunk
+                                })
+
+                            # Add this exchange to conversation history
+                            session_state.add_to_history("user", content)
+                            session_state.add_to_history("assistant", full_response)
+                        else:
+                            logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                            await websocket.send_json({
+                                "type": "rag_context",
+                                "has_context": False,
+                                "knowledge_base_id": knowledge_base_id
+                            })
+                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                                full_response += chunk
+                                await websocket.send_json({
+                                    "type": "stream",
+                                    "content": chunk
+                                })
+                    except Exception as e:
+                        logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
+                        import traceback
+                        logger.error(traceback.format_exc())
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                            full_response += chunk
+                            await websocket.send_json({
+                                "type": "stream",
+                                "content": chunk
+                            })
+                else:
+                    # Standard conversation without RAG (with conversation history for context)
+                    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                        full_response += chunk
+                        await websocket.send_json({
+                            "type": "stream",
+                            "content": chunk
+                        })
+
+            # Update conversation history with this exchange (in-memory)
+            session_state.add_to_history("user", content)
+            if full_response:
+                session_state.add_to_history("assistant", full_response)
+
+            # Persist messages to DB if session_id is provided
+            if msg_session_id and full_response:
+                try:
+                    async with AsyncSessionLocal() as db_session:
+                        # Save user message
+                        await ollama.save_message(
+                            msg_session_id, "user", content, db_session,
+                            metadata={"room_context": room_context} if room_context else None
+                        )
+                        # Save assistant response
+                        await ollama.save_message(
+                            msg_session_id, "assistant", full_response, db_session,
+                            metadata={
+                                "intent": intent.get("intent") if intent else None,
+                                "action_success": action_result.get("success") if action_result else None
+                            }
+                        )
+                        logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to save messages to DB: {e}")
+
+            # Check for output routing if we have room context
+            tts_handled_by_server = False
+            if room_context and room_context.get("room_id") and full_response:
+                tts_handled_by_server = await _route_chat_tts_output(
+                    room_context, full_response, websocket
+                )
+
+            # Stream finished - tell frontend if TTS was handled server-side
+            await websocket.send_json({
+                "type": "done",
+                "tts_handled": tts_handled_by_server
+            })
+
+            logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
+
+    except WebSocketDisconnect:
+        logger.info("👋 WebSocket Verbindung getrennt")
+    except Exception as e:
+        logger.error(f"❌ WebSocket Fehler: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        await websocket.close()

@@ -10,49 +10,54 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
-| Backend | 1 | 5 | 4 | 10 | 1 |
+| Backend | 0 | 5 | 4 | 9 | 2 |
 | Frontend | 1 | 4 | 3 | 8 | 0 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 1 | 3 | 2 | 6 | 0 |
-| **Gesamt** | **3** | **15** | **11** | **29** | **1** |
+| **Gesamt** | **2** | **15** | **11** | **28** | **2** |
 
 ---
 
 ## Backend
 
-### 🔴 Kritisch
+### ~~🔴 Kritisch~~ → ✅ Behoben
 
-#### 1. God Class: main.py (2130 → 1986 Zeilen) 🔄 In Arbeit
+#### ~~1. God Class: main.py (2130 → 493 Zeilen)~~ ✅ Behoben
 
-**Problem:** Die Datei `src/backend/main.py` enthält zu viele Verantwortlichkeiten:
+**Status:** Behoben am 2026-01-25
+
+**Ursprüngliches Problem:** Die Datei `src/backend/main.py` enthielt zu viele Verantwortlichkeiten:
 - FastAPI App-Konfiguration
 - WebSocket-Handler (Chat, Device, Satellite)
 - Lifecycle-Management
 - Streaming-Logik
 
-**Auswirkung:** Schwer zu warten, testen und erweitern.
-
-**Fortschritt:**
-- ✅ Phase 1: Shared Utilities extrahiert (2026-01-25)
+**Lösung:**
+- ✅ Phase 1: Shared Utilities extrahiert
   - `api/websocket/shared.py` erstellt
-  - `ConversationSessionState`, `is_followup_question()`, `get_whisper_service()` ausgelagert
-  - 144 Zeilen reduziert (2130 → 1986)
-- ⬜ Phase 2: WebSocket-Handler extrahieren
-- ⬜ Phase 3: Lifecycle-Management extrahieren
+  - `ConversationSessionState`, `RAGSessionState`, Helpers ausgelagert
+- ✅ Phase 2: WebSocket-Handler extrahiert
+  - `api/websocket/chat_handler.py` (~370 Zeilen)
+  - `api/websocket/satellite_handler.py` (~550 Zeilen)
+  - `api/websocket/device_handler.py` (~530 Zeilen)
+- ✅ Phase 3: Alte Handler entfernt
 
-**Zielstruktur:**
+**Ergebnis:**
+- main.py: 2130 → 493 Zeilen (**77% Reduktion**)
+- Alle 558 Tests bestanden
+
+**Neue Struktur:**
 ```
 api/
 ├── websocket/
-│   ├── __init__.py      ✅
-│   ├── shared.py        ✅
-│   ├── chat_handler.py
-│   ├── device_handler.py
-│   └── satellite_handler.py
-└── lifecycle.py
+│   ├── __init__.py      ✅ Router exports
+│   ├── shared.py        ✅ Shared utilities
+│   ├── chat_handler.py  ✅ /ws endpoint
+│   ├── device_handler.py ✅ /ws/device endpoint
+│   └── satellite_handler.py ✅ /ws/satellite endpoint
+└── routes/
+    └── ... (unchanged)
 ```
-
-**Aufwand:** ~2-3 Tage (Phase 1 abgeschlossen)
 
 ---
 
@@ -374,7 +379,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 ### Kurzfristig (1-4 Wochen)
 
-4. ⬜ main.py Refactoring
+4. ✅ ~~main.py Refactoring~~ (2026-01-25)
 5. ⬜ ChatPage.jsx aufteilen
 6. ⬜ Requirements pinnen
 7. ⬜ Type Hints hinzufügen (Backend)
@@ -397,6 +402,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | main.py Refactoring abgeschlossen: 2130 → 493 Zeilen (77% Reduktion) (#27) |
+| 2026-01-25 | WebSocket-Handler extrahiert: chat, satellite, device (#27) |
 | 2026-01-25 | main.py Refactoring Phase 1: Shared Utilities extrahiert (#27) |
 | 2026-01-25 | Bare Except Clauses im Backend behoben (#27) |
 | 2026-01-25 | Initial Technical Debt Analyse |
