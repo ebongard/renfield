@@ -1,0 +1,191 @@
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Send, Mic, MicOff, BookOpen, ChevronDown } from 'lucide-react';
+import apiClient from '../../utils/axios';
+import AudioVisualizer from './AudioVisualizer';
+
+/**
+ * Chat input component with RAG toggle and recording controls.
+ *
+ * @param {Object} props - Component props
+ * @param {string} props.input - Current input value
+ * @param {Function} props.onInputChange - Callback when input changes
+ * @param {Function} props.onSendMessage - Callback to send message
+ * @param {boolean} props.loading - Whether a message is being processed
+ * @param {boolean} props.recording - Whether currently recording
+ * @param {Function} props.onToggleRecording - Callback to toggle recording
+ * @param {number} props.audioLevel - Current audio level (0-100)
+ * @param {number} props.silenceTimeRemaining - Time until auto-stop (ms)
+ * @param {boolean} props.useRag - Whether RAG is enabled
+ * @param {Function} props.onToggleRag - Callback to toggle RAG
+ * @param {number|null} props.selectedKnowledgeBase - Selected KB ID or null for all
+ * @param {Function} props.onSelectKnowledgeBase - Callback to select KB
+ */
+export default function ChatInput({
+  input = '',
+  onInputChange,
+  onSendMessage,
+  loading = false,
+  recording = false,
+  onToggleRecording,
+  audioLevel = 0,
+  silenceTimeRemaining = 0,
+  useRag = false,
+  onToggleRag,
+  selectedKnowledgeBase = null,
+  onSelectKnowledgeBase,
+}) {
+  const { t } = useTranslation();
+  const [knowledgeBases, setKnowledgeBases] = useState([]);
+  const [showRagSettings, setShowRagSettings] = useState(false);
+
+  // Load knowledge bases when RAG is enabled
+  useEffect(() => {
+    if (useRag && knowledgeBases.length === 0) {
+      loadKnowledgeBases();
+    }
+  }, [useRag]);
+
+  const loadKnowledgeBases = async () => {
+    try {
+      const response = await apiClient.get('/api/knowledge/bases');
+      setKnowledgeBases(response.data);
+    } catch (error) {
+      console.error('Error loading Knowledge Bases:', error);
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      onSendMessage?.(input, false);
+    }
+  };
+
+  const handleSelectKb = (kbId) => {
+    onSelectKnowledgeBase?.(kbId);
+    setShowRagSettings(false);
+  };
+
+  return (
+    <div className="card mx-4 mb-4 md:mx-0 md:mb-0">
+      {/* RAG Toggle */}
+      <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={onToggleRag}
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
+              useRag
+                ? 'bg-primary-100 text-primary-700 border border-primary-300 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/50'
+                : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
+            }`}
+            title={useRag ? t('rag.disableKnowledge') : t('rag.enableKnowledge')}
+          >
+            <BookOpen className="w-4 h-4" />
+            <span>{t('rag.knowledge')}</span>
+          </button>
+
+          {useRag && (
+            <div className="relative">
+              <button
+                onClick={() => setShowRagSettings(!showRagSettings)}
+                className="flex items-center space-x-1 px-3 py-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors"
+              >
+                <span>
+                  {selectedKnowledgeBase
+                    ? knowledgeBases.find(kb => kb.id === selectedKnowledgeBase)?.name || t('common.all')
+                    : t('rag.allDocuments')}
+                </span>
+                <ChevronDown className={`w-4 h-4 transition-transform ${showRagSettings ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showRagSettings && (
+                <div className="absolute bottom-full left-0 mb-2 w-48 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-lg z-10">
+                  <div className="p-2">
+                    <button
+                      onClick={() => handleSelectKb(null)}
+                      className={`w-full text-left px-3 py-2 rounded text-sm ${
+                        selectedKnowledgeBase === null
+                          ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
+                          : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                      }`}
+                    >
+                      {t('rag.allDocuments')}
+                    </button>
+                    {knowledgeBases.map(kb => (
+                      <button
+                        key={kb.id}
+                        onClick={() => handleSelectKb(kb.id)}
+                        className={`w-full text-left px-3 py-2 rounded text-sm ${
+                          selectedKnowledgeBase === kb.id
+                            ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
+                            : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        {kb.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {useRag && (
+          <span className="text-xs text-gray-500">
+            {t('rag.searchesInDocuments')}
+          </span>
+        )}
+      </div>
+
+      {/* Audio Waveform Visualizer during recording */}
+      {recording && (
+        <AudioVisualizer
+          audioLevel={audioLevel}
+          silenceTimeRemaining={silenceTimeRemaining}
+        />
+      )}
+
+      {/* Input Area */}
+      <div className="flex items-center space-x-2">
+        <label htmlFor="chat-input" className="sr-only">{t('chat.placeholder')}</label>
+        <input
+          id="chat-input"
+          type="text"
+          value={input}
+          onChange={(e) => onInputChange?.(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={t('chat.placeholder')}
+          className="input flex-1"
+          disabled={loading || recording}
+          aria-describedby={loading ? 'chat-loading-hint' : undefined}
+        />
+        {loading && <span id="chat-loading-hint" className="sr-only">{t('chat.processingMessage')}</span>}
+
+        <button
+          onClick={onToggleRecording}
+          className={`p-3 rounded-lg transition-colors ${
+            recording
+              ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
+              : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
+          }`}
+          disabled={loading}
+          aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
+          aria-pressed={recording}
+        >
+          {recording ? <MicOff className="w-5 h-5" aria-hidden="true" /> : <Mic className="w-5 h-5" aria-hidden="true" />}
+        </button>
+
+        <button
+          onClick={() => onSendMessage?.(input, false)}
+          disabled={loading || !input.trim()}
+          className="btn btn-primary"
+          aria-label={t('chat.sendMessage')}
+        >
+          <Send className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </div>
+    </div>
+  );
+}
