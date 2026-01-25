@@ -2,13 +2,14 @@
 Ollama Service - Lokales LLM
 """
 import ollama
-from typing import AsyncGenerator, List, Dict, Optional
+from typing import AsyncGenerator, List, Dict, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from integrations.core.plugin_registry import PluginRegistry
+    from models.database import Message
 from loguru import logger
 from utils.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
-from models.database import Conversation, Message
-from datetime import datetime
 
 class OllamaService:
     """Service für Ollama LLM Interaktion"""
@@ -51,7 +52,7 @@ Du: 'Hier sind die Ergebnisse: {...}'
 Du: 'System: Aktion ausgeführt'
 """
     
-    async def ensure_model_loaded(self):
+    async def ensure_model_loaded(self) -> None:
         """Stelle sicher, dass das Modell geladen ist"""
         try:
             models = await self.client.list()
@@ -486,6 +487,8 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
             }
 
     # ========== Kontext-Management Methoden ==========
+    # NOTE: These methods delegate to ConversationService for backwards compatibility.
+    # New code should use ConversationService directly.
 
     async def load_conversation_context(
         self,
@@ -493,39 +496,10 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
         db: AsyncSession,
         max_messages: int = 20
     ) -> List[Dict]:
-        """Lade Konversationskontext aus der Datenbank"""
-        try:
-            # Finde Conversation
-            result = await db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
-            )
-            conversation = result.scalar_one_or_none()
-
-            if not conversation:
-                logger.debug(f"Keine Konversation gefunden für session_id: {session_id}")
-                return []
-
-            # Lade letzte N Nachrichten
-            result = await db.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation.id)
-                .order_by(Message.timestamp.desc())
-                .limit(max_messages)
-            )
-            messages = result.scalars().all()
-
-            # Konvertiere zu Chat-Format (älteste zuerst)
-            context = [
-                {"role": msg.role, "content": msg.content}
-                for msg in reversed(messages)
-            ]
-
-            logger.info(f"📚 Geladen: {len(context)} Nachrichten für Session {session_id}")
-            return context
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Laden des Kontexts: {e}")
-            return []
+        """Lade Konversationskontext aus der Datenbank (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.load_context(session_id, max_messages)
 
     async def save_message(
         self,
@@ -534,119 +508,31 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
         content: str,
         db: AsyncSession,
         metadata: Optional[Dict] = None
-    ) -> Message:
-        """Speichere eine einzelne Nachricht"""
-        try:
-            # Finde oder erstelle Conversation
-            result = await db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
-            )
-            conversation = result.scalar_one_or_none()
-
-            if not conversation:
-                conversation = Conversation(session_id=session_id)
-                db.add(conversation)
-                await db.flush()
-
-            # Erstelle Message
-            message = Message(
-                conversation_id=conversation.id,
-                role=role,
-                content=content,
-                message_metadata=metadata
-            )
-            db.add(message)
-
-            # Update conversation timestamp
-            conversation.updated_at = datetime.utcnow()
-
-            await db.commit()
-            await db.refresh(message)
-
-            logger.debug(f"💾 Nachricht gespeichert: {role} - {content[:50]}...")
-            return message
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Speichern der Nachricht: {e}")
-            await db.rollback()
-            raise
+    ) -> "Message":
+        """Speichere eine einzelne Nachricht (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.save_message(session_id, role, content, metadata)
 
     async def get_conversation_summary(
         self,
         session_id: str,
         db: AsyncSession
     ) -> Optional[Dict]:
-        """Hole Zusammenfassung einer Konversation"""
-        try:
-            result = await db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
-            )
-            conversation = result.scalar_one_or_none()
-
-            if not conversation:
-                return None
-
-            # Zähle Nachrichten
-            result = await db.execute(
-                select(func.count(Message.id))
-                .where(Message.conversation_id == conversation.id)
-            )
-            message_count = result.scalar()
-
-            # Hole erste und letzte Nachricht
-            result = await db.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation.id)
-                .order_by(Message.timestamp.asc())
-                .limit(1)
-            )
-            first_message = result.scalar_one_or_none()
-
-            result = await db.execute(
-                select(Message)
-                .where(Message.conversation_id == conversation.id)
-                .order_by(Message.timestamp.desc())
-                .limit(1)
-            )
-            last_message = result.scalar_one_or_none()
-
-            return {
-                "session_id": session_id,
-                "created_at": conversation.created_at.isoformat(),
-                "updated_at": conversation.updated_at.isoformat(),
-                "message_count": message_count,
-                "first_message": first_message.content[:100] if first_message else None,
-                "last_message": last_message.content[:100] if last_message else None
-            }
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der Zusammenfassung: {e}")
-            return None
+        """Hole Zusammenfassung einer Konversation (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.get_summary(session_id)
 
     async def delete_conversation(
         self,
         session_id: str,
         db: AsyncSession
     ) -> bool:
-        """Lösche eine komplette Konversation"""
-        try:
-            result = await db.execute(
-                select(Conversation).where(Conversation.session_id == session_id)
-            )
-            conversation = result.scalar_one_or_none()
-
-            if conversation:
-                await db.delete(conversation)
-                await db.commit()
-                logger.info(f"🗑️  Konversation gelöscht: {session_id}")
-                return True
-
-            return False
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Löschen der Konversation: {e}")
-            await db.rollback()
-            return False
+        """Lösche eine komplette Konversation (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.delete(session_id)
 
     async def get_all_conversations(
         self,
@@ -654,48 +540,10 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
         limit: int = 50,
         offset: int = 0
     ) -> List[Dict]:
-        """Hole Liste aller Konversationen"""
-        try:
-            result = await db.execute(
-                select(Conversation)
-                .order_by(Conversation.updated_at.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-            conversations = result.scalars().all()
-
-            summaries = []
-            for conv in conversations:
-                # Zähle Nachrichten
-                result = await db.execute(
-                    select(func.count(Message.id))
-                    .where(Message.conversation_id == conv.id)
-                )
-                message_count = result.scalar()
-
-                # Hole erste User-Nachricht als Vorschau
-                result = await db.execute(
-                    select(Message)
-                    .where(Message.conversation_id == conv.id, Message.role == "user")
-                    .order_by(Message.timestamp.asc())
-                    .limit(1)
-                )
-                first_user_msg = result.scalar_one_or_none()
-
-                summaries.append({
-                    "session_id": conv.session_id,
-                    "created_at": conv.created_at.isoformat(),
-                    "updated_at": conv.updated_at.isoformat(),
-                    "message_count": message_count,
-                    "preview": first_user_msg.content[:100] if first_user_msg else "Leere Konversation"
-                })
-
-            logger.info(f"📋 Geladen: {len(summaries)} Konversationen")
-            return summaries
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der Konversationen: {e}")
-            return []
+        """Hole Liste aller Konversationen (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.list_all(limit, offset)
 
     async def search_conversations(
         self,
@@ -703,53 +551,12 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
         db: AsyncSession,
         limit: int = 20
     ) -> List[Dict]:
-        """Suche in Konversationen nach Text"""
-        try:
-            # Suche in Message-Content
-            result = await db.execute(
-                select(Message)
-                .where(Message.content.ilike(f"%{query}%"))
-                .order_by(Message.timestamp.desc())
-                .limit(limit)
-            )
-            messages = result.scalars().all()
+        """Suche in Konversationen nach Text (delegiert an ConversationService)"""
+        from services.conversation_service import ConversationService
+        service = ConversationService(db)
+        return await service.search(query, limit)
 
-            # Gruppiere nach Conversation
-            conversation_ids = list(set(msg.conversation_id for msg in messages))
-
-            results = []
-            for conv_id in conversation_ids[:limit]:
-                result = await db.execute(
-                    select(Conversation).where(Conversation.id == conv_id)
-                )
-                conv = result.scalar_one_or_none()
-
-                if conv:
-                    # Finde matching messages
-                    matching_msgs = [
-                        {
-                            "role": msg.role,
-                            "content": msg.content,
-                            "timestamp": msg.timestamp.isoformat()
-                        }
-                        for msg in messages if msg.conversation_id == conv_id
-                    ]
-
-                    results.append({
-                        "session_id": conv.session_id,
-                        "created_at": conv.created_at.isoformat(),
-                        "updated_at": conv.updated_at.isoformat(),
-                        "matching_messages": matching_msgs
-                    })
-
-            logger.info(f"🔍 Gefunden: {len(results)} Konversationen mit '{query}'")
-            return results
-
-        except Exception as e:
-            logger.error(f"❌ Fehler bei der Suche: {e}")
-            return []
-
-    def _build_plugin_context(self, plugin_registry) -> str:
+    def _build_plugin_context(self, plugin_registry: Optional["PluginRegistry"]) -> str:
         """
         Build plugin context for LLM prompt
 

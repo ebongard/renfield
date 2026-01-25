@@ -10,11 +10,11 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
-| Backend | 0 | 3 | 4 | 7 | 4 |
+| Backend | 0 | 1 | 4 | 7 | 6 |
 | Frontend | 0 | 4 | 3 | 7 | 1 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **13** | **11** | **24** | **6** |
+| **Gesamt** | **0** | **11** | **11** | **24** | **8** |
 
 ---
 
@@ -108,19 +108,38 @@ api/
 
 ---
 
-#### 6. Fehlende Type Hints
+#### ~~6. Fehlende Type Hints~~ ✅ Verbessert
 
-**Problem:** Viele Funktionen haben keine Type Hints.
+**Status:** Verbessert am 2026-01-25
 
-**Empfehlung:** Schrittweise Type Hints hinzufügen, mit `mypy` prüfen.
+**Änderungen:**
+- `ollama_service.py`: `ensure_model_loaded() -> None`, `_build_plugin_context() -> str`
+- `audio_output_service.py`: `_ensure_cache_dir() -> None`, `_cleanup_old_cache_files() -> None`
+- TYPE_CHECKING Imports für PluginRegistry und Message hinzugefügt
+
+**Empfehlung:** Weitere Type Hints schrittweise hinzufügen, mit `mypy` prüfen.
 
 ---
 
-#### 7. Ollama Service Größe (966 Zeilen)
+#### ~~7. Ollama Service Größe (966 → 773 Zeilen)~~ ✅ Teilweise behoben
 
-**Problem:** `ollama_service.py` ist sehr groß und hat mehrere Verantwortlichkeiten.
+**Status:** Teilweise behoben am 2026-01-25
 
-**Empfehlung:** Intent-Extraction, Streaming und RAG in separate Module.
+**Änderungen:**
+- `services/conversation_service.py` erstellt (~300 Zeilen)
+- Conversation-Methoden aus OllamaService extrahiert
+- OllamaService delegiert jetzt an ConversationService (Rückwärtskompatibilität)
+- Reduktion: 966 → 773 Zeilen (**20% Reduktion**)
+
+**Neue Struktur:**
+```
+services/
+├── ollama_service.py       (773 Zeilen) - LLM, Intent, RAG
+├── conversation_service.py (300 Zeilen) - Conversation Persistence (NEU)
+└── rag_service.py          - Document Management (bestehend)
+```
+
+**Verbleibend:** Intent-Extraction könnte noch separiert werden.
 
 ---
 
@@ -390,19 +409,20 @@ Besser: Docker Secrets oder Vault für Produktion.
 4. ✅ ~~main.py Refactoring~~ (2026-01-25)
 5. ✅ ~~ChatPage.jsx aufteilen~~ (2026-01-25)
 6. ⬜ Requirements pinnen
-7. ⬜ Type Hints hinzufügen (Backend)
+7. ✅ ~~Type Hints hinzufügen (Backend)~~ (2026-01-25)
+8. ✅ ~~ollama_service.py Refactoring~~ (2026-01-25)
 
 ### Mittelfristig (1-3 Monate)
 
-8. ⬜ TypeScript Migration (Frontend)
-9. ⬜ Test-Coverage erhöhen auf 60%+
-10. ⬜ Dependency Updates (Minor)
+9. ⬜ TypeScript Migration (Frontend)
+10. ⬜ Test-Coverage erhöhen auf 60%+
+11. ⬜ Dependency Updates (Minor)
 
 ### Langfristig (3-6 Monate)
 
-11. ⬜ Major Dependency Updates (React 19, etc.)
-12. ⬜ Hardware-Abstraktionsschicht (Satellite)
-13. ⬜ Multi-Stage Docker Builds
+12. ⬜ Major Dependency Updates (React 19, etc.)
+13. ⬜ Hardware-Abstraktionsschicht (Satellite)
+14. ⬜ Multi-Stage Docker Builds
 
 ---
 
@@ -410,6 +430,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | ConversationService extrahiert aus OllamaService: 966 → 773 Zeilen (20% Reduktion) (#28) |
+| 2026-01-25 | Type Hints hinzugefügt: ollama_service.py, audio_output_service.py (#28) |
 | 2026-01-25 | Schemas extrahiert: rooms_schemas.py, knowledge_schemas.py (#28) |
 | 2026-01-25 | CLI-Test-Tools dokumentiert (print statements OK für CLI) (#28) |
 | 2026-01-25 | Hardcoded localhost durch BACKEND_INTERNAL_URL ersetzt (#28) |

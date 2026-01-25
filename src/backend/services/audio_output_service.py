@@ -42,7 +42,7 @@ class AudioOutputService:
         self._ensure_cache_dir()
         self._last_cleanup = 0
 
-    def _ensure_cache_dir(self):
+    def _ensure_cache_dir(self) -> None:
         """Ensure the TTS cache directory exists."""
         self.TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -244,7 +244,7 @@ class AudioOutputService:
         logger.debug(f"Using internal backend URL: {settings.backend_internal_url}")
         return settings.backend_internal_url
 
-    async def _cleanup_old_cache_files(self):
+    async def _cleanup_old_cache_files(self) -> None:
         """Remove old TTS cache files."""
         now = time.time()
 
