@@ -73,6 +73,11 @@ class Satellite:
         self._session_count_1h: int = 0
         self._error_count_1h: int = 0
 
+        # Real-time audio level tracking (updated on every audio chunk)
+        self._current_audio_rms: float = 0.0
+        self._current_audio_db: float = -96.0
+        self._current_is_speech: bool = False
+
         # Initialize components
         self._init_components()
 
@@ -402,6 +407,21 @@ class Satellite:
 
     def _on_audio_chunk(self, audio_bytes: bytes):
         """Handle incoming audio chunk from microphone (called from audio thread)"""
+        # Calculate audio levels for monitoring (runs on every chunk)
+        try:
+            import struct
+            import math
+            if len(audio_bytes) >= 2:
+                samples = struct.unpack(f"<{len(audio_bytes)//2}h", audio_bytes)
+                if samples:
+                    rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
+                    self._current_audio_rms = round(rms, 1)
+                    self._current_audio_db = round(20 * math.log10(max(rms, 1) / 32768.0), 1)
+                    # Simple VAD: speech if RMS > threshold
+                    self._current_is_speech = rms > 500
+        except Exception:
+            pass
+
         # Process for wake word in IDLE state
         if self._state == SatelliteState.IDLE and not self._wakeword_pending:
             detection = self.wakeword.process_audio(audio_bytes)
@@ -652,33 +672,12 @@ class Satellite:
 
         Returns metrics about audio levels, system stats, and session counters.
         """
-        import math
-
         metrics = {}
 
-        # Audio metrics from capture buffer
-        try:
-            if self.audio_capture and self._audio_buffer:
-                # Calculate RMS from recent audio
-                recent_audio = b"".join(self._audio_buffer[-5:]) if self._audio_buffer else b""
-                if len(recent_audio) >= 2:
-                    import struct
-                    samples = struct.unpack(f"<{len(recent_audio)//2}h", recent_audio)
-                    if samples:
-                        rms = (sum(s * s for s in samples) / len(samples)) ** 0.5
-                        metrics["audio_rms"] = round(rms, 1)
-                        metrics["audio_db"] = round(20 * math.log10(max(rms, 1) / 32768.0), 1)
-        except Exception as e:
-            pass
-
-        # VAD status (if we have recent audio)
-        try:
-            if hasattr(self, 'vad') and self.vad and self._audio_buffer:
-                recent = self._audio_buffer[-1] if self._audio_buffer else None
-                if recent:
-                    metrics["is_speech"] = self.vad.is_speech(recent)
-        except:
-            pass
+        # Audio metrics (continuously updated in _on_audio_chunk)
+        metrics["audio_rms"] = self._current_audio_rms
+        metrics["audio_db"] = self._current_audio_db
+        metrics["is_speech"] = self._current_is_speech
 
         # System metrics
         try:
