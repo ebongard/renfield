@@ -37,3 +37,6 @@ pyyaml>=6.0
 
 # Service discovery (optional)
 zeroconf>=0.100.0
+
+# System metrics (for monitoring)
+psutil>=5.9.0

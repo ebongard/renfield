@@ -328,6 +328,15 @@ class SatelliteMonitor:
             )
             self.audio_capture.start(self._on_audio_chunk)
 
+            # Check if capture actually started
+            if self.audio_capture._running:
+                self.connection_state = "standalone"
+                self.state = "monitoring"
+            else:
+                self.connection_state = "error"
+                self.state = "capture failed"
+                return
+
             # Keep running while self.running is True
             while self.running:
                 await asyncio.sleep(0.1)
@@ -336,10 +345,11 @@ class SatelliteMonitor:
             self.audio_capture.stop()
 
         except ImportError as e:
-            # Audio capture not available, metrics will stay at defaults
-            pass
+            self.connection_state = f"error: {e}"
+            self.state = "no audio"
         except Exception as e:
-            print(f"Audio error: {e}")
+            self.connection_state = f"error"
+            self.state = str(e)[:30]
 
     async def update_system_metrics(self):
         """Periodically update system metrics"""

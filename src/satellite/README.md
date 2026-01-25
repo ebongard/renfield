@@ -281,6 +281,77 @@ sudo systemctl start renfield-satellite
 journalctl -u renfield-satellite -f
 ```
 
+## Monitoring & Debugging
+
+### Web Dashboard
+
+When the satellite is running and connected, you can monitor it via the Renfield web interface:
+
+1. Navigate to **Admin → Satellites** in the web UI
+2. View real-time metrics:
+   - Connection status and uptime
+   - Audio levels (RMS, dB) with visual bars
+   - Voice Activity Detection (VAD) status
+   - CPU, memory, and temperature
+   - Wake word detection history
+   - Session statistics
+
+The dashboard auto-refreshes every 5 seconds.
+
+### CLI Monitor Tool
+
+For debugging audio setup **before** starting the satellite service, use the CLI monitor:
+
+```bash
+# Stop the satellite service first (it holds the audio device exclusively)
+sudo systemctl stop renfield-satellite
+
+# Run the monitor
+cd /opt/renfield-satellite
+source venv/bin/activate
+python -m renfield_satellite.cli.monitor
+```
+
+The monitor displays:
+```
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         RENFIELD SATELLITE MONITOR                          ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+ CONNECTION
+ ────────────────────────────────────────
+ Status: ○ STANDALONE
+ State:  MONITORING
+
+ AUDIO LEVELS
+ ────────────────────────────────────────
+ RMS:  [███████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░] 1433
+ dB:   [███████████████████████████████████░░░░░░░░░░░░░░░] -27.2 dB
+ VAD:  SPEECH
+
+ SYSTEM
+ ────────────────────────────────────────
+ CPU:    3.7%
+ Mem:   36.6%
+ Temp:  54.8°C
+```
+
+Press `Ctrl+C` or `q` to quit.
+
+> **Note:** The CLI monitor requires `psutil` for system metrics. Install with:
+> ```bash
+> /opt/renfield-satellite/venv/bin/pip install psutil
+> ```
+
+### When to Use Which Tool
+
+| Scenario | Tool |
+|----------|------|
+| Satellite running, check live status | Web Dashboard |
+| Debug audio/microphone setup | CLI Monitor (service stopped) |
+| Verify ReSpeaker configuration | CLI Monitor |
+| Monitor multiple satellites | Web Dashboard |
+
 ## Usage
 
 ### LED Patterns
