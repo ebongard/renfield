@@ -168,6 +168,36 @@ make test
 make test-coverage
 ```
 
+### Git Workflow
+
+**WICHTIG: Diese Regeln gelten für alle Git-Operationen:**
+
+1. **Niemals ohne Erlaubnis pushen**
+   - `git push` nur ausführen, wenn der Benutzer explizit die Erlaubnis erteilt
+   - Nach dem Commit fragen: "Soll ich pushen?"
+
+2. **Issue-Nummer bei jedem Commit**
+   - Vor jedem Commit nach der Issue-Nummer fragen
+   - Format: `fix/feat/docs(scope): Beschreibung (#123)`
+   - Beispiel: `feat(satellites): Add monitoring dashboard (#25)`
+
+3. **Commit-Message Format**
+   ```
+   type(scope): Kurze Beschreibung (#issue)
+
+   Längere Beschreibung falls nötig.
+
+   Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+   ```
+
+4. **Typische Commit-Types**
+   - `feat`: Neues Feature
+   - `fix`: Bugfix
+   - `docs`: Dokumentation
+   - `refactor`: Code-Refactoring
+   - `test`: Tests hinzufügen/ändern
+   - `chore`: Wartung, Dependencies
+
 ## Development Commands
 
 ### Quick Start
