@@ -869,6 +869,9 @@ async def satellite_websocket(
                 if session_id and chunk_b64:
                     success, error = satellite_manager.buffer_audio(session_id, chunk_b64, sequence)
                     if not success:
+                        # End session on buffer full to prevent further errors
+                        if "buffer full" in error.lower():
+                            await satellite_manager.end_session(session_id, reason="buffer_full")
                         await _send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
 
             # Handle end of audio
@@ -1361,6 +1364,9 @@ async def device_websocket(
                 if session_id and chunk_b64:
                     success, error = device_manager.buffer_audio(session_id, chunk_b64, sequence)
                     if not success:
+                        # End session on buffer full to prevent further errors
+                        if "buffer full" in error.lower():
+                            await device_manager.end_session(session_id, reason="buffer_full")
                         await _send_ws_error(websocket, WSErrorCode.BUFFER_FULL, error)
 
             # === END OF AUDIO / PROCESS REQUEST ===

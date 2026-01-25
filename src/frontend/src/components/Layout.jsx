@@ -318,7 +318,7 @@ export default function Layout({ children }) {
               <div
                 id="admin-menu"
                 className={`overflow-hidden transition-all duration-200 ease-in-out ${
-                  adminExpanded ? 'max-h-64 opacity-100' : 'max-h-0 opacity-0'
+                  adminExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
                 }`}
               >
                 <div className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-1 py-1">
