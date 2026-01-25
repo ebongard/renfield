@@ -173,14 +173,14 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
           </div>
 
           {/* System metrics */}
-          {(metrics.cpu_percent !== undefined || metrics.temperature !== undefined) && (
+          {(metrics.cpu_percent != null || metrics.temperature != null) && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
                 <Cpu className="w-4 h-4" />
                 {t('satellites.system', 'System')}
               </h4>
               <div className="grid grid-cols-3 gap-4 text-sm">
-                {metrics.cpu_percent !== undefined && (
+                {metrics.cpu_percent != null && (
                   <div className="flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-gray-400" />
                     <span className={metrics.cpu_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
@@ -188,7 +188,7 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
                     </span>
                   </div>
                 )}
-                {metrics.memory_percent !== undefined && (
+                {metrics.memory_percent != null && (
                   <div className="flex items-center gap-2">
                     <MemoryStick className="w-4 h-4 text-gray-400" />
                     <span className={metrics.memory_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
@@ -196,7 +196,7 @@ function SatelliteCard({ satellite, expanded, onToggle }) {
                     </span>
                   </div>
                 )}
-                {metrics.temperature !== undefined && (
+                {metrics.temperature != null && (
                   <div className="flex items-center gap-2">
                     <Thermometer className="w-4 h-4 text-gray-400" />
                     <span className={metrics.temperature > 70 ? 'text-red-600' : metrics.temperature > 60 ? 'text-yellow-600' : 'text-gray-900 dark:text-white'}>
