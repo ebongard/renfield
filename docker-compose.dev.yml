@@ -39,7 +39,7 @@ services:
 
   # Ollama - Lokales LLM (optional - kann durch externe Instanz ersetzt werden)
   ollama:
-    image: ollama/ollama:latest
+    image: ollama/ollama:0.15.1
     container_name: renfield-ollama
     volumes:
       - ollama_data:/root/.ollama

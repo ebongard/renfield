@@ -13,8 +13,8 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Backend | 0 | 5 | 4 | 9 | 2 |
 | Frontend | 1 | 4 | 3 | 8 | 0 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
-| Infrastruktur | 1 | 3 | 2 | 6 | 0 |
-| **Gesamt** | **2** | **15** | **11** | **28** | **2** |
+| Infrastruktur | 0 | 3 | 2 | 5 | 1 |
+| **Gesamt** | **1** | **15** | **11** | **27** | **3** |
 
 ---
 
@@ -284,23 +284,21 @@ Mix aus `print()` und `logger`.
 
 ## Infrastruktur
 
-### 🔴 Kritisch
+### ~~🔴 Kritisch~~ → ✅ Behoben
 
-#### 1. :latest Tags in Docker
+#### ~~1. :latest Tags in Docker~~ ✅ Behoben
 
-**Problem:** Alle Docker Compose Dateien verwenden `ollama/ollama:latest`.
+**Status:** Behoben am 2026-01-25
 
-```yaml
-# docker-compose.yml:29
-image: ollama/ollama:latest
-```
+**Ursprüngliches Problem:** Docker Compose Dateien verwendeten `:latest` Tags.
 
-**Auswirkung:** Nicht reproduzierbare Builds.
+**Lösung:** Alle Images auf spezifische Versionen gepinnt:
+- `ollama/ollama:latest` → `ollama/ollama:0.15.1`
+- `nginx:alpine` → `nginx:1.28-alpine`
 
-**Empfehlung:** Version pinnen:
-```yaml
-image: ollama/ollama:0.3.12
-```
+Bereits gepinnte Images:
+- `pgvector/pgvector:pg16` ✅
+- `redis:7-alpine` ✅
 
 ---
 
@@ -375,7 +373,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 ### Sofort (< 1 Woche)
 
 1. ✅ ~~Bare except → Exception ersetzen~~ (2026-01-25)
-2. ⬜ Docker :latest → gepinnte Versionen
+2. ✅ ~~Docker :latest → gepinnte Versionen~~ (2026-01-25)
 3. ⬜ Console.log Statements entfernen
 
 ### Kurzfristig (1-4 Wochen)
@@ -403,6 +401,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | Docker :latest Tags durch gepinnte Versionen ersetzt (#35) |
 | 2026-01-25 | Lifecycle-Management extrahiert nach api/lifecycle.py (#27) |
 | 2026-01-25 | main.py Refactoring abgeschlossen: 2130 → 337 Zeilen (84% Reduktion) (#27) |
 | 2026-01-25 | WebSocket-Handler extrahiert: chat, satellite, device (#27) |
