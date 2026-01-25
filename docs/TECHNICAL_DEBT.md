@@ -76,13 +76,17 @@ api/
 
 ### 🟡 Mittel
 
-#### 3. Große API-Route-Dateien
+#### 3. Große API-Route-Dateien (teilweise behoben)
 
-| Datei | Zeilen | Empfehlung |
-|-------|--------|------------|
-| `routes/rooms.py` | 1024 | In `rooms/` Modul aufteilen |
-| `routes/knowledge.py` | 1019 | CRUD von Logik trennen |
-| `routes/speakers.py` | 650 | OK, beobachten |
+| Datei | Vorher | Nachher | Status |
+|-------|--------|---------|--------|
+| `routes/rooms.py` | 1024 | 866 | ✅ Schemas extrahiert |
+| `routes/knowledge.py` | 1019 | 924 | ✅ Schemas extrahiert |
+| `routes/speakers.py` | 650 | 650 | OK, beobachten |
+
+**Änderungen (2026-01-25):**
+- `rooms_schemas.py` (182 Zeilen) - Pydantic Models extrahiert
+- `knowledge_schemas.py` (117 Zeilen) - Pydantic Models extrahiert
 
 ---
 
@@ -406,6 +410,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | Schemas extrahiert: rooms_schemas.py, knowledge_schemas.py (#28) |
 | 2026-01-25 | CLI-Test-Tools dokumentiert (print statements OK für CLI) (#28) |
 | 2026-01-25 | Hardcoded localhost durch BACKEND_INTERNAL_URL ersetzt (#28) |
 | 2026-01-25 | ChatPage.jsx Refactoring: 1295 → 555 Zeilen (57% Reduktion), 7 Module (#30) |
