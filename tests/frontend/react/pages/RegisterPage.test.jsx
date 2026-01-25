@@ -45,12 +45,13 @@ describe('RegisterPage', () => {
       renderWithProviders(<RegisterPage />);
 
       expect(screen.getByText('Renfield')).toBeInTheDocument();
-      expect(screen.getByText('Create your account')).toBeInTheDocument();
-      expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/^password/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/confirm password/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /create account/i })).toBeInTheDocument();
+      expect(screen.getByText('Erstelle dein Konto')).toBeInTheDocument();
+      expect(screen.getByLabelText(/benutzername/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/e-mail/i)).toBeInTheDocument();
+      // Use placeholder text since labels include asterisks
+      expect(screen.getByPlaceholderText(/passwort erstellen/i)).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/passwort bestätigen/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /konto erstellen/i })).toBeInTheDocument();
     });
 
     it('shows loading state while checking auth', () => {
@@ -62,14 +63,14 @@ describe('RegisterPage', () => {
       renderWithProviders(<RegisterPage />);
 
       // Should show loading spinner, not the form
-      expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/benutzername/i)).not.toBeInTheDocument();
     });
 
     it('shows login link', () => {
       renderWithProviders(<RegisterPage />);
 
-      expect(screen.getByText(/already have an account/i)).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /sign in/i })).toBeInTheDocument();
+      expect(screen.getByText(/bereits ein konto/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /anmelden/i })).toBeInTheDocument();
     });
   });
 
@@ -78,10 +79,10 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      const usernameInput = screen.getByLabelText(/username/i);
-      const emailInput = screen.getByLabelText(/email/i);
-      const passwordInput = screen.getByLabelText(/^password/i);
-      const confirmPasswordInput = screen.getByLabelText(/confirm password/i);
+      const usernameInput = screen.getByLabelText(/benutzername/i);
+      const emailInput = screen.getByLabelText(/e-mail/i);
+      const passwordInput = screen.getByPlaceholderText(/passwort erstellen/i);
+      const confirmPasswordInput = screen.getByPlaceholderText(/passwort bestätigen/i);
 
       await user.type(usernameInput, 'newuser');
       await user.type(emailInput, 'new@example.com');
@@ -98,7 +99,7 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      const passwordInput = screen.getByLabelText(/^password/i);
+      const passwordInput = screen.getByPlaceholderText(/passwort erstellen/i);
       expect(passwordInput).toHaveAttribute('type', 'password');
 
       // Find and click the toggle button (the button after password input)
@@ -115,11 +116,11 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      const submitButton = screen.getByRole('button', { name: /create account/i });
+      const submitButton = screen.getByRole('button', { name: /konto erstellen/i });
       await user.click(submitButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/please fill in all required fields/i)).toBeInTheDocument();
+        expect(screen.getByText(/bitte alle pflichtfelder ausfüllen/i)).toBeInTheDocument();
       });
     });
 
@@ -127,13 +128,13 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'ab');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'ab');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/username must be at least 3 characters/i)).toBeInTheDocument();
+        expect(screen.getByText(/benutzername muss mindestens 3 zeichen haben/i)).toBeInTheDocument();
       });
     });
 
@@ -141,13 +142,13 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'newuser');
-      await user.type(screen.getByLabelText(/^password/i), 'short');
-      await user.type(screen.getByLabelText(/confirm password/i), 'short');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'newuser');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'short');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'short');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/password must be at least 8 characters/i)).toBeInTheDocument();
+        expect(screen.getByText(/passwort muss mindestens 8 zeichen haben/i)).toBeInTheDocument();
       });
     });
 
@@ -155,13 +156,13 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'newuser');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password456');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'newuser');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password456');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/passwords do not match/i)).toBeInTheDocument();
+        expect(screen.getByText(/passwörter stimmen nicht überein/i)).toBeInTheDocument();
       });
     });
   });
@@ -177,11 +178,11 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'newuser');
-      await user.type(screen.getByLabelText(/email/i), 'new@example.com');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'newuser');
+      await user.type(screen.getByLabelText(/e-mail/i), 'new@example.com');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
         expect(mockRegister).toHaveBeenCalledWith('newuser', 'password123', 'new@example.com');
@@ -198,10 +199,10 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'newuser');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'newuser');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
         expect(mockRegister).toHaveBeenCalledWith('newuser', 'password123', null);
@@ -218,13 +219,13 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'newuser');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'newuser');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
-        expect(screen.getByText(/account created successfully/i)).toBeInTheDocument();
+        expect(screen.getByText(/konto erfolgreich erstellt/i)).toBeInTheDocument();
       });
     });
 
@@ -240,10 +241,10 @@ describe('RegisterPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<RegisterPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'existing_user');
-      await user.type(screen.getByLabelText(/^password/i), 'password123');
-      await user.type(screen.getByLabelText(/confirm password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /create account/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'existing_user');
+      await user.type(screen.getByPlaceholderText(/passwort erstellen/i), 'password123');
+      await user.type(screen.getByPlaceholderText(/passwort bestätigen/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /konto erstellen/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Username already exists')).toBeInTheDocument();

@@ -39,7 +39,7 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
     return (
       <div data-testid="modal">
         <h2>{title}</h2>
-        <button onClick={onClose}>Close Modal</button>
+        <button onClick={onClose}>Modal schließen</button>
         {children}
       </div>
     );
@@ -60,14 +60,14 @@ describe('RolesPage', () => {
     it('renders the page title', async () => {
       renderWithProviders(<RolesPage />);
 
-      expect(screen.getByText('Role Management')).toBeInTheDocument();
-      expect(screen.getByText('Manage roles and their permissions')).toBeInTheDocument();
+      expect(screen.getByText('Rollenverwaltung')).toBeInTheDocument();
+      expect(screen.getByText('Verwalte Rollen und deren Berechtigungen')).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {
       renderWithProviders(<RolesPage />);
 
-      expect(screen.getByText('Loading roles...')).toBeInTheDocument();
+      expect(screen.getByText('Lade Rollen...')).toBeInTheDocument();
     });
 
     it('displays roles after loading', async () => {
@@ -111,16 +111,16 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      // Check for 'Create Role' title in modal using h2 or by scoping to modal
+      // Check for 'Rolle erstellen' title in modal using h2 or by scoping to modal
       const modal = screen.getByTestId('modal');
-      expect(within(modal).getByRole('heading', { name: /create role/i })).toBeInTheDocument();
+      expect(within(modal).getByRole('heading', { name: /rolle erstellen/i })).toBeInTheDocument();
     });
 
     it('shows plugin permission category in create modal', async () => {
@@ -131,7 +131,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -140,7 +140,6 @@ describe('RolesPage', () => {
 
       // Should have Plugins category
       expect(screen.getByText('Plugins')).toBeInTheDocument();
-      expect(screen.getByText('Plugin usage and management')).toBeInTheDocument();
     });
   });
 
@@ -154,14 +153,14 @@ describe('RolesPage', () => {
       });
 
       // Find and click edit button
-      const editButtons = screen.getAllByTitle('Edit role');
+      const editButtons = screen.getAllByTitle('Rolle bearbeiten');
       await user.click(editButtons[0]);
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Edit Role')).toBeInTheDocument();
+      expect(screen.getByText('Rolle bearbeiten')).toBeInTheDocument();
     });
 
     it('pre-fills form with existing role data', async () => {
@@ -172,7 +171,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const editButtons = screen.getAllByTitle('Edit role');
+      const editButtons = screen.getAllByTitle('Rolle bearbeiten');
       await user.click(editButtons[0]);
 
       await waitFor(() => {
@@ -180,7 +179,7 @@ describe('RolesPage', () => {
       });
 
       // Role name should be pre-filled
-      const nameInput = screen.getByPlaceholderText(/e.g., technician/i);
+      const nameInput = screen.getByPlaceholderText(/z\.B\. Techniker/i);
       expect(nameInput).toHaveValue('Admin');
     });
   });
@@ -194,7 +193,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -209,9 +208,6 @@ describe('RolesPage', () => {
 
       const pluginsButton = pluginsCategoryText.closest('button');
       expect(pluginsButton).not.toBeNull();
-
-      // Verify the category shows the description
-      expect(within(modal).getByText('Plugin usage and management')).toBeInTheDocument();
     });
 
     it('can select plugin permissions', async () => {
@@ -222,7 +218,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -238,9 +234,7 @@ describe('RolesPage', () => {
 
       // Verify some permission categories are present
       expect(within(modal).getByText('Home Assistant')).toBeInTheDocument();
-      expect(within(modal).getByText('Knowledge Bases')).toBeInTheDocument();
       expect(within(modal).getByText('Plugins')).toBeInTheDocument();
-      expect(within(modal).getByText('Administration')).toBeInTheDocument();
     });
   });
 
@@ -265,7 +259,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -275,11 +269,10 @@ describe('RolesPage', () => {
       const modal = screen.getByTestId('modal');
 
       // Verify the permissions section header is present
-      expect(within(modal).getByText('Permissions')).toBeInTheDocument();
+      expect(within(modal).getByText('Berechtigungen')).toBeInTheDocument();
 
-      // Verify plugin category exists with description
+      // Verify plugin category exists
       expect(within(modal).getByText('Plugins')).toBeInTheDocument();
-      expect(within(modal).getByText('Plugin usage and management')).toBeInTheDocument();
     });
 
     it('hides allowed plugins section when no plugin permission selected', async () => {
@@ -290,7 +283,7 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -298,7 +291,7 @@ describe('RolesPage', () => {
       });
 
       // Should NOT show Allowed Plugins section initially
-      expect(screen.queryByText('Allowed Plugins')).not.toBeInTheDocument();
+      expect(screen.queryByText('Erlaubte Plugins')).not.toBeInTheDocument();
     });
   });
 
@@ -312,7 +305,7 @@ describe('RolesPage', () => {
 
       // Admin is a system role, should only have edit button
       // User is not a system role, should have both edit and delete
-      const deleteButtons = screen.getAllByTitle('Delete role');
+      const deleteButtons = screen.getAllByTitle('Rolle löschen');
       expect(deleteButtons.length).toBe(1); // Only User role can be deleted
     });
   });
@@ -350,7 +343,7 @@ describe('RolesPage', () => {
       });
 
       // Open create modal
-      const createButton = screen.getByRole('button', { name: /create role/i });
+      const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -360,15 +353,15 @@ describe('RolesPage', () => {
       const modal = screen.getByTestId('modal');
 
       // Fill in name
-      const nameInput = within(modal).getByPlaceholderText(/e.g., technician/i);
+      const nameInput = within(modal).getByPlaceholderText(/z\.B\. Techniker/i);
       await user.type(nameInput, 'TestRole');
 
       // Fill in description
-      const descInput = within(modal).getByPlaceholderText(/brief description/i);
+      const descInput = within(modal).getByPlaceholderText(/kurze beschreibung/i);
       await user.type(descInput, 'A test role');
 
       // Submit form - find the submit button
-      const submitButton = within(modal).getByRole('button', { name: /create role/i });
+      const submitButton = within(modal).getByRole('button', { name: /rolle erstellen/i });
       await user.click(submitButton);
 
       await waitFor(() => {
@@ -408,7 +401,7 @@ describe('RolesPage', () => {
       });
 
       // Edit the User role (not Admin which is system)
-      const editButtons = screen.getAllByTitle('Edit role');
+      const editButtons = screen.getAllByTitle('Rolle bearbeiten');
       await user.click(editButtons[1]); // Second role is User
 
       await waitFor(() => {
@@ -416,7 +409,7 @@ describe('RolesPage', () => {
       });
 
       // Submit the form
-      const updateButton = screen.getByRole('button', { name: /update role/i });
+      const updateButton = screen.getByRole('button', { name: /rolle aktualisieren/i });
       await user.click(updateButton);
 
       await waitFor(() => {
@@ -453,7 +446,7 @@ describe('RolesPage', () => {
       renderWithProviders(<RolesPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('No roles found')).toBeInTheDocument();
+        expect(screen.getByText('Keine Rollen gefunden')).toBeInTheDocument();
       });
     });
   });

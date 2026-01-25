@@ -60,21 +60,21 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Settings')).toBeInTheDocument();
+        expect(screen.getByText('Einstellungen')).toBeInTheDocument();
       });
     });
 
     it('shows loading state initially', () => {
       renderWithProviders(<SettingsPage />);
 
-      expect(screen.getByText('Loading...')).toBeInTheDocument();
+      expect(screen.getByText('Lade...')).toBeInTheDocument();
     });
 
     it('displays wake word settings after loading', async () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Check for keyword dropdown
@@ -86,7 +86,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       const keywordSelect = screen.getByRole('combobox');
@@ -102,7 +102,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/3 devices connected/)).toBeInTheDocument();
+        expect(screen.getByText(/3 Geräte verbunden/)).toBeInTheDocument();
       });
     });
   });
@@ -112,10 +112,10 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      const saveButton = screen.getByRole('button', { name: /save/i });
+      const saveButton = screen.getByRole('button', { name: /speichern/i });
       expect(saveButton).toBeDisabled();
 
       // Change keyword
@@ -130,21 +130,21 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+      expect(screen.getByText('Ungespeicherte Änderungen')).toBeInTheDocument();
     });
 
     it('updates threshold via slider', async () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Find threshold slider
@@ -171,7 +171,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Change keyword
@@ -179,7 +179,7 @@ describe('SettingsPage', () => {
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
       // Click save
-      const saveButton = screen.getByRole('button', { name: /save/i });
+      const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
       await waitFor(() => {
@@ -200,7 +200,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Change keyword
@@ -208,11 +208,11 @@ describe('SettingsPage', () => {
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
       // Click save
-      const saveButton = screen.getByRole('button', { name: /save/i });
+      const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/Settings saved/)).toBeInTheDocument();
+        expect(screen.getByText(/Einstellungen gespeichert/)).toBeInTheDocument();
       });
     });
   });
@@ -228,7 +228,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Failed to load settings/)).toBeInTheDocument();
+        expect(screen.getByText(/Einstellungen konnten nicht geladen werden/)).toBeInTheDocument();
       });
     });
 
@@ -245,7 +245,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Change keyword
@@ -253,7 +253,7 @@ describe('SettingsPage', () => {
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
       // Click save
-      const saveButton = screen.getByRole('button', { name: /save/i });
+      const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
       await waitFor(() => {
@@ -271,7 +271,7 @@ describe('SettingsPage', () => {
       renderWithProviders(<SettingsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Wake Word Settings')).toBeInTheDocument();
+        expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
       // Change keyword
@@ -279,11 +279,11 @@ describe('SettingsPage', () => {
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
       // Click save
-      const saveButton = screen.getByRole('button', { name: /save/i });
+      const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/Access denied/)).toBeInTheDocument();
+        expect(screen.getByText(/Zugriff verweigert/)).toBeInTheDocument();
       });
     });
   });

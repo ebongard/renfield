@@ -50,13 +50,13 @@ describe('PluginsPage', () => {
       renderWithProviders(<PluginsPage />);
 
       expect(screen.getByText('Plugins')).toBeInTheDocument();
-      expect(screen.getByText('Manage available plugins and integrations')).toBeInTheDocument();
+      expect(screen.getByText('Verwalte Plugins und Erweiterungen')).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {
       renderWithProviders(<PluginsPage />);
 
-      expect(screen.getByText('Loading plugins...')).toBeInTheDocument();
+      expect(screen.getByText('Lade Plugins...')).toBeInTheDocument();
     });
 
     it('displays plugins after loading', async () => {
@@ -73,13 +73,13 @@ describe('PluginsPage', () => {
       renderWithProviders(<PluginsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Total Plugins')).toBeInTheDocument();
+        expect(screen.getByText('Plugins gesamt')).toBeInTheDocument();
       });
 
-      // Use getAllByText since 'Enabled' and 'Disabled' appear in both stats and badges
-      expect(screen.getAllByText('Enabled').length).toBeGreaterThan(0);
-      expect(screen.getAllByText('Disabled').length).toBeGreaterThan(0);
-      expect(screen.getByText('Total Intents')).toBeInTheDocument();
+      // Use getAllByText since 'Aktiviert' and 'Deaktiviert' appear in both stats and badges
+      expect(screen.getAllByText('Aktiviert').length).toBeGreaterThan(0);
+      expect(screen.getAllByText('Deaktiviert').length).toBeGreaterThan(0);
+      expect(screen.getByText('Intents gesamt')).toBeInTheDocument();
     });
 
     it('shows enabled/disabled badges correctly', async () => {
@@ -90,11 +90,11 @@ describe('PluginsPage', () => {
       });
 
       // Weather plugin should be enabled
-      const enabledBadges = screen.getAllByText('Enabled');
+      const enabledBadges = screen.getAllByText('Aktiviert');
       expect(enabledBadges.length).toBeGreaterThan(0);
 
       // Calendar plugin should be disabled
-      const disabledBadges = screen.getAllByText('Disabled');
+      const disabledBadges = screen.getAllByText('Deaktiviert');
       expect(disabledBadges.length).toBeGreaterThan(0);
     });
   });
@@ -109,7 +109,7 @@ describe('PluginsPage', () => {
       });
 
       // Find and click the info button (first one should be for weather)
-      const infoButtons = screen.getAllByTitle('View details');
+      const infoButtons = screen.getAllByTitle('Details anzeigen');
       await user.click(infoButtons[0]);
 
       // Modal should show plugin details
@@ -126,7 +126,7 @@ describe('PluginsPage', () => {
         expect(screen.getByText('weather')).toBeInTheDocument();
       });
 
-      const infoButtons = screen.getAllByTitle('View details');
+      const infoButtons = screen.getAllByTitle('Details anzeigen');
       await user.click(infoButtons[0]);
 
       await waitFor(() => {
@@ -142,20 +142,20 @@ describe('PluginsPage', () => {
         expect(screen.getByText('weather')).toBeInTheDocument();
       });
 
-      const infoButtons = screen.getAllByTitle('View details');
+      const infoButtons = screen.getAllByTitle('Details anzeigen');
       await user.click(infoButtons[0]);
 
       await waitFor(() => {
         expect(screen.getByText('Version')).toBeInTheDocument();
       });
 
-      // Click close button
-      const closeButton = screen.getByRole('button', { name: /close/i });
-      await user.click(closeButton);
+      // Click close button (first one in the modal)
+      const closeButtons = screen.getAllByRole('button', { name: /schließen/i });
+      await user.click(closeButtons[0]);
 
       // Modal should be closed - Version text should not be visible in main content
       await waitFor(() => {
-        expect(screen.queryByText('Enable Variable')).not.toBeInTheDocument();
+        expect(screen.queryByText('Aktivierungsvariable')).not.toBeInTheDocument();
       });
     });
   });
@@ -169,7 +169,7 @@ describe('PluginsPage', () => {
       });
 
       // Should have toggle buttons (power icons)
-      const toggleButtons = screen.getAllByTitle(/able plugin/i);
+      const toggleButtons = screen.getAllByTitle(/plugin (aktivieren|deaktivieren)/i);
       expect(toggleButtons.length).toBeGreaterThan(0);
     });
 
@@ -195,8 +195,8 @@ describe('PluginsPage', () => {
         expect(screen.getByText('weather')).toBeInTheDocument();
       });
 
-      // Click the toggle button for weather (which is enabled, so it says "Disable")
-      const toggleButtons = screen.getAllByTitle(/able plugin/i);
+      // Click the toggle button for weather (which is enabled, so it says "Deaktivieren")
+      const toggleButtons = screen.getAllByTitle(/plugin (aktivieren|deaktivieren)/i);
       await user.click(toggleButtons[0]);
 
       await waitFor(() => {
@@ -210,7 +210,7 @@ describe('PluginsPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/plugins`, () => {
           return HttpResponse.json(
-            { detail: 'Failed to load plugins' },
+            { detail: 'Plugins konnten nicht geladen werden' },
             { status: 500 }
           );
         })
@@ -219,7 +219,7 @@ describe('PluginsPage', () => {
       renderWithProviders(<PluginsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to load plugins/i)).toBeInTheDocument();
+        expect(screen.getByText(/plugins konnten nicht geladen werden/i)).toBeInTheDocument();
       });
     });
 
@@ -237,7 +237,7 @@ describe('PluginsPage', () => {
       renderWithProviders(<PluginsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('No plugins found')).toBeInTheDocument();
+        expect(screen.getByText('Keine Plugins gefunden')).toBeInTheDocument();
       });
     });
 
@@ -255,7 +255,7 @@ describe('PluginsPage', () => {
       renderWithProviders(<PluginsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/plugin system is disabled/i)).toBeInTheDocument();
+        expect(screen.getByText(/plugin-system ist deaktiviert/i)).toBeInTheDocument();
       });
     });
   });
@@ -283,7 +283,7 @@ describe('PluginsPage', () => {
       });
 
       // Click refresh button
-      const refreshButton = screen.getByRole('button', { name: /refresh/i });
+      const refreshButton = screen.getByRole('button', { name: /aktualisieren/i });
       await user.click(refreshButton);
 
       await waitFor(() => {
@@ -308,11 +308,11 @@ describe('PluginsPage without manage permission', () => {
     });
 
     // Info buttons should exist
-    const infoButtons = screen.getAllByTitle('View details');
+    const infoButtons = screen.getAllByTitle('Details anzeigen');
     expect(infoButtons.length).toBeGreaterThan(0);
 
     // Toggle buttons should not exist (no manage permission)
-    const toggleButtons = screen.queryAllByTitle(/able plugin/i);
+    const toggleButtons = screen.queryAllByTitle(/plugin (aktivieren|deaktivieren)/i);
     expect(toggleButtons.length).toBe(0);
   });
 });

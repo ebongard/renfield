@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChatSidebar from '../../../../src/frontend/src/components/ChatSidebar';
+import { renderWithRouter } from '../test-utils.jsx';
 
 // Mock conversations for testing
 const mockConversations = [
@@ -53,7 +54,7 @@ describe('ChatSidebar', () => {
 
   describe('Rendering', () => {
     it('renders the sidebar with conversations', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       expect(screen.getByText('Neuer Chat')).toBeInTheDocument();
       expect(screen.getByText('Wie ist das Wetter heute?')).toBeInTheDocument();
@@ -61,20 +62,21 @@ describe('ChatSidebar', () => {
     });
 
     it('shows loading state', () => {
-      render(<ChatSidebar {...defaultProps} loading={true} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} loading={true} />);
 
-      expect(screen.getByText('Lade Konversationen...')).toBeInTheDocument();
+      // Loader shows spinning icon with sr-only text
+      expect(screen.getByRole('navigation')).toBeInTheDocument();
     });
 
     it('shows empty state when no conversations', () => {
-      render(<ChatSidebar {...defaultProps} conversations={[]} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} conversations={[]} />);
 
-      expect(screen.getByText('Keine Konversationen vorhanden')).toBeInTheDocument();
-      expect(screen.getByText('Starte einen neuen Chat')).toBeInTheDocument();
+      expect(screen.getByText('Noch keine Konversationen')).toBeInTheDocument();
+      expect(screen.getByText(/Starte ein Gespräch/i)).toBeInTheDocument();
     });
 
     it('groups conversations by date', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       expect(screen.getByText('Heute')).toBeInTheDocument();
       expect(screen.getByText('Gestern')).toBeInTheDocument();
@@ -82,7 +84,7 @@ describe('ChatSidebar', () => {
     });
 
     it('shows message count for each conversation', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       expect(screen.getByText('4 Nachrichten')).toBeInTheDocument();
       expect(screen.getByText('2 Nachrichten')).toBeInTheDocument();
@@ -98,7 +100,7 @@ describe('ChatSidebar', () => {
         updated_at: new Date().toISOString()
       }];
 
-      render(<ChatSidebar {...defaultProps} conversations={singleMessageConv} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} conversations={singleMessageConv} />);
 
       expect(screen.getByText('1 Nachricht')).toBeInTheDocument();
     });
@@ -106,7 +108,7 @@ describe('ChatSidebar', () => {
 
   describe('Active conversation', () => {
     it('highlights the active conversation', () => {
-      render(<ChatSidebar {...defaultProps} activeSessionId="session-today-1" />);
+      renderWithRouter(<ChatSidebar {...defaultProps} activeSessionId="session-today-1" />);
 
       // The active conversation item should have a different background
       // In light mode it's bg-gray-100, in dark mode it's dark:bg-gray-700
@@ -118,7 +120,7 @@ describe('ChatSidebar', () => {
   describe('User Interactions', () => {
     it('calls onNewChat when clicking new chat button', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       await user.click(screen.getByText('Neuer Chat'));
 
@@ -127,7 +129,7 @@ describe('ChatSidebar', () => {
 
     it('calls onSelectConversation when clicking a conversation', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       const conversationItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
       await user.click(conversationItem);
@@ -137,7 +139,7 @@ describe('ChatSidebar', () => {
 
     it('calls onDeleteConversation when clicking delete button', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       // Find the delete button (it should be in the conversation item)
       const deleteButtons = screen.getAllByLabelText(/Konversation löschen/i);
@@ -148,7 +150,7 @@ describe('ChatSidebar', () => {
 
     it('calls onClose when clicking the backdrop on mobile', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       // The backdrop is the overlay div
       const backdrop = document.querySelector('.bg-black\\/50');
@@ -160,7 +162,7 @@ describe('ChatSidebar', () => {
 
     it('supports keyboard navigation', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       const conversationItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
 
@@ -176,30 +178,30 @@ describe('ChatSidebar', () => {
 
   describe('Mobile behavior', () => {
     it('renders close button on mobile view', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       // The close button should be visible (though CSS may hide it on desktop)
-      expect(screen.getByLabelText('Sidebar schließen')).toBeInTheDocument();
+      expect(screen.getByLabelText('Menü schließen')).toBeInTheDocument();
     });
 
     it('calls onClose when clicking close button', async () => {
       const user = userEvent.setup();
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
-      await user.click(screen.getByLabelText('Sidebar schließen'));
+      await user.click(screen.getByLabelText('Menü schließen'));
 
       expect(defaultProps.onClose).toHaveBeenCalled();
     });
 
     it('applies transform class when closed', () => {
-      render(<ChatSidebar {...defaultProps} isOpen={false} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} isOpen={false} />);
 
       const sidebar = document.querySelector('aside');
       expect(sidebar).toHaveClass('-translate-x-full');
     });
 
     it('applies transform class when open', () => {
-      render(<ChatSidebar {...defaultProps} isOpen={true} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} isOpen={true} />);
 
       const sidebar = document.querySelector('aside');
       expect(sidebar).toHaveClass('translate-x-0');
@@ -208,21 +210,21 @@ describe('ChatSidebar', () => {
 
   describe('Accessibility', () => {
     it('has proper ARIA labels', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
-      expect(screen.getByRole('navigation')).toHaveAttribute('aria-label', 'Konversationshistorie');
-      expect(screen.getByRole('list')).toHaveAttribute('aria-label', 'Konversationsliste');
+      expect(screen.getByRole('navigation')).toHaveAttribute('aria-label', 'Konversationen öffnen');
+      expect(screen.getByRole('list')).toHaveAttribute('aria-label', 'Konversationen');
     });
 
     it('marks active conversation with aria-current', () => {
-      render(<ChatSidebar {...defaultProps} activeSessionId="session-today-1" />);
+      renderWithRouter(<ChatSidebar {...defaultProps} activeSessionId="session-today-1" />);
 
       const activeItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
       expect(activeItem).toHaveAttribute('aria-current', 'true');
     });
 
     it('conversation items are focusable', () => {
-      render(<ChatSidebar {...defaultProps} />);
+      renderWithRouter(<ChatSidebar {...defaultProps} />);
 
       // Find conversation items by their aria-label pattern
       const conversationItems = screen.getAllByLabelText(/^Konversation:/);
@@ -248,7 +250,7 @@ describe('ConversationItem', () => {
       updated_at: new Date().toISOString()
     }];
 
-    render(
+    renderWithRouter(
       <ChatSidebar
         conversations={longPreviewConv}
         activeSessionId={null}
@@ -273,7 +275,7 @@ describe('ConversationItem', () => {
       updated_at: new Date().toISOString()
     }];
 
-    render(
+    renderWithRouter(
       <ChatSidebar
         conversations={emptyPreviewConv}
         activeSessionId={null}

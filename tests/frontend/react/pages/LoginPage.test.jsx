@@ -49,10 +49,10 @@ describe('LoginPage', () => {
       renderWithProviders(<LoginPage />);
 
       expect(screen.getByText('Renfield')).toBeInTheDocument();
-      expect(screen.getByText('Sign in to your account')).toBeInTheDocument();
-      expect(screen.getByLabelText(/username/i)).toBeInTheDocument();
-      expect(screen.getByLabelText(/password/i)).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
+      expect(screen.getByText('Melden Sie sich an')).toBeInTheDocument();
+      expect(screen.getByLabelText(/benutzername/i)).toBeInTheDocument();
+      expect(screen.getByLabelText(/passwort/i)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /anmelden/i })).toBeInTheDocument();
     });
 
     it('shows loading state while checking auth', () => {
@@ -64,7 +64,7 @@ describe('LoginPage', () => {
       renderWithProviders(<LoginPage />);
 
       // Should show loading spinner, not the form
-      expect(screen.queryByLabelText(/username/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/benutzername/i)).not.toBeInTheDocument();
     });
 
     it('shows registration link when allowed', () => {
@@ -75,14 +75,14 @@ describe('LoginPage', () => {
 
       renderWithProviders(<LoginPage />);
 
-      expect(screen.getByText(/don't have an account/i)).toBeInTheDocument();
-      expect(screen.getByRole('link', { name: /create one/i })).toBeInTheDocument();
+      expect(screen.getByText(/noch kein konto/i)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: /erstellen sie eines/i })).toBeInTheDocument();
     });
 
     it('hides registration link when not allowed', () => {
       renderWithProviders(<LoginPage />);
 
-      expect(screen.queryByText(/don't have an account/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/noch kein konto/i)).not.toBeInTheDocument();
     });
   });
 
@@ -91,8 +91,8 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      const usernameInput = screen.getByLabelText(/username/i);
-      const passwordInput = screen.getByLabelText(/password/i);
+      const usernameInput = screen.getByLabelText(/benutzername/i);
+      const passwordInput = screen.getByLabelText(/passwort/i);
 
       await user.type(usernameInput, 'testuser');
       await user.type(passwordInput, 'testpass');
@@ -105,7 +105,7 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      const passwordInput = screen.getByLabelText(/password/i);
+      const passwordInput = screen.getByLabelText(/passwort/i);
       expect(passwordInput).toHaveAttribute('type', 'password');
 
       // Find and click the toggle button
@@ -121,11 +121,11 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      const submitButton = screen.getByRole('button', { name: /sign in/i });
+      const submitButton = screen.getByRole('button', { name: /anmelden/i });
       await user.click(submitButton);
 
       await waitFor(() => {
-        expect(screen.getByText(/please enter username and password/i)).toBeInTheDocument();
+        expect(screen.getByText(/bitte benutzername und passwort eingeben/i)).toBeInTheDocument();
       });
     });
 
@@ -139,9 +139,9 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'admin');
-      await user.type(screen.getByLabelText(/password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /sign in/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'admin');
+      await user.type(screen.getByLabelText(/passwort/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /anmelden/i }));
 
       await waitFor(() => {
         expect(mockLogin).toHaveBeenCalledWith('admin', 'password123');
@@ -160,9 +160,9 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'admin');
-      await user.type(screen.getByLabelText(/password/i), 'wrongpassword');
-      await user.click(screen.getByRole('button', { name: /sign in/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'admin');
+      await user.type(screen.getByLabelText(/passwort/i), 'wrongpassword');
+      await user.click(screen.getByRole('button', { name: /anmelden/i }));
 
       await waitFor(() => {
         expect(screen.getByText('Invalid credentials')).toBeInTheDocument();
@@ -179,9 +179,9 @@ describe('LoginPage', () => {
       const user = userEvent.setup();
       renderWithProviders(<LoginPage />);
 
-      await user.type(screen.getByLabelText(/username/i), 'admin');
-      await user.type(screen.getByLabelText(/password/i), 'password123');
-      await user.click(screen.getByRole('button', { name: /sign in/i }));
+      await user.type(screen.getByLabelText(/benutzername/i), 'admin');
+      await user.type(screen.getByLabelText(/passwort/i), 'password123');
+      await user.click(screen.getByRole('button', { name: /anmelden/i }));
 
       await waitFor(() => {
         expect(mockNavigate).toHaveBeenCalledWith('/', { replace: true });

@@ -28,7 +28,7 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
     return (
       <div data-testid="modal">
         <h2>{title}</h2>
-        <button onClick={onClose}>Close Modal</button>
+        <button onClick={onClose}>Modal schließen</button>
         {children}
       </div>
     );
@@ -55,14 +55,14 @@ describe('UsersPage', () => {
     it('renders the page title', async () => {
       renderWithProviders(<UsersPage />);
 
-      expect(screen.getByText('User Management')).toBeInTheDocument();
-      expect(screen.getByText('Manage user accounts and permissions')).toBeInTheDocument();
+      expect(screen.getByText('Benutzerverwaltung')).toBeInTheDocument();
+      expect(screen.getByText('Verwalte Benutzerkonten und Berechtigungen')).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {
       renderWithProviders(<UsersPage />);
 
-      expect(screen.getByText('Loading users...')).toBeInTheDocument();
+      expect(screen.getByText('Lade Benutzer...')).toBeInTheDocument();
     });
 
     it('displays users after loading', async () => {
@@ -96,7 +96,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('inactive_user')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Inactive')).toBeInTheDocument();
+      expect(screen.getByText('Inaktiv')).toBeInTheDocument();
     });
 
     it('shows "You" badge for current user', async () => {
@@ -106,7 +106,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('You')).toBeInTheDocument();
+      expect(screen.getByText('Du')).toBeInTheDocument();
     });
 
     it('shows voice linked indicator for users with speaker', async () => {
@@ -116,7 +116,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('user1')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Voice linked')).toBeInTheDocument();
+      expect(screen.getByText('Stimme verknüpft')).toBeInTheDocument();
     });
   });
 
@@ -129,7 +129,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      const createButton = screen.getByRole('button', { name: /create user/i });
+      const createButton = screen.getByRole('button', { name: /benutzer erstellen/i });
       await user.click(createButton);
 
       await waitFor(() => {
@@ -137,7 +137,7 @@ describe('UsersPage', () => {
       });
 
       const modal = screen.getByTestId('modal');
-      expect(within(modal).getByRole('heading', { name: 'Create User' })).toBeInTheDocument();
+      expect(within(modal).getByRole('heading', { name: 'Benutzer erstellen' })).toBeInTheDocument();
     });
 
     it('shows required form fields in create modal', async () => {
@@ -148,17 +148,17 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      await user.click(screen.getByRole('button', { name: /create user/i }));
+      await user.click(screen.getByRole('button', { name: /benutzer erstellen/i }));
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
       const modal = screen.getByTestId('modal');
-      expect(within(modal).getByPlaceholderText(/enter username/i)).toBeInTheDocument();
-      expect(within(modal).getByPlaceholderText(/user@example.com/i)).toBeInTheDocument();
-      expect(within(modal).getByPlaceholderText(/enter password/i)).toBeInTheDocument();
-      expect(within(modal).getByText(/select a role/i)).toBeInTheDocument();
+      expect(within(modal).getByPlaceholderText(/benutzernamen eingeben/i)).toBeInTheDocument();
+      expect(within(modal).getByPlaceholderText(/deine@email.de/i)).toBeInTheDocument();
+      expect(within(modal).getByPlaceholderText(/passwort eingeben/i)).toBeInTheDocument();
+      expect(within(modal).getByText(/rolle auswählen/i)).toBeInTheDocument();
     });
   });
 
@@ -172,14 +172,14 @@ describe('UsersPage', () => {
       });
 
       // Find and click edit button for a user
-      const editButtons = screen.getAllByTitle('Edit user');
+      const editButtons = screen.getAllByTitle('Benutzer bearbeiten');
       await user.click(editButtons[0]);
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Edit User')).toBeInTheDocument();
+      expect(screen.getByText('Benutzer bearbeiten')).toBeInTheDocument();
     });
   });
 
@@ -207,7 +207,7 @@ describe('UsersPage', () => {
       });
 
       // Open create modal
-      await user.click(screen.getByRole('button', { name: /create user/i }));
+      await user.click(screen.getByRole('button', { name: /benutzer erstellen/i }));
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
@@ -216,12 +216,12 @@ describe('UsersPage', () => {
       const modal = screen.getByTestId('modal');
 
       // Fill in form
-      await user.type(within(modal).getByPlaceholderText(/enter username/i), 'newuser');
-      await user.type(within(modal).getByPlaceholderText(/user@example.com/i), 'new@example.com');
-      await user.type(within(modal).getByPlaceholderText(/enter password/i), 'password123');
+      await user.type(within(modal).getByPlaceholderText(/benutzernamen eingeben/i), 'newuser');
+      await user.type(within(modal).getByPlaceholderText(/deine@email.de/i), 'new@example.com');
+      await user.type(within(modal).getByPlaceholderText(/passwort eingeben/i), 'password123');
 
       // Submit form
-      const submitButton = within(modal).getByRole('button', { name: /create user/i });
+      const submitButton = within(modal).getByRole('button', { name: /benutzer erstellen/i });
       await user.click(submitButton);
 
       await waitFor(() => {
@@ -250,7 +250,7 @@ describe('UsersPage', () => {
       });
 
       // Find delete button for user1 (not the current user)
-      const deleteButtons = screen.getAllByTitle('Delete user');
+      const deleteButtons = screen.getAllByTitle('Benutzer löschen');
       // Click on a delete button (not for current user)
       await user.click(deleteButtons[1]);
 
@@ -265,7 +265,7 @@ describe('UsersPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/users`, () => {
           return HttpResponse.json(
-            { detail: 'Failed to load users' },
+            { detail: 'Benutzer konnten nicht geladen werden' },
             { status: 500 }
           );
         })
@@ -274,7 +274,7 @@ describe('UsersPage', () => {
       renderWithProviders(<UsersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/failed to load users/i)).toBeInTheDocument();
+        expect(screen.getByText(/benutzer konnten nicht geladen werden/i)).toBeInTheDocument();
       });
     });
 
@@ -293,7 +293,7 @@ describe('UsersPage', () => {
       renderWithProviders(<UsersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('No users found')).toBeInTheDocument();
+        expect(screen.getByText('Keine Benutzer gefunden')).toBeInTheDocument();
       });
     });
   });
@@ -322,7 +322,7 @@ describe('UsersPage', () => {
       });
 
       // Click refresh button
-      const refreshButton = screen.getByRole('button', { name: /refresh/i });
+      const refreshButton = screen.getByRole('button', { name: /aktualisieren/i });
       await user.click(refreshButton);
 
       await waitFor(() => {

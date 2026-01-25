@@ -52,7 +52,7 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
     return (
       <div data-testid="modal">
         <h2>{title}</h2>
-        <button onClick={onClose}>Close</button>
+        <button onClick={onClose}>Schließen</button>
         {children}
       </div>
     );
@@ -112,7 +112,7 @@ describe('SpeakersPage', () => {
       renderWithProviders(<SpeakersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Speaker Recognition nicht verfuegbar')).toBeInTheDocument();
+        expect(screen.getByText('Speaker Recognition nicht verfügbar')).toBeInTheDocument();
       });
     });
 

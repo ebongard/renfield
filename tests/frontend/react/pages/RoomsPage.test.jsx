@@ -57,7 +57,7 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
     return (
       <div data-testid="modal">
         <h2>{title}</h2>
-        <button onClick={onClose}>Close</button>
+        <button onClick={onClose}>Schließen</button>
         {children}
       </div>
     );
@@ -119,7 +119,7 @@ describe('RoomsPage', () => {
       renderWithProviders(<RoomsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Raeume \(2\)/)).toBeInTheDocument();
+        expect(screen.getByText(/Räume \(2\)/)).toBeInTheDocument();
       });
     });
 
@@ -174,8 +174,8 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      expect(screen.getByText('Verknuepft')).toBeInTheDocument();
-      expect(screen.getByText('Nicht verknuepft')).toBeInTheDocument();
+      expect(screen.getByText('Verknüpft')).toBeInTheDocument();
+      expect(screen.getByText('Nicht verknüpft')).toBeInTheDocument();
     });
   });
 
@@ -190,7 +190,7 @@ describe('RoomsPage', () => {
       renderWithProviders(<RoomsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Noch keine Raeume vorhanden')).toBeInTheDocument();
+        expect(screen.getByText('Noch keine Räume vorhanden')).toBeInTheDocument();
       });
 
       expect(screen.getByText('Ersten Raum anlegen')).toBeInTheDocument();
@@ -350,7 +350,7 @@ describe('RoomsPage', () => {
       renderWithProviders(<RoomsPage />);
 
       await waitFor(() => {
-        expect(screen.getByText(/Raeume konnten nicht geladen werden/i)).toBeInTheDocument();
+        expect(screen.getByText(/Räume konnten nicht geladen werden/i)).toBeInTheDocument();
       });
     });
   });
@@ -385,7 +385,7 @@ describe('RoomsPage', () => {
       });
 
       // Kueche is not linked
-      expect(screen.getByText('Verknuepfen')).toBeInTheDocument();
+      expect(screen.getByText('Verknüpfen')).toBeInTheDocument();
     });
 
     it('shows unlink button for linked rooms', async () => {
