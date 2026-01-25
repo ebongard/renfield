@@ -232,17 +232,17 @@ class AudioOutputService:
         Get the URL for the backend that HA can access.
 
         Priority:
-        1. ADVERTISE_HOST from settings (required for HA integration)
-        2. Fallback to localhost (warning: won't work if HA is on different host)
+        1. ADVERTISE_HOST from settings (recommended for HA integration)
+        2. BACKEND_INTERNAL_URL for Docker networking (default: http://backend:8000)
         """
         if settings.advertise_host:
             host = settings.advertise_host
             port = settings.advertise_port or 8000
             return f"http://{host}:{port}"
 
-        # Fallback to localhost - this will likely not work for HA
-        logger.warning("⚠️ ADVERTISE_HOST not set - HA may not be able to fetch TTS audio!")
-        return "http://localhost:8000"
+        # Use internal Docker URL - works when HA and Renfield are on same Docker network
+        logger.debug(f"Using internal backend URL: {settings.backend_internal_url}")
+        return settings.backend_internal_url
 
     async def _cleanup_old_cache_files(self):
         """Remove old TTS cache files."""

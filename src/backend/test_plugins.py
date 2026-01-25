@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Test script for plugin system"""
+"""
+CLI Tool: Plugin System Tester
+
+Interactive command-line tool for testing and debugging the plugin system.
+Run directly: python test_plugins.py
+
+Note: Uses print() for CLI output (not logger) as this is an interactive tool.
+"""
 import asyncio
 import sys
 from pathlib import Path

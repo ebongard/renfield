@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Test error handling in plugin system"""
+"""
+CLI Tool: Plugin Error Handling Tester
+
+Interactive command-line tool for testing error handling in the plugin system.
+Run directly: python test_error_handling.py
+
+Note: Uses print() for CLI output (not logger) as this is an interactive tool.
+"""
 import asyncio
 import sys
 from pathlib import Path

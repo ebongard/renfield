@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Test URL encoding in plugin system"""
+"""
+CLI Tool: URL Encoding Tester
+
+Interactive command-line tool for testing URL parameter encoding in the plugin system.
+Run directly: python test_url_encoding.py
+
+Note: Uses print() for CLI output (not logger) as this is an interactive tool.
+"""
 import asyncio
 import sys
 from pathlib import Path

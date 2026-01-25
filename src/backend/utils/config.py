@@ -84,6 +84,7 @@ class Settings(BaseSettings):
     # Output Routing
     advertise_host: Optional[str] = None  # Hostname/IP that external services (like HA) can reach
     advertise_port: int = 8000            # Port for advertise_host
+    backend_internal_url: str = "http://backend:8000"  # Internal URL for Docker networking (fallback when advertise_host not set)
 
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)

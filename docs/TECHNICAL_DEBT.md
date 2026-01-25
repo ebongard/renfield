@@ -10,11 +10,11 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
-| Backend | 0 | 5 | 4 | 9 | 2 |
+| Backend | 0 | 3 | 4 | 7 | 4 |
 | Frontend | 0 | 4 | 3 | 7 | 1 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **15** | **11** | **26** | **4** |
+| **Gesamt** | **0** | **13** | **11** | **24** | **6** |
 
 ---
 
@@ -86,24 +86,21 @@ api/
 
 ---
 
-#### 4. Hardcoded Fallback-Werte
+#### ~~4. Hardcoded Fallback-Werte~~ ✅ Behoben
 
-**Problem:** Fallback auf `localhost` funktioniert nicht in Container-Umgebungen.
+**Status:** Behoben am 2026-01-25
 
-```python
-# audio_output_service.py:245
-return "http://localhost:8000"
-```
+**Ursprüngliches Problem:** Fallback auf `localhost` funktioniert nicht in Container-Umgebungen.
 
-**Empfehlung:** Immer über Konfiguration/Environment lösen.
+**Lösung:** Neues Config-Setting `BACKEND_INTERNAL_URL` (Default: `http://backend:8000`) als Fallback statt localhost.
 
 ---
 
-#### 5. Print Statements statt Logger
+#### ~~5. Print Statements in CLI-Tools~~ ✅ Dokumentiert
 
-**Datei:** `test_plugins.py` enthält 25+ `print()` Statements.
+**Status:** Dokumentiert am 2026-01-25
 
-**Empfehlung:** Durch `logger.info()` ersetzen oder als separates CLI-Tool kennzeichnen.
+**Lösung:** CLI-Test-Tools (`test_plugins.py`, `test_url_encoding.py`, `test_error_handling.py`) sind jetzt als interaktive CLI-Tools dokumentiert, wo `print()` für Ausgabe angemessen ist.
 
 ---
 
@@ -409,6 +406,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-25 | CLI-Test-Tools dokumentiert (print statements OK für CLI) (#28) |
+| 2026-01-25 | Hardcoded localhost durch BACKEND_INTERNAL_URL ersetzt (#28) |
 | 2026-01-25 | ChatPage.jsx Refactoring: 1295 → 555 Zeilen (57% Reduktion), 7 Module (#30) |
 | 2026-01-25 | Docker :latest Tags durch gepinnte Versionen ersetzt (#35) |
 | 2026-01-25 | Lifecycle-Management extrahiert nach api/lifecycle.py (#27) |
