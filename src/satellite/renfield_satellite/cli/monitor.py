@@ -309,22 +309,34 @@ class SatelliteMonitor:
 
         sys.stdout.flush()
 
+    def _on_audio_chunk(self, audio_bytes: bytes):
+        """Callback for audio chunks - updates metrics"""
+        self.audio_rms = self._calculate_rms(audio_bytes)
+        self.audio_db = self._calculate_db(self.audio_rms)
+        # Simple VAD: speech if RMS > threshold
+        self.is_speech = self.audio_rms > 500
+
     async def update_metrics_from_audio(self):
         """Update metrics by reading from audio capture"""
         try:
-            from audio.capture import AudioCapture
+            from ..audio.capture import AudioCapture
 
-            self.audio_capture = AudioCapture()
-            self.audio_capture.start()
+            self.audio_capture = AudioCapture(
+                sample_rate=16000,
+                chunk_size=1024,
+                channels=1,
+            )
+            self.audio_capture.start(self._on_audio_chunk)
 
+            # Keep running while self.running is True
             while self.running:
-                chunk = self.audio_capture.get_chunk()
-                if chunk:
-                    self.audio_rms = self._calculate_rms(chunk)
-                    self.audio_db = self._calculate_db(self.audio_rms)
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.1)
 
-        except ImportError:
+            # Stop capture when done
+            self.audio_capture.stop()
+
+        except ImportError as e:
+            # Audio capture not available, metrics will stay at defaults
             pass
         except Exception as e:
             print(f"Audio error: {e}")
@@ -375,35 +387,47 @@ class SatelliteMonitor:
         print()
 
         try:
-            from audio.capture import AudioCapture
+            from ..audio.capture import AudioCapture
 
-            capture = AudioCapture()
-            capture.start()
+            # Shared state for audio metrics
+            test_state = {"rms": 0.0, "db": -96.0, "max_rms": 0.0, "max_db": -96.0}
+
+            def on_audio(audio_bytes: bytes):
+                rms = self._calculate_rms(audio_bytes)
+                db = self._calculate_db(rms)
+                test_state["rms"] = rms
+                test_state["db"] = db
+                test_state["max_rms"] = max(test_state["max_rms"], rms)
+                test_state["max_db"] = max(test_state["max_db"], db)
+
+            capture = AudioCapture(
+                sample_rate=16000,
+                chunk_size=1024,
+                channels=1,
+            )
+            capture.start(on_audio)
 
             start = time.time()
-            max_rms = 0
-            max_db = -96
 
             while time.time() - start < duration:
-                chunk = capture.get_chunk()
-                if chunk:
-                    rms = self._calculate_rms(chunk)
-                    db = self._calculate_db(rms)
+                rms = test_state["rms"]
+                db = test_state["db"]
 
-                    max_rms = max(max_rms, rms)
-                    max_db = max(max_db, db)
+                # Create level bar
+                bar_width = 50
+                db_normalized = (db + 96) / 96
+                bar = create_bar(db_normalized, 1.0, bar_width)
+                color = get_level_color(db)
 
-                    # Create level bar
-                    bar_width = 50
-                    db_normalized = (db + 96) / 96
-                    bar = create_bar(db_normalized, 1.0, bar_width)
-                    color = get_level_color(db)
-
-                    print(f"\r [{color}{bar}{Colors.RESET}] {db:6.1f} dB  RMS: {rms:7.0f}", end="")
+                print(f"\r [{color}{bar}{Colors.RESET}] {db:6.1f} dB  RMS: {rms:7.0f}", end="")
+                sys.stdout.flush()
 
                 time.sleep(0.05)
 
             capture.stop()
+
+            max_rms = test_state["max_rms"]
+            max_db = test_state["max_db"]
 
             print()
             print()
@@ -420,6 +444,7 @@ class SatelliteMonitor:
 
         except ImportError as e:
             print(f"{Colors.RED}Error: Could not import audio module: {e}{Colors.RESET}")
+            print(f"{Colors.DIM}Make sure PyAudio is installed: pip install pyaudio{Colors.RESET}")
         except Exception as e:
             print(f"{Colors.RED}Error: {e}{Colors.RESET}")
 
