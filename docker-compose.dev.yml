@@ -23,6 +23,12 @@ services:
     restart: unless-stopped
     ports:
       - "5432:5432"  # Exposed for local development tools
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renfield -d renfield"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Redis für Message Queue und Caching
   redis:
@@ -36,6 +42,12 @@ services:
     restart: unless-stopped
     ports:
       - "6379:6379"  # Exposed for local development tools
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   # Ollama - Lokales LLM (optional - kann durch externe Instanz ersetzt werden)
   ollama:
@@ -50,6 +62,12 @@ services:
       - "11434:11434"  # Exposed for direct access
     profiles:
       - ollama  # Aktiviere mit: docker compose --profile ollama up
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   # Backend API (CPU version - for Mac development)
   backend:
@@ -72,13 +90,21 @@ services:
       - piper_models:/root/.local/share/piper
       - rag_uploads:/app/data/uploads
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - renfield-network
     ports:
       - "8000:8000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
   # Frontend Web-App (Development with hot reload)
   frontend:
@@ -93,12 +119,19 @@ services:
       - ./src/frontend:/app
       - /app/node_modules
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - renfield-network
     ports:
       - "3000:3000"
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
 networks:
   renfield-network:

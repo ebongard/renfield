@@ -13,8 +13,8 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Backend | 0 | 1 | 4 | 7 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 5 |
 | Satellite | 0 | 3 | 2 | 5 | 5 |
-| Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **21** |
+| Infrastruktur | 0 | 3 | 2 | 5 | 4 |
+| **Gesamt** | **0** | **8** | **11** | **24** | **24** |
 
 ---
 
@@ -398,39 +398,56 @@ Bereits gepinnte Images:
 
 ---
 
-### 🟡 Mittel
+### ~~🟡 Mittel~~ → ✅ Behoben/Dokumentiert
 
-#### 2. Unpinned Python Dependencies
+#### ~~2. Unpinned Python Dependencies~~ ✅ Dokumentiert
 
-**Problem:** Nur 7 von 40 Requirements haben gepinnte Versionen.
+**Status:** Überprüft am 2026-01-26 - Akzeptabel
 
-```
-# Vorher
-fastapi
-pydantic
+**Analyse:**
+- 7 exakt gepinnt (`==`), 34 mit Minimum-Version (`>=`)
+- Docker-Images fungieren als effektives "Lockfile"
+- `>=` ermöglicht Flexibilität bei Upgrades
+- Kritische Packages (whisper, bcrypt, pytest) sind gepinnt
 
-# Nachher
-fastapi==0.115.6
-pydantic==2.10.5
-```
-
-**Empfehlung:** `pip-compile` oder `poetry` für Lockfile.
+**Entscheidung:** Aktueller Ansatz ist für Docker-basiertes Projekt akzeptabel.
 
 ---
 
-#### 3. Keine Health Checks in Docker Compose
+#### ~~3. Health Checks in Docker Compose~~ ✅ Behoben
 
-**Problem:** Nur Backend hat Health Check, andere Services nicht.
+**Status:** Behoben am 2026-01-26
 
-**Empfehlung:** Health Checks für alle Services.
+**Hinzugefügte Health Checks:**
+- `postgres`: `pg_isready -U renfield -d renfield`
+- `redis`: `redis-cli ping`
+- `ollama`: `curl -f http://localhost:11434/api/tags`
+- `backend`: `curl -f http://localhost:8000/health`
+- `frontend`: `wget -q --spider http://localhost:3000`
+- `nginx`: `wget -q --spider http://localhost:80`
+
+**Zusätzliche Verbesserungen:**
+- `depends_on` mit `condition: service_healthy` für Startabhängigkeiten
+- Aktualisiert in: `docker-compose.yml`, `docker-compose.dev.yml`, `docker-compose.prod.yml`
 
 ---
 
-#### 4. Fehlende Rate Limiting
+#### ~~4. Rate Limiting~~ ✅ Dokumentiert
 
-**Problem:** Kein globales Rate Limiting für API.
+**Status:** Überprüft am 2026-01-26 - Teilweise implementiert
 
-**Empfehlung:** slowapi oder nginx Rate Limiting.
+**Bereits implementiert:**
+- ✅ **WebSocket Rate Limiting**: `websocket_rate_limiter.py`
+  - Chat, Device, Satellite Handler
+  - Konfigurierbar: `ws_rate_limit_per_second`, `ws_rate_limit_per_minute`
+- ✅ **Plugin Rate Limiting**: Per-Plugin in YAML
+  - Weather: 60/min, News: 100/min, Search: 120/min
+
+**Nicht implementiert:**
+- ⚠️ REST API: Keine globalen Rate Limits für HTTP-Endpoints
+
+**Entscheidung:** Für selbst-gehostete Anwendung im privaten Netzwerk akzeptabel.
+WebSocket (Hauptangriffsfläche) und Plugins (externe APIs) sind geschützt.
 
 ---
 
@@ -498,6 +515,9 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Docker Health Checks hinzugefügt: postgres, redis, ollama, backend, frontend, nginx (#36) |
+| 2026-01-26 | Python Dependencies dokumentiert: >= Ansatz für Docker akzeptabel (#36) |
+| 2026-01-26 | Rate Limiting dokumentiert: WebSocket + Plugins implementiert (#36) |
 | 2026-01-26 | Pi Zero 2 W Einschränkungen dokumentiert: Bereits in src/satellite/TECHNICAL_DEBT.md (#34) |
 | 2026-01-26 | Satellite Logging dokumentiert: 307 print() konsistent, kein Mix (#34) |
 | 2026-01-26 | Satellite Bare Except Clauses behoben: 22 → spezifische Exceptions (#33) |

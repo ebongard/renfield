@@ -33,6 +33,12 @@ services:
       - renfield-network
     restart: always
     # Not exposed externally in production
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renfield -d renfield"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   # Redis für Message Queue und Caching
   redis:
@@ -45,6 +51,12 @@ services:
       - renfield-network
     restart: always
     # Not exposed externally in production
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
   # Ollama with GPU (optional - use external instance for better resource management)
   ollama-gpu:
@@ -57,6 +69,12 @@ services:
     restart: always
     profiles:
       - ollama-gpu
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:11434/api/tags || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     deploy:
       resources:
         reservations:
@@ -86,11 +104,19 @@ services:
       - piper_models:/root/.local/share/piper
       - rag_uploads:/app/data/uploads
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - renfield-network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         reservations:
@@ -111,9 +137,18 @@ services:
     environment:
       VITE_API_URL: ${EXTERNAL_URL:-http://localhost}/api
       VITE_WS_URL: ${EXTERNAL_WS_URL:-ws://localhost}/ws
+    depends_on:
+      backend:
+        condition: service_healthy
     networks:
       - renfield-network
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
     # Frontend exposed via nginx only
 
   # Nginx Reverse Proxy (Production)
@@ -124,14 +159,22 @@ services:
       - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./config/ssl:/etc/nginx/ssl:ro  # Optional: SSL certificates
     depends_on:
-      - backend
-      - frontend
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
     networks:
       - renfield-network
     ports:
       - "80:80"
       - "443:443"
     restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
 networks:
   renfield-network:
