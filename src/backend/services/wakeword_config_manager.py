@@ -11,7 +11,6 @@ Features:
 - Tracks device sync status (which devices have applied the config)
 - Provides model availability info for satellites
 """
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict, Any

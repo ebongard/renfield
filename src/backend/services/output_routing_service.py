@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from models.database import Room, RoomOutputDevice, RoomDevice, OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL
+from models.database import RoomOutputDevice, RoomDevice, OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL
 from integrations.homeassistant import HomeAssistantClient
 
 

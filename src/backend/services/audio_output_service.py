@@ -10,11 +10,10 @@ that HA can access to play the audio.
 """
 
 import asyncio
-import os
 import time
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional
 from loguru import logger
 
 from models.database import RoomOutputDevice

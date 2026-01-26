@@ -7,9 +7,8 @@ Pydantic schemas are defined in knowledge_schemas.py.
 """
 from typing import List, Optional
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
-from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select
 import aiofiles
 import os
 import hashlib
@@ -18,14 +17,14 @@ from loguru import logger
 
 from services.database import get_db
 from services.rag_service import RAGService
-from services.auth_service import get_optional_user, require_permission, get_current_user
+from services.auth_service import get_optional_user
 from models.database import Document, KnowledgeBase, User, KBPermission
 from models.permissions import Permission, has_permission
 from utils.config import settings
 
 # Import all schemas from separate file
 from .knowledge_schemas import (
-    KnowledgeBaseCreate, KnowledgeBaseUpdate, KnowledgeBaseResponse,
+    KnowledgeBaseCreate, KnowledgeBaseResponse,
     KBPermissionCreate, KBPermissionResponse,
     DocumentResponse,
     SearchRequest, SearchResultChunk, SearchResultDocument, SearchResult, SearchResponse,

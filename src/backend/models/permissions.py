@@ -5,7 +5,7 @@ This module defines all granular permissions used in Renfield.
 Permissions are grouped by resource type and follow the format: resource.action
 """
 from enum import Enum
-from typing import List, Set
+from typing import List
 
 
 class Permission(str, Enum):

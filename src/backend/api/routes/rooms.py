@@ -17,7 +17,7 @@ from integrations.homeassistant import HomeAssistantClient
 from .rooms_schemas import (
     RoomCreate, RoomUpdate, RoomResponse,
     HAAreaResponse, HAImportRequest, HAImportResponse, HAExportResponse,
-    SyncResponse, LinkHAAreaRequest,
+    SyncResponse,
     SatelliteAssignRequest,
     DeviceResponse, DeviceRegisterRequest, ConnectedDeviceResponse,
     OutputDeviceCreate, OutputDeviceUpdate, OutputDeviceResponse,

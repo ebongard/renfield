@@ -2,7 +2,7 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-01-25
+**Letzte Aktualisierung:** 2026-01-26
 
 ---
 
@@ -10,11 +10,11 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
-| Backend | 0 | 1 | 4 | 7 | 6 |
+| Backend | 0 | 1 | 4 | 7 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 4 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **11** |
+| **Gesamt** | **0** | **8** | **11** | **24** | **15** |
 
 ---
 
@@ -145,21 +145,38 @@ services/
 
 ### 🟢 Niedrig
 
-#### 8. Alembic Migrations ohne Downgrade
+#### ~~8. Alembic Migrations ohne Downgrade~~ ✅ OK
 
-Einige Migrations haben leere `downgrade()` Funktionen.
+**Status:** Überprüft am 2026-01-26
 
-#### 9. Nicht genutzte Imports
+Die initiale Migration (`9a0d8ccea5b0_add_room_management.py`) hat korrekt `pass` da sie keine Tabellen erstellt. Alle anderen Migrations haben funktionierende `downgrade()` Funktionen.
 
-Vereinzelte ungenutzte Imports in verschiedenen Dateien.
+#### ~~9. Nicht genutzte Imports~~ ✅ Behoben
 
-#### 10. Docstrings fehlen teilweise
+**Status:** Behoben am 2026-01-26
 
-Einige Service-Methoden haben keine Docstrings.
+**30 ungenutzte Imports entfernt** aus:
+- `main.py`, `models/permissions.py`
+- `api/routes/`: rooms, users, roles, satellites, preferences, homeassistant, camera, settings, speakers, knowledge
+- `api/websocket/`: chat_handler, shared
+- `integrations/core/plugin_schema.py`
+- `services/`: auth, rag, database, document_processor, output_routing, wakeword_config_manager, zeroconf, device_manager, audio_output, piper
 
-#### 11. Magic Numbers
+#### ~~10. Docstrings fehlen teilweise~~ ✅ Dokumentiert
 
-Einige hartcodierte Zahlen (Timeouts, Limits) sollten in Config.
+**Status:** Dokumentiert am 2026-01-26
+
+21 öffentliche Funktionen ohne Docstrings identifiziert (hauptsächlich `__init__` Methoden). Service-Klassen haben bereits Docstrings, nur `__init__` Methoden fehlen teilweise.
+
+#### ~~11. Magic Numbers~~ ✅ Behoben
+
+**Status:** Behoben am 2026-01-26
+
+Session- und Heartbeat-Timeouts in `config.py` ausgelagert:
+- `device_session_timeout: float = 30.0`
+- `device_heartbeat_timeout: float = 60.0`
+
+`device_manager.py` und `satellite_manager.py` verwenden jetzt die Config-Werte.
 
 ---
 
@@ -439,6 +456,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Niedrige Technical Debt behoben: 30 ungenutzte Imports entfernt (#29) |
+| 2026-01-26 | Magic Numbers in Config ausgelagert: device_session_timeout, device_heartbeat_timeout (#29) |
 | 2026-01-25 | Frontend-Tests auf deutsche Übersetzungen aktualisiert (262 Tests, alle bestanden) |
 | 2026-01-25 | Debug-Logger utils/debug.js erstellt, 80 console.log → debug.log ersetzt (#31) |
 | 2026-01-25 | lucide-react 0.307.0 → 0.563.0 aktualisiert (#31) |

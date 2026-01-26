@@ -2,7 +2,7 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger

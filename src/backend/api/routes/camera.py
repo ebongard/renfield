@@ -6,7 +6,6 @@ With RPBAC permission checks:
 - cam.full: Access snapshots and full event details
 """
 from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
 from typing import Optional
 from loguru import logger
 

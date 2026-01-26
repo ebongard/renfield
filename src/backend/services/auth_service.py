@@ -17,7 +17,7 @@ from loguru import logger
 from utils.config import settings
 from services.database import get_db
 from models.database import User, Role
-from models.permissions import Permission, has_permission, DEFAULT_ROLES
+from models.permissions import Permission, DEFAULT_ROLES
 
 
 # Password hashing context

@@ -12,10 +12,9 @@ from typing import Optional, Dict, Any
 from loguru import logger
 
 from integrations.homeassistant import HomeAssistantClient
-from services.auth_service import require_permission, get_optional_user
+from services.auth_service import require_permission
 from models.database import User
 from models.permissions import Permission
-from utils.config import settings
 
 router = APIRouter()
 ha_client = HomeAssistantClient()

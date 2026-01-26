@@ -2,7 +2,6 @@
 Datenbank Service
 """
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
 from models.database import Base
 from utils.config import settings
 from loguru import logger

@@ -125,8 +125,8 @@ class SatelliteManager:
         from utils.config import settings
         self.default_wake_words = [settings.wake_word_default]
         self.default_threshold = settings.wake_word_threshold
-        self.session_timeout = 30.0  # seconds
-        self.heartbeat_timeout = 60.0  # seconds
+        self.session_timeout = settings.device_session_timeout
+        self.heartbeat_timeout = settings.device_heartbeat_timeout
 
         logger.info("📡 SatelliteManager initialized")
 

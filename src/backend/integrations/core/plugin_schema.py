@@ -1,8 +1,8 @@
 """
 Plugin schema definitions using Pydantic for validation
 """
-from pydantic import BaseModel, Field, validator
-from typing import Dict, List, Optional, Any, Literal
+from pydantic import BaseModel, validator
+from typing import Dict, List, Optional, Any
 from enum import Enum
 
 

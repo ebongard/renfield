@@ -13,7 +13,6 @@ from typing import Optional, List
 import re
 
 from fastapi import WebSocket
-from loguru import logger
 
 from models.websocket_messages import create_error_response, WSErrorCode
 from services.whisper_service import WhisperService

@@ -22,14 +22,12 @@ from loguru import logger
 from services.database import get_db
 from services.auth_service import (
     require_permission,
-    get_current_user,
     get_password_hash,
     validate_password,
     get_role_by_id,
 )
-from models.database import User, Role, Speaker
+from models.database import User, Speaker
 from models.permissions import Permission
-from utils.config import settings
 
 router = APIRouter()
 

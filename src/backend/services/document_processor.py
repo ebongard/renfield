@@ -4,7 +4,6 @@ Document Processor Service using IBM Docling
 Handles document parsing, chunking, and metadata extraction for RAG.
 Supports: PDF, DOCX, PPTX, XLSX, HTML, MD, TXT, and images.
 """
-import os
 import asyncio
 from pathlib import Path
 from typing import List, Dict, Any, Optional

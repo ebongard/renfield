@@ -4,7 +4,6 @@ Settings API Routes
 Provides configuration endpoints for frontend components.
 Supports both read (all users) and write (admin only) operations.
 """
-import os
 from pathlib import Path
 from typing import Optional, List
 
@@ -16,7 +15,7 @@ from loguru import logger
 
 from utils.config import settings
 from services.database import get_db
-from services.auth_service import require_permission, get_optional_user
+from services.auth_service import require_permission
 from services.wakeword_config_manager import (
     get_wakeword_config_manager,
     AVAILABLE_KEYWORDS,

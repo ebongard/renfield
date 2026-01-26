@@ -7,13 +7,12 @@ can automatically discover and connect to it.
 Service Type: _renfield._tcp.local
 """
 
-import asyncio
 import socket
 from typing import Optional
 from loguru import logger
 
 try:
-    from zeroconf import IPVersion, ServiceInfo, Zeroconf
+    from zeroconf import IPVersion, ServiceInfo
     from zeroconf.asyncio import AsyncZeroconf
     ZEROCONF_AVAILABLE = True
 except ImportError:

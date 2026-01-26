@@ -21,13 +21,13 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Any, Callable, Tuple
+from typing import Dict, List, Optional, Any, Tuple
 from fastapi import WebSocket
 from loguru import logger
 
 from models.database import (
     DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL,
-    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK, DEFAULT_CAPABILITIES
+    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK
 )
 from utils.config import settings
 
@@ -166,8 +166,8 @@ class DeviceManager:
         from utils.config import settings
         self.default_wake_words = [settings.wake_word_default]
         self.default_threshold = settings.wake_word_threshold
-        self.session_timeout = 30.0  # seconds
-        self.heartbeat_timeout = 60.0  # seconds
+        self.session_timeout = settings.device_session_timeout
+        self.heartbeat_timeout = settings.device_heartbeat_timeout
 
         logger.info("📱 DeviceManager initialized")
 

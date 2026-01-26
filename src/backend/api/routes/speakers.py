@@ -14,7 +14,7 @@ from loguru import logger
 import numpy as np
 
 from services.database import get_db
-from services.speaker_service import get_speaker_service, SpeakerService, SPEECHBRAIN_ERROR
+from services.speaker_service import get_speaker_service, SPEECHBRAIN_ERROR
 from models.database import Speaker, SpeakerEmbedding
 
 router = APIRouter()

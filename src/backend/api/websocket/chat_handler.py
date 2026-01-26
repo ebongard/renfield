@@ -16,7 +16,7 @@ from loguru import logger
 from services.database import AsyncSessionLocal
 from services.websocket_auth import authenticate_websocket, WSAuthError
 from services.websocket_rate_limiter import get_rate_limiter
-from models.websocket_messages import WSChatMessage, WSErrorCode, create_error_response
+from models.websocket_messages import WSChatMessage, WSErrorCode
 from utils.config import settings
 
 from .shared import (

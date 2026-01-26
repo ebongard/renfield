@@ -15,7 +15,7 @@ from loguru import logger
 
 from models.database import (
     Document, DocumentChunk, KnowledgeBase,
-    DOC_STATUS_PENDING, DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED,
+    DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED,
     EMBEDDING_DIMENSION
 )
 from services.document_processor import DocumentProcessor

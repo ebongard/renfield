@@ -16,10 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from services.database import get_db
-from services.auth_service import require_permission, get_current_user
+from services.auth_service import require_permission
 from models.database import Role, User
 from models.permissions import Permission, get_all_permissions
-from utils.config import settings
 
 router = APIRouter()
 

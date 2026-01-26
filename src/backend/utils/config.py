@@ -157,6 +157,10 @@ class Settings(BaseSettings):
     # WebSocket Protocol
     ws_protocol_version: str = "1.0"
 
+    # Device/Session Timeouts
+    device_session_timeout: float = 30.0  # Max voice session duration in seconds
+    device_heartbeat_timeout: float = 60.0  # Disconnect after no heartbeat for this duration
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Gibt allowed_extensions als Liste zurück"""

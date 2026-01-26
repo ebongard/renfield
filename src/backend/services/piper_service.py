@@ -10,7 +10,6 @@ from loguru import logger
 from utils.config import settings
 import subprocess
 import tempfile
-from typing import Optional
 
 
 class PiperService:

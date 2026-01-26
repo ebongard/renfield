@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from loguru import logger
 
-from services.satellite_manager import get_satellite_manager, SatelliteState
+from services.satellite_manager import get_satellite_manager
 from utils.config import settings
 
 
