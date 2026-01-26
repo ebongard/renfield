@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Upgrade pip to fix CVE-2025-8869 (tar extraction vulnerability)
+RUN pip install --no-cache-dir --upgrade pip>=25.3
+
 # Install PyTorch CPU-only first (saves ~500MB vs CUDA version)
 # ARM64 doesn't use +cpu suffix, x86_64 does
 RUN ARCH=$(uname -m) && \

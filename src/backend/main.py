@@ -2,9 +2,10 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
 from loguru import logger
 from datetime import datetime
 import os
@@ -35,6 +36,53 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+
+# Security Headers Middleware (OWASP recommendations)
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses (OWASP best practices)."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+
+        # Prevent MIME type sniffing
+        response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # Prevent clickjacking
+        response.headers["X-Frame-Options"] = "DENY"
+
+        # XSS Protection (legacy, but still useful for older browsers)
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+
+        # Referrer Policy
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # Permissions Policy (restrict browser features)
+        response.headers["Permissions-Policy"] = (
+            "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+            "magnetometer=(), microphone=(self), payment=(), usb=()"
+        )
+
+        # Spectre/Meltdown protection
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
+
+        # Content Security Policy (allow self and common CDNs for development)
+        # In production, this should be more restrictive
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "font-src 'self' data:; "
+            "connect-src 'self' ws: wss:; "
+            "media-src 'self' blob:; "
+            "frame-ancestors 'none';"
+        )
+
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # CORS Middleware - configured via settings
 _cors_origins = (

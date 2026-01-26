@@ -1463,3 +1463,4 @@ Additional documentation files in the repository:
 - `src/satellite/README.md` - Satellite setup guide
 - `src/backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference
+- `docs/SECURITY.md` - Security headers, OWASP testing, vulnerability management
