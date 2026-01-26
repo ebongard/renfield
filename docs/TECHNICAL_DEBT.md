@@ -11,10 +11,10 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
 | Backend | 0 | 1 | 4 | 7 | 10 |
-| Frontend | 0 | 1 | 3 | 7 | 4 |
+| Frontend | 0 | 1 | 3 | 7 | 5 |
 | Satellite | 0 | 3 | 2 | 5 | 0 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **15** |
+| **Gesamt** | **0** | **8** | **11** | **24** | **16** |
 
 ---
 
@@ -281,9 +281,13 @@ Kommentar wurde erweitert um die Begründung zu dokumentieren.
 
 Nur eine zentrale ErrorBoundary, keine Feature-spezifischen.
 
-#### 8. Keine Unit Tests für Hooks
+#### ~~8. Keine Unit Tests für Hooks~~ ✅ Behoben
 
-Custom Hooks wie `useWakeWord.js` haben keine Tests.
+**Status:** Behoben am 2026-01-26
+
+**Änderungen:**
+- `tests/frontend/react/hooks/useWakeWord.test.jsx` erstellt (15 Tests)
+- Initial State, Settings Management, Callbacks, Enable/Disable, Pause/Resume, Toggle, Config Events, Cleanup getestet
 
 ---
 
@@ -409,7 +413,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 | Bereich | Test Files | Tests | Source Files | Ratio |
 |---------|------------|-------|--------------|-------|
 | Backend | 29 | 558 | 72 | 40% |
-| Frontend | 16 | 262 | ~40 | 40% |
+| Frontend | 17 | 277 | ~40 | 43% |
 | Satellite | 1 | - | 15 | 7% |
 
 ### Fehlende Tests
@@ -456,6 +460,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Hook-Tests für useWakeWord erstellt: 15 Tests (#32) |
 | 2026-01-26 | Niedrige Technical Debt behoben: 30 ungenutzte Imports entfernt (#29) |
 | 2026-01-26 | Magic Numbers in Config ausgelagert: device_session_timeout, device_heartbeat_timeout (#29) |
 | 2026-01-25 | Frontend-Tests auf deutsche Übersetzungen aktualisiert (262 Tests, alle bestanden) |
