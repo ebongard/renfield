@@ -52,6 +52,9 @@ RUN mkdir -p /usr/share/piper/voices \
     && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
     && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
 
+# Remove wget after downloads complete (security hardening)
+RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 # Install PyTorch with CUDA support FIRST (before other packages)
 RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
@@ -64,5 +67,9 @@ COPY . .
 
 # Verify CUDA is available
 RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}')"
+
+# Health check (using Python's built-in urllib, no external tools needed)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

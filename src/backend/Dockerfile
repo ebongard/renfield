@@ -57,6 +57,7 @@ WORKDIR /app
 
 # Runtime dependencies only (no compilers, no dev headers)
 # ffmpeg pulls in the correct libav* versions automatically
+# wget is installed temporarily for Piper downloads, then removed
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
@@ -64,7 +65,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     espeak-ng \
     wget \
-    curl \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -96,6 +96,9 @@ RUN mkdir -p /usr/share/piper/voices \
     && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
     && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
 
+# Remove wget after downloads complete (security hardening)
+RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
+
 # Application code
 COPY . .
 
@@ -105,9 +108,9 @@ RUN useradd --create-home --shell /bin/bash appuser \
 # Note: Running as root for now due to volume mount permissions
 # USER appuser
 
-# Health check
+# Health check (using Python's built-in urllib, no external tools needed)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
 EXPOSE 8000
 
