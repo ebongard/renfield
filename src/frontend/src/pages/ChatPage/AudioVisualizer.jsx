@@ -13,7 +13,7 @@ export default function AudioVisualizer({ audioLevel = 0, silenceTimeRemaining =
   const { t } = useTranslation();
 
   return (
-    <div className="mb-4 p-4 bg-gradient-to-br from-gray-100/80 to-gray-200/80 dark:from-gray-800/80 dark:to-gray-900/80 rounded-xl border border-gray-300/50 dark:border-gray-700/50 backdrop-blur-sm">
+    <div className="mb-4 p-4 bg-linear-to-br from-gray-100/80 to-gray-200/80 dark:from-gray-800/80 dark:to-gray-900/80 rounded-xl border border-gray-300/50 dark:border-gray-700/50 backdrop-blur-xs">
       {/* Header with status and countdown */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center space-x-2">

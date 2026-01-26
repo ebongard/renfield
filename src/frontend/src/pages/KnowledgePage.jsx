@@ -263,7 +263,7 @@ export default function KnowledgePage() {
       {/* Statistics */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="card bg-gradient-to-br from-blue-100 to-blue-50 dark:from-blue-900/50 dark:to-blue-800/30">
+          <div className="card bg-linear-to-br from-blue-100 to-blue-50 dark:from-blue-900/50 dark:to-blue-800/30">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-200 dark:bg-blue-600/30 rounded-lg">
                 <FileText className="w-6 h-6 text-blue-600 dark:text-blue-400" />
@@ -274,7 +274,7 @@ export default function KnowledgePage() {
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-green-100 to-green-50 dark:from-green-900/50 dark:to-green-800/30">
+          <div className="card bg-linear-to-br from-green-100 to-green-50 dark:from-green-900/50 dark:to-green-800/30">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-green-200 dark:bg-green-600/30 rounded-lg">
                 <CheckCircle className="w-6 h-6 text-green-600 dark:text-green-400" />
@@ -285,7 +285,7 @@ export default function KnowledgePage() {
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-purple-100 to-purple-50 dark:from-purple-900/50 dark:to-purple-800/30">
+          <div className="card bg-linear-to-br from-purple-100 to-purple-50 dark:from-purple-900/50 dark:to-purple-800/30">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-purple-200 dark:bg-purple-600/30 rounded-lg">
                 <Layers className="w-6 h-6 text-purple-600 dark:text-purple-400" />
@@ -296,7 +296,7 @@ export default function KnowledgePage() {
               </div>
             </div>
           </div>
-          <div className="card bg-gradient-to-br from-orange-100 to-orange-50 dark:from-orange-900/50 dark:to-orange-800/30">
+          <div className="card bg-linear-to-br from-orange-100 to-orange-50 dark:from-orange-900/50 dark:to-orange-800/30">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-orange-200 dark:bg-orange-600/30 rounded-lg">
                 <Database className="w-6 h-6 text-orange-600 dark:text-orange-400" />
@@ -447,7 +447,7 @@ export default function KnowledgePage() {
                       </span>
                     )}
                   </div>
-                  <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300 rounded">
+                  <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300 rounded-sm">
                     {t('knowledge.relevance', { percent: Math.round(result.similarity * 100) })}
                   </span>
                 </div>
@@ -565,7 +565,7 @@ export default function KnowledgePage() {
 
       {/* New Knowledge Base Modal */}
       {showNewKbModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50">
           <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 border border-gray-200 dark:border-gray-700">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">
               {t('knowledge.createKnowledgeBase')}

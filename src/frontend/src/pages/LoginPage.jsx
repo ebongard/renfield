@@ -5,7 +5,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, UserPlus, Loader, AlertCircle, Eye, EyeOff } from 'lucide-react';
 
@@ -83,7 +83,7 @@ export default function LoginPage() {
           {error && (
             <div className="bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
               <div className="flex items-center space-x-3">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
                 <p className="text-red-700 dark:text-red-400">{error}</p>
               </div>
             </div>

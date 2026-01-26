@@ -52,14 +52,14 @@ export default function ChatSidebar({
         aria-label={t('chat.openConversations')}
       >
         {/* Header with New Chat Button */}
-        <div className="p-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+        <div className="p-4 border-b border-gray-200 dark:border-gray-700 shrink-0">
           <div className="flex items-center justify-between mb-4 md:mb-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white md:hidden">
               {t('chat.conversations')}
             </h2>
             <button
               onClick={onClose}
-              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded md:hidden"
+              className="p-1.5 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white rounded-sm md:hidden"
               aria-label={t('nav.closeMenu')}
             >
               <X className="w-5 h-5" aria-hidden="true" />

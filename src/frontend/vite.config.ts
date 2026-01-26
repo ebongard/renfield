@@ -57,6 +57,10 @@ export default defineConfig({
         ]
       },
       workbox: {
+        // Exclude large WASM files from precaching (ONNX Runtime)
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+        // Skip large files silently instead of erroring
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/api\./,

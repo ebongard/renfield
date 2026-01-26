@@ -10,8 +10,8 @@ vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
 }));
 
 // Mock Navigate component
-vi.mock('react-router-dom', async () => {
-  const actual = await vi.importActual('react-router-dom');
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual('react-router');
   return {
     ...actual,
     Navigate: ({ to }) => <div data-testid="navigate" data-to={to}>Redirecting to {to}</div>,

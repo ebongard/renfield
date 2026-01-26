@@ -98,7 +98,7 @@ export default function ChatHeader({
             <span className="text-sm text-red-700 dark:text-red-300">
               {wakeWordError.name === 'BrowserNotSupportedError'
                 ? t('wakeword.browserNotSupported')
-                : <>{t('wakeword.notAvailable')}. Run: <code className="bg-red-200 dark:bg-red-900/50 px-1 rounded">docker compose up -d --build</code></>
+                : <>{t('wakeword.notAvailable')}. Run: <code className="bg-red-200 dark:bg-red-900/50 px-1 rounded-sm">docker compose up -d --build</code></>
               }
             </span>
           </div>
@@ -139,7 +139,7 @@ export default function ChatHeader({
               <select
                 value={wakeWordSettings.keyword || ''}
                 onChange={(e) => setWakeWordKeyword?.(e.target.value)}
-                className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white text-sm rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-600 focus:border-primary-500 focus:outline-none"
+                className="w-full bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white text-sm rounded-lg px-3 py-2 border border-gray-300 dark:border-gray-600 focus:border-primary-500 focus:outline-hidden"
               >
                 {availableKeywords.map(kw => (
                   <option key={kw.id} value={kw.id}>{kw.label}</option>

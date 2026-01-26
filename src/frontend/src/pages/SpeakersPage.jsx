@@ -505,7 +505,7 @@ export default function SpeakersPage() {
                     </div>
                   </div>
                   {speaker.is_admin && (
-                    <span className="px-2 py-1 bg-yellow-100 text-yellow-700 dark:bg-yellow-600/20 dark:text-yellow-400 text-xs rounded">
+                    <span className="px-2 py-1 bg-yellow-100 text-yellow-700 dark:bg-yellow-600/20 dark:text-yellow-400 text-xs rounded-sm">
                       Admin
                     </span>
                   )}
@@ -594,7 +594,7 @@ export default function SpeakersPage() {
                   id="isAdmin"
                   checked={newSpeakerIsAdmin}
                   onChange={(e) => setNewSpeakerIsAdmin(e.target.checked)}
-                  className="w-4 h-4 rounded"
+                  className="w-4 h-4 rounded-sm"
                 />
                 <label htmlFor="isAdmin" className="text-sm text-gray-600 dark:text-gray-300 flex items-center space-x-2">
                   <Shield className="w-4 h-4" />
@@ -906,7 +906,7 @@ export default function SpeakersPage() {
                   id="editIsAdmin"
                   checked={editSpeakerIsAdmin}
                   onChange={(e) => setEditSpeakerIsAdmin(e.target.checked)}
-                  className="w-4 h-4 rounded"
+                  className="w-4 h-4 rounded-sm"
                 />
                 <label htmlFor="editIsAdmin" className="text-sm text-gray-600 dark:text-gray-300 flex items-center space-x-2">
                   <Shield className="w-4 h-4" />
@@ -986,7 +986,7 @@ export default function SpeakersPage() {
 
             <div className="bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg p-3 mb-4">
               <div className="flex items-start space-x-2">
-                <AlertCircle className="w-5 h-5 text-yellow-600 dark:text-yellow-500 flex-shrink-0 mt-0.5" />
+                <AlertCircle className="w-5 h-5 text-yellow-600 dark:text-yellow-500 shrink-0 mt-0.5" />
                 <p className="text-sm text-yellow-700 dark:text-yellow-400">
                   {t('speakers.mergeWarning', { name: selectedSpeaker.name })}
                 </p>

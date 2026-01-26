@@ -322,10 +322,10 @@ export default function UsersPage() {
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{user.username}</h3>
                       {user.id === currentUser?.id && (
-                        <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded">{t('users.you')}</span>
+                        <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded-sm">{t('users.you')}</span>
                       )}
                       {!user.is_active && (
-                        <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded">{t('users.inactive')}</span>
+                        <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded-sm">{t('users.inactive')}</span>
                       )}
                     </div>
                     <div className="flex items-center space-x-3 text-sm text-gray-500 dark:text-gray-400">
@@ -490,7 +490,7 @@ export default function UsersPage() {
               id="is_active"
               checked={formData.is_active}
               onChange={(e) => setFormData({ ...formData, is_active: e.target.checked })}
-              className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
+              className="w-4 h-4 rounded-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
               disabled={formLoading}
             />
             <label htmlFor="is_active" className="text-sm text-gray-700 dark:text-gray-300">

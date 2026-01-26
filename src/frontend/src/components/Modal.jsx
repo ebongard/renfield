@@ -116,7 +116,7 @@ export default function Modal({
         aria-labelledby={title ? 'modal-title' : undefined}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
-        className={`card ${maxWidth} w-full outline-none ${className}`}
+        className={`card ${maxWidth} w-full outline-hidden ${className}`}
       >
         {/* Header with title and close button */}
         {(title || showCloseButton) && (

@@ -5,7 +5,7 @@
  */
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { UserPlus, Loader, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 
@@ -107,7 +107,7 @@ export default function RegisterPage() {
           {success && (
             <div className="bg-green-100 dark:bg-green-900/20 border border-green-300 dark:border-green-700 rounded-lg p-4 mb-6">
               <div className="flex items-center space-x-3">
-                <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
+                <CheckCircle className="w-5 h-5 text-green-500 shrink-0" />
                 <div>
                   <p className="text-green-700 dark:text-green-400 font-medium">{t('auth.accountCreatedSuccess')}</p>
                   <p className="text-green-600 dark:text-green-400/70 text-sm">{t('auth.redirectingToLogin')}</p>
@@ -120,7 +120,7 @@ export default function RegisterPage() {
           {error && (
             <div className="bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
               <div className="flex items-center space-x-3">
-                <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
+                <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
                 <p className="text-red-700 dark:text-red-400">{error}</p>
               </div>
             </div>

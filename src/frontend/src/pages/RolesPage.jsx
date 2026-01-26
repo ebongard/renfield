@@ -381,7 +381,7 @@ export default function RolesPage() {
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{role.name}</h3>
                       {role.is_system && (
-                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded">
+                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm">
                           <Lock className="w-3 h-3" />
                           <span>{t('roles.system')}</span>
                         </span>
@@ -394,14 +394,14 @@ export default function RolesPage() {
                       {role.permissions.slice(0, 5).map((perm) => (
                         <span
                           key={perm}
-                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded"
+                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm"
                           title={PERMISSION_DESCRIPTIONS[perm]}
                         >
                           {perm}
                         </span>
                       ))}
                       {role.permissions.length > 5 && (
-                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
+                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
                           {t('roles.more', { count: role.permissions.length - 5 })}
                         </span>
                       )}
@@ -540,13 +540,13 @@ export default function RolesPage() {
                           {permissions.map((perm) => (
                             <label
                               key={perm}
-                              className="flex items-start space-x-3 p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
+                              className="flex items-start space-x-3 p-2 rounded-sm hover:bg-gray-100 dark:hover:bg-gray-800 cursor-pointer"
                             >
                               <input
                                 type="checkbox"
                                 checked={formData.permissions.includes(perm)}
                                 onChange={() => togglePermission(perm)}
-                                className="mt-0.5 w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
+                                className="mt-0.5 w-4 h-4 rounded-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
                                 disabled={formLoading}
                               />
                               <div>
@@ -583,7 +583,7 @@ export default function RolesPage() {
 
               <div className="p-3 bg-gray-100 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg">
                 <div className="flex items-start space-x-2 mb-3 text-sm">
-                  <Info className="w-4 h-4 text-blue-500 dark:text-blue-400 flex-shrink-0 mt-0.5" />
+                  <Info className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
                   <p className="text-gray-500 dark:text-gray-400">
                     {t('roles.pluginSelectionHint')}
                   </p>
@@ -616,7 +616,7 @@ export default function RolesPage() {
                   {availablePlugins.map((plugin) => (
                     <label
                       key={plugin.name}
-                      className="flex items-start space-x-3 p-2 rounded hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer"
+                      className="flex items-start space-x-3 p-2 rounded-sm hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer"
                     >
                       <input
                         type="checkbox"
@@ -629,18 +629,18 @@ export default function RolesPage() {
                             toggleAllowedPlugin(plugin.name);
                           }
                         }}
-                        className="mt-0.5 w-4 h-4 rounded border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
+                        className="mt-0.5 w-4 h-4 rounded-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
                         disabled={formLoading}
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center space-x-2">
                           <p className="text-gray-900 dark:text-white text-sm font-medium truncate">{plugin.name}</p>
                           {plugin.enabled ? (
-                            <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded">
+                            <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded-sm">
                               {t('plugins.enabled')}
                             </span>
                           ) : (
-                            <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1.5 py-0.5 rounded">
+                            <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1.5 py-0.5 rounded-sm">
                               {t('plugins.disabled')}
                             </span>
                           )}
@@ -657,7 +657,7 @@ export default function RolesPage() {
           {/* Info for system roles */}
           {editingRole?.is_system && (
             <div className="flex items-start space-x-3 p-3 bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
-              <Info className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
+              <Info className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
               <div>
                 <p className="text-yellow-700 dark:text-yellow-400 font-medium">{t('roles.systemRole')}</p>
                 <p className="text-yellow-600 dark:text-yellow-400/70 text-sm">

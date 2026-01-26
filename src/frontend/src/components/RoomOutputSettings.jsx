@@ -210,7 +210,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
         <div className="mt-4 space-y-3">
           {/* Error Message */}
           {error && (
-            <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded">
+            <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded-sm">
               {error}
               <button onClick={() => setError(null)} className="ml-2 underline">
                 OK
@@ -240,7 +240,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                   }`}
                 >
                   {/* Priority Badge */}
-                  <span className="w-5 h-5 bg-gray-700 rounded text-xs flex items-center justify-center text-gray-400">
+                  <span className="w-5 h-5 bg-gray-700 rounded-sm text-xs flex items-center justify-center text-gray-400">
                     {index + 1}
                   </span>
 
@@ -269,7 +269,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                   {/* Enable/Disable */}
                   <button
                     onClick={() => updateOutputDevice(device.id, { is_enabled: !device.is_enabled })}
-                    className={`p-1 rounded ${device.is_enabled ? 'text-green-400' : 'text-gray-500'}`}
+                    className={`p-1 rounded-sm ${device.is_enabled ? 'text-green-400' : 'text-gray-500'}`}
                     title={device.is_enabled ? 'Deaktivieren' : 'Aktivieren'}
                   >
                     {device.is_enabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}

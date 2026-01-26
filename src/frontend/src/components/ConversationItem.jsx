@@ -36,7 +36,7 @@ export default function ConversationItem({
       aria-current={isActive ? 'true' : undefined}
     >
       <MessageSquare
-        className="w-4 h-4 text-gray-400 mr-3 flex-shrink-0"
+        className="w-4 h-4 text-gray-400 mr-3 shrink-0"
         aria-hidden="true"
       />
 
@@ -51,7 +51,7 @@ export default function ConversationItem({
 
       <button
         onClick={handleDelete}
-        className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded transition-all focus:opacity-100 focus:outline-none focus:ring-2 focus:ring-red-500/50"
+        className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded-sm transition-all focus:opacity-100 focus:outline-hidden focus:ring-2 focus:ring-red-500/50"
         aria-label={`Konversation löschen: ${conversation.preview || 'Neue Konversation'}`}
         title="Konversation löschen"
       >

@@ -128,13 +128,13 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
 
         <div className="flex items-center gap-3">
           {/* Version badge */}
-          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-1 rounded">
+          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-1 rounded-sm">
             v{satellite.version || 'unknown'}
           </span>
 
           {/* Update available indicator */}
           {hasUpdate && !isUpdating && (
-            <span className="inline-flex items-center gap-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-1 rounded">
+            <span className="inline-flex items-center gap-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-1 rounded-sm">
               <ArrowUpCircle className="w-3 h-3" />
               {t('satellites.updateAvailable', 'Update')}
             </span>
@@ -142,7 +142,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
 
           {/* Updating indicator */}
           {isUpdating && (
-            <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 px-2 py-1 rounded">
+            <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 px-2 py-1 rounded-sm">
               <Loader2 className="w-3 h-3 animate-spin" />
               {t('satellites.updating', 'Updating...')}
             </span>
@@ -289,17 +289,17 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
           {/* Capabilities */}
           <div className="flex flex-wrap gap-2 text-xs">
             {satellite.capabilities?.local_wakeword && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 rounded">
+              <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 rounded-sm">
                 Wake Word
               </span>
             )}
             {satellite.capabilities?.speaker && (
-              <span className="px-2 py-1 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 rounded">
+              <span className="px-2 py-1 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 rounded-sm">
                 Speaker
               </span>
             )}
             {satellite.capabilities?.led_count > 0 && (
-              <span className="px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 rounded">
+              <span className="px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 rounded-sm">
                 {satellite.capabilities.led_count} LEDs
               </span>
             )}
@@ -492,7 +492,7 @@ export default function SatellitesPage() {
               type="checkbox"
               checked={autoRefresh}
               onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+              className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
             />
             {t('satellites.autoRefresh', 'Auto-refresh')}
           </label>

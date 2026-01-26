@@ -3,7 +3,7 @@
  *
  * Wraps routes that require authentication or specific permissions.
  */
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Loader, ShieldOff } from 'lucide-react';
 

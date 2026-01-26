@@ -274,7 +274,7 @@ export default function DeviceSetup({
               value={selectedRoom}
               onChange={(e) => setSelectedRoom(e.target.value)}
               disabled={loadingRooms}
-              className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:outline-none disabled:opacity-50"
+              className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white focus:border-primary-500 focus:outline-hidden disabled:opacity-50"
               aria-describedby={loadingRooms ? 'room-loading' : undefined}
             >
               <option value="">{t('device.selectRoom')}</option>
@@ -313,7 +313,7 @@ export default function DeviceSetup({
                 value={newRoomName}
                 onChange={(e) => setNewRoomName(e.target.value)}
                 placeholder={t('device.newRoomPlaceholder')}
-                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
+                className="flex-1 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-hidden"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') {
                     e.preventDefault();
@@ -383,7 +383,7 @@ export default function DeviceSetup({
             value={deviceName}
             onChange={(e) => setDeviceName(e.target.value)}
             placeholder={t('device.deviceNamePlaceholder')}
-            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-none"
+            className="w-full bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg px-4 py-2 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:border-primary-500 focus:outline-hidden"
           />
         </div>
 
@@ -410,7 +410,7 @@ export default function DeviceSetup({
                 {micPermission !== 'granted' && (
                   <button
                     onClick={requestMicrophonePermission}
-                    className="text-xs px-2 py-1 bg-primary-600 hover:bg-primary-500 rounded text-white"
+                    className="text-xs px-2 py-1 bg-primary-600 hover:bg-primary-500 rounded-sm text-white"
                   >
                     {t('device.allow')}
                   </button>
@@ -423,7 +423,7 @@ export default function DeviceSetup({
                     disabled={micPermission !== 'granted'}
                     className="sr-only peer"
                   />
-                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
+                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
                 </label>
               </div>
             </div>
@@ -444,7 +444,7 @@ export default function DeviceSetup({
                   onChange={(e) => setHasSpeaker(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+                <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
               </label>
             </div>
 
@@ -466,7 +466,7 @@ export default function DeviceSetup({
                     disabled={!hasMicrophone}
                     className="sr-only peer"
                   />
-                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
+                  <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600 peer-disabled:opacity-50"></div>
                 </label>
               </div>
             )}
@@ -489,7 +489,7 @@ export default function DeviceSetup({
                 onChange={(e) => setIsStationary(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
+              <div className="w-9 h-5 bg-gray-300 dark:bg-gray-600 peer-focus:outline-hidden rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary-600"></div>
             </label>
           </div>
         )}

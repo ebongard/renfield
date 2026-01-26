@@ -277,11 +277,11 @@ export default function RoomsPage() {
   const getSourceBadge = (source) => {
     switch (source) {
       case 'homeassistant':
-        return <span className="px-2 py-1 bg-blue-100 text-blue-600 dark:bg-blue-600/20 dark:text-blue-400 text-xs rounded">HA</span>;
+        return <span className="px-2 py-1 bg-blue-100 text-blue-600 dark:bg-blue-600/20 dark:text-blue-400 text-xs rounded-sm">HA</span>;
       case 'satellite':
-        return <span className="px-2 py-1 bg-green-100 text-green-600 dark:bg-green-600/20 dark:text-green-400 text-xs rounded">Satellite</span>;
+        return <span className="px-2 py-1 bg-green-100 text-green-600 dark:bg-green-600/20 dark:text-green-400 text-xs rounded-sm">Satellite</span>;
       default:
-        return <span className="px-2 py-1 bg-gray-200 text-gray-600 dark:bg-gray-600/20 dark:text-gray-400 text-xs rounded">Renfield</span>;
+        return <span className="px-2 py-1 bg-gray-200 text-gray-600 dark:bg-gray-600/20 dark:text-gray-400 text-xs rounded-sm">Renfield</span>;
     }
   };
 
@@ -421,12 +421,12 @@ export default function RoomsPage() {
                           className="flex items-center justify-between text-xs py-1"
                         >
                           <div className="flex items-center space-x-2 min-w-0 flex-1">
-                            <DeviceIcon className={`w-3 h-3 flex-shrink-0 ${config.color}`} />
+                            <DeviceIcon className={`w-3 h-3 shrink-0 ${config.color}`} />
                             <span className="text-gray-500 dark:text-gray-400 truncate" title={device.device_id}>
                               {device.device_name || device.device_id}
                             </span>
                           </div>
-                          <div className="flex items-center space-x-2 flex-shrink-0 ml-2">
+                          <div className="flex items-center space-x-2 shrink-0 ml-2">
                             <span className="text-gray-500 text-[10px]">{config.label}</span>
                             <span className={device.is_online ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}>
                               {device.is_online ? t('common.online') : t('common.offline')}

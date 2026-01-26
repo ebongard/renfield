@@ -1,44 +1,77 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
 
-/* Body base styles - Light mode default */
-body {
-  background-color: #f9fafb; /* gray-50 */
-  color: #111827; /* gray-900 */
-  transition: background-color 0.2s, color 0.2s;
+@custom-variant dark (&:where([class~="dark"], [class~="dark"] *));
+
+@theme {
+  --color-primary-50: #f0f9ff;
+  --color-primary-100: #e0f2fe;
+  --color-primary-200: #bae6fd;
+  --color-primary-300: #7dd3fc;
+  --color-primary-400: #38bdf8;
+  --color-primary-500: #0ea5e9;
+  --color-primary-600: #0284c7;
+  --color-primary-700: #0369a1;
+  --color-primary-800: #075985;
+  --color-primary-900: #0c4a6e;
 }
 
-/* Dark mode body */
-html.dark body {
-  background-color: #111827; /* gray-900 */
-  color: #f3f4f6; /* gray-100 */
+/*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
 }
 
-@layer components {
-  .btn {
-    @apply px-4 py-2 rounded-lg font-medium transition-colors;
-  }
+@utility btn {
+  @apply px-4 py-2 rounded-lg font-medium transition-colors;
+}
 
-  .btn-primary {
-    @apply bg-primary-600 hover:bg-primary-700 text-white;
-  }
+@utility btn-primary {
+  @apply bg-primary-600 hover:bg-primary-700 text-white;
+}
 
-  .btn-secondary {
-    @apply bg-gray-200 hover:bg-gray-300 text-gray-800
+@utility btn-secondary {
+  @apply bg-gray-200 hover:bg-gray-300 text-gray-800
            dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-100;
-  }
+}
 
-  .card {
-    @apply bg-white rounded-lg p-6 shadow-lg border border-gray-200
+@utility card {
+  @apply bg-white rounded-lg p-6 shadow-lg border border-gray-200
            dark:bg-gray-800 dark:border-gray-700;
+}
+
+@utility input {
+  @apply w-full px-4 py-2 bg-white border border-gray-300 rounded-lg
+           text-gray-900 placeholder-gray-500
+           focus:outline-hidden focus:ring-2 focus:ring-primary-500 focus:border-transparent
+           dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400;
+}
+
+@layer utilities {
+  /* Body base styles - Light mode default */
+  body {
+    background-color: #f9fafb; /* gray-50 */
+    color: #111827; /* gray-900 */
+    transition:
+      background-color 0.2s,
+      color 0.2s;
   }
 
-  .input {
-    @apply w-full px-4 py-2 bg-white border border-gray-300 rounded-lg
-           text-gray-900 placeholder-gray-500
-           focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent
-           dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400;
+  /* Dark mode body */
+  html.dark body {
+    background-color: #111827; /* gray-900 */
+    color: #f3f4f6; /* gray-100 */
   }
 }
 

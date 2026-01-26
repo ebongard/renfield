@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import {
   MessageSquare,
@@ -174,7 +174,7 @@ export default function Layout({ children }) {
         }`}
         aria-current={isActive ? 'page' : undefined}
       >
-        <Icon className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+        <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span>{item.name}</span>
       </Link>
     );
@@ -185,7 +185,7 @@ export default function Layout({ children }) {
       {/* Skip Link for Accessibility */}
       <a
         href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[60] focus:px-4 focus:py-2 focus:bg-primary-600 focus:text-white focus:rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-400"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-60 focus:px-4 focus:py-2 focus:bg-primary-600 focus:text-white focus:rounded-lg focus:outline-hidden focus:ring-2 focus:ring-primary-400"
       >
         {t('nav.skipToContent')}
       </a>
@@ -197,7 +197,7 @@ export default function Layout({ children }) {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors"
               aria-label={t('nav.openMenu')}
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -245,7 +245,7 @@ export default function Layout({ children }) {
 
       {/* Backdrop */}
       <div
-        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-sm z-40 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs z-40 transition-opacity duration-300 ${
           sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         aria-hidden="true"
@@ -272,7 +272,7 @@ export default function Layout({ children }) {
           <button
             ref={firstFocusableRef}
             onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+            className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors"
             aria-label={t('nav.closeMenu')}
           >
             <X className="w-5 h-5" aria-hidden="true" />
@@ -303,7 +303,7 @@ export default function Layout({ children }) {
                 aria-controls="admin-menu"
               >
                 <div className="flex items-center space-x-3">
-                  <Settings className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                  <Settings className="w-5 h-5 shrink-0" aria-hidden="true" />
                   <span>{t('nav.admin')}</span>
                 </div>
                 <ChevronDown
@@ -355,7 +355,7 @@ export default function Layout({ children }) {
                     onClick={handleLogout}
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
-                    <LogOut className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                    <LogOut className="w-5 h-5 shrink-0" aria-hidden="true" />
                     <span>{t('auth.logout')}</span>
                   </button>
                 </div>
@@ -365,7 +365,7 @@ export default function Layout({ children }) {
                   onClick={handleNavClick}
                   className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
-                  <LogIn className="w-5 h-5 flex-shrink-0" aria-hidden="true" />
+                  <LogIn className="w-5 h-5 shrink-0" aria-hidden="true" />
                   <span>{t('auth.login')}</span>
                 </Link>
               )}

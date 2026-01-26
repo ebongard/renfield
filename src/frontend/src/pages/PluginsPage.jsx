@@ -140,7 +140,7 @@ export default function PluginsPage() {
           <div className="flex items-center space-x-3">
             <Info className="w-5 h-5 text-yellow-500" />
             <p className="text-yellow-700 dark:text-yellow-400">
-              {t('plugins.systemDisabled')} <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded">PLUGINS_ENABLED=true</code>
+              {t('plugins.systemDisabled')} <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded-sm">PLUGINS_ENABLED=true</code>
             </p>
           </div>
         </div>
@@ -204,16 +204,16 @@ export default function PluginsPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{plugin.name}</h3>
-                      <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
+                      <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
                         v{plugin.version}
                       </span>
                       {plugin.enabled ? (
-                        <span className="flex items-center space-x-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-2 py-0.5 rounded">
+                        <span className="flex items-center space-x-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-2 py-0.5 rounded-sm">
                           <Power className="w-3 h-3" />
                           <span>{t('plugins.enabled')}</span>
                         </span>
                       ) : (
-                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-500 px-2 py-0.5 rounded">
+                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-500 px-2 py-0.5 rounded-sm">
                           <PowerOff className="w-3 h-3" />
                           <span>{t('plugins.disabled')}</span>
                         </span>
@@ -227,13 +227,13 @@ export default function PluginsPage() {
                       {plugin.intents?.slice(0, 3).map((intent) => (
                         <span
                           key={intent.name}
-                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded"
+                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm"
                         >
                           {intent.name}
                         </span>
                       ))}
                       {plugin.intents?.length > 3 && (
-                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
+                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
                           {t('plugins.more', { count: plugin.intents.length - 3 })}
                         </span>
                       )}
@@ -328,7 +328,7 @@ export default function PluginsPage() {
                 <div className="bg-gray-100 dark:bg-gray-850 p-3 rounded-lg">
                   <div className="flex flex-wrap gap-2">
                     {selectedPlugin.config_vars.map((varName) => (
-                      <code key={varName} className="text-xs bg-gray-200 text-primary-600 dark:bg-gray-700 dark:text-primary-400 px-2 py-1 rounded">
+                      <code key={varName} className="text-xs bg-gray-200 text-primary-600 dark:bg-gray-700 dark:text-primary-400 px-2 py-1 rounded-sm">
                         {varName}
                       </code>
                     ))}
@@ -340,7 +340,7 @@ export default function PluginsPage() {
             {/* Enable Variable */}
             <div>
               <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">{t('plugins.enableVariable')}</p>
-              <code className="text-sm bg-gray-100 text-primary-600 dark:bg-gray-850 dark:text-primary-400 px-2 py-1 rounded">
+              <code className="text-sm bg-gray-100 text-primary-600 dark:bg-gray-850 dark:text-primary-400 px-2 py-1 rounded-sm">
                 {selectedPlugin.enabled_var}=true
               </code>
             </div>
@@ -369,7 +369,7 @@ export default function PluginsPage() {
                           <span className="text-gray-900 dark:text-white font-medium">{intent.name}</span>
                         </div>
                         {intent.parameters?.length > 0 && (
-                          <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded">
+                          <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
                             {t('plugins.paramsCount', { count: intent.parameters.length })}
                           </span>
                         )}
@@ -383,12 +383,12 @@ export default function PluginsPage() {
                             <div className="space-y-2">
                               <p className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">{t('plugins.parameters')}</p>
                               {intent.parameters.map((param) => (
-                                <div key={param.name} className="bg-gray-100 dark:bg-gray-850 p-2 rounded">
+                                <div key={param.name} className="bg-gray-100 dark:bg-gray-850 p-2 rounded-sm">
                                   <div className="flex items-center space-x-2">
                                     <code className="text-primary-600 dark:text-primary-400 text-sm">{param.name}</code>
                                     <span className="text-gray-400 dark:text-gray-500 text-xs">({param.type})</span>
                                     {param.required && (
-                                      <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 px-1 rounded">
+                                      <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 px-1 rounded-sm">
                                         {t('plugins.required')}
                                       </span>
                                     )}
@@ -399,7 +399,7 @@ export default function PluginsPage() {
                                   {param.enum && (
                                     <div className="flex flex-wrap gap-1 mt-1">
                                       {param.enum.map((v) => (
-                                        <span key={v} className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1 rounded">
+                                        <span key={v} className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1 rounded-sm">
                                           {v}
                                         </span>
                                       ))}

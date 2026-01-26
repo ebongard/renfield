@@ -1,5 +1,5 @@
 import { render } from '@testing-library/react';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter } from 'react-router';
 import { createContext, useContext } from 'react';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../../../src/frontend/src/i18n';
