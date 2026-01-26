@@ -134,12 +134,13 @@ class WakeWordDetector:
             List of model info dicts
         """
         models = []
+        found_ids = set()  # Track found model IDs to avoid duplicates
 
         if not self.models_path.exists():
             print(f"Models path does not exist: {self.models_path}")
             return models
 
-        # Look for JSON config files (TFLite models)
+        # Look for JSON config files (TFLite models with config)
         for json_file in self.models_path.glob("**/*.json"):
             try:
                 with open(json_file) as f:
@@ -155,8 +156,10 @@ class WakeWordDetector:
                         model_path = str(tflite_file)
 
                 if model_path and os.path.exists(model_path):
+                    model_id = json_file.stem
+                    found_ids.add(model_id)
                     models.append({
-                        "id": json_file.stem,
+                        "id": model_id,
                         "name": config.get("name", json_file.stem),
                         "path": model_path,
                         "config_path": str(json_file),
@@ -166,14 +169,42 @@ class WakeWordDetector:
             except Exception as e:
                 print(f"Failed to load config {json_file}: {e}")
 
+        # Look for standalone TFLite models (without JSON config)
+        for tflite_file in self.models_path.glob("**/*.tflite"):
+            # Skip preprocessing models
+            if tflite_file.stem in ["melspectrogram", "embedding_model"]:
+                continue
+
+            # Skip if already found via JSON config
+            model_id = tflite_file.stem.replace("_v0.1", "")
+            if model_id in found_ids:
+                continue
+
+            found_ids.add(model_id)
+            # Use pyopen-wakeword for standalone TFLite files (if available)
+            # or fall back to micro-wakeword
+            model_type = "open" if OPEN_WAKEWORD_AVAILABLE else "micro"
+            models.append({
+                "id": model_id,
+                "name": tflite_file.stem,
+                "path": str(tflite_file),
+                "type": model_type,
+                "threshold": self.default_threshold,
+            })
+
         # Look for ONNX models (legacy)
         for onnx_file in self.models_path.glob("**/*.onnx"):
             # Skip common models (not wake words)
-            if onnx_file.stem in ["melspectrogram", "embedding_model"]:
+            if onnx_file.stem in ["melspectrogram", "embedding_model", "silero_vad"]:
                 continue
 
+            model_id = onnx_file.stem.replace("_v0.1", "")
+            if model_id in found_ids:
+                continue
+
+            found_ids.add(model_id)
             models.append({
-                "id": onnx_file.stem.replace("_v0.1", ""),
+                "id": model_id,
                 "name": onnx_file.stem,
                 "path": str(onnx_file),
                 "type": "onnx",
@@ -496,6 +527,23 @@ class WakeWordDetector:
         if keyword in self._wake_models:
             return True
 
+        # First try built-in models (pymicro-wakeword)
+        keyword_normalized = keyword.lower().replace("-", "_")
+        if MICRO_WAKEWORD_AVAILABLE and keyword_normalized in MICRO_BUILTIN_MODELS:
+            model_info = {
+                "id": keyword,
+                "name": keyword,
+                "path": "builtin",
+                "type": "micro",
+                "threshold": self.default_threshold,
+            }
+            model = self._load_model(model_info)
+            if model:
+                self._wake_models[keyword] = model
+                print(f"Loaded wake word: {keyword} (micro/builtin)")
+                return True
+
+        # Otherwise search in discovered models (files)
         available_models = self._discover_models()
         model_info = self._find_model(keyword, available_models)
         if model_info:

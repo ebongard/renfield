@@ -1,0 +1,158 @@
+/*
+ * Seeed 2-Mic Voicecard Overlay with Real GPCLK0 MCLK
+ *
+ * This overlay fixes the "No MCLK configured" error on kernel 6.x by using
+ * the actual BCM2835 GPCLK0 hardware clock instead of a "fixed-clock" placeholder.
+ *
+ * The original seeed-2mic-voicecard overlay uses a "fixed-clock" device which
+ * only provides clock metadata but doesn't actually output a clock signal.
+ * This overlay configures GPIO4 as GPCLK0 and has the WM8960 codec consume it,
+ * which triggers clk_prepare_enable() in the driver and outputs a real 12.288 MHz
+ * clock signal on GPIO4.
+ *
+ * Hardware: ReSpeaker 2-Mics Pi HAT (Seeed Studio)
+ * Codec: WM8960
+ * Target: Raspberry Pi Zero 2 W / Pi 3 / Pi 4 (BCM2835/BCM2836/BCM2837/BCM2711)
+ *
+ * Installation:
+ *   dtc -@ -I dts -O dtb -o seeed-2mic-gpclk.dtbo seeed-2mic-gpclk-overlay.dts
+ *   sudo cp seeed-2mic-gpclk.dtbo /boot/firmware/overlays/
+ *   # Add to /boot/firmware/config.txt: dtoverlay=seeed-2mic-gpclk
+ *
+ * Copyright 2026 Renfield Project
+ * SPDX-License-Identifier: GPL-2.0-or-later
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835", "brcm,bcm2708", "brcm,bcm2709", "brcm,bcm2711";
+
+    /* Fragment 0: Enable I2S interface */
+    fragment@0 {
+        target = <&i2s_clk_producer>;
+        __overlay__ {
+            status = "okay";
+        };
+    };
+
+    /* Fragment 1: Configure GPIO4 for GPCLK0 output (ALT0 function) */
+    fragment@1 {
+        target = <&gpio>;
+        __overlay__ {
+            wm8960_gpclk_pin: wm8960_gpclk_pin {
+                brcm,pins = <4>;
+                brcm,function = <4>;  /* ALT0 = GPCLK0 */
+                brcm,pull = <0>;      /* No pull-up/down */
+            };
+        };
+    };
+
+    /* Fragment 2: WM8960 codec on I2C1 with real GPCLK0 clock */
+    fragment@2 {
+        target = <&i2c1>;
+        __overlay__ {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            status = "okay";
+
+            wm8960: wm8960@1a {
+                compatible = "wlf,wm8960";
+                reg = <0x1a>;
+
+                /* Power supplies */
+                AVDD-supply = <&vdd_5v0_reg>;
+                DVDD-supply = <&vdd_3v3_reg>;
+
+                /* Use the real GPCLK0 clock instead of fixed-clock */
+                clocks = <&clocks 38>;  /* BCM2835_CLOCK_GP0 = 38 */
+                clock-names = "mclk";
+
+                /* Request 12.288 MHz clock rate for 48kHz audio */
+                assigned-clocks = <&clocks 38>;
+                assigned-clock-rates = <12288000>;
+
+                /* GPIO4 pin configuration for clock output */
+                pinctrl-names = "default";
+                pinctrl-0 = <&wm8960_gpclk_pin>;
+
+                #sound-dai-cells = <0>;
+            };
+        };
+    };
+
+    /* Fragment 3: Power supply regulators */
+    fragment@3 {
+        target-path = "/";
+        __overlay__ {
+            vdd_5v0_reg: fixedregulator_5v0 {
+                compatible = "regulator-fixed";
+                regulator-name = "5V0";
+                regulator-min-microvolt = <5000000>;
+                regulator-max-microvolt = <5000000>;
+                regulator-always-on;
+            };
+            vdd_3v3_reg: fixedregulator_3v3 {
+                compatible = "regulator-fixed";
+                regulator-name = "3V3";
+                regulator-min-microvolt = <3300000>;
+                regulator-max-microvolt = <3300000>;
+                regulator-always-on;
+            };
+        };
+    };
+
+    /* Fragment 4: Simple audio card configuration */
+    fragment@4 {
+        target-path = "/";
+        __overlay__ {
+            sound: seeed-2mic-soundcard {
+                compatible = "simple-audio-card";
+                simple-audio-card,format = "i2s";
+                simple-audio-card,name = "seeed-2mic-voicecard";
+                status = "okay";
+
+                /* Audio widgets */
+                simple-audio-card,widgets =
+                    "Microphone", "Mic Jack",
+                    "Line", "Line In",
+                    "Line", "Line Out",
+                    "Speaker", "Speaker",
+                    "Headphone", "Headphone Jack";
+
+                /* Audio routing */
+                simple-audio-card,routing =
+                    "Headphone Jack", "HP_L",
+                    "Headphone Jack", "HP_R",
+                    "Speaker", "SPK_LP",
+                    "Speaker", "SPK_LN",
+                    "Speaker", "SPK_RP",
+                    "Speaker", "SPK_RN",
+                    "LINPUT1", "Mic Jack",
+                    "LINPUT3", "Mic Jack",
+                    "RINPUT1", "Mic Jack",
+                    "RINPUT2", "Mic Jack",
+                    "Mic Jack", "MICB",
+                    "Line In", "LINPUT2",
+                    "Line In", "RINPUT2";
+
+                /* CPU DAI */
+                simple-audio-card,cpu {
+                    sound-dai = <&i2s_clk_producer>;
+                };
+
+                /* Codec DAI */
+                simple-audio-card,codec {
+                    sound-dai = <&wm8960>;
+                };
+            };
+        };
+    };
+
+    /* Runtime parameter overrides */
+    __overrides__ {
+        alsaname = <&sound>, "simple-audio-card,name";
+        compatible = <&wm8960>, "compatible";
+    };
+};

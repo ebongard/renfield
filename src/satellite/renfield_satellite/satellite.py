@@ -188,6 +188,9 @@ class Satellite:
         print(f"Starting Renfield Satellite: {self.config.satellite.id}")
         print(f"Room: {self.config.satellite.room}")
 
+        # Store event loop early for thread-safe callbacks (before any async operations)
+        self._loop = asyncio.get_running_loop()
+
         self._running = True
         self._set_state(SatelliteState.BOOT)
 
