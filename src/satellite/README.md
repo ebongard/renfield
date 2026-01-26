@@ -23,6 +23,7 @@ Raspberry Pi-based satellite voice assistant for the Renfield ecosystem. Enables
 - Refractory period (prevent double triggers)
 - Processing timeout recovery (auto-recovers from stuck states)
 - Low CPU usage (~25% on Pi Zero 2 W)
+- **Beamforming** (optional): Delay-and-Sum beamforming with stereo microphones for improved noise rejection
 
 Architecture inspired by [OHF-Voice/linux-voice-assistant](https://github.com/OHF-Voice/linux-voice-assistant).
 
@@ -30,9 +31,9 @@ Architecture inspired by [OHF-Voice/linux-voice-assistant](https://github.com/OH
 
 ### 1. Flash Raspberry Pi OS
 
-Use Raspberry Pi Imager to flash **Raspberry Pi OS Lite (32-bit)**.
+Use Raspberry Pi Imager to flash **Raspberry Pi OS Lite (64-bit)**.
 
-> **Important:** Use 32-bit OS for ReSpeaker HAT compatibility. The ReSpeaker drivers do not work reliably on 64-bit Raspberry Pi OS.
+> **Note:** 64-bit OS is now recommended for the Pi Zero 2 W. It enables ONNX Runtime for Silero VAD and better performance. The ReSpeaker HAT requires a custom MCLK overlay (see step 3).
 
 Configure in advanced settings:
 - Set hostname (e.g., `satellite-livingroom`)
@@ -67,6 +68,64 @@ sudo reboot
 
 > **Note:** We use the [HinTak fork](https://github.com/HinTak/seeed-voicecard) which has better kernel compatibility.
 
+#### MCLK Fix for 64-bit OS (Pi Zero 2 W)
+
+On 64-bit Raspberry Pi OS, the WM8960 codec needs a proper MCLK signal. Create a custom overlay:
+
+```bash
+# Create the overlay source
+cat > /tmp/gpclk-pwm.dts << 'EOF'
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835";
+
+    fragment@0 {
+        target = <&gpio>;
+        __overlay__ {
+            gpclk0_pins: gpclk0_pins {
+                brcm,pins = <4>;
+                brcm,function = <4>; /* ALT0 = GPCLK0 */
+            };
+        };
+    };
+
+    fragment@1 {
+        target-path = "/";
+        __overlay__ {
+            gpclk0: gpclk0@7e101070 {
+                compatible = "brcm,bcm2835-clock";
+                reg = <0x7e101070 0x08>;
+                clocks = <&clocks 6>;  /* PLLD = 500MHz */
+                #clock-cells = <0>;
+                clock-output-names = "gpclk0";
+                pinctrl-names = "default";
+                pinctrl-0 = <&gpclk0_pins>;
+                assigned-clocks = <&gpclk0>;
+                assigned-clock-rates = <12288000>;
+            };
+        };
+    };
+};
+EOF
+
+# Compile and install
+dtc -@ -I dts -O dtb -o /tmp/gpclk-pwm.dtbo /tmp/gpclk-pwm.dts
+sudo cp /tmp/gpclk-pwm.dtbo /boot/firmware/overlays/
+
+# Add to config.txt
+echo "dtoverlay=gpclk-pwm" | sudo tee -a /boot/firmware/config.txt
+
+sudo reboot
+```
+
+After reboot, verify MCLK is working:
+```bash
+cat /sys/kernel/debug/clk/clk_summary | grep gpclk
+# Should show: gpclk0 12288000 Hz
+```
+
 ### 4. Verify Audio Hardware
 
 ```bash
@@ -87,19 +146,56 @@ This step is **required** for PyAudio to use the ReSpeaker HAT:
 
 ```bash
 cat > ~/.asoundrc << 'EOF'
+# Rate converter for sample rate conversion
+defaults.pcm.rate_converter "samplerate"
+
 pcm.!default {
     type asym
-    playback.pcm "plughw:1,0"
-    capture.pcm "plughw:1,0"
+    playback.pcm "playback"
+    capture.pcm "capture"
 }
-ctl.!default {
-    type hw
-    card 1
+
+pcm.playback {
+    type plug
+    slave.pcm "dmixed"
+}
+
+pcm.capture {
+    type plug
+    slave.pcm "array"
+}
+
+pcm.dmixed {
+    type dmix
+    slave.pcm "hw:seeed2micvoicec"
+    ipc_key 555555
+}
+
+# Stereo microphone array (for beamforming)
+pcm.array {
+    type dsnoop
+    slave {
+        pcm "hw:seeed2micvoicec"
+        channels 2
+    }
+    ipc_key 666666
+}
+
+# Stereo capture with automatic rate conversion (for beamforming at 16kHz)
+pcm.array16k {
+    type rate
+    slave {
+        pcm "array"
+        rate 48000
+    }
+    converter "samplerate"
 }
 EOF
 ```
 
 > **Important:** Without this configuration, PyAudio will use the wrong audio device (HDMI instead of ReSpeaker).
+
+**Note:** The `array16k` device is required for beamforming with stereo capture at 16kHz sample rate.
 
 ### 6. Install System Dependencies
 
@@ -124,27 +220,26 @@ python -m pip install --upgrade pip
 
 ### 7. Install Python Packages
 
-For **32-bit ARM (armv7l)** - which is required for ReSpeaker compatibility:
+For **64-bit ARM (aarch64)** on Pi Zero 2 W:
 
 ```bash
 # Check architecture
 uname -m
-# Should show: armv7l
+# Should show: aarch64
 
-# Install onnxruntime for 32-bit ARM (unofficial build)
-pip install https://github.com/nknytk/built-onnxruntime-for-raspberrypi-linux/raw/master/wheels/bullseye/onnxruntime-1.16.0-cp311-cp311-linux_armv7l.whl
+# Install ONNX Runtime (official release for 64-bit ARM)
+pip install onnxruntime
 
 # Install PyAudio (preferred for ALSA/ReSpeaker support)
 pip install pyaudio
 
 # Install other dependencies
-# Note: numpy<2 is required for onnxruntime compatibility
-pip install "numpy<2" openwakeword websockets python-mpv spidev RPi.GPIO pyyaml zeroconf
+pip install numpy openwakeword websockets python-mpv spidev lgpio pyyaml zeroconf
 ```
 
-> **Source:** [nknytk/built-onnxruntime-for-raspberrypi-linux](https://github.com/nknytk/built-onnxruntime-for-raspberrypi-linux)
-
 > **Note:** We use PyAudio instead of soundcard because PyAudio uses ALSA directly and respects the `.asoundrc` configuration. The soundcard library uses PipeWire/PulseAudio which may not detect the ReSpeaker HAT.
+
+> **Note:** On 64-bit OS, use `lgpio` instead of `RPi.GPIO` for GPIO control (button).
 
 ### 8. Download Wake Word Models
 
@@ -203,9 +298,13 @@ server:
 audio:
   sample_rate: 16000
   chunk_size: 1280
-  channels: 1
-  device: "default"             # Uses ALSA default from .asoundrc
+  channels: 1                   # Use 2 for beamforming (automatically set when enabled)
+  device: "default"             # Uses ALSA default, or "array16k" for beamforming
   playback_device: "default"
+  beamforming:
+    enabled: false              # Enable Delay-and-Sum beamforming
+    mic_spacing: 0.058          # ReSpeaker 2-Mics HAT: 58mm spacing
+    steering_angle: 0.0         # 0 = front-facing
 
 wakeword:
   model: "alexa"                # Must match downloaded model name
@@ -581,27 +680,79 @@ WAKE_WORD_THRESHOLD=0.5
 
 ## Performance
 
-On Raspberry Pi Zero 2 W (32-bit):
+On Raspberry Pi Zero 2 W (64-bit):
 
 | Component | CPU | Memory |
 |-----------|-----|--------|
-| OpenWakeWord (ONNX) | 15-20% | ~100MB |
+| Wake Word (pymicro-wakeword) | 10-15% | ~80MB |
+| Silero VAD (ONNX) | 3-5% | ~30MB |
 | Audio capture | 5% | ~10MB |
+| Beamforming (optional) | 5-7% | ~5MB |
 | WebSocket | 2% | ~20MB |
 | LEDs | <1% | <5MB |
-| **Total** | **~25%** | **~135MB** |
+| **Total (without beamforming)** | **~25%** | **~145MB** |
+| **Total (with beamforming)** | **~30%** | **~150MB** |
+
+## Beamforming (Optional)
+
+The ReSpeaker 2-Mics Pi HAT has two microphones spaced 58mm apart. This enables **Delay-and-Sum (DAS) beamforming** for improved noise rejection.
+
+### Benefits
+
+- **3-6 dB SNR improvement** for noise from the sides
+- **Better speech recognition** in noisy environments
+- **Effective frequency range**: 600 Hz - 3000 Hz (ideal for speech)
+
+### How It Works
+
+1. Captures stereo audio (left and right microphone)
+2. Calculates time delay based on steering angle
+3. Aligns signals by shifting one channel
+4. Sums aligned signals (constructive interference from target direction)
+5. Outputs enhanced mono audio
+
+### Configuration
+
+To enable beamforming, update your `satellite.yaml`:
+
+```yaml
+audio:
+  sample_rate: 16000
+  chunk_size: 1280
+  channels: 2                   # Required for beamforming
+  device: "array16k"            # Stereo device with rate conversion
+  playback_device: "plughw:0,0"
+  beamforming:
+    enabled: true
+    mic_spacing: 0.058          # ReSpeaker 2-Mics: 58mm
+    steering_angle: 0.0         # 0 = front-facing, 90 = right, -90 = left
+```
+
+**Requirements:**
+- `.asoundrc` must include the `array16k` device (see step 5)
+- `channels: 2` for stereo capture
+- `device: "array16k"` for resampled stereo at 16kHz
+
+### Performance
+
+On Pi Zero 2 W, beamforming adds approximately 5-7% CPU overhead. This is acceptable given the noise rejection benefits.
 
 ## Architecture Notes
 
-### Why 32-bit OS?
+### Why 64-bit OS?
 
-The ReSpeaker 2-Mics Pi HAT drivers have compatibility issues with 64-bit Raspberry Pi OS. While the Pi Zero 2 W supports 64-bit, using 32-bit OS ensures reliable audio hardware operation.
+64-bit Raspberry Pi OS is now recommended for the Pi Zero 2 W:
+- **ONNX Runtime**: Official wheels available for aarch64 (no 32-bit builds)
+- **Silero VAD**: Requires ONNX Runtime for efficient voice activity detection
+- **Better performance**: 64-bit operations are native on the ARM Cortex-A53
+
+The ReSpeaker 2-Mics HAT works on 64-bit OS with a custom MCLK overlay (see step 3).
 
 ### Why openwakeword instead of pymicro-wakeword?
 
-- `pymicro-wakeword` includes pre-compiled TensorFlow Lite libraries that are 64-bit only
-- `openwakeword` with ONNX runtime has community-built wheels for 32-bit ARM
-- Both provide similar wake word detection accuracy
+- `pymicro-wakeword` is now recommended on 64-bit (built-in TFLite models work)
+- `openwakeword` with ONNX runtime is an alternative with similar accuracy
+- Both provide accurate wake word detection
 
 ### Why PyAudio instead of soundcard?
 

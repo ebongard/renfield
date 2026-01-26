@@ -86,12 +86,15 @@ class Satellite:
         """Initialize all hardware and software components"""
         print("Initializing satellite components...")
 
-        # Audio capture
+        # Audio capture (with optional beamforming)
         self.audio_capture = AudioCapture(
             sample_rate=self.config.audio.sample_rate,
             chunk_size=self.config.audio.chunk_size,
             channels=self.config.audio.channels,
             device=self.config.audio.device,
+            beamforming=self.config.audio.beamforming.enabled,
+            mic_spacing=self.config.audio.beamforming.mic_spacing,
+            steering_angle=self.config.audio.beamforming.steering_angle,
         )
 
         # Audio playback

@@ -4,13 +4,19 @@ Audio Capture Module for Renfield Satellite
 Handles microphone input using PyAudio (ALSA) or soundcard library.
 PyAudio is preferred on Raspberry Pi as it respects ALSA configuration.
 
+Supports optional beamforming with ReSpeaker 2-Mics Pi HAT for
+improved noise rejection and speech enhancement.
+
 Inspired by OHF-Voice/linux-voice-assistant approach.
 """
 
 import asyncio
 import threading
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, TYPE_CHECKING
 import numpy as np
+
+if TYPE_CHECKING:
+    from .beamformer import BeamformerDAS
 
 # Try PyAudio first (preferred for Raspberry Pi / ALSA)
 PYAUDIO_AVAILABLE = False
@@ -47,6 +53,11 @@ class AudioCapture:
     Uses PyAudio (ALSA) on Raspberry Pi for proper hardware support,
     or soundcard library as fallback.
     Audio is provided as 16-bit PCM, 16kHz, mono.
+
+    Supports optional beamforming with ReSpeaker 2-Mics Pi HAT:
+    - Set channels=2 and beamforming=True
+    - Captures stereo and applies Delay-and-Sum beamforming
+    - Output is still mono (enhanced)
     """
 
     def __init__(
@@ -55,6 +66,9 @@ class AudioCapture:
         chunk_size: int = 1024,
         channels: int = 1,
         device: Optional[str] = None,
+        beamforming: bool = False,
+        mic_spacing: float = 0.058,  # ReSpeaker 2-Mics: 58mm
+        steering_angle: float = 0.0,  # 0 = front-facing
     ):
         """
         Initialize audio capture.
@@ -62,13 +76,23 @@ class AudioCapture:
         Args:
             sample_rate: Sample rate in Hz (default 16000)
             chunk_size: Samples per chunk (default 1024)
-            channels: Number of channels (default 1 = mono)
+            channels: Number of channels (1=mono, 2=stereo)
             device: Device name/id or None for default (ALSA device for PyAudio)
+            beamforming: Enable beamforming (requires channels=2)
+            mic_spacing: Microphone spacing in meters (default 58mm for ReSpeaker)
+            steering_angle: Target direction in degrees (0=front)
         """
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
-        self.channels = channels
         self.device_name = device
+        self.beamforming_enabled = beamforming
+
+        # If beamforming enabled, force stereo capture
+        if beamforming and channels == 1:
+            channels = 2
+            print("Beamforming enabled: switching to stereo capture")
+
+        self.channels = channels
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -82,6 +106,14 @@ class AudioCapture:
         self._mic = None
         self._recorder = None
 
+        # Beamformer (lazy initialization)
+        self._beamformer: Optional["BeamformerDAS"] = None
+        self._mic_spacing = mic_spacing
+        self._steering_angle = steering_angle
+
+        if beamforming:
+            self._init_beamformer()
+
         # Determine which backend to use
         self._use_pyaudio = PYAUDIO_AVAILABLE
         if self._use_pyaudio:
@@ -90,6 +122,20 @@ class AudioCapture:
             print("Audio backend: soundcard (PipeWire/PulseAudio)")
         else:
             print("Audio backend: None available!")
+
+    def _init_beamformer(self):
+        """Initialize beamformer for stereo processing."""
+        try:
+            from .beamformer import BeamformerDAS
+            self._beamformer = BeamformerDAS(
+                mic_spacing=self._mic_spacing,
+                sample_rate=self.sample_rate,
+                steering_angle=self._steering_angle,
+            )
+            print(f"Beamformer: DAS (spacing={self._mic_spacing*1000:.0f}mm, angle={self._steering_angle}°)")
+        except ImportError as e:
+            print(f"Beamformer not available: {e}")
+            self.beamforming_enabled = False
 
     @staticmethod
     def list_devices() -> List[dict]:
@@ -240,6 +286,10 @@ class AudioCapture:
                     # Read audio data (already 16-bit PCM)
                     audio_bytes = self._stream.read(self.chunk_size, exception_on_overflow=False)
 
+                    # Apply beamforming if enabled (stereo -> mono)
+                    if self._beamformer and self.channels == 2:
+                        audio_bytes = self._beamformer.process_bytes(audio_bytes)
+
                     # Deliver to callback
                     if self._callback and audio_bytes:
                         self._callback(audio_bytes)
@@ -283,8 +333,13 @@ class AudioCapture:
                         # Record audio block (returns float32 array)
                         audio_float = recorder.record(numframes=self.chunk_size)
 
-                        # Convert to mono if needed
-                        if len(audio_float.shape) > 1 and audio_float.shape[1] > 1:
+                        # Apply beamforming if enabled (stereo -> mono)
+                        if self._beamformer and self.channels == 2:
+                            # audio_float shape: (samples, channels)
+                            stereo = audio_float.T  # -> (channels, samples)
+                            audio_float = self._beamformer.process(stereo)
+                        elif len(audio_float.shape) > 1 and audio_float.shape[1] > 1:
+                            # Convert to mono if stereo but no beamforming
                             audio_float = audio_float.mean(axis=1)
                         else:
                             audio_float = audio_float.flatten()
@@ -355,6 +410,27 @@ class AudioCapture:
     def is_running(self) -> bool:
         """Check if capture is running"""
         return self._running
+
+    @property
+    def beamformer(self) -> Optional["BeamformerDAS"]:
+        """Get beamformer instance (if enabled)"""
+        return self._beamformer
+
+    def set_steering_angle(self, angle_degrees: float) -> None:
+        """
+        Update beamformer steering angle.
+
+        Args:
+            angle_degrees: Target direction (0=front, 90=right, -90=left)
+        """
+        if self._beamformer:
+            self._beamformer.set_steering_angle(angle_degrees)
+
+    def get_beamformer_stats(self) -> Optional[dict]:
+        """Get beamformer statistics (if enabled)"""
+        if self._beamformer:
+            return self._beamformer.get_stats()
+        return None
 
 
 class AudioCaptureAsync:

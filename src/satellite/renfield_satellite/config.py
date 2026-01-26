@@ -37,6 +37,14 @@ class ServerConfig:
 
 
 @dataclass
+class BeamformingConfig:
+    """Beamforming settings for ReSpeaker 2-Mics HAT"""
+    enabled: bool = False
+    mic_spacing: float = 0.058  # ReSpeaker 2-Mics: 58mm
+    steering_angle: float = 0.0  # 0 = front-facing
+
+
+@dataclass
 class AudioConfig:
     """Audio capture and playback settings"""
     sample_rate: int = 16000
@@ -45,6 +53,7 @@ class AudioConfig:
     format_bits: int = 16
     device: str = "plughw:1,0"  # ReSpeaker default
     playback_device: str = "plughw:1,0"
+    beamforming: BeamformingConfig = field(default_factory=BeamformingConfig)
 
 
 @dataclass
@@ -156,8 +165,16 @@ def load_config(config_path: Optional[str] = None) -> Config:
         aud = config_data["audio"]
         config.audio.sample_rate = aud.get("sample_rate", config.audio.sample_rate)
         config.audio.chunk_size = aud.get("chunk_size", config.audio.chunk_size)
+        config.audio.channels = aud.get("channels", config.audio.channels)
         config.audio.device = aud.get("device", config.audio.device)
         config.audio.playback_device = aud.get("playback_device", config.audio.playback_device)
+
+        # Beamforming config
+        if "beamforming" in aud:
+            bf = aud["beamforming"]
+            config.audio.beamforming.enabled = bf.get("enabled", config.audio.beamforming.enabled)
+            config.audio.beamforming.mic_spacing = bf.get("mic_spacing", config.audio.beamforming.mic_spacing)
+            config.audio.beamforming.steering_angle = bf.get("steering_angle", config.audio.beamforming.steering_angle)
 
     if "wakeword" in config_data:
         ww = config_data["wakeword"]
