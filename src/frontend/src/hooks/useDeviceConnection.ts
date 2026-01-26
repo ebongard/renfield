@@ -9,53 +9,46 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { debug } from '../utils/debug';
+import type {
+  DeviceType,
+  DeviceState,
+  ConnectionState,
+  DeviceCapabilities,
+  DeviceConfig,
+  DeviceConnectionOptions,
+  WebSocketMessage,
+  TranscriptionMessage,
+  ActionMessage,
+  TtsAudioMessage,
+  ResponseTextMessage,
+  StreamMessage,
+  SessionEndMessage,
+  ErrorMessage,
+} from '../types/device';
+
+// Re-export constants for backward compatibility
+export {
+  DEVICE_TYPES,
+  CONNECTION_STATES,
+  DEVICE_STATES,
+} from '../types/device';
 
 // Module-level storage for WebSocket connection (survives React remounts)
-let _activeWebSocket = null;
-let _activeConnectionPromise = null;
-let _connectionResolvers = null; // { resolve, reject, timeout, ws }
+let _activeWebSocket: WebSocket | null = null;
+let _activeConnectionPromise: Promise<{ deviceId: string; roomId: number }> | null = null;
+let _connectionResolvers: {
+  resolve: (value: { deviceId: string; roomId: number }) => void;
+  reject: (reason: Error) => void;
+  timeout: ReturnType<typeof setTimeout>;
+  ws: WebSocket;
+  connectionId: number;
+} | null = null;
 let _connectionId = 0; // Incremented for each new connection attempt
 
-// Device types matching backend
-export const DEVICE_TYPES = {
-  SATELLITE: 'satellite',
-  WEB_PANEL: 'web_panel',
-  WEB_TABLET: 'web_tablet',
-  WEB_BROWSER: 'web_browser',
-  WEB_KIOSK: 'web_kiosk',
-};
-
-// Device type labels for UI
-export const DEVICE_TYPE_LABELS = {
-  [DEVICE_TYPES.SATELLITE]: 'Satellite (Hardware)',
-  [DEVICE_TYPES.WEB_PANEL]: 'Web Panel (Stationary)',
-  [DEVICE_TYPES.WEB_TABLET]: 'Web Tablet (Mobile)',
-  [DEVICE_TYPES.WEB_BROWSER]: 'Web Browser',
-  [DEVICE_TYPES.WEB_KIOSK]: 'Kiosk Terminal',
-};
-
-// Connection states
-export const CONNECTION_STATES = {
-  DISCONNECTED: 'disconnected',
-  CONNECTING: 'connecting',
-  CONNECTED: 'connected',
-  REGISTERED: 'registered',
-  ERROR: 'error',
-};
-
-// Device states (from backend)
-export const DEVICE_STATES = {
-  IDLE: 'idle',
-  LISTENING: 'listening',
-  PROCESSING: 'processing',
-  SPEAKING: 'speaking',
-  ERROR: 'error',
-};
-
 // Default capabilities for web devices
-const getDefaultCapabilities = (deviceType) => {
+const getDefaultCapabilities = (deviceType: DeviceType): DeviceCapabilities => {
   switch (deviceType) {
-    case DEVICE_TYPES.WEB_PANEL:
+    case 'web_panel':
       return {
         has_microphone: true,
         has_speaker: true,
@@ -65,7 +58,7 @@ const getDefaultCapabilities = (deviceType) => {
         display_size: 'large',
         supports_notifications: true,
       };
-    case DEVICE_TYPES.WEB_TABLET:
+    case 'web_tablet':
       return {
         has_microphone: true,
         has_speaker: true,
@@ -75,7 +68,7 @@ const getDefaultCapabilities = (deviceType) => {
         display_size: 'medium',
         supports_notifications: true,
       };
-    case DEVICE_TYPES.WEB_BROWSER:
+    case 'web_browser':
       return {
         has_microphone: false, // Will be updated after permission check
         has_speaker: false,
@@ -84,7 +77,7 @@ const getDefaultCapabilities = (deviceType) => {
         display_size: 'large',
         supports_notifications: true,
       };
-    case DEVICE_TYPES.WEB_KIOSK:
+    case 'web_kiosk':
       return {
         has_microphone: true,
         has_speaker: true,
@@ -104,7 +97,7 @@ const getDefaultCapabilities = (deviceType) => {
 };
 
 // Generate device ID
-const generateDeviceId = () => {
+const generateDeviceId = (): string => {
   // Try to get from localStorage first (persistent ID)
   const storedId = localStorage.getItem('renfield_device_id');
   if (storedId) {
@@ -118,18 +111,27 @@ const generateDeviceId = () => {
 };
 
 // Get stored device config
-const getStoredConfig = () => {
+const getStoredConfig = (): DeviceConfig | null => {
   try {
     const stored = localStorage.getItem('renfield_device_config');
     return stored ? JSON.parse(stored) : null;
-  } catch (e) {
+  } catch {
     return null;
   }
 };
 
 // Save device config
-const saveConfig = (config) => {
+const saveConfig = (config: DeviceConfig): void => {
   localStorage.setItem('renfield_device_config', JSON.stringify(config));
+};
+
+// Device type labels for UI
+export const DEVICE_TYPE_LABELS: Record<DeviceType, string> = {
+  satellite: 'Satellite (Hardware)',
+  web_panel: 'Web Panel (Stationary)',
+  web_tablet: 'Web Tablet (Mobile)',
+  web_browser: 'Web Browser',
+  web_kiosk: 'Kiosk Terminal',
 };
 
 /**
@@ -146,37 +148,57 @@ export function useDeviceConnection({
   onStream = () => {},
   onSessionEnd = () => {},
   onError = () => {},
-} = {}) {
+}: DeviceConnectionOptions = {}) {
   // State
-  const [connectionState, setConnectionState] = useState(CONNECTION_STATES.DISCONNECTED);
-  const [deviceState, setDeviceState] = useState(DEVICE_STATES.IDLE);
-  const [deviceId, setDeviceId] = useState(null);
-  const [roomId, setRoomId] = useState(null);
-  const [roomName, setRoomName] = useState(null);
-  const [deviceType, setDeviceType] = useState(DEVICE_TYPES.WEB_BROWSER);
-  const [deviceName, setDeviceName] = useState(null);
-  const [capabilities, setCapabilities] = useState({});
-  const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [error, setError] = useState(null);
+  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  const [deviceState, setDeviceState] = useState<DeviceState>('idle');
+  const [deviceId, setDeviceId] = useState<string | null>(null);
+  const [roomId, setRoomId] = useState<number | null>(null);
+  const [roomName, setRoomName] = useState<string | null>(null);
+  const [deviceType, setDeviceType] = useState<DeviceType>('web_browser');
+  const [deviceName, setDeviceName] = useState<string | null>(null);
+  const [capabilities, setCapabilities] = useState<DeviceCapabilities>({} as DeviceCapabilities);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
 
   // Refs
-  const wsRef = useRef(null);
-  const reconnectTimeoutRef = useRef(null);
-  const heartbeatIntervalRef = useRef(null);
-  // Note: Promise resolution is handled via module-level _connectionResolvers
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Get WebSocket URL
-  const getWsUrl = useCallback(() => {
+  const getWsUrl = useCallback((): string => {
     const baseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
     // Replace /ws with /ws/device for the device endpoint
     return baseUrl.replace(/\/ws$/, '') + '/ws/device';
   }, []);
 
+  // Stop heartbeat
+  const stopHeartbeat = useCallback((): void => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
+    }
+  }, []);
+
+  // Start heartbeat
+  const startHeartbeat = useCallback((): void => {
+    stopHeartbeat();
+    heartbeatIntervalRef.current = setInterval(() => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.send(JSON.stringify({
+          type: 'heartbeat',
+          status: deviceState,
+        }));
+      }
+    }, 30000); // Every 30 seconds
+  }, [deviceState, stopHeartbeat]);
+
   // Connect to WebSocket - returns a Promise that resolves when registered
-  const connect = useCallback((config = {}) => {
+  const connect = useCallback((config: Partial<DeviceConfig> = {}): Promise<{ deviceId: string; roomId: number }> => {
     const {
       room = null,
-      type = DEVICE_TYPES.WEB_BROWSER,
+      type = 'web_browser' as DeviceType,
       name = null,
       isStationary = true,
       customCapabilities = {},
@@ -204,7 +226,7 @@ export function useDeviceConnection({
       _connectionResolvers = null;
     }
 
-    setConnectionState(CONNECTION_STATES.CONNECTING);
+    setConnectionState('connecting');
     setError(null);
 
     const wsUrl = getWsUrl();
@@ -218,7 +240,7 @@ export function useDeviceConnection({
     const thisConnectionId = ++_connectionId;
 
     // Create and return a Promise for the connection
-    const connectionPromise = new Promise((resolve, reject) => {
+    const connectionPromise = new Promise<{ deviceId: string; roomId: number }>((resolve, reject) => {
       // Timeout after 10 seconds
       const timeout = setTimeout(() => {
         // Only timeout if this is still the active connection
@@ -243,7 +265,7 @@ export function useDeviceConnection({
 
     ws.onopen = () => {
       debug.log('✅ Device WebSocket connected');
-      setConnectionState(CONNECTION_STATES.CONNECTED);
+      setConnectionState('connected');
 
       // Register device
       const id = generateDeviceId();
@@ -269,20 +291,20 @@ export function useDeviceConnection({
       ws.send(JSON.stringify(registerMsg));
 
       // Save config for reconnection
-      saveConfig({ room, type, name, isStationary, customCapabilities });
+      saveConfig({ room, type, name, isStationary, customCapabilities } as DeviceConfig);
     };
 
     ws.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data) as WebSocketMessage;
         debug.log('📩 Device message:', data.type, data);
 
         // Handle message types
         switch (data.type) {
           case 'register_ack':
             if (data.success) {
-              setConnectionState(CONNECTION_STATES.REGISTERED);
-              setRoomId(data.room_id);
+              setConnectionState('registered');
+              setRoomId(data.room_id || null);
               if (data.capabilities) {
                 setCapabilities(data.capabilities);
               }
@@ -294,13 +316,13 @@ export function useDeviceConnection({
               // Resolve the connection promise (only if resolvers belong to this WebSocket)
               if (_connectionResolvers && _connectionResolvers.ws === ws) {
                 clearTimeout(_connectionResolvers.timeout);
-                _connectionResolvers.resolve({ deviceId: data.device_id, roomId: data.room_id });
+                _connectionResolvers.resolve({ deviceId: data.device_id!, roomId: data.room_id! });
                 _connectionResolvers = null;
               }
             } else {
               const err = new Error('Device registration failed');
               setError(err);
-              setConnectionState(CONNECTION_STATES.ERROR);
+              setConnectionState('error');
 
               // Reject the connection promise (only if resolvers belong to this WebSocket)
               if (_connectionResolvers && _connectionResolvers.ws === ws) {
@@ -316,34 +338,30 @@ export function useDeviceConnection({
             onStateChange(data.state);
             break;
 
-          case 'session_started':
-            setCurrentSessionId(data.session_id);
-            break;
-
           case 'transcription':
-            onTranscription(data);
+            onTranscription(data as TranscriptionMessage);
             break;
 
           case 'action':
-            onAction(data);
+            onAction(data as ActionMessage);
             break;
 
           case 'tts_audio':
-            onTtsAudio(data);
+            onTtsAudio(data as TtsAudioMessage);
             break;
 
           case 'response_text':
-            onResponseText(data);
+            onResponseText(data as ResponseTextMessage);
             break;
 
           case 'stream':
-            onStream(data);
+            onStream(data as StreamMessage);
             break;
 
           case 'session_end':
             setCurrentSessionId(null);
-            setDeviceState(DEVICE_STATES.IDLE);
-            onSessionEnd(data);
+            setDeviceState('idle');
+            onSessionEnd(data as SessionEndMessage);
             break;
 
           case 'heartbeat_ack':
@@ -361,7 +379,7 @@ export function useDeviceConnection({
 
           case 'error':
             setError(new Error(data.message));
-            onError(data);
+            onError(data as ErrorMessage);
             break;
 
           default:
@@ -377,7 +395,7 @@ export function useDeviceConnection({
 
       // Only update state if this is the active WebSocket
       if (_activeWebSocket === ws || wsRef.current === ws) {
-        setConnectionState(CONNECTION_STATES.DISCONNECTED);
+        setConnectionState('disconnected');
         setCurrentSessionId(null);
         stopHeartbeat();
       }
@@ -407,14 +425,14 @@ export function useDeviceConnection({
       }
     };
 
-    ws.onerror = (error) => {
-      console.error('❌ Device WebSocket error:', error);
+    ws.onerror = () => {
+      console.error('❌ Device WebSocket error');
 
       // Only update state if this is the active WebSocket
       if (_activeWebSocket === ws || wsRef.current === ws) {
         const err = new Error('WebSocket connection error');
         setError(err);
-        setConnectionState(CONNECTION_STATES.ERROR);
+        setConnectionState('error');
         onError({ type: 'error', message: 'WebSocket connection error' });
 
         // Only reject if this is the WebSocket that the resolvers belong to
@@ -427,7 +445,7 @@ export function useDeviceConnection({
     };
 
     return connectionPromise;
-  }, [getWsUrl, onMessage, onStateChange, onTranscription, onAction, onTtsAudio, onResponseText, onStream, onSessionEnd, onError]);
+  }, [getWsUrl, onMessage, onStateChange, onTranscription, onAction, onTtsAudio, onResponseText, onStream, onSessionEnd, onError, startHeartbeat, stopHeartbeat]);
 
   // Disconnect
   const disconnect = useCallback(() => {
@@ -453,33 +471,12 @@ export function useDeviceConnection({
       _activeWebSocket = null;
     }
 
-    setConnectionState(CONNECTION_STATES.DISCONNECTED);
+    setConnectionState('disconnected');
     setCurrentSessionId(null);
-  }, []);
-
-  // Start heartbeat
-  const startHeartbeat = useCallback(() => {
-    stopHeartbeat();
-    heartbeatIntervalRef.current = setInterval(() => {
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        wsRef.current.send(JSON.stringify({
-          type: 'heartbeat',
-          status: deviceState,
-        }));
-      }
-    }, 30000); // Every 30 seconds
-  }, [deviceState]);
-
-  // Stop heartbeat
-  const stopHeartbeat = useCallback(() => {
-    if (heartbeatIntervalRef.current) {
-      clearInterval(heartbeatIntervalRef.current);
-      heartbeatIntervalRef.current = null;
-    }
-  }, []);
+  }, [stopHeartbeat]);
 
   // Send text message
-  const sendText = useCallback((content) => {
+  const sendText = useCallback((content: string) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'text',
@@ -499,7 +496,7 @@ export function useDeviceConnection({
   }, []);
 
   // Send wake word detected
-  const sendWakeWordDetected = useCallback((keyword, confidence) => {
+  const sendWakeWordDetected = useCallback((keyword: string, confidence: number) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: 'wakeword_detected',
@@ -510,7 +507,7 @@ export function useDeviceConnection({
   }, []);
 
   // Send audio chunk
-  const sendAudioChunk = useCallback((chunkBase64, sequence) => {
+  const sendAudioChunk = useCallback((chunkBase64: string, sequence: number) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && currentSessionId) {
       wsRef.current.send(JSON.stringify({
         type: 'audio',
@@ -556,7 +553,7 @@ export function useDeviceConnection({
       wsRef.current = _activeWebSocket;
       // Also restore connection state if registered
       if (_activeWebSocket.readyState === WebSocket.OPEN) {
-        setConnectionState(CONNECTION_STATES.CONNECTED);
+        setConnectionState('connected');
       }
     }
 
@@ -583,8 +580,8 @@ export function useDeviceConnection({
   return {
     // Connection state
     connectionState,
-    isConnected: connectionState === CONNECTION_STATES.REGISTERED,
-    isConnecting: connectionState === CONNECTION_STATES.CONNECTING || connectionState === CONNECTION_STATES.CONNECTED,
+    isConnected: connectionState === 'registered',
+    isConnecting: connectionState === 'connecting' || connectionState === 'connected',
 
     // Device info
     deviceId,

@@ -8,7 +8,7 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 
 **Tech Stack:**
 - Backend: Python 3.11 + FastAPI + SQLAlchemy
-- Frontend: React 18 + Vite + Tailwind CSS + PWA
+- Frontend: React 18 + TypeScript + Vite + Tailwind CSS + PWA
 - Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
 - Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
@@ -771,7 +771,7 @@ src/frontend/
 ├── src/
 │   ├── main.jsx              # React entry point
 │   ├── App.jsx               # Router setup, main layout
-│   ├── pages/                # Route components
+│   ├── pages/                # Route components (JSX, gradual TS migration)
 │   │   ├── HomePage.jsx      # Dashboard/landing
 │   │   ├── ChatPage.jsx      # Chat interface with WebSocket, voice controls, sidebar
 │   │   ├── SpeakersPage.jsx  # Speaker management and enrollment
@@ -779,30 +779,42 @@ src/frontend/
 │   │   ├── HomeAssistantPage.jsx # Device browser and controls
 │   │   ├── CameraPage.jsx    # Frigate events viewer
 │   │   └── TasksPage.jsx     # Task queue viewer
-│   ├── components/
+│   ├── components/           # React components (JSX, gradual TS migration)
 │   │   ├── Layout.jsx        # Navigation, responsive layout, ThemeToggle
 │   │   ├── ThemeToggle.jsx   # Dark/Light/System theme dropdown
 │   │   ├── ChatSidebar.jsx   # Conversation history sidebar with date grouping
 │   │   ├── ConversationItem.jsx # Single conversation row in sidebar
 │   │   ├── DeviceSetup.jsx   # Device registration modal
 │   │   └── DeviceStatus.jsx  # Device/room status indicator for navbar
-│   ├── context/
-│   │   ├── DeviceContext.jsx # App-wide device connection state
-│   │   └── ThemeContext.jsx  # Dark Mode state (light/dark/system)
-│   ├── hooks/
-│   │   ├── useDeviceConnection.js  # WebSocket connection to /ws/device
-│   │   ├── useChatSessions.js      # Conversation list management and API
-│   │   └── useCapabilities.jsx     # Capability-based feature toggles
-│   ├── i18n/                       # Internationalization
-│   │   ├── index.js                # i18next configuration
+│   ├── context/              # React contexts (TypeScript)
+│   │   ├── AuthContext.tsx   # Authentication state and JWT handling
+│   │   ├── DeviceContext.tsx # App-wide device connection state
+│   │   └── ThemeContext.tsx  # Dark Mode state (light/dark/system)
+│   ├── hooks/                # Custom hooks (TypeScript)
+│   │   ├── useDeviceConnection.ts  # WebSocket connection to /ws/device
+│   │   ├── useChatSessions.ts      # Conversation list management and API
+│   │   ├── useCapabilities.tsx     # Capability-based feature toggles
+│   │   └── useWakeWord.ts          # Wake word detection (OpenWakeWord WASM)
+│   ├── types/                # TypeScript type definitions
+│   │   ├── index.ts          # Barrel export
+│   │   ├── device.ts         # Device, WebSocket, Capabilities types
+│   │   ├── chat.ts           # Chat, Conversation, Message types
+│   │   └── api.ts            # API response types (Room, Speaker, Auth)
+│   ├── config/               # Configuration (TypeScript)
+│   │   └── wakeword.ts       # Wake word settings and keywords
+│   ├── i18n/                 # Internationalization
+│   │   ├── index.js          # i18next configuration
 │   │   └── locales/
-│   │       ├── de.json             # German translations (~400 keys)
-│   │       └── en.json             # English translations (~400 keys)
-│   └── utils/
-│       └── axios.js          # Axios instance with base URL config
+│   │       ├── de.json       # German translations (~400 keys)
+│   │       └── en.json       # English translations (~400 keys)
+│   └── utils/                # Utility functions (TypeScript)
+│       ├── axios.ts          # Axios instance with base URL config
+│       └── debug.ts          # Debug logger (dev-only)
+├── tsconfig.json             # TypeScript config (permissive, allowJs)
+├── tsconfig.node.json        # TypeScript config for Vite
 ├── Dockerfile
 ├── package.json
-└── vite.config.js
+└── vite.config.ts            # Vite config with path aliases
 ```
 
 ### Frontend Connection Architecture

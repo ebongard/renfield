@@ -4,17 +4,45 @@
  * Provides global authentication state and methods for login/logout.
  * Handles JWT token storage and automatic refresh.
  */
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import apiClient from '../utils/axios';
+import type { User, LoginResponse } from '../types/api';
 
-const AuthContext = createContext(null);
+// Auth user with permissions
+interface AuthUser extends User {
+  permissions?: string[];
+}
+
+// Context value type
+interface AuthContextValue {
+  user: AuthUser | null;
+  loading: boolean;
+  authEnabled: boolean;
+  allowRegistration: boolean;
+  isAuthenticated: boolean;
+  login: (username: string, password: string) => Promise<LoginResponse>;
+  logout: () => void;
+  register: (username: string, password: string, email?: string | null) => Promise<User>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<{ message: string }>;
+  fetchUser: () => Promise<AuthUser | null>;
+  hasPermission: (permission: string) => boolean;
+  hasAnyPermission: (permissions: string[]) => boolean;
+  isAdmin: () => boolean;
+  getAccessToken: () => string | null;
+}
+
+const AuthContext = createContext<AuthContextValue | null>(null);
 
 // Token storage keys
 const ACCESS_TOKEN_KEY = 'renfield_access_token';
 const REFRESH_TOKEN_KEY = 'renfield_refresh_token';
 
-export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
+interface AuthProviderProps {
+  children: ReactNode;
+}
+
+export function AuthProvider({ children }: AuthProviderProps) {
+  const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [allowRegistration, setAllowRegistration] = useState(false);
@@ -24,7 +52,7 @@ export function AuthProvider({ children }) {
   const getRefreshToken = useCallback(() => localStorage.getItem(REFRESH_TOKEN_KEY), []);
 
   // Store tokens
-  const setTokens = useCallback((accessToken, refreshToken) => {
+  const setTokens = useCallback((accessToken?: string, refreshToken?: string) => {
     if (accessToken) {
       localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
     }
@@ -40,14 +68,14 @@ export function AuthProvider({ children }) {
   }, []);
 
   // Check if user has a specific permission
-  const hasPermission = useCallback((permission) => {
+  const hasPermission = useCallback((permission: string): boolean => {
     if (!user) return false;
     if (!authEnabled) return true; // Auth disabled = full access
-    return user.permissions?.includes(permission) || user.permissions?.includes('admin');
+    return user.permissions?.includes(permission) || user.permissions?.includes('admin') || false;
   }, [user, authEnabled]);
 
   // Check if user has any of the specified permissions
-  const hasAnyPermission = useCallback((permissions) => {
+  const hasAnyPermission = useCallback((permissions: string[]): boolean => {
     if (!user) return false;
     if (!authEnabled) return true;
     if (user.permissions?.includes('admin')) return true;
@@ -55,12 +83,30 @@ export function AuthProvider({ children }) {
   }, [user, authEnabled]);
 
   // Check if user is admin
-  const isAdmin = useCallback(() => {
+  const isAdmin = useCallback((): boolean => {
     return hasPermission('admin');
   }, [hasPermission]);
 
+  // Refresh access token
+  const refreshAccessToken = useCallback(async (): Promise<boolean> => {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) return false;
+
+    try {
+      const response = await apiClient.post('/api/auth/refresh', {
+        refresh_token: refreshToken
+      });
+      setTokens(response.data.access_token, response.data.refresh_token);
+      return true;
+    } catch {
+      clearTokens();
+      setUser(null);
+      return false;
+    }
+  }, [getRefreshToken, setTokens, clearTokens]);
+
   // Fetch current user info
-  const fetchUser = useCallback(async () => {
+  const fetchUser = useCallback(async (): Promise<AuthUser | null> => {
     const token = getAccessToken();
     if (!token) {
       setUser(null);
@@ -73,40 +119,25 @@ export function AuthProvider({ children }) {
       });
       setUser(response.data);
       return response.data;
-    } catch (error) {
+    } catch (error: unknown) {
       // Token might be expired, try to refresh
-      if (error.response?.status === 401) {
-        const refreshed = await refreshAccessToken();
-        if (refreshed) {
-          return fetchUser();
+      if (error && typeof error === 'object' && 'response' in error) {
+        const axiosError = error as { response?: { status?: number } };
+        if (axiosError.response?.status === 401) {
+          const refreshed = await refreshAccessToken();
+          if (refreshed) {
+            return fetchUser();
+          }
         }
       }
       clearTokens();
       setUser(null);
       return null;
     }
-  }, [getAccessToken, clearTokens]);
-
-  // Refresh access token
-  const refreshAccessToken = useCallback(async () => {
-    const refreshToken = getRefreshToken();
-    if (!refreshToken) return false;
-
-    try {
-      const response = await apiClient.post('/api/auth/refresh', {
-        refresh_token: refreshToken
-      });
-      setTokens(response.data.access_token, response.data.refresh_token);
-      return true;
-    } catch (error) {
-      clearTokens();
-      setUser(null);
-      return false;
-    }
-  }, [getRefreshToken, setTokens, clearTokens]);
+  }, [getAccessToken, clearTokens, refreshAccessToken]);
 
   // Login
-  const login = useCallback(async (username, password) => {
+  const login = useCallback(async (username: string, password: string): Promise<LoginResponse> => {
     const formData = new URLSearchParams();
     formData.append('username', username);
     formData.append('password', password);
@@ -121,7 +152,7 @@ export function AuthProvider({ children }) {
   }, [setTokens, fetchUser]);
 
   // Register
-  const register = useCallback(async (username, password, email = null) => {
+  const register = useCallback(async (username: string, password: string, email: string | null = null): Promise<User> => {
     const response = await apiClient.post('/api/auth/register', {
       username,
       password,
@@ -137,7 +168,7 @@ export function AuthProvider({ children }) {
   }, [clearTokens]);
 
   // Change password
-  const changePassword = useCallback(async (currentPassword, newPassword) => {
+  const changePassword = useCallback(async (currentPassword: string, newPassword: string): Promise<{ message: string }> => {
     const token = getAccessToken();
     const response = await apiClient.post('/api/auth/change-password', {
       current_password: currentPassword,
@@ -163,9 +194,12 @@ export function AuthProvider({ children }) {
           setUser({
             id: 0,
             username: 'anonymous',
-            role: 'Admin',
+            role: { id: 0, name: 'Admin', permissions: ['admin'], created_at: '', updated_at: '' },
             permissions: ['admin'],
-            is_active: true
+            is_active: true,
+            role_id: 0,
+            created_at: '',
+            updated_at: ''
           });
         }
       } catch (error) {
@@ -221,7 +255,7 @@ export function AuthProvider({ children }) {
     };
   }, [authEnabled, refreshAccessToken, getAccessToken]);
 
-  const value = {
+  const value: AuthContextValue = {
     user,
     loading,
     authEnabled,
@@ -245,7 +279,7 @@ export function AuthProvider({ children }) {
   );
 }
 
-export function useAuth() {
+export function useAuth(): AuthContextValue {
   const context = useContext(AuthContext);
   if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');

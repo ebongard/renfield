@@ -5,7 +5,52 @@
  * Models are loaded from /public/wakeword-models/
  */
 
-export const WAKEWORD_CONFIG = {
+// Keyword configuration type
+export interface KeywordConfig {
+  id: string;
+  label: string;
+  model: string;
+  description: string;
+}
+
+// Wake word settings type
+export interface WakeWordSettings {
+  enabled: boolean;
+  keyword: string;
+  threshold: number;
+  audioFeedback: boolean;
+}
+
+// Storage keys type
+interface StorageKeys {
+  enabled: string;
+  keyword: string;
+  threshold: string;
+  audioFeedback: string;
+}
+
+// Wake word defaults type
+interface WakeWordDefaults {
+  enabled: boolean;
+  keyword: string;
+  threshold: number;
+  cooldownMs: number;
+  audioFeedback: boolean;
+  gain: number;
+}
+
+// Main config type
+export interface WakeWordConfigType {
+  modelBasePath: string;
+  ortWasmPath: string;
+  availableKeywords: KeywordConfig[];
+  defaults: WakeWordDefaults;
+  storageKeys: StorageKeys;
+  vadHangoverFrames: number;
+  activationDelayMs: number;
+}
+
+export const WAKEWORD_CONFIG: WakeWordConfigType = {
   // Path to ONNX model files (relative to public folder)
   modelBasePath: '/wakeword-models',
 
@@ -70,10 +115,8 @@ export const WAKEWORD_CONFIG = {
 
 /**
  * Get the model file path for a keyword
- * @param {string} keywordId - The keyword identifier
- * @returns {string|null} - Full path to the model file or null if not found
  */
-export function getModelPath(keywordId) {
+export function getModelPath(keywordId: string): string | null {
   const keyword = WAKEWORD_CONFIG.availableKeywords.find(k => k.id === keywordId);
   if (!keyword) return null;
   return `${WAKEWORD_CONFIG.modelBasePath}/${keyword.model}`;
@@ -81,38 +124,39 @@ export function getModelPath(keywordId) {
 
 /**
  * Get keyword configuration by ID
- * @param {string} keywordId - The keyword identifier
- * @returns {object|null} - Keyword configuration or null if not found
  */
-export function getKeywordConfig(keywordId) {
+export function getKeywordConfig(keywordId: string): KeywordConfig | null {
   return WAKEWORD_CONFIG.availableKeywords.find(k => k.id === keywordId) || null;
 }
 
 /**
  * Load saved wake word settings from localStorage
- * @returns {object} - Merged settings with defaults
  */
-export function loadWakeWordSettings() {
+export function loadWakeWordSettings(): WakeWordSettings {
   const { defaults, storageKeys } = WAKEWORD_CONFIG;
 
   try {
     return {
       enabled: localStorage.getItem(storageKeys.enabled) === 'true',
       keyword: localStorage.getItem(storageKeys.keyword) || defaults.keyword,
-      threshold: parseFloat(localStorage.getItem(storageKeys.threshold)) || defaults.threshold,
+      threshold: parseFloat(localStorage.getItem(storageKeys.threshold) || '') || defaults.threshold,
       audioFeedback: localStorage.getItem(storageKeys.audioFeedback) !== 'false',
     };
   } catch {
     // localStorage not available (e.g., private browsing)
-    return { ...defaults };
+    return {
+      enabled: defaults.enabled,
+      keyword: defaults.keyword,
+      threshold: defaults.threshold,
+      audioFeedback: defaults.audioFeedback,
+    };
   }
 }
 
 /**
  * Save wake word settings to localStorage
- * @param {object} settings - Settings to save
  */
-export function saveWakeWordSettings(settings) {
+export function saveWakeWordSettings(settings: Partial<WakeWordSettings>): void {
   const { storageKeys } = WAKEWORD_CONFIG;
 
   try {

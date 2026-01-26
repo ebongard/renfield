@@ -1,19 +1,33 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 
-const ThemeContext = createContext(undefined);
+// Theme types
+export type ThemePreference = 'light' | 'dark' | 'system';
+
+interface ThemeContextValue {
+  theme: ThemePreference;
+  isDark: boolean;
+  setTheme: (theme: ThemePreference) => void;
+  toggleTheme: () => void;
+}
+
+const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 // LocalStorage key for theme preference
 const THEME_STORAGE_KEY = 'renfield_theme';
+
+interface ThemeProviderProps {
+  children: ReactNode;
+}
 
 /**
  * ThemeProvider manages the application's color scheme.
  * Supports 'light', 'dark', and 'system' (follows OS preference).
  */
-export function ThemeProvider({ children }) {
+export function ThemeProvider({ children }: ThemeProviderProps) {
   // Initialize theme from localStorage or default to 'system'
-  const [theme, setTheme] = useState(() => {
+  const [theme, setThemeState] = useState<ThemePreference>(() => {
     if (typeof window === 'undefined') return 'system';
-    return localStorage.getItem(THEME_STORAGE_KEY) || 'system';
+    return (localStorage.getItem(THEME_STORAGE_KEY) as ThemePreference) || 'system';
   });
 
   // Computed dark mode state
@@ -22,7 +36,7 @@ export function ThemeProvider({ children }) {
   // Update the actual theme based on preference
   useEffect(() => {
     const updateTheme = () => {
-      let shouldBeDark;
+      let shouldBeDark: boolean;
 
       if (theme === 'system') {
         // Follow system preference
@@ -68,17 +82,16 @@ export function ThemeProvider({ children }) {
 
   /**
    * Set theme preference
-   * @param {'light' | 'dark' | 'system'} newTheme
    */
-  const setThemePreference = (newTheme) => {
-    setTheme(newTheme);
+  const setTheme = (newTheme: ThemePreference) => {
+    setThemeState(newTheme);
   };
 
   /**
    * Toggle between light and dark (ignores system)
    */
   const toggleTheme = () => {
-    setTheme(prev => {
+    setThemeState(prev => {
       if (prev === 'system') {
         // If system, toggle based on current computed state
         return isDark ? 'light' : 'dark';
@@ -87,10 +100,10 @@ export function ThemeProvider({ children }) {
     });
   };
 
-  const value = {
+  const value: ThemeContextValue = {
     theme,           // 'light' | 'dark' | 'system'
     isDark,          // computed boolean
-    setTheme: setThemePreference,
+    setTheme,
     toggleTheme
   };
 
@@ -104,7 +117,7 @@ export function ThemeProvider({ children }) {
 /**
  * Hook to access theme context
  */
-export function useTheme() {
+export function useTheme(): ThemeContextValue {
   const context = useContext(ThemeContext);
   if (context === undefined) {
     throw new Error('useTheme must be used within a ThemeProvider');

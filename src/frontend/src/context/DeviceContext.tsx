@@ -5,27 +5,104 @@
  * Manages the WebSocket connection to /ws/device endpoint.
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect, ReactNode } from 'react';
 import {
   useDeviceConnection,
   DEVICE_TYPES,
   CONNECTION_STATES,
   DEVICE_STATES,
 } from '../hooks/useDeviceConnection';
+import type {
+  DeviceType,
+  DeviceState,
+  ConnectionState,
+  DeviceCapabilities,
+  DeviceConfig,
+  WebSocketMessage,
+  TranscriptionMessage,
+  ActionMessage,
+  TtsAudioMessage,
+  ResponseTextMessage,
+  StreamMessage,
+  SessionEndMessage,
+  ErrorMessage,
+} from '../types/device';
+
+// Message handlers type
+interface MessageHandlers {
+  onMessage: (data: WebSocketMessage) => void;
+  onStateChange: (state: DeviceState) => void;
+  onTranscription: (data: TranscriptionMessage) => void;
+  onAction: (data: ActionMessage) => void;
+  onTtsAudio: (data: TtsAudioMessage) => void;
+  onResponseText: (data: ResponseTextMessage) => void;
+  onStream: (data: StreamMessage) => void;
+  onSessionEnd: (data: SessionEndMessage) => void;
+  onError: (data: ErrorMessage) => void;
+}
+
+// Device context value type
+interface DeviceContextValue {
+  // Connection state
+  connectionState: ConnectionState;
+  isConnected: boolean;
+  isConnecting: boolean;
+
+  // Device info
+  deviceId: string | null;
+  deviceType: DeviceType;
+  deviceName: string | null;
+  roomId: number | null;
+  roomName: string | null;
+  capabilities: DeviceCapabilities;
+
+  // Session state
+  deviceState: DeviceState;
+  currentSessionId: string | null;
+  error: Error | null;
+
+  // Actions
+  connect: (config?: Partial<DeviceConfig>) => Promise<{ deviceId: string; roomId: number }>;
+  disconnect: () => void;
+  sendText: (content: string) => void;
+  startSession: () => void;
+  sendWakeWordDetected: (keyword: string, confidence: number) => void;
+  sendAudioChunk: (chunkBase64: string, sequence: number) => void;
+  sendAudioEnd: (reason?: string) => void;
+
+  // Utilities
+  getStoredConfig: () => DeviceConfig | null;
+  clearStoredConfig: () => void;
+
+  // Setup state
+  isSetupComplete: boolean;
+  showSetupModal: boolean;
+  setShowSetupModal: (show: boolean) => void;
+
+  // Setup actions
+  handleSetupComplete: (config: DeviceConfig) => void;
+  registerHandlers: (handlers: Partial<MessageHandlers>) => void;
+  autoConnect: () => void;
+  resetSetup: () => void;
+}
 
 // Create context
-const DeviceContext = createContext(null);
+const DeviceContext = createContext<DeviceContextValue | null>(null);
+
+interface DeviceProviderProps {
+  children: ReactNode;
+}
 
 /**
  * DeviceProvider component
  */
-export function DeviceProvider({ children }) {
+export function DeviceProvider({ children }: DeviceProviderProps) {
   // Setup state
   const [isSetupComplete, setIsSetupComplete] = useState(false);
   const [showSetupModal, setShowSetupModal] = useState(false);
 
   // Message callbacks - will be populated by consumers
-  const [messageHandlers, setMessageHandlers] = useState({
+  const [messageHandlers, setMessageHandlers] = useState<MessageHandlers>({
     onMessage: () => {},
     onStateChange: () => {},
     onTranscription: () => {},
@@ -57,16 +134,17 @@ export function DeviceProvider({ children }) {
     if (storedConfig && storedConfig.room) {
       setIsSetupComplete(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Handle setup completion
-  const handleSetupComplete = useCallback((config) => {
+  const handleSetupComplete = useCallback((_config: DeviceConfig) => {
     setIsSetupComplete(true);
     setShowSetupModal(false);
   }, []);
 
   // Register message handlers
-  const registerHandlers = useCallback((handlers) => {
+  const registerHandlers = useCallback((handlers: Partial<MessageHandlers>) => {
     setMessageHandlers(prev => ({
       ...prev,
       ...handlers,
@@ -74,7 +152,7 @@ export function DeviceProvider({ children }) {
   }, []);
 
   // Connect with existing config
-  const autoConnect = useCallback(() => {
+  const autoConnectFn = useCallback(() => {
     const storedConfig = deviceConnection.getStoredConfig();
     if (storedConfig) {
       deviceConnection.connect(storedConfig);
@@ -89,7 +167,7 @@ export function DeviceProvider({ children }) {
   }, [deviceConnection]);
 
   // Context value
-  const value = {
+  const value: DeviceContextValue = {
     // Connection state
     ...deviceConnection,
 
@@ -101,7 +179,7 @@ export function DeviceProvider({ children }) {
     // Actions
     handleSetupComplete,
     registerHandlers,
-    autoConnect,
+    autoConnect: autoConnectFn,
     resetSetup,
   };
 
@@ -115,7 +193,7 @@ export function DeviceProvider({ children }) {
 /**
  * Hook to use device context
  */
-export function useDevice() {
+export function useDevice(): DeviceContextValue {
   const context = useContext(DeviceContext);
   if (!context) {
     throw new Error('useDevice must be used within a DeviceProvider');

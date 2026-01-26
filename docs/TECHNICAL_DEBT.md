@@ -233,11 +233,25 @@ pages/ChatPage/
 
 ---
 
-#### 3. Keine TypeScript Migration
+#### 3. TypeScript Migration (teilweise abgeschlossen)
 
-**Problem:** Gesamtes Frontend in JavaScript (JSX), keine Type-Safety.
+**Status:** ✅ Grundgerüst migriert (2026-01-26)
 
-**Empfehlung:** Schrittweise TypeScript Migration für neue Dateien.
+**Migrierte Dateien:**
+- `tsconfig.json`, `tsconfig.node.json` - TypeScript Konfiguration
+- `vite.config.ts` - Vite Config mit Path Aliases
+- `src/types/` - Type Definitionen (device, chat, api)
+- `src/hooks/*.ts` - Alle Hooks (useDeviceConnection, useChatSessions, useWakeWord, useCapabilities)
+- `src/context/*.tsx` - Alle Contexts (Auth, Device, Theme)
+- `src/utils/*.ts` - Utilities (axios, debug)
+- `src/config/wakeword.ts` - Wake Word Konfiguration
+
+**Noch zu migrieren:**
+- `src/pages/*.jsx` - Seiten-Komponenten
+- `src/components/*.jsx` - UI-Komponenten
+- `src/main.jsx`, `src/App.jsx` - Entry Points
+
+**Konfiguration:** Permissive Settings (`strict: false`, `allowJs: true`) für schrittweise Migration.
 
 ---
 
@@ -525,7 +539,7 @@ Bereits gepinnte Images:
 
 ### Mittelfristig (1-3 Monate)
 
-9. ⬜ TypeScript Migration (Frontend)
+9. 🔄 TypeScript Migration (Frontend) - Grundgerüst fertig (2026-01-26)
 10. ⬜ Test-Coverage erhöhen auf 60%+
 11. ⬜ Dependency Updates (Minor)
 
@@ -541,6 +555,7 @@ Bereits gepinnte Images:
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | TypeScript Migration: Hooks, Context, Utils, Types migriert; permissive Config (#38) |
 | 2026-01-26 | Frontend Multi-Stage Build: 624MB → 155MB (75% Reduktion), nginx.conf für SPA (#37) |
 | 2026-01-26 | Secrets Management dokumentiert: Docker Secrets, Vault, Kubernetes (#37) |
 | 2026-01-26 | REST API Rate Limiting implementiert: slowapi, auth 10/min, voice 30/min, chat 60/min (#36) |
