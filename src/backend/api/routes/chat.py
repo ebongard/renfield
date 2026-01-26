@@ -1,7 +1,7 @@
 """
 Chat API Routes
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional
 from loguru import logger
@@ -11,6 +11,8 @@ from sqlalchemy import select, func
 from services.database import get_db
 from services.ollama_service import OllamaService
 from services.auth_service import get_current_user
+from services.api_rate_limiter import limiter
+from utils.config import settings
 from models.database import Conversation, Message, User
 from datetime import datetime
 import uuid
@@ -28,40 +30,42 @@ class ChatResponse(BaseModel):
     intent: Optional[dict] = None
 
 @router.post("/send", response_model=ChatResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def send_message(
-    request: ChatRequest,
+    request: Request,
+    chat_request: ChatRequest,
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_current_user)
 ):
     """Nachricht senden und Antwort erhalten"""
     try:
-        logger.info(f"📨 Neue Nachricht: '{request.message[:100]}'")
-        
+        logger.info(f"📨 Neue Nachricht: '{chat_request.message[:100]}'")
+
         # Session ID generieren falls nicht vorhanden
-        session_id = request.session_id or str(uuid.uuid4())
-        
+        session_id = chat_request.session_id or str(uuid.uuid4())
+
         # Conversation in DB speichern/laden
         result = await db.execute(
             select(Conversation).where(Conversation.session_id == session_id)
         )
         conversation = result.scalar_one_or_none()
-        
+
         if not conversation:
             conversation = Conversation(session_id=session_id)
             db.add(conversation)
             await db.commit()
             await db.refresh(conversation)
-        
+
         # User Message speichern
         user_msg = Message(
             conversation_id=conversation.id,
             role="user",
-            content=request.message
+            content=chat_request.message
         )
         db.add(user_msg)
-        
+
         # Kontext aus DB laden falls nicht übergeben
-        context = request.context or []
+        context = chat_request.context or []
         if not context:
             # Letzte 10 Nachrichten laden
             result = await db.execute(
@@ -82,7 +86,7 @@ async def send_message(
         
         # Intent extrahieren
         logger.info("🔍 Extrahiere Intent...")
-        intent = await ollama.extract_intent(request.message)
+        intent = await ollama.extract_intent(chat_request.message)
         logger.info(f"🎯 Erkannter Intent: {intent.get('intent')} (confidence: {intent.get('confidence', 0):.2f})")
         
         # Action ausführen falls nötig
@@ -99,7 +103,7 @@ async def send_message(
             # Erfolgreiche Aktion - nutze Ergebnis für Antwort
             enhanced_prompt = f"""Du bist Renfield, ein persönlicher Assistent.
 
-Der Nutzer hat gefragt: "{request.message}"
+Der Nutzer hat gefragt: "{chat_request.message}"
 
 Die Aktion wurde ausgeführt mit folgendem Ergebnis:
 {action_result.get('message')}
@@ -118,7 +122,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
         
         else:
             # Normale Konversation
-            response_text = await ollama.chat(request.message, context)
+            response_text = await ollama.chat(chat_request.message, context)
         
         # Assistant Message speichern
         assistant_msg = Message(

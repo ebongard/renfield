@@ -5,7 +5,7 @@ Multi-language support:
 - STT: Pass ?language=en to transcribe in a specific language
 - TTS: Pass {"language": "en"} to synthesize in a specific language
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.whisper_service import WhisperService
 from services.piper_service import PiperService
 from services.database import get_db
+from services.api_rate_limiter import limiter
 from utils.config import settings
 
 router = APIRouter()
@@ -30,7 +31,9 @@ class TTSRequest(BaseModel):
     language: Optional[str] = None  # Language code (e.g., 'de', 'en')
 
 @router.post("/stt")
+@limiter.limit(settings.api_rate_limit_voice)
 async def speech_to_text(
+    request: Request,
     audio: UploadFile = File(...),
     language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)
@@ -107,7 +110,8 @@ async def speech_to_text(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("/tts")
-async def text_to_speech(request: TTSRequest):
+@limiter.limit(settings.api_rate_limit_voice)
+async def text_to_speech(request: Request, tts_request: TTSRequest):
     """
     Text-to-Speech: Text zu Audio konvertieren.
 
@@ -115,16 +119,16 @@ async def text_to_speech(request: TTSRequest):
     """
     try:
         # Validate language if provided
-        language = request.language
+        language = tts_request.language
         if language and language.lower() not in settings.supported_languages_list:
             logger.warning(f"⚠️ Unsupported language '{language}', falling back to default")
             language = None
 
         effective_language = language or settings.default_language
-        logger.info(f"🔊 TTS request: {len(request.text)} chars, language: {effective_language}")
+        logger.info(f"🔊 TTS request: {len(tts_request.text)} chars, language: {effective_language}")
 
         # TTS generieren with language support
-        audio_bytes = await piper_service.synthesize_to_bytes(request.text, language=language)
+        audio_bytes = await piper_service.synthesize_to_bytes(tts_request.text, language=language)
 
         if not audio_bytes:
             raise HTTPException(status_code=400, detail="TTS-Generierung fehlgeschlagen")
@@ -170,7 +174,9 @@ async def get_tts_cache(audio_id: str):
 
 
 @router.post("/voice-chat")
+@limiter.limit(settings.api_rate_limit_voice)
 async def voice_chat(
+    request: Request,
     audio: UploadFile = File(...),
     language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)

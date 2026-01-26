@@ -149,6 +149,14 @@ class Settings(BaseSettings):
     ws_rate_limit_per_second: int = 50  # Allows audio streaming + overhead
     ws_rate_limit_per_minute: int = 1000  # Allows longer recordings and multiple interactions
 
+    # REST API Rate Limiting
+    api_rate_limit_enabled: bool = True
+    api_rate_limit_default: str = "100/minute"  # Default rate limit for most endpoints
+    api_rate_limit_auth: str = "10/minute"      # Stricter limit for auth endpoints (login, register)
+    api_rate_limit_voice: str = "30/minute"     # Voice endpoints (STT, TTS)
+    api_rate_limit_chat: str = "60/minute"      # Chat endpoints
+    api_rate_limit_admin: str = "200/minute"    # Admin endpoints (higher limit)
+
     # WebSocket Connection Limits
     ws_max_connections_per_ip: int = 10
     ws_max_message_size: int = 1_000_000  # 1MB max message size

@@ -9,7 +9,7 @@ Provides endpoints for user authentication:
 """
 from datetime import datetime
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, Field, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +29,8 @@ from services.auth_service import (
     get_current_user,
     validate_password,
 )
+from services.api_rate_limiter import limiter
+from utils.config import settings
 from models.database import User, Role
 from models.permissions import get_all_permissions
 from utils.config import settings
@@ -96,7 +98,9 @@ class AuthStatusResponse(BaseModel):
 # =============================================================================
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit(settings.api_rate_limit_auth)
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
@@ -136,8 +140,10 @@ async def login(
 
 
 @router.post("/refresh", response_model=TokenResponse)
+@limiter.limit(settings.api_rate_limit_auth)
 async def refresh_token(
-    request: RefreshRequest,
+    request: Request,
+    refresh_request: RefreshRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -145,7 +151,7 @@ async def refresh_token(
 
     Refresh tokens are long-lived and can only be used to get new access tokens.
     """
-    payload = decode_token(request.refresh_token)
+    payload = decode_token(refresh_request.refresh_token)
 
     if not payload:
         raise HTTPException(
@@ -192,8 +198,10 @@ async def refresh_token(
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(settings.api_rate_limit_auth)
 async def register(
-    request: RegisterRequest,
+    request: Request,
+    register_request: RegisterRequest,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -209,7 +217,7 @@ async def register(
         )
 
     # Validate password
-    is_valid, error = validate_password(request.password)
+    is_valid, error = validate_password(register_request.password)
     if not is_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -234,10 +242,10 @@ async def register(
     # Create user
     user = await create_user(
         db=db,
-        username=request.username,
-        password=request.password,
+        username=register_request.username,
+        password=register_request.password,
         role_id=default_role.id,
-        email=request.email
+        email=register_request.email
     )
 
     logger.info(f"New user registered: {user.username}")
@@ -377,7 +385,9 @@ class VoiceAuthResponse(BaseModel):
 
 
 @router.post("/voice", response_model=VoiceAuthResponse)
+@limiter.limit(settings.api_rate_limit_auth)
 async def voice_authenticate(
+    request: Request,
     audio_file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db)
 ):

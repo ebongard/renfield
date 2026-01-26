@@ -53,6 +53,9 @@ zeroconf>=0.131.0
 opencv-python-headless>=4.9.0.80
 pillow>=10.2.0
 
+# Rate Limiting
+slowapi>=0.1.9                # Rate limiting for FastAPI
+
 # Utilities
 python-dotenv>=1.0.0
 pydantic>=2.9.0

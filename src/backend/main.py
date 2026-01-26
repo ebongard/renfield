@@ -25,6 +25,7 @@ from services.database import AsyncSessionLocal
 from services.ollama_service import OllamaService
 from services.device_manager import get_device_manager
 from services.websocket_auth import get_token_store
+from services.api_rate_limiter import setup_rate_limiter
 from utils.config import settings
 
 # FastAPI App erstellen
@@ -47,6 +48,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+
+# REST API Rate Limiting
+setup_rate_limiter(app)
 
 # REST API Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])

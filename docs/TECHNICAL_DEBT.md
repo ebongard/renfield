@@ -432,22 +432,31 @@ Bereits gepinnte Images:
 
 ---
 
-#### ~~4. Rate Limiting~~ ✅ Dokumentiert
+#### ~~4. Rate Limiting~~ ✅ Behoben
 
-**Status:** Überprüft am 2026-01-26 - Teilweise implementiert
+**Status:** Vollständig implementiert am 2026-01-26
 
-**Bereits implementiert:**
+**Implementiert:**
+- ✅ **REST API Rate Limiting**: `services/api_rate_limiter.py`
+  - Verwendet slowapi für FastAPI
+  - Konfigurierbare Limits via `.env`:
+    - `api_rate_limit_default: 100/minute` (Standard)
+    - `api_rate_limit_auth: 10/minute` (Login, Register, Token Refresh, Voice Auth)
+    - `api_rate_limit_voice: 30/minute` (STT, TTS, Voice-Chat)
+    - `api_rate_limit_chat: 60/minute` (Chat Send)
+    - `api_rate_limit_admin: 200/minute` (Admin Endpoints)
+  - X-Forwarded-For Header Support für Reverse Proxies
+  - JSON Error Response mit Retry-After Header
 - ✅ **WebSocket Rate Limiting**: `websocket_rate_limiter.py`
   - Chat, Device, Satellite Handler
   - Konfigurierbar: `ws_rate_limit_per_second`, `ws_rate_limit_per_minute`
 - ✅ **Plugin Rate Limiting**: Per-Plugin in YAML
   - Weather: 60/min, News: 100/min, Search: 120/min
 
-**Nicht implementiert:**
-- ⚠️ REST API: Keine globalen Rate Limits für HTTP-Endpoints
-
-**Entscheidung:** Für selbst-gehostete Anwendung im privaten Netzwerk akzeptabel.
-WebSocket (Hauptangriffsfläche) und Plugins (externe APIs) sind geschützt.
+**Angewandt auf:**
+- `api/routes/auth.py`: login, register, refresh, voice (10/min)
+- `api/routes/voice.py`: stt, tts, voice-chat (30/min)
+- `api/routes/chat.py`: send (60/min)
 
 ---
 
@@ -515,6 +524,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | REST API Rate Limiting implementiert: slowapi, auth 10/min, voice 30/min, chat 60/min (#36) |
 | 2026-01-26 | Docker Health Checks hinzugefügt: postgres, redis, ollama, backend, frontend, nginx (#36) |
 | 2026-01-26 | Python Dependencies dokumentiert: >= Ansatz für Docker akzeptabel (#36) |
 | 2026-01-26 | Rate Limiting dokumentiert: WebSocket + Plugins implementiert (#36) |
