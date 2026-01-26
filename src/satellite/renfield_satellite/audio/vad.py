@@ -21,7 +21,8 @@ class VADBackend(str, Enum):
 
 # Try to import optional VAD libraries
 WEBRTC_AVAILABLE = False
-SILERO_AVAILABLE = False
+SILERO_TORCH_AVAILABLE = False
+SILERO_ONNX_AVAILABLE = False
 
 try:
     import webrtcvad
@@ -31,9 +32,18 @@ except ImportError:
 
 try:
     import torch
-    SILERO_AVAILABLE = True
+    SILERO_TORCH_AVAILABLE = True
 except ImportError:
     torch = None
+
+try:
+    import onnxruntime
+    SILERO_ONNX_AVAILABLE = True
+except ImportError:
+    onnxruntime = None
+
+# Silero is available if either PyTorch or ONNX Runtime is installed
+SILERO_AVAILABLE = SILERO_TORCH_AVAILABLE or SILERO_ONNX_AVAILABLE
 
 
 class VoiceActivityDetector:
@@ -71,6 +81,8 @@ class VoiceActivityDetector:
         self._webrtc_vad = None
         self._silero_model = None
         self._silero_utils = None
+        self._silero_onnx = None
+        self._use_onnx = False
 
         # Initialize selected backend
         self._init_backend()
@@ -87,7 +99,7 @@ class VoiceActivityDetector:
 
         elif self.backend == VADBackend.SILERO:
             if not SILERO_AVAILABLE:
-                print("Silero VAD not available (torch not installed), falling back to RMS")
+                print("Silero VAD not available (neither torch nor onnxruntime installed), falling back to RMS")
                 self.backend = VADBackend.RMS
             else:
                 try:
@@ -101,20 +113,37 @@ class VoiceActivityDetector:
             print(f"VAD: RMS (threshold={self.rms_threshold})")
 
     def _load_silero_model(self):
-        """Load Silero VAD model"""
-        if torch is None:
-            raise RuntimeError("PyTorch not available")
+        """Load Silero VAD model (prefers ONNX Runtime for lower resource usage)"""
+        # Try ONNX Runtime first (more lightweight for embedded systems)
+        if SILERO_ONNX_AVAILABLE:
+            try:
+                self._silero_onnx = SileroVADLite(
+                    threshold=self.silero_threshold,
+                    sample_rate=self.sample_rate,
+                )
+                if self._silero_onnx.available:
+                    self._use_onnx = True
+                    print("  Using ONNX Runtime backend")
+                    return
+            except Exception as e:
+                print(f"  ONNX loading failed: {e}")
 
-        # Load Silero VAD model from torch hub
-        self._silero_model, self._silero_utils = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            onnx=False,  # Use PyTorch model
-        )
+        # Fall back to PyTorch
+        if SILERO_TORCH_AVAILABLE:
+            # Load Silero VAD model from torch hub
+            self._silero_model, self._silero_utils = torch.hub.load(
+                repo_or_dir='snakers4/silero-vad',
+                model='silero_vad',
+                force_reload=False,
+                onnx=False,  # Use PyTorch model
+            )
+            # Move to CPU and eval mode
+            self._silero_model.eval()
+            self._use_onnx = False
+            print("  Using PyTorch backend")
+            return
 
-        # Move to CPU and eval mode
-        self._silero_model.eval()
+        raise RuntimeError("Neither ONNX Runtime nor PyTorch available for Silero VAD")
 
     def is_speech(self, audio_bytes: bytes) -> bool:
         """
@@ -176,6 +205,11 @@ class VoiceActivityDetector:
 
     def _silero_detect(self, audio_bytes: bytes) -> bool:
         """Silero VAD speech detection"""
+        # Use ONNX backend if available
+        if self._use_onnx and self._silero_onnx is not None:
+            return self._silero_onnx.is_speech(audio_bytes)
+
+        # Use PyTorch backend
         if self._silero_model is None:
             return self._rms_detect(audio_bytes)
 
@@ -208,25 +242,37 @@ class VoiceActivityDetector:
         Returns:
             Speech probability (0-1)
         """
-        if self.backend == VADBackend.SILERO and self._silero_model is not None:
-            try:
-                audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
-                audio = audio / 32768.0
-                audio_tensor = torch.from_numpy(audio)
-                return self._silero_model(audio_tensor, self.sample_rate).item()
-            except Exception:
-                pass
+        if self.backend == VADBackend.SILERO:
+            # ONNX backend
+            if self._use_onnx and self._silero_onnx is not None:
+                return self._silero_onnx.get_speech_probability(audio_bytes)
+
+            # PyTorch backend
+            if self._silero_model is not None:
+                try:
+                    audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+                    audio = audio / 32768.0
+                    audio_tensor = torch.from_numpy(audio)
+                    return self._silero_model(audio_tensor, self.sample_rate).item()
+                except Exception:
+                    pass
 
         # For other backends, return binary result
         return 1.0 if self.is_speech(audio_bytes) else 0.0
 
     def reset(self):
         """Reset VAD state (for backends that maintain state)"""
-        if self.backend == VADBackend.SILERO and self._silero_model is not None:
-            try:
-                self._silero_model.reset_states()
-            except Exception:
-                pass
+        if self.backend == VADBackend.SILERO:
+            # ONNX backend
+            if self._use_onnx and self._silero_onnx is not None:
+                self._silero_onnx.reset()
+
+            # PyTorch backend
+            if self._silero_model is not None:
+                try:
+                    self._silero_model.reset_states()
+                except Exception:
+                    pass
 
     @staticmethod
     def get_available_backends() -> list:
@@ -245,6 +291,8 @@ class SileroVADLite:
 
     This is more suitable for Raspberry Pi as it doesn't require
     the full PyTorch installation.
+
+    Supports both old model format (h/c separate) and new format (combined state).
     """
 
     def __init__(
@@ -265,8 +313,8 @@ class SileroVADLite:
         self.sample_rate = sample_rate
         self.model_path = model_path
         self._session = None
-        self._h = None
-        self._c = None
+        self._state = None
+        self._use_new_format = True  # Detect based on model inputs
 
         # Try to load ONNX model
         self._load_model()
@@ -275,10 +323,10 @@ class SileroVADLite:
         """Load ONNX model"""
         try:
             import onnxruntime as ort
+            import os
 
             if self.model_path is None:
                 # Try default locations
-                import os
                 possible_paths = [
                     "/opt/renfield-satellite/models/silero_vad.onnx",
                     "models/silero_vad.onnx",
@@ -291,19 +339,24 @@ class SileroVADLite:
 
             if self.model_path is None or not os.path.exists(self.model_path):
                 print("Silero VAD ONNX model not found")
-                print("Download from: https://github.com/snakers4/silero-vad/raw/master/files/silero_vad.onnx")
+                print("Download from: https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx")
                 return
 
             # Create ONNX session
             sess_options = ort.SessionOptions()
             sess_options.intra_op_num_threads = 1
             sess_options.inter_op_num_threads = 1
+            sess_options.log_severity_level = 3  # Suppress warnings
 
             self._session = ort.InferenceSession(
                 self.model_path,
                 sess_options=sess_options,
                 providers=['CPUExecutionProvider']
             )
+
+            # Detect model format based on input names
+            input_names = [i.name for i in self._session.get_inputs()]
+            self._use_new_format = 'state' in input_names
 
             # Initialize hidden states
             self._reset_states()
@@ -316,10 +369,13 @@ class SileroVADLite:
 
     def _reset_states(self):
         """Reset LSTM hidden states"""
-        # Initialize with zeros - shape depends on model version
-        # Silero VAD v5 uses (2, 1, 64) for h and c
-        self._h = np.zeros((2, 1, 64), dtype=np.float32)
-        self._c = np.zeros((2, 1, 64), dtype=np.float32)
+        if self._use_new_format:
+            # New format: combined state tensor (2, batch, 128)
+            self._state = np.zeros((2, 1, 128), dtype=np.float32)
+        else:
+            # Old format: separate h and c tensors (2, 1, 64) each
+            self._h = np.zeros((2, 1, 64), dtype=np.float32)
+            self._c = np.zeros((2, 1, 64), dtype=np.float32)
 
     def is_speech(self, audio_bytes: bytes) -> bool:
         """
@@ -355,16 +411,23 @@ class SileroVADLite:
             # Reshape for model: (batch, samples)
             audio = audio.reshape(1, -1)
 
-            # Create input dict
-            ort_inputs = {
-                'input': audio,
-                'sr': np.array([self.sample_rate], dtype=np.int64),
-                'h': self._h,
-                'c': self._c,
-            }
-
-            # Run inference
-            output, self._h, self._c = self._session.run(None, ort_inputs)
+            if self._use_new_format:
+                # New model format with combined state
+                ort_inputs = {
+                    'input': audio,
+                    'sr': np.array(self.sample_rate, dtype=np.int64),
+                    'state': self._state,
+                }
+                output, self._state = self._session.run(None, ort_inputs)
+            else:
+                # Old model format with separate h/c
+                ort_inputs = {
+                    'input': audio,
+                    'sr': np.array([self.sample_rate], dtype=np.int64),
+                    'h': self._h,
+                    'c': self._c,
+                }
+                output, self._h, self._c = self._session.run(None, ort_inputs)
 
             return float(output[0][0])
 

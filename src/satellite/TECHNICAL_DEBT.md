@@ -2,13 +2,39 @@
 
 ## Renfield Satellite
 
-### Hardware Limitations (Pi Zero 2 W)
+### Hardware Status (Pi Zero 2 W with 64-bit OS)
 
 | Item | Status | Notes |
 |------|--------|-------|
-| **Silero VAD** | Blocked | PyTorch/ONNX Runtime nicht verfügbar auf ARM32. Workaround: WebRTC VAD |
-| **Noise Reduction** | Partial | `noisereduce` Installation hängt (matplotlib/contourpy). Workaround: `pip install noisereduce --no-deps` |
+| **Silero VAD** | ✅ Working | ONNX Runtime 1.23.2 funktioniert auf aarch64 |
+| **Noise Reduction** | ✅ Working | `noisereduce` vollständig installierbar auf 64-bit |
+| **ONNX Runtime** | ✅ Working | Version 1.23.2 mit CPUExecutionProvider |
 | **GPU Acceleration** | N/A | Pi Zero hat keine GPU für ML |
+
+---
+
+## Resolved Items
+
+### ✅ 64-bit OS für Pi Zero 2 W (RESOLVED 2026-01-26)
+
+Pi Zero 2 W läuft jetzt mit 64-bit OS (Debian 12 bookworm aarch64):
+- ONNX Runtime 1.23.2 funktioniert
+- Silero VAD (~2.3MB ONNX model) funktioniert
+- `noisereduce` vollständig installierbar
+- PyTorch nicht getestet (nicht benötigt dank ONNX)
+
+### ✅ Silero VAD (RESOLVED 2026-01-26)
+
+VAD-Modul unterstützt jetzt mehrere Backends:
+- RMS (immer verfügbar)
+- WebRTC VAD (leichtgewichtig)
+- Silero VAD via ONNX Runtime (beste Qualität auf 64-bit)
+
+Model-Download:
+```bash
+curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
+  'https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx'
+```
 
 ---
 
@@ -16,24 +42,14 @@
 
 ### High Priority
 
-- [ ] **Silero VAD für Pi 4/5**: Implementierung für leistungsstärkere Satellites
-  - PyTorch oder ONNX Runtime funktioniert auf Pi 4 (64-bit OS)
-  - Silero VAD bietet bessere Spracherkennung als WebRTC VAD
-  - Model: `silero_vad.onnx` (~2MB)
-
-- [ ] **64-bit OS für Pi Zero 2 W testen**: Könnte ONNX Runtime ermöglichen
-  - Pi Zero 2 W hat 64-bit CPU, läuft aber standardmäßig mit 32-bit OS
-  - 64-bit OS könnte PyTorch Lite / ONNX Runtime ermöglichen
-
 - [ ] **Audio Preprocessing auf Backend verschieben**: Für ressourcenschwache Satellites
   - Noise Reduction im Backend statt auf Satellite
   - Satellite sendet Raw Audio, Backend preprocessed vor Whisper
 
 ### Medium Priority
 
-- [ ] **Sprechererkennung (Phase 4)**
-  - pyannote.audio auf Backend (State-of-the-Art)
-  - Resemblyzer als leichtgewichtige Alternative
+- [x] **Sprechererkennung** ✅ (Bereits im Backend implementiert)
+  - SpeechBrain ECAPA-TDNN auf Backend
   - Speaker Enrollment via Web-UI
   - Personalisierte Antworten pro Benutzer
 
@@ -64,35 +80,48 @@
 
 ---
 
-## Bekannte Einschränkungen
+## Pi Zero 2 W mit 64-bit OS
 
-### Pi Zero 2 W
-- 512MB RAM → große Python-Pakete können nicht kompiliert werden
-- ARM32 (armv7l) → PyTorch nicht verfügbar
-- Keine piwheels für alle Pakete
+### Anforderungen
+- **64-bit OS erforderlich** (Debian 12 bookworm aarch64)
+- 512MB RAM ist ausreichend für ONNX Runtime
+- Custom GPCLK Overlay für ReSpeaker HAT (siehe `src/satellite/hardware/`)
 
-### Workarounds
-| Problem | Workaround |
-|---------|------------|
-| Silero VAD nicht möglich | WebRTC VAD (`pip install webrtcvad`) |
-| noisereduce hängt | `pip install noisereduce --no-deps` |
-| onnxruntime hängt | Swap erhöhen oder weglassen |
-| torch nicht verfügbar | Kein Workaround auf ARM32 |
+### Funktionierende Features (64-bit)
+| Feature | Status | Package |
+|---------|--------|---------|
+| RMS VAD | ✅ | numpy |
+| WebRTC VAD | ✅ | webrtcvad |
+| Silero VAD | ✅ | onnxruntime |
+| Noise Reduction | ✅ | noisereduce |
+| Wake Word (TFLite) | ✅ | pymicro-wakeword |
+| Wake Word (ONNX) | ✅ | pyopen-wakeword |
+
+### Installation auf 64-bit
+```bash
+# Standard-Installation (funktioniert vollständig)
+pip install -r requirements.txt
+
+# Silero VAD Model
+mkdir -p /opt/renfield-satellite/models
+curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
+  'https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx'
+```
 
 ---
 
-## Getestete Konfiguration
+## Legacy: Pi Zero 2 W mit 32-bit OS
 
-**Hardware:**
-- Raspberry Pi Zero 2 W
-- ReSpeaker 2-Mics Pi HAT V2.0
-- Raspberry Pi OS Lite (32-bit, Bookworm)
+> **Nicht mehr empfohlen.** Verwende 64-bit OS für volle Funktionalität.
 
-**Funktionierende VAD-Backends:**
-- ✅ RMS (immer verfügbar)
-- ✅ WebRTC VAD (`pip install webrtcvad`)
-- ❌ Silero VAD (PyTorch/ONNX nicht verfügbar)
+### Einschränkungen (32-bit)
+- ARM32 (armv7l) → PyTorch/ONNX Runtime nicht verfügbar
+- Silero VAD nicht möglich → WebRTC VAD als Alternative
+- noisereduce benötigt `--no-deps` Installation
 
-**Audio Preprocessing:**
-- ✅ Normalisierung (numpy only)
-- ⚠️ Noise Reduction (benötigt `--no-deps` Installation)
+### Workarounds (32-bit)
+| Problem | Workaround |
+|---------|------------|
+| Silero VAD nicht möglich | WebRTC VAD |
+| noisereduce hängt | `pip install noisereduce --no-deps` |
+| onnxruntime nicht verfügbar | Nicht möglich auf 32-bit |

@@ -1,5 +1,6 @@
 # Renfield Satellite Requirements
 # For Raspberry Pi Zero 2 W with ReSpeaker 2-Mics Pi HAT
+# Requires 64-bit OS (aarch64) for full feature support
 #
 # Inspired by OHF-Voice/linux-voice-assistant
 
@@ -16,9 +17,10 @@ numpy>=1.24.0
 # Audio preprocessing (optional but recommended for better recognition)
 noisereduce>=3.0.0  # Spectral noise reduction
 
-# Voice Activity Detection backends (optional)
-# webrtcvad>=2.0.10  # Google WebRTC VAD (fast, lightweight)
-# torch>=2.0.0       # For Silero VAD (ML-based, most accurate)
+# Voice Activity Detection backends
+webrtcvad>=2.0.10   # Google WebRTC VAD (fast, lightweight)
+onnxruntime>=1.17.0  # For Silero VAD on 64-bit systems (aarch64)
+# torch>=2.0.0       # PyTorch for Silero VAD (alternative, heavier)
 
 # Audio playback (using MPV for robust playback)
 python-mpv>=1.0.0
