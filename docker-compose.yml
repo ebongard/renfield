@@ -81,6 +81,7 @@ services:
       - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
@@ -121,6 +122,7 @@ services:
       - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface

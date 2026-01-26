@@ -737,6 +737,13 @@ class Satellite:
         Args:
             config: Server configuration to apply
         """
+        # Ensure model downloader has server URL for downloading missing models
+        model_downloader = get_model_downloader()
+        if self.ws_client.server_url:
+            model_downloader.set_server_url(self.ws_client.server_url)
+        if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
+            model_downloader.set_auth_token(self.ws_client._auth_token)
+
         keywords = config.wake_words or []
         active_keywords = []
         failed_keywords = []
@@ -761,7 +768,6 @@ class Satellite:
                     continue
 
                 # Check if model file exists locally
-                model_downloader = get_model_downloader()
                 if model_downloader.is_model_available(keyword):
                     print(f"✓ Keyword '{keyword}' available locally")
                     active_keywords.append(keyword)

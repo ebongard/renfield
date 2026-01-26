@@ -63,3 +63,7 @@ secrets/
 # Coverage
 coverage/
 *.lcov
+
+# Wake word models (binary files)
+data/wakeword-models/*.tflite
+data/wakeword-models/*.onnx

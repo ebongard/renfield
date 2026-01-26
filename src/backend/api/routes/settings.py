@@ -238,9 +238,9 @@ async def get_single_device_sync_status(device_id: str):
 # Wake Word Model Endpoints (for satellite model download)
 # =============================================================================
 
-# Path to TFLite models (from openwakeword-wasm-browser npm package)
-# These are bundled in the frontend but can be served for satellite download
-TFLITE_MODELS_PATH = Path("/app/src/frontend/node_modules/openwakeword-wasm-browser/models")
+# Path to TFLite models for satellite download
+# These are mounted from data/wakeword-models/ via docker-compose
+TFLITE_MODELS_PATH = Path("/app/wakeword-models")
 
 
 def _find_model_file(model_id: str) -> Optional[Path]:
