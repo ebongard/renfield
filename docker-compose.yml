@@ -156,6 +156,7 @@ services:
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
+      target: development
     container_name: renfield-frontend
     environment:
       VITE_API_URL: http://localhost:8000

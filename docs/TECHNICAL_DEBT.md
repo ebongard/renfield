@@ -13,8 +13,8 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Backend | 0 | 1 | 4 | 7 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 5 |
 | Satellite | 0 | 3 | 2 | 5 | 5 |
-| Infrastruktur | 0 | 3 | 2 | 5 | 4 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **24** |
+| Infrastruktur | 0 | 3 | 2 | 6 | 6 |
+| **Gesamt** | **0** | **8** | **11** | **25** | **26** |
 
 ---
 
@@ -460,15 +460,32 @@ Bereits gepinnte Images:
 
 ---
 
-### 🟢 Niedrig
+### ~~🟢 Niedrig~~ → ✅ Behoben
 
-#### 5. Keine Multi-Stage Builds
+#### ~~5. Keine Multi-Stage Builds~~ ✅ Behoben
 
-Frontend Dockerfile könnte Multi-Stage für kleinere Images nutzen.
+**Status:** Behoben am 2026-01-26
 
-#### 6. Secrets in .env
+**Änderungen:**
+- Frontend Dockerfile auf Multi-Stage Build umgestellt:
+  - Stage 1: `base` - Dependencies installieren
+  - Stage 2: `development` - Vite Dev Server (624MB)
+  - Stage 3: `build` - Production Build
+  - Stage 4: `production` - Nginx mit statischen Dateien (155MB)
+- **75% Image-Größenreduktion** für Production
+- `nginx.conf` für SPA-Routing hinzugefügt
+- docker-compose Dateien für Build-Targets aktualisiert
 
-Besser: Docker Secrets oder Vault für Produktion.
+#### ~~6. Secrets in .env~~ ✅ Dokumentiert
+
+**Status:** Dokumentiert am 2026-01-26
+
+**Neue Dokumentation:** `docs/SECRETS_MANAGEMENT.md`
+- Docker Secrets Anleitung
+- HashiCorp Vault Integration
+- Kubernetes Secrets
+- Produktions-Checkliste
+- Scripts zum Generieren sicherer Secrets
 
 ---
 
@@ -516,7 +533,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 12. ⬜ Major Dependency Updates (React 19, etc.)
 13. ✅ ~~Hardware-Abstraktionsschicht (Satellite)~~ - Bereits vorhanden (2026-01-26)
-14. ⬜ Multi-Stage Docker Builds
+14. ✅ ~~Multi-Stage Docker Builds~~ (2026-01-26)
 
 ---
 
@@ -524,6 +541,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Frontend Multi-Stage Build: 624MB → 155MB (75% Reduktion), nginx.conf für SPA (#37) |
+| 2026-01-26 | Secrets Management dokumentiert: Docker Secrets, Vault, Kubernetes (#37) |
 | 2026-01-26 | REST API Rate Limiting implementiert: slowapi, auth 10/min, voice 30/min, chat 60/min (#36) |
 | 2026-01-26 | Docker Health Checks hinzugefügt: postgres, redis, ollama, backend, frontend, nginx (#36) |
 | 2026-01-26 | Python Dependencies dokumentiert: >= Ansatz für Docker akzeptabel (#36) |

@@ -126,30 +126,24 @@ services:
               capabilities: [gpu]
     # Backend exposed via nginx only
 
-  # Frontend Web-App (Production build)
+  # Frontend Web-App (Production build with nginx)
   frontend:
     build:
       context: ./src/frontend
       dockerfile: Dockerfile
+      target: production
       args:
-        NODE_ENV: production
+        VITE_API_URL: ${EXTERNAL_URL:-}/api
+        VITE_WS_URL: ${EXTERNAL_WS_URL:-}/ws
     container_name: renfield-frontend
-    environment:
-      VITE_API_URL: ${EXTERNAL_URL:-http://localhost}/api
-      VITE_WS_URL: ${EXTERNAL_WS_URL:-ws://localhost}/ws
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - renfield-network
     restart: always
-    healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000',(r)=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 30s
-    # Frontend exposed via nginx only
+    # Health check is built into the Dockerfile for production stage
+    # Frontend exposed via nginx reverse proxy only
 
   # Nginx Reverse Proxy (Production)
   nginx:
