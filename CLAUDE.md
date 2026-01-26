@@ -13,6 +13,19 @@ Renfield is a fully offline-capable, self-hosted AI assistant for smart home con
 - Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
+## KRITISCHE REGELN - IMMER BEACHTEN
+
+### Git Push Verbot
+
+**NIEMALS `git push` ohne explizite Erlaubnis des Benutzers ausführen!**
+
+- Nach jedem Commit MUSS gefragt werden: "Soll ich pushen?"
+- Erst nach ausdrücklicher Bestätigung ("ja", "push", etc.) darf gepusht werden
+- Diese Regel gilt auch nach Session-Komprimierung (Compact)
+- Bei Unsicherheit: IMMER fragen, NIEMALS automatisch pushen
+
+---
+
 ## Development Guidelines
 
 ### Test-Driven Development (TDD)
@@ -170,11 +183,13 @@ make test-coverage
 
 ### Git Workflow
 
-**WICHTIG: Diese Regeln gelten für alle Git-Operationen:**
+**⚠️ KRITISCH: Diese Regeln gelten für ALLE Git-Operationen:**
 
-1. **Niemals ohne Erlaubnis pushen**
-   - `git push` nur ausführen, wenn der Benutzer explizit die Erlaubnis erteilt
-   - Nach dem Commit fragen: "Soll ich pushen?"
+1. **NIEMALS ohne Erlaubnis pushen** ⛔
+   - `git push` NUR ausführen, wenn der Benutzer EXPLIZIT die Erlaubnis erteilt
+   - Nach JEDEM Commit MUSS gefragt werden: "Soll ich pushen?"
+   - Auf Bestätigung warten ("ja", "push", "ok") bevor git push ausgeführt wird
+   - Diese Regel überlebt Session-Komprimierung und MUSS immer beachtet werden
 
 2. **Issue-Nummer bei jedem Commit**
    - Vor jedem Commit nach der Issue-Nummer fragen
