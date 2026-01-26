@@ -684,7 +684,7 @@ On Raspberry Pi Zero 2 W (64-bit):
 
 | Component | CPU | Memory |
 |-----------|-----|--------|
-| Wake Word (pymicro-wakeword) | 10-15% | ~80MB |
+| Wake Word (openwakeword/ONNX) | 10-15% | ~80MB |
 | Silero VAD (ONNX) | 3-5% | ~30MB |
 | Audio capture | 5% | ~10MB |
 | Beamforming (optional) | 5-7% | ~5MB |
@@ -750,9 +750,10 @@ The ReSpeaker 2-Mics HAT works on 64-bit OS with a custom MCLK overlay (see step
 
 ### Why openwakeword instead of pymicro-wakeword?
 
-- `pymicro-wakeword` is now recommended on 64-bit (built-in TFLite models work)
-- `openwakeword` with ONNX runtime is an alternative with similar accuracy
-- Both provide accurate wake word detection
+- `openwakeword` with ONNX Runtime is now preferred on 64-bit ARM (aarch64)
+- `pymicro-wakeword`'s TFLite models are stateful streaming models that don't work correctly with `tflite_runtime` on ARM64 (outputs all zeros)
+- `openwakeword` ONNX models work correctly and provide accurate wake word detection
+- The detector automatically prefers ONNX when available, with fallback to pymicro-wakeword for 32-bit systems
 
 ### Why PyAudio instead of soundcard?
 

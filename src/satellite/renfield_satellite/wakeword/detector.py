@@ -21,19 +21,36 @@ import numpy as np
 MICRO_WAKEWORD_AVAILABLE = False
 OPEN_WAKEWORD_AVAILABLE = False
 ONNX_WAKEWORD_AVAILABLE = False
+TFLITE_RUNTIME_AVAILABLE = False
+
+# Try tflite_runtime first (works better on ARM64)
+try:
+    import tflite_runtime.interpreter as tflite
+    TFLITE_RUNTIME_AVAILABLE = True
+except ImportError:
+    tflite = None
 
 try:
-    from pymicro_wakeword import MicroWakeWord, MicroWakeWordFeatures, Model as MicroModel
+    from pymicro_wakeword import MicroWakeWordFeatures, Model as MicroModel
+    # Only import MicroWakeWord if tflite_runtime is not available
+    if not TFLITE_RUNTIME_AVAILABLE:
+        from pymicro_wakeword import MicroWakeWord
+    else:
+        MicroWakeWord = None
     MICRO_WAKEWORD_AVAILABLE = True
-    # Map of built-in model names
+    # Map of built-in model names to their tflite files
     MICRO_BUILTIN_MODELS = {
         "okay_nabu": MicroModel.OKAY_NABU,
         "hey_jarvis": MicroModel.HEY_JARVIS,
         "alexa": MicroModel.ALEXA,
         "hey_mycroft": MicroModel.HEY_MYCROFT,
     }
+    # Get the path to pymicro_wakeword models
+    import pymicro_wakeword
+    MICRO_MODELS_PATH = Path(pymicro_wakeword.__file__).parent / "models"
 except ImportError:
     MICRO_BUILTIN_MODELS = {}
+    MICRO_MODELS_PATH = None
 
 try:
     from pyopen_wakeword import OpenWakeWord
@@ -54,10 +71,13 @@ class WakeWordModel:
     id: str
     name: str
     path: str
-    model_type: str  # "micro", "open", "onnx"
+    model_type: str  # "micro", "micro_tflite", "open", "onnx"
     threshold: float
-    model: object  # The actual model instance
+    model: object  # The actual model instance or tflite interpreter
     features: object = None  # Feature extractor (for micro models)
+    input_details: dict = None  # For tflite_runtime models
+    output_details: dict = None  # For tflite_runtime models
+    feature_buffer: list = None  # Buffer for accumulating features
 
 
 @dataclass
@@ -117,6 +137,7 @@ class WakeWordDetector:
         self._open_features = None
 
         print(f"Wake word frameworks available:")
+        print(f"  - tflite-runtime: {TFLITE_RUNTIME_AVAILABLE}")
         print(f"  - pymicro-wakeword: {MICRO_WAKEWORD_AVAILABLE}")
         print(f"  - pyopen-wakeword: {OPEN_WAKEWORD_AVAILABLE}")
         print(f"  - openwakeword (ONNX): {ONNX_WAKEWORD_AVAILABLE}")
@@ -233,8 +254,24 @@ class WakeWordDetector:
 
         # Load wake word models
         for keyword in self.keywords:
-            # First try built-in models (pymicro-wakeword)
             keyword_normalized = keyword.lower().replace("-", "_")
+
+            # First try openwakeword (ONNX) - works better on ARM64
+            if ONNX_WAKEWORD_AVAILABLE:
+                model_info = {
+                    "id": keyword,
+                    "name": keyword,
+                    "path": "builtin",
+                    "type": "onnx",
+                    "threshold": self.default_threshold,
+                }
+                model = self._load_model(model_info)
+                if model:
+                    self._wake_models[keyword] = model
+                    print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
+                    continue
+
+            # Fall back to pymicro-wakeword if ONNX not available
             if MICRO_WAKEWORD_AVAILABLE and keyword_normalized in MICRO_BUILTIN_MODELS:
                 model_info = {
                     "id": keyword,
@@ -246,7 +283,7 @@ class WakeWordDetector:
                 model = self._load_model(model_info)
                 if model:
                     self._wake_models[keyword] = model
-                    print(f"Loaded wake word: {keyword} (micro/builtin)")
+                    print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                     continue
 
             # Otherwise search in discovered models
@@ -261,8 +298,24 @@ class WakeWordDetector:
 
         # Load stop word models
         for stop_word in self.stop_words:
-            # First try built-in models
             stop_normalized = stop_word.lower().replace("-", "_")
+
+            # First try openwakeword (ONNX) - works better on ARM64
+            if ONNX_WAKEWORD_AVAILABLE:
+                model_info = {
+                    "id": stop_word,
+                    "name": stop_word,
+                    "path": "builtin",
+                    "type": "onnx",
+                    "threshold": self.default_threshold,
+                }
+                model = self._load_model(model_info)
+                if model:
+                    self._stop_models[stop_word] = model
+                    print(f"Loaded stop word: {stop_word} ({model.model_type}/builtin)")
+                    continue
+
+            # Fall back to pymicro-wakeword
             if MICRO_WAKEWORD_AVAILABLE and stop_normalized in MICRO_BUILTIN_MODELS:
                 model_info = {
                     "id": stop_word,
@@ -274,7 +327,7 @@ class WakeWordDetector:
                 model = self._load_model(model_info)
                 if model:
                     self._stop_models[stop_word] = model
-                    print(f"Loaded stop word: {stop_word} (micro/builtin)")
+                    print(f"Loaded stop word: {stop_word} ({model.model_type}/builtin)")
                     continue
 
             # Otherwise search in discovered models
@@ -307,28 +360,61 @@ class WakeWordDetector:
         model_type = model_info["type"]
         model_path = model_info["path"]
         model_id = model_info["id"].lower().replace("-", "_")
+        threshold = model_info.get("threshold", self.default_threshold)
 
         try:
             if model_type == "micro" and MICRO_WAKEWORD_AVAILABLE:
-                # Check if it's a built-in model
-                if model_id in MICRO_BUILTIN_MODELS:
-                    model = MicroWakeWord.from_builtin(MICRO_BUILTIN_MODELS[model_id])
-                else:
-                    # Load from file
-                    model = MicroWakeWord(model_path)
+                # Prefer tflite_runtime over pymicro_wakeword's C library (works better on ARM64)
+                if TFLITE_RUNTIME_AVAILABLE and MICRO_MODELS_PATH:
+                    # Get the tflite model path
+                    if model_id in MICRO_BUILTIN_MODELS:
+                        tflite_path = MICRO_MODELS_PATH / f"{model_id}.tflite"
+                    else:
+                        tflite_path = Path(model_path)
 
-                # Create feature extractor for this model
-                features = MicroWakeWordFeatures()
+                    if tflite_path.exists():
+                        # Load with tflite_runtime
+                        interpreter = tflite.Interpreter(model_path=str(tflite_path))
+                        interpreter.allocate_tensors()
 
-                return WakeWordModel(
-                    id=model_info["id"],
-                    name=model_info["name"],
-                    path=model_path,
-                    model_type="micro",
-                    threshold=model_info.get("threshold", self.default_threshold),
-                    model=model,
-                    features=features,
-                )
+                        input_details = interpreter.get_input_details()[0]
+                        output_details = interpreter.get_output_details()[0]
+
+                        # Create feature extractor
+                        features = MicroWakeWordFeatures()
+
+                        return WakeWordModel(
+                            id=model_info["id"],
+                            name=model_info["name"],
+                            path=str(tflite_path),
+                            model_type="micro_tflite",
+                            threshold=threshold,
+                            model=interpreter,
+                            features=features,
+                            input_details=input_details,
+                            output_details=output_details,
+                            feature_buffer=[],
+                        )
+
+                # Fall back to pymicro_wakeword's C library
+                if MicroWakeWord is not None:
+                    if model_id in MICRO_BUILTIN_MODELS:
+                        model = MicroWakeWord.from_builtin(MICRO_BUILTIN_MODELS[model_id])
+                    else:
+                        model = MicroWakeWord(model_path)
+
+                    model.probability_cutoff = threshold
+                    features = MicroWakeWordFeatures()
+
+                    return WakeWordModel(
+                        id=model_info["id"],
+                        name=model_info["name"],
+                        path=model_path,
+                        model_type="micro",
+                        threshold=threshold,
+                        model=model,
+                        features=features,
+                    )
 
             elif model_type == "open" and OPEN_WAKEWORD_AVAILABLE:
                 config_path = model_info.get("config_path")
@@ -346,13 +432,19 @@ class WakeWordDetector:
                 )
 
             elif model_type == "onnx" and ONNX_WAKEWORD_AVAILABLE:
-                # Load ONNX wake word model
-                # Only pass the actual wake word model file, not preprocessing models
-                # openwakeword will find melspectrogram.onnx and embedding_model.onnx automatically
-                model = OWWModel(
-                    wakeword_models=[model_path],
-                    inference_framework="onnx",
-                )
+                # Load ONNX wake word model using openwakeword
+                if model_path == "builtin":
+                    # Use builtin model name
+                    model = OWWModel(
+                        wakeword_models=[model_id],
+                        inference_framework="onnx",
+                    )
+                else:
+                    # Use custom model path
+                    model = OWWModel(
+                        wakeword_models=[model_path],
+                        inference_framework="onnx",
+                    )
                 return WakeWordModel(
                     id=model_info["id"],
                     name=model_info["name"],
@@ -422,8 +514,58 @@ class WakeWordDetector:
             Tuple of (detected: bool, confidence: float)
         """
         try:
-            if model.model_type == "micro":
-                # pymicro-wakeword uses streaming feature extraction
+            if model.model_type == "micro_tflite":
+                # Using tflite_runtime directly (works better on ARM64)
+                STRIDE = 3  # Model expects [1, 3, 40] input
+                input_scale = model.input_details["quantization"][0]
+                input_zero = model.input_details["quantization"][1]
+                out_scale = model.output_details["quantization"][0]
+                out_zero = model.output_details["quantization"][1]
+
+                max_prob = 0.0
+                detected = False
+                feature_count = 0
+
+                for features in model.features.process_streaming(audio_bytes):
+                    model.feature_buffer.append(features)
+                    feature_count += 1
+
+                    if len(model.feature_buffer) >= STRIDE:
+                        # Concatenate features and quantize to int8
+                        concat = np.concatenate(model.feature_buffer[:STRIDE], axis=1)
+                        quant = np.round(concat / input_scale + input_zero).clip(-128, 127).astype(np.int8)
+
+                        # Run inference
+                        model.model.set_tensor(model.input_details["index"], quant)
+                        model.model.invoke()
+                        output = model.model.get_tensor(model.output_details["index"])
+
+                        # Dequantize output
+                        prob = (float(output[0][0]) - out_zero) * out_scale
+                        if prob > max_prob:
+                            max_prob = prob
+
+                        # Debug: print high probabilities
+                        if prob > 0.1:  # Only log if probability > 10%
+                            print(f"  [WW] {model.id}: prob={prob:.2%} (threshold={model.threshold:.0%})")
+
+                        if prob >= model.threshold:
+                            detected = True
+                            model.feature_buffer.clear()
+                            print(f"  [WW] DETECTED {model.id}: prob={prob:.2%}")
+                            return True, prob
+
+                        # Slide the buffer
+                        model.feature_buffer = model.feature_buffer[STRIDE:]
+
+                # Debug: log high probabilities
+                if max_prob > 0.1:
+                    print(f"  [WW] {model.id}: prob={max_prob:.2%} (threshold={model.threshold:.0%})")
+
+                return detected, max_prob
+
+            elif model.model_type == "micro":
+                # pymicro-wakeword uses streaming feature extraction (C library fallback)
                 # Audio must be 16-bit mono 16kHz, process in 10ms chunks
                 for features in model.features.process_streaming(audio_bytes):
                     if model.model.process_streaming(features):
@@ -446,17 +588,21 @@ class WakeWordDetector:
                 prediction = model.model.predict(audio_int16)
 
                 # Find the best matching score
+                max_score = 0.0
                 for key, score in prediction.items():
                     # Score is already a float
                     score_val = float(score) if not isinstance(score, float) else score
+                    if score_val > max_score:
+                        max_score = score_val
                     if score_val >= model.threshold:
+                        print(f"  [WW] DETECTED {model.id}: prob={score_val:.2%}")
                         return True, score_val
 
-                # Return max score even if below threshold
-                if prediction:
-                    max_score = max(prediction.values())
-                    return False, float(max_score)
-                return False, 0.0
+                # Debug: log high probabilities
+                if max_score > 0.1:
+                    print(f"  [WW] {model.id}: prob={max_score:.2%} (threshold={model.threshold:.0%})")
+
+                return False, max_score
 
         except Exception as e:
             print(f"Detection error for {model.id}: {e}")
@@ -466,10 +612,13 @@ class WakeWordDetector:
 
     def reset(self):
         """Reset detector state (call after wake word action completes)"""
-        # Reset ONNX models if needed
         for model in list(self._wake_models.values()) + list(self._stop_models.values()):
+            # Reset ONNX models
             if model.model_type == "onnx" and hasattr(model.model, "reset"):
                 model.model.reset()
+            # Clear feature buffers for tflite models
+            if model.model_type == "micro_tflite" and model.feature_buffer is not None:
+                model.feature_buffer.clear()
 
     def set_threshold(self, threshold: float, keyword: Optional[str] = None):
         """
@@ -527,8 +676,25 @@ class WakeWordDetector:
         if keyword in self._wake_models:
             return True
 
-        # First try built-in models (pymicro-wakeword)
         keyword_normalized = keyword.lower().replace("-", "_")
+
+        # First try openwakeword (ONNX) - works better on ARM64
+        if ONNX_WAKEWORD_AVAILABLE:
+            model_info = {
+                "id": keyword,
+                "name": keyword,
+                "path": "builtin",
+                "type": "onnx",
+                "threshold": self.default_threshold,
+            }
+            model = self._load_model(model_info)
+            if model:
+                self._wake_models[keyword] = model
+                self._loaded = True
+                print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
+                return True
+
+        # Fall back to pymicro-wakeword if ONNX not available
         if MICRO_WAKEWORD_AVAILABLE and keyword_normalized in MICRO_BUILTIN_MODELS:
             model_info = {
                 "id": keyword,
@@ -540,7 +706,8 @@ class WakeWordDetector:
             model = self._load_model(model_info)
             if model:
                 self._wake_models[keyword] = model
-                print(f"Loaded wake word: {keyword} (micro/builtin)")
+                self._loaded = True
+                print(f"Loaded wake word: {keyword} ({model.model_type}/builtin)")
                 return True
 
         # Otherwise search in discovered models (files)
@@ -550,6 +717,7 @@ class WakeWordDetector:
             model = self._load_model(model_info)
             if model:
                 self._wake_models[keyword] = model
+                self._loaded = True  # Mark as loaded
                 return True
         return False
 
