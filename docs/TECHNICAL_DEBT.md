@@ -12,9 +12,9 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 |---------|----------|--------|---------|--------|---------|
 | Backend | 0 | 1 | 4 | 7 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 5 |
-| Satellite | 0 | 3 | 2 | 5 | 3 |
+| Satellite | 0 | 3 | 2 | 5 | 5 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **19** |
+| **Gesamt** | **0** | **8** | **11** | **24** | **21** |
 
 ---
 
@@ -346,19 +346,35 @@ Nur eine zentrale ErrorBoundary, keine Feature-spezifischen.
 
 ---
 
-### 🟢 Niedrig
+### ~~🟢 Niedrig~~ → ✅ Dokumentiert
 
-#### 4. Pi Zero 2 W Einschränkungen (dokumentiert)
+#### ~~4. Pi Zero 2 W Einschränkungen~~ ✅ Dokumentiert
 
-- Kein PyTorch (ARM32)
-- Kein Silero VAD
-- 512MB RAM Limit
+**Status:** Bereits dokumentiert in `src/satellite/TECHNICAL_DEBT.md`
 
-Siehe: `src/satellite/TECHNICAL_DEBT.md`
+**Bekannte Einschränkungen:**
+- ARM32 (armv7l) → PyTorch nicht verfügbar
+- 512MB RAM → große Python-Pakete können nicht kompiliert werden
+- Kein Silero VAD → WebRTC VAD als Workaround
 
-#### 5. Logging Inkonsistenz
+**Workarounds dokumentiert:**
+- WebRTC VAD statt Silero
+- `pip install noisereduce --no-deps`
+- Swap erhöhen für große Pakete
 
-Mix aus `print()` und `logger`.
+#### ~~5. Logging~~ ✅ Dokumentiert
+
+**Status:** Überprüft am 2026-01-26 - Akzeptabel
+
+**Analyse:**
+- 307 `print()` Statements, 0 `logger` Statements
+- Kein Mix - durchgängig `print()` verwendet
+- Für Embedded-Gerät (Raspberry Pi) akzeptabel:
+  - `print()` → stdout → systemd/journald
+  - Einfacherer Code ohne Logger-Konfiguration
+  - Satellite läuft als Service, journalctl zeigt Logs
+
+**Entscheidung:** Keine Änderung erforderlich.
 
 ---
 
@@ -482,6 +498,8 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Pi Zero 2 W Einschränkungen dokumentiert: Bereits in src/satellite/TECHNICAL_DEBT.md (#34) |
+| 2026-01-26 | Satellite Logging dokumentiert: 307 print() konsistent, kein Mix (#34) |
 | 2026-01-26 | Satellite Bare Except Clauses behoben: 22 → spezifische Exceptions (#33) |
 | 2026-01-26 | satellite.py Größe dokumentiert: 875 Zeilen akzeptabel als Orchestrator (#33) |
 | 2026-01-26 | Hardware-Abstraktionsschicht dokumentiert: Mocks bereits in conftest.py (#33) |
