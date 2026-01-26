@@ -141,7 +141,7 @@ class VoiceActivityDetector:
             audio = np.frombuffer(audio_bytes, dtype=np.int16)
             rms = np.sqrt(np.mean(audio.astype(np.float32) ** 2))
             return rms >= self.rms_threshold
-        except:
+        except (ValueError, TypeError):
             return False
 
     def _webrtc_detect(self, audio_bytes: bytes) -> bool:
@@ -214,7 +214,7 @@ class VoiceActivityDetector:
                 audio = audio / 32768.0
                 audio_tensor = torch.from_numpy(audio)
                 return self._silero_model(audio_tensor, self.sample_rate).item()
-            except:
+            except Exception:
                 pass
 
         # For other backends, return binary result
@@ -225,7 +225,7 @@ class VoiceActivityDetector:
         if self.backend == VADBackend.SILERO and self._silero_model is not None:
             try:
                 self._silero_model.reset_states()
-            except:
+            except Exception:
                 pass
 
     @staticmethod

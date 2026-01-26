@@ -200,7 +200,7 @@ class AudioPreprocessor:
         try:
             audio = np.frombuffer(audio_bytes, dtype=np.int16)
             return float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-        except:
+        except (ValueError, TypeError):
             return 0.0
 
     def get_db(self, audio_bytes: bytes) -> float:

@@ -155,7 +155,7 @@ class SatelliteMonitor:
             try:
                 with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
                     self.temperature = float(f.read().strip()) / 1000.0
-            except:
+            except (OSError, ValueError):
                 self.temperature = 0.0
 
         except ImportError:
@@ -470,7 +470,7 @@ class SatelliteMonitor:
             print(f"  Satellite ID: {config.satellite_id}")
             print(f"  Room:         {config.room}")
             print(f"  Server:       {config.server_url}")
-        except:
+        except Exception:
             print(f"  {Colors.DIM}(Config not loaded){Colors.RESET}")
 
         print()

@@ -152,7 +152,7 @@ class AudioPlayback:
             try:
                 if 'tmp_path' in locals():
                     os.unlink(tmp_path)
-            except:
+            except OSError:
                 pass
 
     def play_file(self, file_path: str) -> bool:
@@ -206,7 +206,7 @@ class AudioPlayback:
         if self._player:
             try:
                 self._player.terminate()
-            except:
+            except Exception:
                 pass
             self._player = None
 
@@ -215,7 +215,7 @@ class AudioPlayback:
         if self._player:
             try:
                 self._player.stop()
-            except:
+            except Exception:
                 pass
         self._playing = False
 
@@ -230,7 +230,7 @@ class AudioPlayback:
         if self._player:
             try:
                 self._player.volume = self.volume
-            except:
+            except Exception:
                 pass
 
     @property

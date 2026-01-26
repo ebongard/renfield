@@ -697,7 +697,7 @@ class Satellite:
             try:
                 with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
                     metrics["temperature"] = round(float(f.read().strip()) / 1000.0, 1)
-            except:
+            except (OSError, ValueError):
                 pass
         except ImportError:
             pass

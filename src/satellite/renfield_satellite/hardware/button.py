@@ -190,7 +190,7 @@ class ButtonHandler:
             if self._lgpio_handle is not None:
                 try:
                     lgpio.gpiochip_close(self._lgpio_handle)
-                except:
+                except Exception:
                     pass
                 self._lgpio_handle = None
             return False
@@ -309,15 +309,15 @@ class ButtonHandler:
                 if self._lgpio_callback:
                     self._lgpio_callback.cancel()
                     self._lgpio_callback = None
-            except:
+            except Exception:
                 pass
             try:
                 lgpio.gpio_free(self._lgpio_handle, self.gpio_pin)
-            except:
+            except Exception:
                 pass
             try:
                 lgpio.gpiochip_close(self._lgpio_handle)
-            except:
+            except Exception:
                 pass
             self._lgpio_handle = None
             return
@@ -326,14 +326,14 @@ class ButtonHandler:
         if RPIGPIO_AVAILABLE:
             try:
                 GPIO.remove_event_detect(self.gpio_pin)
-            except:
+            except Exception:
                 pass
             try:
                 GPIO.cleanup(self.gpio_pin)
             except RuntimeWarning:
                 # "No channels have been set up yet" - this is fine
                 pass
-            except:
+            except Exception:
                 pass
 
     def _gpio_callback(self, channel: int):

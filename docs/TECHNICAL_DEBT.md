@@ -12,9 +12,9 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 |---------|----------|--------|---------|--------|---------|
 | Backend | 0 | 1 | 4 | 7 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 5 |
-| Satellite | 0 | 3 | 2 | 5 | 0 |
+| Satellite | 0 | 3 | 2 | 5 | 3 |
 | Infrastruktur | 0 | 3 | 2 | 5 | 1 |
-| **Gesamt** | **0** | **8** | **11** | **24** | **16** |
+| **Gesamt** | **0** | **8** | **11** | **24** | **19** |
 
 ---
 
@@ -293,34 +293,56 @@ Nur eine zentrale ErrorBoundary, keine Feature-spezifischen.
 
 ## Satellite
 
-### 🟡 Mittel
+### ~~🟡 Mittel~~ → ✅ Behoben/Dokumentiert
 
-#### 1. Bare Except Clauses (20+)
+#### ~~1. Bare Except Clauses (22)~~ ✅ Behoben
 
-**Betroffene Dateien:**
-- `hardware/button.py` (6 Stellen)
-- `hardware/led.py` (1)
-- `audio/playback.py` (4)
-- `audio/capture.py` (3)
-- `satellite.py` (1)
+**Status:** Behoben am 2026-01-26
 
-**Empfehlung:** Spezifische Exceptions, besonders für Hardware-Fehler.
-
----
-
-#### 2. satellite.py Größe (875 Zeilen)
-
-**Problem:** Große State Machine mit viel Logik.
-
-**Empfehlung:** States und Transitions in separate Klassen.
+**22 bare except Clauses ersetzt** durch spezifische Exceptions:
+- `hardware/button.py` (6) → `Exception` für GPIO Cleanup
+- `hardware/led.py` (1) → `OSError` für SPI
+- `audio/playback.py` (4) → `Exception`, `OSError` für MPV/Temp-Files
+- `audio/capture.py` (3) → `Exception`, `(ValueError, TypeError)` für PyAudio/numpy
+- `audio/preprocessor.py` (1) → `(ValueError, TypeError)` für numpy
+- `audio/vad.py` (3) → `(ValueError, TypeError)`, `Exception` für VAD
+- `network/websocket_client.py` (1) → `Exception` für WebSocket
+- `satellite.py` (1) → `(OSError, ValueError)` für Temperatur
+- `cli/monitor.py` (2) → `(OSError, ValueError)`, `Exception` für Config/Temp
 
 ---
 
-#### 3. Hardware-Abhängigkeiten nicht gemockt
+#### ~~2. satellite.py Größe (875 Zeilen)~~ ✅ Dokumentiert
 
-**Problem:** Tests benötigen echte Hardware (GPIO, SPI).
+**Status:** Überprüft am 2026-01-26 - Akzeptabel
 
-**Empfehlung:** Hardware-Abstraktionsschicht für Tests.
+**Analyse:**
+- Satellite-Klasse ist ein Orchestrator mit 6 einfachen States
+- Komponenten bereits modular extrahiert:
+  - `audio/` - Capture, Playback, VAD, Preprocessing
+  - `hardware/` - LED, Button
+  - `network/` - WebSocket, Discovery, Auth
+  - `wakeword/` - Detector
+  - `update/` - UpdateManager
+- Aufteilung würde Indirektion ohne Nutzen hinzufügen
+
+**Entscheidung:** Keine weitere Aufteilung erforderlich.
+
+---
+
+#### ~~3. Hardware-Abstraktionsschicht~~ ✅ Dokumentiert
+
+**Status:** Überprüft am 2026-01-26 - Bereits vorhanden
+
+**Vorhandene Infrastruktur:**
+- `tests/satellite/conftest.py` enthält Hardware-Mocks:
+  - `mock_led_controller` - LED Mocking
+  - `mock_button` - GPIO Button Mocking
+  - `mock_microphone` - Mikrophone Mocking
+  - `mock_speaker` - Speaker Mocking
+  - `mock_wakeword_detector` - Wake Word Mocking
+- Hardware-Module prüfen Bibliotheksverfügbarkeit (`LGPIO_AVAILABLE`, `RPIGPIO_AVAILABLE`)
+- Graceful Degradation wenn Hardware nicht verfügbar
 
 ---
 
@@ -451,7 +473,7 @@ Besser: Docker Secrets oder Vault für Produktion.
 ### Langfristig (3-6 Monate)
 
 12. ⬜ Major Dependency Updates (React 19, etc.)
-13. ⬜ Hardware-Abstraktionsschicht (Satellite)
+13. ✅ ~~Hardware-Abstraktionsschicht (Satellite)~~ - Bereits vorhanden (2026-01-26)
 14. ⬜ Multi-Stage Docker Builds
 
 ---
@@ -460,6 +482,9 @@ Besser: Docker Secrets oder Vault für Produktion.
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-01-26 | Satellite Bare Except Clauses behoben: 22 → spezifische Exceptions (#33) |
+| 2026-01-26 | satellite.py Größe dokumentiert: 875 Zeilen akzeptabel als Orchestrator (#33) |
+| 2026-01-26 | Hardware-Abstraktionsschicht dokumentiert: Mocks bereits in conftest.py (#33) |
 | 2026-01-26 | Hook-Tests für useWakeWord erstellt: 15 Tests (#32) |
 | 2026-01-26 | Niedrige Technical Debt behoben: 30 ungenutzte Imports entfernt (#29) |
 | 2026-01-26 | Magic Numbers in Config ausgelagert: device_session_timeout, device_heartbeat_timeout (#29) |

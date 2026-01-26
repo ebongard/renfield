@@ -316,14 +316,14 @@ class AudioCapture:
             try:
                 self._stream.stop_stream()
                 self._stream.close()
-            except:
+            except Exception:
                 pass
             self._stream = None
 
         if self._pyaudio:
             try:
                 self._pyaudio.terminate()
-            except:
+            except Exception:
                 pass
             self._pyaudio = None
 
@@ -348,7 +348,7 @@ class AudioCapture:
         try:
             audio = np.frombuffer(audio_bytes, dtype=np.int16)
             return float(np.sqrt(np.mean(audio.astype(np.float32) ** 2)))
-        except:
+        except (ValueError, TypeError):
             return 0.0
 
     @property

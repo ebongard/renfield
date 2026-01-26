@@ -132,7 +132,7 @@ class LEDController:
         if self._spi:
             try:
                 self._spi.close()
-            except:
+            except OSError:
                 pass
             self._spi = None
 

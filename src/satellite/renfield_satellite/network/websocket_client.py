@@ -264,7 +264,7 @@ class WebSocketClient:
         if self._ws:
             try:
                 await self._ws.close()
-            except:
+            except Exception:
                 pass
             self._ws = None
 
