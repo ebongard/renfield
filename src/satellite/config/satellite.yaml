@@ -45,12 +45,12 @@ wakeword:
 # Voice Activity Detection (for end-of-speech)
 vad:
   backend: "silero"           # "rms" (simple), "webrtc" (fast), or "silero" (ML-based, best)
-  silence_threshold: 350      # RMS threshold (for RMS backend)
   silence_duration_ms: 1200   # How long silence to end recording
   max_recording_seconds: 20   # Maximum recording length
-  webrtc_aggressiveness: 2    # WebRTC VAD aggressiveness 0-3 (higher = more aggressive)
-  # silero_threshold: 0.5     # Silero VAD threshold 0-1 (higher = stricter)
-  # silero_model_path: "/opt/renfield-satellite/models/silero_vad.onnx"
+  silero_threshold: 0.5       # Silero VAD threshold 0-1 (higher = stricter)
+  # Settings for other backends (uncomment if switching backend):
+  # silence_threshold: 350    # RMS threshold (for "rms" backend only)
+  # webrtc_aggressiveness: 2  # WebRTC aggressiveness 0-3 (for "webrtc" backend only)
 
 # LED settings (ReSpeaker HAT)
 led:
