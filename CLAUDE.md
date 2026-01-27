@@ -4,13 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Renfield is a fully offline-capable, self-hosted AI assistant for smart home control, camera monitoring, and workflow automation. It uses local LLMs (Ollama), speech-to-text (Whisper), text-to-speech (Piper), and integrates with Home Assistant, Frigate, and n8n.
+Renfield is a fully offline-capable, self-hosted **digital assistant** — a personal AI hub that consolidates knowledge, information retrieval, and multi-channel queries into one interface. It serves multiple users in parallel, primarily within the household. Core capabilities include a queryable knowledge base (RAG), bundled tool access (web search, weather, news, etc.), and smart home control as a complementary feature. It informs, assists, and entertains.
+
+**LLM:** `gpt-oss:latest` (OpenAI open-weight, 20B parameters, MoE architecture) via Ollama. The model natively supports structured JSON output, function calling, and chain-of-thought reasoning — enabling multi-step agent workflows.
 
 **Tech Stack:**
 - Backend: Python 3.11 + FastAPI + SQLAlchemy
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS + PWA
 - Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
-- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows)
+- LLM: gpt-oss:latest (20B, MoE, Apache 2.0) via Ollama
+- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
@@ -370,13 +373,13 @@ docker exec -it renfield-backend alembic downgrade -1
 docker compose --profile ollama up -d
 
 # Pull/update model
-docker exec -it renfield-ollama ollama pull llama3.2:3b
+docker exec -it renfield-ollama ollama pull gpt-oss:latest
 
 # List installed models
 docker exec -it renfield-ollama ollama list
 
 # Remove model
-docker exec -it renfield-ollama ollama rm llama3.2:3b
+docker exec -it renfield-ollama ollama rm gpt-oss:latest
 ```
 
 #### Externe Ollama-Instanz
@@ -980,7 +983,7 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
 - `DATABASE_URL` - PostgreSQL connection string
 - `REDIS_URL` - Redis connection
 - `OLLAMA_URL` - Ollama API endpoint (usually `http://ollama:11434`)
-- `OLLAMA_MODEL` - Model name (default: `llama3.2:3b`)
+- `OLLAMA_MODEL` - Model name (default: `gpt-oss:latest`)
 - `HOME_ASSISTANT_URL` - HA instance URL
 - `HOME_ASSISTANT_TOKEN` - Long-lived access token from HA
 - `FRIGATE_URL` - Frigate NVR URL

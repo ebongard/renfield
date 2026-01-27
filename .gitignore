@@ -55,6 +55,9 @@ pids/
 *.sqlite
 *.db
 
+# Private documents (not for repo)
+docs/private/
+
 # Secrets (should use .env)
 *.pem
 *.key
