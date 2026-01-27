@@ -59,71 +59,33 @@ sudo reboot
 
 ### 3. Install ReSpeaker Drivers
 
-```bash
-git clone https://github.com/HinTak/seeed-voicecard.git
-cd seeed-voicecard
-sudo ./install.sh
-sudo reboot
-```
-
-> **Note:** We use the [HinTak fork](https://github.com/HinTak/seeed-voicecard) which has better kernel compatibility.
-
-#### MCLK Fix for 64-bit OS (Pi Zero 2 W)
-
-On 64-bit Raspberry Pi OS, the WM8960 codec needs a proper MCLK signal. Create a custom overlay:
+The Renfield repo includes a custom DTS overlay and install script for the ReSpeaker 2-Mics HAT on 64-bit OS.
 
 ```bash
-# Create the overlay source
-cat > /tmp/gpclk-pwm.dts << 'EOF'
-/dts-v1/;
-/plugin/;
+# Copy hardware files from the Renfield repo to the satellite
+rsync -avz src/satellite/hardware/ user@satellite.local:/tmp/renfield-hardware/
 
-/ {
-    compatible = "brcm,bcm2835";
+# Compile and install the overlay
+ssh user@satellite.local "sudo /tmp/renfield-hardware/install-overlay.sh simple"
 
-    fragment@0 {
-        target = <&gpio>;
-        __overlay__ {
-            gpclk0_pins: gpclk0_pins {
-                brcm,pins = <4>;
-                brcm,function = <4>; /* ALT0 = GPCLK0 */
-            };
-        };
-    };
-
-    fragment@1 {
-        target-path = "/";
-        __overlay__ {
-            gpclk0: gpclk0@7e101070 {
-                compatible = "brcm,bcm2835-clock";
-                reg = <0x7e101070 0x08>;
-                clocks = <&clocks 6>;  /* PLLD = 500MHz */
-                #clock-cells = <0>;
-                clock-output-names = "gpclk0";
-                pinctrl-names = "default";
-                pinctrl-0 = <&gpclk0_pins>;
-                assigned-clocks = <&gpclk0>;
-                assigned-clock-rates = <12288000>;
-            };
-        };
-    };
-};
-EOF
-
-# Compile and install
-dtc -@ -I dts -O dtb -o /tmp/gpclk-pwm.dtbo /tmp/gpclk-pwm.dts
-sudo cp /tmp/gpclk-pwm.dtbo /boot/firmware/overlays/
-
-# Add to config.txt
-echo "dtoverlay=gpclk-pwm" | sudo tee -a /boot/firmware/config.txt
+# Disable onboard audio (optional, prevents confusion with HDMI audio)
+ssh user@satellite.local "sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' /boot/firmware/config.txt"
 
 sudo reboot
 ```
 
-After reboot, verify MCLK is working:
+> **Important: GPIO4 Conflict!** The GPCLK0 overlay uses GPIO4 for the MCLK signal. If you have `dtoverlay=w1-gpio` (1-Wire) enabled in `/boot/firmware/config.txt`, you **must** disable it — it uses GPIO4 by default and will prevent the ReSpeaker from initializing. Comment it out:
+> ```bash
+> sudo sed -i 's/^dtoverlay=w1-gpio/#dtoverlay=w1-gpio  # conflicts with GPCLK0 on GPIO4/' /boot/firmware/config.txt
+> ```
+
+After reboot, verify the sound card and MCLK:
 ```bash
-cat /sys/kernel/debug/clk/clk_summary | grep gpclk
-# Should show: gpclk0 12288000 Hz
+# Should show: seeed2micvoicec
+cat /proc/asound/cards
+
+# Should show: gp0 ... 12288000
+cat /sys/kernel/debug/clk/clk_summary | grep gp0
 ```
 
 ### 4. Verify Audio Hardware
@@ -145,53 +107,11 @@ aplay -D plughw:1,0 test.wav
 This step is **required** for PyAudio to use the ReSpeaker HAT:
 
 ```bash
-cat > ~/.asoundrc << 'EOF'
-# Rate converter for sample rate conversion
-defaults.pcm.rate_converter "samplerate"
-
-pcm.!default {
-    type asym
-    playback.pcm "playback"
-    capture.pcm "capture"
-}
-
-pcm.playback {
-    type plug
-    slave.pcm "dmixed"
-}
-
-pcm.capture {
-    type plug
-    slave.pcm "array"
-}
-
-pcm.dmixed {
-    type dmix
-    slave.pcm "hw:seeed2micvoicec"
-    ipc_key 555555
-}
-
-# Stereo microphone array (for beamforming)
-pcm.array {
-    type dsnoop
-    slave {
-        pcm "hw:seeed2micvoicec"
-        channels 2
-    }
-    ipc_key 666666
-}
-
-# Stereo capture with automatic rate conversion (for beamforming at 16kHz)
-pcm.array16k {
-    type rate
-    slave {
-        pcm "array"
-        rate 48000
-    }
-    converter "samplerate"
-}
-EOF
+# Copy from the Renfield repo
+scp src/satellite/config/asoundrc user@satellite.local:~/.asoundrc
 ```
+
+Or create manually — see `src/satellite/config/asoundrc` in the repo for the full content.
 
 > **Important:** Without this configuration, PyAudio will use the wrong audio device (HDMI instead of ReSpeaker).
 
@@ -202,8 +122,9 @@ EOF
 ```bash
 # System packages
 sudo apt install -y python3-pip python3-venv python3-dev \
-    portaudio19-dev libasound2-dev libatlas-base-dev git \
-    libopenblas0 libmpv-dev mpv
+    portaudio19-dev libasound2-dev libopenblas0 \
+    libmpv-dev mpv libsamplerate0 \
+    swig liblgpio-dev
 
 # Create installation directory
 sudo mkdir -p /opt/renfield-satellite
@@ -218,6 +139,10 @@ source venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
+> **Note (Debian Trixie / Bookworm):** The package `libatlas-base-dev` has been removed. Use `liblapack-dev` if you need LAPACK/BLAS headers. The `libopenblas0` package provides the runtime library.
+
+> **Note:** `swig` and `liblgpio-dev` are required to build the `lgpio` Python package from source.
+
 ### 7. Install Python Packages
 
 For **64-bit ARM (aarch64)** on Pi Zero 2 W:
@@ -227,19 +152,23 @@ For **64-bit ARM (aarch64)** on Pi Zero 2 W:
 uname -m
 # Should show: aarch64
 
-# Install ONNX Runtime (official release for 64-bit ARM)
-pip install onnxruntime
+# Install all dependencies
+pip install onnxruntime pyaudio numpy websockets python-mpv \
+    spidev lgpio pyyaml zeroconf webrtcvad psutil scikit-learn
 
-# Install PyAudio (preferred for ALSA/ReSpeaker support)
-pip install pyaudio
-
-# Install other dependencies
-pip install numpy openwakeword websockets python-mpv spidev lgpio pyyaml zeroconf
+# Install openwakeword (may need --no-deps on Python 3.13+, see note below)
+pip install openwakeword
 ```
 
 > **Note:** We use PyAudio instead of soundcard because PyAudio uses ALSA directly and respects the `.asoundrc` configuration. The soundcard library uses PipeWire/PulseAudio which may not detect the ReSpeaker HAT.
 
 > **Note:** On 64-bit OS, use `lgpio` instead of `RPi.GPIO` for GPIO control (button).
+
+> **Python 3.13+ Compatibility:** The `openwakeword` package declares `tflite-runtime` as a dependency, but `tflite-runtime` has no wheels for Python 3.13. Since we use ONNX (not TFLite), install with `--no-deps` and then install the actual dependencies manually:
+> ```bash
+> pip install --no-deps openwakeword
+> pip install requests  # required by openwakeword
+> ```
 
 ### 8. Download Wake Word Models
 
@@ -254,10 +183,17 @@ wget https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/embedding
 # Download wake word model (alexa)
 wget https://github.com/dscripka/openWakeWord/releases/download/v0.5.1/alexa_v0.1.onnx
 
-# Copy models to openwakeword's expected location
-mkdir -p /opt/renfield-satellite/venv/lib/python3.11/site-packages/openwakeword/resources/models/
-cp *.onnx /opt/renfield-satellite/venv/lib/python3.11/site-packages/openwakeword/resources/models/
+# Download Silero VAD model
+wget -O silero_vad.onnx https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx
+
+# Copy models to openwakeword's expected location (use correct Python version)
+PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+OWW_DIR=/opt/renfield-satellite/venv/lib/python${PYVER}/site-packages/openwakeword/resources/models
+mkdir -p $OWW_DIR
+cp *.onnx $OWW_DIR/
 ```
+
+> **Important:** When upgrading the `openwakeword` package, the `resources/models/` directory is deleted. You must re-copy the ONNX models after any openwakeword upgrade.
 
 Available wake word models from [openWakeWord](https://github.com/dscripka/openWakeWord):
 - `alexa_v0.1.onnx` - "Alexa" (recommended - works on 32-bit)
@@ -267,59 +203,27 @@ Available wake word models from [openWakeWord](https://github.com/dscripka/openW
 ### 9. Install Satellite Software
 
 ```bash
-cd /opt/renfield-satellite
+# Deploy from the Renfield repo using rsync
+rsync -avz src/satellite/renfield_satellite/ \
+    user@satellite.local:/opt/renfield-satellite/renfield_satellite/
 
-# Copy the renfield_satellite package here
-# (from the main Renfield repo: renfield-satellite/renfield_satellite/)
-
-# Or clone and install
-git clone <renfield-repo-url> /tmp/renfield
-cp -r /tmp/renfield/renfield-satellite/renfield_satellite .
+# Or use the deploy script
+./bin/deploy-satellite.sh satellite.local user
 ```
 
 ### 10. Configure
 
 ```bash
-mkdir -p /opt/renfield-satellite/config
+# Copy the example config from the repo
+scp src/satellite/config/satellite.yaml \
+    user@satellite.local:/opt/renfield-satellite/config/satellite.yaml
 
-cat > config/satellite.yaml << 'EOF'
-satellite:
-  id: "sat-livingroom"
-  room: "Living Room"
-  language: "de"             # Language for STT/TTS (de, en)
-
-# Server connection - auto-discovery is enabled by default
-# The satellite will automatically find the Renfield backend on your network
-server:
-  auto_discover: true           # Find server automatically via zeroconf
-  discovery_timeout: 10         # Seconds to wait for discovery
-  # url: "ws://renfield.local:8000/ws/satellite"  # Manual URL (optional)
-
-audio:
-  sample_rate: 16000
-  chunk_size: 1280
-  channels: 1                   # Use 2 for beamforming (automatically set when enabled)
-  device: "default"             # Uses ALSA default, or "array16k" for beamforming
-  playback_device: "default"
-  beamforming:
-    enabled: false              # Enable Delay-and-Sum beamforming
-    mic_spacing: 0.058          # ReSpeaker 2-Mics HAT: 58mm spacing
-    steering_angle: 0.0         # 0 = front-facing
-
-wakeword:
-  model: "alexa"                # Must match downloaded model name
-  threshold: 0.5
-  refractory_seconds: 2.0
-  # stop_words:                 # Words that cancel ongoing interaction
-  #   - "stop"
-  #   - "cancel"
-
-vad:
-  silence_threshold: 500
-  silence_duration_ms: 1500
-  max_recording_seconds: 15
-EOF
+# Edit satellite ID and room name
+ssh user@satellite.local "sed -i 's/sat-livingroom/sat-kitchen/; s/Living Room/Kitchen/' \
+    /opt/renfield-satellite/config/satellite.yaml"
 ```
+
+See `src/satellite/config/satellite.yaml` in the repo for all configuration options including audio, wake word, VAD, LED, and button settings.
 
 **Note:** With auto-discovery enabled (default), the satellite will automatically find and connect to the Renfield backend on your local network. No manual URL configuration is needed. The backend advertises itself using zeroconf/mDNS (`_renfield._tcp.local.`).
 
@@ -349,31 +253,18 @@ Say "Alexa" to trigger wake word detection.
 ### 12. Install Systemd Service
 
 ```bash
-sudo cat > /etc/systemd/system/renfield-satellite.service << 'EOF'
-[Unit]
-Description=Renfield Satellite Voice Assistant
-After=network-online.target sound.target
-Wants=network-online.target
+# Copy the service file from the repo
+scp src/satellite/systemd/renfield-satellite.service \
+    user@satellite.local:/tmp/renfield-satellite.service
+ssh user@satellite.local "sudo cp /tmp/renfield-satellite.service /etc/systemd/system/"
 
-[Service]
-Type=simple
-User=pi
-Group=audio
-WorkingDirectory=/opt/renfield-satellite
-ExecStart=/opt/renfield-satellite/venv/bin/python -m renfield_satellite config/satellite.yaml
-Restart=always
-RestartSec=5
-Environment=PYTHONUNBUFFERED=1
-SupplementaryGroups=spi gpio i2c
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl enable renfield-satellite
-sudo systemctl start renfield-satellite
+# Enable and start
+ssh user@satellite.local "sudo systemctl daemon-reload && \
+    sudo systemctl enable renfield-satellite && \
+    sudo systemctl start renfield-satellite"
 ```
+
+> **Note:** The service file uses `User=pi` by default. Edit it if your satellite user is different.
 
 ### 13. Check Logs
 
@@ -480,21 +371,14 @@ If you see "Using default microphone: Built-in Audio Stereo" instead of the ReSp
 1. **Check `.asoundrc` exists and is correct:**
    ```bash
    cat ~/.asoundrc
-   ```
-
-   It should contain:
-   ```
-   pcm.!default {
-       type asym
-       playback.pcm "plughw:1,0"
-       capture.pcm "plughw:1,0"
-   }
+   # Should contain pcm.!default with capture.pcm "capture"
+   # See src/satellite/config/asoundrc in the repo for the correct content
    ```
 
 2. **Verify ReSpeaker is detected:**
    ```bash
-   arecord -l
-   # Should show: seeed-2mic-voicecard
+   cat /proc/asound/cards
+   # Should show: seeed2micvoicec
    ```
 
 3. **Make sure PyAudio is installed (not just soundcard):**
@@ -507,6 +391,21 @@ If you see "Using default microphone: Built-in Audio Stereo" instead of the ReSp
    arecord -d 3 /tmp/test.wav
    aplay /tmp/test.wav
    ```
+
+### GPIO4 conflict (ReSpeaker not initializing)
+
+If `cat /proc/asound/cards` does not show `seeed2micvoicec` and `dmesg` shows:
+```
+pinctrl-bcm2835: error -EINVAL: pin-4 ... could not request pin 4
+wm8960 1-001a: Error applying setting, reverse things back
+```
+
+This means GPIO4 is already in use by another overlay (typically `w1-gpio` for 1-Wire sensors). The ReSpeaker GPCLK0 overlay needs GPIO4 for the MCLK signal. Disable the conflicting overlay:
+
+```bash
+sudo sed -i 's/^dtoverlay=w1-gpio/#dtoverlay=w1-gpio/' /boot/firmware/config.txt
+sudo reboot
+```
 
 ### Garbled transcription
 
@@ -544,18 +443,27 @@ If you see `Cannot find libmpv`:
 sudo apt install libmpv-dev
 ```
 
+### lgpio build fails
+
+If `pip install lgpio` fails with `error: command 'swig' failed` or `cannot find -llgpio`:
+
+```bash
+# Install build dependencies
+sudo apt install -y swig liblgpio-dev
+# Then retry
+pip install lgpio
+```
+
 ### No audio input
 
 ```bash
 # Check if ReSpeaker is detected
-arecord -l
+cat /proc/asound/cards
+# Should show: seeed2micvoicec
 
-# If not detected, reinstall the driver
-cd ~
-git clone https://github.com/HinTak/seeed-voicecard.git
-cd seeed-voicecard
-sudo ./install.sh
-sudo reboot
+# If not detected, re-run the overlay installer (see step 3)
+# Check for GPIO4 conflicts (see "GPIO4 conflict" above)
+# Verify /boot/firmware/config.txt contains: dtoverlay=seeed-2mic-gpclk-simple
 ```
 
 ### Auto-discovery not finding server
@@ -601,10 +509,14 @@ ws.close()
 
 ### Wake word not detecting
 
-1. Check model files exist:
+1. Check model files exist in **both** locations:
    ```bash
    ls -la /opt/renfield-satellite/models/
-   ls -la /opt/renfield-satellite/venv/lib/python3.11/site-packages/openwakeword/resources/models/
+   # Must contain: melspectrogram.onnx, embedding_model.onnx, alexa_v0.1.onnx
+
+   PYVER=$(python3 -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")
+   ls -la /opt/renfield-satellite/venv/lib/python${PYVER}/site-packages/openwakeword/resources/models/
+   # Must also contain the same .onnx files (openwakeword loads from here)
    ```
 
 2. Verify the model name in config matches the file (without `_v0.1.onnx` suffix)
@@ -613,9 +525,11 @@ ws.close()
 
 4. Check audio input is working:
    ```bash
-   arecord -D plughw:1,0 -f S16_LE -r 16000 -c 1 -d 5 test.wav
-   aplay test.wav
+   arecord -d 3 /tmp/test.wav
+   aplay /tmp/test.wav
    ```
+
+5. If you see `AudioFeatures.__init__() got an unexpected keyword argument 'wakeword_models'`, you have openwakeword < 0.5.0. Upgrade: `pip install --no-deps 'openwakeword>=0.5.1'`
 
 ### LED not working
 

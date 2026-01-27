@@ -740,8 +740,15 @@ src/satellite/
 │   │   └── websocket_client.py
 │   └── update/
 │       └── update_manager.py # OTA update handling
-└── config/
-    └── satellite.yaml        # Example configuration
+├── config/
+│   ├── satellite.yaml        # Example configuration
+│   └── asoundrc              # ALSA config for ReSpeaker 2-Mics HAT
+├── hardware/
+│   ├── install-overlay.sh    # ReSpeaker overlay installer
+│   ├── seeed-2mic-gpclk-simple-overlay.dts  # DTS overlay source
+│   └── README.md             # Hardware setup docs
+└── systemd/
+    └── renfield-satellite.service  # Systemd unit file
 ```
 
 ### Satellite OTA Updates
@@ -1407,9 +1414,12 @@ For NVIDIA GPU acceleration (faster Whisper transcription):
 ### Satellite Issues
 
 - **Satellite not finding backend**: Check Zeroconf advertisement with `docker compose logs backend | grep zeroconf`
-- **Wrong microphone**: Ensure `.asoundrc` is configured for ReSpeaker (see satellite README)
+- **ReSpeaker not detected**: Check for GPIO4 conflict with `w1-gpio` overlay (disable it in `/boot/firmware/config.txt`)
+- **Wrong microphone**: Ensure `.asoundrc` is configured for ReSpeaker — copy from `src/satellite/config/asoundrc`
 - **Garbled transcription**: PyAudio must be installed (not soundcard) for ALSA support
 - **GPIO errors**: Add user to gpio group with `sudo usermod -aG gpio $USER`
+- **lgpio build fails**: Install `swig` and `liblgpio-dev` system packages
+- **openwakeword on Python 3.13+**: Install with `--no-deps` (tflite-runtime has no Python 3.13 wheels)
 
 ## Project Structure
 
