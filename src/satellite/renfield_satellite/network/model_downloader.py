@@ -6,6 +6,7 @@ when they are not available locally.
 """
 
 import os
+import ssl
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urljoin
@@ -144,8 +145,15 @@ class ModelDownloader:
             if self._auth_token:
                 headers["Authorization"] = f"Bearer {self._auth_token}"
 
+            # Allow self-signed certificates for https:// URLs
+            ssl_ctx = None
+            if download_url.startswith("https://"):
+                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+
             async with aiohttp.ClientSession() as session:
-                async with session.get(download_url, headers=headers) as response:
+                async with session.get(download_url, headers=headers, ssl=ssl_ctx) as response:
                     if response.status == 200:
                         # Save model file
                         content = await response.read()

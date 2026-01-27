@@ -8,6 +8,7 @@ Provides auto-reconnection and message routing.
 import asyncio
 import base64
 import json
+import ssl
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -217,10 +218,22 @@ class WebSocketClient:
         print(f"Connecting to {self.server_url}...")
 
         try:
+            # Build connection kwargs
+            connect_kwargs = {
+                "ping_interval": 20,
+                "ping_timeout": 10,
+            }
+
+            # Enable SSL for wss:// URLs (allow self-signed certificates)
+            if ws_url.startswith("wss://"):
+                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+                connect_kwargs["ssl"] = ssl_context
+
             self._ws = await websockets.connect(
                 ws_url,
-                ping_interval=20,
-                ping_timeout=10,
+                **connect_kwargs,
             )
 
             # Register with server

@@ -11,6 +11,7 @@ alembic>=1.13.1
 
 # Redis & Task Queue
 redis>=5.0.1
+async-timeout>=4.0.3  # Required by redis on Python <3.12
 celery>=5.3.6
 
 # LLM & AI

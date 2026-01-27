@@ -45,7 +45,7 @@ CMD ["npm", "run", "dev", "--", "--host"]
 FROM base AS build
 
 # Build arguments for environment configuration
-ARG VITE_API_URL=/api
+ARG VITE_API_URL=
 ARG VITE_WS_URL=/ws
 
 # Set environment variables for build

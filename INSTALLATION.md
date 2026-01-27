@@ -220,7 +220,7 @@ sudo nvidia-ctk runtime configure --runtime=docker
 sudo systemctl restart docker
 
 # Testen
-docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 ```
 
 2. Mit GPU-Profil starten:
@@ -353,7 +353,7 @@ docker compose up -d backend
 nvidia-smi
 
 # Container Toolkit prüfen
-docker run --rm --gpus all nvidia/cuda:12.1-base-ubuntu22.04 nvidia-smi
+docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu22.04 nvidia-smi
 
 # Falls Fehler: Docker neu starten
 sudo systemctl restart docker

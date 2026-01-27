@@ -1,6 +1,6 @@
 # GPU-enabled Dockerfile for Whisper acceleration
 # Requires: NVIDIA GPU, nvidia-docker installed
-FROM nvidia/cuda:12.1-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 WORKDIR /app
 
@@ -55,12 +55,12 @@ RUN mkdir -p /usr/share/piper/voices \
 # Remove wget after downloads complete (security hardening)
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
-# Install PyTorch with CUDA support FIRST (before other packages)
-RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# Python Dependencies (ohne torch, da schon installiert)
+# Python Dependencies
 COPY requirements.txt .
 RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Replace PyTorch with CUDA 12.8 version (Blackwell sm_120 support)
+RUN pip3 install --no-cache-dir --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # App Code
 COPY . .

@@ -133,7 +133,7 @@ services:
       dockerfile: Dockerfile
       target: production
       args:
-        VITE_API_URL: ${EXTERNAL_URL:-}/api
+        VITE_API_URL: ${EXTERNAL_URL:-}
         VITE_WS_URL: ${EXTERNAL_WS_URL:-}/ws
     container_name: renfield-frontend
     depends_on:

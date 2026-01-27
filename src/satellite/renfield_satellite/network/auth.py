@@ -6,6 +6,7 @@ Only needed when server has WS_AUTH_ENABLED=true.
 """
 
 import asyncio
+import ssl
 from typing import Optional, Tuple
 
 # Try to import aiohttp, fall back to urllib for basic functionality
@@ -23,6 +24,16 @@ try:
     URLLIB_AVAILABLE = True
 except ImportError:
     URLLIB_AVAILABLE = False
+
+
+def _create_ssl_context_for_url(url: str) -> Optional[ssl.SSLContext]:
+    """Create an unverified SSL context for https:// URLs (self-signed certs)."""
+    if url.startswith("https://"):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    return None
 
 
 async def fetch_ws_token(
@@ -70,9 +81,10 @@ async def _fetch_with_aiohttp(
         }
 
         timeout = aiohttp.ClientTimeout(total=10)
+        ssl_ctx = _create_ssl_context_for_url(url)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, params=params) as response:
+            async with session.post(url, params=params, ssl=ssl_ctx) as response:
                 if response.status == 200:
                     data = await response.json()
                     token = data.get("token")
@@ -117,7 +129,8 @@ def _fetch_with_urllib(
         req = urllib.request.Request(url, method="POST")
         req.add_header("Content-Type", "application/json")
 
-        with urllib.request.urlopen(req, timeout=10) as response:
+        ssl_ctx = _create_ssl_context_for_url(url)
+        with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))
                 token = data.get("token")

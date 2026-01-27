@@ -122,7 +122,7 @@ Or create manually — see `src/satellite/config/asoundrc` in the repo for the f
 ```bash
 # System packages
 sudo apt install -y python3-pip python3-venv python3-dev \
-    portaudio19-dev libasound2-dev libopenblas0 \
+    portaudio19-dev libasound2-dev libasound2-plugins libopenblas0 \
     libmpv-dev mpv libsamplerate0 \
     swig liblgpio-dev
 
@@ -141,6 +141,8 @@ python -m pip install --upgrade pip
 
 > **Note (Debian Trixie / Bookworm):** The package `libatlas-base-dev` has been removed. Use `liblapack-dev` if you need LAPACK/BLAS headers. The `libopenblas0` package provides the runtime library.
 
+> **Note:** `libasound2-plugins` provides the ALSA rate converter plugin (`libasound_module_rate_samplerate.so`), required for sample rate conversion in `.asoundrc`. Without it, PyAudio fails to open the audio stream.
+
 > **Note:** `swig` and `liblgpio-dev` are required to build the `lgpio` Python package from source.
 
 ### 7. Install Python Packages
@@ -154,7 +156,8 @@ uname -m
 
 # Install all dependencies
 pip install onnxruntime pyaudio numpy websockets python-mpv \
-    spidev lgpio pyyaml zeroconf webrtcvad psutil scikit-learn
+    spidev lgpio pyyaml zeroconf webrtcvad psutil scikit-learn \
+    noisereduce
 
 # Install openwakeword (may need --no-deps on Python 3.13+, see note below)
 pip install openwakeword
@@ -494,10 +497,13 @@ zc.close()
 ### Connection issues
 
 ```bash
-# Test server reachability
+# Test server reachability (direct)
 curl http://renfield.local:8000/health
 
-# Check WebSocket endpoint
+# Test server reachability (via nginx/SSL, skip cert verification)
+curl -sk https://renfield.local/health
+
+# Check WebSocket endpoint (direct)
 pip install websocket-client
 python -c "
 import websocket
@@ -506,6 +512,8 @@ print('Connected!')
 ws.close()
 "
 ```
+
+> **Note:** In production setups with nginx reverse proxy and SSL, the satellite connects via `wss://renfield.local/ws/satellite` (port 443). Self-signed certificates are accepted automatically. If port 8000 is not exposed directly, use the `wss://` URL in your satellite config.
 
 ### Wake word not detecting
 
