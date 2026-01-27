@@ -408,28 +408,39 @@ class SileroVADLite:
             audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
             audio = audio / 32768.0  # Normalize to [-1, 1]
 
-            # Reshape for model: (batch, samples)
-            audio = audio.reshape(1, -1)
+            # Silero VAD requires small chunks (max ~640 samples at 16kHz).
+            # Process in 512-sample frames (32ms) and return mean probability.
+            frame_size = 512
+            sr_input = np.array(self.sample_rate, dtype=np.int64) if self._use_new_format \
+                else np.array([self.sample_rate], dtype=np.int64)
 
-            if self._use_new_format:
-                # New model format with combined state
-                ort_inputs = {
-                    'input': audio,
-                    'sr': np.array(self.sample_rate, dtype=np.int64),
-                    'state': self._state,
-                }
-                output, self._state = self._session.run(None, ort_inputs)
-            else:
-                # Old model format with separate h/c
-                ort_inputs = {
-                    'input': audio,
-                    'sr': np.array([self.sample_rate], dtype=np.int64),
-                    'h': self._h,
-                    'c': self._c,
-                }
-                output, self._h, self._c = self._session.run(None, ort_inputs)
+            frame_probs = []
+            for i in range(0, len(audio), frame_size):
+                chunk = audio[i:i + frame_size]
+                if len(chunk) < frame_size:
+                    # Pad last chunk with zeros if too short
+                    chunk = np.pad(chunk, (0, frame_size - len(chunk)))
+                chunk = chunk.reshape(1, -1)
 
-            return float(output[0][0])
+                if self._use_new_format:
+                    ort_inputs = {
+                        'input': chunk,
+                        'sr': sr_input,
+                        'state': self._state,
+                    }
+                    output, self._state = self._session.run(None, ort_inputs)
+                else:
+                    ort_inputs = {
+                        'input': chunk,
+                        'sr': sr_input,
+                        'h': self._h,
+                        'c': self._c,
+                    }
+                    output, self._h, self._c = self._session.run(None, ort_inputs)
+
+                frame_probs.append(float(output[0][0]))
+
+            return max(frame_probs) if frame_probs else 0.0
 
         except Exception as e:
             # Return neutral on error

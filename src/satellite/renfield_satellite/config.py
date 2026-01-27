@@ -72,6 +72,7 @@ class VADConfig:
     backend: str = "rms"  # "rms", "webrtc", or "silero"
     silence_threshold: int = 500  # RMS threshold (for RMS backend)
     silence_duration_ms: int = 1500  # ms of silence to end recording
+    min_listening_seconds: float = 2.0  # Grace period before silence detection starts
     max_recording_seconds: float = 15.0  # Maximum recording length
     webrtc_aggressiveness: int = 2  # WebRTC VAD aggressiveness (0-3)
     silero_threshold: float = 0.5  # Silero VAD threshold (0-1)
@@ -190,6 +191,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.vad.backend = vad.get("backend", config.vad.backend)
         config.vad.silence_threshold = vad.get("silence_threshold", config.vad.silence_threshold)
         config.vad.silence_duration_ms = vad.get("silence_duration_ms", config.vad.silence_duration_ms)
+        config.vad.min_listening_seconds = vad.get("min_listening_seconds", config.vad.min_listening_seconds)
         config.vad.max_recording_seconds = vad.get("max_recording_seconds", config.vad.max_recording_seconds)
         config.vad.webrtc_aggressiveness = vad.get("webrtc_aggressiveness", config.vad.webrtc_aggressiveness)
         config.vad.silero_threshold = vad.get("silero_threshold", config.vad.silero_threshold)

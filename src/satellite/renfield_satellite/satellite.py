@@ -64,6 +64,7 @@ class Satellite:
         self._session_id: Optional[str] = None
         self._audio_buffer: list = []
         self._silence_start: Optional[float] = None
+        self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
         self._processing_timeout: float = 30.0  # Max time to wait for server response
         self._reconnecting: bool = False  # Prevent duplicate reconnection attempts
@@ -466,8 +467,10 @@ class Satellite:
                 )
 
             # Check for silence using VAD
+            # Skip silence detection during initial grace period (user needs time to start speaking)
+            listening_elapsed = time.time() - self._listening_start if self._listening_start else 0
             is_speech = self.vad.is_speech(normalized_audio)
-            if not is_speech:
+            if not is_speech and listening_elapsed >= self.config.vad.min_listening_seconds:
                 if self._silence_start is None:
                     self._silence_start = time.time()
                 elif time.time() - self._silence_start > self.config.vad.silence_duration_ms / 1000:
@@ -512,6 +515,7 @@ class Satellite:
         self._set_state(SatelliteState.LISTENING)
         self._audio_buffer.clear()
         self._silence_start = None
+        self._listening_start = time.time()
 
         # Notify server
         self._session_id = await self.ws_client.send_wakeword_detected(keyword, confidence)
