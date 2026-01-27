@@ -1,18 +1,26 @@
-# GPU-enabled Dockerfile for Whisper acceleration
+# ============================================================================
+# Renfield Backend - Multi-Stage GPU Docker Build
+# ============================================================================
+# Stage 1: Builder - Compiles Python packages with build dependencies + CUDA
+# Stage 2: Runtime - Minimal image with only runtime dependencies
+# ============================================================================
 # Requires: NVIDIA GPU, nvidia-docker installed
-FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
-WORKDIR /app
+# ============================================================================
+# Stage 1: Builder
+# ============================================================================
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04 AS builder
 
-# Install Python and system dependencies
+WORKDIR /build
+
+# Install Python + build dependencies (not needed at runtime)
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3-pip \
-    ffmpeg \
-    libsndfile1 \
-    portaudio19-dev \
     pkg-config \
+    portaudio19-dev \
+    libsndfile1-dev \
     libavformat-dev \
     libavcodec-dev \
     libavdevice-dev \
@@ -21,15 +29,62 @@ RUN apt-get update && apt-get install -y \
     libswresample-dev \
     gcc \
     g++ \
-    wget \
-    espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.11 the default
 RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
-# Piper TTS Binary installieren
+# Create virtual environment for cleaner copying
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install PyTorch cu128 FIRST (single install, correct CUDA version from the start)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
+
+# Install remaining Python dependencies
+# - Filter out torch* (already installed cu128) and openai-whisper (triton version conflict)
+# - Use constraints to prevent transitive deps from replacing cu128 torch/nvidia packages
+# - Install openai-whisper separately with --no-deps (works fine with triton 3.x at runtime)
+COPY requirements.txt .
+RUN grep -v -E "^(torch(audio|vision)?|openai-whisper)([>=<]|$)" requirements.txt > requirements-filtered.txt \
+    && pip freeze | grep -E "^(torch|torchaudio|torchvision|nvidia-|triton)" > /tmp/constraints.txt \
+    && pip install --no-cache-dir -c /tmp/constraints.txt -r requirements-filtered.txt \
+    && pip install --no-cache-dir --no-deps openai-whisper==20231117 \
+    && pip install --no-cache-dir tiktoken more-itertools numba \
+    && rm requirements-filtered.txt /tmp/constraints.txt
+
+
+# ============================================================================
+# Stage 2: Runtime
+# ============================================================================
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
+
+WORKDIR /app
+
+# Runtime dependencies only (no compilers, no dev headers)
+# wget is installed temporarily for Piper downloads, then removed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.11 \
+    python3.11-venv \
+    ffmpeg \
+    libsndfile1 \
+    libportaudio2 \
+    libgomp1 \
+    espeak-ng \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Make python3.11 the default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+# Copy Python virtual environment from builder
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+ENV PYTHONUNBUFFERED=1
+
+# Piper TTS Binary (architecture-aware)
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "aarch64" ]; then \
         PIPER_ARCH="arm64"; \
@@ -38,29 +93,22 @@ RUN ARCH=$(uname -m) && \
     else \
         echo "Unsupported architecture: $ARCH" && exit 1; \
     fi && \
-    wget https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz \
+    wget -q https://github.com/rhasspy/piper/releases/download/v1.2.0/piper_${PIPER_ARCH}.tar.gz \
     && tar -xzf piper_${PIPER_ARCH}.tar.gz \
     && mv piper/piper /usr/local/bin/ \
-    && mv piper/lib* /usr/local/lib/ \
+    && mv piper/lib* /usr/local/lib/ 2>/dev/null || true \
     && chmod +x /usr/local/bin/piper \
     && ldconfig \
     && rm -rf piper piper_${PIPER_ARCH}.tar.gz
 
-# Piper Voice Model herunterladen
+# Piper Voice Model (German - thorsten high quality)
 RUN mkdir -p /usr/share/piper/voices \
     && cd /usr/share/piper/voices \
-    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
-    && wget https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
+    && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx \
+    && wget -q https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json
 
 # Remove wget after downloads complete (security hardening)
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-
-# Python Dependencies
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
-
-# Replace PyTorch with CUDA 12.8 version (Blackwell sm_120 support)
-RUN pip3 install --no-cache-dir --force-reinstall torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
 # App Code
 COPY . .
@@ -72,4 +120,4 @@ RUN python -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
