@@ -86,6 +86,132 @@ class TestConfigSettings:
 
 
 # ============================================================================
+# Secrets / DATABASE_URL Assembly Tests
+# ============================================================================
+
+class TestSecretsAndDatabaseUrl:
+    """Tests für Secrets-Support und dynamischen DATABASE_URL-Aufbau"""
+
+    @pytest.mark.unit
+    def test_database_url_assembled_from_parts(self):
+        """Test: DATABASE_URL wird aus Einzelteilen zusammengebaut wenn nicht gesetzt"""
+        from utils.config import Settings
+
+        settings = Settings(
+            database_url=None,
+            postgres_user="testuser",
+            postgres_password="testpass",
+            postgres_host="dbhost",
+            postgres_port=5433,
+            postgres_db="testdb",
+        )
+
+        assert settings.database_url == "postgresql://testuser:testpass@dbhost:5433/testdb"
+
+    @pytest.mark.unit
+    def test_database_url_explicit_takes_precedence(self):
+        """Test: Explizite DATABASE_URL hat Vorrang vor Einzelteilen"""
+        from utils.config import Settings
+
+        explicit_url = "postgresql://explicit:pass@host:5432/db"
+        settings = Settings(
+            database_url=explicit_url,
+            postgres_password="ignored",
+        )
+
+        assert settings.database_url == explicit_url
+
+    @pytest.mark.unit
+    def test_database_url_default_parts(self):
+        """Test: Default-Werte für Postgres-Einzelteile"""
+        from utils.config import Settings
+
+        settings = Settings(database_url=None)
+
+        assert settings.postgres_user == "renfield"
+        assert settings.postgres_host == "postgres"
+        assert settings.postgres_port == 5432
+        assert settings.postgres_db == "renfield"
+        assert "postgresql://renfield:" in settings.database_url
+        assert "@postgres:5432/renfield" in settings.database_url
+
+    @pytest.mark.unit
+    def test_secrets_dir_configured(self):
+        """Test: secrets_dir ist auf /run/secrets konfiguriert"""
+        from utils.config import Settings
+
+        config = Settings.model_config
+        assert config.get("secrets_dir") == "/run/secrets"
+
+    @pytest.mark.unit
+    def test_secret_fields_exist(self):
+        """Test: Alle Secret-Felder existieren in Settings"""
+        from utils.config import Settings
+
+        settings = Settings(database_url=None)
+
+        # Felder die als Secrets unterstützt werden
+        assert hasattr(settings, "postgres_password")
+        assert hasattr(settings, "home_assistant_token")
+        assert hasattr(settings, "secret_key")
+        assert hasattr(settings, "default_admin_password")
+        assert hasattr(settings, "openweather_api_key")
+        assert hasattr(settings, "newsapi_key")
+        assert hasattr(settings, "jellyfin_api_key")
+
+    @pytest.mark.unit
+    def test_postgres_password_from_env(self):
+        """Test: postgres_password kann per Environment-Variable gesetzt werden"""
+        with patch.dict(os.environ, {"POSTGRES_PASSWORD": "env-secret-pw"}):
+            from utils.config import Settings
+
+            settings = Settings(database_url=None)
+            assert settings.postgres_password == "env-secret-pw"
+            assert "env-secret-pw" in settings.database_url
+
+    @pytest.mark.unit
+    def test_secrets_from_file(self, tmp_path):
+        """Test: Secrets werden aus Dateien gelesen wenn secrets_dir existiert"""
+        from pydantic_settings import BaseSettings
+        from pydantic import model_validator
+        from typing import Optional
+
+        # Erstelle temporäre Secret-Datei
+        secret_file = tmp_path / "test_secret"
+        secret_file.write_text("file-based-secret")
+
+        class TestSettings(BaseSettings):
+            test_secret: str = "default"
+
+            class Config:
+                secrets_dir = str(tmp_path)
+
+        # Sicherstellen dass keine Env-Var den Test stört
+        env_clean = {k: v for k, v in os.environ.items() if k != "TEST_SECRET"}
+        with patch.dict(os.environ, env_clean, clear=True):
+            settings = TestSettings()
+            assert settings.test_secret == "file-based-secret"
+
+    @pytest.mark.unit
+    def test_env_var_overrides_secret_file(self, tmp_path):
+        """Test: Environment-Variable hat Vorrang vor Secret-Datei"""
+        from pydantic_settings import BaseSettings
+
+        secret_file = tmp_path / "secret_key"
+        secret_file.write_text("file-value")
+
+        class TestSettings(BaseSettings):
+            secret_key: str = "default"
+
+            class Config:
+                secrets_dir = str(tmp_path)
+
+        with patch.dict(os.environ, {"SECRET_KEY": "env-value"}):
+            settings = TestSettings()
+            assert settings.secret_key == "env-value"
+
+
+# ============================================================================
 # Room Name Normalization Tests (Additional)
 # ============================================================================
 

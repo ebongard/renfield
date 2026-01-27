@@ -2,14 +2,21 @@
 Konfiguration und Settings
 """
 from pydantic_settings import BaseSettings
+from pydantic import model_validator
 from typing import Optional, List, Dict
+from pathlib import Path
 from functools import lru_cache
 
 class Settings(BaseSettings):
     """Anwendungs-Einstellungen"""
-    
-    # Datenbank
-    database_url: str = "postgresql://renfield:changeme@postgres:5432/renfield"
+
+    # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
+    database_url: Optional[str] = None
+    postgres_user: str = "renfield"
+    postgres_password: str = "changeme"
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_db: str = "renfield"
     
     # Redis
     redis_url: str = "redis://redis:6379"
@@ -113,6 +120,9 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "changeme-in-production-use-strong-random-key"
 
+    # Jellyfin (Plugin)
+    jellyfin_api_key: Optional[str] = None
+
     # === Authentication ===
     # Set to True to enable authentication (default: False for development)
     auth_enabled: bool = False
@@ -195,8 +205,19 @@ class Settings(BaseSettings):
             voice_map[self.default_language] = self.piper_voice
         return voice_map
 
+    @model_validator(mode="after")
+    def assemble_database_url(self) -> "Settings":
+        """Baut DATABASE_URL aus Einzelteilen zusammen, falls nicht explizit gesetzt."""
+        if self.database_url is None:
+            self.database_url = (
+                f"postgresql://{self.postgres_user}:{self.postgres_password}"
+                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+            )
+        return self
+
     class Config:
         env_file = ".env"
+        secrets_dir = "/run/secrets"
         case_sensitive = False
 
 

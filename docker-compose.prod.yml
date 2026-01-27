@@ -26,7 +26,9 @@ services:
     environment:
       POSTGRES_DB: renfield
       POSTGRES_USER: renfield
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -92,10 +94,18 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/renfield
+      # DATABASE_URL wird dynamisch aus Einzelteilen zusammengebaut (config.py)
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       NVIDIA_VISIBLE_DEVICES: all
+    secrets:
+      - postgres_password
+      - home_assistant_token
+      - secret_key
+      - default_admin_password
+      - openweather_api_key
+      - newsapi_key
+      - jellyfin_api_key
     volumes:
       - ./src/backend:/app
       - ./tests:/tests
@@ -181,3 +191,19 @@ volumes:
   whisper_models:
   piper_models:
   rag_uploads:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  home_assistant_token:
+    file: ./secrets/home_assistant_token
+  secret_key:
+    file: ./secrets/secret_key
+  default_admin_password:
+    file: ./secrets/default_admin_password
+  openweather_api_key:
+    file: ./secrets/openweather_api_key
+  newsapi_key:
+    file: ./secrets/newsapi_key
+  jellyfin_api_key:
+    file: ./secrets/jellyfin_api_key

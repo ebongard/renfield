@@ -1,218 +1,155 @@
 # Secrets Management
 
-Dieses Dokument beschreibt Best Practices für die Verwaltung von Secrets in Renfield.
-
-## Entwicklung vs. Produktion
+Renfield unterstützt zwei Methoden zur Verwaltung von Secrets:
 
 | Umgebung | Methode | Sicherheitslevel |
 |----------|---------|------------------|
 | Entwicklung | `.env` Datei | Niedrig (OK für lokale Entwicklung) |
-| Produktion | Docker Secrets / Vault | Hoch |
+| Produktion | Docker Compose File-Based Secrets | Hoch |
 
-## Aktuelle Secrets in `.env`
+## Secrets-Übersicht
+
+| Secret | Beschreibung | Secret-Datei |
+|--------|-------------|--------------|
+| `postgres_password` | PostgreSQL-Passwort | `secrets/postgres_password` |
+| `home_assistant_token` | Home Assistant Long-Lived Access Token | `secrets/home_assistant_token` |
+| `secret_key` | JWT-Signierung und Security Key | `secrets/secret_key` |
+| `default_admin_password` | Initiales Admin-Passwort | `secrets/default_admin_password` |
+| `openweather_api_key` | OpenWeatherMap API Key | `secrets/openweather_api_key` |
+| `newsapi_key` | NewsAPI Key | `secrets/newsapi_key` |
+| `jellyfin_api_key` | Jellyfin API Key | `secrets/jellyfin_api_key` |
+
+## Produktion einrichten
+
+### 1. Secrets generieren
 
 ```bash
-# Datenbank
-POSTGRES_PASSWORD=changeme
+./bin/generate-secrets.sh
+```
 
-# JWT
-SECRET_KEY=changeme-in-production-use-strong-random-key
+Das Script erstellt das `secrets/` Verzeichnis und generiert:
+- **Automatisch**: `postgres_password`, `secret_key`, `default_admin_password`
+- **Interaktiv**: `home_assistant_token`, `openweather_api_key`, `newsapi_key`, `jellyfin_api_key`
 
-# Home Assistant
-HOME_ASSISTANT_TOKEN=your-long-lived-access-token
+Bereits vorhandene Secrets werden nicht überschrieben.
 
-# Optional: API Keys
+### 2. Secrets aus .env entfernen
+
+Entferne folgende Variablen aus der `.env` Datei auf dem Produktions-Server:
+
+```bash
+# Diese Zeilen entfernen:
+POSTGRES_PASSWORD=...
+HOME_ASSISTANT_TOKEN=...
+SECRET_KEY=...
+DEFAULT_ADMIN_PASSWORD=...
 OPENWEATHER_API_KEY=...
 NEWSAPI_KEY=...
-SPOTIFY_CLIENT_SECRET=...
+JELLYFIN_API_KEY=...
 ```
 
-## Option 1: Docker Secrets (empfohlen für Docker Swarm)
+Nicht-sensitive Konfiguration (URLs, Model-Namen, Feature-Flags) bleibt in `.env`.
 
-Docker Secrets sind die native Lösung für Docker Swarm Deployments.
-
-### Secrets erstellen
+### 3. Stack starten
 
 ```bash
-# Secret aus Datei erstellen
-echo "my-secure-password" | docker secret create postgres_password -
-echo "my-jwt-secret-key" | docker secret create jwt_secret_key -
-echo "ha-token" | docker secret create ha_token -
-
-# Secrets auflisten
-docker secret ls
+docker compose -f docker-compose.prod.yml up -d
 ```
 
-### docker-compose.prod.yml anpassen
+### 4. Verifizieren
 
-```yaml
-version: '3.8'
+```bash
+# Health Check
+curl -sk https://localhost/health
 
-services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-    secrets:
-      - postgres_password
-
-  backend:
-    image: renfield-backend
-    environment:
-      DATABASE_URL_FILE: /run/secrets/database_url
-      SECRET_KEY_FILE: /run/secrets/jwt_secret_key
-      HOME_ASSISTANT_TOKEN_FILE: /run/secrets/ha_token
-    secrets:
-      - database_url
-      - jwt_secret_key
-      - ha_token
-
-secrets:
-  postgres_password:
-    external: true
-  database_url:
-    external: true
-  jwt_secret_key:
-    external: true
-  ha_token:
-    external: true
+# DB-Verbindung prüfen
+docker exec renfield-backend python -c "from services.database import engine; print('DB OK')"
 ```
 
-### Backend-Code anpassen
+## Wie es funktioniert
 
-Der Backend-Code muss angepasst werden, um `*_FILE` Environment-Variablen zu unterstützen:
+### Pydantic SecretsSettingsSource
+
+Der Backend verwendet Pydantic's eingebauten `SecretsSettingsSource`. In `config.py`:
 
 ```python
-# utils/config.py
-import os
-
-def get_secret(env_var: str, default: str = None) -> str:
-    """
-    Liest Secret aus Environment-Variable oder Datei.
-
-    Unterstützt:
-    - Direkte Werte: SECRET_KEY=value
-    - Datei-Referenz: SECRET_KEY_FILE=/run/secrets/secret_key
-    """
-    # Prüfe ob _FILE Version existiert
-    file_env = f"{env_var}_FILE"
-    if file_path := os.environ.get(file_env):
-        try:
-            with open(file_path, 'r') as f:
-                return f.read().strip()
-        except FileNotFoundError:
-            pass
-
-    # Fallback auf direkte Environment-Variable
-    return os.environ.get(env_var, default)
+class Config:
+    env_file = ".env"
+    secrets_dir = "/run/secrets"
+    case_sensitive = False
 ```
 
-## Option 2: HashiCorp Vault
+Docker Compose mountet Secret-Dateien nach `/run/secrets/`. Pydantic sucht automatisch nach `/run/secrets/<feldname>` für jedes Settings-Feld.
 
-Für komplexere Setups mit Rotation, Audit-Logs und feingranularer Zugriffskontrolle.
+**Priorität** (höchste zuerst):
+1. Environment-Variable (z.B. `POSTGRES_PASSWORD=...`)
+2. Secret-Datei (`/run/secrets/postgres_password`)
+3. Default-Wert aus `config.py`
 
-### Vault Setup
+### DATABASE_URL dynamisch
 
-```bash
-# Vault Container starten
-docker run -d --name vault \
-  -p 8200:8200 \
-  -e 'VAULT_DEV_ROOT_TOKEN_ID=myroot' \
-  -e 'VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200' \
-  vault
-
-# Secrets speichern
-vault kv put secret/renfield \
-  postgres_password="secure-password" \
-  jwt_secret="jwt-secret-key" \
-  ha_token="home-assistant-token"
-```
-
-### Python-Integration
+`DATABASE_URL` wird nicht mehr direkt in `docker-compose.prod.yml` gesetzt. Stattdessen baut `config.py` die URL aus Einzelteilen zusammen:
 
 ```python
-import hvac
-
-client = hvac.Client(url='http://vault:8200', token='myroot')
-secrets = client.secrets.kv.v2.read_secret_version(path='renfield')
-postgres_password = secrets['data']['data']['postgres_password']
+@model_validator(mode="after")
+def assemble_database_url(self) -> "Settings":
+    if self.database_url is None:
+        self.database_url = (
+            f"postgresql://{self.postgres_user}:{self.postgres_password}"
+            f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        )
+    return self
 ```
 
-## Option 3: Kubernetes Secrets
+Das Postgres-Passwort kommt aus `/run/secrets/postgres_password`, die anderen Felder aus `.env` oder Defaults.
 
-Für Kubernetes-Deployments.
+### PostgreSQL POSTGRES_PASSWORD_FILE
+
+Das offizielle PostgreSQL Docker-Image unterstützt nativ `POSTGRES_PASSWORD_FILE`:
 
 ```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: renfield-secrets
-type: Opaque
-stringData:
-  postgres-password: "secure-password"
-  jwt-secret: "jwt-secret-key"
-  ha-token: "home-assistant-token"
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: renfield-backend
-spec:
-  template:
-    spec:
-      containers:
-      - name: backend
-        env:
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: renfield-secrets
-              key: postgres-password
+postgres:
+  environment:
+    POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+  secrets:
+    - postgres_password
 ```
 
-## Empfehlungen
+## Abwärtskompatibilität
 
-### Für Heimnetzwerk (Self-Hosted)
+- `.env`-basierte Secrets funktionieren weiterhin (höhere Priorität als Secret-Dateien)
+- `docker-compose.yml` und `docker-compose.dev.yml` bleiben unverändert
+- Nur `docker-compose.prod.yml` nutzt Docker Compose Secrets
+- Migration ist optional — vorhandene Setups brechen nicht
 
-1. **Minimum**: Starke Passwörter in `.env`, Datei nicht committen
-2. **Besser**: Docker Secrets mit Docker Compose
-3. **Am besten**: Vault für automatische Rotation
+## Entwicklung
 
-### Für Cloud/Produktion
-
-1. **AWS**: AWS Secrets Manager + IAM Roles
-2. **GCP**: Google Secret Manager
-3. **Azure**: Azure Key Vault
-4. **Kubernetes**: External Secrets Operator + Vault/Cloud Provider
-
-### Checkliste für Produktion
-
-- [ ] Alle Default-Passwörter geändert (`changeme`)
-- [ ] `.env` nicht in Git committed (in `.gitignore`)
-- [ ] Secrets nicht in Docker Images
-- [ ] Secrets-Rotation eingerichtet
-- [ ] Audit-Logging für Secret-Zugriffe
-- [ ] Backup für Secrets (verschlüsselt)
-
-## Secrets generieren
+Für die lokale Entwicklung reicht die `.env` Datei:
 
 ```bash
-# Sicheres Passwort generieren
-openssl rand -base64 32
-
-# JWT Secret Key generieren
-python -c "import secrets; print(secrets.token_urlsafe(64))"
-
-# Vollständige .env für Produktion generieren
-cat > .env.production << EOF
-POSTGRES_PASSWORD=$(openssl rand -base64 32)
-SECRET_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(64))")
-HOME_ASSISTANT_TOKEN=<your-token-here>
-EOF
+# .env (nur Entwicklung)
+POSTGRES_PASSWORD=changeme
+HOME_ASSISTANT_TOKEN=your_token
+SECRET_KEY=dev-key
 ```
 
-## Referenzen
+Keine Secret-Dateien nötig. Pydantic ignoriert `secrets_dir` wenn das Verzeichnis nicht existiert.
 
-- [Docker Secrets Documentation](https://docs.docker.com/engine/swarm/secrets/)
-- [HashiCorp Vault](https://www.vaultproject.io/)
-- [Kubernetes Secrets](https://kubernetes.io/docs/concepts/configuration/secret/)
+## Secret erneuern
+
+```bash
+# Einzelnes Secret neu generieren
+rm secrets/postgres_password
+./bin/generate-secrets.sh
+
+# Stack neu starten
+docker compose -f docker-compose.prod.yml restart backend postgres
+```
+
+## Sicherheitshinweise
+
+- `secrets/` Verzeichnis ist in `.gitignore` — Secrets werden nie committed
+- Secret-Dateien haben `chmod 600` (nur Owner lesen/schreiben)
+- `secrets/` Verzeichnis hat `chmod 700`
+- Docker Compose Secrets werden als tmpfs gemountet (nicht auf Disk)
+- Default-Passwörter (`changeme`) **müssen** in Produktion geändert werden
