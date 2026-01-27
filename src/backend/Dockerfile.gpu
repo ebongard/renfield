@@ -98,6 +98,8 @@ RUN ARCH=$(uname -m) && \
     && mv piper/piper /usr/local/bin/ \
     && mv piper/lib* /usr/local/lib/ 2>/dev/null || true \
     && chmod +x /usr/local/bin/piper \
+    && rm -f /usr/lib/x86_64-linux-gnu/libespeak-ng.so.1* \
+    && ln -sf /usr/lib/x86_64-linux-gnu/espeak-ng-data /usr/share/espeak-ng-data \
     && ldconfig \
     && rm -rf piper piper_${PIPER_ARCH}.tar.gz
 

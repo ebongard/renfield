@@ -174,21 +174,22 @@ class PluginLoader:
         return enabled
 
     def _validate_config_vars(self, plugin: PluginDefinition):
-        """Validate that required config variables exist in environment"""
+        """Validate that required config variables exist in environment or secrets"""
+        from integrations.core.generic_plugin import GenericPlugin
         config = plugin.config
         missing_vars = []
 
         if config.url:
-            if not os.getenv(config.url):
+            if not GenericPlugin._resolve_config_var(config.url):
                 missing_vars.append(config.url)
 
         if config.api_key:
-            if not os.getenv(config.api_key):
+            if not GenericPlugin._resolve_config_var(config.api_key):
                 missing_vars.append(config.api_key)
 
         if config.additional:
             for var_name in config.additional.values():
-                if not os.getenv(var_name):
+                if not GenericPlugin._resolve_config_var(var_name):
                     missing_vars.append(var_name)
 
         if missing_vars:

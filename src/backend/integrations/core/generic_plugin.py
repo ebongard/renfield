@@ -21,20 +21,40 @@ class GenericPlugin:
         self.rate_limiter = self._create_rate_limiter()
 
     def _load_config(self) -> Dict[str, Any]:
-        """Load configuration from environment variables"""
+        """Load configuration from environment variables or Pydantic Settings (secrets)"""
         config = {}
 
         if self.definition.config.url:
-            config['url'] = os.getenv(self.definition.config.url)
+            config['url'] = self._resolve_config_var(self.definition.config.url)
 
         if self.definition.config.api_key:
-            config['api_key'] = os.getenv(self.definition.config.api_key)
+            config['api_key'] = self._resolve_config_var(self.definition.config.api_key)
 
         if self.definition.config.additional:
             for key, env_var in self.definition.config.additional.items():
-                config[key] = os.getenv(env_var)
+                config[key] = self._resolve_config_var(env_var)
 
         return config
+
+    @staticmethod
+    def _resolve_config_var(env_var_name: str) -> Optional[str]:
+        """Resolve config variable from env var or Pydantic Settings (Docker secrets)"""
+        # First try environment variable
+        value = os.getenv(env_var_name)
+        if value is not None:
+            return value
+
+        # Fall back to Pydantic Settings (reads from /run/secrets/ and .env)
+        try:
+            from utils.config import get_settings
+            settings = get_settings()
+            field_name = env_var_name.lower()
+            if hasattr(settings, field_name):
+                return getattr(settings, field_name)
+        except Exception:
+            pass
+
+        return None
 
     def _create_rate_limiter(self) -> Optional[Dict]:
         """Create rate limiter if configured"""
