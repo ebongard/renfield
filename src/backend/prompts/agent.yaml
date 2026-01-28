@@ -1,73 +1,147 @@
 # Agent Loop Prompts
 # Used by AgentService for ReAct agent loop
+# Supports multilingual prompts (de/en)
 
-# Main agent prompt template
-# Available variables: {message}, {conv_context}, {tools_prompt}, {history_prompt}, {step_directive}
-agent_prompt: |
-  Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
+de:
+  # Main agent prompt template
+  # Available variables: {message}, {conv_context}, {tools_prompt}, {history_prompt}, {step_directive}
+  agent_prompt: |
+    Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
-  AUFGABE: "{message}"
-  {conv_context}
+    AUFGABE: "{message}"
+    {conv_context}
 
-  {tools_prompt}
+    {tools_prompt}
 
-  {history_prompt}
+    {history_prompt}
 
-  ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
+    ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
-  Wenn du ein Tool aufrufen willst:
-  {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum dieses Tool"}}
+    Wenn du ein Tool aufrufen willst:
+    {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum dieses Tool"}}
 
-  Wenn du die finale Antwort geben willst:
-  {{"action": "final_answer", "answer": "Deine Antwort an den Nutzer", "reason": "Warum fertig"}}
+    Wenn du die finale Antwort geben willst:
+    {{"action": "final_answer", "answer": "Deine Antwort an den Nutzer", "reason": "Warum fertig"}}
 
-  REGELN:
-  - Nutze NUR Tools aus der Liste oben
-  - Rufe pro Antwort GENAU EIN Tool auf
-  - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
-  - Gib final_answer wenn alle Informationen gesammelt sind
-  - Die finale Antwort muss natürlich und auf Deutsch sein
-  - Antworte NUR mit JSON, kein anderer Text
+    REGELN:
+    - Nutze NUR Tools aus der Liste oben
+    - Rufe pro Antwort GENAU EIN Tool auf
+    - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
+    - Gib final_answer wenn alle Informationen gesammelt sind
+    - Die finale Antwort muss natürlich und auf Deutsch sein
+    - Antworte NUR mit JSON, kein anderer Text
 
-  {step_directive}
+    {step_directive}
 
-# Conversation context template
-conv_context_template: |
-  KONVERSATIONS-KONTEXT:
-  {history_lines}
+  # Conversation context template
+  conv_context_template: |
+    KONVERSATIONS-KONTEXT:
+    {history_lines}
 
-# Step directives
-step_directive_first: "Beginne mit dem ERSTEN Schritt:"
-step_directive_next: "Was ist der nächste Schritt?"
+  # Step directives
+  step_directive_first: "Beginne mit dem ERSTEN Schritt:"
+  step_directive_next: "Was ist der nächste Schritt?"
 
-# Summary prompt for collecting tool results
-summary_prompt: |
-  Der Nutzer hat gefragt: "{message}"
+  # Summary prompt for collecting tool results
+  summary_prompt: |
+    Der Nutzer hat gefragt: "{message}"
 
-  Folgende Tool-Ergebnisse wurden gesammelt:
-  {results}
+    Folgende Tool-Ergebnisse wurden gesammelt:
+    {results}
 
-  Fasse die Ergebnisse in einer natürlichen, hilfreichen Antwort auf Deutsch zusammen.
-  Nenne konkrete Zahlen, Namen und Links. Antworte direkt ohne Einleitung wie 'Hier ist'.
+    Fasse die Ergebnisse in einer natürlichen, hilfreichen Antwort auf Deutsch zusammen.
+    Nenne konkrete Zahlen, Namen und Links. Antworte direkt ohne Einleitung wie 'Hier ist'.
 
-# Summary system message
-summary_system_message: "Du bist ein hilfreicher Assistent. Antworte natürlich auf Deutsch."
+  # Summary system message
+  summary_system_message: "Du bist ein hilfreicher Assistent. Antworte natürlich auf Deutsch."
 
-# Retry nudge prompt (appended when LLM returns empty)
-retry_nudge: "\n\nDu MUSST jetzt mit einem JSON-Objekt antworten. Was ist der nächste Schritt?"
+  # Retry nudge prompt (appended when LLM returns empty)
+  retry_nudge: "\n\nDu MUSST jetzt mit einem JSON-Objekt antworten. Was ist der nächste Schritt?"
 
-# Error messages
-error_loop_detected: "Loop erkannt: Tool '{tool}' wurde mehrfach identisch aufgerufen."
-error_circuit_open: "LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv)."
-error_timeout: "Schritt {step} hat zu lange gedauert (Timeout)."
-error_llm_failed: "LLM-Fehler: {error}"
-error_incomplete: "Entschuldigung, ich konnte die Anfrage nicht vollständig bearbeiten."
-error_summary_failed: "Entschuldigung, ich konnte die Ergebnisse nicht zusammenfassen."
+  # Error messages
+  error_loop_detected: "Loop erkannt: Tool '{tool}' wurde mehrfach identisch aufgerufen."
+  error_circuit_open: "LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv)."
+  error_timeout: "Schritt {step} hat zu lange gedauert (Timeout)."
+  error_llm_failed: "LLM-Fehler: {error}"
+  error_incomplete: "Entschuldigung, ich konnte die Anfrage nicht vollständig bearbeiten."
+  error_summary_failed: "Entschuldigung, ich konnte die Ergebnisse nicht zusammenfassen."
 
-# Thinking step message
-thinking_message: "Analysiere Anfrage und plane Schritte..."
+  # Thinking step message
+  thinking_message: "Analysiere Anfrage und plane Schritte..."
 
-# LLM options
+  # JSON system message
+  json_system_message: "Antworte nur mit JSON."
+
+en:
+  # Main agent prompt template
+  agent_prompt: |
+    You are an agent that solves complex tasks step by step.
+
+    TASK: "{message}"
+    {conv_context}
+
+    {tools_prompt}
+
+    {history_prompt}
+
+    RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
+
+    If you want to call a tool:
+    {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Why this tool"}}
+
+    If you want to give the final answer:
+    {{"action": "final_answer", "answer": "Your answer to the user", "reason": "Why finished"}}
+
+    RULES:
+    - Use ONLY tools from the list above
+    - Call EXACTLY ONE tool per response
+    - Use results from previous steps for decisions
+    - Give final_answer when all information is gathered
+    - The final answer must be natural and in English
+    - Reply ONLY with JSON, no other text
+
+    {step_directive}
+
+  # Conversation context template
+  conv_context_template: |
+    CONVERSATION CONTEXT:
+    {history_lines}
+
+  # Step directives
+  step_directive_first: "Start with the FIRST step:"
+  step_directive_next: "What is the next step?"
+
+  # Summary prompt for collecting tool results
+  summary_prompt: |
+    The user asked: "{message}"
+
+    The following tool results were collected:
+    {results}
+
+    Summarize the results in a natural, helpful answer in English.
+    Mention specific numbers, names, and links. Answer directly without introductions like 'Here is'.
+
+  # Summary system message
+  summary_system_message: "You are a helpful assistant. Answer naturally in English."
+
+  # Retry nudge prompt (appended when LLM returns empty)
+  retry_nudge: "\n\nYou MUST now respond with a JSON object. What is the next step?"
+
+  # Error messages
+  error_loop_detected: "Loop detected: Tool '{tool}' was called identically multiple times."
+  error_circuit_open: "LLM service temporarily unavailable (Circuit Breaker active)."
+  error_timeout: "Step {step} took too long (Timeout)."
+  error_llm_failed: "LLM error: {error}"
+  error_incomplete: "Sorry, I could not fully process the request."
+  error_summary_failed: "Sorry, I could not summarize the results."
+
+  # Thinking step message
+  thinking_message: "Analyzing request and planning steps..."
+
+  # JSON system message
+  json_system_message: "Reply with JSON only."
+
+# Language-independent LLM options
 llm_options:
   temperature: 0.1
   top_p: 0.2
@@ -81,6 +155,3 @@ llm_options_retry:
 llm_options_summary:
   temperature: 0.3
   num_predict: 800
-
-# JSON system message
-json_system_message: "Antworte nur mit JSON."

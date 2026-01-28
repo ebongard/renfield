@@ -1,5 +1,8 @@
 """
 Ollama Service - Lokales LLM
+
+Provides LLM interaction with multilingual support (de/en).
+Language can be specified per-call or defaults to system setting.
 """
 import ollama
 from typing import AsyncGenerator, List, Dict, Optional, TYPE_CHECKING
@@ -13,8 +16,9 @@ from utils.circuit_breaker import llm_circuit_breaker, CircuitOpenError
 from services.prompt_manager import prompt_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
+
 class OllamaService:
-    """Service für Ollama LLM Interaktion"""
+    """Service für Ollama LLM Interaktion mit Mehrsprachigkeit."""
 
     def __init__(self):
         self.client = ollama.AsyncClient(host=settings.ollama_url)
@@ -26,12 +30,33 @@ class OllamaService:
         self.embed_model = settings.ollama_embed_model
         self.intent_model = settings.ollama_intent_model
 
-        # Load system prompt from externalized YAML (fallback to hardcoded)
-        self.system_prompt = prompt_manager.get("chat", "system_prompt", default=self._default_system_prompt())
+        # Default language from settings
+        self.default_lang = settings.default_language
 
-    def _default_system_prompt(self) -> str:
+    def get_system_prompt(self, lang: Optional[str] = None) -> str:
+        """Get system prompt for the specified language."""
+        lang = lang or self.default_lang
+        return prompt_manager.get("chat", "system_prompt", lang=lang, default=self._default_system_prompt(lang))
+
+    def _default_system_prompt(self, lang: str = "de") -> str:
         """Fallback system prompt if YAML not available."""
-        return """Du bist Renfield, ein hilfreicher KI-Assistent für Smart Home Steuerung.
+        if lang == "en":
+            return """You are Renfield, a fully offline-capable, self-hosted digital assistant.
+
+Your capabilities:
+- Control Home Assistant devices (lights, switches, sensors, etc.)
+- Manage camera surveillance
+- Execute n8n workflows
+- Conduct research
+- Manage tasks
+
+IMPORTANT RULES FOR RESPONSES:
+1. ALWAYS respond in natural English language
+2. NEVER output JSON, code, or technical details
+3. Be brief, friendly, and direct
+4. If an action was executed, simply confirm it"""
+        else:
+            return """Du bist Renfield, ein vollständig offline-fähiger, selbst-gehosteter digitaler Assistent.
 
 Deine Fähigkeiten:
 - Home Assistant Geräte steuern (Lichter, Schalter, Sensoren, etc.)
@@ -63,15 +88,25 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"Fehler beim Laden des Modells: {e}")
             raise
     
-    async def chat(self, message: str, history: List[Dict] = None) -> str:
-        """Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie."""
+    async def chat(self, message: str, history: List[Dict] = None, lang: Optional[str] = None) -> str:
+        """
+        Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie.
+
+        Args:
+            message: Die Benutzernachricht
+            history: Optionale Konversationshistorie
+            lang: Sprache für die Antwort (de/en). None = default_lang
+        """
+        lang = lang or self.default_lang
+
         # Check circuit breaker before LLM call
         if not llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting chat request")
-            return prompt_manager.get("chat", "error_fallback", default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            return prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
 
         try:
-            messages = [{"role": "system", "content": self.system_prompt}]
+            system_prompt = self.get_system_prompt(lang)
+            messages = [{"role": "system", "content": system_prompt}]
 
             if history:
                 messages.extend(history)
@@ -88,18 +123,28 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             llm_circuit_breaker.record_failure()
             logger.error(f"Chat Fehler: {e}")
-            return prompt_manager.get("chat", "error_fallback", default=f"Entschuldigung, es gab einen Fehler: {str(e)}", error=str(e))
+            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {str(e)}", error=str(e))
     
-    async def chat_stream(self, message: str, history: List[Dict] = None) -> AsyncGenerator[str, None]:
-        """Streaming Chat with optional conversation history."""
+    async def chat_stream(self, message: str, history: List[Dict] = None, lang: Optional[str] = None) -> AsyncGenerator[str, None]:
+        """
+        Streaming Chat with optional conversation history.
+
+        Args:
+            message: Die Benutzernachricht
+            history: Optionale Konversationshistorie
+            lang: Sprache für die Antwort (de/en). None = default_lang
+        """
+        lang = lang or self.default_lang
+
         # Check circuit breaker before LLM call
         if not llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting stream request")
-            yield prompt_manager.get("chat", "error_fallback", default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
             return
 
         try:
-            messages = [{"role": "system", "content": self.system_prompt}]
+            system_prompt = self.get_system_prompt(lang)
+            messages = [{"role": "system", "content": system_prompt}]
 
             if history:
                 messages.extend(history)
@@ -120,14 +165,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             llm_circuit_breaker.record_failure()
             logger.error(f"Streaming Fehler: {e}")
-            yield prompt_manager.get("chat", "error_fallback", default=f"Fehler: {str(e)}", error=str(e))
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {str(e)}", error=str(e))
     
     async def extract_intent(
         self,
         message: str,
         plugin_registry=None,
         room_context: Optional[Dict] = None,
-        conversation_history: Optional[List[Dict]] = None
+        conversation_history: Optional[List[Dict]] = None,
+        lang: Optional[str] = None
     ) -> Dict:
         """
         Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung.
@@ -142,18 +188,26 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 - speaker_name: Name des erkannten Sprechers (optional)
             conversation_history: Optional conversation history for resolving
                 pronouns and references like "dort", "es", "das", "dafür"
+            lang: Language for prompts (de/en). None = default_lang
 
         Returns:
             Dict mit intent, parameters und confidence
         """
+        lang = lang or self.default_lang
 
         # Lade echte Entity Map von Home Assistant mit Room-Priorisierung
         entity_context = await self._build_entity_context(message, room_context)
 
-        # Build plugin context (NEW)
-        plugin_context = ""
+        # Build dynamic intent types from IntentRegistry
+        from services.intent_registry import intent_registry
+
+        # Set plugin registry if provided (for dynamic plugin intents)
         if plugin_registry:
-            plugin_context = self._build_plugin_context(plugin_registry)
+            intent_registry.set_plugin_registry(plugin_registry)
+
+        # Build intent types and examples dynamically
+        intent_types = intent_registry.build_intent_prompt(lang=lang)
+        examples = intent_registry.build_examples_prompt(lang=lang, max_examples=6)
 
         # Build room context for the prompt
         room_context_prompt = ""
@@ -162,11 +216,14 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             speaker_name = room_context.get("speaker_name", "")
 
             if room_name:
-                room_context_prompt += f"\nRAUM-KONTEXT: Der Benutzer befindet sich im Raum '{room_name}'."
-                room_context_prompt += f"\nWenn der Benutzer 'das Licht' oder 'die Lampe' sagt ohne Raumnamen, bevorzuge Geräte im Raum '{room_name}'."
+                room_context_prompt = prompt_manager.get(
+                    "intent", "room_context_template", lang=lang, room_name=room_name
+                )
 
             if speaker_name:
-                room_context_prompt += f"\nSPRECHER: {speaker_name}"
+                room_context_prompt += "\n" + prompt_manager.get(
+                    "intent", "speaker_context_template", lang=lang, speaker_name=speaker_name
+                )
 
         # Build conversation history context for reference resolution
         history_context_prompt = ""
@@ -176,49 +233,37 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             if recent_history:
                 history_lines = []
                 for msg in recent_history:
-                    role = "Nutzer" if msg.get("role") == "user" else "Assistent"
+                    role = "User" if lang == "en" else "Nutzer"
+                    if msg.get("role") != "user":
+                        role = "Assistant" if lang == "en" else "Assistent"
                     content = msg.get("content", "")[:200]  # Truncate long messages
                     history_lines.append(f"  {role}: {content}")
 
-                history_context_prompt = f"""
-KONVERSATIONS-HISTORIE (für Referenz-Auflösung):
-{chr(10).join(history_lines)}
+                history_context_prompt = prompt_manager.get(
+                    "intent", "history_context_template", lang=lang,
+                    history_lines="\n".join(history_lines)
+                )
 
-WICHTIG bei Referenzen:
-- Wenn der Nutzer "dort", "da", "dorthin" sagt, beziehe es auf den letzten genannten ORT in der Historie
-- Wenn der Nutzer "es", "das", "die", "den" sagt, beziehe es auf das letzte OBJEKT/GERÄT
-- Ersetze Referenzen durch die konkreten Werte aus der Historie in den Parametern
-- Beispiel: Wenn vorher "Berlin" erwähnt wurde und der Nutzer "dort" sagt, nutze "Berlin" im Query"""
-
-        prompt = f"""Erkenne den Intent für diese Nachricht: "{message}"
-{room_context_prompt}
-{history_context_prompt}
-
-INTENT-TYPEN:
-
-CORE INTENTS:
-- homeassistant.turn_on: Gerät einschalten
-- homeassistant.turn_off: Gerät ausschalten
-- homeassistant.get_state: Status abfragen
-- general.conversation: Normale Konversation (kein Smart Home)
-
-{plugin_context}
-
-{entity_context}
-
-BEISPIELE:
-1. "Schalte Licht ein" → {{"intent":"homeassistant.turn_on","parameters":{{"entity_id":"light.xxx"}}}}
-2. "Ist Fenster offen?" → {{"intent":"homeassistant.get_state","parameters":{{"entity_id":"binary_sensor.xxx"}}}}
-3. "Wie geht es dir?" → {{"intent":"general.conversation","parameters":{{}}}}
-
-WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Text!"""
+        # Build the full prompt from externalized template
+        prompt = prompt_manager.get(
+            "intent", "extraction_prompt", lang=lang,
+            message=message,
+            room_context=room_context_prompt,
+            history_context=history_context_prompt,
+            intent_types=intent_types,
+            examples=examples,
+            entity_context=entity_context
+        )
         
         try:
-            # Nutze direkt den Client mit temperature=0 für deterministische Antworten
+            # Use externalized system message and LLM options
+            json_system_message = prompt_manager.get("intent", "json_system_message", lang=lang, default="Reply with JSON only.")
+            llm_options = prompt_manager.get_config("intent", "llm_options") or {}
+
             messages = [
                 {
                     "role": "system",
-                    "content": "Antworte nur mit JSON."
+                    "content": json_system_message
                 },
                 {
                     "role": "user",
@@ -230,9 +275,9 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
                 model=self.model,
                 messages=messages,
                 options={
-                    "temperature": 0.0,  # Deterministisch
-                    "top_p": 0.1,        # Sehr fokussiert
-                    "num_predict": 300   # Etwas mehr Platz für JSON
+                    "temperature": llm_options.get("temperature", 0.0),
+                    "top_p": llm_options.get("top_p", 0.1),
+                    "num_predict": llm_options.get("num_predict", 300)
                 }
             )
             # ollama>=0.4.0 uses Pydantic models
@@ -631,7 +676,8 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
         self,
         message: str,
         rag_context: Optional[str] = None,
-        history: Optional[List[Dict]] = None
+        history: Optional[List[Dict]] = None,
+        lang: Optional[str] = None
     ) -> str:
         """
         Chat mit optionalem RAG-Kontext (nicht-streamend).
@@ -642,16 +688,18 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
             message: User-Nachricht
             rag_context: Optional formatierter Kontext aus der Wissensdatenbank
             history: Optional Chat-Historie
+            lang: Sprache für die Antwort (de/en). None = default_lang
 
         Returns:
             Generierte Antwort
         """
+        lang = lang or self.default_lang
         try:
             # Wähle Modell basierend auf RAG-Kontext
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
-            system_prompt = self._build_rag_system_prompt(rag_context)
+            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang)
 
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -669,13 +717,14 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
 
         except Exception as e:
             logger.error(f"RAG Chat Fehler: {e}")
-            return f"Entschuldigung, es gab einen Fehler: {str(e)}"
+            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Sorry, there was an error: {str(e)}", error=str(e))
 
     async def chat_stream_with_rag(
         self,
         message: str,
         rag_context: Optional[str] = None,
-        history: Optional[List[Dict]] = None
+        history: Optional[List[Dict]] = None,
+        lang: Optional[str] = None
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat mit optionalem RAG-Kontext.
@@ -686,16 +735,18 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
             message: User-Nachricht
             rag_context: Optional formatierter Kontext aus der Wissensdatenbank
             history: Optional Chat-Historie
+            lang: Sprache für die Antwort (de/en). None = default_lang
 
         Yields:
             Text-Chunks der Antwort
         """
+        lang = lang or self.default_lang
         try:
             # Wähle Modell basierend auf RAG-Kontext
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
-            system_prompt = self._build_rag_system_prompt(rag_context)
+            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang)
 
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -717,30 +768,43 @@ WICHTIG: Verwende NUR Intents aus der Liste oben! Antworte NUR mit JSON, kein Te
 
         except Exception as e:
             logger.error(f"RAG Streaming Fehler: {e}")
-            yield f"Fehler: {str(e)}"
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {str(e)}", error=str(e))
 
-    def _build_rag_system_prompt(self, context: Optional[str] = None) -> str:
+    def _build_rag_system_prompt(self, context: Optional[str] = None, lang: Optional[str] = None) -> str:
         """
         Erstellt System-Prompt mit optionalem RAG-Kontext.
 
         Args:
             context: Formatierter Kontext aus der Wissensdatenbank
+            lang: Sprache für den Prompt (de/en). None = default_lang
 
         Returns:
             System-Prompt für das LLM
         """
-        base_prompt = """Du bist Renfield, ein hilfreicher KI-Assistent.
-Antworte präzise, freundlich und auf Deutsch."""
+        lang = lang or self.default_lang
+
+        # Base RAG system prompt from externalized prompts
+        base_prompt = prompt_manager.get("chat", "rag_system_prompt", lang=lang)
 
         if not context:
             return base_prompt
 
-        return f"""{base_prompt}
+        # Get LLM options for RAG
+        rag_options = prompt_manager.get_config("chat", "rag_llm_options") or {}
 
-Nutze den folgenden Kontext aus der Wissensdatenbank, um die Frage zu beantworten.
-Wenn der Kontext die Frage nicht beantwortet, sage das ehrlich.
-Zitiere relevante Quellen mit [Quelle X].
+        # Build context section based on language
+        if lang == "en":
+            context_section = f"""
+KNOWLEDGE BASE CONTEXT:
+{context}
 
+IMPORTANT:
+- Base your answer on the context
+- Do not invent information
+- If you are unsure, say so
+- Reference the source when quoting from it"""
+        else:
+            context_section = f"""
 KONTEXT AUS WISSENSDATENBANK:
 {context}
 
@@ -749,6 +813,8 @@ WICHTIG:
 - Erfinde keine Informationen
 - Wenn du unsicher bist, sage es
 - Verweise auf die Quelle wenn du daraus zitierst"""
+
+        return f"{base_prompt}\n{context_section}"
 
     async def ensure_rag_models_loaded(self) -> Dict[str, bool]:
         """
