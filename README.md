@@ -11,6 +11,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 - **Sprechererkennung** - Automatische Identifikation mit SpeechBrain ECAPA-TDNN
 - **Multi-Room Voice Control** - Raspberry Pi Satellite Sprachassistenten
 - **Konversations-Persistenz** - Follow-up-Fragen verstehen ("Mach es aus", "Und dort?")
+- **Agent Loop (ReAct)** - Mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung
 
 ### Integrationen
 - **Smart Home Steuerung** - Home Assistant Integration mit Raum-Kontext
@@ -552,7 +553,7 @@ docker exec -it renfield-backend alembic upgrade head
 
 ### Tests ausführen
 
-Das Projekt verfügt über eine umfassende Test-Suite mit über 450 Backend-Tests:
+Das Projekt verfügt über eine umfassende Test-Suite mit über 650 Backend-Tests:
 
 ```bash
 # Alle Tests ausführen
@@ -574,6 +575,7 @@ docker compose exec -T -e PYTHONPATH=/app backend pytest /tests/backend/ -v
 **Testabdeckung:**
 - API-Routen: Chat, Voice, Speakers, Users, HomeAssistant, Camera, Tasks, Settings
 - Services: OllamaService, RAGService, SpeakerService, DeviceManager, RoomService
+- Agent Loop: ComplexityDetector, AgentToolRegistry, AgentService (85 Tests)
 - Auth & RBAC: JWT-Tokens, Passwort-Hashing, Berechtigungen, Rollen
 - WebSocket: Protokoll-Parsing, Geräte-Registrierung, Rate-Limiting
 

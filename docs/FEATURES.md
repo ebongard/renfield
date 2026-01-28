@@ -2,7 +2,7 @@
 
 ## Übersicht
 
-Renfield ist ein vollständig offline-fähiger KI-Assistent, der speziell für Smart Home und Hausautomatisierung entwickelt wurde.
+Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Tool-Zugriff in einer Oberfläche bündelt. Er dient mehreren Nutzern parallel, primär im Haushalt. Kernfähigkeiten: abfragbare Wissensbasis (RAG), gebündelte Tool-Nutzung (Web-Suche, Wetter, News, etc.) und Smart-Home-Steuerung als ergänzendes Feature.
 
 ## Chat & Konversation
 
@@ -285,9 +285,24 @@ Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschied
 
 ### Intent Recognition
 - **Automatisch**: Erkennt Benutzerabsicht aus Text
-- **Multi-Intent**: Kann mehrere Absichten kombinieren
 - **Confidence-Scores**: Wie sicher die Erkennung ist
 - **Fallback**: Bei Unsicherheit nachfragen
+
+### Agent Loop (ReAct — Multi-Step Tool Chaining)
+- **Mehrstufige Anfragen**: Komplexe Queries mit bedingter Logik und Tool-Verkettung
+- **Automatische Erkennung**: Regex-basierte Complexity Detection (Zero-Cost, kein LLM-Call)
+- **Echtzeit-Feedback**: Nutzer sieht jeden Schritt über WebSocket (Thinking → Tool Call → Result → Answer)
+- **Tool-Registry**: Alle HA-Tools und YAML-Plugins stehen als Agent-Tools zur Verfügung
+- **Sicherheitsmechanismen**: Max Steps, Per-Step Timeout, Total Timeout, JSON-Fallback
+- **Opt-in**: Deaktiviert by default (`AGENT_ENABLED=false`), einfache Anfragen nutzen weiter den schnellen Single-Intent-Pfad
+
+**Beispiel:**
+```
+"Wie ist das Wetter in Berlin und wenn es kälter als 10 Grad ist, suche ein Hotel"
+→ Agent Step 1: weather.get_current(Berlin) → 8°C
+→ Agent Step 2: search.web("4* Hotel Berlin") → 5 Ergebnisse
+→ Finale Antwort: "Es sind 8°C in Berlin. Da es kälter als 10° ist, hier Hotel-Empfehlungen: ..."
+```
 
 ### Kontextverständnis
 - **Session-Memory**: Merkt sich Gespräch

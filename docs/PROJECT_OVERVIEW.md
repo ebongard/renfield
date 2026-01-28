@@ -36,6 +36,9 @@ renfield/
 │   │   ├── whisper_service.py
 │   │   ├── piper_service.py
 │   │   ├── satellite_manager.py    # Satellite Session Management
+│   │   ├── complexity_detector.py  # Regex-basierte Multi-Step-Erkennung
+│   │   ├── agent_tools.py          # Tool-Registry für Agent Loop
+│   │   ├── agent_service.py        # ReAct Agent Loop (Multi-Step)
 │   │   └── task_queue.py
 │   ├── integrations/               # Externe Integrationen
 │   │   ├── homeassistant.py

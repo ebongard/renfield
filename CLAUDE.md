@@ -1039,6 +1039,11 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
 - `SPEAKER_RECOGNITION_THRESHOLD` - Similarity threshold for identification (default: `0.25`)
 - `SPEAKER_AUTO_ENROLL` - Auto-create profiles for unknown speakers (default: `true`)
 - `SPEAKER_CONTINUOUS_LEARNING` - Add embeddings on each interaction (default: `true`)
+- `AGENT_ENABLED` - Enable ReAct Agent Loop for multi-step queries (default: `false`)
+- `AGENT_MAX_STEPS` - Max reasoning steps per request (default: `5`)
+- `AGENT_STEP_TIMEOUT` - Timeout per LLM call in seconds (default: `30.0`)
+- `AGENT_TOTAL_TIMEOUT` - Total timeout for entire agent run in seconds (default: `120.0`)
+- `AGENT_MODEL` - Optional separate model for agent reasoning (default: uses `OLLAMA_MODEL`)
 
 ## Common Development Patterns
 
@@ -1190,12 +1195,12 @@ This reloads the dynamic keyword cache used for intent recognition.
 
 ## Testing
 
-Tests are organized by component in the `tests/` directory at project root. The backend test suite covers **450+ tests** across all API routes and services.
+Tests are organized by component in the `tests/` directory at project root. The backend test suite covers **650+ tests** across all API routes and services.
 
 ```
 tests/
 ├── conftest.py              # Shared fixtures for all tests
-├── backend/                 # Backend-specific tests (450+ tests)
+├── backend/                 # Backend-specific tests (650+ tests)
 │   ├── conftest.py          # Backend fixtures (DB, async client, mocks)
 │   │
 │   │   # API Route Tests

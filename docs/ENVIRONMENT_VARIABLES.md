@@ -155,6 +155,41 @@ LOG_LEVEL=INFO
 
 ---
 
+### Agent Loop (ReAct)
+
+```bash
+# Agent Loop aktivieren (Multi-Step Tool Chaining)
+AGENT_ENABLED=false
+
+# Maximale Reasoning-Schritte pro Anfrage
+AGENT_MAX_STEPS=5
+
+# Timeout pro LLM-Call (Sekunden)
+AGENT_STEP_TIMEOUT=30.0
+
+# Gesamt-Timeout für gesamten Agent-Run (Sekunden)
+AGENT_TOTAL_TIMEOUT=120.0
+
+# Optionales separates Modell für Agent (Standard: OLLAMA_MODEL)
+# AGENT_MODEL=gpt-oss:latest
+```
+
+**Defaults:**
+- `AGENT_ENABLED`: `false` (Opt-in)
+- `AGENT_MAX_STEPS`: `5`
+- `AGENT_STEP_TIMEOUT`: `30.0`
+- `AGENT_TOTAL_TIMEOUT`: `120.0`
+- `AGENT_MODEL`: None (nutzt `OLLAMA_MODEL`)
+
+**Wann aktivieren:**
+Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung:
+- "Wie ist das Wetter in Berlin und wenn es kälter als 10 Grad ist, suche ein Hotel"
+- "Schalte das Licht ein und dann stelle die Heizung auf 22 Grad"
+
+Einfache Anfragen ("Schalte das Licht ein") nutzen weiterhin den schnellen Single-Intent-Pfad.
+
+---
+
 ### Satellite System
 
 ```bash
@@ -811,6 +846,15 @@ HOME_ASSISTANT_TOKEN=eyJhbGci...
 N8N_WEBHOOK_URL=http://192.168.1.78:5678/webhook
 
 FRIGATE_URL=http://frigate.local:5000
+
+# -----------------------------------------------------------------------------
+# Agent Loop (ReAct — Multi-Step Tool Chaining)
+# -----------------------------------------------------------------------------
+AGENT_ENABLED=false
+# AGENT_MAX_STEPS=5
+# AGENT_STEP_TIMEOUT=30.0
+# AGENT_TOTAL_TIMEOUT=120.0
+# AGENT_MODEL=                       # Optional: eigenes Modell für Agent
 
 # -----------------------------------------------------------------------------
 # Satellite System
