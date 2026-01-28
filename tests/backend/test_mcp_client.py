@@ -14,8 +14,14 @@ from services.mcp_client import (
     MCPServerState,
     MCPToolInfo,
     MCPTransportType,
+    TokenBucketRateLimiter,
+    MCPValidationError,
+    MCPRateLimitError,
     _substitute_env_vars,
     _resolve_value,
+    _validate_tool_input,
+    _truncate_response,
+    MAX_RESPONSE_SIZE,
 )
 
 
@@ -641,3 +647,285 @@ class TestMCPIntentRouting:
         })
 
         assert result["success"] is True
+
+
+# ============================================================================
+# Input Validation
+# ============================================================================
+
+class TestInputValidation:
+    """Test MCP tool input validation against JSON schema."""
+
+    @pytest.mark.unit
+    def test_valid_input(self):
+        """Valid input should pass validation."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "age": {"type": "integer"},
+            },
+            "required": ["name"],
+        }
+        arguments = {"name": "Alice", "age": 30}
+
+        # Should not raise
+        _validate_tool_input(arguments, schema)
+
+    @pytest.mark.unit
+    def test_missing_required_field(self):
+        """Missing required field should raise MCPValidationError."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+            "required": ["name"],
+        }
+        arguments = {}
+
+        with pytest.raises(MCPValidationError) as exc:
+            _validate_tool_input(arguments, schema)
+        assert "validation failed" in str(exc.value).lower()
+
+    @pytest.mark.unit
+    def test_wrong_type(self):
+        """Wrong type should raise MCPValidationError."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer"},
+            },
+        }
+        arguments = {"count": "not a number"}
+
+        with pytest.raises(MCPValidationError) as exc:
+            _validate_tool_input(arguments, schema)
+        assert "validation failed" in str(exc.value).lower()
+
+    @pytest.mark.unit
+    def test_empty_schema_passes(self):
+        """Empty schema should allow any input."""
+        _validate_tool_input({"any": "thing"}, {})
+        _validate_tool_input({}, {})
+        _validate_tool_input({"nested": {"data": True}}, None)
+
+
+# ============================================================================
+# Response Truncation
+# ============================================================================
+
+class TestResponseTruncation:
+    """Test MCP response truncation."""
+
+    @pytest.mark.unit
+    def test_short_response_unchanged(self):
+        """Short responses should not be truncated."""
+        text = "Hello, World!"
+        result = _truncate_response(text)
+        assert result == text
+
+    @pytest.mark.unit
+    def test_long_response_truncated(self):
+        """Long responses should be truncated to MAX_RESPONSE_SIZE."""
+        text = "x" * (MAX_RESPONSE_SIZE + 1000)
+        result = _truncate_response(text)
+
+        # Should be truncated and have indicator
+        assert len(result.encode('utf-8')) <= MAX_RESPONSE_SIZE
+        assert "[... Response truncated" in result
+
+    @pytest.mark.unit
+    def test_exact_size_not_truncated(self):
+        """Response exactly at limit should not be truncated."""
+        # Create text that's exactly at the limit
+        text = "a" * (MAX_RESPONSE_SIZE - 100)  # Leave some buffer for UTF-8
+        result = _truncate_response(text)
+        assert result == text
+        assert "truncated" not in result.lower()
+
+    @pytest.mark.unit
+    def test_unicode_truncation(self):
+        """Unicode characters should be handled properly during truncation."""
+        # German umlauts and emoji
+        text = "äöü" * 5000 + "🎉" * 1000
+        result = _truncate_response(text)
+
+        # Should not raise and should be properly truncated
+        assert len(result.encode('utf-8')) <= MAX_RESPONSE_SIZE
+        # Should be valid UTF-8
+        result.encode('utf-8').decode('utf-8')
+
+
+# ============================================================================
+# Rate Limiting
+# ============================================================================
+
+class TestTokenBucketRateLimiter:
+    """Test token bucket rate limiter."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_allows_within_limit(self):
+        """Should allow requests within rate limit."""
+        limiter = TokenBucketRateLimiter(rate_per_minute=60)
+
+        # Should allow first request
+        assert await limiter.acquire() is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_blocks_when_exhausted(self):
+        """Should block when tokens exhausted."""
+        limiter = TokenBucketRateLimiter(rate_per_minute=2)
+
+        # Use up all tokens
+        assert await limiter.acquire() is True
+        assert await limiter.acquire() is True
+
+        # Third should be blocked
+        assert await limiter.acquire() is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_refills_over_time(self):
+        """Tokens should refill over time."""
+        limiter = TokenBucketRateLimiter(rate_per_minute=60)  # 1 per second
+
+        # Use a token
+        await limiter.acquire()
+
+        # Wait for refill (60/min = 1/sec, so wait >1sec)
+        import time
+        time.sleep(1.1)
+
+        # Should have tokens again
+        assert await limiter.acquire() is True
+
+    @pytest.mark.unit
+    def test_reset(self):
+        """Reset should restore full capacity."""
+        limiter = TokenBucketRateLimiter(rate_per_minute=3)
+
+        # Exhaust tokens
+        asyncio.run(limiter.acquire())
+        asyncio.run(limiter.acquire())
+        asyncio.run(limiter.acquire())
+
+        limiter.reset()
+
+        assert limiter.tokens == limiter.max_tokens
+
+
+# ============================================================================
+# Integration: Validation + Truncation + Rate Limit in execute_tool
+# ============================================================================
+
+class TestExecuteToolSecurity:
+    """Test security features in execute_tool."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_validates_input(self):
+        """execute_tool should validate input against schema."""
+        manager = MCPManager()
+        tool = MCPToolInfo(
+            server_name="srv",
+            original_name="strict_tool",
+            namespaced_name="mcp.srv.strict_tool",
+            description="A tool with strict schema",
+            input_schema={
+                "type": "object",
+                "properties": {"required_field": {"type": "string"}},
+                "required": ["required_field"],
+            },
+        )
+        manager._tool_index["mcp.srv.strict_tool"] = tool
+
+        mock_session = AsyncMock()
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+            rate_limiter=TokenBucketRateLimiter(rate_per_minute=100),
+        )
+        manager._servers["srv"] = state
+
+        # Missing required field should fail validation
+        result = await manager.execute_tool("mcp.srv.strict_tool", {})
+
+        assert result["success"] is False
+        assert "validation" in result["message"].lower()
+        mock_session.call_tool.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_truncates_large_response(self):
+        """execute_tool should truncate large responses."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "big", "mcp.srv.big", "Big response tool")
+        manager._tool_index["mcp.srv.big"] = tool
+
+        # Mock huge response
+        mock_content = MagicMock()
+        mock_content.text = "x" * (MAX_RESPONSE_SIZE + 5000)
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+            rate_limiter=TokenBucketRateLimiter(rate_per_minute=100),
+        )
+        manager._servers["srv"] = state
+
+        result = await manager.execute_tool("mcp.srv.big", {})
+
+        assert result["success"] is True
+        assert len(result["message"].encode('utf-8')) <= MAX_RESPONSE_SIZE
+        assert "truncated" in result["message"].lower()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_respects_rate_limit(self):
+        """execute_tool should respect rate limits."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "t", "mcp.srv.t", "Tool")
+        manager._tool_index["mcp.srv.t"] = tool
+
+        mock_content = MagicMock()
+        mock_content.text = "OK"
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        # Rate limiter with very low limit
+        rate_limiter = TokenBucketRateLimiter(rate_per_minute=1)
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+            rate_limiter=rate_limiter,
+        )
+        manager._servers["srv"] = state
+
+        # First call should succeed
+        result1 = await manager.execute_tool("mcp.srv.t", {})
+        assert result1["success"] is True
+
+        # Second call should be rate limited
+        result2 = await manager.execute_tool("mcp.srv.t", {})
+        assert result2["success"] is False
+        assert "rate limit" in result2["message"].lower()

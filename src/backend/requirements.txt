@@ -69,6 +69,7 @@ python-dateutil>=2.8.2
 
 # MCP Client (Model Context Protocol)
 mcp>=1.26.0
+jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 
 # Monitoring & Logging
 loguru==0.7.2

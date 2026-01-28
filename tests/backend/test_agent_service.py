@@ -121,6 +121,71 @@ class TestAgentContext:
         assert ctx.build_history_prompt() == ""
 
     @pytest.mark.unit
+    def test_sliding_window_limits_steps(self):
+        """Context sliding window should limit steps included in prompt."""
+        ctx = AgentContext(original_message="test")
+
+        # Add more steps than MAX_HISTORY_STEPS
+        for i in range(15):
+            ctx.steps.append(AgentStep(
+                step_number=i,
+                step_type="tool_call",
+                tool=f"tool_{i}",
+                parameters={"id": i}
+            ))
+
+        prompt = ctx.build_history_prompt()
+        # Should only include last 10 steps (MAX_HISTORY_STEPS)
+        assert "tool_0" not in prompt
+        assert "tool_4" not in prompt  # First 5 should be excluded
+        assert "tool_5" in prompt or "tool_6" in prompt  # Later ones included
+        assert "tool_14" in prompt  # Last one definitely included
+
+    @pytest.mark.unit
+    def test_detect_infinite_loop_no_repetition(self):
+        """No infinite loop when different tools are called."""
+        ctx = AgentContext(original_message="test")
+        ctx.steps.append(AgentStep(step_number=1, step_type="tool_call", tool="tool_a", parameters={"x": 1}))
+        ctx.steps.append(AgentStep(step_number=2, step_type="tool_call", tool="tool_b", parameters={"x": 2}))
+        ctx.steps.append(AgentStep(step_number=3, step_type="tool_call", tool="tool_c", parameters={"x": 3}))
+
+        assert ctx.detect_infinite_loop(min_repetitions=3) is False
+
+    @pytest.mark.unit
+    def test_detect_infinite_loop_with_repetition(self):
+        """Infinite loop detected when same tool+params called repeatedly."""
+        ctx = AgentContext(original_message="test")
+        # Same tool with same parameters 3 times
+        for i in range(3):
+            ctx.steps.append(AgentStep(
+                step_number=i,
+                step_type="tool_call",
+                tool="weather.get_current",
+                parameters={"location": "Berlin"}
+            ))
+
+        assert ctx.detect_infinite_loop(min_repetitions=3) is True
+
+    @pytest.mark.unit
+    def test_detect_infinite_loop_different_params(self):
+        """No infinite loop when same tool but different params."""
+        ctx = AgentContext(original_message="test")
+        ctx.steps.append(AgentStep(step_number=1, step_type="tool_call", tool="weather.get_current", parameters={"location": "Berlin"}))
+        ctx.steps.append(AgentStep(step_number=2, step_type="tool_call", tool="weather.get_current", parameters={"location": "Munich"}))
+        ctx.steps.append(AgentStep(step_number=3, step_type="tool_call", tool="weather.get_current", parameters={"location": "Hamburg"}))
+
+        assert ctx.detect_infinite_loop(min_repetitions=3) is False
+
+    @pytest.mark.unit
+    def test_detect_infinite_loop_not_enough_calls(self):
+        """No loop detected if fewer calls than threshold."""
+        ctx = AgentContext(original_message="test")
+        ctx.steps.append(AgentStep(step_number=1, step_type="tool_call", tool="tool_a", parameters={}))
+        ctx.steps.append(AgentStep(step_number=2, step_type="tool_call", tool="tool_a", parameters={}))
+
+        assert ctx.detect_infinite_loop(min_repetitions=3) is False
+
+    @pytest.mark.unit
     def test_history_prompt_with_steps(self):
         ctx = AgentContext(original_message="test")
         ctx.steps.append(AgentStep(
@@ -858,3 +923,147 @@ class TestToolResultDataInclusion:
         assert len(tool_results) == 1
         assert tool_results[0].content == "Licht eingeschaltet"
         assert "Daten:" not in tool_results[0].content
+
+
+# ============================================================================
+# Test Infinite Loop Detection in Agent Loop
+# ============================================================================
+
+class TestAgentInfiniteLoopDetection:
+    """Test that the agent detects and breaks out of infinite loops."""
+
+    def _make_registry(self):
+        return AgentToolRegistry(ha_available=True)
+
+    def _make_executor_mock(self):
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value={
+            "success": True,
+            "message": "OK",
+            "action_taken": True,
+        })
+        return executor
+
+    @pytest.mark.unit
+    async def test_infinite_loop_breaks_after_detection(self):
+        """Agent should break out when same tool is called 3+ times identically."""
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def stuck_llm(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            # Check if this is the summary call
+            messages = kwargs.get("messages", [])
+            user_content = messages[-1].get("content", "") if messages else ""
+            if "Fasse die Ergebnisse" in user_content:
+                resp.message.content = "Zusammenfassung."
+                return resp
+            # Keep calling the same tool with same params
+            resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+            return resp
+
+        ollama.client.chat = stuck_llm
+        executor = self._make_executor_mock()
+
+        agent = AgentService(registry, max_steps=10)
+        steps = await collect_steps(
+            agent, message="Infinite loop test", ollama=ollama, executor=executor
+        )
+
+        step_types = [s.step_type for s in steps]
+        # Should have detected loop and exited early
+        assert "error" in step_types
+        error_steps = [s for s in steps if s.step_type == "error"]
+        assert any("Loop erkannt" in s.content for s in error_steps)
+        assert steps[-1].step_type == "final_answer"
+        # Should not have used all 10 steps
+        tool_calls = [s for s in steps if s.step_type == "tool_call"]
+        assert len(tool_calls) <= 3  # Stopped after detecting loop
+
+
+# ============================================================================
+# Test Circuit Breaker Integration
+# ============================================================================
+
+class TestAgentCircuitBreakerIntegration:
+    """Test circuit breaker integration in agent service."""
+
+    def _make_registry(self):
+        return AgentToolRegistry(ha_available=True)
+
+    @pytest.mark.unit
+    async def test_circuit_breaker_blocks_when_open(self):
+        """When circuit breaker is open, agent should fail fast."""
+        from utils.circuit_breaker import agent_circuit_breaker
+
+        # Reset circuit breaker to known state
+        agent_circuit_breaker.reset()
+
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        # Make LLM always fail to trigger circuit breaker
+        async def failing_llm(**kwargs):
+            raise RuntimeError("LLM unavailable")
+
+        ollama.client.chat = failing_llm
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=5)
+
+        # Run multiple times to open the circuit
+        for _ in range(3):
+            try:
+                steps = await collect_steps(
+                    agent, message="Test", ollama=ollama, executor=executor
+                )
+            except Exception:
+                pass
+
+        # Circuit should now be open
+        assert agent_circuit_breaker.state.value == "open"
+
+        # Reset for other tests
+        agent_circuit_breaker.reset()
+
+    @pytest.mark.unit
+    async def test_circuit_breaker_records_success(self):
+        """Successful LLM calls should record success."""
+        from utils.circuit_breaker import agent_circuit_breaker
+
+        # Reset circuit breaker
+        agent_circuit_breaker.reset()
+        # Simulate some failures first
+        agent_circuit_breaker.record_failure()
+        agent_circuit_breaker.record_failure()
+
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def working_llm(**kwargs):
+            resp = MagicMock()
+            resp.message = MagicMock()
+            resp.message.content = '{"action": "final_answer", "answer": "OK", "reason": "Done"}'
+            return resp
+
+        ollama.client.chat = working_llm
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=5)
+        await collect_steps(
+            agent, message="Test", ollama=ollama, executor=executor
+        )
+
+        # Failure count should have been reset by success
+        assert agent_circuit_breaker.failure_count == 0
+
+        # Reset for other tests
+        agent_circuit_breaker.reset()

@@ -6,11 +6,16 @@ Manages multiple MCP server connections with:
 - Eager connection at startup with background reconnect
 - Tool discovery and namespacing (mcp.<server>.<tool>)
 - Tool execution with timeout handling
+- Input validation against JSON schema
+- Response truncation for large outputs
+- Per-server rate limiting
 """
 
 import asyncio
+import json
 import os
 import re
+import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from enum import Enum
@@ -21,6 +26,114 @@ import yaml
 from loguru import logger
 
 from utils.config import settings
+
+# Optional jsonschema import (graceful degradation if not installed)
+try:
+    import jsonschema
+    JSONSCHEMA_AVAILABLE = True
+except ImportError:
+    JSONSCHEMA_AVAILABLE = False
+    logger.warning("jsonschema not installed — MCP input validation disabled")
+
+
+# === Constants ===
+MAX_RESPONSE_SIZE = 10 * 1024  # 10KB max response size
+DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
+
+
+class MCPValidationError(Exception):
+    """Raised when MCP tool input validation fails."""
+    pass
+
+
+class MCPRateLimitError(Exception):
+    """Raised when MCP rate limit is exceeded."""
+    pass
+
+
+class TokenBucketRateLimiter:
+    """
+    Simple token bucket rate limiter for MCP calls.
+
+    Thread-safe via asyncio lock.
+    """
+
+    def __init__(self, rate_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE):
+        self.rate = rate_per_minute
+        self.tokens = float(rate_per_minute)
+        self.max_tokens = float(rate_per_minute)
+        self.last_update = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self) -> bool:
+        """
+        Try to acquire a token. Returns True if successful, False if rate limited.
+        """
+        async with self._lock:
+            now = time.monotonic()
+            elapsed = now - self.last_update
+            self.last_update = now
+
+            # Refill tokens based on elapsed time
+            self.tokens = min(
+                self.max_tokens,
+                self.tokens + elapsed * (self.rate / 60.0)
+            )
+
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
+                return True
+            return False
+
+    def reset(self) -> None:
+        """Reset the rate limiter to full capacity."""
+        self.tokens = self.max_tokens
+        self.last_update = time.monotonic()
+
+
+def _validate_tool_input(arguments: Dict, input_schema: Dict) -> None:
+    """
+    Validate tool arguments against JSON schema.
+
+    Args:
+        arguments: The arguments to validate
+        input_schema: JSON schema from tool definition
+
+    Raises:
+        MCPValidationError: If validation fails
+    """
+    if not JSONSCHEMA_AVAILABLE:
+        return  # Skip validation if jsonschema not installed
+
+    if not input_schema:
+        return  # No schema defined, skip validation
+
+    try:
+        jsonschema.validate(instance=arguments, schema=input_schema)
+    except jsonschema.ValidationError as e:
+        raise MCPValidationError(f"Input validation failed: {e.message}")
+    except jsonschema.SchemaError as e:
+        logger.warning(f"Invalid MCP tool schema: {e.message}")
+        # Don't fail on schema errors — the MCP server may handle it
+
+
+def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
+    """
+    Truncate response text to max_size bytes.
+
+    Args:
+        text: Response text to truncate
+        max_size: Maximum size in bytes
+
+    Returns:
+        Truncated text with indicator if truncated
+    """
+    if len(text.encode('utf-8')) <= max_size:
+        return text
+
+    # Truncate and add indicator
+    truncated = text.encode('utf-8')[:max_size - 50].decode('utf-8', errors='ignore')
+    return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
 
 
 class MCPTransportType(str, Enum):
@@ -62,6 +175,7 @@ class MCPServerState:
     last_error: Optional[str] = None
     session: Any = None  # mcp.ClientSession
     exit_stack: Optional[AsyncExitStack] = None
+    rate_limiter: Optional[TokenBucketRateLimiter] = None
 
 
 def _substitute_env_vars(value: str) -> str:
@@ -157,7 +271,14 @@ class MCPManager:
                     logger.info(f"MCP server '{config.name}' is disabled, skipping")
                     continue
 
-                self._servers[config.name] = MCPServerState(config=config)
+                # Initialize server state with rate limiter
+                rate_limiter = TokenBucketRateLimiter(
+                    rate_per_minute=DEFAULT_RATE_LIMIT_PER_MINUTE
+                )
+                self._servers[config.name] = MCPServerState(
+                    config=config,
+                    rate_limiter=rate_limiter,
+                )
                 logger.info(f"MCP server configured: {config.name} ({config.transport.value})")
 
             except Exception as e:
@@ -287,6 +408,11 @@ class MCPManager:
         """
         Execute an MCP tool by its namespaced name.
 
+        Includes:
+        - Input validation against JSON schema
+        - Rate limiting per server
+        - Response truncation for large outputs
+
         Returns:
             {"success": bool, "message": str, "data": Any}
         """
@@ -306,6 +432,27 @@ class MCPManager:
                 "data": None,
             }
 
+        # === Rate Limiting ===
+        if state.rate_limiter:
+            if not await state.rate_limiter.acquire():
+                logger.warning(f"MCP rate limit exceeded for server '{tool_info.server_name}'")
+                return {
+                    "success": False,
+                    "message": f"Rate limit exceeded for MCP server '{tool_info.server_name}'",
+                    "data": None,
+                }
+
+        # === Input Validation ===
+        try:
+            _validate_tool_input(arguments, tool_info.input_schema)
+        except MCPValidationError as e:
+            logger.warning(f"MCP input validation failed for {namespaced_name}: {e}")
+            return {
+                "success": False,
+                "message": str(e),
+                "data": None,
+            }
+
         try:
             result = await asyncio.wait_for(
                 state.session.call_tool(tool_info.original_name, arguments),
@@ -320,12 +467,17 @@ class MCPManager:
             for item in result.content:
                 text = getattr(item, "text", None)
                 if text:
-                    content_parts.append(text)
+                    # === Response Truncation ===
+                    truncated_text = _truncate_response(text)
+                    content_parts.append(truncated_text)
                 raw_data.append(
                     {"type": getattr(item, "type", "unknown"), "text": text}
                 )
 
             message = "\n".join(content_parts) if content_parts else "Tool executed"
+
+            # Truncate final message if still too large
+            message = _truncate_response(message)
 
             return {
                 "success": not is_error,

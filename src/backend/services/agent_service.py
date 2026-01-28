@@ -18,6 +18,7 @@ from typing import AsyncGenerator, Dict, List, Optional, TYPE_CHECKING
 from loguru import logger
 
 from utils.config import settings
+from utils.circuit_breaker import agent_circuit_breaker, CircuitOpenError
 from services.agent_tools import AgentToolRegistry
 
 if TYPE_CHECKING:
@@ -45,13 +46,24 @@ class AgentContext:
     steps: List[AgentStep] = field(default_factory=list)
     tool_results: List[Dict] = field(default_factory=list)
 
+    # Maximum number of steps to include in the prompt (sliding window)
+    MAX_HISTORY_STEPS: int = 10
+
     def build_history_prompt(self) -> str:
-        """Build prompt section from accumulated step history."""
+        """
+        Build prompt section from accumulated step history.
+
+        Uses a sliding window to limit context size and prevent token overflow.
+        Only the last MAX_HISTORY_STEPS steps are included in the prompt.
+        """
         if not self.steps:
             return ""
 
+        # Sliding window: only include last N steps
+        recent_steps = self.steps[-self.MAX_HISTORY_STEPS:]
+
         lines = ["BISHERIGE SCHRITTE:"]
-        for step in self.steps:
+        for step in recent_steps:
             if step.step_type == "tool_call":
                 lines.append(
                     f"  Schritt {step.step_number}: Tool '{step.tool}' aufgerufen"
@@ -65,6 +77,32 @@ class AgentContext:
                 lines.append(f"  Fehler: {step.content[:200]}")
 
         return "\n".join(lines)
+
+    def detect_infinite_loop(self, min_repetitions: int = 3) -> bool:
+        """
+        Detect if the agent is stuck in an infinite loop.
+
+        Checks if the last N tool calls are identical (same tool + same parameters).
+
+        Args:
+            min_repetitions: Minimum number of identical calls to trigger detection
+
+        Returns:
+            True if infinite loop detected, False otherwise
+        """
+        # Get recent tool calls
+        tool_calls = [
+            (s.tool, json.dumps(s.parameters or {}, sort_keys=True))
+            for s in self.steps
+            if s.step_type == "tool_call"
+        ]
+
+        if len(tool_calls) < min_repetitions:
+            return False
+
+        # Check if last N calls are identical
+        recent = tool_calls[-min_repetitions:]
+        return len(set(recent)) == 1
 
 
 def _truncate(text: str, max_length: int = 300) -> str:
@@ -223,6 +261,18 @@ REGELN:
             prompt = self._build_agent_prompt(message, context, conversation_history)
             logger.debug(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars)")
 
+            # Check circuit breaker before LLM call
+            if not agent_circuit_breaker.allow_request():
+                logger.warning(f"🔴 Agent circuit breaker OPEN — skipping LLM call at step {step_num}")
+                yield AgentStep(
+                    step_number=step_num,
+                    step_type="error",
+                    content="LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv).",
+                )
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model)
+                yield summary_step
+                return
+
             # Call LLM with per-step timeout
             try:
                 raw_response = await asyncio.wait_for(
@@ -241,8 +291,10 @@ REGELN:
                     timeout=self.step_timeout,
                 )
                 response_text = raw_response.message.content or ""
+                agent_circuit_breaker.record_success()
                 logger.debug(f"🤖 Agent step {step_num} response_len={len(response_text)}")
             except asyncio.TimeoutError:
+                agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
                 yield AgentStep(
                     step_number=step_num,
@@ -253,6 +305,7 @@ REGELN:
                 yield summary_step
                 return
             except Exception as e:
+                agent_circuit_breaker.record_failure()
                 logger.error(f"❌ Agent LLM call failed at step {step_num}: {e}")
                 yield AgentStep(
                     step_number=step_num,
@@ -396,6 +449,19 @@ REGELN:
             context.steps.append(tool_result_step)
             context.tool_results.append(result)
             yield tool_result_step
+
+            # Check for infinite loop (same tool called repeatedly)
+            if context.detect_infinite_loop(min_repetitions=3):
+                logger.warning(f"🔄 Agent infinite loop detected at step {step_num} (tool: {action})")
+                yield AgentStep(
+                    step_number=step_num,
+                    step_type="error",
+                    content=f"Loop erkannt: Tool '{action}' wurde mehrfach identisch aufgerufen.",
+                    tool=action,
+                )
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model)
+                yield summary_step
+                return
 
         # Max steps reached — summarize collected results via LLM
         logger.warning(f"⚠️ Agent reached max steps ({self.max_steps})")
