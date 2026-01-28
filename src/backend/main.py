@@ -17,7 +17,7 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
 from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge, satellites
-from api.routes import auth, roles, users, plugins, preferences, mcp as mcp_routes
+from api.routes import auth, roles, users, plugins, preferences, mcp as mcp_routes, intents
 from api.lifecycle import lifespan
 from api.websocket import chat_router, satellite_router, device_router
 from services.auth_service import require_permission
@@ -117,6 +117,7 @@ app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"]
 app.include_router(plugins.router, prefix="/api/plugins", tags=["Plugins"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
+app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

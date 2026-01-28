@@ -145,13 +145,26 @@ async def _init_mcp(app: "FastAPI"):
 
     try:
         from services.mcp_client import MCPManager
+        from services.intent_registry import intent_registry
 
         manager = MCPManager()
         manager.load_config(settings.mcp_config_path)
         await manager.connect_all()
         await manager.start_refresh_loop()
         app.state.mcp_manager = manager
-        logger.info("MCP Client bereit")
+
+        # Register MCP tools with IntentRegistry for visibility in admin UI
+        mcp_tools = manager.get_all_tools()
+        tool_dicts = [
+            {
+                "intent": tool.namespaced_name,
+                "description": tool.description,
+                "server": tool.server_name,
+            }
+            for tool in mcp_tools
+        ]
+        intent_registry.set_mcp_tools(tool_dicts)
+        logger.info(f"✅ MCP Client bereit: {len(mcp_tools)} Tools registriert")
     except Exception as e:
         logger.error(f"MCP Client konnte nicht initialisiert werden: {e}")
         import traceback

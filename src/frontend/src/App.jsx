@@ -17,6 +17,7 @@ import RolesPage from './pages/RolesPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsPage from './pages/SettingsPage';
 import SatellitesPage from './pages/SatellitesPage';
+import IntentsPage from './pages/IntentsPage';
 import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
@@ -90,6 +91,11 @@ function App() {
                   <Route path="/admin/integrations" element={
                     <AdminRoute>
                       <IntegrationsPage />
+                    </AdminRoute>
+                  } />
+                  <Route path="/admin/intents" element={
+                    <AdminRoute>
+                      <IntentsPage />
                     </AdminRoute>
                   } />
                 </Routes>
