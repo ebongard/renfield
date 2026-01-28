@@ -14,6 +14,7 @@ from loguru import logger
 
 if TYPE_CHECKING:
     from integrations.core.plugin_registry import PluginRegistry
+    from services.mcp_client import MCPManager
 
 
 @dataclass
@@ -60,7 +61,7 @@ class AgentToolRegistry:
         ),
     ]
 
-    def __init__(self, plugin_registry: Optional["PluginRegistry"] = None, ha_available: bool = True):
+    def __init__(self, plugin_registry: Optional["PluginRegistry"] = None, ha_available: bool = True, mcp_manager: Optional["MCPManager"] = None):
         self._tools: Dict[str, ToolDefinition] = {}
         self._ha_available = ha_available
 
@@ -72,6 +73,10 @@ class AgentToolRegistry:
         # Register plugin tools
         if plugin_registry:
             self._register_plugin_tools(plugin_registry)
+
+        # Register MCP tools
+        if mcp_manager:
+            self._register_mcp_tools(mcp_manager)
 
     def _register_plugin_tools(self, plugin_registry: "PluginRegistry") -> None:
         """Register all plugin intents as agent tools."""
@@ -88,6 +93,26 @@ class AgentToolRegistry:
             )
             self._tools[tool.name] = tool
             logger.debug(f"🔧 Agent tool registered: {tool.name}")
+
+    def _register_mcp_tools(self, mcp_manager: "MCPManager") -> None:
+        """Register all MCP tools as agent tools."""
+        for mcp_tool in mcp_manager.get_all_tools():
+            params = {}
+            schema_props = mcp_tool.input_schema.get("properties", {})
+            required_params = mcp_tool.input_schema.get("required", [])
+            for param_name, param_schema in schema_props.items():
+                desc = param_schema.get("description", param_schema.get("type", ""))
+                if param_name in required_params:
+                    desc += " (required)"
+                params[param_name] = desc
+
+            tool = ToolDefinition(
+                name=mcp_tool.namespaced_name,
+                description=mcp_tool.description,
+                parameters=params,
+            )
+            self._tools[tool.name] = tool
+            logger.debug(f"MCP agent tool registered: {tool.name}")
 
     def get_tool(self, name: str) -> Optional[ToolDefinition]:
         """Get a tool definition by name."""

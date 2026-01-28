@@ -18,8 +18,8 @@ import {
   Shield,
   UserCog,
   User,
-  Puzzle,
-  Satellite
+  Satellite,
+  Blocks
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -39,7 +39,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'] },
-  { nameKey: 'nav.plugins', href: '/plugins', icon: Puzzle, permission: ['plugins.use', 'plugins.manage'] },
+  { nameKey: 'nav.integrations', href: '/admin/integrations', icon: Blocks, permission: ['admin', 'plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'] },

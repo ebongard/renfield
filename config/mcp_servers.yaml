@@ -1,0 +1,79 @@
+# MCP Server Configuration
+# ========================
+# Define external MCP servers that Renfield connects to as a client.
+# Each server exposes tools that become available to the Agent Loop.
+#
+# Environment variable substitution:
+#   ${VAR}           — Requires VAR to be set
+#   ${VAR:-default}  — Uses "default" if VAR is not set
+#
+# Transport types:
+#   streamable_http  — Modern MCP transport (default)
+#   sse              — Server-Sent Events (legacy)
+#   stdio            — Subprocess with stdin/stdout (requires Node.js)
+
+servers:
+  # --- OpenWeatherMap MCP Server ---
+  # Replaces: plugins/weather.yaml
+  # npm: @tristau/openweathermap-mcp
+  # Requires: OPENWEATHER_API_KEY env var
+  - name: weather
+    transport: stdio
+    command: npx
+    args: ["-y", "@tristau/openweathermap-mcp", "--apikey", "${OPENWEATHER_API_KEY}"]
+    enabled: "${WEATHER_ENABLED:-false}"
+    refresh_interval: 300
+
+  # --- SearXNG MCP Server ---
+  # Replaces: plugins/search.yaml
+  # npm: @kevinwatt/mcp-server-searxng
+  # Requires: SEARXNG_URL env var
+  - name: search
+    transport: stdio
+    command: npx
+    args: ["-y", "@kevinwatt/mcp-server-searxng"]
+    enabled: "${SEARCH_ENABLED:-false}"
+    refresh_interval: 300
+
+  # --- NewsAPI MCP Server ---
+  # Replaces: plugins/news.yaml
+  # npm: mcp-newsapi
+  # Requires: NEWSAPI_KEY env var
+  - name: news
+    transport: stdio
+    command: npx
+    args: ["-y", "mcp-newsapi"]
+    enabled: "${NEWS_ENABLED:-false}"
+    refresh_interval: 300
+
+  # --- Jellyfin MCP Server ---
+  # Replaces: plugins/jellyfin.yaml
+  # npm: jellyfin-suggestion-mcp
+  # Requires: JELLYFIN_BASE_URL, JELLYFIN_TOKEN env vars
+  - name: jellyfin
+    transport: stdio
+    command: npx
+    args: ["-y", "jellyfin-suggestion-mcp"]
+    enabled: "${JELLYFIN_ENABLED:-false}"
+    refresh_interval: 300
+
+  # --- n8n MCP Server ---
+  # npm: mcp-n8n
+  # Requires: N8N_BASE_URL, N8N_API_KEY env vars
+  # Get API key from: n8n → Settings → API → Create API Key
+  - name: n8n
+    transport: stdio
+    command: npx
+    args: ["-y", "mcp-n8n"]
+    enabled: "${N8N_MCP_ENABLED:-false}"
+    refresh_interval: 300
+
+  # --- Home Assistant MCP Server ---
+  # Uses HA's built-in MCP server at /api/mcp
+  # Requires: MCP Server integration enabled in HA
+  - name: homeassistant
+    transport: streamable_http
+    url: "${HOME_ASSISTANT_URL}/api/mcp"
+    auth_token_env: HOME_ASSISTANT_TOKEN
+    enabled: "${HA_MCP_ENABLED:-false}"
+    refresh_interval: 600

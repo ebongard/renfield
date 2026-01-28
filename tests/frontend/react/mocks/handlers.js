@@ -103,6 +103,90 @@ const mockConversationHistory = {
   ]
 };
 
+// MCP mock data
+const mockMcpStatus = {
+  enabled: true,
+  total_tools: 15,
+  servers: [
+    {
+      name: 'weather',
+      connected: true,
+      transport: 'stdio',
+      tool_count: 5,
+      last_error: null
+    },
+    {
+      name: 'homeassistant',
+      connected: true,
+      transport: 'streamable_http',
+      tool_count: 8,
+      last_error: null
+    },
+    {
+      name: 'search',
+      connected: false,
+      transport: 'stdio',
+      tool_count: 2,
+      last_error: 'Connection timeout'
+    }
+  ]
+};
+
+const mockMcpTools = [
+  {
+    name: 'weather__get_current',
+    original_name: 'get_current',
+    server: 'weather',
+    description: 'Get current weather for a location',
+    input_schema: {
+      type: 'object',
+      properties: {
+        location: { type: 'string', description: 'City name' }
+      },
+      required: ['location']
+    }
+  },
+  {
+    name: 'weather__get_forecast',
+    original_name: 'get_forecast',
+    server: 'weather',
+    description: 'Get weather forecast',
+    input_schema: {
+      type: 'object',
+      properties: {
+        location: { type: 'string' },
+        days: { type: 'integer', default: 5 }
+      }
+    }
+  },
+  {
+    name: 'homeassistant__turn_on',
+    original_name: 'turn_on',
+    server: 'homeassistant',
+    description: 'Turn on a Home Assistant entity',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entity_id: { type: 'string' }
+      },
+      required: ['entity_id']
+    }
+  },
+  {
+    name: 'homeassistant__turn_off',
+    original_name: 'turn_off',
+    server: 'homeassistant',
+    description: 'Turn off a Home Assistant entity',
+    input_schema: {
+      type: 'object',
+      properties: {
+        entity_id: { type: 'string' }
+      },
+      required: ['entity_id']
+    }
+  }
+];
+
 // Default mock data
 const mockPlugins = [
   {
@@ -180,6 +264,25 @@ const mockPermissions = [
 ];
 
 export const handlers = [
+  // MCP API
+  http.get(`${BASE_URL}/api/mcp/status`, () => {
+    return HttpResponse.json(mockMcpStatus);
+  }),
+
+  http.get(`${BASE_URL}/api/mcp/tools`, () => {
+    return HttpResponse.json({
+      tools: mockMcpTools,
+      total: mockMcpTools.length
+    });
+  }),
+
+  http.post(`${BASE_URL}/api/mcp/refresh`, () => {
+    return HttpResponse.json({
+      message: 'MCP connections refreshed successfully',
+      servers_reconnected: 1
+    });
+  }),
+
   // Plugins API
   http.get(`${BASE_URL}/api/plugins`, () => {
     return HttpResponse.json({
@@ -411,4 +514,4 @@ export const handlers = [
 ];
 
 // Export BASE_URL for use in tests that need to override handlers
-export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth, mockConversations, mockConversationHistory };
+export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth, mockConversations, mockConversationHistory, mockMcpStatus, mockMcpTools };

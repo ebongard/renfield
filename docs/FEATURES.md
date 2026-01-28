@@ -253,6 +253,68 @@ Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschied
 - **Response-Mapping**: Antworten transformieren
 - **Intent-Integration**: Automatische Intent-Erkennung
 
+## MCP Integration (Model Context Protocol)
+
+### Universelle Tool-Schnittstelle
+- **Dynamische Tool-Erkennung**: Externe MCP-Server werden automatisch als LLM-Tools eingebunden
+- **Keine Code-Änderung nötig**: Neue Tools per YAML-Konfiguration hinzufügen
+- **Drei Transport-Typen**: Streamable HTTP, SSE und Stdio
+- **Namensraum-System**: Tools als `mcp.<server>.<tool>` — kollisionsfrei mit bestehenden Intents
+
+### Konfiguration
+```yaml
+# config/mcp_servers.yaml
+servers:
+  - name: n8n
+    url: "${N8N_MCP_URL:-http://n8n.local:5678/mcp}"
+    transport: streamable_http
+    auth_token_env: N8N_API_TOKEN
+    enabled: "${N8N_MCP_ENABLED:-false}"
+```
+
+### Features
+- **Eager Connection**: Verbindung beim Startup, nicht pro Request
+- **Background Refresh**: Automatischer Health-Check und Tool-Refresh
+- **Partial Failure**: Ein fehlender Server blockiert nicht die anderen
+- **Env-Var Substitution**: `${VAR}` und `${VAR:-default}` in der YAML-Konfiguration
+- **Agent-Integration**: MCP-Tools stehen im Agent Loop zur Verfügung
+- **Admin-API**: Status, Tool-Liste und manueller Refresh über `/api/mcp/*`
+
+### Umgebungsvariablen
+```bash
+MCP_ENABLED=true                          # MCP aktivieren
+MCP_CONFIG_PATH=config/mcp_servers.yaml   # Pfad zur Konfiguration
+MCP_REFRESH_INTERVAL=60                   # Background-Refresh (Sekunden)
+MCP_CONNECT_TIMEOUT=10.0                  # Verbindungs-Timeout
+MCP_CALL_TIMEOUT=30.0                     # Tool-Call-Timeout
+```
+
+### Admin-Endpoints
+- `GET /api/mcp/status` — Server-Verbindungen, Tool-Counts, Fehler
+- `GET /api/mcp/tools` — Alle entdeckten MCP-Tools mit Schemas
+- `POST /api/mcp/refresh` — Tool-Listen manuell refreshen
+
+### Admin-UI: Integrationen (`/admin/integrations`)
+Die Integrationsseite vereint MCP-Server und YAML-Plugins in einer übersichtlichen Oberfläche:
+
+**MCP-Server Sektion:**
+- **Übersicht**: Status aller konfigurierten MCP-Server (Online/Offline)
+- **Expandierbare Server**: Klick auf einen Server zeigt verfügbare Tools
+- **Tool-Details**: Modal mit Tool-Namen, Schema und Beschreibung
+- **Transport-Badges**: Anzeige des Verbindungstyps (stdio, streamable_http, sse)
+- **Fehlerdetails**: Bei Offline-Servern wird der letzte Fehler angezeigt
+- **Refresh-Button**: Manuelles Aktualisieren der Verbindungen
+
+**YAML-Plugins Sektion:**
+- **Plugin-Liste**: Alle geladenen Plugins mit Status (Aktiviert/Deaktiviert)
+- **Toggle-Button**: Plugins ein-/ausschalten (erfordert `plugins.manage` Berechtigung)
+- **Details-Modal**: Version, Autor, Konfigurationsvariablen und Intents
+- **Intent-Übersicht**: Expandierbare Intent-Details mit Parametern
+
+**Statistiken:**
+- Anzahl MCP-Server / Verbundene Server / MCP-Tools
+- Anzahl YAML-Plugins / Aktive Plugins / Gesamt-Intents
+
 ## Task Management
 
 ### Task-Queue

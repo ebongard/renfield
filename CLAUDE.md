@@ -823,13 +823,20 @@ src/frontend/
 │   ├── main.jsx              # React entry point
 │   ├── App.jsx               # Router setup, main layout
 │   ├── pages/                # Route components (JSX, gradual TS migration)
-│   │   ├── HomePage.jsx      # Dashboard/landing
 │   │   ├── ChatPage.jsx      # Chat interface with WebSocket, voice controls, sidebar
-│   │   ├── SpeakersPage.jsx  # Speaker management and enrollment
-│   │   ├── RoomsPage.jsx     # Room management with device list, HA sync
-│   │   ├── HomeAssistantPage.jsx # Device browser and controls
+│   │   ├── TasksPage.jsx     # Task queue viewer
 │   │   ├── CameraPage.jsx    # Frigate events viewer
-│   │   └── TasksPage.jsx     # Task queue viewer
+│   │   ├── KnowledgePage.jsx # Knowledge base management
+│   │   ├── HomeAssistantPage.jsx # Device browser and controls
+│   │   ├── RoomsPage.jsx     # Room management with device list, HA sync
+│   │   ├── SpeakersPage.jsx  # Speaker management and enrollment
+│   │   ├── LoginPage.jsx     # Authentication login
+│   │   ├── RegisterPage.jsx  # User registration
+│   │   ├── UsersPage.jsx     # Admin: User management
+│   │   ├── RolesPage.jsx     # Admin: Role/permission management
+│   │   ├── IntegrationsPage.jsx # Admin: MCP servers & YAML plugins (unified view)
+│   │   ├── SettingsPage.jsx  # Admin: Wakeword and system settings
+│   │   └── SatellitesPage.jsx # Admin: Satellite device management
 │   ├── components/           # React components (JSX, gradual TS migration)
 │   │   ├── Layout.jsx        # Navigation, responsive layout, ThemeToggle
 │   │   ├── ThemeToggle.jsx   # Dark/Light/System theme dropdown

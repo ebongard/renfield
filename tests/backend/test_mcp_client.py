@@ -1,0 +1,643 @@
+"""
+Tests for MCPManager — MCP client core, config loading, tool execution, and integration.
+"""
+
+import os
+import pytest
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from dataclasses import dataclass
+
+from services.mcp_client import (
+    MCPManager,
+    MCPServerConfig,
+    MCPServerState,
+    MCPToolInfo,
+    MCPTransportType,
+    _substitute_env_vars,
+    _resolve_value,
+)
+
+
+# ============================================================================
+# Env-Var Substitution
+# ============================================================================
+
+class TestEnvVarSubstitution:
+    """Test ${VAR} and ${VAR:-default} substitution."""
+
+    @pytest.mark.unit
+    def test_simple_substitution(self):
+        with patch.dict(os.environ, {"MY_VAR": "hello"}):
+            assert _substitute_env_vars("${MY_VAR}") == "hello"
+
+    @pytest.mark.unit
+    def test_default_value_used(self):
+        env = {k: v for k, v in os.environ.items() if k != "MISSING_VAR"}
+        with patch.dict(os.environ, env, clear=True):
+            assert _substitute_env_vars("${MISSING_VAR:-fallback}") == "fallback"
+
+    @pytest.mark.unit
+    def test_env_overrides_default(self):
+        with patch.dict(os.environ, {"MY_VAR": "real_value"}):
+            assert _substitute_env_vars("${MY_VAR:-fallback}") == "real_value"
+
+    @pytest.mark.unit
+    def test_no_substitution_needed(self):
+        assert _substitute_env_vars("plain text") == "plain text"
+
+    @pytest.mark.unit
+    def test_multiple_vars(self):
+        with patch.dict(os.environ, {"A": "1", "B": "2"}):
+            assert _substitute_env_vars("${A}-${B}") == "1-2"
+
+    @pytest.mark.unit
+    def test_missing_required_var_returns_empty(self):
+        env = {k: v for k, v in os.environ.items() if k != "UNDEF_VAR"}
+        with patch.dict(os.environ, env, clear=True):
+            assert _substitute_env_vars("${UNDEF_VAR}") == ""
+
+    @pytest.mark.unit
+    def test_resolve_bool_true(self):
+        assert _resolve_value("true") is True
+        assert _resolve_value("True") is True
+        assert _resolve_value("1") is True
+
+    @pytest.mark.unit
+    def test_resolve_bool_false(self):
+        assert _resolve_value("false") is False
+        assert _resolve_value("False") is False
+        assert _resolve_value("0") is False
+
+    @pytest.mark.unit
+    def test_resolve_non_string(self):
+        assert _resolve_value(42) == 42
+        assert _resolve_value(True) is True
+
+
+# ============================================================================
+# Config Loading
+# ============================================================================
+
+class TestLoadConfig:
+    """Test YAML configuration loading."""
+
+    @pytest.mark.unit
+    def test_load_config_from_yaml(self, tmp_path):
+        """YAML parsing with env-var substitution."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("""
+servers:
+  - name: test_server
+    url: "http://localhost:8080/mcp"
+    transport: streamable_http
+    enabled: true
+    refresh_interval: 120
+""")
+        manager = MCPManager()
+        manager.load_config(str(config_file))
+
+        assert "test_server" in manager._servers
+        state = manager._servers["test_server"]
+        assert state.config.name == "test_server"
+        assert state.config.url == "http://localhost:8080/mcp"
+        assert state.config.transport == MCPTransportType.STREAMABLE_HTTP
+        assert state.config.refresh_interval == 120
+
+    @pytest.mark.unit
+    def test_env_var_substitution_in_config(self, tmp_path):
+        """${VAR} and ${VAR:-default} patterns in YAML."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("""
+servers:
+  - name: env_test
+    url: "${TEST_MCP_URL:-http://default:9090/mcp}"
+    transport: sse
+    enabled: "${TEST_MCP_ENABLED:-true}"
+""")
+        with patch.dict(os.environ, {"TEST_MCP_URL": "http://custom:1234/mcp"}):
+            manager = MCPManager()
+            manager.load_config(str(config_file))
+
+        assert "env_test" in manager._servers
+        assert manager._servers["env_test"].config.url == "http://custom:1234/mcp"
+        assert manager._servers["env_test"].config.transport == MCPTransportType.SSE
+
+    @pytest.mark.unit
+    def test_disabled_server_skipped(self, tmp_path):
+        """Disabled servers should not be registered."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("""
+servers:
+  - name: disabled_server
+    url: "http://localhost/mcp"
+    enabled: false
+""")
+        manager = MCPManager()
+        manager.load_config(str(config_file))
+
+        assert "disabled_server" not in manager._servers
+
+    @pytest.mark.unit
+    def test_missing_config_file(self):
+        """Missing config file should log warning and continue."""
+        manager = MCPManager()
+        manager.load_config("/nonexistent/path.yaml")
+        assert len(manager._servers) == 0
+
+    @pytest.mark.unit
+    def test_empty_servers_list(self, tmp_path):
+        """Empty servers list should work."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("servers:\n")
+        manager = MCPManager()
+        manager.load_config(str(config_file))
+        assert len(manager._servers) == 0
+
+    @pytest.mark.unit
+    def test_stdio_transport_config(self, tmp_path):
+        """Stdio transport should parse command and args."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("""
+servers:
+  - name: stdio_server
+    transport: stdio
+    command: npx
+    args: ["-y", "@mcp/server-fs", "/data"]
+    enabled: true
+""")
+        manager = MCPManager()
+        manager.load_config(str(config_file))
+
+        assert "stdio_server" in manager._servers
+        config = manager._servers["stdio_server"].config
+        assert config.transport == MCPTransportType.STDIO
+        assert config.command == "npx"
+        assert config.args == ["-y", "@mcp/server-fs", "/data"]
+
+
+# ============================================================================
+# Tool Namespacing
+# ============================================================================
+
+class TestToolNamespacing:
+    """Test mcp.<server>.<tool> naming."""
+
+    @pytest.mark.unit
+    def test_tool_namespacing(self):
+        """Tools should be namespaced as mcp.<server>.<tool>."""
+        tool = MCPToolInfo(
+            server_name="n8n",
+            original_name="send_email",
+            namespaced_name="mcp.n8n.send_email",
+            description="Send an email",
+            input_schema={"properties": {"to": {"type": "string"}}},
+        )
+        assert tool.namespaced_name == "mcp.n8n.send_email"
+        assert tool.server_name == "n8n"
+        assert tool.original_name == "send_email"
+
+    @pytest.mark.unit
+    def test_is_mcp_tool(self):
+        """is_mcp_tool should check the index."""
+        manager = MCPManager()
+        tool = MCPToolInfo(
+            server_name="test",
+            original_name="foo",
+            namespaced_name="mcp.test.foo",
+            description="Test tool",
+        )
+        manager._tool_index["mcp.test.foo"] = tool
+
+        assert manager.is_mcp_tool("mcp.test.foo") is True
+        assert manager.is_mcp_tool("mcp.test.bar") is False
+        assert manager.is_mcp_tool("homeassistant.turn_on") is False
+
+    @pytest.mark.unit
+    def test_get_all_tools(self):
+        """get_all_tools should return all indexed tools."""
+        manager = MCPManager()
+        tool1 = MCPToolInfo("s1", "t1", "mcp.s1.t1", "desc1")
+        tool2 = MCPToolInfo("s2", "t2", "mcp.s2.t2", "desc2")
+        manager._tool_index["mcp.s1.t1"] = tool1
+        manager._tool_index["mcp.s2.t2"] = tool2
+
+        tools = manager.get_all_tools()
+        assert len(tools) == 2
+        names = {t.namespaced_name for t in tools}
+        assert names == {"mcp.s1.t1", "mcp.s2.t2"}
+
+
+# ============================================================================
+# Tool Execution
+# ============================================================================
+
+class TestExecuteTool:
+    """Test MCPManager.execute_tool()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_unknown(self):
+        """Unknown tool name should return error."""
+        manager = MCPManager()
+        result = await manager.execute_tool("mcp.nonexistent.tool", {})
+        assert result["success"] is False
+        assert "Unknown" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_server_down(self):
+        """Disconnected server should return error."""
+        manager = MCPManager()
+        tool = MCPToolInfo("down_server", "test", "mcp.down_server.test", "Test")
+        manager._tool_index["mcp.down_server.test"] = tool
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="down_server"),
+            connected=False,
+        )
+        manager._servers["down_server"] = state
+
+        result = await manager.execute_tool("mcp.down_server.test", {})
+        assert result["success"] is False
+        assert "nicht verbunden" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_success(self):
+        """Successful tool call should return formatted result."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "mytool", "mcp.srv.mytool", "My tool")
+        manager._tool_index["mcp.srv.mytool"] = tool
+
+        # Mock session
+        mock_content = MagicMock()
+        mock_content.text = "Tool result text"
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["srv"] = state
+
+        result = await manager.execute_tool("mcp.srv.mytool", {"param": "value"})
+        assert result["success"] is True
+        assert result["message"] == "Tool result text"
+        mock_session.call_tool.assert_called_once_with("mytool", {"param": "value"})
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_error_result(self):
+        """Tool returning isError=True should return success=False."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "bad", "mcp.srv.bad", "Failing tool")
+        manager._tool_index["mcp.srv.bad"] = tool
+
+        mock_content = MagicMock()
+        mock_content.text = "Something went wrong"
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = True
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["srv"] = state
+
+        result = await manager.execute_tool("mcp.srv.bad", {})
+        assert result["success"] is False
+        assert "Something went wrong" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_timeout(self):
+        """Tool call exceeding timeout should return error."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "slow", "mcp.srv.slow", "Slow tool")
+        manager._tool_index["mcp.srv.slow"] = tool
+
+        async def slow_call(*args, **kwargs):
+            await asyncio.sleep(100)
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = slow_call
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["srv"] = state
+
+        with patch("services.mcp_client.settings") as mock_settings:
+            mock_settings.mcp_call_timeout = 0.01
+            result = await manager.execute_tool("mcp.srv.slow", {})
+
+        assert result["success"] is False
+        assert "Timeout" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_tool_result_empty_content(self):
+        """Empty tool content should return generic message."""
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "empty", "mcp.srv.empty", "Empty tool")
+        manager._tool_index["mcp.srv.empty"] = tool
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = []
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["srv"] = state
+
+        result = await manager.execute_tool("mcp.srv.empty", {})
+        assert result["success"] is True
+        assert result["message"] == "Tool executed"
+
+
+# ============================================================================
+# Connect — Partial Failure
+# ============================================================================
+
+class TestConnectPartialFailure:
+    """Test that partial connection failures don't block other servers."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_connect_partial_failure(self):
+        """One server failing should not prevent others from connecting."""
+        manager = MCPManager()
+
+        # Two servers: one will fail, one succeeds
+        manager._servers["failing"] = MCPServerState(
+            config=MCPServerConfig(name="failing", url="http://bad:9999/mcp")
+        )
+        manager._servers["good"] = MCPServerState(
+            config=MCPServerConfig(name="good", url="http://good:8080/mcp")
+        )
+
+        # Mock _connect_server to simulate partial failure
+        call_count = {"failing": 0, "good": 0}
+
+        async def mock_connect(state):
+            call_count[state.config.name] += 1
+            if state.config.name == "failing":
+                state.connected = False
+                state.last_error = "Connection refused"
+            else:
+                state.connected = True
+                state.tools = [
+                    MCPToolInfo("good", "test", "mcp.good.test", "A tool")
+                ]
+                manager._tool_index["mcp.good.test"] = state.tools[0]
+
+        with patch.object(manager, "_connect_server", side_effect=mock_connect):
+            await manager.connect_all()
+
+        assert manager._servers["failing"].connected is False
+        assert manager._servers["good"].connected is True
+        assert len(manager._tool_index) == 1
+        assert call_count["failing"] == 1
+        assert call_count["good"] == 1
+
+
+# ============================================================================
+# Status
+# ============================================================================
+
+class TestGetStatus:
+    """Test MCPManager.get_status()."""
+
+    @pytest.mark.unit
+    def test_status_empty(self):
+        manager = MCPManager()
+        status = manager.get_status()
+        assert status["enabled"] is True
+        assert status["total_tools"] == 0
+        assert status["servers"] == []
+
+    @pytest.mark.unit
+    def test_status_with_servers(self):
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "t", "mcp.srv.t", "desc")
+        manager._tool_index["mcp.srv.t"] = tool
+        manager._servers["srv"] = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            tools=[tool],
+        )
+
+        status = manager.get_status()
+        assert status["total_tools"] == 1
+        assert len(status["servers"]) == 1
+        assert status["servers"][0]["name"] == "srv"
+        assert status["servers"][0]["connected"] is True
+        assert status["servers"][0]["tool_count"] == 1
+
+
+# ============================================================================
+# Shutdown
+# ============================================================================
+
+class TestShutdown:
+    """Test MCPManager.shutdown()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_shutdown_clears_state(self):
+        manager = MCPManager()
+        tool = MCPToolInfo("srv", "t", "mcp.srv.t", "desc")
+        manager._tool_index["mcp.srv.t"] = tool
+
+        mock_exit_stack = AsyncMock()
+        manager._servers["srv"] = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            tools=[tool],
+            exit_stack=mock_exit_stack,
+        )
+
+        await manager.shutdown()
+
+        assert len(manager._tool_index) == 0
+        assert manager._servers["srv"].connected is False
+        assert manager._servers["srv"].session is None
+        mock_exit_stack.__aexit__.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_shutdown_cancels_refresh_task(self):
+        manager = MCPManager()
+        manager._refresh_task = asyncio.create_task(asyncio.sleep(1000))
+
+        await manager.shutdown()
+
+        assert manager._refresh_task.cancelled()
+
+
+# ============================================================================
+# AgentToolRegistry Integration
+# ============================================================================
+
+class TestMCPToolsInRegistry:
+    """Test that MCP tools appear in AgentToolRegistry."""
+
+    @pytest.mark.unit
+    def test_mcp_tools_in_registry(self):
+        """MCP tools should be registered as agent tools."""
+        from services.agent_tools import AgentToolRegistry
+
+        mock_manager = MagicMock()
+        mock_manager.get_all_tools.return_value = [
+            MCPToolInfo(
+                server_name="n8n",
+                original_name="send_email",
+                namespaced_name="mcp.n8n.send_email",
+                description="Send an email via n8n",
+                input_schema={
+                    "properties": {
+                        "to": {"type": "string", "description": "Recipient address"},
+                        "subject": {"type": "string", "description": "Email subject"},
+                    },
+                    "required": ["to", "subject"],
+                },
+            ),
+        ]
+
+        registry = AgentToolRegistry(ha_available=False, mcp_manager=mock_manager)
+
+        assert registry.is_valid_tool("mcp.n8n.send_email") is True
+        tool = registry.get_tool("mcp.n8n.send_email")
+        assert tool.description == "Send an email via n8n"
+        assert "to" in tool.parameters
+        assert "(required)" in tool.parameters["to"]
+        assert "(required)" in tool.parameters["subject"]
+
+    @pytest.mark.unit
+    def test_mcp_tools_in_prompt(self):
+        """MCP tools should appear in build_tools_prompt() output."""
+        from services.agent_tools import AgentToolRegistry
+
+        mock_manager = MagicMock()
+        mock_manager.get_all_tools.return_value = [
+            MCPToolInfo(
+                server_name="test",
+                original_name="greet",
+                namespaced_name="mcp.test.greet",
+                description="Greet someone",
+                input_schema={
+                    "properties": {"name": {"type": "string", "description": "Person name"}},
+                    "required": ["name"],
+                },
+            ),
+        ]
+
+        registry = AgentToolRegistry(ha_available=False, mcp_manager=mock_manager)
+        prompt = registry.build_tools_prompt()
+
+        assert "mcp.test.greet" in prompt
+        assert "Greet someone" in prompt
+        assert "name" in prompt
+
+    @pytest.mark.unit
+    def test_registry_without_mcp(self):
+        """Registry should work fine without mcp_manager."""
+        from services.agent_tools import AgentToolRegistry
+
+        registry = AgentToolRegistry(ha_available=True, mcp_manager=None)
+        assert registry.is_valid_tool("homeassistant.turn_on") is True
+        assert registry.is_valid_tool("mcp.anything") is False
+
+
+# ============================================================================
+# ActionExecutor Integration
+# ============================================================================
+
+class TestMCPIntentRouting:
+    """Test that mcp.* intents are routed to MCPManager."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_mcp_intent_routing(self):
+        """mcp.* intents should be routed to MCPManager.execute_tool()."""
+        from services.action_executor import ActionExecutor
+
+        mock_manager = AsyncMock()
+        mock_manager.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": "Email sent",
+            "data": None,
+        })
+
+        executor = ActionExecutor(mcp_manager=mock_manager)
+        result = await executor.execute({
+            "intent": "mcp.n8n.send_email",
+            "parameters": {"to": "user@example.com", "subject": "Test"},
+            "confidence": 0.9,
+        })
+
+        assert result["success"] is True
+        assert result["message"] == "Email sent"
+        mock_manager.execute_tool.assert_called_once_with(
+            "mcp.n8n.send_email",
+            {"to": "user@example.com", "subject": "Test"},
+        )
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_non_mcp_unaffected(self):
+        """Non-MCP intents should not be routed to MCPManager."""
+        from services.action_executor import ActionExecutor
+
+        mock_manager = AsyncMock()
+        executor = ActionExecutor(mcp_manager=mock_manager)
+
+        # HA intent should go through normal routing (will hit HA client)
+        # We just verify mcp_manager is NOT called
+        result = await executor.execute({
+            "intent": "general.conversation",
+            "parameters": {},
+            "confidence": 0.9,
+        })
+
+        mock_manager.execute_tool.assert_not_called()
+        assert result["success"] is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_executor_without_mcp(self):
+        """Executor should work without mcp_manager (None)."""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor(mcp_manager=None)
+        result = await executor.execute({
+            "intent": "general.conversation",
+            "parameters": {},
+            "confidence": 0.9,
+        })
+
+        assert result["success"] is True

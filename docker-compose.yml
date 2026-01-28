@@ -81,6 +81,7 @@ services:
       - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
@@ -122,6 +123,7 @@ services:
       - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper

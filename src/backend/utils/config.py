@@ -109,6 +109,13 @@ class Settings(BaseSettings):
     agent_total_timeout: float = 120.0    # Total timeout for entire agent run
     agent_model: Optional[str] = None     # Optional: separate model for agent (default: ollama_model)
 
+    # MCP Client (Model Context Protocol)
+    mcp_enabled: bool = False             # Opt-in, disabled by default
+    mcp_config_path: str = "config/mcp_servers.yaml"
+    mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
+    mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
+    mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
+
     # RAG (Retrieval-Augmented Generation)
     rag_enabled: bool = True
     rag_chunk_size: int = 512           # Token-Limit pro Chunk

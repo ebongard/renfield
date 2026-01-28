@@ -99,9 +99,10 @@ async def send_message(
                 from services.action_executor import ActionExecutor
 
                 ha_available = settings.home_assistant_url is not None
-                tool_registry = AgentToolRegistry(app.state.plugin_registry, ha_available=ha_available)
+                mcp_manager = getattr(app.state, 'mcp_manager', None)
+                tool_registry = AgentToolRegistry(app.state.plugin_registry, ha_available=ha_available, mcp_manager=mcp_manager)
                 agent = AgentService(tool_registry)
-                executor = ActionExecutor(plugin_registry=app.state.plugin_registry)
+                executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
 
                 async for step in agent.run(
                     message=chat_request.message,
@@ -141,7 +142,8 @@ async def send_message(
         if intent.get("intent") != "general.conversation":
             logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
             from services.action_executor import ActionExecutor
-            executor = ActionExecutor(plugin_registry=app.state.plugin_registry)
+            mcp_mgr = getattr(app.state, 'mcp_manager', None)
+            executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_mgr)
             action_result = await executor.execute(intent, user=current_user)
             logger.info(f"✅ Aktion ausgeführt: {action_result.get('success')} - {action_result.get('message')}")
 

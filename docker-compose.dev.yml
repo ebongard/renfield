@@ -86,6 +86,7 @@ services:
       - ./src/backend:/app
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - rag_uploads:/app/data/uploads

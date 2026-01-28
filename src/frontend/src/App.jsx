@@ -14,7 +14,7 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import UsersPage from './pages/UsersPage';
 import RolesPage from './pages/RolesPage';
-import PluginsPage from './pages/PluginsPage';
+import IntegrationsPage from './pages/IntegrationsPage';
 import SettingsPage from './pages/SettingsPage';
 import SatellitesPage from './pages/SatellitesPage';
 import { DeviceProvider } from './context/DeviceContext';
@@ -64,11 +64,8 @@ function App() {
                       <KnowledgePage />
                     </ProtectedRoute>
                   } />
-                  <Route path="/plugins" element={
-                    <ProtectedRoute permission={['plugins.use', 'plugins.manage']} requireAny>
-                      <PluginsPage />
-                    </ProtectedRoute>
-                  } />
+                  {/* Redirect old /plugins route to new integrations page */}
+                  <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
                   {/* Admin routes */}
                   <Route path="/admin/users" element={
                     <AdminRoute>
@@ -88,6 +85,11 @@ function App() {
                   <Route path="/admin/satellites" element={
                     <AdminRoute>
                       <SatellitesPage />
+                    </AdminRoute>
+                  } />
+                  <Route path="/admin/integrations" element={
+                    <AdminRoute>
+                      <IntegrationsPage />
                     </AdminRoute>
                   } />
                 </Routes>

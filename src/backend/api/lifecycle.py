@@ -136,6 +136,29 @@ def _schedule_ha_keywords_preload():
         logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
 
 
+async def _init_mcp(app: "FastAPI"):
+    """Initialize MCP client connections to external tool servers."""
+    if not settings.mcp_enabled:
+        app.state.mcp_manager = None
+        logger.info("MCP Client deaktiviert")
+        return
+
+    try:
+        from services.mcp_client import MCPManager
+
+        manager = MCPManager()
+        manager.load_config(settings.mcp_config_path)
+        await manager.connect_all()
+        await manager.start_refresh_loop()
+        app.state.mcp_manager = manager
+        logger.info("MCP Client bereit")
+    except Exception as e:
+        logger.error(f"MCP Client konnte nicht initialisiert werden: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        app.state.mcp_manager = None
+
+
 async def _init_zeroconf(app: "FastAPI"):
     """Initialize Zeroconf service for satellite auto-discovery."""
     zeroconf_service = None
@@ -199,6 +222,7 @@ async def lifespan(app: "FastAPI"):
     await _init_ollama(app)
     await _init_task_queue(app)
     await _init_plugins(app)
+    await _init_mcp(app)
 
     # Background preloading
     _schedule_whisper_preload()
@@ -214,6 +238,10 @@ async def lifespan(app: "FastAPI"):
 
     await _cancel_startup_tasks()
     await _notify_devices_shutdown()
+
+    # Shutdown MCP
+    if getattr(app.state, "mcp_manager", None):
+        await app.state.mcp_manager.shutdown()
 
     if zeroconf_service:
         await zeroconf_service.stop()

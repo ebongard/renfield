@@ -12,12 +12,15 @@ if TYPE_CHECKING:
 class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
 
-    def __init__(self, plugin_registry=None):
+    def __init__(self, plugin_registry=None, mcp_manager=None):
         self.ha_client = HomeAssistantClient()
         self.n8n_client = N8NClient()
 
         # Plugin system
         self.plugin_registry = plugin_registry
+
+        # MCP system
+        self.mcp_manager = mcp_manager
 
     def _check_plugin_permission(self, intent: str, user: Optional["User"]) -> tuple[bool, str]:
         """
@@ -83,6 +86,11 @@ class ActionExecutor:
                 "message": "Normal conversation - no action needed",
                 "action_taken": False
             }
+
+        # MCP tool intents (mcp.* prefix)
+        if self.mcp_manager and intent.startswith("mcp."):
+            logger.info(f"🔌 Executing MCP tool: {intent}")
+            return await self.mcp_manager.execute_tool(intent, parameters)
 
         # Plugin intents - check permission first
         if self.plugin_registry:
