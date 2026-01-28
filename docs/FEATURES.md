@@ -304,6 +304,26 @@ Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschied
 → Finale Antwort: "Es sind 8°C in Berlin. Da es kälter als 10° ist, hier Hotel-Empfehlungen: ..."
 ```
 
+#### Complexity Detection — Erkannte Muster
+
+Der `ComplexityDetector` prüft jede Nachricht per Regex auf 5 Mustergruppen. Sobald **ein** Muster matcht, wird der Agent Loop aktiviert. Nachrichten unter 10 Zeichen werden immer als einfach eingestuft.
+
+| Gruppe | Erkennt | Beispiele |
+|--------|---------|-----------|
+| **Bedingungs-Muster** | Wenn-Dann-Konstrukte | "**Wenn** es regnet, **dann** schließe die Fenster" / "**Falls** die Temperatur über 25° ist, **dann** schalte die Klima ein" / "**If** ... **then** ..." |
+| **Sequenz-Muster** | Aufeinanderfolgende Aktionen | "Hole Wetter **und dann** suche ein Restaurant" / "Schalte das Licht ein, **danach** stelle die Heizung ein" / "**Anschließend** ..." / "**Als nächstes** ..." |
+| **Vergleichs-Muster** | Schwellwert-Vergleiche | "**wärmer als** 20 Grad" / "**höher als** 100 Euro" / "**über** 4 Sterne" / "**unter** 50€" / "**above**/**below** + Zahl" |
+| **Multi-Aktions-Muster** | Zwei Aktionsverben mit "und" | "**Schalte** das Licht ein **und stelle** die Heizung auf 22°" / "**Turn** on the lights **and set** the thermostat" |
+| **Kombinierte-Fragen-Muster** | Zwei Fragewörter mit "und" | "**Wie** ist das Wetter **und was** gibt es Neues?" / "**What** is the weather **and how** are the stock prices?" |
+
+**Wichtige Details:**
+
+- **Word Boundaries (`\b`)**: Verhindert False Positives — "Dennoch" matcht nicht als "dann", "Wenn**gleich**" matcht nicht als "Wenn...dann".
+- **Aktionsverben-Liste** (Multi-Aktion): `schalte`, `mach`, `stelle`, `öffne`, `schließe`, `starte`, `stoppe`, `suche`, `finde`, `hole`, `zeige`, `sende`, `schicke` (DE) / `turn`, `switch`, `set`, `open`, `close`, `start`, `stop`, `search`, `find`, `get`, `show`, `send` (EN). Nur wenn **zwei** dieser Verben mit "und"/"and" verbunden sind, wird der Agent aktiviert.
+- **Vergleiche direkt**: `wärmer als` matcht, aber `höher ist als` nicht — das Adjektiv muss direkt vor "als" stehen (kein Wort dazwischen).
+- **Einfaches "und" reicht nicht**: "Schalte das Licht ein und erzähl mir einen Witz" aktiviert den Agent **nicht**, weil "erzähl" kein Aktionsverb in der Liste ist.
+- **Sprachen**: Alle 5 Gruppen unterstützen Deutsch und Englisch mit `re.IGNORECASE`.
+
 ### Kontextverständnis
 - **Session-Memory**: Merkt sich Gespräch
 - **Entity-Resolution**: Versteht "es" und "dort"

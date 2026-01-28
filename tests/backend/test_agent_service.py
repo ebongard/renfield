@@ -356,11 +356,30 @@ class TestAgentServiceRun:
 
     @pytest.mark.unit
     async def test_max_steps_reached(self):
-        """When max steps are exhausted, a partial answer is generated."""
+        """When max steps are exhausted, LLM summarizes collected results."""
         registry = self._make_registry()
-        # LLM keeps calling tools, never gives final_answer
-        tool_response = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
-        ollama = self._make_ollama_mock([tool_response] * 10)
+
+        # LLM keeps calling tools, then on the summary call returns natural language
+        call_count = 0
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            # First calls: tool actions. Later call: summary.
+            messages = kwargs.get("messages", [])
+            user_content = messages[-1].get("content", "") if messages else ""
+            if "Fasse die Ergebnisse" in user_content:
+                resp.message.content = "Die Temperatur beträgt 22°C."
+            else:
+                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+            return resp
+
+        ollama.client.chat = mock_chat
         executor = self._make_executor_mock([
             {"success": True, "message": "22°C", "action_taken": True}
         ] * 10)
@@ -370,10 +389,9 @@ class TestAgentServiceRun:
             agent, message="Infinite loop test", ollama=ollama, executor=executor
         )
 
-        # Should end with a final_answer from _build_timeout_answer
+        # Should end with a final_answer from LLM summary
         assert steps[-1].step_type == "final_answer"
-        # Should have collected some results
-        assert "22°C" in steps[-1].content or "nicht vollständig" in steps[-1].content
+        assert "22°C" in steps[-1].content
 
     @pytest.mark.unit
     async def test_tool_execution_error(self):
@@ -425,19 +443,27 @@ class TestAgentServiceRun:
 
     @pytest.mark.unit
     async def test_step_timeout(self):
-        """Per-step timeout — should yield error + timeout answer."""
+        """Per-step timeout — should yield error + summary answer."""
         registry = self._make_registry()
         ollama = MagicMock()
         ollama.client = MagicMock()
 
-        async def slow_chat(**kwargs):
-            await asyncio.sleep(10)  # Very slow
-            resp = MagicMock()
-            resp.message = MagicMock()
-            resp.message.content = '{"action": "final_answer", "answer": "Late"}'
-            return resp
+        call_count = 0
 
-        ollama.client.chat = slow_chat
+        async def slow_then_fast_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call is slow (triggers timeout), summary call is fast
+            messages = kwargs.get("messages", [])
+            user_content = messages[-1].get("content", "") if messages else ""
+            if "Fasse die Ergebnisse" in user_content or call_count > 1:
+                resp = MagicMock()
+                resp.message = MagicMock()
+                resp.message.content = "Zusammenfassung."
+                return resp
+            await asyncio.sleep(10)  # Very slow — will timeout
+
+        ollama.client.chat = slow_then_fast_chat
         executor = self._make_executor_mock()
 
         agent = AgentService(registry, max_steps=5, step_timeout=0.1)
@@ -504,9 +530,15 @@ class TestAgentServiceSafety:
         async def slow_but_within_step(**kwargs):
             nonlocal call_count
             call_count += 1
-            await asyncio.sleep(0.05)  # 50ms per step
             resp = MagicMock()
             resp.message = MagicMock()
+            # Check if this is the summary call
+            messages = kwargs.get("messages", [])
+            user_content = messages[-1].get("content", "") if messages else ""
+            if "Fasse die Ergebnisse" in user_content:
+                resp.message.content = "Zusammenfassung der Ergebnisse."
+                return resp
+            await asyncio.sleep(0.05)  # 50ms per step
             resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "test"}, "reason": "loop"}'
             return resp
 
@@ -532,35 +564,74 @@ class TestAgentServiceSafety:
         assert call_count < 100  # Didn't exhaust all steps
 
     @pytest.mark.unit
-    def test_build_timeout_answer_with_results(self):
-        """Timeout answer should include collected successful results."""
+    async def test_build_summary_answer_with_results(self):
+        """Summary answer should call LLM to produce natural language from tool results."""
         registry = AgentToolRegistry(ha_available=True)
         agent = AgentService(registry)
 
-        ctx = AgentContext(original_message="test")
+        ctx = AgentContext(original_message="Wie ist das Wetter?")
         ctx.steps.append(AgentStep(
             step_number=1, step_type="tool_result",
-            content="Wetter: 15°C", success=True, tool="weather"
+            content="Wetter: 15°C, sonnig", success=True, tool="weather"
         ))
         ctx.steps.append(AgentStep(
             step_number=2, step_type="tool_result",
             content="Fehler", success=False, tool="search"
         ))
 
-        answer = agent._build_timeout_answer(ctx, 3)
+        # Mock LLM that returns a nice summary
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def mock_chat(**kwargs):
+            resp = MagicMock()
+            resp.message = MagicMock()
+            resp.message.content = "In Berlin sind es aktuell 15°C bei sonnigem Wetter."
+            return resp
+
+        ollama.client.chat = mock_chat
+
+        answer = await agent._build_summary_answer(ctx, 3, "Wie ist das Wetter?", ollama, "test-model")
         assert answer.step_type == "final_answer"
         assert "15°C" in answer.content
-        assert "Fehler" not in answer.content  # Failed results excluded
+        # Should be natural language, not raw tool output
+        assert "Successfully executed" not in answer.content
 
     @pytest.mark.unit
-    def test_build_timeout_answer_no_results(self):
-        """Timeout answer without any results should give generic message."""
+    async def test_build_summary_answer_no_results(self):
+        """Summary answer without any results should give generic message."""
         registry = AgentToolRegistry(ha_available=True)
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
-        answer = agent._build_timeout_answer(ctx, 1)
+        ollama = MagicMock()
+
+        answer = await agent._build_summary_answer(ctx, 1, "test", ollama, "test-model")
         assert "nicht vollständig" in answer.content or "Entschuldigung" in answer.content
+
+    @pytest.mark.unit
+    async def test_build_summary_answer_llm_failure_fallback(self):
+        """When LLM summary fails, should return a fallback message."""
+        registry = AgentToolRegistry(ha_available=True)
+        agent = AgentService(registry)
+
+        ctx = AgentContext(original_message="test")
+        ctx.steps.append(AgentStep(
+            step_number=1, step_type="tool_result",
+            content="some data", success=True, tool="test"
+        ))
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def failing_chat(**kwargs):
+            raise RuntimeError("Model crashed")
+
+        ollama.client.chat = failing_chat
+
+        answer = await agent._build_summary_answer(ctx, 2, "test", ollama, "test-model")
+        assert answer.step_type == "final_answer"
+        assert "Entschuldigung" in answer.content or "zusammenfassen" in answer.content
 
     @pytest.mark.unit
     def test_build_fallback_answer(self):
@@ -572,3 +643,218 @@ class TestAgentServiceSafety:
         answer = agent._build_fallback_answer(ctx, 1, "Model crashed")
         assert "Model crashed" in answer.content
         assert answer.step_type == "final_answer"
+
+
+# ============================================================================
+# Test Empty Response Retry Mechanism
+# ============================================================================
+
+class TestAgentServiceRetry:
+    """Test the retry-on-empty-response mechanism."""
+
+    def _make_registry(self):
+        return AgentToolRegistry(ha_available=True)
+
+    def _make_executor_mock(self, results=None):
+        executor = AsyncMock()
+        if results:
+            executor.execute = AsyncMock(side_effect=results)
+        else:
+            executor.execute = AsyncMock(return_value={
+                "success": True,
+                "message": "OK",
+                "action_taken": True,
+            })
+        return executor
+
+    @pytest.mark.unit
+    async def test_empty_response_triggers_retry(self):
+        """When LLM returns empty string, retry with nudge should be attempted."""
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            if call_count == 1:
+                # First call returns empty
+                resp.message.content = ""
+            else:
+                # Retry returns valid JSON
+                resp.message.content = '{"action": "final_answer", "answer": "Retried!", "reason": "OK"}'
+            return resp
+
+        ollama.client.chat = mock_chat
+        executor = self._make_executor_mock()
+
+        agent = AgentService(registry, max_steps=5)
+        steps = await collect_steps(
+            agent, message="Test retry", ollama=ollama, executor=executor
+        )
+
+        # Should have succeeded via retry
+        final = steps[-1]
+        assert final.step_type == "final_answer"
+        assert "Retried!" in final.content
+        # Two calls: original + retry
+        assert call_count == 2
+
+    @pytest.mark.unit
+    async def test_empty_response_retry_also_empty(self):
+        """When both original and retry return empty, fallback message is used."""
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def mock_chat(**kwargs):
+            resp = MagicMock()
+            resp.message = MagicMock()
+            resp.message.content = ""
+            return resp
+
+        ollama.client.chat = mock_chat
+        executor = self._make_executor_mock()
+
+        agent = AgentService(registry, max_steps=5)
+        steps = await collect_steps(
+            agent, message="Test double empty", ollama=ollama, executor=executor
+        )
+
+        final = steps[-1]
+        assert final.step_type == "final_answer"
+        assert "Entschuldigung" in final.content or "bearbeiten" in final.content
+
+    @pytest.mark.unit
+    async def test_retry_with_tool_call_after_empty(self):
+        """Empty response followed by retry that returns a tool call."""
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            if call_count == 1:
+                resp.message.content = ""  # Empty
+            elif call_count == 2:
+                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+            else:
+                resp.message.content = '{"action": "final_answer", "answer": "22 Grad", "reason": "Done"}'
+            return resp
+
+        ollama.client.chat = mock_chat
+        executor = self._make_executor_mock([
+            {"success": True, "message": "22°C", "action_taken": True, "data": {"temperature": 22}}
+        ])
+
+        agent = AgentService(registry, max_steps=5)
+        steps = await collect_steps(
+            agent, message="Test retry + tool", ollama=ollama, executor=executor
+        )
+
+        step_types = [s.step_type for s in steps]
+        assert "tool_call" in step_types
+        assert "tool_result" in step_types
+        assert "final_answer" in step_types
+
+
+# ============================================================================
+# Test Tool Result Data Inclusion
+# ============================================================================
+
+class TestToolResultDataInclusion:
+    """Test that tool results include actual data for LLM reasoning."""
+
+    def _make_registry(self):
+        return AgentToolRegistry(ha_available=True)
+
+    @pytest.mark.unit
+    async def test_tool_result_includes_data(self):
+        """Tool result content should include actual data, not just 'Successfully executed'."""
+        registry = self._make_registry()
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            if call_count <= 1:
+                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+            else:
+                resp.message.content = '{"action": "final_answer", "answer": "Done", "reason": "OK"}'
+            return resp
+
+        ollama.client.chat = mock_chat
+
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value={
+            "success": True,
+            "message": "Successfully executed homeassistant.get_state",
+            "action_taken": True,
+            "data": {"state": "22.5", "unit": "°C", "entity_id": "sensor.temp"},
+        })
+
+        agent = AgentService(registry, max_steps=5)
+        steps = await collect_steps(
+            agent, message="Wie warm?", ollama=ollama, executor=executor
+        )
+
+        tool_results = [s for s in steps if s.step_type == "tool_result"]
+        assert len(tool_results) == 1
+        # Content should include the actual data, not just "Successfully executed"
+        assert "22.5" in tool_results[0].content
+        assert "Daten:" in tool_results[0].content
+
+    @pytest.mark.unit
+    async def test_tool_result_without_data_uses_message(self):
+        """Tool result without data should use just the message."""
+        registry = self._make_registry()
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            if call_count <= 1:
+                resp.message.content = '{"action": "homeassistant.turn_on", "parameters": {"entity_id": "light.test"}, "reason": "On"}'
+            else:
+                resp.message.content = '{"action": "final_answer", "answer": "Done", "reason": "OK"}'
+            return resp
+
+        ollama.client.chat = mock_chat
+
+        executor = AsyncMock()
+        executor.execute = AsyncMock(return_value={
+            "success": True,
+            "message": "Licht eingeschaltet",
+            "action_taken": True,
+        })
+
+        agent = AgentService(registry, max_steps=5)
+        steps = await collect_steps(
+            agent, message="Licht an", ollama=ollama, executor=executor
+        )
+
+        tool_results = [s for s in steps if s.step_type == "tool_result"]
+        assert len(tool_results) == 1
+        assert tool_results[0].content == "Licht eingeschaltet"
+        assert "Daten:" not in tool_results[0].content
