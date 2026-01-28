@@ -17,11 +17,15 @@ from services.mcp_client import (
     TokenBucketRateLimiter,
     MCPValidationError,
     MCPRateLimitError,
+    ExponentialBackoff,
     _substitute_env_vars,
     _resolve_value,
     _validate_tool_input,
     _truncate_response,
     MAX_RESPONSE_SIZE,
+    BACKOFF_INITIAL_DELAY,
+    BACKOFF_MAX_DELAY,
+    BACKOFF_MULTIPLIER,
 )
 
 
@@ -929,3 +933,257 @@ class TestExecuteToolSecurity:
         result2 = await manager.execute_tool("mcp.srv.t", {})
         assert result2["success"] is False
         assert "rate limit" in result2["message"].lower()
+
+
+# ============================================================================
+# Exponential Backoff
+# ============================================================================
+
+class TestExponentialBackoff:
+    """Test exponential backoff for reconnection."""
+
+    @pytest.mark.unit
+    def test_initial_state(self):
+        """Backoff should start with zero attempts."""
+        backoff = ExponentialBackoff()
+        assert backoff.attempt_count == 0
+        assert backoff.should_retry() is True
+        assert backoff.time_until_retry() == 0.0
+
+    @pytest.mark.unit
+    def test_first_failure_delay(self):
+        """First failure should use initial delay."""
+        backoff = ExponentialBackoff(initial_delay=1.0, jitter=0.0)
+        delay = backoff.record_failure()
+
+        assert backoff.attempt_count == 1
+        assert delay == pytest.approx(1.0, rel=0.01)
+        assert backoff.should_retry() is False
+
+    @pytest.mark.unit
+    def test_exponential_increase(self):
+        """Delays should increase exponentially."""
+        backoff = ExponentialBackoff(
+            initial_delay=1.0,
+            multiplier=2.0,
+            max_delay=1000.0,
+            jitter=0.0,
+        )
+
+        # First failure: 1.0
+        delay1 = backoff.record_failure()
+        assert delay1 == pytest.approx(1.0)
+
+        # Second failure: 2.0
+        delay2 = backoff.record_failure()
+        assert delay2 == pytest.approx(2.0)
+
+        # Third failure: 4.0
+        delay3 = backoff.record_failure()
+        assert delay3 == pytest.approx(4.0)
+
+        # Fourth failure: 8.0
+        delay4 = backoff.record_failure()
+        assert delay4 == pytest.approx(8.0)
+
+    @pytest.mark.unit
+    def test_max_delay_cap(self):
+        """Delay should be capped at max_delay."""
+        backoff = ExponentialBackoff(
+            initial_delay=100.0,
+            multiplier=10.0,
+            max_delay=300.0,
+            jitter=0.0,
+        )
+
+        # First: 100
+        backoff.record_failure()
+        # Second: would be 1000, capped to 300
+        delay = backoff.record_failure()
+
+        assert delay == pytest.approx(300.0)
+
+    @pytest.mark.unit
+    def test_jitter_adds_randomness(self):
+        """Jitter should add randomness to delays."""
+        backoff = ExponentialBackoff(
+            initial_delay=10.0,
+            jitter=0.5,  # 50% jitter
+            max_delay=1000.0,
+        )
+
+        delays = []
+        for _ in range(10):
+            b = ExponentialBackoff(initial_delay=10.0, jitter=0.5, max_delay=1000.0)
+            delays.append(b.record_failure())
+            b.record_success()
+
+        # Not all delays should be identical (random jitter)
+        unique_delays = set(round(d, 4) for d in delays)
+        # With 50% jitter, we expect variation
+        assert len(unique_delays) > 1
+
+    @pytest.mark.unit
+    def test_success_resets_backoff(self):
+        """record_success() should reset the backoff state."""
+        backoff = ExponentialBackoff(jitter=0.0)
+
+        backoff.record_failure()
+        backoff.record_failure()
+        assert backoff.attempt_count == 2
+
+        backoff.record_success()
+
+        assert backoff.attempt_count == 0
+        assert backoff.should_retry() is True
+        assert backoff.time_until_retry() == 0.0
+
+    @pytest.mark.unit
+    def test_should_retry_after_delay(self):
+        """should_retry() should return True after delay passes."""
+        backoff = ExponentialBackoff(initial_delay=0.05, jitter=0.0)
+        backoff.record_failure()
+
+        assert backoff.should_retry() is False
+
+        # Wait for delay
+        import time
+        time.sleep(0.06)
+
+        assert backoff.should_retry() is True
+
+    @pytest.mark.unit
+    def test_time_until_retry(self):
+        """time_until_retry() should return remaining wait time."""
+        backoff = ExponentialBackoff(initial_delay=1.0, jitter=0.0)
+        backoff.record_failure()
+
+        remaining = backoff.time_until_retry()
+        assert remaining > 0.9
+        assert remaining <= 1.0
+
+
+class TestBackoffInServerState:
+    """Test backoff integration in MCPServerState."""
+
+    @pytest.mark.unit
+    def test_server_state_has_backoff(self, tmp_path):
+        """MCPServerState should have backoff tracker after load_config."""
+        config_file = tmp_path / "mcp_servers.yaml"
+        config_file.write_text("""
+servers:
+  - name: test_server
+    url: "http://localhost:8080/mcp"
+    enabled: true
+""")
+        manager = MCPManager()
+        manager.load_config(str(config_file))
+
+        state = manager._servers["test_server"]
+        assert state.backoff is not None
+        assert isinstance(state.backoff, ExponentialBackoff)
+        assert state.backoff.attempt_count == 0
+
+    @pytest.mark.unit
+    def test_status_includes_backoff_info(self):
+        """get_status() should include backoff info for disconnected servers."""
+        manager = MCPManager()
+        backoff = ExponentialBackoff(jitter=0.0)
+        backoff.record_failure()
+        backoff.record_failure()
+
+        manager._servers["srv"] = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=False,
+            last_error="Connection failed",
+            backoff=backoff,
+        )
+
+        status = manager.get_status()
+        server_info = status["servers"][0]
+
+        assert server_info["reconnect_attempts"] == 2
+        assert "next_retry_in" in server_info
+
+    @pytest.mark.unit
+    def test_status_no_backoff_for_connected(self):
+        """Connected servers should not have backoff info in status."""
+        manager = MCPManager()
+        manager._servers["srv"] = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            backoff=ExponentialBackoff(),
+        )
+
+        status = manager.get_status()
+        server_info = status["servers"][0]
+
+        assert "reconnect_attempts" not in server_info
+        assert "next_retry_in" not in server_info
+
+
+class TestBackoffInReconnect:
+    """Test backoff behavior in refresh_tools reconnection."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reconnect_respects_backoff(self):
+        """refresh_tools should skip reconnect if backoff not ready."""
+        manager = MCPManager()
+
+        # Create a disconnected server with backoff in progress
+        backoff = ExponentialBackoff(initial_delay=1000.0, jitter=0.0)
+        backoff.record_failure()  # Set next retry 1000s from now
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="backoff_srv"),
+            connected=False,
+            backoff=backoff,
+        )
+        manager._servers["backoff_srv"] = state
+
+        # Track if _connect_server is called
+        connect_called = False
+
+        async def mock_connect(s):
+            nonlocal connect_called
+            connect_called = True
+
+        with patch.object(manager, "_connect_server", side_effect=mock_connect):
+            await manager.refresh_tools()
+
+        # Should NOT have called connect due to backoff
+        assert connect_called is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reconnect_proceeds_when_backoff_ready(self):
+        """refresh_tools should reconnect when backoff timer expires."""
+        manager = MCPManager()
+
+        # Create a disconnected server with expired backoff
+        backoff = ExponentialBackoff(initial_delay=0.001, jitter=0.0)
+        backoff.record_failure()
+
+        # Wait for backoff to expire
+        import time
+        time.sleep(0.01)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="ready_srv"),
+            connected=False,
+            backoff=backoff,
+        )
+        manager._servers["ready_srv"] = state
+
+        connect_called = False
+
+        async def mock_connect(s):
+            nonlocal connect_called
+            connect_called = True
+
+        with patch.object(manager, "_connect_server", side_effect=mock_connect):
+            await manager.refresh_tools()
+
+        # Should have called connect since backoff expired
+        assert connect_called is True

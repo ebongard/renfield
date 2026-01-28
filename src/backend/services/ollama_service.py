@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from models.database import Message
 from loguru import logger
 from utils.config import settings
+from utils.circuit_breaker import llm_circuit_breaker, CircuitOpenError
+from services.prompt_manager import prompt_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 
 class OllamaService:
@@ -24,7 +26,12 @@ class OllamaService:
         self.embed_model = settings.ollama_embed_model
         self.intent_model = settings.ollama_intent_model
 
-        self.system_prompt = """Du bist Renfield, ein hilfreicher KI-Assistent für Smart Home Steuerung.
+        # Load system prompt from externalized YAML (fallback to hardcoded)
+        self.system_prompt = prompt_manager.get("chat", "system_prompt", default=self._default_system_prompt())
+
+    def _default_system_prompt(self) -> str:
+        """Fallback system prompt if YAML not available."""
+        return """Du bist Renfield, ein hilfreicher KI-Assistent für Smart Home Steuerung.
 
 Deine Fähigkeiten:
 - Home Assistant Geräte steuern (Lichter, Schalter, Sensoren, etc.)
@@ -37,21 +44,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 1. Antworte IMMER in natürlicher deutscher Sprache
 2. Gib NIEMALS JSON, Code oder technische Details aus
 3. Sei kurz, freundlich und direkt
-4. Wenn eine Aktion ausgeführt wurde, bestätige dies einfach
+4. Wenn eine Aktion ausgeführt wurde, bestätige dies einfach"""
 
-GUTE Beispiele:
-User: "Ist das Licht an?"
-Du: "Das Licht ist eingeschaltet."
-
-User: "Schalte das Licht aus"
-Du: "Ich habe das Licht ausgeschaltet."
-
-SCHLECHTE Beispiele (NICHT SO):
-Du: '{"intent": "homeassistant.turn_on", "entity_id": "light.x"}'
-Du: 'Hier sind die Ergebnisse: {...}'
-Du: 'System: Aktion ausgeführt'
-"""
-    
     async def ensure_model_loaded(self) -> None:
         """Stelle sicher, dass das Modell geladen ist"""
         try:
@@ -71,6 +65,11 @@ Du: 'System: Aktion ausgeführt'
     
     async def chat(self, message: str, history: List[Dict] = None) -> str:
         """Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie."""
+        # Check circuit breaker before LLM call
+        if not llm_circuit_breaker.allow_request():
+            logger.warning("🔴 LLM circuit breaker OPEN — rejecting chat request")
+            return prompt_manager.get("chat", "error_fallback", default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+
         try:
             messages = [{"role": "system", "content": self.system_prompt}]
 
@@ -78,19 +77,27 @@ Du: 'System: Aktion ausgeführt'
                 messages.extend(history)
 
             messages.append({"role": "user", "content": message})
-            
+
             response = await self.client.chat(
                 model=self.model,
                 messages=messages
             )
             # ollama>=0.4.0 uses Pydantic models
+            llm_circuit_breaker.record_success()
             return response.message.content
         except Exception as e:
+            llm_circuit_breaker.record_failure()
             logger.error(f"Chat Fehler: {e}")
-            return f"Entschuldigung, es gab einen Fehler: {str(e)}"
+            return prompt_manager.get("chat", "error_fallback", default=f"Entschuldigung, es gab einen Fehler: {str(e)}", error=str(e))
     
     async def chat_stream(self, message: str, history: List[Dict] = None) -> AsyncGenerator[str, None]:
         """Streaming Chat with optional conversation history."""
+        # Check circuit breaker before LLM call
+        if not llm_circuit_breaker.allow_request():
+            logger.warning("🔴 LLM circuit breaker OPEN — rejecting stream request")
+            yield prompt_manager.get("chat", "error_fallback", default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
+            return
+
         try:
             messages = [{"role": "system", "content": self.system_prompt}]
 
@@ -98,7 +105,7 @@ Du: 'System: Aktion ausgeführt'
                 messages.extend(history)
 
             messages.append({"role": "user", "content": message})
-            
+
             async for chunk in await self.client.chat(
                 model=self.model,
                 messages=messages,
@@ -107,9 +114,13 @@ Du: 'System: Aktion ausgeführt'
                 # ollama>=0.4.0 uses Pydantic models
                 if chunk.message and chunk.message.content:
                     yield chunk.message.content
+
+            # Record success after successful streaming
+            llm_circuit_breaker.record_success()
         except Exception as e:
+            llm_circuit_breaker.record_failure()
             logger.error(f"Streaming Fehler: {e}")
-            yield f"Fehler: {str(e)}"
+            yield prompt_manager.get("chat", "error_fallback", default=f"Fehler: {str(e)}", error=str(e))
     
     async def extract_intent(
         self,

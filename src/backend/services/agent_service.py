@@ -19,7 +19,9 @@ from loguru import logger
 
 from utils.config import settings
 from utils.circuit_breaker import agent_circuit_breaker, CircuitOpenError
+from utils.token_counter import token_counter
 from services.agent_tools import AgentToolRegistry
+from services.prompt_manager import prompt_manager
 
 if TYPE_CHECKING:
     from services.ollama_service import OllamaService
@@ -48,6 +50,24 @@ class AgentContext:
 
     # Maximum number of steps to include in the prompt (sliding window)
     MAX_HISTORY_STEPS: int = 10
+
+    # Token tracking
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+
+    def track_tokens(self, prompt: str, response: str = "") -> None:
+        """Track token usage for monitoring and budget management."""
+        self.total_input_tokens += token_counter.count(prompt)
+        if response:
+            self.total_output_tokens += token_counter.count(response)
+
+    def get_token_usage(self) -> Dict:
+        """Get total token usage statistics."""
+        return {
+            "input_tokens": self.total_input_tokens,
+            "output_tokens": self.total_output_tokens,
+            "total_tokens": self.total_input_tokens + self.total_output_tokens,
+        }
 
     def build_history_prompt(self) -> str:
         """
@@ -184,40 +204,26 @@ class AgentService:
             for msg in recent:
                 role = "Nutzer" if msg.get("role") == "user" else "Assistent"
                 lines.append(f"  {role}: {msg.get('content', '')[:200]}")
-            conv_context = f"\nKONVERSATIONS-KONTEXT:\n" + "\n".join(lines)
+            conv_context = prompt_manager.get(
+                "agent", "conv_context_template",
+                history_lines="\n".join(lines)
+            )
 
         # Determine step directive based on whether we have history
         if context.steps:
-            step_directive = "Was ist der nächste Schritt?"
+            step_directive = prompt_manager.get("agent", "step_directive_next")
         else:
-            step_directive = "Beginne mit dem ERSTEN Schritt:"
+            step_directive = prompt_manager.get("agent", "step_directive_first")
 
-        return f"""Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
-
-AUFGABE: "{message}"
-{conv_context}
-
-{tools_prompt}
-
-{history_prompt}
-
-ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
-
-Wenn du ein Tool aufrufen willst:
-{{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum dieses Tool"}}
-
-Wenn du die finale Antwort geben willst:
-{{"action": "final_answer", "answer": "Deine Antwort an den Nutzer", "reason": "Warum fertig"}}
-
-REGELN:
-- Nutze NUR Tools aus der Liste oben
-- Rufe pro Antwort GENAU EIN Tool auf
-- Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
-- Gib final_answer wenn alle Informationen gesammelt sind
-- Die finale Antwort muss natürlich und auf Deutsch sein
-- Antworte NUR mit JSON, kein anderer Text
-
-{step_directive}"""
+        # Build prompt from externalized template
+        return prompt_manager.get(
+            "agent", "agent_prompt",
+            message=message,
+            conv_context=conv_context,
+            tools_prompt=tools_prompt,
+            history_prompt=history_prompt,
+            step_directive=step_directive
+        )
 
     async def run(
         self,
@@ -245,8 +251,17 @@ REGELN:
         yield AgentStep(
             step_number=0,
             step_type="thinking",
-            content="Analysiere Anfrage und plane Schritte...",
+            content=prompt_manager.get("agent", "thinking_message"),
         )
+
+        # Get LLM options from config
+        llm_options = prompt_manager.get_config("agent", "llm_options") or {
+            "temperature": 0.1, "top_p": 0.2, "num_predict": 500
+        }
+        llm_options_retry = prompt_manager.get_config("agent", "llm_options_retry") or {
+            "temperature": 0.3, "top_p": 0.4, "num_predict": 500
+        }
+        json_system_message = prompt_manager.get("agent", "json_system_message")
 
         for step_num in range(1, self.max_steps + 1):
             # Check total timeout
@@ -267,7 +282,7 @@ REGELN:
                 yield AgentStep(
                     step_number=step_num,
                     step_type="error",
-                    content="LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv).",
+                    content=prompt_manager.get("agent", "error_circuit_open"),
                 )
                 summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model)
                 yield summary_step
@@ -279,19 +294,18 @@ REGELN:
                     ollama.client.chat(
                         model=agent_model,
                         messages=[
-                            {"role": "system", "content": "Antworte nur mit JSON."},
+                            {"role": "system", "content": json_system_message},
                             {"role": "user", "content": prompt},
                         ],
-                        options={
-                            "temperature": 0.1,
-                            "top_p": 0.2,
-                            "num_predict": 500,
-                        },
+                        options=llm_options,
                     ),
                     timeout=self.step_timeout,
                 )
                 response_text = raw_response.message.content or ""
                 agent_circuit_breaker.record_success()
+
+                # Track token usage
+                context.track_tokens(prompt, response_text)
                 logger.debug(f"🤖 Agent step {step_num} response_len={len(response_text)}")
             except asyncio.TimeoutError:
                 agent_circuit_breaker.record_failure()
@@ -299,7 +313,7 @@ REGELN:
                 yield AgentStep(
                     step_number=step_num,
                     step_type="error",
-                    content=f"Schritt {step_num} hat zu lange gedauert (Timeout).",
+                    content=prompt_manager.get("agent", "error_timeout", step=step_num),
                 )
                 summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model)
                 yield summary_step
@@ -310,7 +324,7 @@ REGELN:
                 yield AgentStep(
                     step_number=step_num,
                     step_type="error",
-                    content=f"LLM-Fehler: {str(e)}",
+                    content=prompt_manager.get("agent", "error_llm_failed", error=str(e)),
                 )
                 yield self._build_fallback_answer(context, step_num, str(e))
                 return
@@ -321,24 +335,22 @@ REGELN:
             # Retry once on empty response with a nudge prompt
             if not parsed and not response_text.strip():
                 logger.info(f"🔄 Agent step {step_num}: Empty LLM response, retrying with nudge...")
-                nudge = prompt + "\n\nDu MUSST jetzt mit einem JSON-Objekt antworten. Was ist der nächste Schritt?"
+                retry_nudge = prompt_manager.get("agent", "retry_nudge")
+                nudge = prompt + retry_nudge
                 try:
                     retry_response = await asyncio.wait_for(
                         ollama.client.chat(
                             model=agent_model,
                             messages=[
-                                {"role": "system", "content": "Antworte nur mit JSON."},
+                                {"role": "system", "content": json_system_message},
                                 {"role": "user", "content": nudge},
                             ],
-                            options={
-                                "temperature": 0.3,
-                                "top_p": 0.4,
-                                "num_predict": 500,
-                            },
+                            options=llm_options_retry,
                         ),
                         timeout=self.step_timeout,
                     )
                     response_text = retry_response.message.content or ""
+                    context.track_tokens(nudge, response_text)
                     logger.debug(f"🔄 Agent step {step_num} retry: {len(response_text)} chars")
                     parsed = _parse_agent_json(response_text)
                 except Exception as e:
@@ -364,7 +376,7 @@ REGELN:
                     yield AgentStep(
                         step_number=step_num,
                         step_type="final_answer",
-                        content="Entschuldigung, ich konnte die Anfrage nicht vollständig bearbeiten.",
+                        content=prompt_manager.get("agent", "error_incomplete"),
                         reason="Leere LLM-Antwort",
                     )
                 return
@@ -456,7 +468,7 @@ REGELN:
                 yield AgentStep(
                     step_number=step_num,
                     step_type="error",
-                    content=f"Loop erkannt: Tool '{action}' wurde mehrfach identisch aufgerufen.",
+                    content=prompt_manager.get("agent", "error_loop_detected", tool=action),
                     tool=action,
                 )
                 summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model)
@@ -490,35 +502,41 @@ REGELN:
             return AgentStep(
                 step_number=step_num,
                 step_type="final_answer",
-                content="Entschuldigung, ich konnte die Anfrage nicht vollständig bearbeiten.",
+                content=prompt_manager.get("agent", "error_incomplete"),
                 reason="Keine Ergebnisse gesammelt",
             )
 
-        # Build a summary prompt for the LLM
+        # Build a summary prompt from externalized template
         results_text = "\n".join(f"- {c}" for c in collected)
-        summary_prompt = (
-            f"Der Nutzer hat gefragt: \"{original_message}\"\n\n"
-            f"Folgende Tool-Ergebnisse wurden gesammelt:\n{results_text}\n\n"
-            f"Fasse die Ergebnisse in einer natürlichen, hilfreichen Antwort auf Deutsch zusammen. "
-            f"Nenne konkrete Zahlen, Namen und Links. Antworte direkt ohne Einleitung wie 'Hier ist'."
+        summary_prompt_text = prompt_manager.get(
+            "agent", "summary_prompt",
+            message=original_message,
+            results=results_text
         )
+
+        # Get LLM options for summary
+        llm_options_summary = prompt_manager.get_config("agent", "llm_options_summary") or {
+            "temperature": 0.3, "num_predict": 800
+        }
+        summary_system = prompt_manager.get("agent", "summary_system_message")
 
         try:
             raw_response = await asyncio.wait_for(
                 ollama.client.chat(
                     model=agent_model,
                     messages=[
-                        {"role": "system", "content": "Du bist ein hilfreicher Assistent. Antworte natürlich auf Deutsch."},
-                        {"role": "user", "content": summary_prompt},
+                        {"role": "system", "content": summary_system},
+                        {"role": "user", "content": summary_prompt_text},
                     ],
-                    options={
-                        "temperature": 0.3,
-                        "num_predict": 800,
-                    },
+                    options=llm_options_summary,
                 ),
                 timeout=self.step_timeout,
             )
             summary = (raw_response.message.content or "").strip()
+
+            # Track tokens for summary call
+            context.track_tokens(summary_prompt_text, summary)
+
             if summary:
                 logger.info(f"✅ Agent summary generated ({len(summary)} chars)")
                 return AgentStep(
@@ -534,7 +552,7 @@ REGELN:
         return AgentStep(
             step_number=step_num,
             step_type="final_answer",
-            content="Entschuldigung, ich konnte die Ergebnisse nicht zusammenfassen.",
+            content=prompt_manager.get("agent", "error_summary_failed"),
             reason="Zusammenfassung fehlgeschlagen",
         )
 

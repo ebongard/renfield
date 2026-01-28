@@ -4,6 +4,7 @@ MCP Client — Connects to external MCP servers and exposes their tools.
 Manages multiple MCP server connections with:
 - YAML-based configuration with env-var substitution
 - Eager connection at startup with background reconnect
+- Exponential backoff for failed reconnection attempts
 - Tool discovery and namespacing (mcp.<server>.<tool>)
 - Tool execution with timeout handling
 - Input validation against JSON schema
@@ -14,6 +15,7 @@ Manages multiple MCP server connections with:
 import asyncio
 import json
 import os
+import random
 import re
 import time
 from contextlib import AsyncExitStack
@@ -39,6 +41,79 @@ except ImportError:
 # === Constants ===
 MAX_RESPONSE_SIZE = 10 * 1024  # 10KB max response size
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
+
+# Exponential Backoff constants for reconnection
+BACKOFF_INITIAL_DELAY = 1.0  # Initial delay in seconds
+BACKOFF_MAX_DELAY = 300.0  # Maximum delay (5 minutes)
+BACKOFF_MULTIPLIER = 2.0  # Exponential multiplier
+BACKOFF_JITTER = 0.1  # Random jitter factor (10%)
+
+
+class ExponentialBackoff:
+    """
+    Tracks exponential backoff state for reconnection attempts.
+
+    Implements:
+    - Exponential delay increase with configurable multiplier
+    - Maximum delay cap
+    - Random jitter to prevent thundering herd
+    - Reset on successful connection
+    """
+
+    def __init__(
+        self,
+        initial_delay: float = BACKOFF_INITIAL_DELAY,
+        max_delay: float = BACKOFF_MAX_DELAY,
+        multiplier: float = BACKOFF_MULTIPLIER,
+        jitter: float = BACKOFF_JITTER,
+    ):
+        self.initial_delay = initial_delay
+        self.max_delay = max_delay
+        self.multiplier = multiplier
+        self.jitter = jitter
+
+        self._attempt = 0
+        self._next_retry_time: float = 0.0
+
+    @property
+    def attempt_count(self) -> int:
+        """Number of failed attempts."""
+        return self._attempt
+
+    def record_failure(self) -> float:
+        """
+        Record a failed connection attempt.
+
+        Returns:
+            Delay in seconds before next retry.
+        """
+        self._attempt += 1
+
+        # Calculate exponential delay
+        delay = self.initial_delay * (self.multiplier ** (self._attempt - 1))
+        delay = min(delay, self.max_delay)
+
+        # Add random jitter
+        jitter_range = delay * self.jitter
+        delay += random.uniform(-jitter_range, jitter_range)
+        delay = max(0.0, delay)
+
+        self._next_retry_time = time.monotonic() + delay
+        return delay
+
+    def record_success(self) -> None:
+        """Reset backoff state on successful connection."""
+        self._attempt = 0
+        self._next_retry_time = 0.0
+
+    def should_retry(self) -> bool:
+        """Check if enough time has passed for the next retry."""
+        return time.monotonic() >= self._next_retry_time
+
+    def time_until_retry(self) -> float:
+        """Return seconds until next retry is allowed (0 if ready)."""
+        remaining = self._next_retry_time - time.monotonic()
+        return max(0.0, remaining)
 
 
 class MCPValidationError(Exception):
@@ -176,6 +251,7 @@ class MCPServerState:
     session: Any = None  # mcp.ClientSession
     exit_stack: Optional[AsyncExitStack] = None
     rate_limiter: Optional[TokenBucketRateLimiter] = None
+    backoff: Optional[ExponentialBackoff] = None  # Reconnection backoff tracker
 
 
 def _substitute_env_vars(value: str) -> str:
@@ -271,13 +347,15 @@ class MCPManager:
                     logger.info(f"MCP server '{config.name}' is disabled, skipping")
                     continue
 
-                # Initialize server state with rate limiter
+                # Initialize server state with rate limiter and backoff tracker
                 rate_limiter = TokenBucketRateLimiter(
                     rate_per_minute=DEFAULT_RATE_LIMIT_PER_MINUTE
                 )
+                backoff = ExponentialBackoff()
                 self._servers[config.name] = MCPServerState(
                     config=config,
                     rate_limiter=rate_limiter,
+                    backoff=backoff,
                 )
                 logger.info(f"MCP server configured: {config.name} ({config.transport.value})")
 
@@ -390,12 +468,26 @@ class MCPManager:
             state.tools = tools
             state.last_error = None
 
+            # Reset backoff on successful connection
+            if state.backoff:
+                state.backoff.record_success()
+
             logger.info(f"MCP server '{config.name}' connected: {len(tools)} tools")
 
         except Exception as e:
             state.connected = False
             state.last_error = str(e)
-            logger.warning(f"MCP server '{config.name}' connection failed: {e}")
+
+            # Record failure for exponential backoff
+            if state.backoff:
+                next_delay = state.backoff.record_failure()
+                logger.warning(
+                    f"MCP server '{config.name}' connection failed: {e} "
+                    f"(attempt {state.backoff.attempt_count}, next retry in {next_delay:.1f}s)"
+                )
+            else:
+                logger.warning(f"MCP server '{config.name}' connection failed: {e}")
+
             # Clean up exit stack on failure
             if state.exit_stack:
                 try:
@@ -515,13 +607,18 @@ class MCPManager:
         """Return status information for all servers."""
         servers = []
         for name, state in self._servers.items():
-            servers.append({
+            server_info = {
                 "name": name,
                 "transport": state.config.transport.value,
                 "connected": state.connected,
                 "tool_count": len(state.tools),
                 "last_error": state.last_error,
-            })
+            }
+            # Include backoff info for disconnected servers
+            if not state.connected and state.backoff and state.backoff.attempt_count > 0:
+                server_info["reconnect_attempts"] = state.backoff.attempt_count
+                server_info["next_retry_in"] = round(state.backoff.time_until_retry(), 1)
+            servers.append(server_info)
         return {
             "enabled": True,
             "total_tools": len(self._tool_index),
@@ -561,8 +658,20 @@ class MCPManager:
                     state.connected = False
                     state.last_error = str(e)
             elif not state.connected:
+                # Check if backoff allows reconnection attempt
+                if state.backoff and not state.backoff.should_retry():
+                    remaining = state.backoff.time_until_retry()
+                    logger.debug(
+                        f"MCP server '{state.config.name}' in backoff, "
+                        f"next retry in {remaining:.1f}s"
+                    )
+                    continue
+
                 # Try to reconnect
-                logger.info(f"MCP reconnecting to '{state.config.name}'...")
+                logger.info(
+                    f"MCP reconnecting to '{state.config.name}' "
+                    f"(attempt {state.backoff.attempt_count + 1 if state.backoff else 1})..."
+                )
                 await self._connect_server(state)
 
     async def start_refresh_loop(self) -> None:
