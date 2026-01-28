@@ -83,21 +83,68 @@ async def send_message(
         # Ollama Service nutzen
         from main import app
         ollama: OllamaService = app.state.ollama
-        
+
+        response_text = ""
+        intent = None
+        action_result = None
+
+        # === Agent Loop Check ===
+        if settings.agent_enabled:
+            from services.complexity_detector import ComplexityDetector
+            if ComplexityDetector.needs_agent(chat_request.message):
+                logger.info(f"🤖 Agent Loop (REST) aktiviert für: '{chat_request.message[:80]}...'")
+
+                from services.agent_tools import AgentToolRegistry
+                from services.agent_service import AgentService
+                from services.action_executor import ActionExecutor
+
+                ha_available = settings.home_assistant_url is not None
+                tool_registry = AgentToolRegistry(app.state.plugin_registry, ha_available=ha_available)
+                agent = AgentService(tool_registry)
+                executor = ActionExecutor(plugin_registry=app.state.plugin_registry)
+
+                async for step in agent.run(
+                    message=chat_request.message,
+                    ollama=ollama,
+                    executor=executor,
+                ):
+                    if step.step_type == "final_answer":
+                        response_text = step.content
+
+                if not response_text:
+                    response_text = "Entschuldigung, ich konnte die Anfrage nicht bearbeiten."
+
+                # Save and return (skip single-intent path)
+                assistant_msg = Message(
+                    conversation_id=conversation.id,
+                    role="assistant",
+                    content=response_text,
+                    message_metadata={"agent": True}
+                )
+                db.add(assistant_msg)
+                conversation.updated_at = datetime.utcnow()
+                await db.commit()
+
+                return ChatResponse(
+                    message=response_text,
+                    session_id=session_id,
+                    intent={"intent": "agent.multi_step", "parameters": {}}
+                )
+
+        # === Standard Single-Intent Path ===
         # Intent extrahieren
         logger.info("🔍 Extrahiere Intent...")
         intent = await ollama.extract_intent(chat_request.message)
         logger.info(f"🎯 Erkannter Intent: {intent.get('intent')} (confidence: {intent.get('confidence', 0):.2f})")
-        
+
         # Action ausführen falls nötig
-        action_result = None
         if intent.get("intent") != "general.conversation":
             logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
             from services.action_executor import ActionExecutor
             executor = ActionExecutor(plugin_registry=app.state.plugin_registry)
             action_result = await executor.execute(intent, user=current_user)
             logger.info(f"✅ Aktion ausgeführt: {action_result.get('success')} - {action_result.get('message')}")
-        
+
         # Antwort generieren
         if action_result and action_result.get("success"):
             # Erfolgreiche Aktion - nutze Ergebnis für Antwort
@@ -113,13 +160,13 @@ Zusätzliche Details:
 
 Gib eine kurze, natürliche Antwort basierend auf dem Ergebnis.
 WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
-            
+
             response_text = await ollama.chat(enhanced_prompt, context=[])
-        
+
         elif action_result and not action_result.get("success"):
             # Aktion fehlgeschlagen
             response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
-        
+
         else:
             # Normale Konversation
             response_text = await ollama.chat(chat_request.message, context)

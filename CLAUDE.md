@@ -432,6 +432,44 @@ Piper TTS → Audio Response
 Audio Playback → Satellite Speaker
 ```
 
+### Agent Loop (ReAct — Multi-Step Tool Chaining)
+
+For complex queries requiring multiple steps or conditional logic, Renfield uses a ReAct (Reason + Act) Agent Loop:
+
+```
+User → ComplexityDetector → simple? → Single-Intent (as before)
+                          → complex? → Agent Loop:
+                                        ├─ LLM: Plan → Tool Call 1
+                                        ├─ User sees: "🔍 Hole Wetterdaten..."
+                                        ├─ Tool Result → back to LLM
+                                        ├─ LLM: Reasoning → Tool Call 2
+                                        ├─ User sees: "🔍 Suche Hotels..."
+                                        └─ LLM: Final Answer → Stream
+```
+
+**Key Components:**
+- `services/complexity_detector.py` — Regex-based detection (zero-cost, no LLM call)
+- `services/agent_tools.py` — Wraps HA + Plugin tools as descriptions for the LLM prompt
+- `services/agent_service.py` — Core loop: LLM → Tool → LLM → ... → Answer (AsyncGenerator)
+
+**Configuration** (all opt-in, disabled by default):
+```bash
+AGENT_ENABLED=false          # Enable agent loop
+AGENT_MAX_STEPS=5            # Max reasoning steps
+AGENT_STEP_TIMEOUT=30.0      # Per-step LLM timeout (seconds)
+AGENT_TOTAL_TIMEOUT=120.0    # Total timeout
+AGENT_MODEL=                 # Optional: separate model for agent
+```
+
+**WebSocket Message Types** (Server → Client):
+- `agent_thinking` — Agent is analyzing the query
+- `agent_tool_call` — Agent is calling a tool (with tool name, parameters, reason)
+- `agent_tool_result` — Tool result (success/failure, data)
+- `stream` — Final answer (same as single-intent path)
+- `done` with `agent_steps` count
+
+**Tests:** `tests/backend/test_complexity_detector.py`, `tests/backend/test_agent_tools.py`, `tests/backend/test_agent_service.py` (85 tests)
+
 ### Intent Recognition System
 
 The core of Renfield is the intent recognition system in `src/backend/services/ollama_service.py`:
@@ -707,6 +745,9 @@ src/backend/
 │   ├── output_routing_service.py  # Audio/visual output device routing
 │   ├── audio_output_service.py    # TTS delivery to output devices
 │   ├── action_executor.py    # Routes intents to appropriate integrations
+│   ├── complexity_detector.py # Regex-based detection of multi-step queries
+│   ├── agent_tools.py        # Tool registry for Agent Loop (HA + plugins)
+│   ├── agent_service.py      # ReAct Agent Loop (multi-step tool chaining)
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
 ├── integrations/              # External service clients
@@ -1227,6 +1268,9 @@ tests/
 | `test_services.py` | OllamaService, RAGService, SpeakerService, DeviceManager |
 | `test_auth.py` | JWT, passwords, permissions, roles, RBAC hierarchy |
 | `test_websocket.py` | Protocol parsing, device registration, rate limiting |
+| `test_complexity_detector.py` | ComplexityDetector patterns (conditional, sequence, comparison, multi-action) |
+| `test_agent_tools.py` | AgentToolRegistry (core tools, plugin tools, prompt generation) |
+| `test_agent_service.py` | AgentService loop, JSON parsing, timeouts, error handling, WebSocket messages |
 
 ### Running Tests
 
