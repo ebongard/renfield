@@ -220,7 +220,8 @@ async def _process_text_input(
         action_result = None
         if intent.get("intent") != "general.conversation":
             from services.action_executor import ActionExecutor
-            executor = ActionExecutor(plugin_registry)
+            mcp_mgr = getattr(websocket.app.state, 'mcp_manager', None)
+            executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
             action_result = await executor.execute(intent)
             logger.info(f"⚡ Action result: {action_result.get('success')}")
             await device_manager.send_action_result(session_id, intent, action_result.get("success", False))

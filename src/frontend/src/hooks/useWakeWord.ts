@@ -237,15 +237,32 @@ export function useWakeWord({
       console.error('Failed to enable wake word:', err);
       const error = err instanceof Error ? err : new Error(String(err));
 
-      // Check for Firefox sample rate mismatch error
+      // Check for browser-specific errors
       if (error.message && error.message.includes('sample-rate')) {
-        const firefoxError = new Error(
+        // Firefox: AudioContext sample rate mismatch
+        const browserError = new Error(
           'Wake word detection is not supported in Firefox due to AudioContext sample rate limitations. ' +
-          'Please use Chrome, Edge, or Safari for wake word detection, or use the manual recording button.'
+          'Please use Chrome or Edge for wake word detection, or use the manual recording button.'
         );
-        firefoxError.name = 'BrowserNotSupportedError';
-        setError(firefoxError);
-        callbacksRef.current.onError?.(firefoxError);
+        browserError.name = 'BrowserNotSupportedError';
+        setError(browserError);
+        callbacksRef.current.onError?.(browserError);
+      } else if (
+        error.message && (
+          error.message.includes('SharedArrayBuffer') ||
+          error.message.includes('cross-origin isolated') ||
+          error.message.includes('CompileError') ||
+          error.message.includes('WebAssembly')
+        )
+      ) {
+        // Safari/WebKit: WASM or SharedArrayBuffer issues
+        const browserError = new Error(
+          'Wake word detection requires WebAssembly threading which may not be available in this browser. ' +
+          'Please use Chrome or Edge, or use the manual recording button.'
+        );
+        browserError.name = 'BrowserNotSupportedError';
+        setError(browserError);
+        callbacksRef.current.onError?.(browserError);
       } else {
         setError(error);
         callbacksRef.current.onError?.(error);

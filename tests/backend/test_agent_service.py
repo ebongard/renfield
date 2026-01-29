@@ -285,12 +285,34 @@ class TestStepToWsMessage:
 # Test AgentService.run() — Core Agent Loop
 # ============================================================================
 
+def _make_mock_mcp_manager():
+    """Create a mock MCP manager with standard HA tools for agent tests."""
+    mock_mcp = MagicMock()
+    tools = []
+    for name, desc in [
+        ("mcp.homeassistant.turn_on", "Turn on a device"),
+        ("mcp.homeassistant.turn_off", "Turn off a device"),
+        ("mcp.homeassistant.get_state", "Get device state"),
+        ("mcp.weather.get_current", "Get current weather"),
+    ]:
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = name
+        mock_tool.description = desc
+        mock_tool.input_schema = {
+            "properties": {"entity_id": {"type": "string", "description": "Entity ID"}},
+            "required": ["entity_id"],
+        }
+        tools.append(mock_tool)
+    mock_mcp.get_all_tools.return_value = tools
+    return mock_mcp
+
+
 class TestAgentServiceRun:
     """Test the Agent Loop with mocked OllamaService and ActionExecutor."""
 
     def _make_registry(self, tools=None):
-        """Create a tool registry with optional custom tools."""
-        registry = AgentToolRegistry(ha_available=True)
+        """Create a tool registry with MCP tools."""
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         return registry
 
     def _make_ollama_mock(self, responses):
@@ -352,7 +374,7 @@ class TestAgentServiceRun:
         """LLM calls one tool, then gives final answer."""
         registry = self._make_registry()
         ollama = self._make_ollama_mock([
-            '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check temp"}',
+            '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check temp"}',
             '{"action": "final_answer", "answer": "Es sind 22°C.", "reason": "Done"}'
         ])
         executor = self._make_executor_mock([
@@ -372,7 +394,7 @@ class TestAgentServiceRun:
 
         # Check tool call details
         tool_call = next(s for s in steps if s.step_type == "tool_call")
-        assert tool_call.tool == "homeassistant.get_state"
+        assert tool_call.tool == "mcp.homeassistant.get_state"
         assert tool_call.parameters["entity_id"] == "sensor.temp"
 
         # Check final answer
@@ -441,7 +463,7 @@ class TestAgentServiceRun:
             if "Fasse die Ergebnisse" in user_content:
                 resp.message.content = "Die Temperatur beträgt 22°C."
             else:
-                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+                resp.message.content = '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
             return resp
 
         ollama.client.chat = mock_chat
@@ -463,7 +485,7 @@ class TestAgentServiceRun:
         """Tool execution raises exception — error is caught and loop continues."""
         registry = self._make_registry()
         ollama = self._make_ollama_mock([
-            '{"action": "homeassistant.turn_on", "parameters": {"entity_id": "light.test"}, "reason": "Turn on"}',
+            '{"action": "mcp.homeassistant.turn_on", "parameters": {"entity_id": "light.test"}, "reason": "Turn on"}',
             '{"action": "final_answer", "answer": "Fehler beim Einschalten.", "reason": "Error"}'
         ])
         executor = self._make_executor_mock()
@@ -586,7 +608,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_total_timeout(self):
         """Total timeout should stop the agent even if steps are within per-step limit."""
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         ollama = MagicMock()
         ollama.client = MagicMock()
 
@@ -604,7 +626,7 @@ class TestAgentServiceSafety:
                 resp.message.content = "Zusammenfassung der Ergebnisse."
                 return resp
             await asyncio.sleep(0.05)  # 50ms per step
-            resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "test"}, "reason": "loop"}'
+            resp.message.content = '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "test"}, "reason": "loop"}'
             return resp
 
         ollama.client.chat = slow_but_within_step
@@ -631,7 +653,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_with_results(self):
         """Summary answer should call LLM to produce natural language from tool results."""
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="Wie ist das Wetter?")
@@ -665,7 +687,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_no_results(self):
         """Summary answer without any results should give generic message."""
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -677,7 +699,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_llm_failure_fallback(self):
         """When LLM summary fails, should return a fallback message."""
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -701,7 +723,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     def test_build_fallback_answer(self):
         """Fallback answer should include the error message."""
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -718,7 +740,7 @@ class TestAgentServiceRetry:
     """Test the retry-on-empty-response mechanism."""
 
     def _make_registry(self):
-        return AgentToolRegistry(ha_available=True)
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
 
     def _make_executor_mock(self, results=None):
         executor = AsyncMock()
@@ -811,7 +833,7 @@ class TestAgentServiceRetry:
             if call_count == 1:
                 resp.message.content = ""  # Empty
             elif call_count == 2:
-                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+                resp.message.content = '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
             else:
                 resp.message.content = '{"action": "final_answer", "answer": "22 Grad", "reason": "Done"}'
             return resp
@@ -840,7 +862,7 @@ class TestToolResultDataInclusion:
     """Test that tool results include actual data for LLM reasoning."""
 
     def _make_registry(self):
-        return AgentToolRegistry(ha_available=True)
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
 
     @pytest.mark.unit
     async def test_tool_result_includes_data(self):
@@ -858,7 +880,7 @@ class TestToolResultDataInclusion:
             resp = MagicMock()
             resp.message = MagicMock()
             if call_count <= 1:
-                resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+                resp.message.content = '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
             else:
                 resp.message.content = '{"action": "final_answer", "answer": "Done", "reason": "OK"}'
             return resp
@@ -900,7 +922,7 @@ class TestToolResultDataInclusion:
             resp = MagicMock()
             resp.message = MagicMock()
             if call_count <= 1:
-                resp.message.content = '{"action": "homeassistant.turn_on", "parameters": {"entity_id": "light.test"}, "reason": "On"}'
+                resp.message.content = '{"action": "mcp.homeassistant.turn_on", "parameters": {"entity_id": "light.test"}, "reason": "On"}'
             else:
                 resp.message.content = '{"action": "final_answer", "answer": "Done", "reason": "OK"}'
             return resp
@@ -933,7 +955,7 @@ class TestAgentInfiniteLoopDetection:
     """Test that the agent detects and breaks out of infinite loops."""
 
     def _make_registry(self):
-        return AgentToolRegistry(ha_available=True)
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
 
     def _make_executor_mock(self):
         executor = AsyncMock()
@@ -965,7 +987,7 @@ class TestAgentInfiniteLoopDetection:
                 resp.message.content = "Zusammenfassung."
                 return resp
             # Keep calling the same tool with same params
-            resp.message.content = '{"action": "homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
+            resp.message.content = '{"action": "mcp.homeassistant.get_state", "parameters": {"entity_id": "sensor.temp"}, "reason": "Check"}'
             return resp
 
         ollama.client.chat = stuck_llm
@@ -995,7 +1017,7 @@ class TestAgentCircuitBreakerIntegration:
     """Test circuit breaker integration in agent service."""
 
     def _make_registry(self):
-        return AgentToolRegistry(ha_available=True)
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
 
     @pytest.mark.unit
     async def test_circuit_breaker_blocks_when_open(self):

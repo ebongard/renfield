@@ -1,5 +1,7 @@
 """
 Tests for AgentToolRegistry — Tool descriptions for the Agent Loop.
+
+Tools are registered dynamically from MCP servers and plugins.
 """
 
 import pytest
@@ -27,44 +29,79 @@ class TestToolDefinition:
         assert tool.parameters == {"entity_id": "The entity ID"}
 
 
-class TestAgentToolRegistryCoreTools:
-    """Test core HA tool registration."""
+class TestAgentToolRegistryMCPTools:
+    """Test MCP tool registration."""
 
     @pytest.mark.unit
-    def test_ha_tools_registered_when_available(self):
-        registry = AgentToolRegistry(ha_available=True)
-        names = registry.get_tool_names()
-        assert "homeassistant.turn_on" in names
-        assert "homeassistant.turn_off" in names
-        assert "homeassistant.toggle" in names
-        assert "homeassistant.get_state" in names
-        assert "homeassistant.set_value" in names
+    def test_mcp_tools_registered(self):
+        """MCP tools should be registered as agent tools."""
+        mock_mcp = MagicMock()
 
-    @pytest.mark.unit
-    def test_ha_tools_not_registered_when_unavailable(self):
-        registry = AgentToolRegistry(ha_available=False)
-        names = registry.get_tool_names()
-        assert "homeassistant.turn_on" not in names
-        assert len(names) == 0
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.homeassistant.turn_on"
+        mock_tool.description = "Turn on a device"
+        mock_tool.input_schema = {
+            "properties": {
+                "entity_id": {"type": "string", "description": "HA Entity ID"}
+            },
+            "required": ["entity_id"]
+        }
 
-    @pytest.mark.unit
-    def test_get_tool_returns_definition(self):
-        registry = AgentToolRegistry(ha_available=True)
-        tool = registry.get_tool("homeassistant.turn_on")
-        assert tool is not None
-        assert tool.name == "homeassistant.turn_on"
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.is_valid_tool("mcp.homeassistant.turn_on") is True
+
+        tool = registry.get_tool("mcp.homeassistant.turn_on")
+        assert tool.description == "Turn on a device"
         assert "entity_id" in tool.parameters
+        assert "(required)" in tool.parameters["entity_id"]
+
+    @pytest.mark.unit
+    def test_multiple_mcp_tools(self):
+        """Multiple MCP tools from different servers should all register."""
+        mock_mcp = MagicMock()
+
+        tools = []
+        for name in ["mcp.homeassistant.turn_on", "mcp.weather.get_forecast", "mcp.n8n.list_workflows"]:
+            mock_tool = MagicMock()
+            mock_tool.namespaced_name = name
+            mock_tool.description = f"Description for {name}"
+            mock_tool.input_schema = {"properties": {}, "required": []}
+            tools.append(mock_tool)
+
+        mock_mcp.get_all_tools.return_value = tools
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        names = registry.get_tool_names()
+        assert len(names) == 3
+        assert "mcp.homeassistant.turn_on" in names
+        assert "mcp.weather.get_forecast" in names
+        assert "mcp.n8n.list_workflows" in names
+
+    @pytest.mark.unit
+    def test_empty_registry_no_mcp(self):
+        """Without MCP or plugins, registry should be empty."""
+        registry = AgentToolRegistry()
+        assert len(registry.get_tool_names()) == 0
 
     @pytest.mark.unit
     def test_get_tool_returns_none_for_unknown(self):
-        registry = AgentToolRegistry(ha_available=True)
+        registry = AgentToolRegistry()
         tool = registry.get_tool("nonexistent.tool")
         assert tool is None
 
     @pytest.mark.unit
     def test_is_valid_tool(self):
-        registry = AgentToolRegistry(ha_available=True)
-        assert registry.is_valid_tool("homeassistant.turn_on") is True
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.test.tool"
+        mock_tool.description = "Test"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.is_valid_tool("mcp.test.tool") is True
         assert registry.is_valid_tool("nonexistent.tool") is False
 
 
@@ -76,7 +113,6 @@ class TestAgentToolRegistryPluginTools:
         """Plugin intents should be registered as agent tools."""
         mock_registry = MagicMock()
 
-        # Create mock intent definitions
         mock_param = MagicMock()
         mock_param.name = "location"
         mock_param.description = "City name"
@@ -89,7 +125,7 @@ class TestAgentToolRegistryPluginTools:
 
         mock_registry.get_all_intents.return_value = [mock_intent]
 
-        registry = AgentToolRegistry(plugin_registry=mock_registry, ha_available=False)
+        registry = AgentToolRegistry(plugin_registry=mock_registry)
         assert registry.is_valid_tool("weather.get_current") is True
 
         tool = registry.get_tool("weather.get_current")
@@ -98,19 +134,24 @@ class TestAgentToolRegistryPluginTools:
         assert "(required)" in tool.parameters["location"]
 
     @pytest.mark.unit
-    def test_plugin_and_ha_tools_coexist(self):
-        """Both HA core tools and plugin tools should be available."""
-        mock_registry = MagicMock()
-
+    def test_plugin_and_mcp_tools_coexist(self):
+        """Both MCP tools and plugin tools should be available."""
+        mock_plugin_registry = MagicMock()
         mock_intent = MagicMock()
         mock_intent.name = "weather.get_current"
         mock_intent.description = "Get weather"
         mock_intent.parameters = []
+        mock_plugin_registry.get_all_intents.return_value = [mock_intent]
 
-        mock_registry.get_all_intents.return_value = [mock_intent]
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.homeassistant.turn_on"
+        mock_tool.description = "Turn on"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(plugin_registry=mock_registry, ha_available=True)
-        assert registry.is_valid_tool("homeassistant.turn_on") is True
+        registry = AgentToolRegistry(plugin_registry=mock_plugin_registry, mcp_manager=mock_mcp)
+        assert registry.is_valid_tool("mcp.homeassistant.turn_on") is True
         assert registry.is_valid_tool("weather.get_current") is True
 
     @pytest.mark.unit
@@ -130,7 +171,7 @@ class TestAgentToolRegistryPluginTools:
 
         mock_registry.get_all_intents.return_value = [mock_intent]
 
-        registry = AgentToolRegistry(plugin_registry=mock_registry, ha_available=False)
+        registry = AgentToolRegistry(plugin_registry=mock_registry)
         tool = registry.get_tool("weather.get_current")
         assert "(required)" not in tool.parameters["units"]
 
@@ -140,26 +181,59 @@ class TestAgentToolRegistryPrompt:
 
     @pytest.mark.unit
     def test_empty_registry_prompt(self):
-        registry = AgentToolRegistry(ha_available=False)
+        registry = AgentToolRegistry()
         prompt = registry.build_tools_prompt()
         assert "KEINE TOOLS" in prompt
 
     @pytest.mark.unit
-    def test_prompt_contains_tool_names(self):
-        registry = AgentToolRegistry(ha_available=True)
+    def test_prompt_contains_mcp_tool_names(self):
+        mock_mcp = MagicMock()
+        tools = []
+        for name, desc in [
+            ("mcp.homeassistant.turn_on", "Turn on device"),
+            ("mcp.weather.get_forecast", "Get weather forecast"),
+        ]:
+            mock_tool = MagicMock()
+            mock_tool.namespaced_name = name
+            mock_tool.description = desc
+            mock_tool.input_schema = {
+                "properties": {"param": {"type": "string", "description": "A param"}},
+                "required": []
+            }
+            tools.append(mock_tool)
+        mock_mcp.get_all_tools.return_value = tools
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
         prompt = registry.build_tools_prompt()
-        assert "homeassistant.turn_on" in prompt
-        assert "homeassistant.turn_off" in prompt
+        assert "mcp.homeassistant.turn_on" in prompt
+        assert "mcp.weather.get_forecast" in prompt
         assert "VERFÜGBARE TOOLS:" in prompt
 
     @pytest.mark.unit
     def test_prompt_contains_descriptions(self):
-        registry = AgentToolRegistry(ha_available=True)
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.test.tool"
+        mock_tool.description = "A very specific description"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
         prompt = registry.build_tools_prompt()
-        assert "einschalten" in prompt.lower() or "Gerät einschalten" in prompt
+        assert "A very specific description" in prompt
 
     @pytest.mark.unit
     def test_prompt_contains_parameters(self):
-        registry = AgentToolRegistry(ha_available=True)
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.ha.turn_on"
+        mock_tool.description = "Turn on"
+        mock_tool.input_schema = {
+            "properties": {"entity_id": {"type": "string", "description": "Entity ID"}},
+            "required": ["entity_id"]
+        }
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
         prompt = registry.build_tools_prompt()
         assert "entity_id" in prompt

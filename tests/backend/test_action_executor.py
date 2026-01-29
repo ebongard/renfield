@@ -2,9 +2,8 @@
 Tests für ActionExecutor
 
 Testet:
-- Intent Routing
-- Home Assistant Aktionen
-- n8n Workflow Ausführung
+- Intent Routing (MCP, Knowledge, Plugin, General)
+- MCP Tool Execution
 - Plugin Dispatch
 - Fehlerbehandlung
 """
@@ -21,10 +20,10 @@ class TestActionExecutorRouting:
     """Tests für Intent Routing"""
 
     @pytest.mark.unit
-    async def test_route_homeassistant_intent(self, action_executor, mock_ha_client):
-        """Test: HomeAssistant Intent wird korrekt geroutet"""
+    async def test_route_mcp_intent(self, action_executor):
+        """Test: MCP Intent wird an mcp_manager weitergeleitet"""
         intent_data = {
-            "intent": "homeassistant.turn_on",
+            "intent": "mcp.homeassistant.turn_on",
             "parameters": {"entity_id": "light.wohnzimmer"},
             "confidence": 0.95
         }
@@ -32,37 +31,44 @@ class TestActionExecutorRouting:
         result = await action_executor.execute(intent_data)
 
         assert result["success"] is True
-        assert result["action_taken"] is True
-        mock_ha_client.turn_on.assert_called_once_with("light.wohnzimmer")
+        action_executor.mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.homeassistant.turn_on",
+            {"entity_id": "light.wohnzimmer"}
+        )
 
     @pytest.mark.unit
-    async def test_route_n8n_intent(self, action_executor, mock_n8n_client):
-        """Test: n8n Intent wird korrekt geroutet"""
+    async def test_route_mcp_n8n_intent(self, action_executor):
+        """Test: MCP n8n Intent wird korrekt geroutet"""
         intent_data = {
-            "intent": "n8n.trigger_workflow",
-            "parameters": {"workflow_id": "test-workflow"},
+            "intent": "mcp.n8n.n8n_list_workflows",
+            "parameters": {},
             "confidence": 0.9
         }
 
         result = await action_executor.execute(intent_data)
 
         assert result["success"] is True
-        assert result["action_taken"] is True
-        mock_n8n_client.trigger_workflow.assert_called_once()
+        action_executor.mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.n8n.n8n_list_workflows",
+            {}
+        )
 
     @pytest.mark.unit
-    async def test_route_camera_intent(self, action_executor):
-        """Test: Camera Intent wird korrekt geroutet"""
+    async def test_route_mcp_weather_intent(self, action_executor):
+        """Test: MCP Weather Intent wird korrekt geroutet"""
         intent_data = {
-            "intent": "camera.get_snapshot",
-            "parameters": {"camera": "front_door"},
-            "confidence": 0.85
+            "intent": "mcp.weather.get_current_weather",
+            "parameters": {"location": "Berlin"},
+            "confidence": 0.92
         }
 
         result = await action_executor.execute(intent_data)
 
-        # Camera actions are currently placeholders
-        assert result["action_taken"] is False
+        assert result["success"] is True
+        action_executor.mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.weather.get_current_weather",
+            {"location": "Berlin"}
+        )
 
     @pytest.mark.unit
     async def test_route_general_conversation(self, action_executor):
@@ -119,283 +125,75 @@ class TestActionExecutorRouting:
             {"location": "Berlin"}
         )
 
-
-# ============================================================================
-# ActionExecutor Home Assistant Tests
-# ============================================================================
-
-class TestActionExecutorHomeAssistant:
-    """Tests für Home Assistant Aktionen"""
-
     @pytest.mark.unit
-    async def test_turn_on(self, action_executor, mock_ha_client):
-        """Test: turn_on Aktion"""
+    async def test_route_knowledge_intent(self, action_executor):
+        """Test: Knowledge Intent wird an RAG-Service geroutet"""
         intent_data = {
-            "intent": "homeassistant.turn_on",
-            "parameters": {"entity_id": "light.wohnzimmer"},
-            "confidence": 0.95
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        assert result["entity_id"] == "light.wohnzimmer"
-        assert "eingeschaltet" in result["message"]
-
-    @pytest.mark.unit
-    async def test_turn_off(self, action_executor, mock_ha_client):
-        """Test: turn_off Aktion"""
-        intent_data = {
-            "intent": "homeassistant.turn_off",
-            "parameters": {"entity_id": "switch.fernseher"},
-            "confidence": 0.92
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        mock_ha_client.turn_off.assert_called_once_with("switch.fernseher")
-        assert "ausgeschaltet" in result["message"]
-
-    @pytest.mark.unit
-    async def test_toggle(self, action_executor, mock_ha_client):
-        """Test: toggle Aktion"""
-        intent_data = {
-            "intent": "homeassistant.toggle",
-            "parameters": {"entity_id": "light.flur"},
-            "confidence": 0.88
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        mock_ha_client.toggle.assert_called_once_with("light.flur")
-        assert "umgeschaltet" in result["message"]
-
-    @pytest.mark.unit
-    async def test_get_state(self, action_executor, mock_ha_client):
-        """Test: get_state Aktion"""
-        mock_ha_client.get_state.return_value = {
-            "state": "on",
-            "attributes": {"friendly_name": "Küchen Licht"}
-        }
-
-        intent_data = {
-            "intent": "homeassistant.get_state",
-            "parameters": {"entity_id": "light.kueche"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        assert result["state"] == "on"
-        assert "eingeschaltet" in result["message"]
-
-    @pytest.mark.unit
-    async def test_check_state_alias(self, action_executor, mock_ha_client):
-        """Test: check_state wird wie get_state behandelt"""
-        mock_ha_client.get_state.return_value = {
-            "state": "off",
-            "attributes": {"friendly_name": "Test Light"}
-        }
-
-        intent_data = {
-            "intent": "homeassistant.check_state",
-            "parameters": {"entity_id": "light.test"},
+            "intent": "knowledge.search",
+            "parameters": {"query": "Docker Anleitung"},
             "confidence": 0.85
         }
 
-        result = await action_executor.execute(intent_data)
+        with patch("services.database.AsyncSessionLocal") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        assert result["success"] is True
+            with patch("services.rag_service.RAGService") as mock_rag_cls:
+                mock_rag = MagicMock()
+                mock_rag.search = AsyncMock(return_value=[])
+                mock_rag_cls.return_value = mock_rag
 
-    @pytest.mark.unit
-    async def test_set_value(self, action_executor, mock_ha_client):
-        """Test: set_value Aktion"""
-        mock_ha_client.set_value.return_value = True
-
-        intent_data = {
-            "intent": "homeassistant.set_value",
-            "parameters": {
-                "entity_id": "light.wohnzimmer",
-                "value": 50,
-                "attribute": "brightness"
-            },
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        mock_ha_client.set_value.assert_called_once()
-
-    @pytest.mark.unit
-    async def test_entity_search_by_name(self, action_executor, mock_ha_client):
-        """Test: Entity wird nach Namen gesucht wenn keine entity_id"""
-        mock_ha_client.search_entities.return_value = [
-            {"entity_id": "light.wohnzimmer", "friendly_name": "Wohnzimmer Licht"}
-        ]
-
-        intent_data = {
-            "intent": "homeassistant.turn_on",
-            "parameters": {"name": "Wohnzimmer Licht"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        mock_ha_client.search_entities.assert_called_once_with("Wohnzimmer Licht")
-        mock_ha_client.turn_on.assert_called_once_with("light.wohnzimmer")
-
-    @pytest.mark.unit
-    async def test_entity_not_found(self, action_executor, mock_ha_client):
-        """Test: Fehler wenn Entity nicht gefunden"""
-        mock_ha_client.search_entities.return_value = []
-
-        intent_data = {
-            "intent": "homeassistant.turn_on",
-            "parameters": {"name": "Nicht Existierendes Gerät"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is False
-        assert "konnte kein gerät" in result["message"].lower()
-
-    @pytest.mark.unit
-    async def test_ha_exception_handling(self, action_executor, mock_ha_client):
-        """Test: Exceptions werden abgefangen"""
-        mock_ha_client.turn_on.side_effect = Exception("Connection failed")
-
-        intent_data = {
-            "intent": "homeassistant.turn_on",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is False
-        assert "fehler" in result["message"].lower()
-
-
-# ============================================================================
-# ActionExecutor n8n Tests
-# ============================================================================
-
-class TestActionExecutorN8N:
-    """Tests für n8n Workflow Ausführung"""
-
-    @pytest.mark.unit
-    async def test_trigger_workflow_by_id(self, action_executor, mock_n8n_client):
-        """Test: Workflow nach ID triggern"""
-        mock_n8n_client.trigger_workflow.return_value = {
-            "success": True,
-            "executionId": "exec-123"
-        }
-
-        intent_data = {
-            "intent": "n8n.trigger",
-            "parameters": {
-                "workflow_id": "workflow-123",
-                "data": {"param": "value"}
-            },
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
+                result = await action_executor.execute(intent_data)
 
         assert result["success"] is True
         assert result["action_taken"] is True
-        mock_n8n_client.trigger_workflow.assert_called_once_with(
-            "workflow-123",
-            {"param": "value"}
-        )
+
+
+# ============================================================================
+# ActionExecutor MCP Tests
+# ============================================================================
+
+class TestActionExecutorMCP:
+    """Tests für MCP Tool Execution"""
 
     @pytest.mark.unit
-    async def test_trigger_workflow_by_name(self, action_executor, mock_n8n_client):
-        """Test: Workflow nach Name triggern"""
-        mock_n8n_client.trigger_workflow.return_value = {"success": True}
+    async def test_mcp_not_available_returns_unknown(self):
+        """Test: Ohne mcp_manager wird MCP Intent als unknown behandelt"""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor(plugin_registry=None, mcp_manager=None)
 
         intent_data = {
-            "intent": "n8n.trigger",
-            "parameters": {"workflow_name": "backup-workflow"},
-            "confidence": 0.85
+            "intent": "mcp.homeassistant.turn_on",
+            "parameters": {"entity_id": "light.test"},
+            "confidence": 0.9
         }
 
-        result = await action_executor.execute(intent_data)
+        result = await executor.execute(intent_data)
 
-        assert result["success"] is True
+        assert result["success"] is False
+        assert "unknown intent" in result["message"].lower()
 
     @pytest.mark.unit
-    async def test_n8n_exception_handling(self, action_executor, mock_n8n_client):
-        """Test: n8n Fehler werden abgefangen"""
-        mock_n8n_client.trigger_workflow.side_effect = Exception("Webhook failed")
+    async def test_mcp_tool_failure_propagated(self, action_executor):
+        """Test: MCP Tool Fehler werden propagiert"""
+        action_executor.mcp_manager.execute_tool.return_value = {
+            "success": False,
+            "message": "Tool execution failed: rate limited",
+            "action_taken": False
+        }
 
         intent_data = {
-            "intent": "n8n.trigger",
-            "parameters": {"workflow_id": "failing-workflow"},
+            "intent": "mcp.weather.get_forecast",
+            "parameters": {"location": "Berlin"},
             "confidence": 0.9
         }
 
         result = await action_executor.execute(intent_data)
 
         assert result["success"] is False
-        assert "fehler" in result["message"].lower()
-
-
-# ============================================================================
-# ActionExecutor State Translation Tests
-# ============================================================================
-
-class TestActionExecutorStateTranslation:
-    """Tests für State-Übersetzung"""
-
-    @pytest.mark.unit
-    def test_translate_on_state(self, action_executor):
-        """Test: 'on' wird zu 'eingeschaltet'"""
-        result = action_executor._translate_state("on")
-        assert result == "eingeschaltet"
-
-    @pytest.mark.unit
-    def test_translate_off_state(self, action_executor):
-        """Test: 'off' wird zu 'ausgeschaltet'"""
-        result = action_executor._translate_state("off")
-        assert result == "ausgeschaltet"
-
-    @pytest.mark.unit
-    def test_translate_open_state(self, action_executor):
-        """Test: 'open' wird zu 'offen'"""
-        result = action_executor._translate_state("open")
-        assert result == "offen"
-
-    @pytest.mark.unit
-    def test_translate_closed_state(self, action_executor):
-        """Test: 'closed' wird zu 'geschlossen'"""
-        result = action_executor._translate_state("closed")
-        assert result == "geschlossen"
-
-    @pytest.mark.unit
-    def test_translate_playing_state(self, action_executor):
-        """Test: 'playing' wird zu 'läuft'"""
-        result = action_executor._translate_state("playing")
-        assert result == "läuft"
-
-    @pytest.mark.unit
-    def test_translate_unknown_state(self, action_executor):
-        """Test: Unbekannte States werden unverändert zurückgegeben"""
-        result = action_executor._translate_state("custom_state")
-        assert result == "custom_state"
-
-    @pytest.mark.unit
-    def test_translate_case_insensitive(self, action_executor):
-        """Test: Übersetzung ist case-insensitive"""
-        assert action_executor._translate_state("ON") == "eingeschaltet"
-        assert action_executor._translate_state("Off") == "ausgeschaltet"
-        assert action_executor._translate_state("PLAYING") == "läuft"
+        assert "rate limited" in result["message"]
 
 
 # ============================================================================
@@ -419,49 +217,18 @@ class TestActionExecutorEdgeCases:
         assert result["action_taken"] is False
 
     @pytest.mark.unit
-    async def test_empty_parameters(self, action_executor, mock_ha_client):
-        """Test: Leere Parameter bei HA Action"""
+    async def test_knowledge_intent_without_query(self, action_executor):
+        """Test: Knowledge Intent ohne Query gibt Fehler"""
         intent_data = {
-            "intent": "homeassistant.turn_on",
+            "intent": "knowledge.search",
             "parameters": {},
             "confidence": 0.9
         }
 
         result = await action_executor.execute(intent_data)
 
-        # Action executor tries to turn_on with None entity_id
-        # The mock succeeds, so the result is success
-        assert result["success"] is True
-        mock_ha_client.turn_on.assert_called_once_with(None)
-
-    @pytest.mark.unit
-    async def test_low_confidence_still_executes(self, action_executor, mock_ha_client):
-        """Test: Auch niedrige Confidence führt Aktion aus"""
-        intent_data = {
-            "intent": "homeassistant.turn_on",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.3
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        # ActionExecutor prüft Confidence nicht
-        assert result["success"] is True
-        mock_ha_client.turn_on.assert_called_once()
-
-    @pytest.mark.unit
-    async def test_unknown_ha_intent(self, action_executor):
-        """Test: Unbekannter HA Intent"""
-        intent_data = {
-            "intent": "homeassistant.unknown_action",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
         assert result["success"] is False
-        assert "unbekannter" in result["message"].lower()
+        assert "keine suchanfrage" in result["message"].lower()
 
 
 # ============================================================================
@@ -514,13 +281,11 @@ class TestActionExecutorPluginIntegration:
         assert result["message"] == "API rate limited"
 
     @pytest.mark.unit
-    async def test_no_plugin_registry(self, mock_ha_client, mock_n8n_client):
+    async def test_no_plugin_registry(self):
         """Test: ActionExecutor ohne Plugin Registry"""
         from services.action_executor import ActionExecutor
 
-        executor = ActionExecutor(plugin_registry=None)
-        executor.ha_client = mock_ha_client
-        executor.n8n_client = mock_n8n_client
+        executor = ActionExecutor(plugin_registry=None, mcp_manager=None)
 
         intent_data = {
             "intent": "custom.action",

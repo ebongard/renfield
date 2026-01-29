@@ -279,78 +279,14 @@ class TestSpeakerService:
 # ============================================================================
 
 class TestActionExecutor:
-    """Tests für ActionExecutor"""
-
-    @pytest.fixture
-    def mock_ha_client(self):
-        """Mock Home Assistant Client"""
-        client = AsyncMock()
-        client.turn_on = AsyncMock(return_value=True)
-        client.turn_off = AsyncMock(return_value=True)
-        client.toggle = AsyncMock(return_value=True)
-        client.get_state = AsyncMock(return_value={
-            "state": "on",
-            "attributes": {"friendly_name": "Test Light"}
-        })
-        return client
+    """Tests für ActionExecutor — all external integrations via MCP"""
 
     @pytest.mark.unit
-    async def test_execute_turn_on(self, mock_ha_client):
-        """Testet Turn On Ausführung"""
-        from services.action_executor import ActionExecutor
-
-        executor = ActionExecutor()
-        executor.ha_client = mock_ha_client
-
-        result = await executor.execute({
-            "intent": "homeassistant.turn_on",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.9
-        })
-
-        assert result["success"] is True
-        mock_ha_client.turn_on.assert_called_once_with("light.test")
-
-    @pytest.mark.unit
-    async def test_execute_turn_off(self, mock_ha_client):
-        """Testet Turn Off Ausführung"""
-        from services.action_executor import ActionExecutor
-
-        executor = ActionExecutor()
-        executor.ha_client = mock_ha_client
-
-        result = await executor.execute({
-            "intent": "homeassistant.turn_off",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.9
-        })
-
-        assert result["success"] is True
-        mock_ha_client.turn_off.assert_called_once_with("light.test")
-
-    @pytest.mark.unit
-    async def test_execute_get_state(self, mock_ha_client):
-        """Testet Get State Ausführung"""
-        from services.action_executor import ActionExecutor
-
-        executor = ActionExecutor()
-        executor.ha_client = mock_ha_client
-
-        result = await executor.execute({
-            "intent": "homeassistant.get_state",
-            "parameters": {"entity_id": "light.test"},
-            "confidence": 0.9
-        })
-
-        assert result["success"] is True
-
-    @pytest.mark.unit
-    async def test_execute_conversation_intent(self, mock_ha_client):
+    async def test_execute_conversation_intent(self):
         """Testet dass Conversation Intent keine Aktion ausführt"""
         from services.action_executor import ActionExecutor
 
         executor = ActionExecutor()
-        executor.ha_client = mock_ha_client
 
         result = await executor.execute({
             "intent": "general.conversation",
@@ -360,6 +296,47 @@ class TestActionExecutor:
 
         assert result["success"] is True
         assert result.get("action_taken") is False
+
+    @pytest.mark.unit
+    async def test_execute_mcp_intent(self):
+        """Testet MCP Intent Routing"""
+        from services.action_executor import ActionExecutor
+
+        mock_mcp = AsyncMock()
+        mock_mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": "Light turned on",
+            "action_taken": True,
+        })
+
+        executor = ActionExecutor(mcp_manager=mock_mcp)
+
+        result = await executor.execute({
+            "intent": "mcp.homeassistant.turn_on",
+            "parameters": {"entity_id": "light.test"},
+            "confidence": 0.9
+        })
+
+        assert result["success"] is True
+        mock_mcp.execute_tool.assert_called_once_with(
+            "mcp.homeassistant.turn_on",
+            {"entity_id": "light.test"}
+        )
+
+    @pytest.mark.unit
+    async def test_execute_unknown_intent(self):
+        """Testet dass unbekannter Intent Fehler zurückgibt"""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor()
+
+        result = await executor.execute({
+            "intent": "unknown.action",
+            "parameters": {},
+            "confidence": 0.5
+        })
+
+        assert result["success"] is False
 
 
 # ============================================================================

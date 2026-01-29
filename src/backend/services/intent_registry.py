@@ -73,115 +73,6 @@ class IntegrationIntents:
 # Core Integration Intent Definitions
 # =============================================================================
 
-HOME_ASSISTANT_INTENTS = IntegrationIntents(
-    integration_name="homeassistant",
-    title_de="SMART HOME (Home Assistant)",
-    title_en="SMART HOME (Home Assistant)",
-    is_enabled_func=lambda: bool(settings.home_assistant_url and settings.home_assistant_token),
-    intents=[
-        IntentDef(
-            name="homeassistant.turn_on",
-            description_de="Gerät einschalten",
-            description_en="Turn device on",
-            parameters=[IntentParam("entity_id", "Entity ID des Geräts", required=True)],
-            examples_de=["Schalte das Licht ein", "Mach die Lampe an"],
-            examples_en=["Turn on the light", "Switch on the lamp"],
-        ),
-        IntentDef(
-            name="homeassistant.turn_off",
-            description_de="Gerät ausschalten",
-            description_en="Turn device off",
-            parameters=[IntentParam("entity_id", "Entity ID des Geräts", required=True)],
-            examples_de=["Schalte das Licht aus", "Mach die Lampe aus"],
-            examples_en=["Turn off the light", "Switch off the lamp"],
-        ),
-        IntentDef(
-            name="homeassistant.toggle",
-            description_de="Gerät umschalten",
-            description_en="Toggle device",
-            parameters=[IntentParam("entity_id", "Entity ID des Geräts", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.get_state",
-            description_de="Status eines Geräts abfragen",
-            description_en="Get device state",
-            parameters=[IntentParam("entity_id", "Entity ID des Geräts", required=True)],
-            examples_de=["Ist das Fenster offen?", "Wie ist der Status der Heizung?"],
-            examples_en=["Is the window open?", "What's the status of the heater?"],
-        ),
-        IntentDef(
-            name="homeassistant.set_brightness",
-            description_de="Helligkeit setzen (0-255)",
-            description_en="Set brightness (0-255)",
-            parameters=[
-                IntentParam("entity_id", "Entity ID der Lampe", required=True),
-                IntentParam("brightness", "Helligkeit 0-255", required=True, param_type="integer"),
-            ],
-            examples_de=["Dimme das Licht auf 50%"],
-            examples_en=["Dim the light to 50%"],
-        ),
-        IntentDef(
-            name="homeassistant.set_temperature",
-            description_de="Temperatur setzen (Grad)",
-            description_en="Set temperature (degrees)",
-            parameters=[
-                IntentParam("entity_id", "Entity ID des Thermostats", required=True),
-                IntentParam("temperature", "Zieltemperatur", required=True, param_type="float"),
-            ],
-            examples_de=["Stelle die Heizung auf 21 Grad"],
-            examples_en=["Set the heating to 21 degrees"],
-        ),
-        IntentDef(
-            name="homeassistant.set_color",
-            description_de="Farbe einer Lampe setzen",
-            description_en="Set light color",
-            parameters=[
-                IntentParam("entity_id", "Entity ID der Lampe", required=True),
-                IntentParam("color", "Farbe (red, blue, green, etc.)", required=True),
-            ],
-        ),
-        IntentDef(
-            name="homeassistant.media_play",
-            description_de="Medien abspielen",
-            description_en="Play media",
-            parameters=[IntentParam("entity_id", "Entity ID des Media Players", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.media_pause",
-            description_de="Medien pausieren",
-            description_en="Pause media",
-            parameters=[IntentParam("entity_id", "Entity ID des Media Players", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.media_stop",
-            description_de="Medien stoppen",
-            description_en="Stop media",
-            parameters=[IntentParam("entity_id", "Entity ID des Media Players", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.media_next",
-            description_de="Nächster Titel",
-            description_en="Next track",
-            parameters=[IntentParam("entity_id", "Entity ID des Media Players", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.media_previous",
-            description_de="Vorheriger Titel",
-            description_en="Previous track",
-            parameters=[IntentParam("entity_id", "Entity ID des Media Players", required=True)],
-        ),
-        IntentDef(
-            name="homeassistant.set_volume",
-            description_de="Lautstärke setzen (0-100)",
-            description_en="Set volume (0-100)",
-            parameters=[
-                IntentParam("entity_id", "Entity ID des Media Players", required=True),
-                IntentParam("volume", "Lautstärke 0-100", required=True, param_type="integer"),
-            ],
-        ),
-    ],
-)
-
 KNOWLEDGE_INTENTS = IntegrationIntents(
     integration_name="knowledge",
     title_de="WISSENSDATENBANK (RAG)",
@@ -207,61 +98,6 @@ KNOWLEDGE_INTENTS = IntegrationIntents(
     ],
 )
 
-CAMERA_INTENTS = IntegrationIntents(
-    integration_name="camera",
-    title_de="KAMERA (Frigate)",
-    title_en="CAMERA (Frigate)",
-    is_enabled_func=lambda: bool(settings.frigate_url),
-    intents=[
-        IntentDef(
-            name="camera.get_events",
-            description_de="Kamera-Events abrufen",
-            description_en="Get camera events",
-            parameters=[
-                IntentParam("camera", "Kameraname (optional)", required=False),
-                IntentParam("label", "Objekttyp: person, car, etc. (optional)", required=False),
-            ],
-            examples_de=["Zeige Kamera-Events", "Was hat die Kamera aufgezeichnet?"],
-            examples_en=["Show camera events", "What did the camera record?"],
-        ),
-        IntentDef(
-            name="camera.get_snapshot",
-            description_de="Aktuelles Kamerabild abrufen",
-            description_en="Get current camera snapshot",
-            parameters=[IntentParam("camera", "Kameraname", required=True)],
-            examples_de=["Zeige Bild von der Haustür-Kamera"],
-            examples_en=["Show image from the front door camera"],
-        ),
-        IntentDef(
-            name="camera.list_cameras",
-            description_de="Verfügbare Kameras auflisten",
-            description_en="List available cameras",
-            examples_de=["Welche Kameras gibt es?"],
-            examples_en=["Which cameras are available?"],
-        ),
-    ],
-)
-
-N8N_INTENTS = IntegrationIntents(
-    integration_name="n8n",
-    title_de="WORKFLOWS (n8n)",
-    title_en="WORKFLOWS (n8n)",
-    is_enabled_func=lambda: bool(settings.n8n_webhook_url),
-    intents=[
-        IntentDef(
-            name="n8n.trigger",
-            description_de="n8n Workflow auslösen",
-            description_en="Trigger n8n workflow",
-            parameters=[
-                IntentParam("workflow", "Workflow-Name oder ID", required=True),
-                IntentParam("data", "Optionale Daten für den Workflow", required=False),
-            ],
-            examples_de=["Starte den Backup-Workflow", "Führe Automatisierung aus"],
-            examples_en=["Start the backup workflow", "Run automation"],
-        ),
-    ],
-)
-
 GENERAL_INTENTS = IntegrationIntents(
     integration_name="general",
     title_de="ALLGEMEIN",
@@ -278,12 +114,9 @@ GENERAL_INTENTS = IntegrationIntents(
     ],
 )
 
-# All core integrations
+# All core integrations (HA, n8n, camera are now MCP-only)
 CORE_INTEGRATIONS = [
-    HOME_ASSISTANT_INTENTS,
     KNOWLEDGE_INTENTS,
-    CAMERA_INTENTS,
-    N8N_INTENTS,
     GENERAL_INTENTS,
 ]
 

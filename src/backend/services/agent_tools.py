@@ -26,55 +26,21 @@ class ToolDefinition:
 
 
 class AgentToolRegistry:
-    """Registry of all tools available to the Agent Loop."""
+    """Registry of all tools available to the Agent Loop.
 
-    # Core Home Assistant tools (always available if HA is configured)
-    CORE_HA_TOOLS: List[ToolDefinition] = [
-        ToolDefinition(
-            name="homeassistant.turn_on",
-            description="Gerät einschalten (Licht, Schalter, etc.)",
-            parameters={"entity_id": "Home Assistant Entity ID (z.B. light.wohnzimmer)"},
-        ),
-        ToolDefinition(
-            name="homeassistant.turn_off",
-            description="Gerät ausschalten",
-            parameters={"entity_id": "Home Assistant Entity ID"},
-        ),
-        ToolDefinition(
-            name="homeassistant.toggle",
-            description="Gerät umschalten (ein/aus wechseln)",
-            parameters={"entity_id": "Home Assistant Entity ID"},
-        ),
-        ToolDefinition(
-            name="homeassistant.get_state",
-            description="Status eines Geräts oder Sensors abfragen",
-            parameters={"entity_id": "Home Assistant Entity ID"},
-        ),
-        ToolDefinition(
-            name="homeassistant.set_value",
-            description="Wert setzen (z.B. Temperatur, Helligkeit)",
-            parameters={
-                "entity_id": "Home Assistant Entity ID",
-                "value": "Zielwert",
-                "attribute": "Attribut (z.B. temperature, brightness)",
-            },
-        ),
-    ]
+    Tools are registered dynamically from:
+    - MCP servers (Home Assistant, n8n, weather, search, etc.)
+    - Plugins (legacy YAML-based plugins)
+    """
 
-    def __init__(self, plugin_registry: Optional["PluginRegistry"] = None, ha_available: bool = True, mcp_manager: Optional["MCPManager"] = None):
+    def __init__(self, plugin_registry: Optional["PluginRegistry"] = None, mcp_manager: Optional["MCPManager"] = None):
         self._tools: Dict[str, ToolDefinition] = {}
-        self._ha_available = ha_available
-
-        # Register core tools
-        if ha_available:
-            for tool in self.CORE_HA_TOOLS:
-                self._tools[tool.name] = tool
 
         # Register plugin tools
         if plugin_registry:
             self._register_plugin_tools(plugin_registry)
 
-        # Register MCP tools
+        # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
             self._register_mcp_tools(mcp_manager)
 

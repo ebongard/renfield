@@ -538,7 +538,7 @@ class TestMCPToolsInRegistry:
             ),
         ]
 
-        registry = AgentToolRegistry(ha_available=False, mcp_manager=mock_manager)
+        registry = AgentToolRegistry(mcp_manager=mock_manager)
 
         assert registry.is_valid_tool("mcp.n8n.send_email") is True
         tool = registry.get_tool("mcp.n8n.send_email")
@@ -566,7 +566,7 @@ class TestMCPToolsInRegistry:
             ),
         ]
 
-        registry = AgentToolRegistry(ha_available=False, mcp_manager=mock_manager)
+        registry = AgentToolRegistry(mcp_manager=mock_manager)
         prompt = registry.build_tools_prompt()
 
         assert "mcp.test.greet" in prompt
@@ -578,8 +578,8 @@ class TestMCPToolsInRegistry:
         """Registry should work fine without mcp_manager."""
         from services.agent_tools import AgentToolRegistry
 
-        registry = AgentToolRegistry(ha_available=True, mcp_manager=None)
-        assert registry.is_valid_tool("homeassistant.turn_on") is True
+        registry = AgentToolRegistry(mcp_manager=None)
+        assert len(registry.get_tool_names()) == 0
         assert registry.is_valid_tool("mcp.anything") is False
 
 

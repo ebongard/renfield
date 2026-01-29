@@ -1,10 +1,12 @@
 """
 Action Executor - Führt erkannte Intents aus
+
+All external integrations (Home Assistant, n8n, camera, weather, search, etc.)
+are executed via MCP servers. Only internal intents (knowledge/RAG, general
+conversation) and legacy plugins have dedicated handlers here.
 """
 from typing import Dict, Optional, TYPE_CHECKING
 from loguru import logger
-from integrations.homeassistant import HomeAssistantClient
-from integrations.n8n import N8NClient
 
 if TYPE_CHECKING:
     from models.database import User
@@ -13,13 +15,10 @@ class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
 
     def __init__(self, plugin_registry=None, mcp_manager=None):
-        self.ha_client = HomeAssistantClient()
-        self.n8n_client = N8NClient()
-
         # Plugin system
         self.plugin_registry = plugin_registry
 
-        # MCP system
+        # MCP system (handles HA, n8n, camera, weather, search, news, etc.)
         self.mcp_manager = mcp_manager
 
     def _check_plugin_permission(self, intent: str, user: Optional["User"]) -> tuple[bool, str]:
@@ -53,7 +52,7 @@ class ActionExecutor:
 
         Args:
             intent_data: {
-                "intent": "homeassistant.turn_on",
+                "intent": "mcp.homeassistant.turn_on",
                 "parameters": {...},
                 "confidence": 0.9
             }
@@ -73,13 +72,9 @@ class ActionExecutor:
         logger.info(f"🎯 Executing intent: {intent} (confidence: {confidence:.2f})")
         logger.debug(f"Parameters: {parameters}")
 
-        # Routing basierend auf Intent (Core intents first - backward compatibility)
-        if intent.startswith("homeassistant."):
-            return await self._execute_homeassistant(intent, parameters)
-        elif intent.startswith("n8n."):
-            return await self._execute_n8n(intent, parameters)
-        elif intent.startswith("camera."):
-            return await self._execute_camera(intent, parameters)
+        # Internal intents (no MCP equivalent)
+        if intent.startswith("knowledge."):
+            return await self._execute_knowledge(intent, parameters)
         elif intent == "general.conversation":
             return {
                 "success": True,
@@ -87,7 +82,7 @@ class ActionExecutor:
                 "action_taken": False
             }
 
-        # MCP tool intents (mcp.* prefix)
+        # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
             return await self.mcp_manager.execute_tool(intent, parameters)
@@ -115,153 +110,58 @@ class ActionExecutor:
             "message": f"Unknown intent: {intent}",
             "action_taken": False
         }
-    
-    async def _execute_homeassistant(self, intent: str, parameters: Dict) -> Dict:
-        """Home Assistant Aktionen ausführen"""
-        entity_id = parameters.get("entity_id")
-        
-        if not entity_id:
-            # Versuche Entity aus Namen zu finden
-            query = parameters.get("name") or parameters.get("device") or parameters.get("location")
-            if query:
-                entities = await self.ha_client.search_entities(query)
-                if entities:
-                    entity_id = entities[0]["entity_id"]
-                    logger.info(f"🔍 Found entity: {entity_id} for query '{query}'")
-                else:
-                    return {
-                        "success": False,
-                        "message": f"Konnte kein Gerät mit Namen '{query}' finden",
-                        "action_taken": False
-                    }
-        
-        # Intent-spezifische Aktionen
+
+    async def _execute_knowledge(self, intent: str, parameters: Dict) -> Dict:
+        """Wissensdatenbank-Aktionen ausführen (RAG)"""
+        query = parameters.get("query") or parameters.get("question") or parameters.get("text", "")
+
+        if not query:
+            return {
+                "success": False,
+                "message": "Keine Suchanfrage angegeben",
+                "action_taken": False
+            }
+
         try:
-            if intent == "homeassistant.turn_on":
-                success = await self.ha_client.turn_on(entity_id)
-                state = await self.ha_client.get_state(entity_id)
+            from services.database import AsyncSessionLocal
+            from services.rag_service import RAGService
+
+            async with AsyncSessionLocal() as db:
+                rag = RAGService(db)
+                results = await rag.search(query=query, top_k=5)
+
+            if results:
+                # Build context from search results
+                context_parts = []
+                for r in results:
+                    sim = r.get("similarity", 0)
+                    content = r.get("chunk", {}).get("content", "") if isinstance(r.get("chunk"), dict) else r.get("content", "")
+                    source = r.get("document", {}).get("filename", "") if isinstance(r.get("document"), dict) else r.get("filename", "")
+                    if content:
+                        context_parts.append(f"[{source}] {content[:500]}")
+
                 return {
-                    "success": success,
-                    "message": f"{state.get('attributes', {}).get('friendly_name', entity_id)} ist jetzt eingeschaltet",
+                    "success": True,
+                    "message": f"Ergebnisse aus der Wissensdatenbank ({len(results)} Treffer)",
                     "action_taken": True,
-                    "entity_id": entity_id,
-                    "state": state.get("state")
-                }
-            
-            elif intent == "homeassistant.turn_off":
-                success = await self.ha_client.turn_off(entity_id)
-                state = await self.ha_client.get_state(entity_id)
-                return {
-                    "success": success,
-                    "message": f"{state.get('attributes', {}).get('friendly_name', entity_id)} ist jetzt ausgeschaltet",
-                    "action_taken": True,
-                    "entity_id": entity_id,
-                    "state": state.get("state")
-                }
-            
-            elif intent == "homeassistant.toggle":
-                success = await self.ha_client.toggle(entity_id)
-                state = await self.ha_client.get_state(entity_id)
-                return {
-                    "success": success,
-                    "message": f"{state.get('attributes', {}).get('friendly_name', entity_id)} wurde umgeschaltet",
-                    "action_taken": True,
-                    "entity_id": entity_id,
-                    "state": state.get("state")
-                }
-            
-            elif intent == "homeassistant.get_state" or intent == "homeassistant.check_state":
-                state = await self.ha_client.get_state(entity_id)
-                if state:
-                    friendly_name = state.get('attributes', {}).get('friendly_name', entity_id)
-                    current_state = state.get('state')
-                    
-                    # Übersetze State
-                    state_text = self._translate_state(current_state)
-                    
-                    return {
-                        "success": True,
-                        "message": f"{friendly_name} ist {state_text}",
-                        "action_taken": True,
-                        "entity_id": entity_id,
-                        "state": current_state,
-                        "attributes": state.get('attributes', {})
+                    "data": {
+                        "query": query,
+                        "results_count": len(results),
+                        "context": "\n\n".join(context_parts[:5])
                     }
-                else:
-                    return {
-                        "success": False,
-                        "message": f"Konnte Status von {entity_id} nicht abrufen",
-                        "action_taken": False
-                    }
-            
-            elif intent == "homeassistant.set_value":
-                value = parameters.get("value")
-                attribute = parameters.get("attribute", "value")
-                success = await self.ha_client.set_value(entity_id, value, attribute)
-                return {
-                    "success": success,
-                    "message": f"{attribute} wurde auf {value} gesetzt",
-                    "action_taken": True,
-                    "entity_id": entity_id
                 }
-            
             else:
                 return {
-                    "success": False,
-                    "message": f"Unbekannter Home Assistant Intent: {intent}",
-                    "action_taken": False
+                    "success": True,
+                    "message": f"Keine Ergebnisse in der Wissensdatenbank für: {query}",
+                    "action_taken": True,
+                    "data": {"query": query, "results_count": 0}
                 }
-        
+
         except Exception as e:
-            logger.error(f"❌ Error executing Home Assistant action: {e}")
+            logger.error(f"❌ Error executing knowledge action: {e}")
             return {
                 "success": False,
-                "message": f"Fehler bei der Ausführung: {str(e)}",
+                "message": f"Fehler bei der Wissensdatenbank-Suche: {str(e)}",
                 "action_taken": False
             }
-    
-    async def _execute_n8n(self, intent: str, parameters: Dict) -> Dict:
-        """n8n Workflows ausführen"""
-        workflow_id = parameters.get("workflow_id") or parameters.get("workflow_name")
-        data = parameters.get("data", {})
-        
-        try:
-            result = await self.n8n_client.trigger_workflow(workflow_id, data)
-            return {
-                "success": result.get("success", False),
-                "message": f"Workflow {workflow_id} wurde getriggert",
-                "action_taken": True,
-                "workflow_result": result
-            }
-        except Exception as e:
-            logger.error(f"❌ Error executing n8n workflow: {e}")
-            return {
-                "success": False,
-                "message": f"Fehler beim Triggern des Workflows: {str(e)}",
-                "action_taken": False
-            }
-    
-    async def _execute_camera(self, intent: str, parameters: Dict) -> Dict:
-        """Kamera-Aktionen ausführen"""
-        return {
-            "success": True,
-            "message": "Kamera-Aktion würde hier ausgeführt",
-            "action_taken": False
-        }
-    
-    def _translate_state(self, state: str) -> str:
-        """Übersetze technischen State in natürliche Sprache"""
-        translations = {
-            "on": "eingeschaltet",
-            "off": "ausgeschaltet",
-            "open": "offen",
-            "closed": "geschlossen",
-            "locked": "verschlossen",
-            "unlocked": "entriegelt",
-            "home": "zuhause",
-            "away": "abwesend",
-            "playing": "läuft",
-            "paused": "pausiert",
-            "idle": "inaktiv"
-        }
-        return translations.get(state.lower(), state)

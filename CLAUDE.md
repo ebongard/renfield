@@ -184,6 +184,100 @@ make test
 make test-coverage
 ```
 
+### Ende-zu-Ende Browser-Tests (Pflicht nach jeder Änderung)
+
+**WICHTIG: Nach jeder Code-Änderung (Frontend ODER Backend) MUSS ein echter Ende-zu-Ende Browser-Test durchgeführt werden.**
+
+Dies stellt sicher, dass Frontend und Backend korrekt zusammenspielen — Unit-Tests allein reichen nicht aus.
+
+**Voraussetzungen:**
+- Frontend läuft auf `localhost:3000`
+- Backend läuft auf `localhost:8000`
+- Playwright ist installiert (`pip install playwright && playwright install chromium`)
+
+**Testdatei:** `test_ui_browser.py` (Projekt-Root)
+
+**Ausführung:**
+```bash
+python3 test_ui_browser.py
+```
+
+**Was getestet wird (8 Tests):**
+
+| Test | Prüft |
+|------|-------|
+| Chat Page + WebSocket | Seite lädt, WebSocket verbindet ("Verbunden"), Chat-Input und Mikrofon-Button vorhanden |
+| Send Chat Message | Nachricht senden via WebSocket, Backend-LLM antwortet |
+| Wake Word Button | WASM-Engine lädt, Button wechselt zu grün (aktiv), deaktiviert zurück zu grau |
+| Microphone Button | Mikrofon-Button vorhanden, korrekter Idle-State |
+| Intents Admin Page | Intents-Seite lädt mit echten Backend-Daten (Integrationen, MCP Tools) |
+| Expand Integration | Integration aufklappen zeigt Intent-Tabelle mit Einträgen |
+| Navigation Sidebar | Sidebar öffnen, Admin-Bereich aufklappen, Navigation zu Intents-Seite |
+| Chat WS Roundtrip | Vollständiger WebSocket-Roundtrip: Nachricht senden, LLM-Antwort im DOM sichtbar |
+
+**Wann ausführen:**
+- Nach jeder Frontend-Änderung (Komponenten, Pages, Hooks, Styles)
+- Nach jeder Backend-Änderung (API-Routes, Services, WebSocket-Handler)
+- Nach Konfigurationsänderungen (Vite, Docker, Security-Headers)
+- Vor jedem Commit
+
+**Ergebnis muss sein:** Alle 8 Tests PASSED. Bei Fehlern muss die Ursache behoben werden, bevor committet wird.
+
+### Intent-Rauchtest (Pflicht nach jeder Änderung)
+
+**WICHTIG: Nach jeder Code-Änderung MUSS ein lesender Intent pro aktiver Anbindung getestet werden.**
+
+Dies stellt sicher, dass die Intent-Erkennung und MCP-Tool-Ausführung korrekt funktionieren.
+
+**Ausführung:** Über den Debug-Endpoint `/debug/intent` wird geprüft, ob das LLM den richtigen Intent extrahiert.
+
+```bash
+# Weather (MCP)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Wie+ist+das+Wetter+in+Berlin?"
+
+# Home Assistant (Core)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Wie+ist+der+Status+vom+Wohnzimmerlicht?"
+
+# News (MCP)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Was+sind+die+Top-Schlagzeilen+heute?"
+
+# Search (MCP)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Websuche+nach+Python+tutorials"
+
+# Jellyfin (MCP)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Welche+Filme+habe+ich+in+meiner+Bibliothek?"
+
+# Camera (Core)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Welche+Kameras+sind+verfügbar?"
+
+# n8n (MCP)
+curl -s -X POST "http://localhost:8000/debug/intent?message=Zeige+mir+meine+n8n+Workflows"
+
+# General Conversation
+curl -s -X POST "http://localhost:8000/debug/intent?message=Erzähl+mir+einen+Witz"
+```
+
+**Erwartete Ergebnisse:**
+
+| Anbindung | Testfrage | Erwarteter Intent |
+|-----------|-----------|-------------------|
+| Weather (MCP) | "Wie ist das Wetter in Berlin?" | `mcp.weather.get_current_weather` |
+| Home Assistant | "Wie ist der Status vom Wohnzimmerlicht?" | `homeassistant.get_state` |
+| News (MCP) | "Was sind die Top-Schlagzeilen heute?" | `mcp.news.get_top_headlines` |
+| Search (MCP) | "Websuche nach Python tutorials" | `mcp.search.web_search` |
+| Jellyfin (MCP) | "Welche Filme habe ich in meiner Bibliothek?" | `mcp.jellyfin.list_items` |
+| n8n (MCP) | "Zeige mir meine n8n Workflows" | `mcp.n8n.n8n_list_workflows` |
+| Camera (Core) | "Welche Kameras sind verfügbar?" | `camera.list_cameras` |
+| General | "Erzähl mir einen Witz" | `general.conversation` |
+
+**Wann ausführen:**
+- Nach jeder Backend-Änderung (Services, Intents, Prompts, MCP-Konfiguration)
+- Nach Änderungen an der Intent-Registry oder dem ActionExecutor
+- Nach Änderungen an MCP-Server-Konfigurationen
+- Vor jedem Commit
+
+**Ergebnis muss sein:** Jeder Intent wird korrekt erkannt. Bei Fehlzuordnungen (z.B. `knowledge.search` statt `mcp.search.web_search`) muss die Ursache untersucht werden — meist liegt es am Intent-Prompt oder an fehlenden/deaktivierten MCP-Servern.
+
 ### Git Workflow
 
 **⚠️ KRITISCH: Diese Regeln gelten für ALLE Git-Operationen:**
@@ -408,7 +502,7 @@ Intent Recognition → OllamaService.extract_intent()
   ↓
 Action Execution → ActionExecutor.execute()
   ↓
-Integration → HomeAssistantClient / N8NClient / FrigateClient
+Integration → MCPManager (HA, n8n, weather, search, etc.) / RAGService (knowledge)
   ↓
 Response → Frontend (streaming or JSON)
 ```
@@ -449,7 +543,7 @@ User → ComplexityDetector → simple? → Single-Intent (as before)
 
 **Key Components:**
 - `services/complexity_detector.py` — Regex-based detection (zero-cost, no LLM call)
-- `services/agent_tools.py` — Wraps HA + Plugin tools as descriptions for the LLM prompt
+- `services/agent_tools.py` — Wraps MCP + Plugin tools as descriptions for the LLM prompt
 - `services/agent_service.py` — Core loop: LLM → Tool → LLM → ... → Answer (AsyncGenerator)
 
 **Configuration** (all opt-in, disabled by default):
@@ -477,9 +571,8 @@ The core of Renfield is the intent recognition system in `src/backend/services/o
 1. **extract_intent()**: Uses Ollama LLM to parse natural language into structured intents
 2. **Dynamic Keyword Matching**: Fetches device names from Home Assistant to improve accuracy
 3. **Intent Types**:
-   - `homeassistant.*` - Smart home control (turn_on, turn_off, get_state, etc.)
-   - `n8n.*` - Workflow triggers
-   - `camera.*` - Camera/Frigate actions
+   - `mcp.*` - All external integrations via MCP servers (Home Assistant, n8n, weather, search, news, etc.)
+   - `knowledge.*` - Knowledge base / RAG queries
    - `general.conversation` - Normal chat (no action needed)
 
 **Key Implementation Detail**: The system pre-loads Home Assistant entity names and friendly names as "keywords" to determine if a user query is smart-home related. See `HomeAssistantClient.get_keywords()` for the dynamic keyword extraction logic.
@@ -744,9 +837,9 @@ src/backend/
 │   ├── room_service.py       # Room and device CRUD, HA area sync
 │   ├── output_routing_service.py  # Audio/visual output device routing
 │   ├── audio_output_service.py    # TTS delivery to output devices
-│   ├── action_executor.py    # Routes intents to appropriate integrations
+│   ├── action_executor.py    # Routes intents to MCP, knowledge, plugins
 │   ├── complexity_detector.py # Regex-based detection of multi-step queries
-│   ├── agent_tools.py        # Tool registry for Agent Loop (HA + plugins)
+│   ├── agent_tools.py        # Tool registry for Agent Loop (MCP + plugins)
 │   ├── agent_service.py      # ReAct Agent Loop (multi-step tool chaining)
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
@@ -1056,27 +1149,27 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
 
 ### Adding a New Integration
 
-1. Create client in `src/backend/integrations/your_service.py`:
-   ```python
-   class YourServiceClient:
-       async def do_something(self):
-           # Implementation
+All external integrations (Home Assistant, n8n, weather, search, etc.) run via MCP servers. To add a new integration:
+
+1. Deploy an MCP server for the service (HTTP/SSE or stdio transport)
+
+2. Add the server to `config/mcp_servers.yaml`:
+   ```yaml
+   servers:
+     - name: your_service
+       url: "${YOUR_SERVICE_MCP_URL:-http://localhost:9090/mcp}"
+       transport: streamable_http
+       enabled: "${YOUR_SERVICE_ENABLED:-true}"
    ```
 
-2. Add intent handling in `src/backend/services/action_executor.py`:
-   ```python
-   elif intent.startswith("yourservice."):
-       return await self._execute_yourservice(intent, parameters)
-   ```
+3. The tools will be auto-discovered and available as `mcp.your_service.<tool_name>` intents
 
-3. Update intent recognition prompt in `src/backend/services/ollama_service.py` to include new intent types
-
-4. Create API route in `src/backend/api/routes/yourservice.py`
-
-5. Register route in `src/backend/main.py`:
+4. Optionally create a REST API route in `src/backend/api/routes/yourservice.py` for direct access:
    ```python
    app.include_router(yourservice.router, prefix="/api/yourservice", tags=["YourService"])
    ```
+
+**Note:** The `ActionExecutor` routes `mcp.*` intents to `MCPManager.execute_tool()` automatically. No code changes needed in `action_executor.py` for new MCP integrations.
 
 ### Adding a New Frontend Page
 
@@ -1281,7 +1374,7 @@ tests/
 | `test_auth.py` | JWT, passwords, permissions, roles, RBAC hierarchy |
 | `test_websocket.py` | Protocol parsing, device registration, rate limiting |
 | `test_complexity_detector.py` | ComplexityDetector patterns (conditional, sequence, comparison, multi-action) |
-| `test_agent_tools.py` | AgentToolRegistry (core tools, plugin tools, prompt generation) |
+| `test_agent_tools.py` | AgentToolRegistry (MCP tools, plugin tools, prompt generation) |
 | `test_agent_service.py` | AgentService loop, JSON parsing, timeouts, error handling, WebSocket messages |
 
 ### Running Tests

@@ -98,9 +98,8 @@ async def send_message(
                 from services.agent_service import AgentService
                 from services.action_executor import ActionExecutor
 
-                ha_available = settings.home_assistant_url is not None
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
-                tool_registry = AgentToolRegistry(app.state.plugin_registry, ha_available=ha_available, mcp_manager=mcp_manager)
+                tool_registry = AgentToolRegistry(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
                 agent = AgentService(tool_registry)
                 executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
 

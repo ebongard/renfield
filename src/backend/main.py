@@ -62,8 +62,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "magnetometer=(), microphone=(self), payment=(), usb=()"
         )
 
-        # Spectre/Meltdown protection
+        # Spectre/Meltdown protection + SharedArrayBuffer for WASM (Safari)
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Cross-Origin-Embedder-Policy"] = "require-corp"
         response.headers["Cross-Origin-Resource-Policy"] = "same-origin"
 
         # Content Security Policy (allow self and common CDNs for development)

@@ -510,13 +510,26 @@ def room_service(db_session: AsyncSession):
 
 
 @pytest.fixture
-def action_executor(mock_ha_client, mock_n8n_client, mock_plugin_registry):
+def mock_mcp_manager():
+    """Create a mock MCP manager"""
+    manager = AsyncMock()
+    manager.execute_tool.return_value = {
+        "success": True,
+        "message": "MCP tool executed",
+        "action_taken": True,
+    }
+    return manager
+
+
+@pytest.fixture
+def action_executor(mock_plugin_registry, mock_mcp_manager):
     """Create ActionExecutor with mocked dependencies"""
     from services.action_executor import ActionExecutor
 
-    executor = ActionExecutor(plugin_registry=mock_plugin_registry)
-    executor.ha_client = mock_ha_client
-    executor.n8n_client = mock_n8n_client
+    executor = ActionExecutor(
+        plugin_registry=mock_plugin_registry,
+        mcp_manager=mock_mcp_manager,
+    )
 
     return executor
 

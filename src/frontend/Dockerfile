@@ -55,6 +55,13 @@ ENV VITE_WS_URL=${VITE_WS_URL}
 # App Code kopieren
 COPY . .
 
+# Copy ONNX Runtime WASM files to public directory
+# (postinstall ran before COPY, so public/ort/ was missed)
+RUN mkdir -p public/ort && \
+    cp node_modules/onnxruntime-web/dist/ort-wasm*.wasm \
+       node_modules/onnxruntime-web/dist/ort-wasm*.mjs \
+       public/ort/ 2>/dev/null || true
+
 # Production build erstellen
 RUN npm run build
 
