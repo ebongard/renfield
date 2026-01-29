@@ -131,24 +131,42 @@ async def send_message(
                     intent={"intent": "agent.multi_step", "parameters": {}}
                 )
 
-        # === Standard Single-Intent Path ===
-        # Intent extrahieren
-        logger.info("🔍 Extrahiere Intent...")
-        intent = await ollama.extract_intent(chat_request.message)
-        logger.info(f"🎯 Erkannter Intent: {intent.get('intent')} (confidence: {intent.get('confidence', 0):.2f})")
+        # === Ranked Intent Path with Fallback Chain ===
+        logger.info("🔍 Extrahiere Ranked Intents...")
+        ranked_intents = await ollama.extract_ranked_intents(chat_request.message)
 
-        # Action ausführen falls nötig
-        if intent.get("intent") != "general.conversation":
-            logger.info(f"⚡ Führe Aktion aus: {intent.get('intent')}")
-            from services.action_executor import ActionExecutor
-            mcp_mgr = getattr(app.state, 'mcp_manager', None)
+        from services.action_executor import ActionExecutor
+        mcp_mgr = getattr(app.state, 'mcp_manager', None)
+        intent_used = None
+
+        for intent_candidate in ranked_intents:
+            intent_name = intent_candidate.get("intent", "general.conversation")
+            logger.info(f"🎯 Versuche Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
+
+            if intent_name == "general.conversation":
+                intent = intent_candidate
+                intent_used = intent_candidate
+                break
+
             executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_mgr)
-            action_result = await executor.execute(intent, user=current_user)
-            logger.info(f"✅ Aktion ausgeführt: {action_result.get('success')} - {action_result.get('message')}")
+            candidate_result = await executor.execute(intent_candidate, user=current_user)
+
+            if candidate_result.get("success") and not candidate_result.get("empty_result"):
+                intent = intent_candidate
+                action_result = candidate_result
+                intent_used = intent_candidate
+                logger.info(f"✅ Intent {intent_name} erfolgreich: {candidate_result.get('message', '')[:80]}")
+                break
+
+            logger.info(f"⏭️ Intent {intent_name} lieferte kein Ergebnis, versuche nächsten...")
+
+        # If no ranked intent worked, fall back to conversation
+        if not intent_used:
+            logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
+            intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
         # Antwort generieren
         if action_result and action_result.get("success"):
-            # Erfolgreiche Aktion - nutze Ergebnis für Antwort
             enhanced_prompt = f"""Du bist Renfield, ein persönlicher Assistent.
 
 Der Nutzer hat gefragt: "{chat_request.message}"
@@ -165,11 +183,9 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             response_text = await ollama.chat(enhanced_prompt, context=[])
 
         elif action_result and not action_result.get("success"):
-            # Aktion fehlgeschlagen
             response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
 
         else:
-            # Normale Konversation
             response_text = await ollama.chat(chat_request.message, context)
         
         # Assistant Message speichern

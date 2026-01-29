@@ -21,10 +21,23 @@ de:
 
     {examples}
 
+    ENTSCHEIDUNGSHILFE:
+    - knowledge.ask / knowledge.search → NUR verwenden wenn der Nutzer EXPLIZIT auf eigene Dokumente,
+      Notizen oder die Wissensdatenbank verweist ("in meinen Dokumenten", "in meiner Wissensdatenbank",
+      "in meinen Notizen", "was habe ich gespeichert über")
+    - general.conversation → Für Allgemeinwissen, Smalltalk, Meinungen, Erklärungen, historische Fakten
+      ("Was passierte 1989?", "Erkläre mir Quantenphysik", "Wie geht es dir?", "Wer war Einstein?")
+    - mcp.* Tools → Wenn aktuelle/live Daten benötigt werden ("Wetter morgen", "aktuelle Nachrichten",
+      "was kostet X heute") oder Geräte gesteuert werden sollen
+
     WICHTIG:
     - Verwende NUR Intents aus der Liste oben!
     - Antworte NUR mit JSON, kein Text!
     - Bei Unsicherheit: general.conversation verwenden
+    - Gib bis zu 3 gewichtete Intents zurück, sortiert nach Wahrscheinlichkeit
+
+    ANTWORT-FORMAT:
+    {{"intents": [{{"intent": "...", "confidence": 0.8, "parameters": {{...}}}}, ...]}}
 
   # Room context template
   room_context_template: |
@@ -63,10 +76,22 @@ en:
 
     {examples}
 
+    DECISION GUIDE:
+    - knowledge.ask / knowledge.search → ONLY use when the user EXPLICITLY references their own documents,
+      notes, or knowledge base ("in my documents", "in my knowledge base", "in my notes", "what did I save about")
+    - general.conversation → For general knowledge, smalltalk, opinions, explanations, historical facts
+      ("What happened in 1989?", "Explain quantum physics", "How are you?", "Who was Einstein?")
+    - mcp.* tools → When current/live data is needed ("weather tomorrow", "latest news",
+      "what does X cost today") or devices need to be controlled
+
     IMPORTANT:
     - Use ONLY intents from the list above!
     - Reply with JSON ONLY, no text!
     - When uncertain: use general.conversation
+    - Return up to 3 weighted intents, sorted by probability
+
+    RESPONSE FORMAT:
+    {{"intents": [{{"intent": "...", "confidence": 0.8, "parameters": {{...}}}}, ...]}}
 
   # Room context template
   room_context_template: |
@@ -94,4 +119,4 @@ en:
 llm_options:
   temperature: 0.0
   top_p: 0.1
-  num_predict: 300
+  num_predict: 500

@@ -294,7 +294,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             
             # Methode 1: Markdown Code-Block
             if "```" in response:
-                match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+                match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
                 if match:
                     response = match.group(1)
                 else:
@@ -304,19 +304,54 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                         response = parts[1].strip()
                         if response.startswith("json"):
                             response = response[4:].strip()
-            
-            # Methode 2: Extrahiere erstes JSON-Objekt (robusteste Methode)
-            json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', response, re.DOTALL)
-            if json_match:
-                response = json_match.group(0)
-            
-            # Entferne alles nach dem schließenden }
-            if '}' in response:
-                response = response[:response.rfind('}')+1]
+
+            # Methode 2: Balanced braces extraction (supports nested objects/arrays)
+            # Find the first { and match to its balanced closing }
+            first_brace = response.find('{')
+            if first_brace >= 0:
+                depth = 0
+                in_string = False
+                escape_next = False
+                end_pos = -1
+                for i in range(first_brace, len(response)):
+                    c = response[i]
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if c == '\\' and in_string:
+                        escape_next = True
+                        continue
+                    if c == '"' and not escape_next:
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if c == '{':
+                        depth += 1
+                    elif c == '}':
+                        depth -= 1
+                        if depth == 0:
+                            end_pos = i
+                            break
+                if end_pos > 0:
+                    response = response[first_brace:end_pos + 1]
             
             # Parse JSON
             try:
-                intent_data = json.loads(response)
+                raw_data = json.loads(response)
+
+                # Handle new ranked format: {"intents": [...]}
+                # Normalize to single intent_data for backward compatibility
+                if "intents" in raw_data and isinstance(raw_data["intents"], list) and raw_data["intents"]:
+                    intents_list = raw_data["intents"]
+                    # Sort by confidence descending, pick top intent
+                    intents_list.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+                    intent_data = dict(intents_list[0])  # Copy to avoid mutation
+                    intent_data.setdefault("parameters", {})
+                    # Preserve full list as separate copies for extract_ranked_intents()
+                    intent_data["_ranked_intents"] = [dict(i) for i in intents_list]
+                else:
+                    intent_data = raw_data
             except json.JSONDecodeError as e:
                 logger.error(f"❌ JSON Parse Error: {e}")
                 logger.error(f"Attempted to parse: {response[:200]}")
@@ -382,9 +417,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     }
             
             logger.info(f"🎯 Intent: {intent_data.get('intent')} | Entity: {intent_data.get('parameters', {}).get('entity_id', 'none')}")
-            
+
             return intent_data
-            
+
         except Exception as e:
             logger.error(f"❌ Intent Extraction Fehler: {e}")
             import traceback
@@ -395,6 +430,56 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 "parameters": {},
                 "confidence": 1.0
             }
+
+    async def extract_ranked_intents(
+        self,
+        message: str,
+        plugin_registry=None,
+        room_context: Optional[Dict] = None,
+        conversation_history: Optional[List[Dict]] = None,
+        lang: Optional[str] = None
+    ) -> List[Dict]:
+        """
+        Extract ranked list of intents from message (highest confidence first).
+
+        Calls extract_intent() internally and handles both old single-intent format
+        and new ranked format with {"intents": [...]}.
+
+        Args:
+            message: User message
+            plugin_registry: Optional plugin registry
+            room_context: Optional room context
+            conversation_history: Optional conversation history
+            lang: Language (de/en)
+
+        Returns:
+            List of intent dicts sorted by confidence (descending).
+            Each dict has: intent, parameters, confidence
+        """
+        raw = await self.extract_intent(
+            message,
+            plugin_registry=plugin_registry,
+            room_context=room_context,
+            conversation_history=conversation_history,
+            lang=lang
+        )
+
+        # Check if extract_intent() already parsed ranked intents
+        if "_ranked_intents" in raw:
+            intents = raw["_ranked_intents"]
+            # Ensure each intent has required fields
+            for intent in intents:
+                intent.setdefault("confidence", 0.5)
+                intent.setdefault("parameters", {})
+                # Remove internal marker
+                intent.pop("_ranked_intents", None)
+            intents.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+            ranked_summary = ", ".join(f"{i.get('intent')}({i.get('confidence', 0):.2f})" for i in intents)
+            logger.info(f"🎯 Ranked intents: [{ranked_summary}]")
+            return intents
+
+        # Old format: single intent dict
+        return [raw]
     
     async def _build_entity_context(
         self,

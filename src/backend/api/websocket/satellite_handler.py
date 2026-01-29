@@ -392,26 +392,45 @@ async def satellite_websocket(
 
                         logger.info(f"🏠 Satellite room context: {satellite.room} (ID: {satellite.room_id})")
 
-                    # Extract intent with room context and conversation history
-                    intent = await ollama.extract_intent(
+                    # Extract ranked intents with room context and conversation history
+                    ranked_intents = await ollama.extract_ranked_intents(
                         text,
                         plugin_registry,
                         room_context=room_context,
                         conversation_history=satellite_conversation_history if satellite_conversation_history else None
                     )
-                    logger.info(f"🎯 Intent: {intent.get('intent')}")
 
-                    # Execute action if needed
+                    # Fallback chain: try intents until one works
+                    from services.action_executor import ActionExecutor
+                    mcp_mgr = getattr(websocket.app.state, 'mcp_manager', None)
                     action_result = None
-                    if intent.get("intent") != "general.conversation":
-                        from services.action_executor import ActionExecutor
-                        mcp_mgr = getattr(websocket.app.state, 'mcp_manager', None)
+                    intent = None
+
+                    for intent_candidate in ranked_intents:
+                        intent_name = intent_candidate.get("intent", "general.conversation")
+                        logger.info(f"🎯 Satellite versucht Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
+
+                        if intent_name == "general.conversation":
+                            intent = intent_candidate
+                            break
+
                         executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
-                        action_result = await executor.execute(intent)
-                        logger.info(f"⚡ Action result: {action_result.get('success')}")
-                        await satellite_manager.send_action_result(
-                            session_id, intent, action_result.get("success", False)
-                        )
+                        candidate_result = await executor.execute(intent_candidate)
+
+                        if candidate_result.get("success") and not candidate_result.get("empty_result"):
+                            intent = intent_candidate
+                            action_result = candidate_result
+                            logger.info(f"⚡ Action result: {candidate_result.get('success')}")
+                            await satellite_manager.send_action_result(
+                                session_id, intent, candidate_result.get("success", False)
+                            )
+                            break
+
+                        logger.info(f"⏭️ Intent {intent_name} leer, versuche nächsten...")
+
+                    # Fallback to conversation if no intent worked
+                    if intent is None:
+                        intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
                     # Generate response (with conversation history for context)
                     response_text = ""

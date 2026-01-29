@@ -155,6 +155,7 @@ class ActionExecutor:
                     "success": True,
                     "message": f"Keine Ergebnisse in der Wissensdatenbank für: {query}",
                     "action_taken": True,
+                    "empty_result": True,
                     "data": {"query": query, "results_count": 0}
                 }
 

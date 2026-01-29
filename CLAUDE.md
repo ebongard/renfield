@@ -568,12 +568,33 @@ AGENT_MODEL=                 # Optional: separate model for agent
 
 The core of Renfield is the intent recognition system in `src/backend/services/ollama_service.py`:
 
-1. **extract_intent()**: Uses Ollama LLM to parse natural language into structured intents
-2. **Dynamic Keyword Matching**: Fetches device names from Home Assistant to improve accuracy
-3. **Intent Types**:
+1. **extract_intent()**: Uses Ollama LLM to parse natural language into structured intents (returns top intent)
+2. **extract_ranked_intents()**: Returns ranked list of 1-3 intents sorted by confidence (for fallback chain)
+3. **Dynamic Keyword Matching**: Fetches device names from Home Assistant to improve accuracy
+4. **Intent Types**:
    - `mcp.*` - All external integrations via MCP servers (Home Assistant, n8n, weather, search, news, etc.)
-   - `knowledge.*` - Knowledge base / RAG queries
-   - `general.conversation` - Normal chat (no action needed)
+   - `knowledge.*` - Knowledge base / RAG queries (only for user's own documents)
+   - `general.conversation` - Normal chat, general knowledge, smalltalk (no action needed)
+
+**Ranked Intents & Fallback Chain:**
+
+The LLM returns up to 3 weighted intents. The chat handler tries them in order:
+```
+User: "Was passierte 1989 in China?"
+→ LLM returns: [general.conversation(0.8), knowledge.ask(0.2)]
+→ Try general.conversation → stream LLM response directly ✓
+
+User: "Suche in meinen Notizen nach Docker"
+→ LLM returns: [knowledge.ask(0.9)]
+→ Try knowledge.ask → RAG finds results → stream response ✓
+
+User: "Was passierte 1989 in China?" (if misclassified)
+→ LLM returns: [knowledge.ask(0.6), general.conversation(0.3)]
+→ Try knowledge.ask → RAG returns 0 results (empty_result) → skip
+→ Try general.conversation → stream LLM response ✓
+```
+
+If all ranked intents fail and Agent Loop is enabled, it kicks in as final fallback.
 
 **Key Implementation Detail**: The system pre-loads Home Assistant entity names and friendly names as "keywords" to determine if a user query is smart-home related. See `HomeAssistantClient.get_keywords()` for the dynamic keyword extraction logic.
 

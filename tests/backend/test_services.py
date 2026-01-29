@@ -111,6 +111,156 @@ class TestOllamaService:
 
 
 # ============================================================================
+# OllamaService Ranked Intents Tests
+# ============================================================================
+
+class TestOllamaServiceRankedIntents:
+    """Tests für extract_ranked_intents()"""
+
+    @pytest.fixture
+    def mock_ollama_client(self):
+        """Mock Ollama Client"""
+        with patch('services.ollama_service.ollama') as mock:
+            mock_client = MagicMock()
+            mock.AsyncClient = MagicMock(return_value=mock_client)
+            yield mock_client
+
+    def _make_service(self, mock_ollama_client):
+        """Create OllamaService with mocked settings."""
+        with patch('services.ollama_service.settings') as mock_settings:
+            mock_settings.ollama_url = "http://localhost:11434"
+            mock_settings.ollama_model = "llama3.2:3b"
+            mock_settings.ollama_chat_model = "llama3.2:3b"
+            mock_settings.ollama_rag_model = "llama3.2:3b"
+            mock_settings.ollama_embed_model = "nomic-embed-text"
+            mock_settings.ollama_intent_model = "llama3.2:3b"
+            mock_settings.default_language = "de"
+
+            from services.ollama_service import OllamaService
+            service = OllamaService()
+            service.client = mock_ollama_client
+            return service
+
+    @pytest.mark.unit
+    async def test_ranked_intents_new_format(self, mock_ollama_client):
+        """Test: Neues Format mit intents-Array wird korrekt geparst"""
+        import json
+        response_json = json.dumps({
+            "intents": [
+                {"intent": "general.conversation", "confidence": 0.7, "parameters": {}},
+                {"intent": "knowledge.ask", "confidence": 0.2, "parameters": {"question": "Test"}}
+            ]
+        })
+
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = response_json
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        service = self._make_service(mock_ollama_client)
+
+        with patch.object(service, '_build_entity_context', return_value=""), \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_pm.get.return_value = "test prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "top_p": 0.1, "num_predict": 500}
+
+            result = await service.extract_ranked_intents("Was passierte 1989?")
+
+        assert isinstance(result, list)
+        assert len(result) == 2
+        assert result[0]["intent"] == "general.conversation"
+        assert result[0]["confidence"] == 0.7
+        assert result[1]["intent"] == "knowledge.ask"
+
+    @pytest.mark.unit
+    async def test_ranked_intents_old_format_backward_compatible(self, mock_ollama_client):
+        """Test: Altes Format (einzelner Intent) wird als 1-Element-Liste zurückgegeben"""
+        import json
+        response_json = json.dumps({
+            "intent": "general.conversation",
+            "parameters": {},
+            "confidence": 0.9
+        })
+
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = response_json
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        service = self._make_service(mock_ollama_client)
+
+        with patch.object(service, '_build_entity_context', return_value=""), \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_pm.get.return_value = "test prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "top_p": 0.1, "num_predict": 500}
+
+            result = await service.extract_ranked_intents("Wie geht es dir?")
+
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert result[0]["intent"] == "general.conversation"
+
+    @pytest.mark.unit
+    async def test_ranked_intents_sorted_by_confidence(self, mock_ollama_client):
+        """Test: Intents werden nach Confidence absteigend sortiert"""
+        import json
+        response_json = json.dumps({
+            "intents": [
+                {"intent": "knowledge.ask", "confidence": 0.3, "parameters": {"question": "Test"}},
+                {"intent": "general.conversation", "confidence": 0.8, "parameters": {}},
+                {"intent": "mcp.search.web", "confidence": 0.5, "parameters": {"query": "Test"}}
+            ]
+        })
+
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = response_json
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        service = self._make_service(mock_ollama_client)
+
+        with patch.object(service, '_build_entity_context', return_value=""), \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_pm.get.return_value = "test prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "top_p": 0.1, "num_predict": 500}
+
+            result = await service.extract_ranked_intents("Test query")
+
+        assert result[0]["confidence"] == 0.8
+        assert result[1]["confidence"] == 0.5
+        assert result[2]["confidence"] == 0.3
+
+    @pytest.mark.unit
+    async def test_extract_intent_returns_top_from_ranked(self, mock_ollama_client):
+        """Test: extract_intent() gibt den Top-Intent zurück wenn LLM ranked antwortet"""
+        import json
+        response_json = json.dumps({
+            "intents": [
+                {"intent": "knowledge.ask", "confidence": 0.3, "parameters": {"question": "Test"}},
+                {"intent": "general.conversation", "confidence": 0.8, "parameters": {}}
+            ]
+        })
+
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = response_json
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        service = self._make_service(mock_ollama_client)
+
+        with patch.object(service, '_build_entity_context', return_value=""), \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_pm.get.return_value = "test prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "top_p": 0.1, "num_predict": 500}
+
+            result = await service.extract_intent("Test query")
+
+        # extract_intent returns the top intent (highest confidence)
+        assert result["intent"] == "general.conversation"
+        assert result["confidence"] == 0.8
+
+
+# ============================================================================
 # RAGService Tests
 # ============================================================================
 

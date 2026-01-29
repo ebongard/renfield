@@ -296,3 +296,71 @@ class TestActionExecutorPluginIntegration:
         result = await executor.execute(intent_data)
 
         assert result["success"] is False
+
+
+# ============================================================================
+# ActionExecutor Knowledge empty_result Tests
+# ============================================================================
+
+class TestActionExecutorKnowledgeEmptyResult:
+    """Tests für empty_result Flag bei Knowledge-Intents"""
+
+    @pytest.mark.unit
+    async def test_knowledge_empty_result_flag(self):
+        """Test: Knowledge Intent mit 0 Ergebnissen setzt empty_result=True"""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor()
+
+        intent_data = {
+            "intent": "knowledge.search",
+            "parameters": {"query": "nonexistent topic"},
+            "confidence": 0.8
+        }
+
+        with patch("services.database.AsyncSessionLocal") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("services.rag_service.RAGService") as mock_rag_cls:
+                mock_rag = MagicMock()
+                mock_rag.search = AsyncMock(return_value=[])
+                mock_rag_cls.return_value = mock_rag
+
+                result = await executor.execute(intent_data)
+
+        assert result["success"] is True
+        assert result["empty_result"] is True
+        assert result["data"]["results_count"] == 0
+
+    @pytest.mark.unit
+    async def test_knowledge_with_results_no_empty_flag(self):
+        """Test: Knowledge Intent mit Ergebnissen hat kein empty_result"""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor()
+
+        intent_data = {
+            "intent": "knowledge.search",
+            "parameters": {"query": "Docker"},
+            "confidence": 0.8
+        }
+
+        with patch("services.database.AsyncSessionLocal") as mock_session:
+            mock_db = AsyncMock()
+            mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+            mock_session.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("services.rag_service.RAGService") as mock_rag_cls:
+                mock_rag = MagicMock()
+                mock_rag.search = AsyncMock(return_value=[
+                    {"similarity": 0.8, "chunk": {"content": "Docker is..."}, "document": {"filename": "notes.md"}}
+                ])
+                mock_rag_cls.return_value = mock_rag
+
+                result = await executor.execute(intent_data)
+
+        assert result["success"] is True
+        assert result.get("empty_result") is not True
+        assert result["data"]["results_count"] == 1
