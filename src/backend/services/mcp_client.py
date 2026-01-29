@@ -229,6 +229,7 @@ class MCPServerConfig:
     args: List[str] = field(default_factory=list)
     enabled: bool = True
     refresh_interval: int = 300
+    examples: Dict[str, List[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
 
 
 @dataclass
@@ -355,6 +356,11 @@ class MCPManager:
                     refresh_interval=int(
                         _resolve_value(entry.get("refresh_interval", 300))
                     ),
+                    examples={
+                        lang: exs
+                        for lang, exs in entry.get("examples", {}).items()
+                        if isinstance(exs, list)
+                    },
                 )
 
                 if not config.enabled:
@@ -626,6 +632,18 @@ class MCPManager:
     def get_all_tools(self) -> List[MCPToolInfo]:
         """Return all discovered MCP tools."""
         return list(self._tool_index.values())
+
+    def get_server_examples(self) -> Dict[str, Dict[str, List[str]]]:
+        """Return configured examples for all servers.
+
+        Returns:
+            Dict mapping server name to {"de": [...], "en": [...]}
+        """
+        return {
+            name: state.config.examples
+            for name, state in self._servers.items()
+            if state.config.examples
+        }
 
     def is_mcp_tool(self, name: str) -> bool:
         """Check if a name is a known MCP tool."""

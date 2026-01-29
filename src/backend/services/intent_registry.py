@@ -134,6 +134,7 @@ class IntentRegistry:
     def __init__(self):
         self._plugin_registry: Optional["PluginRegistry"] = None
         self._mcp_tools: List[Dict] = []
+        self._mcp_examples: Dict[str, Dict[str, List[str]]] = {}  # server_name → {"de": [...], "en": [...]}
 
     def set_plugin_registry(self, registry: "PluginRegistry") -> None:
         """Set the plugin registry for plugin intent access."""
@@ -142,6 +143,14 @@ class IntentRegistry:
     def set_mcp_tools(self, tools: List[Dict]) -> None:
         """Set available MCP tools for intent prompt."""
         self._mcp_tools = tools
+
+    def set_mcp_examples(self, examples: Dict[str, Dict[str, List[str]]]) -> None:
+        """Set MCP server examples from YAML config.
+
+        Args:
+            examples: Dict mapping server name to {"de": [...], "en": [...]}
+        """
+        self._mcp_examples = examples
 
     def get_enabled_integrations(self) -> List[IntegrationIntents]:
         """Get list of enabled core integrations."""
@@ -239,7 +248,7 @@ class IntentRegistry:
 
         return "\n\n".join(sections)
 
-    def build_examples_prompt(self, lang: str = "de", max_examples: int = 10) -> str:
+    def build_examples_prompt(self, lang: str = "de", max_examples: int = 15) -> str:
         """
         Build examples section for the intent prompt.
 
@@ -262,6 +271,14 @@ class IntentRegistry:
             if len(examples) >= max_examples:
                 break
 
+        # MCP tool examples (auto-generated from tool descriptions)
+        if settings.mcp_enabled and self._mcp_tools and len(examples) < max_examples:
+            mcp_examples = self._build_mcp_examples(lang)
+            for example, intent_name in mcp_examples:
+                examples.append((example, intent_name))
+                if len(examples) >= max_examples:
+                    break
+
         if not examples:
             return ""
 
@@ -273,6 +290,30 @@ class IntentRegistry:
             lines.append(f'{i}. "{example}" → {{"intent":"{intent_name}",...}}')
 
         return "\n".join(lines)
+
+    def _build_mcp_examples(self, lang: str = "de") -> List[tuple]:
+        """Generate example queries for MCP tools from YAML-configured examples.
+
+        Examples are read from self._mcp_examples (populated via set_mcp_examples()
+        from mcp_servers.yaml). Returns 1 example per server.
+        """
+        examples = []
+        seen_servers = set()
+
+        for tool in self._mcp_tools:
+            server = tool.get("server", "")
+            intent_name = tool.get("intent", tool.get("name", "unknown"))
+
+            if server in seen_servers:
+                continue
+            seen_servers.add(server)
+
+            server_examples = self._mcp_examples.get(server, {})
+            lang_examples = server_examples.get(lang, server_examples.get("de", []))
+            for ex in lang_examples[:1]:  # 1 example per server
+                examples.append((ex, intent_name))
+
+        return examples
 
     def get_status(self) -> Dict:
         """Get status of all integrations and their intents."""

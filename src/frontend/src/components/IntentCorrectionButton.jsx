@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, Check, ChevronDown } from 'lucide-react';
+import axios from '../utils/axios';
 
 /**
  * Button component for correcting wrong intent classifications.
  * Shows a dropdown with available intent options when clicked.
+ * Dynamically fetches MCP tools from the API to include all available intents.
  *
  * @param {Object} props
  * @param {string} props.messageText - The original user message
@@ -13,6 +15,41 @@ import { AlertCircle, Check, ChevronDown } from 'lucide-react';
  * @param {Function} props.onCorrect - Callback(messageText, feedbackType, originalValue, correctedValue)
  * @param {boolean} props.proactive - Whether this was proactively requested by the backend
  */
+
+// Module-level cache for MCP intent options
+let _mcpOptionsCache = null;
+let _mcpOptionsFetchPromise = null;
+
+async function fetchMcpIntentOptions() {
+  if (_mcpOptionsCache) return _mcpOptionsCache;
+  if (_mcpOptionsFetchPromise) return _mcpOptionsFetchPromise;
+
+  _mcpOptionsFetchPromise = axios.get('/api/intents/status')
+    .then(res => {
+      const mcpTools = res.data?.mcp_tools || [];
+      // Group by server — use first tool per server as representative intent
+      const serverMap = {};
+      for (const tool of mcpTools) {
+        const server = tool.server || 'unknown';
+        if (!serverMap[server]) {
+          serverMap[server] = {
+            value: tool.intent,
+            label: server.charAt(0).toUpperCase() + server.slice(1),
+            server,
+          };
+        }
+      }
+      _mcpOptionsCache = Object.values(serverMap);
+      return _mcpOptionsCache;
+    })
+    .catch(() => {
+      _mcpOptionsFetchPromise = null;
+      return [];
+    });
+
+  return _mcpOptionsFetchPromise;
+}
+
 export default function IntentCorrectionButton({
   messageText,
   detectedIntent,
@@ -23,14 +60,27 @@ export default function IntentCorrectionButton({
   const { t } = useTranslation();
   const [open, setOpen] = useState(proactive);
   const [submitted, setSubmitted] = useState(false);
+  const [mcpOptions, setMcpOptions] = useState([]);
 
-  const intentOptions = [
+  useEffect(() => {
+    if (feedbackType === 'intent') {
+      fetchMcpIntentOptions().then(setMcpOptions);
+    }
+  }, [feedbackType]);
+
+  // Core intent options (always available)
+  const coreOptions = [
     { value: 'general.conversation', label: t('feedback.intentConversation') },
     { value: 'knowledge.ask', label: t('feedback.intentKnowledge') },
-    { value: 'mcp.homeassistant', label: t('feedback.intentHomeAssistant') },
-    { value: 'mcp.search.web', label: t('feedback.intentWebSearch') },
-    { value: 'mcp.weather', label: t('feedback.intentWeather') },
-    { value: 'mcp.news', label: t('feedback.intentNews') },
+  ];
+
+  // Build dynamic intent options: core + MCP tools
+  const intentOptions = [
+    ...coreOptions,
+    ...mcpOptions.map(opt => ({
+      value: opt.value,
+      label: opt.label,
+    })),
   ].filter(opt => opt.value !== detectedIntent);
 
   const complexityOptions = [

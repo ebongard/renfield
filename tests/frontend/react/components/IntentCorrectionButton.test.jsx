@@ -2,6 +2,26 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import { renderWithRouter } from '../test-utils.jsx';
+import axios from '../../../../src/frontend/src/utils/axios';
+
+// Mock axios to return MCP tools
+vi.mock('../../../../src/frontend/src/utils/axios', () => ({
+  default: {
+    get: vi.fn().mockResolvedValue({
+      data: {
+        mcp_tools: [
+          { intent: 'mcp.homeassistant.turn_on', description: 'Turn on device', server: 'homeassistant' },
+          { intent: 'mcp.homeassistant.turn_off', description: 'Turn off device', server: 'homeassistant' },
+          { intent: 'mcp.weather.get_forecast', description: 'Get weather', server: 'weather' },
+          { intent: 'mcp.paperless.search_documents', description: 'Search docs', server: 'paperless' },
+          { intent: 'mcp.news.get_headlines', description: 'Get news', server: 'news' },
+          { intent: 'mcp.search.web_search', description: 'Web search', server: 'search' },
+        ],
+      },
+    }),
+    post: vi.fn(),
+  },
+}));
 
 describe('IntentCorrectionButton', () => {
   const defaultProps = {
@@ -34,22 +54,47 @@ describe('IntentCorrectionButton', () => {
     expect(screen.getByText('Richtigen Intent wählen:')).toBeInTheDocument();
   });
 
-  it('shows intent options excluding detected intent', () => {
+  it('shows core intent options (always available)', async () => {
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} detectedIntent="mcp.weather.get_forecast" />
+    );
+
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+
+    // Core options should always be present
+    expect(screen.getByText('Allgemeine Konversation')).toBeInTheDocument();
+    expect(screen.getByText('Wissensdatenbank')).toBeInTheDocument();
+  });
+
+  it('shows dynamic MCP options after loading', async () => {
+    renderWithRouter(
+      <IntentCorrectionButton {...defaultProps} detectedIntent="general.conversation" />
+    );
+
+    fireEvent.click(screen.getByText('Falsch erkannt?'));
+
+    // Wait for MCP options to load
+    await waitFor(() => {
+      expect(screen.getByText('Paperless')).toBeInTheDocument();
+    });
+
+    // Other MCP servers should also appear
+    expect(screen.getByText('Homeassistant')).toBeInTheDocument();
+    expect(screen.getByText('Weather')).toBeInTheDocument();
+  });
+
+  it('excludes detected intent from options', async () => {
     renderWithRouter(
       <IntentCorrectionButton {...defaultProps} detectedIntent="knowledge.ask" />
     );
 
     fireEvent.click(screen.getByText('Falsch erkannt?'));
 
-    // Should show all options except knowledge.ask
-    expect(screen.getByText('Allgemeine Konversation')).toBeInTheDocument();
-    expect(screen.getByText('Smart Home')).toBeInTheDocument();
-    expect(screen.getByText('Websuche')).toBeInTheDocument();
-    expect(screen.getByText('Wetter')).toBeInTheDocument();
-    expect(screen.getByText('Nachrichten')).toBeInTheDocument();
-
     // knowledge.ask should NOT be in the options (it's the detected intent)
     expect(screen.queryByText('Wissensdatenbank')).not.toBeInTheDocument();
+
+    // general.conversation should be there
+    expect(screen.getByText('Allgemeine Konversation')).toBeInTheDocument();
   });
 
   it('calls onCorrect when option is selected', async () => {

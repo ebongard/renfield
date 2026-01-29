@@ -251,12 +251,124 @@ class TestIntentRegistry:
     def test_build_examples_prompt(self, mock_settings):
         """Test building examples prompt."""
         mock_settings.rag_enabled = True
+        mock_settings.mcp_enabled = False
 
         registry = IntentRegistry()
         examples = registry.build_examples_prompt(lang="de", max_examples=5)
 
         assert "BEISPIELE:" in examples
         assert "knowledge" in examples
+
+    @patch("services.intent_registry.settings")
+    def test_build_examples_prompt_with_mcp(self, mock_settings):
+        """Test MCP tools contribute examples to the prompt from YAML config."""
+        mock_settings.rag_enabled = False
+        mock_settings.mcp_enabled = True
+
+        registry = IntentRegistry()
+        registry.set_mcp_tools([
+            {"intent": "mcp.paperless.search_documents", "description": "Search documents", "server": "paperless"},
+            {"intent": "mcp.paperless.get_document", "description": "Get document", "server": "paperless"},
+            {"intent": "mcp.weather.get_forecast", "description": "Get forecast", "server": "weather"},
+        ])
+        registry.set_mcp_examples({
+            "paperless": {
+                "de": ["Zeige meine Dokumente in Paperless"],
+                "en": ["Show my documents in Paperless"],
+            },
+            "weather": {
+                "de": ["Wie wird das Wetter morgen?"],
+                "en": ["What's the weather tomorrow?"],
+            },
+        })
+        examples = registry.build_examples_prompt(lang="de", max_examples=20)
+
+        assert "BEISPIELE:" in examples
+        assert "mcp.paperless" in examples
+        assert "mcp.weather" in examples
+
+    @patch("services.intent_registry.settings")
+    def test_build_mcp_examples_deduplicates_servers(self, mock_settings):
+        """Test that MCP examples are deduplicated per server (1 example per server)."""
+        mock_settings.mcp_enabled = True
+
+        registry = IntentRegistry()
+        registry.set_mcp_tools([
+            {"intent": "mcp.paperless.search", "description": "Search", "server": "paperless"},
+            {"intent": "mcp.paperless.get", "description": "Get", "server": "paperless"},
+            {"intent": "mcp.paperless.delete", "description": "Delete", "server": "paperless"},
+        ])
+        registry.set_mcp_examples({
+            "paperless": {"de": ["Zeige Dokumente"], "en": ["Show documents"]},
+        })
+        examples = registry._build_mcp_examples(lang="de")
+
+        # Should only have 1 example for paperless (deduplicated by server)
+        assert len(examples) == 1
+        assert "mcp.paperless.search" in examples[0][1]
+
+    @patch("services.intent_registry.settings")
+    def test_build_mcp_examples_unknown_server(self, mock_settings):
+        """Test MCP examples for server without configured examples returns empty."""
+        mock_settings.mcp_enabled = True
+
+        registry = IntentRegistry()
+        registry.set_mcp_tools([
+            {"intent": "mcp.unknown.tool", "description": "Unknown tool", "server": "unknown_server"},
+        ])
+        # No set_mcp_examples() — server has no configured examples
+        examples = registry._build_mcp_examples(lang="de")
+
+        assert len(examples) == 0
+
+    @patch("services.intent_registry.settings")
+    def test_build_mcp_examples_from_config(self, mock_settings):
+        """Test MCP examples are read from YAML-configured examples with language support."""
+        mock_settings.mcp_enabled = True
+
+        registry = IntentRegistry()
+        registry.set_mcp_tools([
+            {"intent": "mcp.weather.get_forecast", "description": "Get forecast", "server": "weather"},
+        ])
+        registry.set_mcp_examples({
+            "weather": {
+                "de": ["Wie wird das Wetter?"],
+                "en": ["What's the weather?"],
+            },
+        })
+
+        examples_de = registry._build_mcp_examples(lang="de")
+        assert len(examples_de) == 1
+        assert examples_de[0][0] == "Wie wird das Wetter?"
+        assert examples_de[0][1] == "mcp.weather.get_forecast"
+
+        examples_en = registry._build_mcp_examples(lang="en")
+        assert len(examples_en) == 1
+        assert examples_en[0][0] == "What's the weather?"
+
+    @patch("services.intent_registry.settings")
+    def test_build_mcp_examples_falls_back_to_german(self, mock_settings):
+        """Test MCP examples fall back to German when requested language is missing."""
+        mock_settings.mcp_enabled = True
+
+        registry = IntentRegistry()
+        registry.set_mcp_tools([
+            {"intent": "mcp.paperless.search", "description": "Search", "server": "paperless"},
+        ])
+        registry.set_mcp_examples({
+            "paperless": {"de": ["Zeige Dokumente"]},  # No "en" key
+        })
+
+        examples_en = registry._build_mcp_examples(lang="en")
+        assert len(examples_en) == 1
+        assert examples_en[0][0] == "Zeige Dokumente"  # Falls back to German
+
+    def test_set_mcp_examples(self):
+        """Test setting MCP examples."""
+        registry = IntentRegistry()
+        examples = {"weather": {"de": ["Wetter?"], "en": ["Weather?"]}}
+        registry.set_mcp_examples(examples)
+        assert registry._mcp_examples == examples
 
     @patch("services.intent_registry.settings")
     def test_get_status(self, mock_settings):

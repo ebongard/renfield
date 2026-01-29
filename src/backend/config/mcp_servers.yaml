@@ -11,6 +11,13 @@
 #   streamable_http  — Modern MCP transport (default)
 #   sse              — Server-Sent Events (legacy)
 #   stdio            — Subprocess with stdin/stdout (requires Node.js)
+#
+# Examples:
+#   Each server can define bilingual examples for the LLM intent prompt.
+#   These help the LLM recognize when to use a server's tools.
+#   examples:
+#     de: ["Beispiel-Anfrage auf Deutsch"]
+#     en: ["Example query in English"]
 
 servers:
   # --- OpenWeatherMap MCP Server ---
@@ -23,6 +30,13 @@ servers:
     args: ["-y", "@tristau/openweathermap-mcp", "--apikey", "${OPENWEATHER_API_KEY}"]
     enabled: "${WEATHER_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Wie wird das Wetter morgen?"
+        - "Wettervorhersage für Berlin"
+      en:
+        - "What's the weather tomorrow?"
+        - "Weather forecast for Berlin"
 
   # --- SearXNG MCP Server ---
   # Replaces: plugins/search.yaml
@@ -34,6 +48,13 @@ servers:
     args: ["-y", "@kevinwatt/mcp-server-searxng"]
     enabled: "${SEARCH_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Suche im Web nach Python Tutorials"
+        - "Was kostet ein Tesla Model 3?"
+      en:
+        - "Search the web for Python tutorials"
+        - "What does a Tesla Model 3 cost?"
 
   # --- NewsAPI MCP Server ---
   # Replaces: plugins/news.yaml
@@ -45,6 +66,13 @@ servers:
     args: ["-y", "mcp-newsapi"]
     enabled: "${NEWS_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Was sind die aktuellen Nachrichten?"
+        - "Nachrichten über KI"
+      en:
+        - "What are the latest news?"
+        - "News about AI"
 
   # --- Jellyfin MCP Server ---
   # Replaces: plugins/jellyfin.yaml
@@ -59,6 +87,13 @@ servers:
     args: ["-y", "jellyfin-suggestion-mcp"]
     enabled: "${JELLYFIN_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Welche Filme habe ich?"
+        - "Zeige meine Serien"
+      en:
+        - "What movies do I have?"
+        - "Show my series"
 
   # --- n8n MCP Server ---
   # npm: mcp-n8n
@@ -70,6 +105,13 @@ servers:
     args: ["-y", "mcp-n8n"]
     enabled: "${N8N_MCP_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Starte den Backup-Workflow"
+        - "Liste meine Workflows"
+      en:
+        - "Start the backup workflow"
+        - "List my workflows"
 
   # --- Paperless-NGX MCP Server ---
   # npm: @nloui/paperless-mcp
@@ -81,6 +123,13 @@ servers:
     args: ["-y", "@nloui/paperless-mcp", "${PAPERLESS_API_URL}", "${PAPERLESS_API_TOKEN}"]
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
+    examples:
+      de:
+        - "Zeige meine Dokumente in Paperless"
+        - "Suche nach Rechnungen in Paperless"
+      en:
+        - "Show my documents in Paperless"
+        - "Search for invoices in Paperless"
 
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp
@@ -91,3 +140,10 @@ servers:
     auth_token_env: HOME_ASSISTANT_TOKEN
     enabled: "${HA_MCP_ENABLED:-false}"
     refresh_interval: 600
+    examples:
+      de:
+        - "Schalte das Licht im Wohnzimmer ein"
+        - "Wie warm ist es im Büro?"
+      en:
+        - "Turn on the living room light"
+        - "How warm is it in the office?"

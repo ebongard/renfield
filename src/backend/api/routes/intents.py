@@ -174,7 +174,7 @@ async def get_intent_prompt(
     Shows exactly what prompt text is sent to the LLM for intent recognition.
     """
     intent_types = intent_registry.build_intent_prompt(lang=lang)
-    examples = intent_registry.build_examples_prompt(lang=lang, max_examples=10)
+    examples = intent_registry.build_examples_prompt(lang=lang, max_examples=15)
 
     return IntentPromptResponse(
         language=lang,

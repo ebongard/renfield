@@ -164,6 +164,11 @@ async def _init_mcp(app: "FastAPI"):
             for tool in mcp_tools
         ]
         intent_registry.set_mcp_tools(tool_dicts)
+
+        # Pass bilingual examples from YAML config to intent registry
+        mcp_examples = manager.get_server_examples()
+        intent_registry.set_mcp_examples(mcp_examples)
+
         logger.info(f"✅ MCP Client bereit: {len(mcp_tools)} Tools registriert")
     except Exception as e:
         logger.error(f"MCP Client konnte nicht initialisiert werden: {e}")

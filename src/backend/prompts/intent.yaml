@@ -24,13 +24,15 @@ de:
     {correction_examples}
 
     ENTSCHEIDUNGSHILFE:
-    - knowledge.ask / knowledge.search → NUR verwenden wenn der Nutzer EXPLIZIT auf eigene Dokumente,
-      Notizen oder die Wissensdatenbank verweist ("in meinen Dokumenten", "in meiner Wissensdatenbank",
-      "in meinen Notizen", "was habe ich gespeichert über")
+    - knowledge.ask / knowledge.search → NUR verwenden wenn der Nutzer EXPLIZIT auf die Renfield-Wissensdatenbank
+      verweist ("in meiner Wissensdatenbank", "in meinen Notizen", "was habe ich gespeichert über")
     - general.conversation → Für Allgemeinwissen, Smalltalk, Meinungen, Erklärungen, historische Fakten
       ("Was passierte 1989?", "Erkläre mir Quantenphysik", "Wie geht es dir?", "Wer war Einstein?")
     - mcp.* Tools → Wenn aktuelle/live Daten benötigt werden ("Wetter morgen", "aktuelle Nachrichten",
-      "was kostet X heute") oder Geräte gesteuert werden sollen
+      "was kostet X heute"), Geräte gesteuert werden sollen, oder externe Dienste angesprochen werden
+      (Paperless-Dokumente, Workflows, Medien-Bibliothek, Websuche)
+    - WICHTIG: Fragen zu "Dokumenten", "Rechnungen", "Belegen" ohne expliziten Wissensdatenbank-Bezug
+      → mcp.paperless.* verwenden (NICHT knowledge.*)
 
     WICHTIG:
     - Verwende NUR Intents aus der Liste oben!
@@ -82,12 +84,15 @@ en:
     {correction_examples}
 
     DECISION GUIDE:
-    - knowledge.ask / knowledge.search → ONLY use when the user EXPLICITLY references their own documents,
-      notes, or knowledge base ("in my documents", "in my knowledge base", "in my notes", "what did I save about")
+    - knowledge.ask / knowledge.search → ONLY use when the user EXPLICITLY references the Renfield knowledge base
+      ("in my knowledge base", "in my notes", "what did I save about")
     - general.conversation → For general knowledge, smalltalk, opinions, explanations, historical facts
       ("What happened in 1989?", "Explain quantum physics", "How are you?", "Who was Einstein?")
     - mcp.* tools → When current/live data is needed ("weather tomorrow", "latest news",
-      "what does X cost today") or devices need to be controlled
+      "what does X cost today"), devices need to be controlled, or external services are queried
+      (Paperless documents, workflows, media library, web search)
+    - IMPORTANT: Questions about "documents", "invoices", "receipts" without explicit knowledge base reference
+      → use mcp.paperless.* (NOT knowledge.*)
 
     IMPORTANT:
     - Use ONLY intents from the list above!

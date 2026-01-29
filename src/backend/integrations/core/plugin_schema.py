@@ -51,8 +51,18 @@ class IntentDefinition(BaseModel):
     name: str  # e.g., "weather.get_current"
     description: str
     parameters: List[PluginParameter] = []
-    examples: List[str] = []  # Example user queries
+    examples: List[str] = []  # Legacy: German-only examples
+    examples_de: List[str] = []  # German examples (takes priority over `examples`)
+    examples_en: List[str] = []  # English examples
     api: APIDefinition
+
+    def get_examples(self, lang: str = "de") -> List[str]:
+        """Get examples in specified language with fallback to legacy field."""
+        if lang == "en" and self.examples_en:
+            return self.examples_en
+        if self.examples_de:
+            return self.examples_de
+        return self.examples  # Fallback to legacy German-only field
 
     @validator('name')
     def validate_intent_name(cls, v):

@@ -207,7 +207,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         # Build intent types and examples dynamically
         intent_types = intent_registry.build_intent_prompt(lang=lang)
-        examples = intent_registry.build_examples_prompt(lang=lang, max_examples=6)
+        examples = intent_registry.build_examples_prompt(lang=lang, max_examples=15)
 
         # Build room context for the prompt
         room_context_prompt = ""
