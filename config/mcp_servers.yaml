@@ -71,6 +71,17 @@ servers:
     enabled: "${N8N_MCP_ENABLED:-false}"
     refresh_interval: 300
 
+  # --- Paperless-NGX MCP Server ---
+  # npm: @nloui/paperless-mcp
+  # Requires: PAPERLESS_API_URL, PAPERLESS_API_TOKEN env vars
+  # Get API token from: Paperless-NGX → Profile → Auth Tokens
+  - name: paperless
+    transport: stdio
+    command: npx
+    args: ["-y", "@nloui/paperless-mcp", "${PAPERLESS_API_URL}", "${PAPERLESS_API_TOKEN}"]
+    enabled: "${PAPERLESS_ENABLED:-false}"
+    refresh_interval: 300
+
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp
   # Requires: MCP Server integration enabled in HA
