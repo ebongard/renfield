@@ -180,13 +180,13 @@ Zusätzliche Details:
 Gib eine kurze, natürliche Antwort basierend auf dem Ergebnis.
 WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 
-            response_text = await ollama.chat(enhanced_prompt, context=[])
+            response_text = await ollama.chat(enhanced_prompt)
 
         elif action_result and not action_result.get("success"):
             response_text = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
 
         else:
-            response_text = await ollama.chat(chat_request.message, context)
+            response_text = await ollama.chat(chat_request.message, history=context)
         
         # Assistant Message speichern
         assistant_msg = Message(

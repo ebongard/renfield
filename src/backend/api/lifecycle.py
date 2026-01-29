@@ -160,6 +160,7 @@ async def _init_mcp(app: "FastAPI"):
                 "intent": tool.namespaced_name,
                 "description": tool.description,
                 "server": tool.server_name,
+                "input_schema": tool.input_schema,
             }
             for tool in mcp_tools
         ]
@@ -168,6 +169,10 @@ async def _init_mcp(app: "FastAPI"):
         # Pass bilingual examples from YAML config to intent registry
         mcp_examples = manager.get_server_examples()
         intent_registry.set_mcp_examples(mcp_examples)
+
+        # Pass prompt_tools filter from YAML config
+        prompt_tools = manager.get_prompt_tools_config()
+        intent_registry.set_mcp_prompt_tools(prompt_tools)
 
         logger.info(f"✅ MCP Client bereit: {len(mcp_tools)} Tools registriert")
     except Exception as e:

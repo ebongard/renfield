@@ -18,6 +18,12 @@
 #   examples:
 #     de: ["Beispiel-Anfrage auf Deutsch"]
 #     en: ["Example query in English"]
+#
+# prompt_tools:
+#   Controls which tools appear in the LLM intent prompt.
+#   Only listed tools are shown — all tools remain available for execution.
+#   Omit this field to show all tools of a server in the prompt.
+#   prompt_tools: [tool_name_1, tool_name_2]
 
 servers:
   # --- OpenWeatherMap MCP Server ---
@@ -30,6 +36,10 @@ servers:
     args: ["-y", "@tristau/openweathermap-mcp", "--apikey", "${OPENWEATHER_API_KEY}"]
     enabled: "${WEATHER_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.weather.get_daily_forecast
+    prompt_tools:
+      - get_current_weather
+      - get_daily_forecast
     examples:
       de:
         - "Wie wird das Wetter morgen?"
@@ -48,6 +58,8 @@ servers:
     args: ["-y", "@kevinwatt/mcp-server-searxng"]
     enabled: "${SEARCH_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.search.web_search
+    # No prompt_tools filter — search has only 1 tool
     examples:
       de:
         - "Suche im Web nach Python Tutorials"
@@ -66,6 +78,10 @@ servers:
     args: ["-y", "mcp-newsapi"]
     enabled: "${NEWS_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.news.search_articles
+    prompt_tools:
+      - search_articles
+      - get_top_headlines
     examples:
       de:
         - "Was sind die aktuellen Nachrichten?"
@@ -87,6 +103,10 @@ servers:
     args: ["-y", "jellyfin-suggestion-mcp"]
     enabled: "${JELLYFIN_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.jellyfin.list_items
+    prompt_tools:
+      - list_items
+      - search_items
     examples:
       de:
         - "Welche Filme habe ich?"
@@ -105,6 +125,13 @@ servers:
     args: ["-y", "mcp-n8n"]
     enabled: "${N8N_MCP_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.n8n.n8n_list_workflows_summary
+    prompt_tools:
+      - n8n_list_workflows_summary
+      - n8n_activate_workflow
+      - n8n_deactivate_workflow
+      - n8n_get_workflow
+      - n8n_list_executions
     examples:
       de:
         - "Starte den Backup-Workflow"
@@ -123,6 +150,13 @@ servers:
     args: ["-y", "@nloui/paperless-mcp", "${PAPERLESS_API_URL}", "${PAPERLESS_API_TOKEN}"]
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
+    example_intent: mcp.paperless.search_documents
+    prompt_tools:
+      - search_documents
+      - list_documents
+      - get_document
+      - list_tags
+      - list_correspondents
     examples:
       de:
         - "Zeige meine Dokumente in Paperless"
@@ -140,6 +174,13 @@ servers:
     auth_token_env: HOME_ASSISTANT_TOKEN
     enabled: "${HA_MCP_ENABLED:-false}"
     refresh_interval: 600
+    example_intent: mcp.homeassistant.HassTurnOn
+    prompt_tools:
+      - HassTurnOn
+      - HassTurnOff
+      - HassGetState
+      - HassSetValue
+      - HassLightSet
     examples:
       de:
         - "Schalte das Licht im Wohnzimmer ein"

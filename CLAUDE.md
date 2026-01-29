@@ -598,6 +598,8 @@ If all ranked intents fail and Agent Loop is enabled, it kicks in as final fallb
 
 **Key Implementation Detail**: The system pre-loads Home Assistant entity names and friendly names as "keywords" to determine if a user query is smart-home related. See `HomeAssistantClient.get_keywords()` for the dynamic keyword extraction logic.
 
+**MCP Tool Prompt Filtering**: With 90+ MCP tools across 7 servers, the intent prompt uses `prompt_tools` (from `mcp_servers.yaml`) to show only the most relevant tools per server. This reduces the prompt to ~20 tools while keeping all tools available for execution. The `example_intent` field controls which tool name appears in the prompt examples section. Both are configured per-server in `config/mcp_servers.yaml`. See `IntentRegistry.build_intent_prompt()` for the filtering logic.
+
 ### Intent Feedback Learning (Semantic Correction)
 
 Renfield learns from user corrections using a 3-scope feedback system with pgvector semantic matching:
@@ -1223,9 +1225,28 @@ All external integrations (Home Assistant, n8n, weather, search, etc.) run via M
        url: "${YOUR_SERVICE_MCP_URL:-http://localhost:9090/mcp}"
        transport: streamable_http
        enabled: "${YOUR_SERVICE_ENABLED:-true}"
+       refresh_interval: 300
+       example_intent: mcp.your_service.main_tool  # Intent name used in prompt examples
+       prompt_tools:                                # Tools shown in LLM intent prompt (all remain executable)
+         - main_tool
+         - secondary_tool
+       examples:
+         de: ["Beispiel-Anfrage auf Deutsch"]
+         en: ["Example query in English"]
    ```
 
-3. The tools will be auto-discovered and available as `mcp.your_service.<tool_name>` intents
+   **YAML fields:**
+   | Field | Required | Description |
+   |-------|----------|-------------|
+   | `name` | Yes | Server identifier, used in `mcp.<name>.<tool>` namespace |
+   | `transport` | Yes | `streamable_http`, `sse`, or `stdio` |
+   | `enabled` | Yes | Env-var toggle (e.g. `"${MY_ENABLED:-false}"`) |
+   | `prompt_tools` | No | List of tool base names to include in the LLM intent prompt. Omit to show all tools. All tools remain available for execution regardless. |
+   | `example_intent` | No | Override which intent name appears in prompt examples. Defaults to first tool of server. |
+   | `examples` | No | Bilingual example queries (`de`/`en`) for LLM prompt |
+
+3. The tools will be auto-discovered and available as `mcp.your_service.<tool_name>` intents.
+   Only tools listed in `prompt_tools` appear in the intent prompt (to avoid overwhelming the LLM with 90+ tools).
 
 4. Optionally create a REST API route in `src/backend/api/routes/yourservice.py` for direct access:
    ```python
@@ -1704,7 +1725,7 @@ renfield/
 │   └── release.yml            # Release and Docker push
 ├── config/                    # Configuration files
 │   ├── nginx.conf             # Nginx config for production
-│   └── mcp_servers.yaml       # MCP server definitions (transport, env vars)
+│   └── mcp_servers.yaml       # MCP server definitions (transport, env vars, prompt_tools, examples)
 ├── docs/                      # Additional documentation
 ├── Makefile                   # Task orchestration
 ├── docker-compose.yml         # Standard Docker setup

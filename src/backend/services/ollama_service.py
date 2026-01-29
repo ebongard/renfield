@@ -605,7 +605,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                             break
 
             # Formatiere als kompakte Liste
+            # Note: MCP HA tools use "name" (friendly_name) and "area" (room) as parameters,
+            # NOT entity_id. Format the context so the LLM uses the correct parameter values.
             context_lines = ["VERFÜGBARE HOME ASSISTANT ENTITIES:"]
+            context_lines.append("  [Für MCP HA-Tools: Nutze 'name' = friendly_name, 'area' = Raum-Name]")
 
             # Wenn aktueller Raum bekannt, zeige Entities in diesem Raum zuerst
             if current_room:
@@ -615,12 +618,12 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 entity_room = (entity.get("room") or "").lower()
                 is_current_room = current_room and entity_room and current_room in entity_room
 
-                room_suffix = f" ({entity['room']})" if entity.get('room') else ""
+                room_info = f", area: \"{entity['room']}\"" if entity.get('room') else ""
                 state_info = f" [aktuell: {entity.get('state', 'unknown')}]"
                 current_room_marker = " ★" if is_current_room else ""
 
                 context_lines.append(
-                    f"  - {entity['entity_id']}: {entity['friendly_name']}{room_suffix}{state_info}{current_room_marker}"
+                    f"  - name: \"{entity['friendly_name']}\"{room_info}{state_info}{current_room_marker}"
                 )
 
             return "\n".join(context_lines)

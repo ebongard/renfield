@@ -230,6 +230,8 @@ class MCPServerConfig:
     enabled: bool = True
     refresh_interval: int = 300
     examples: Dict[str, List[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
+    example_intent: Optional[str] = None  # Override intent name used in prompt examples
+    prompt_tools: Optional[List[str]] = None  # Tool names to include in LLM prompt (None = all)
 
 
 @dataclass
@@ -361,6 +363,8 @@ class MCPManager:
                         for lang, exs in entry.get("examples", {}).items()
                         if isinstance(exs, list)
                     },
+                    example_intent=entry.get("example_intent"),
+                    prompt_tools=entry.get("prompt_tools"),
                 )
 
                 if not config.enabled:
@@ -633,17 +637,33 @@ class MCPManager:
         """Return all discovered MCP tools."""
         return list(self._tool_index.values())
 
-    def get_server_examples(self) -> Dict[str, Dict[str, List[str]]]:
+    def get_server_examples(self) -> Dict[str, Dict]:
         """Return configured examples for all servers.
 
         Returns:
-            Dict mapping server name to {"de": [...], "en": [...]}
+            Dict mapping server name to {"de": [...], "en": [...], "example_intent": "mcp.server.tool"}
         """
-        return {
-            name: state.config.examples
-            for name, state in self._servers.items()
-            if state.config.examples
-        }
+        result = {}
+        for name, state in self._servers.items():
+            if state.config.examples:
+                data = dict(state.config.examples)  # copy lang -> examples
+                if state.config.example_intent:
+                    data["_example_intent"] = state.config.example_intent
+                result[name] = data
+        return result
+
+    def get_prompt_tools_config(self) -> Dict[str, List[str]]:
+        """Return per-server prompt_tools filter from YAML config.
+
+        Returns:
+            Dict mapping server name to list of tool base names.
+            Only servers with prompt_tools configured are included.
+        """
+        result = {}
+        for name, state in self._servers.items():
+            if state.config.prompt_tools is not None:
+                result[name] = state.config.prompt_tools
+        return result
 
     def is_mcp_tool(self, name: str) -> bool:
         """Check if a name is a known MCP tool."""

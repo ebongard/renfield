@@ -135,6 +135,7 @@ class IntentRegistry:
         self._plugin_registry: Optional["PluginRegistry"] = None
         self._mcp_tools: List[Dict] = []
         self._mcp_examples: Dict[str, Dict[str, List[str]]] = {}  # server_name → {"de": [...], "en": [...]}
+        self._mcp_prompt_tools: Dict[str, List[str]] = {}  # server_name → [tool_name, ...]
 
     def set_plugin_registry(self, registry: "PluginRegistry") -> None:
         """Set the plugin registry for plugin intent access."""
@@ -151,6 +152,16 @@ class IntentRegistry:
             examples: Dict mapping server name to {"de": [...], "en": [...]}
         """
         self._mcp_examples = examples
+
+    def set_mcp_prompt_tools(self, prompt_tools: Dict[str, List[str]]) -> None:
+        """Set per-server prompt_tools filter from YAML config.
+
+        Args:
+            prompt_tools: Dict mapping server name to list of tool base names
+                          to include in the LLM intent prompt.
+                          Servers without an entry show all their tools.
+        """
+        self._mcp_prompt_tools = prompt_tools
 
     def get_enabled_integrations(self) -> List[IntegrationIntents]:
         """Get list of enabled core integrations."""
@@ -235,14 +246,37 @@ class IntentRegistry:
                 sections.append("\n".join(section_lines))
 
         # MCP Tools (if enabled and tools available)
+        # Only tools listed in prompt_tools YAML config are shown to avoid
+        # overwhelming the LLM. All tools remain available for execution.
         if settings.mcp_enabled and self._mcp_tools:
             title = "MCP TOOLS" if lang == "en" else "MCP TOOLS"
             section_lines = [f"=== {title} ==="]
 
             for tool in self._mcp_tools:
+                server = tool.get("server", "unknown")
                 intent_name = tool.get("intent", tool.get("name", "unknown"))
+
+                # Filter: only show tools listed in prompt_tools config
+                if self._mcp_prompt_tools:
+                    allowed = self._mcp_prompt_tools.get(server)
+                    if allowed is not None:
+                        # Extract tool's base name (after "mcp.<server>.")
+                        base_name = intent_name.split(".")[-1] if "." in intent_name else intent_name
+                        if base_name not in allowed:
+                            continue
+                    else:
+                        # Server has no prompt_tools config → show all its tools
+                        pass
+
                 description = tool.get("description", "")
-                section_lines.append(f"- {intent_name}: {description}")
+                # Include parameter names from input_schema so LLM uses correct params
+                schema = tool.get("input_schema", {})
+                params = list(schema.get("properties", {}).keys())
+                if params:
+                    params_str = ", ".join(params)
+                    section_lines.append(f"- {intent_name}: {description} (parameters: {params_str})")
+                else:
+                    section_lines.append(f"- {intent_name}: {description}")
 
             sections.append("\n".join(section_lines))
 
@@ -296,19 +330,21 @@ class IntentRegistry:
 
         Examples are read from self._mcp_examples (populated via set_mcp_examples()
         from mcp_servers.yaml). Returns 1 example per server.
+        Uses example_intent from YAML config if available, otherwise falls back
+        to the first tool of that server.
         """
         examples = []
         seen_servers = set()
 
         for tool in self._mcp_tools:
             server = tool.get("server", "")
-            intent_name = tool.get("intent", tool.get("name", "unknown"))
-
             if server in seen_servers:
                 continue
             seen_servers.add(server)
 
             server_examples = self._mcp_examples.get(server, {})
+            # Use configured example_intent, or fall back to first tool of server
+            intent_name = server_examples.get("_example_intent") or tool.get("intent", tool.get("name", "unknown"))
             lang_examples = server_examples.get(lang, server_examples.get("de", []))
             for ex in lang_examples[:1]:  # 1 example per server
                 examples.append((ex, intent_name))

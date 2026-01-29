@@ -221,6 +221,10 @@ async def websocket_endpoint(
 
                     logger.info(f"🤖 Agent Loop abgeschlossen: {agent_steps_count} Steps")
 
+                    # Set intent info so frontend can show correction button
+                    if not intent:
+                        intent = {"intent": "agent.multi_step", "confidence": 1.0, "parameters": {}}
+
             if not agent_used:
                 # === Ranked Intent Path with Fallback Chain ===
                 logger.info("🔍 Extrahiere Ranked Intents...")
@@ -298,6 +302,10 @@ async def websocket_endpoint(
                                 agent_steps_count += 1
 
                         logger.info(f"🤖 Agent Fallback abgeschlossen: {agent_steps_count} Steps")
+
+                        # Set intent info so frontend can show correction button
+                        if not intent:
+                            intent = {"intent": "agent.fallback", "confidence": 1.0, "parameters": {}}
                     else:
                         # Absolute fallback: general.conversation
                         logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
