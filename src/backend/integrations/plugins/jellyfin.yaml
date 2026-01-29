@@ -2,7 +2,7 @@ name: jellyfin
 version: 1.0.0
 description: Musik-Streaming von Jellyfin Media Server (DLNA/UPnP)
 author: Renfield Team
-enabled_var: JELLYFIN_ENABLED
+enabled_var: JELLYFIN_PLUGIN_ENABLED
 
 config:
   url: JELLYFIN_URL

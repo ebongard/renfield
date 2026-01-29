@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {tools_prompt}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -12,6 +12,8 @@ de:
     {conv_context}
 
     {tools_prompt}
+
+    {tool_corrections}
 
     {history_prompt}
 
@@ -74,6 +76,7 @@ de:
 
 en:
   # Main agent prompt template
+  # Available variables: {message}, {conv_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -81,6 +84,8 @@ en:
     {conv_context}
 
     {tools_prompt}
+
+    {tool_corrections}
 
     {history_prompt}
 

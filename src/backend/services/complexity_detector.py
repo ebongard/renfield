@@ -5,9 +5,12 @@ Determines whether a user message requires the Agent Loop (complex, multi-step)
 or the standard single-intent path (simple, one action).
 
 Zero-cost: No LLM call, pure regex matching on German and English patterns.
+Semantic feedback override: Checks past corrections before regex fallback.
 """
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
+
+from loguru import logger
 
 
 class ComplexityDetector:
@@ -99,6 +102,32 @@ class ComplexityDetector:
                     return True
 
         return False
+
+    @classmethod
+    async def needs_agent_with_feedback(cls, message: str) -> bool:
+        """
+        Check corrections first, then fall back to regex.
+
+        If a semantically similar message was previously corrected
+        (simple→complex or complex→simple), use the correction.
+        Otherwise, fall back to the standard regex-based detection.
+        """
+        try:
+            from services.database import AsyncSessionLocal
+            from services.intent_feedback_service import IntentFeedbackService
+            async with AsyncSessionLocal() as db:
+                service = IntentFeedbackService(db)
+                override = await service.check_complexity_override(message)
+                if override is not None:
+                    logger.info(
+                        f"📝 Complexity override from feedback: "
+                        f"{'complex' if override else 'simple'} for '{message[:60]}...'"
+                    )
+                    return override
+        except Exception as e:
+            logger.warning(f"⚠️ Complexity feedback check failed: {e}")
+
+        return cls.needs_agent(message)
 
     @classmethod
     def detect_patterns(cls, message: str) -> List[str]:

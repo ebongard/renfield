@@ -705,6 +705,39 @@ class SystemSetting(Base):
     updater = relationship("User", foreign_keys=[updated_by])
 
 
+# ==========================================================================
+# Intent Correction Feedback
+# ==========================================================================
+
+class IntentCorrection(Base):
+    """
+    Stores user corrections for wrong intent classifications, agent tool choices,
+    and complexity detection. Embeddings enable semantic similarity search for
+    few-shot prompt injection — the system learns from its mistakes.
+
+    feedback_type:
+      - "intent": Wrong intent classification (Single-Intent path)
+      - "agent_tool": Wrong tool choice in Agent Loop
+      - "complexity": Wrong simple/complex classification
+    """
+    __tablename__ = "intent_corrections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message_text = Column(Text, nullable=False)
+    feedback_type = Column(String(20), nullable=False, index=True)
+    original_value = Column(String(100), nullable=False)
+    corrected_value = Column(String(100), nullable=False)
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True
+    )
+    context = Column(JSON, nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 # System Setting Keys
 SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"

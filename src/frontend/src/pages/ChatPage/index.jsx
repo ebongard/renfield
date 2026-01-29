@@ -55,6 +55,10 @@ export default function ChatPage() {
   // TTS audio ref
   const audioRef = useRef(null);
 
+  // Intent feedback tracking
+  const lastUserQueryRef = useRef('');
+  const lastIntentInfoRef = useRef(null);
+
   // Chat sessions hook
   const {
     conversations,
@@ -212,6 +216,53 @@ export default function ChatPage() {
     wakeWordEnabledRef.current = wakeWordEnabled;
   }, [wakeWordEnabled]);
 
+  // Handle action — capture intent info for feedback
+  const handleAction = useCallback((data) => {
+    if (data.intent) {
+      lastIntentInfoRef.current = {
+        intent: data.intent?.intent || data.intent,
+        confidence: data.intent?.confidence || 0,
+      };
+    }
+  }, []);
+
+  // Handle proactive feedback request from backend
+  const handleIntentFeedbackRequest = useCallback((data) => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant') {
+        return [
+          ...prev.slice(0, -1),
+          {
+            ...lastMsg,
+            intentInfo: {
+              intent: data.detected_intent,
+              confidence: data.confidence,
+            },
+            feedbackRequested: true,
+            userQuery: data.message_text,
+          },
+        ];
+      }
+      return prev;
+    });
+  }, []);
+
+  // Submit feedback correction to backend
+  const handleFeedbackSubmit = useCallback(async (messageText, feedbackType, originalValue, correctedValue) => {
+    try {
+      await apiClient.post('/api/feedback/correction', {
+        message_text: messageText,
+        feedback_type: feedbackType,
+        original_value: originalValue,
+        corrected_value: correctedValue,
+      });
+      debug.log('Feedback submitted:', feedbackType, originalValue, '→', correctedValue);
+    } catch (error) {
+      console.error('Failed to submit feedback:', error);
+    }
+  }, []);
+
   // Handle stream done - process TTS and wake word resume
   const handleStreamDone = useCallback((data) => {
     const ttsHandledByServer = data.tts_handled === true;
@@ -219,7 +270,18 @@ export default function ChatPage() {
     setMessages(prev => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.streaming) {
-        const completedMessage = { ...lastMsg, streaming: false };
+        const intentInfo = data.intent ? {
+          intent: data.intent.intent,
+          confidence: data.intent.confidence || 0,
+        } : lastIntentInfoRef.current;
+
+        const completedMessage = {
+          ...lastMsg,
+          streaming: false,
+          intentInfo: intentInfo || undefined,
+          userQuery: lastUserQueryRef.current || undefined,
+        };
+        lastIntentInfoRef.current = null;
 
         debug.log('Check Auto-TTS: Channel =', lastInputChannelRef.current, ', ServerHandled =', ttsHandledByServer);
 
@@ -301,7 +363,9 @@ export default function ChatPage() {
   const { wsConnected, sendMessage: wsSendMessage, isReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
     onStreamDone: handleStreamDone,
+    onAction: handleAction,
     onRagContext: handleRagContext,
+    onIntentFeedbackRequest: handleIntentFeedbackRequest,
   });
 
   // Handle transcription from audio recording
@@ -369,6 +433,9 @@ export default function ChatPage() {
       lastAutoTTSTextRef.current = '';
       debug.log('Channel set to: text');
     }
+
+    lastUserQueryRef.current = text;
+    lastIntentInfoRef.current = null;
 
     const userMessage = { role: 'user', content: text };
     setMessages(prev => [...prev, userMessage]);
@@ -533,6 +600,7 @@ export default function ChatPage() {
           loading={loading}
           historyLoading={historyLoading}
           onSpeakText={speakText}
+          onFeedbackSubmit={handleFeedbackSubmit}
         />
 
         {/* Input */}

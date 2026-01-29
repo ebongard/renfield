@@ -2,7 +2,7 @@ name: search
 version: 2.0.0
 description: Web search using SearXNG metasearch engine
 author: Renfield Team
-enabled_var: SEARCH_ENABLED
+enabled_var: SEARCH_PLUGIN_ENABLED
 
 config:
   url: SEARXNG_API_URL

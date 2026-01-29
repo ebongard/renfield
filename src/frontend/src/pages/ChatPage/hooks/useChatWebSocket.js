@@ -10,6 +10,7 @@ import { debug } from '../../../utils/debug';
  * @param {Function} options.onStreamDone - Callback when stream completes
  * @param {Function} options.onAction - Callback when action is executed
  * @param {Function} options.onRagContext - Callback for RAG context info
+ * @param {Function} options.onIntentFeedbackRequest - Callback for proactive feedback
  * @returns {Object} WebSocket state and methods
  */
 export function useChatWebSocket({
@@ -17,6 +18,7 @@ export function useChatWebSocket({
   onStreamDone,
   onAction,
   onRagContext,
+  onIntentFeedbackRequest,
 } = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
@@ -54,6 +56,10 @@ export function useChatWebSocket({
       } else if (data.type === 'done') {
         // Stream beendet
         onStreamDone?.(data);
+      } else if (data.type === 'intent_feedback_request') {
+        // Proaktives Feedback vom Backend
+        debug.log('Intent feedback request:', data.detected_intent);
+        onIntentFeedbackRequest?.(data);
       }
     };
 
@@ -69,7 +75,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest]);
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {

@@ -63,7 +63,7 @@ FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 WORKDIR /app
 
 # Runtime dependencies only (no compilers, no dev headers)
-# wget is installed temporarily for Piper downloads, then removed
+# wget + curl + gpg are installed temporarily for Piper + Node.js downloads, then removed
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.11 \
     python3.11-venv \
@@ -73,6 +73,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     espeak-ng \
     wget \
+    curl \
+    gnupg \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js is required for MCP stdio servers (npx)
+RUN mkdir -p /etc/apt/keyrings \
+    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" > /etc/apt/sources.list.d/nodesource.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Make python3.11 the default

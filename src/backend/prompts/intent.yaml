@@ -7,7 +7,7 @@
 
 de:
   # Main intent extraction prompt template
-  # Available variables: {message}, {room_context}, {history_context}, {intent_types}, {entity_context}, {examples}
+  # Available variables: {message}, {room_context}, {history_context}, {intent_types}, {entity_context}, {examples}, {correction_examples}
   extraction_prompt: |
     Erkenne den Intent für diese Nachricht: "{message}"
     {room_context}
@@ -20,6 +20,8 @@ de:
     {entity_context}
 
     {examples}
+
+    {correction_examples}
 
     ENTSCHEIDUNGSHILFE:
     - knowledge.ask / knowledge.search → NUR verwenden wenn der Nutzer EXPLIZIT auf eigene Dokumente,
@@ -63,6 +65,7 @@ de:
 
 en:
   # Main intent extraction prompt template
+  # Available variables: {message}, {room_context}, {history_context}, {intent_types}, {entity_context}, {examples}, {correction_examples}
   extraction_prompt: |
     Recognize the intent for this message: "{message}"
     {room_context}
@@ -75,6 +78,8 @@ en:
     {entity_context}
 
     {examples}
+
+    {correction_examples}
 
     DECISION GUIDE:
     - knowledge.ask / knowledge.search → ONLY use when the user EXPLICITLY references their own documents,

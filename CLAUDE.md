@@ -598,6 +598,38 @@ If all ranked intents fail and Agent Loop is enabled, it kicks in as final fallb
 
 **Key Implementation Detail**: The system pre-loads Home Assistant entity names and friendly names as "keywords" to determine if a user query is smart-home related. See `HomeAssistantClient.get_keywords()` for the dynamic keyword extraction logic.
 
+### Intent Feedback Learning (Semantic Correction)
+
+Renfield learns from user corrections using a 3-scope feedback system with pgvector semantic matching:
+
+**Feedback Scopes:**
+| Scope | `feedback_type` | What it corrects | Injected into |
+|-------|----------------|------------------|---------------|
+| Intent | `"intent"` | Wrong intent classification | `{correction_examples}` in intent prompt |
+| Agent Tool | `"agent_tool"` | Wrong tool choice in Agent Loop | `{tool_corrections}` in agent prompt |
+| Complexity | `"complexity"` | Wrong simple/complex classification | `ComplexityDetector.needs_agent_with_feedback()` |
+
+**How it works:**
+1. User corrects a wrong classification via the "Falsch erkannt?" button in the chat UI
+2. Correction is stored in `intent_corrections` table with a 768-dim pgvector embedding
+3. On future similar queries, cosine similarity search finds matching corrections (threshold: 0.75)
+4. Matched corrections are injected as few-shot examples into the respective prompt
+
+**Key Components:**
+- `models/database.py` — `IntentCorrection` model (unified for all 3 scopes)
+- `services/intent_feedback_service.py` — Core service (save, find_similar, format, complexity_override)
+- `api/routes/feedback.py` — REST API (`POST/GET/DELETE /api/feedback/correction(s)`)
+- `services/complexity_detector.py` — `needs_agent_with_feedback()` async override
+- `prompts/intent.yaml` — `{correction_examples}` placeholder
+- `prompts/agent.yaml` — `{tool_corrections}` placeholder
+- `components/IntentCorrectionButton.jsx` — Frontend correction UI
+
+**Proactive Feedback:** Backend sends `intent_feedback_request` WebSocket message when action results are empty/failed, prompting the user to correct the classification.
+
+**Performance:** Count cache (60s TTL) skips embedding generation when zero corrections exist for a feedback type.
+
+**Tests:** `tests/backend/test_intent_feedback.py`, `tests/frontend/react/components/IntentCorrectionButton.test.jsx`
+
 ### Conversation Persistence
 
 Renfield implements full conversation persistence with PostgreSQL across **all conversation types** (Chat, WebSocket, Satellite):
@@ -845,6 +877,7 @@ src/backend/
 │   ├── homeassistant.py      # HA state queries, control endpoints (permission-protected)
 │   ├── camera.py             # Frigate events, snapshots (permission-protected)
 │   ├── knowledge.py          # Knowledge base management (ownership + sharing)
+│   ├── feedback.py           # Intent feedback corrections (3-scope learning)
 │   └── tasks.py              # Task queue management
 ├── services/                  # Business logic layer
 │   ├── auth_service.py       # JWT tokens, password hashing, permission checks
@@ -862,6 +895,8 @@ src/backend/
 │   ├── complexity_detector.py # Regex-based detection of multi-step queries
 │   ├── agent_tools.py        # Tool registry for Agent Loop (MCP + plugins)
 │   ├── agent_service.py      # ReAct Agent Loop (multi-step tool chaining)
+│   ├── mcp_client.py         # MCP client manager (stdio/SSE/HTTP transports, secret injection)
+│   ├── intent_feedback_service.py # Semantic feedback learning (3-scope correction)
 │   ├── task_queue.py         # Redis-based task queue
 │   └── database.py           # SQLAlchemy setup, init_db()
 ├── integrations/              # External service clients
@@ -1165,6 +1200,13 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
 - `AGENT_STEP_TIMEOUT` - Timeout per LLM call in seconds (default: `30.0`)
 - `AGENT_TOTAL_TIMEOUT` - Total timeout for entire agent run in seconds (default: `120.0`)
 - `AGENT_MODEL` - Optional separate model for agent reasoning (default: uses `OLLAMA_MODEL`)
+- `MCP_ENABLED` - Enable MCP server integration (default: `false`)
+- `WEATHER_ENABLED` - Enable Weather MCP server (default: `false`)
+- `SEARCH_ENABLED` - Enable SearXNG MCP server (default: `false`)
+- `NEWS_ENABLED` - Enable News MCP server (default: `false`)
+- `JELLYFIN_ENABLED` - Enable Jellyfin MCP server (default: `false`)
+- `N8N_MCP_ENABLED` - Enable n8n MCP server (default: `false`)
+- `HA_MCP_ENABLED` - Enable Home Assistant MCP server (default: `false`)
 
 ## Common Development Patterns
 
@@ -1397,6 +1439,7 @@ tests/
 | `test_complexity_detector.py` | ComplexityDetector patterns (conditional, sequence, comparison, multi-action) |
 | `test_agent_tools.py` | AgentToolRegistry (MCP tools, plugin tools, prompt generation) |
 | `test_agent_service.py` | AgentService loop, JSON parsing, timeouts, error handling, WebSocket messages |
+| `test_intent_feedback.py` | IntentFeedbackService CRUD, format, complexity override, Feedback API, ComplexityDetector with feedback |
 
 ### Running Tests
 
@@ -1546,6 +1589,45 @@ For NVIDIA GPU acceleration (faster Whisper transcription):
 2. Use `docker compose -f docker-compose.prod.yml up -d`
 3. The backend will automatically use GPU for Whisper
 
+**Note:** `Dockerfile.gpu` includes Node.js 20 for MCP stdio servers (`npx`). This is required because MCP servers like `@tristau/openweathermap-mcp` run as Node.js subprocesses.
+
+### Production Secrets Workflow
+
+Production uses Docker Compose file-based secrets (`/run/secrets/`) instead of `.env` for sensitive values.
+
+**Secret files** are in `/opt/renfield/secrets/` on the production server:
+```
+secrets/
+├── postgres_password
+├── home_assistant_token
+├── secret_key
+├── default_admin_password
+├── openweather_api_key
+├── newsapi_key
+├── jellyfin_api_key
+├── jellyfin_token          # Jellyfin MCP (= JELLYFIN_TOKEN)
+├── jellyfin_base_url       # Jellyfin MCP (= JELLYFIN_BASE_URL)
+└── n8n_api_key             # n8n MCP (= N8N_API_KEY)
+```
+
+**Key rule:** Sensitive values (passwords, tokens, API keys) must NEVER appear in `.env` on production. Only non-sensitive config (URLs, feature flags, model names) belongs in `.env`.
+
+**How secrets reach MCP servers:**
+- Pydantic `secrets_dir="/run/secrets"` loads secrets into Settings fields
+- `mcp_client.py` additionally injects `/run/secrets/*` into `os.environ` at config load time
+- This ensures YAML `${VAR}` substitution and stdio subprocess env both have access
+
+**Deploy workflow:**
+```bash
+# 1. rsync source to production
+rsync -av --exclude='.env' --exclude='secrets/' ./ renfield.local:/opt/renfield/
+
+# 2. Rebuild and restart
+ssh renfield.local 'cd /opt/renfield && docker compose -f docker-compose.prod.yml up -d --build'
+```
+
+**Documentation:** See `docs/SECRETS_MANAGEMENT.md` for full details.
+
 ## Common Issues
 
 ### Intent Recognition Problems
@@ -1621,7 +1703,8 @@ renfield/
 │   ├── pr-check.yml           # PR validation
 │   └── release.yml            # Release and Docker push
 ├── config/                    # Configuration files
-│   └── nginx.conf             # Nginx config for production
+│   ├── nginx.conf             # Nginx config for production
+│   └── mcp_servers.yaml       # MCP server definitions (transport, env vars)
 ├── docs/                      # Additional documentation
 ├── Makefile                   # Task orchestration
 ├── docker-compose.yml         # Standard Docker setup
@@ -1646,4 +1729,5 @@ Additional documentation files in the repository:
 - `src/satellite/README.md` - Satellite setup guide
 - `src/backend/integrations/plugins/README.md` - Plugin development guide
 - `docs/ENVIRONMENT_VARIABLES.md` - Environment variable reference
+- `docs/SECRETS_MANAGEMENT.md` - Docker Secrets for production deployment
 - `docs/SECURITY.md` - Security headers, OWASP testing, vulnerability management

@@ -26,7 +26,7 @@ from models.database import (
     Base, Room, RoomDevice, RoomOutputDevice,
     Speaker, SpeakerEmbedding,
     Conversation, Message, Task, CameraEvent, HomeAssistantEntity,
-    KnowledgeBase, Document, DocumentChunk, Role, User,
+    KnowledgeBase, Document, DocumentChunk, Role, User, IntentCorrection,
     DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER,
     DEFAULT_CAPABILITIES
 )

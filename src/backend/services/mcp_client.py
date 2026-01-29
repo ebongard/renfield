@@ -306,6 +306,20 @@ class MCPManager:
 
     def load_config(self, path: str) -> None:
         """Load MCP server configuration from YAML file."""
+        # Inject Docker secrets into os.environ so ${VAR} substitution
+        # in YAML config can resolve API keys stored in /run/secrets/.
+        # Only sets vars that are not already present in the environment.
+        secrets_dir = Path("/run/secrets")
+        if secrets_dir.is_dir():
+            for secret_file in secrets_dir.iterdir():
+                if secret_file.is_file() and not secret_file.name.startswith("."):
+                    env_name = secret_file.name.upper()
+                    if env_name not in os.environ:
+                        try:
+                            os.environ[env_name] = secret_file.read_text().strip()
+                        except Exception:
+                            pass
+
         config_path = Path(path)
         if not config_path.exists():
             logger.warning(f"MCP config file not found: {path}")
@@ -415,11 +429,25 @@ class MCPManager:
                 if not config.command:
                     raise ValueError(f"Command required for stdio transport")
                 # Pass current environment to subprocess so MCP servers
-                # can access API keys and configuration
+                # can access API keys and configuration.
+                # Also inject Docker secrets (/run/secrets/) as env vars
+                # (uppercase filename → value) so stdio MCP servers can
+                # read API keys without exposing them in .env.
+                subprocess_env = dict(os.environ)
+                secrets_dir = Path("/run/secrets")
+                if secrets_dir.is_dir():
+                    for secret_file in secrets_dir.iterdir():
+                        if secret_file.is_file() and not secret_file.name.startswith("."):
+                            env_name = secret_file.name.upper()
+                            if env_name not in subprocess_env:
+                                try:
+                                    subprocess_env[env_name] = secret_file.read_text().strip()
+                                except Exception:
+                                    pass
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args,
-                    env=dict(os.environ),
+                    env=subprocess_env,
                 )
                 transport = await exit_stack.enter_async_context(
                     stdio_client(server=params)

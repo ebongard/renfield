@@ -10,7 +10,8 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 - [Core System](#core-system)
 - [Audio Output Routing](#audio-output-routing)
 - [Integrationen](#integrationen)
-- [Plugin System](#plugin-system)
+- [MCP Server Configuration](#mcp-server-configuration)
+- [Plugin System (Legacy YAML)](#plugin-system-legacy-yaml)
 - [Verfügbare Plugins](#verfügbare-plugins)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -23,14 +24,19 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 
 **Format:**
 ```
-{PLUGIN_NAME}_{PURPOSE}
+{PLUGIN_NAME}_PLUGIN_{PURPOSE}    # YAML-Plugin Aktivierung
+{SERVICE_NAME}_{PURPOSE}          # MCP-Server Aktivierung & Konfiguration
 ```
 
 **Beispiele:**
 ```bash
-WEATHER_ENABLED=true              # Plugin aktivieren/deaktivieren
-WEATHER_API_URL=https://...       # API-URL
-WEATHER_API_KEY=abc123            # API-Schlüssel
+# MCP-Server (bevorzugt)
+WEATHER_ENABLED=true              # MCP-Server aktivieren
+OPENWEATHER_API_KEY=abc123        # API-Schlüssel (in Produktion: Docker Secret)
+
+# YAML-Plugin (Legacy)
+WEATHER_PLUGIN_ENABLED=true       # YAML-Plugin aktivieren
+OPENWEATHER_API_URL=https://...   # API-URL
 ```
 
 ### Regeln
@@ -38,7 +44,8 @@ WEATHER_API_KEY=abc123            # API-Schlüssel
 1. **UPPERCASE_SNAKE_CASE** - Alle Buchstaben groß, Wörter mit Unterstrich getrennt
 2. **Beschreibende Namen** - Klar erkennbar, wofür die Variable ist
 3. **Konsistente Suffixe:**
-   - `_ENABLED` - Boolean zum Aktivieren
+   - `_ENABLED` - Boolean zum Aktivieren (MCP-Server)
+   - `_PLUGIN_ENABLED` - Boolean zum Aktivieren (YAML-Plugins)
    - `_URL` - API-Endpunkte
    - `_KEY` - API-Schlüssel
    - `_TOKEN` - Authentifizierungs-Token
@@ -437,7 +444,76 @@ FRIGATE_URL=http://frigate.local:5000
 
 ---
 
-## Plugin System
+## MCP Server Configuration
+
+MCP (Model Context Protocol) Server stellen externe Tools für den Agent Loop bereit. Konfiguration in `config/mcp_servers.yaml`.
+
+### System-Kontrolle
+
+```bash
+# MCP System aktivieren
+MCP_ENABLED=true
+```
+
+**Default:** `false`
+
+---
+
+### MCP-Server aktivieren
+
+```bash
+# Weather (OpenWeatherMap)
+WEATHER_ENABLED=true
+
+# Search (SearXNG)
+SEARCH_ENABLED=true
+
+# News (NewsAPI)
+NEWS_ENABLED=true
+
+# Jellyfin (Media Server)
+JELLYFIN_ENABLED=true
+
+# n8n (Workflow Automation)
+N8N_MCP_ENABLED=true
+
+# Home Assistant (Smart Home)
+HA_MCP_ENABLED=true
+```
+
+**Defaults:** Alle `false`
+
+### MCP-Server Secrets (Produktion: Docker Secrets)
+
+| Variable | Beschreibung | Docker Secret |
+|----------|-------------|---------------|
+| `OPENWEATHER_API_KEY` | OpenWeatherMap API Key | `secrets/openweather_api_key` |
+| `NEWSAPI_KEY` | NewsAPI Key | `secrets/newsapi_key` |
+| `JELLYFIN_TOKEN` | Jellyfin API Token | `secrets/jellyfin_token` |
+| `JELLYFIN_BASE_URL` | Jellyfin Server URL | `secrets/jellyfin_base_url` |
+| `N8N_API_KEY` | n8n API Key | `secrets/n8n_api_key` |
+| `HOME_ASSISTANT_TOKEN` | HA Long-Lived Access Token | `secrets/home_assistant_token` |
+
+### MCP-Server URLs (nicht-sensitiv, in .env)
+
+```bash
+# Home Assistant URL
+HOME_ASSISTANT_URL=http://homeassistant.local:8123
+
+# n8n Base URL
+N8N_BASE_URL=http://192.168.1.78:5678
+
+# SearXNG URL
+SEARXNG_URL=http://cuda.local:3002
+```
+
+**Hinweis:** In Produktion werden Secrets über Docker Compose File-Based Secrets bereitgestellt und von `mcp_client.py` automatisch in `os.environ` injiziert. Siehe `docs/SECRETS_MANAGEMENT.md`.
+
+---
+
+## Plugin System (Legacy YAML)
+
+> **Hinweis:** YAML-Plugins werden durch MCP-Server ersetzt. Plugins verwenden `*_PLUGIN_ENABLED` zur Aktivierung, um Konflikte mit MCP-Server `*_ENABLED` Variablen zu vermeiden.
 
 ### System-Kontrolle
 
@@ -463,7 +539,7 @@ PLUGINS_DIR=integrations/plugins
 
 ```bash
 # Plugin aktivieren
-WEATHER_ENABLED=true
+WEATHER_PLUGIN_ENABLED=true
 
 # API-Konfiguration
 OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
@@ -471,7 +547,7 @@ OPENWEATHER_API_KEY=your_api_key_here
 ```
 
 **Erforderlich:**
-- `WEATHER_ENABLED` - Boolean
+- `WEATHER_PLUGIN_ENABLED` - Boolean
 - `OPENWEATHER_API_URL` - API-Basis-URL
 - `OPENWEATHER_API_KEY` - API-Schlüssel
 
@@ -490,7 +566,7 @@ OPENWEATHER_API_KEY=your_api_key_here
 
 ```bash
 # Plugin aktivieren
-NEWS_ENABLED=true
+NEWS_PLUGIN_ENABLED=true
 
 # API-Konfiguration
 NEWSAPI_URL=https://newsapi.org/v2
@@ -498,7 +574,7 @@ NEWSAPI_KEY=your_api_key_here
 ```
 
 **Erforderlich:**
-- `NEWS_ENABLED` - Boolean
+- `NEWS_PLUGIN_ENABLED` - Boolean
 - `NEWSAPI_URL` - API-Basis-URL
 - `NEWSAPI_KEY` - API-Schlüssel
 
@@ -517,14 +593,14 @@ NEWSAPI_KEY=your_api_key_here
 
 ```bash
 # Plugin aktivieren
-SEARCH_ENABLED=true
+SEARCH_PLUGIN_ENABLED=true
 
 # SearXNG-Instanz URL (kein Key nötig!)
 SEARXNG_API_URL=http://cuda.local:3002
 ```
 
 **Erforderlich:**
-- `SEARCH_ENABLED` - Boolean
+- `SEARCH_PLUGIN_ENABLED` - Boolean
 - `SEARXNG_API_URL` - SearXNG-Instanz-URL
 
 **API-Key:** Nicht erforderlich! ✅
@@ -544,7 +620,7 @@ SearXNG ist eine Privacy-respektierende Metasearch-Engine.
 
 ```bash
 # Plugin aktivieren
-MUSIC_ENABLED=true
+MUSIC_PLUGIN_ENABLED=true
 
 # API-Konfiguration
 SPOTIFY_API_URL=https://api.spotify.com
@@ -554,7 +630,7 @@ SPOTIFY_ACCESS_TOKEN=your_access_token
 ```
 
 **Erforderlich:**
-- `MUSIC_ENABLED` - Boolean
+- `MUSIC_PLUGIN_ENABLED` - Boolean
 - `SPOTIFY_API_URL` - API-Basis-URL
 - `SPOTIFY_ACCESS_TOKEN` - User Access Token
 
@@ -584,7 +660,7 @@ SPOTIFY_ACCESS_TOKEN=your_access_token
 
 ```bash
 # Plugin aktivieren
-JELLYFIN_ENABLED=true
+JELLYFIN_PLUGIN_ENABLED=true
 
 # API-Konfiguration
 JELLYFIN_URL=http://192.168.1.123:8096
@@ -593,7 +669,7 @@ JELLYFIN_USER_ID=your_user_id_here
 ```
 
 **Erforderlich:**
-- `JELLYFIN_ENABLED` - Boolean
+- `JELLYFIN_PLUGIN_ENABLED` - Boolean
 - `JELLYFIN_URL` - Jellyfin Server URL (inkl. Port, Standard: 8096)
 - `JELLYFIN_API_KEY` - API-Schlüssel
 - `JELLYFIN_USER_ID` - Benutzer-ID für personalisierte Bibliothek
@@ -747,7 +823,7 @@ docker exec renfield-backend python3 -c "import os; print(os.getenv('WEATHER_API
 
 ### Plugin lädt nicht
 
-**Problem:** `ENABLED` Variable nicht gesetzt
+**Problem:** `*_PLUGIN_ENABLED` Variable nicht gesetzt
 
 **Prüfen:**
 ```bash
@@ -787,7 +863,7 @@ mv .env.utf8 .env
 # =============================================================================
 
 # Plugin aktivieren
-{PLUGIN_NAME}_ENABLED=false
+{PLUGIN_NAME}_PLUGIN_ENABLED=false
 
 # API-Konfiguration
 {PLUGIN_NAME}_API_URL=https://api.example.com
@@ -874,24 +950,35 @@ ADVERTISE_PORT=8000
 # -----------------------------------------------------------------------------
 PLUGINS_ENABLED=true
 
-# Weather Plugin (OpenWeatherMap)
+# -----------------------------------------------------------------------------
+# MCP Server (bevorzugt)
+# -----------------------------------------------------------------------------
+MCP_ENABLED=true
 WEATHER_ENABLED=true
-OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
-OPENWEATHER_API_KEY=your_key_here
-
-# News Plugin (NewsAPI)
-NEWS_ENABLED=false
-NEWSAPI_URL=https://newsapi.org/v2
-NEWSAPI_KEY=your_key_here
-
-# Search Plugin (SearXNG)
 SEARCH_ENABLED=true
-SEARXNG_API_URL=http://cuda.local:3002
+NEWS_ENABLED=true
+JELLYFIN_ENABLED=true
+N8N_MCP_ENABLED=true
+HA_MCP_ENABLED=true
 
-# Music Plugin (Spotify)
-MUSIC_ENABLED=false
-SPOTIFY_API_URL=https://api.spotify.com
-SPOTIFY_ACCESS_TOKEN=your_token_here
+# MCP-Server URLs (nicht-sensitiv)
+N8N_BASE_URL=http://192.168.1.78:5678
+SEARXNG_URL=http://cuda.local:3002
+
+# MCP-Server Secrets: In Produktion als Docker Secrets!
+# OPENWEATHER_API_KEY=...  → secrets/openweather_api_key
+# NEWSAPI_KEY=...          → secrets/newsapi_key
+# JELLYFIN_TOKEN=...       → secrets/jellyfin_token
+# JELLYFIN_BASE_URL=...    → secrets/jellyfin_base_url
+# N8N_API_KEY=...          → secrets/n8n_api_key
+
+# -----------------------------------------------------------------------------
+# YAML-Plugins (Legacy — deaktiviert wenn MCP aktiv)
+# -----------------------------------------------------------------------------
+# WEATHER_PLUGIN_ENABLED=false
+# NEWS_PLUGIN_ENABLED=false
+# SEARCH_PLUGIN_ENABLED=false
+# MUSIC_PLUGIN_ENABLED=false
 ```
 
 ---

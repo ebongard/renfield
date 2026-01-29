@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader } from 'lucide-react';
+import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 
 /**
  * Chat messages display component.
@@ -11,12 +12,14 @@ import { Volume2, Loader } from 'lucide-react';
  * @param {boolean} props.loading - Whether a response is being processed
  * @param {boolean} props.historyLoading - Whether conversation history is loading
  * @param {Function} props.onSpeakText - Callback to speak message content
+ * @param {Function} props.onFeedbackSubmit - Callback for intent correction feedback
  */
 export default function ChatMessages({
   messages = [],
   loading = false,
   historyLoading = false,
   onSpeakText,
+  onFeedbackSubmit,
 }) {
   const { t } = useTranslation();
   const messagesEndRef = useRef(null);
@@ -79,6 +82,17 @@ export default function ChatMessages({
                 <Volume2 className="w-3 h-3" aria-hidden="true" />
                 <span>{t('chat.readAloud')}</span>
               </button>
+            )}
+
+            {/* Intent Correction Button for assistant messages */}
+            {message.role === 'assistant' && !message.streaming && message.intentInfo && onFeedbackSubmit && (
+              <IntentCorrectionButton
+                messageText={message.userQuery || ''}
+                detectedIntent={message.intentInfo.intent}
+                feedbackType="intent"
+                onCorrect={onFeedbackSubmit}
+                proactive={message.feedbackRequested === true}
+              />
             )}
           </div>
         </div>

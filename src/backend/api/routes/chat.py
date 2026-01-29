@@ -91,7 +91,7 @@ async def send_message(
         # === Agent Loop Check ===
         if settings.agent_enabled:
             from services.complexity_detector import ComplexityDetector
-            if ComplexityDetector.needs_agent(chat_request.message):
+            if await ComplexityDetector.needs_agent_with_feedback(chat_request.message):
                 logger.info(f"🤖 Agent Loop (REST) aktiviert für: '{chat_request.message[:80]}...'")
 
                 from services.agent_tools import AgentToolRegistry

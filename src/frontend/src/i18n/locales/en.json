@@ -639,6 +639,23 @@
       "syncWarning": "{{count}} device(s) could not be synchronized"
     }
   },
+  "feedback": {
+    "wrongIntent": "Wrong classification?",
+    "wrongTool": "Wrong tool?",
+    "wrongComplexity": "Wrong complexity?",
+    "shouldBeComplex": "Should have used agent",
+    "shouldBeSimple": "Was too complex",
+    "selectCorrectIntent": "Select correct intent:",
+    "selectComplexity": "Select correct complexity:",
+    "correctionSaved": "Correction saved! Renfield will learn from this.",
+    "proactiveQuestion": "Was this the right classification?",
+    "intentConversation": "General conversation",
+    "intentKnowledge": "Knowledge base",
+    "intentHomeAssistant": "Smart Home",
+    "intentWebSearch": "Web search",
+    "intentWeather": "Weather",
+    "intentNews": "News"
+  },
   "errors": {
     "generic": "An error occurred",
     "networkError": "Network error",

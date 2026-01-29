@@ -106,6 +106,9 @@ services:
       - openweather_api_key
       - newsapi_key
       - jellyfin_api_key
+      - jellyfin_token
+      - jellyfin_base_url
+      - n8n_api_key
     volumes:
       - ./src/backend:/app
       - ./tests:/tests
@@ -207,3 +210,9 @@ secrets:
     file: ./secrets/newsapi_key
   jellyfin_api_key:
     file: ./secrets/jellyfin_api_key
+  jellyfin_token:
+    file: ./secrets/jellyfin_token
+  jellyfin_base_url:
+    file: ./secrets/jellyfin_base_url
+  n8n_api_key:
+    file: ./secrets/n8n_api_key

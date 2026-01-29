@@ -14,10 +14,11 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 - **Agent Loop (ReAct)** - Mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung
 
 ### Integrationen
+- **MCP-Server** - Externe Tools via Model Context Protocol (Weather, Search, News, Jellyfin, n8n, Home Assistant)
 - **Smart Home Steuerung** - Home Assistant Integration mit Raum-Kontext
 - **Kamera-Überwachung** - Frigate Integration mit Objekterkennung
 - **Workflow-Automation** - n8n Integration
-- **Dynamisches Plugin-System** - Einfache Integration externer APIs (Wetter, News, Musik, Suche)
+- **Dynamisches Plugin-System** - YAML-basierte Integration externer APIs (Legacy)
 
 ### Wissensspeicher (RAG)
 - **Dokument-Upload** - PDF, DOCX, PPTX, XLSX, HTML, Markdown
@@ -315,89 +316,38 @@ sudo systemctl restart docker
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-## Plugin System
+## Integrationen (MCP + Plugins)
 
-Renfield verfügt über ein **dynamisches, YAML-basiertes Plugin-System**, das es ermöglicht, externe APIs und Services ohne Code-Änderungen zu integrieren.
+Renfield nutzt **MCP-Server (Model Context Protocol)** als bevorzugten Integrationsweg. Zusätzlich existiert ein Legacy-YAML-Plugin-System.
 
-### Verfügbare Plugins
+### MCP-Server (bevorzugt)
 
-#### Weather Plugin (OpenWeatherMap)
-Aktuelle Wetterdaten und Vorhersagen.
+Externe Dienste werden als MCP-Server angebunden und stellen Tools für den Agent Loop bereit. Konfiguration in `config/mcp_servers.yaml`.
+
+**Verfügbare MCP-Server:**
+| Server | Beschreibung | Aktivierung |
+|--------|-------------|-------------|
+| Weather | OpenWeatherMap | `WEATHER_ENABLED=true` |
+| Search | SearXNG Metasearch | `SEARCH_ENABLED=true` |
+| News | NewsAPI | `NEWS_ENABLED=true` |
+| Jellyfin | Media Server | `JELLYFIN_ENABLED=true` |
+| n8n | Workflow Automation | `N8N_MCP_ENABLED=true` |
+| Home Assistant | Smart Home | `HA_MCP_ENABLED=true` |
 
 **Aktivierung:**
 ```bash
-# In .env hinzufügen:
+# In .env:
+MCP_ENABLED=true
 WEATHER_ENABLED=true
-OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
-OPENWEATHER_API_KEY=dein_api_key
-```
-
-**API-Key erhalten:** https://openweathermap.org/api
-
-**Beispiele:**
-- "Wie ist das Wetter in Berlin?"
-- "Wettervorhersage für München"
-
----
-
-#### News Plugin (NewsAPI)
-Aktuelle Nachrichten und Schlagzeilen.
-
-**Aktivierung:**
-```bash
-NEWS_ENABLED=true
-NEWSAPI_URL=https://newsapi.org/v2
-NEWSAPI_KEY=dein_api_key
-```
-
-**API-Key erhalten:** https://newsapi.org/register
-
-**Beispiele:**
-- "Zeige mir die Nachrichten"
-- "Suche Nachrichten über Tesla"
-
----
-
-#### Search Plugin (SearXNG)
-Web-Suche mit SearXNG Metasearch Engine - **Kein API-Key nötig!**
-
-**Aktivierung:**
-```bash
 SEARCH_ENABLED=true
-SEARXNG_API_URL=http://cuda.local:3002
+# ... weitere Server nach Bedarf
 ```
 
-**Hinweis:** Benötigt eine laufende SearXNG-Instanz.
+API-Keys werden in Produktion als Docker Secrets bereitgestellt. Siehe `docs/SECRETS_MANAGEMENT.md`.
 
-**Beispiele:**
-- "Suche nach Python Tutorials"
-- "Was ist Quantencomputing?"
-- "Wie funktioniert Photosynthese?"
+### YAML-Plugins (Legacy)
 
----
-
-#### Music Plugin (Spotify)
-Musik-Steuerung über Spotify.
-
-**Aktivierung:**
-```bash
-MUSIC_ENABLED=true
-SPOTIFY_API_URL=https://api.spotify.com
-SPOTIFY_ACCESS_TOKEN=dein_access_token
-```
-
-**Access Token erhalten:** https://developer.spotify.com/console/
-
-**Beispiele:**
-- "Spiele Musik von Coldplay"
-- "Nächster Song"
-- "Lautstärke auf 50"
-
----
-
-### Eigenes Plugin erstellen
-
-Erstelle eine YAML-Datei in `backend/integrations/plugins/`:
+Für einfache REST-API-Integrationen ohne eigenen MCP-Server:
 
 ```yaml
 name: mein_plugin
@@ -426,19 +376,7 @@ intents:
         result: "data.result"
 ```
 
-Setze die Umgebungsvariablen in `.env`:
-```bash
-MEIN_PLUGIN_ENABLED=true
-MEIN_PLUGIN_API_URL=https://api.example.com
-MEIN_PLUGIN_API_KEY=dein_key
-```
-
-Starte den Container neu:
-```bash
-docker compose up -d --force-recreate backend
-```
-
-**Fertig!** Keine Code-Änderungen nötig.
+> **Hinweis:** YAML-Plugins nutzen `*_PLUGIN_ENABLED` (z.B. `WEATHER_PLUGIN_ENABLED=true`), um Konflikte mit MCP-Server `*_ENABLED` Variablen zu vermeiden.
 
 ### Plugin-Dokumentation
 

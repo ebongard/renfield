@@ -18,6 +18,9 @@ Renfield unterstützt zwei Methoden zur Verwaltung von Secrets:
 | `openweather_api_key` | OpenWeatherMap API Key | `secrets/openweather_api_key` |
 | `newsapi_key` | NewsAPI Key | `secrets/newsapi_key` |
 | `jellyfin_api_key` | Jellyfin API Key | `secrets/jellyfin_api_key` |
+| `jellyfin_token` | Jellyfin MCP Token (= API Key für MCP-Server) | `secrets/jellyfin_token` |
+| `jellyfin_base_url` | Jellyfin Base URL (für MCP-Server) | `secrets/jellyfin_base_url` |
+| `n8n_api_key` | n8n API Key (für MCP-Server) | `secrets/n8n_api_key` |
 
 ## Produktion einrichten
 
@@ -29,7 +32,7 @@ Renfield unterstützt zwei Methoden zur Verwaltung von Secrets:
 
 Das Script erstellt das `secrets/` Verzeichnis und generiert:
 - **Automatisch**: `postgres_password`, `secret_key`, `default_admin_password`
-- **Interaktiv**: `home_assistant_token`, `openweather_api_key`, `newsapi_key`, `jellyfin_api_key`
+- **Interaktiv**: `home_assistant_token`, `openweather_api_key`, `newsapi_key`, `jellyfin_api_key`, `jellyfin_token`, `jellyfin_base_url`, `n8n_api_key`
 
 Bereits vorhandene Secrets werden nicht überschrieben.
 
@@ -46,6 +49,9 @@ DEFAULT_ADMIN_PASSWORD=...
 OPENWEATHER_API_KEY=...
 NEWSAPI_KEY=...
 JELLYFIN_API_KEY=...
+JELLYFIN_TOKEN=...
+JELLYFIN_BASE_URL=...
+N8N_API_KEY=...
 ```
 
 Nicht-sensitive Konfiguration (URLs, Model-Namen, Feature-Flags) bleibt in `.env`.
@@ -114,6 +120,25 @@ postgres:
   secrets:
     - postgres_password
 ```
+
+### MCP-Server und Docker Secrets
+
+MCP-Server (stdio-Transport via `npx`) benötigen Secrets als Umgebungsvariablen. Da Pydantic `secrets_dir` Secrets nur in Settings-Felder lädt, aber **nicht** in `os.environ` injiziert, übernimmt `mcp_client.py` diese Aufgabe:
+
+```python
+# In MCPManager.load_config():
+# Liest /run/secrets/* und setzt fehlende Variablen in os.environ,
+# damit ${VAR} Substitution in mcp_servers.yaml funktioniert
+# UND stdio-Subprozesse die Secrets erben.
+```
+
+**Betroffene Secrets für MCP-Server:**
+- `openweather_api_key` → Weather MCP (`--apikey ${OPENWEATHER_API_KEY}`)
+- `newsapi_key` → News MCP (via `NEWSAPI_KEY` env)
+- `jellyfin_token` → Jellyfin MCP (via `JELLYFIN_TOKEN` env)
+- `jellyfin_base_url` → Jellyfin MCP (via `JELLYFIN_BASE_URL` env)
+- `n8n_api_key` → n8n MCP (via `N8N_API_KEY` env)
+- `home_assistant_token` → HA MCP (via `HOME_ASSISTANT_TOKEN` auth header)
 
 ## Abwärtskompatibilität
 

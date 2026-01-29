@@ -244,6 +244,22 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     history_lines="\n".join(history_lines)
                 )
 
+        # Load correction examples from semantic feedback (if any exist)
+        correction_examples = ""
+        try:
+            from services.database import AsyncSessionLocal
+            from services.intent_feedback_service import IntentFeedbackService
+            async with AsyncSessionLocal() as feedback_db:
+                feedback_service = IntentFeedbackService(feedback_db)
+                similar_corrections = await feedback_service.find_similar_corrections(
+                    message, feedback_type="intent"
+                )
+                if similar_corrections:
+                    correction_examples = feedback_service.format_as_few_shot(similar_corrections, lang=lang)
+                    logger.info(f"📝 {len(similar_corrections)} correction example(s) injected into intent prompt")
+        except Exception as e:
+            logger.warning(f"⚠️ Intent correction lookup failed: {e}")
+
         # Build the full prompt from externalized template
         prompt = prompt_manager.get(
             "intent", "extraction_prompt", lang=lang,
@@ -252,7 +268,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             history_context=history_context_prompt,
             intent_types=intent_types,
             examples=examples,
-            entity_context=entity_context
+            entity_context=entity_context,
+            correction_examples=correction_examples
         )
         
         try:

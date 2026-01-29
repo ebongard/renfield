@@ -2,6 +2,14 @@
 
 Ein dynamisches, YAML-basiertes Plugin-System für einfache Integration externer Services.
 
+> **Hinweis: MCP vs. YAML-Plugins**
+>
+> Renfield unterstützt zwei Integrationswege:
+> - **MCP-Server** (bevorzugt) — konfiguriert in `config/mcp_servers.yaml`, aktiviert via `*_ENABLED` (z.B. `WEATHER_ENABLED=true`)
+> - **YAML-Plugins** (Legacy) — konfiguriert in `backend/integrations/plugins/`, aktiviert via `*_PLUGIN_ENABLED` (z.B. `WEATHER_PLUGIN_ENABLED=true`)
+>
+> Die Namenskonvention `*_PLUGIN_ENABLED` stellt sicher, dass Plugin- und MCP-Aktivierung unabhängig voneinander steuerbar sind. In Produktion werden in der Regel nur MCP-Server genutzt.
+
 ## 🚀 Quick Start
 
 ### Plugin aktivieren (3 Schritte)
@@ -9,7 +17,7 @@ Ein dynamisches, YAML-basiertes Plugin-System für einfache Integration externer
 1. **YAML-Datei** liegt bereits in `backend/integrations/plugins/` (z.B. `weather.yaml`)
 2. **Umgebungsvariablen** in `.env` setzen:
    ```bash
-   WEATHER_ENABLED=true
+   WEATHER_PLUGIN_ENABLED=true
    OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
    OPENWEATHER_API_KEY=your_api_key_here
    ```
@@ -34,7 +42,7 @@ Ein dynamisches, YAML-basiertes Plugin-System für einfache Integration externer
 
 **Konfiguration:**
 ```bash
-WEATHER_ENABLED=true
+WEATHER_PLUGIN_ENABLED=true
 OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
 OPENWEATHER_API_KEY=<dein_api_key>
 ```
@@ -57,7 +65,7 @@ OPENWEATHER_API_KEY=<dein_api_key>
 
 **Konfiguration:**
 ```bash
-NEWS_ENABLED=true
+NEWS_PLUGIN_ENABLED=true
 NEWSAPI_URL=https://newsapi.org/v2
 NEWSAPI_KEY=<dein_api_key>
 ```
@@ -80,7 +88,7 @@ NEWSAPI_KEY=<dein_api_key>
 
 **Konfiguration:**
 ```bash
-SEARCH_ENABLED=true
+SEARCH_PLUGIN_ENABLED=true
 SEARXNG_API_URL=http://cuda.local:3002
 ```
 
@@ -109,7 +117,7 @@ SEARXNG_API_URL=http://cuda.local:3002
 
 **Konfiguration:**
 ```bash
-MUSIC_ENABLED=true
+MUSIC_PLUGIN_ENABLED=true
 SPOTIFY_API_URL=https://api.spotify.com
 SPOTIFY_ACCESS_TOKEN=<dein_access_token>
 ```
@@ -141,7 +149,7 @@ SPOTIFY_ACCESS_TOKEN=<dein_access_token>
 
 **Konfiguration:**
 ```bash
-JELLYFIN_ENABLED=true
+JELLYFIN_PLUGIN_ENABLED=true
 JELLYFIN_URL=http://192.168.1.123:8096
 JELLYFIN_API_KEY=<dein_api_key>
 JELLYFIN_USER_ID=<deine_user_id>
@@ -414,7 +422,7 @@ docker exec renfield-backend python3 /app/test_performance.py
 ### 1. Naming Conventions
 - **Plugin Name:** lowercase, keine Punkte (`weather`, nicht `Weather.Plugin`)
 - **Intent Name:** `plugin_name.action` (`weather.get_current`)
-- **Env Var:** `UPPERCASE_SNAKE_CASE` (`WEATHER_ENABLED`)
+- **Env Var:** `UPPERCASE_SNAKE_CASE` (`WEATHER_PLUGIN_ENABLED`)
 
 ### 2. Error Messages
 - Schreibe benutzerfreundliche Fehlermeldungen auf Deutsch
@@ -446,7 +454,8 @@ docker exec renfield-backend python3 /app/test_performance.py
 ### API-Keys
 - **NIE** API-Keys direkt ins YAML schreiben
 - **IMMER** Umgebungsvariablen verwenden
-- Keys in `.env` speichern (nicht in Git committen)
+- Keys in `.env` (Entwicklung) oder Docker Secrets (Produktion) speichern
+- Nie in Git committen
 
 ### Validierung
 - Alle Parameter werden automatisch validiert

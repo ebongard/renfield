@@ -207,7 +207,7 @@ class AgentService:
         self.step_timeout = step_timeout or settings.agent_step_timeout
         self.total_timeout = total_timeout or settings.agent_total_timeout
 
-    def _build_agent_prompt(
+    async def _build_agent_prompt(
         self,
         message: str,
         context: AgentContext,
@@ -238,12 +238,29 @@ class AgentService:
         else:
             step_directive = prompt_manager.get("agent", "step_directive_first", lang=lang)
 
+        # Load tool corrections from semantic feedback
+        tool_corrections = ""
+        try:
+            from services.database import AsyncSessionLocal
+            from services.intent_feedback_service import IntentFeedbackService
+            async with AsyncSessionLocal() as feedback_db:
+                service = IntentFeedbackService(feedback_db)
+                similar = await service.find_similar_corrections(
+                    message, feedback_type="agent_tool"
+                )
+                if similar:
+                    tool_corrections = service.format_agent_corrections(similar, lang=lang)
+                    logger.info(f"📝 {len(similar)} tool correction(s) injected into agent prompt")
+        except Exception as e:
+            logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
+
         # Build prompt from externalized template
         return prompt_manager.get(
             "agent", "agent_prompt", lang=lang,
             message=message,
             conv_context=conv_context,
             tools_prompt=tools_prompt,
+            tool_corrections=tool_corrections,
             history_prompt=history_prompt,
             step_directive=step_directive
         )
@@ -301,7 +318,7 @@ class AgentService:
                 return
 
             # Build prompt with accumulated context
-            prompt = self._build_agent_prompt(message, context, conversation_history, lang=lang)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang)
             logger.debug(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars)")
 
             # Check circuit breaker before LLM call

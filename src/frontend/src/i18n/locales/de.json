@@ -639,6 +639,23 @@
       "syncWarning": "{{count}} Gerät(e) konnten nicht synchronisiert werden"
     }
   },
+  "feedback": {
+    "wrongIntent": "Falsch erkannt?",
+    "wrongTool": "Falsches Tool?",
+    "wrongComplexity": "Falsche Einstufung?",
+    "shouldBeComplex": "Hätte Agent verwenden sollen",
+    "shouldBeSimple": "War zu komplex eingestuft",
+    "selectCorrectIntent": "Richtigen Intent wählen:",
+    "selectComplexity": "Richtige Einstufung wählen:",
+    "correctionSaved": "Korrektur gespeichert! Renfield lernt daraus.",
+    "proactiveQuestion": "War das die richtige Zuordnung?",
+    "intentConversation": "Allgemeine Konversation",
+    "intentKnowledge": "Wissensdatenbank",
+    "intentHomeAssistant": "Smart Home",
+    "intentWebSearch": "Websuche",
+    "intentWeather": "Wetter",
+    "intentNews": "Nachrichten"
+  },
   "errors": {
     "generic": "Ein Fehler ist aufgetreten",
     "networkError": "Netzwerkfehler",

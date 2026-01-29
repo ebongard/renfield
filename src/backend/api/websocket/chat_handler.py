@@ -190,7 +190,7 @@ async def websocket_endpoint(
 
             if settings.agent_enabled:
                 from services.complexity_detector import ComplexityDetector
-                if ComplexityDetector.needs_agent(content):
+                if await ComplexityDetector.needs_agent_with_feedback(content):
                     agent_used = True
                     matched_patterns = ComplexityDetector.detect_patterns(content)
                     logger.info(f"🤖 Agent Loop aktiviert für: '{content[:80]}...' (patterns: {matched_patterns})")
@@ -469,7 +469,31 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             }
             if agent_used:
                 done_msg["agent_steps"] = agent_steps_count
+            # Include intent info for frontend feedback UI
+            if intent:
+                done_msg["intent"] = {
+                    "intent": intent.get("intent"),
+                    "confidence": intent.get("confidence", 0),
+                }
             await websocket.send_json(done_msg)
+
+            # Proactive feedback: ask user when action failed or returned empty
+            should_request_feedback = False
+            if intent and intent.get("intent") != "general.conversation":
+                if action_result and (
+                    not action_result.get("success") or action_result.get("empty_result")
+                ):
+                    should_request_feedback = True
+
+            if should_request_feedback:
+                await websocket.send_json({
+                    "type": "intent_feedback_request",
+                    "message_text": content,
+                    "detected_intent": intent.get("intent"),
+                    "confidence": intent.get("confidence", 0),
+                    "feedback_type": "intent",
+                })
+                logger.info(f"📝 Proactive feedback requested for intent: {intent.get('intent')}")
 
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 

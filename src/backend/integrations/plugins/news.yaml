@@ -2,7 +2,7 @@ name: news
 version: 1.0.0
 description: Get news headlines and articles from NewsAPI
 author: Renfield Team
-enabled_var: NEWS_ENABLED
+enabled_var: NEWS_PLUGIN_ENABLED
 
 config:
   url: NEWSAPI_URL
