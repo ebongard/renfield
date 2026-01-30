@@ -62,8 +62,8 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r src/backend/requirements.txt
-          pip install pytest pytest-asyncio pytest-cov flake8 aiosqlite
+          pip install -r src/backend/requirements-test.txt
+          pip install flake8
 
       - name: Lint backend
         run: |
@@ -172,8 +172,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r src/backend/requirements.txt
-          pip install pytest pytest-asyncio aiosqlite
+          pip install -r src/backend/requirements-test.txt
 
       - name: Run integration tests
         env:

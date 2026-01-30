@@ -45,12 +45,10 @@ RUN ARCH=$(uname -m) && \
     fi
 
 # Install remaining Python dependencies
-COPY requirements.txt requirements-test.txt ./
+COPY requirements.txt ./
 # Remove torch/torchaudio from requirements (already installed CPU-only)
-# Install test dependencies too (dev/test image)
 RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" > requirements-filtered.txt \
-    && pip install --no-cache-dir -r requirements-filtered.txt \
-    && pip install --no-cache-dir pytest==7.4.4 pytest-asyncio==0.23.3 pytest-cov==4.1.0 aiosqlite==0.19.0
+    && pip install --no-cache-dir -r requirements-filtered.txt
 
 
 # ============================================================================
