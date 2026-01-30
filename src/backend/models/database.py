@@ -461,6 +461,9 @@ class DocumentChunk(Base):
     section_title = Column(String(512), nullable=True)
     chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, etc.
 
+    # Full-text search vector (populated during ingestion, actual type TSVECTOR via migration)
+    search_vector = Column(Text, nullable=True)
+
     # Additional Metadata (JSON für Flexibilität)
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
 

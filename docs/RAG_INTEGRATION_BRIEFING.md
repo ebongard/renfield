@@ -1,5 +1,7 @@
 # RAG-Integration Briefing für Renfield
 
+> **Status (2026-01-30):** RAG ist vollständig implementiert inkl. Hybrid Search (Dense + BM25 via RRF), Context Window Retrieval, Knowledge Base Sharing (RPBAC) und Admin-Reindex-Endpoint. Dieses Dokument dient als historisches Planungsdokument.
+
 ## Projektübersicht
 
 Renfield ist ein lokales Smart-Home-Assistenzsystem mit Sprach- und Chat-Interface. Es soll um eine RAG-Komponente (Retrieval-Augmented Generation) erweitert werden, um einen lokalen Wissensspeicher mit Dokumenten (PDF, DOCX, etc.) per Chat abfragen zu können.

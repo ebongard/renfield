@@ -176,6 +176,21 @@ class RAGService:
             doc.processed_at = datetime.utcnow()
 
             await self.db.commit()
+
+            # Populate search_vector for Full-Text Search (bulk update)
+            fts_config = settings.rag_hybrid_fts_config
+            await self.db.execute(
+                text("""
+                    UPDATE document_chunks
+                    SET search_vector = to_tsvector(:fts_config, content)
+                    WHERE document_id = :doc_id
+                    AND search_vector IS NULL
+                    AND content IS NOT NULL
+                """),
+                {"doc_id": doc.id, "fts_config": fts_config}
+            )
+            await self.db.commit()
+
             await self.db.refresh(doc)
 
             logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")
@@ -202,6 +217,10 @@ class RAGService:
         """
         Sucht relevante Chunks für eine Anfrage.
 
+        Uses Hybrid Search (Dense + BM25 via RRF) when enabled,
+        otherwise falls back to dense-only search.
+        Optionally expands results with adjacent chunks (Context Window).
+
         Args:
             query: Suchanfrage
             top_k: Anzahl der Ergebnisse (default: settings.rag_top_k)
@@ -221,14 +240,54 @@ class RAGService:
             logger.error(f"Fehler beim Query-Embedding: {e}")
             return []
 
-        # Similarity Search mit pgvector
-        # Cosine Distance: 0 = identisch, 2 = entgegengesetzt
-        # Similarity = 1 - distance (für cosine)
+        # Hybrid Search or Dense-only
+        if settings.rag_hybrid_enabled:
+            candidate_k = top_k * 3  # Over-fetch for RRF fusion
+            dense_results = await self._search_dense(query_embedding, candidate_k, knowledge_base_id)
+            bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id)
+            results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
+            logger.info(
+                f"📚 RAG Hybrid Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"dense={len(dense_results)}, bm25={len(bm25_results)}, fused={len(results)}"
+            )
+        else:
+            results = await self._search_dense(query_embedding, top_k, knowledge_base_id, threshold)
+            logger.info(
+                f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"threshold={threshold}, found={len(results)}"
+            )
 
-        # Raw SQL für pgvector Operationen
+        # Context Window Expansion
+        window_size = min(settings.rag_context_window, settings.rag_context_window_max)
+        if window_size > 0 and results:
+            results = await self._expand_context_window(results, window_size)
+
+        return results
+
+    # --------------------------------------------------------------------------
+    # Dense Search (pgvector cosine similarity)
+    # --------------------------------------------------------------------------
+
+    async def _search_dense(
+        self,
+        query_embedding: List[float],
+        top_k: int,
+        knowledge_base_id: Optional[int] = None,
+        threshold: Optional[float] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Dense vector search using pgvector cosine distance.
+
+        Args:
+            query_embedding: Pre-computed query embedding
+            top_k: Number of results
+            knowledge_base_id: Optional KB filter
+            threshold: Minimum cosine similarity (only applied in non-hybrid mode)
+
+        Returns:
+            List of {chunk, document, similarity}
+        """
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
-
-        # Build query dynamically to avoid asyncpg type inference issues with NULL
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
 
         sql = text(f"""
@@ -260,13 +319,11 @@ class RAGService:
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
 
-        # Ergebnisse formatieren
         results = []
         for row in rows:
             similarity = float(row.similarity) if row.similarity else 0
 
-            # Threshold-Filter
-            if similarity < threshold:
+            if threshold and similarity < threshold:
                 continue
 
             results.append({
@@ -286,8 +343,226 @@ class RAGService:
                 "similarity": round(similarity, 4)
             })
 
-        logger.info(f"📚 RAG Search: query='{query[:50]}', kb_id={knowledge_base_id}, threshold={threshold}, found={len(results)} results (raw rows: {len(rows)})")
         return results
+
+    # --------------------------------------------------------------------------
+    # BM25 Search (PostgreSQL Full-Text Search)
+    # --------------------------------------------------------------------------
+
+    async def _search_bm25(
+        self,
+        query: str,
+        top_k: int,
+        knowledge_base_id: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        BM25-style search using PostgreSQL Full-Text Search.
+
+        Uses plainto_tsquery for natural language input and ts_rank_cd
+        (Cover Density Ranking) which is better for shorter text segments.
+
+        Args:
+            query: Natural language search query
+            top_k: Number of results
+            knowledge_base_id: Optional KB filter
+
+        Returns:
+            List of {chunk, document, similarity} where similarity is ts_rank_cd score
+        """
+        fts_config = settings.rag_hybrid_fts_config
+        kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
+
+        sql = text(f"""
+            SELECT
+                dc.id,
+                dc.document_id,
+                dc.content,
+                dc.chunk_index,
+                dc.page_number,
+                dc.section_title,
+                dc.chunk_type,
+                dc.chunk_metadata,
+                d.filename,
+                d.title as doc_title,
+                ts_rank_cd(dc.search_vector, plainto_tsquery(:fts_config, :query)) as rank
+            FROM document_chunks dc
+            JOIN documents d ON dc.document_id = d.id
+            WHERE d.status = 'completed'
+            AND dc.search_vector IS NOT NULL
+            AND dc.search_vector @@ plainto_tsquery(:fts_config, :query)
+            {kb_filter}
+            ORDER BY rank DESC
+            LIMIT :limit
+        """)
+
+        params = {"query": query, "fts_config": fts_config, "limit": top_k}
+        if knowledge_base_id:
+            params["kb_id"] = knowledge_base_id
+
+        result = await self.db.execute(sql, params)
+        rows = result.fetchall()
+
+        results = []
+        for row in rows:
+            results.append({
+                "chunk": {
+                    "id": row.id,
+                    "content": row.content,
+                    "chunk_index": row.chunk_index,
+                    "page_number": row.page_number,
+                    "section_title": row.section_title,
+                    "chunk_type": row.chunk_type,
+                },
+                "document": {
+                    "id": row.document_id,
+                    "filename": row.filename,
+                    "title": row.doc_title or row.filename
+                },
+                "similarity": round(float(row.rank), 6)
+            })
+
+        return results
+
+    # --------------------------------------------------------------------------
+    # Reciprocal Rank Fusion (RRF)
+    # --------------------------------------------------------------------------
+
+    @staticmethod
+    def _reciprocal_rank_fusion(
+        dense_results: List[Dict[str, Any]],
+        bm25_results: List[Dict[str, Any]],
+        top_k: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Combines dense and BM25 results using Reciprocal Rank Fusion.
+
+        RRF score = sum(weight / (k + rank)) for each retriever.
+        Rank-based (not score-based), robust to different score scales.
+
+        Args:
+            dense_results: Results from dense vector search
+            bm25_results: Results from BM25 full-text search
+            top_k: Number of final results
+
+        Returns:
+            Fused and re-ranked results
+        """
+        k = settings.rag_hybrid_rrf_k
+        dense_weight = settings.rag_hybrid_dense_weight
+        bm25_weight = settings.rag_hybrid_bm25_weight
+
+        # Collect scores by chunk ID
+        scores: Dict[int, float] = {}
+        chunk_data: Dict[int, Dict[str, Any]] = {}
+
+        for rank, result in enumerate(dense_results):
+            chunk_id = result["chunk"]["id"]
+            scores[chunk_id] = scores.get(chunk_id, 0) + dense_weight / (k + rank + 1)
+            chunk_data[chunk_id] = result
+
+        for rank, result in enumerate(bm25_results):
+            chunk_id = result["chunk"]["id"]
+            scores[chunk_id] = scores.get(chunk_id, 0) + bm25_weight / (k + rank + 1)
+            if chunk_id not in chunk_data:
+                chunk_data[chunk_id] = result
+
+        # Sort by fused score (descending) and take top_k
+        sorted_ids = sorted(scores.keys(), key=lambda cid: scores[cid], reverse=True)[:top_k]
+
+        results = []
+        for chunk_id in sorted_ids:
+            entry = chunk_data[chunk_id].copy()
+            entry["similarity"] = round(scores[chunk_id], 6)
+            results.append(entry)
+
+        return results
+
+    # --------------------------------------------------------------------------
+    # Context Window Expansion
+    # --------------------------------------------------------------------------
+
+    async def _expand_context_window(
+        self,
+        results: List[Dict[str, Any]],
+        window_size: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Expands each result with adjacent chunks from the same document.
+
+        For each hit chunk with chunk_index=N, fetches chunks N-window..N+window
+        and merges their content. Deduplicates when adjacent chunks are both hits.
+
+        Args:
+            results: Search results to expand
+            window_size: Number of adjacent chunks per direction
+
+        Returns:
+            Results with expanded content
+        """
+        if not results:
+            return results
+
+        # Collect (document_id, chunk_index) pairs for all results
+        hit_keys = set()
+        for r in results:
+            hit_keys.add((r["document"]["id"], r["chunk"]["chunk_index"]))
+
+        expanded = []
+        seen_chunks = set()  # Track already-included chunk IDs to avoid duplicates
+
+        for result in results:
+            chunk_id = result["chunk"]["id"]
+            if chunk_id in seen_chunks:
+                continue
+
+            doc_id = result["document"]["id"]
+            center_index = result["chunk"]["chunk_index"]
+            min_index = max(0, center_index - window_size)
+            max_index = center_index + window_size
+
+            # Fetch adjacent chunks
+            sql = text("""
+                SELECT id, content, chunk_index, page_number, section_title, chunk_type
+                FROM document_chunks
+                WHERE document_id = :doc_id
+                AND chunk_index >= :min_idx
+                AND chunk_index <= :max_idx
+                ORDER BY chunk_index ASC
+            """)
+
+            adj_result = await self.db.execute(sql, {
+                "doc_id": doc_id,
+                "min_idx": min_index,
+                "max_idx": max_index
+            })
+            adjacent_rows = adj_result.fetchall()
+
+            # Merge content from adjacent chunks
+            merged_content_parts = []
+            for row in adjacent_rows:
+                if row.content:
+                    merged_content_parts.append(row.content)
+                # Mark all included chunks as seen
+                seen_chunks.add(row.id)
+
+            merged_content = "\n\n".join(merged_content_parts) if merged_content_parts else result["chunk"]["content"]
+
+            # Build expanded result (preserve original metadata)
+            expanded_result = {
+                "chunk": {
+                    "id": result["chunk"]["id"],
+                    "content": merged_content,
+                    "chunk_index": result["chunk"]["chunk_index"],
+                    "page_number": result["chunk"]["page_number"],
+                    "section_title": result["chunk"]["section_title"],
+                    "chunk_type": result["chunk"]["chunk_type"],
+                },
+                "document": result["document"],
+                "similarity": result["similarity"]
+            }
+            expanded.append(expanded_result)
+
+        return expanded
 
     async def get_context(
         self,
@@ -475,6 +750,30 @@ class RAGService:
     # ==========================================================================
     # Utility Methods
     # ==========================================================================
+
+    async def reindex_fts(self) -> Dict[str, Any]:
+        """
+        Re-populates search_vector for all document chunks.
+
+        Useful after changing the FTS config (e.g. simple → german)
+        or for backfilling after migration.
+
+        Returns:
+            Dict with updated_count
+        """
+        fts_config = settings.rag_hybrid_fts_config
+        result = await self.db.execute(
+            text("""
+                UPDATE document_chunks
+                SET search_vector = to_tsvector(:fts_config, content)
+                WHERE content IS NOT NULL
+            """),
+            {"fts_config": fts_config}
+        )
+        await self.db.commit()
+        updated = result.rowcount
+        logger.info(f"🔄 FTS Reindex: updated {updated} chunks with config '{fts_config}'")
+        return {"updated_count": updated, "fts_config": fts_config}
 
     async def reindex_document(self, document_id: int) -> Document:
         """

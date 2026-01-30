@@ -689,6 +689,28 @@ async def get_knowledge_stats(
 # Model Status
 # =============================================================================
 
+@router.post("/reindex-fts")
+async def reindex_fts(
+    rag: RAGService = Depends(get_rag_service),
+    user: Optional[User] = Depends(get_optional_user)
+):
+    """
+    Re-populates search_vector (tsvector) for all document chunks.
+
+    Use after changing FTS config or to backfill after migration.
+    Admin-only when auth is enabled.
+    """
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_ALL):
+            raise HTTPException(status_code=403, detail="Admin permission required: kb.all")
+
+    result = await rag.reindex_fts()
+    return result
+
+
 @router.get("/models/status")
 async def get_model_status():
     """Prüft, ob die für RAG benötigten Modelle verfügbar sind"""

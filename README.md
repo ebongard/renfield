@@ -434,10 +434,13 @@ Renfield kann Dokumente verarbeiten und als Wissensbasis für kontextbasierte An
 1. **Dokument hochladen** → Automatische Verarbeitung mit IBM Docling
 2. **Chunking** → Text wird in semantische Abschnitte aufgeteilt
 3. **Embedding** → Jeder Chunk wird mit nomic-embed-text vektorisiert
-4. **Suche** → Semantische Ähnlichkeitssuche mit pgvector
+4. **Hybrid Search** → Dense Embeddings (pgvector) + BM25 Full-Text Search (PostgreSQL tsvector), kombiniert via Reciprocal Rank Fusion (RRF)
+5. **Context Window** → Benachbarte Chunks werden automatisch zum Treffer hinzugefügt
 
 ### Features
 
+- **Hybrid Search** - Dense + BM25 für semantische UND keyword-basierte Suche
+- **Context Window** - Erweitert Treffer-Chunks um benachbarte Abschnitte
 - **Knowledge Bases** - Organisiere Dokumente in thematischen Sammlungen
 - **Duplikat-Erkennung** - SHA256-Hash verhindert doppelte Uploads
 - **Follow-up-Fragen** - RAG-Kontext bleibt für Nachfragen erhalten
@@ -460,6 +463,15 @@ RAG_CHUNK_SIZE=512
 RAG_CHUNK_OVERLAP=50
 RAG_TOP_K=5
 RAG_SIMILARITY_THRESHOLD=0.4
+
+# Hybrid Search (Dense + BM25 via RRF)
+RAG_HYBRID_ENABLED=true
+RAG_HYBRID_BM25_WEIGHT=0.3
+RAG_HYBRID_DENSE_WEIGHT=0.7
+RAG_HYBRID_FTS_CONFIG=simple       # simple/german/english
+
+# Context Window
+RAG_CONTEXT_WINDOW=1               # 0=deaktiviert
 ```
 
 ## Entwicklung
@@ -609,7 +621,8 @@ server:
 - `POST /api/knowledge/upload` - Dokument hochladen
 - `GET /api/knowledge/documents` - Dokumente auflisten
 - `DELETE /api/knowledge/documents/{id}` - Dokument löschen
-- `POST /api/knowledge/search` - Semantische Suche
+- `POST /api/knowledge/search` - Hybrid Search (Dense + BM25)
+- `POST /api/knowledge/reindex-fts` - Full-Text-Search Vektoren neu aufbauen (Admin)
 - `GET /api/knowledge/bases` - Knowledge Bases auflisten (gefiltert nach Zugriff)
 - `POST /api/knowledge/bases` - Knowledge Base erstellen
 - `DELETE /api/knowledge/bases/{id}` - Knowledge Base löschen

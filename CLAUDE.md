@@ -1197,6 +1197,13 @@ All configuration is in `.env` and loaded via `src/backend/utils/config.py` usin
 - `SPEAKER_RECOGNITION_THRESHOLD` - Similarity threshold for identification (default: `0.25`)
 - `SPEAKER_AUTO_ENROLL` - Auto-create profiles for unknown speakers (default: `true`)
 - `SPEAKER_CONTINUOUS_LEARNING` - Add embeddings on each interaction (default: `true`)
+- `RAG_HYBRID_ENABLED` - Enable Hybrid Search: Dense + BM25 via RRF (default: `true`)
+- `RAG_HYBRID_BM25_WEIGHT` - BM25 weight in Reciprocal Rank Fusion (default: `0.3`)
+- `RAG_HYBRID_DENSE_WEIGHT` - Dense weight in RRF (default: `0.7`)
+- `RAG_HYBRID_RRF_K` - RRF constant k (default: `60`)
+- `RAG_HYBRID_FTS_CONFIG` - PostgreSQL FTS config: simple/german/english (default: `simple`)
+- `RAG_CONTEXT_WINDOW` - Adjacent chunks per direction for context expansion, 0=disabled (default: `1`)
+- `RAG_CONTEXT_WINDOW_MAX` - Maximum context window size (default: `3`)
 - `AGENT_ENABLED` - Enable ReAct Agent Loop for multi-step queries (default: `false`)
 - `AGENT_MAX_STEPS` - Max reasoning steps per request (default: `5`)
 - `AGENT_STEP_TIMEOUT` - Timeout per LLM call in seconds (default: `30.0`)
@@ -1461,6 +1468,7 @@ tests/
 | `test_agent_tools.py` | AgentToolRegistry (MCP tools, plugin tools, prompt generation) |
 | `test_agent_service.py` | AgentService loop, JSON parsing, timeouts, error handling, WebSocket messages |
 | `test_intent_feedback.py` | IntentFeedbackService CRUD, format, complexity override, Feedback API, ComplexityDetector with feedback |
+| `test_rag_hybrid_search.py` | RRF fusion, context window expansion, hybrid/dense search, FTS reindex, config defaults |
 
 ### Running Tests
 

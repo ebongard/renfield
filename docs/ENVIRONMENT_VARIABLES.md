@@ -8,6 +8,7 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 
 - [Naming Conventions](#naming-conventions)
 - [Core System](#core-system)
+- [RAG (Wissensspeicher)](#rag-wissensspeicher)
 - [Audio Output Routing](#audio-output-routing)
 - [Integrationen](#integrationen)
 - [MCP Server Configuration](#mcp-server-configuration)
@@ -194,6 +195,59 @@ Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik un
 - "Schalte das Licht ein und dann stelle die Heizung auf 22 Grad"
 
 Einfache Anfragen ("Schalte das Licht ein") nutzen weiterhin den schnellen Single-Intent-Pfad.
+
+---
+
+### RAG (Wissensspeicher)
+
+```bash
+# RAG aktivieren
+RAG_ENABLED=true
+
+# Chunking
+RAG_CHUNK_SIZE=512               # Token-Limit pro Chunk
+RAG_CHUNK_OVERLAP=50             # Überlappung zwischen Chunks
+RAG_TOP_K=5                      # Anzahl der relevantesten Chunks
+RAG_SIMILARITY_THRESHOLD=0.4     # Minimum Similarity für Dense-only (0-1)
+
+# Hybrid Search (Dense + BM25 via Reciprocal Rank Fusion)
+RAG_HYBRID_ENABLED=true          # Hybrid Search aktivieren
+RAG_HYBRID_BM25_WEIGHT=0.3      # BM25-Gewicht im RRF (0.0-1.0)
+RAG_HYBRID_DENSE_WEIGHT=0.7     # Dense-Gewicht im RRF (0.0-1.0)
+RAG_HYBRID_RRF_K=60             # RRF-Konstante k (Standard: 60)
+RAG_HYBRID_FTS_CONFIG=simple    # PostgreSQL FTS: simple/german/english
+
+# Context Window (benachbarte Chunks zum Treffer hinzufügen)
+RAG_CONTEXT_WINDOW=1             # Chunks pro Richtung (0=deaktiviert)
+RAG_CONTEXT_WINDOW_MAX=3         # Maximale Window-Größe
+```
+
+**Defaults:**
+- `RAG_ENABLED`: `true`
+- `RAG_CHUNK_SIZE`: `512`
+- `RAG_CHUNK_OVERLAP`: `50`
+- `RAG_TOP_K`: `5`
+- `RAG_SIMILARITY_THRESHOLD`: `0.4`
+- `RAG_HYBRID_ENABLED`: `true`
+- `RAG_HYBRID_BM25_WEIGHT`: `0.3`
+- `RAG_HYBRID_DENSE_WEIGHT`: `0.7`
+- `RAG_HYBRID_RRF_K`: `60`
+- `RAG_HYBRID_FTS_CONFIG`: `simple`
+- `RAG_CONTEXT_WINDOW`: `1`
+- `RAG_CONTEXT_WINDOW_MAX`: `3`
+
+**Hybrid Search:**
+Kombiniert Dense-Embeddings (pgvector Cosine Similarity) mit BM25 Full-Text Search (PostgreSQL tsvector) via Reciprocal Rank Fusion (RRF). Dense findet semantisch ähnliche Chunks, BM25 findet exakte Keyword-Matches. RRF kombiniert beide Rankings robust und score-unabhängig.
+
+**FTS Config:**
+- `simple` — Sprachunabhängig, kein Stemming (Standard)
+- `german` — Deutsch Stemming (z.B. "Häuser" → "Haus")
+- `english` — English Stemming
+
+Nach Änderung der FTS-Config: `POST /api/knowledge/reindex-fts` ausführen.
+
+**Context Window:**
+Erweitert jeden Treffer-Chunk um benachbarte Chunks aus demselben Dokument für mehr Kontext. Bei `RAG_CONTEXT_WINDOW=1` wird ein Chunk links und rechts hinzugefügt. Deduplizierung verhindert doppelte Chunks wenn benachbarte Chunks beide Treffer sind.
 
 ---
 
@@ -922,6 +976,20 @@ HOME_ASSISTANT_TOKEN=eyJhbGci...
 N8N_WEBHOOK_URL=http://192.168.1.78:5678/webhook
 
 FRIGATE_URL=http://frigate.local:5000
+
+# -----------------------------------------------------------------------------
+# RAG (Wissensspeicher)
+# -----------------------------------------------------------------------------
+RAG_ENABLED=true
+# RAG_CHUNK_SIZE=512
+# RAG_CHUNK_OVERLAP=50
+# RAG_TOP_K=5
+# RAG_SIMILARITY_THRESHOLD=0.4
+RAG_HYBRID_ENABLED=true              # Dense + BM25 via RRF
+# RAG_HYBRID_BM25_WEIGHT=0.3
+# RAG_HYBRID_DENSE_WEIGHT=0.7
+# RAG_HYBRID_FTS_CONFIG=simple       # simple/german/english
+RAG_CONTEXT_WINDOW=1                 # Benachbarte Chunks pro Richtung
 
 # -----------------------------------------------------------------------------
 # Agent Loop (ReAct — Multi-Step Tool Chaining)

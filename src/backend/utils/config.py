@@ -123,6 +123,17 @@ class Settings(BaseSettings):
     rag_top_k: int = 5                  # Anzahl der relevantesten Chunks
     rag_similarity_threshold: float = 0.4  # Minimum Similarity für Ergebnisse (0-1)
 
+    # Hybrid Search (Dense + BM25 via PostgreSQL Full-Text Search)
+    rag_hybrid_enabled: bool = True           # Enable hybrid search (BM25 + dense)
+    rag_hybrid_bm25_weight: float = 0.3       # Weight for BM25 in RRF (0.0-1.0)
+    rag_hybrid_dense_weight: float = 0.7      # Weight for dense search in RRF (0.0-1.0)
+    rag_hybrid_rrf_k: int = 60                # RRF constant k (standard: 60)
+    rag_hybrid_fts_config: str = "simple"     # PostgreSQL FTS config: simple/german/english
+
+    # Context Window Retrieval
+    rag_context_window: int = 1               # Adjacent chunks per direction (0=disabled)
+    rag_context_window_max: int = 3           # Maximum allowed window size
+
     # Document Upload
     upload_dir: str = "/app/data/uploads"
     max_file_size_mb: int = 50
