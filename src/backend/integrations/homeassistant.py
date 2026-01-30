@@ -7,13 +7,19 @@ for Area Registry operations (listing, creating, updating areas).
 import httpx
 import json
 import asyncio
+import time
 from typing import Dict, List, Optional, Any
 from loguru import logger
 from utils.config import settings
 
 class HomeAssistantClient:
     """Client für Home Assistant REST API"""
-    
+
+    # Class-level entity map cache (shared across instances, same HA backend)
+    _entity_map_cache: Optional[List[Dict]] = None
+    _entity_map_cache_time: float = 0
+    _ENTITY_MAP_TTL: float = 60.0  # seconds
+
     def __init__(self):
         self.base_url = settings.home_assistant_url
         self.token = settings.home_assistant_token
@@ -264,11 +270,21 @@ class HomeAssistantClient:
 
     async def get_entity_map(self) -> List[Dict]:
         """
-        Erstelle eine Map aller Entities für Intent Recognition
+        Erstelle eine Map aller Entities für Intent Recognition.
+
+        Uses a class-level TTL cache (60s) to avoid hitting the HA REST API
+        on every intent extraction call.
 
         Returns:
             List[Dict]: Liste mit entity_id, friendly_name, domain, room (falls vorhanden)
         """
+        # Check class-level cache
+        now = time.time()
+        cls = HomeAssistantClient
+        if cls._entity_map_cache is not None and (now - cls._entity_map_cache_time) < cls._ENTITY_MAP_TTL:
+            logger.debug(f"Entity map cache hit ({len(cls._entity_map_cache)} entities)")
+            return cls._entity_map_cache
+
         try:
             states = await self.get_states()
             if not states:
@@ -276,6 +292,13 @@ class HomeAssistantClient:
                 return []
 
             entity_map = []
+
+            # Use a set for O(1) domain lookups
+            relevant_domains = {
+                "light", "switch", "binary_sensor", "sensor",
+                "climate", "cover", "lock", "fan", "media_player",
+                "vacuum", "camera", "alarm_control_panel", "scene"
+            }
 
             for state in states:
                 entity_id = state.get("entity_id", "")
@@ -285,13 +308,6 @@ class HomeAssistantClient:
 
                 # Extrahiere Raum aus friendly_name oder entity_id
                 room = self._extract_room(entity_id, friendly_name)
-
-                # Nur relevante Domains (steuerbare/abfragbare Entities)
-                relevant_domains = [
-                    "light", "switch", "binary_sensor", "sensor",
-                    "climate", "cover", "lock", "fan", "media_player",
-                    "vacuum", "camera", "alarm_control_panel", "scene"
-                ]
 
                 if domain in relevant_domains:
                     entity_map.append({
@@ -303,6 +319,11 @@ class HomeAssistantClient:
                     })
 
             logger.info(f"✅ {len(entity_map)} relevante Entities für Intent Recognition geladen")
+
+            # Update class-level cache
+            cls._entity_map_cache = entity_map
+            cls._entity_map_cache_time = time.time()
+
             return entity_map
 
         except Exception as e:

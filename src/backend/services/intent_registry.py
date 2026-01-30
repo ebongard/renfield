@@ -136,14 +136,24 @@ class IntentRegistry:
         self._mcp_tools: List[Dict] = []
         self._mcp_examples: Dict[str, Dict[str, List[str]]] = {}  # server_name → {"de": [...], "en": [...]}
         self._mcp_prompt_tools: Dict[str, List[str]] = {}  # server_name → [tool_name, ...]
+        # Prompt cache: invalidated when tools/plugins change
+        self._prompt_cache: Dict[str, str] = {}  # key → cached output
+        self._examples_cache: Dict[str, str] = {}  # key → cached output
+
+    def _invalidate_prompt_cache(self) -> None:
+        """Clear cached prompt outputs when configuration changes."""
+        self._prompt_cache.clear()
+        self._examples_cache.clear()
 
     def set_plugin_registry(self, registry: "PluginRegistry") -> None:
         """Set the plugin registry for plugin intent access."""
         self._plugin_registry = registry
+        self._invalidate_prompt_cache()
 
     def set_mcp_tools(self, tools: List[Dict]) -> None:
         """Set available MCP tools for intent prompt."""
         self._mcp_tools = tools
+        self._invalidate_prompt_cache()
 
     def set_mcp_examples(self, examples: Dict[str, Dict[str, List[str]]]) -> None:
         """Set MCP server examples from YAML config.
@@ -152,6 +162,7 @@ class IntentRegistry:
             examples: Dict mapping server name to {"de": [...], "en": [...]}
         """
         self._mcp_examples = examples
+        self._invalidate_prompt_cache()
 
     def set_mcp_prompt_tools(self, prompt_tools: Dict[str, List[str]]) -> None:
         """Set per-server prompt_tools filter from YAML config.
@@ -162,6 +173,7 @@ class IntentRegistry:
                           Servers without an entry show all their tools.
         """
         self._mcp_prompt_tools = prompt_tools
+        self._invalidate_prompt_cache()
 
     def get_enabled_integrations(self) -> List[IntegrationIntents]:
         """Get list of enabled core integrations."""
@@ -199,12 +211,18 @@ class IntentRegistry:
         """
         Build the dynamic intent prompt section based on enabled integrations.
 
+        Uses an in-memory cache that is invalidated when tools/plugins change.
+
         Args:
             lang: Language for descriptions (de/en)
 
         Returns:
             Formatted prompt text listing all available intents
         """
+        cache_key = f"intent_prompt_{lang}"
+        if cache_key in self._prompt_cache:
+            return self._prompt_cache[cache_key]
+
         sections = []
 
         # Core integrations
@@ -280,11 +298,15 @@ class IntentRegistry:
 
             sections.append("\n".join(section_lines))
 
-        return "\n\n".join(sections)
+        result = "\n\n".join(sections)
+        self._prompt_cache[cache_key] = result
+        return result
 
     def build_examples_prompt(self, lang: str = "de", max_examples: int = 15) -> str:
         """
         Build examples section for the intent prompt.
+
+        Uses an in-memory cache that is invalidated when tools/plugins change.
 
         Args:
             lang: Language for examples (de/en)
@@ -293,6 +315,10 @@ class IntentRegistry:
         Returns:
             Formatted examples text
         """
+        cache_key = f"examples_{lang}_{max_examples}"
+        if cache_key in self._examples_cache:
+            return self._examples_cache[cache_key]
+
         examples = []
 
         for integration in self.get_enabled_integrations():
@@ -314,6 +340,7 @@ class IntentRegistry:
                     break
 
         if not examples:
+            self._examples_cache[cache_key] = ""
             return ""
 
         header = "EXAMPLES:" if lang == "en" else "BEISPIELE:"
@@ -323,7 +350,9 @@ class IntentRegistry:
             # Simplified JSON representation
             lines.append(f'{i}. "{example}" → {{"intent":"{intent_name}",...}}')
 
-        return "\n".join(lines)
+        result = "\n".join(lines)
+        self._examples_cache[cache_key] = result
+        return result
 
     def _build_mcp_examples(self, lang: str = "de") -> List[tuple]:
         """Generate example queries for MCP tools from YAML-configured examples.

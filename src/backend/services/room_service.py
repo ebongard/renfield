@@ -570,7 +570,7 @@ class RoomService:
                 RoomDevice.is_stationary == True
             )
         )
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def get_room_context_by_ip(self, ip_address: str) -> Optional[Dict[str, Any]]:
         """

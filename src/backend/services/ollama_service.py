@@ -4,6 +4,7 @@ Ollama Service - Lokales LLM
 Provides LLM interaction with multilingual support (de/en).
 Language can be specified per-call or defaults to system setting.
 """
+import asyncio
 import ollama
 from typing import AsyncGenerator, List, Dict, Optional, TYPE_CHECKING
 
@@ -195,15 +196,18 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         """
         lang = lang or self.default_lang
 
-        # Lade echte Entity Map von Home Assistant mit Room-Priorisierung
-        entity_context = await self._build_entity_context(message, room_context)
-
         # Build dynamic intent types from IntentRegistry
         from services.intent_registry import intent_registry
 
         # Set plugin registry if provided (for dynamic plugin intents)
         if plugin_registry:
             intent_registry.set_plugin_registry(plugin_registry)
+
+        # Run entity context + correction lookup in parallel (both are I/O-bound)
+        entity_context, correction_examples = await asyncio.gather(
+            self._build_entity_context(message, room_context),
+            self._find_correction_examples(message, lang),
+        )
 
         # Build intent types and examples dynamically
         intent_types = intent_registry.build_intent_prompt(lang=lang)
@@ -244,22 +248,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     history_lines="\n".join(history_lines)
                 )
 
-        # Load correction examples from semantic feedback (if any exist)
-        correction_examples = ""
-        try:
-            from services.database import AsyncSessionLocal
-            from services.intent_feedback_service import IntentFeedbackService
-            async with AsyncSessionLocal() as feedback_db:
-                feedback_service = IntentFeedbackService(feedback_db)
-                similar_corrections = await feedback_service.find_similar_corrections(
-                    message, feedback_type="intent"
-                )
-                if similar_corrections:
-                    correction_examples = feedback_service.format_as_few_shot(similar_corrections, lang=lang)
-                    logger.info(f"📝 {len(similar_corrections)} correction example(s) injected into intent prompt")
-        except Exception as e:
-            logger.warning(f"⚠️ Intent correction lookup failed: {e}")
-
         # Build the full prompt from externalized template
         prompt = prompt_manager.get(
             "intent", "extraction_prompt", lang=lang,
@@ -288,23 +276,39 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 }
             ]
 
+            llm_call_options = {
+                "temperature": llm_options.get("temperature", 0.0),
+                "top_p": llm_options.get("top_p", 0.1),
+                "num_predict": llm_options.get("num_predict", 300)
+            }
+
+            prompt_length = len(json_system_message) + len(prompt)
+            logger.debug(f"Intent prompt length: ~{prompt_length} chars")
+
             response_data = await self.client.chat(
                 model=self.model,
                 messages=messages,
-                options={
-                    "temperature": llm_options.get("temperature", 0.0),
-                    "top_p": llm_options.get("top_p", 0.1),
-                    "num_predict": llm_options.get("num_predict", 300)
-                }
+                options=llm_call_options
             )
             # ollama>=0.4.0 uses Pydantic models
             response = response_data.message.content
+
+            # Retry once on empty response (model may have failed silently)
+            if not response or not response.strip():
+                logger.warning("⚠️ LLM returned empty response, retrying with higher num_predict...")
+                retry_options = {**llm_call_options, "num_predict": 500}
+                response_data = await self.client.chat(
+                    model=self.model,
+                    messages=messages,
+                    options=retry_options
+                )
+                response = response_data.message.content
 
             # Robuste JSON-Extraktion
             import json
             import re
 
-            logger.debug(f"Raw response: {response[:200]}")
+            logger.debug(f"Raw response: {response[:200] if response else '(empty)'}")
             
             # Entferne Markdown-Code-Blocks
             response = response.strip()
@@ -535,6 +539,34 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     # Normalisiere Raumnamen (entferne Umlaute für Matching)
                     current_room_normalized = current_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
 
+            # Pre-compute message words as a set for O(1) lookups
+            message_words = {w for w in message_lower.split() if len(w) > 2}
+
+            # Pre-compute device keyword matches: which domains are relevant for this message?
+            device_keywords = {
+                "fenster": ["binary_sensor", "sensor"],
+                "tür": ["binary_sensor"],
+                "licht": ["light"],
+                "lampe": ["light"],
+                "schalter": ["switch"],
+                "heizung": ["climate"],
+                "thermostat": ["climate"],
+                "rolladen": ["cover"],
+                "jalousie": ["cover"],
+                "mediaplayer": ["media_player"],
+                "player": ["media_player"],
+                "fernseher": ["media_player"],
+                "tv": ["media_player"],
+                "musik": ["media_player"],
+                "spotify": ["media_player"],
+                "radio": ["media_player"]
+            }
+            # Build a set of domains that match keywords in the message (computed once)
+            matched_domains = set()
+            for keyword, domains in device_keywords.items():
+                if keyword in message_lower:
+                    matched_domains.update(domains)
+
             # Filtere relevante Entities basierend auf Message
             relevant_entities = []
 
@@ -554,35 +586,16 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     if entity_room in message_lower:
                         relevance_score += 10
 
-                # Friendly Name Match
+                # Friendly Name Match — set intersection instead of O(n*m) loop
                 friendly_name_lower = (entity.get("friendly_name") or "").lower()
-                for word in message_lower.split():
-                    if len(word) > 2 and word in friendly_name_lower:
-                        relevance_score += 5
+                friendly_words = set(friendly_name_lower.split())
+                matches = message_words & friendly_words
+                if matches:
+                    relevance_score += 5 * len(matches)
 
-                # Device-Type Match (fenster, licht, etc.)
-                device_keywords = {
-                    "fenster": ["binary_sensor", "sensor"],
-                    "tür": ["binary_sensor"],
-                    "licht": ["light"],
-                    "lampe": ["light"],
-                    "schalter": ["switch"],
-                    "heizung": ["climate"],
-                    "thermostat": ["climate"],
-                    "rolladen": ["cover"],
-                    "jalousie": ["cover"],
-                    "mediaplayer": ["media_player"],
-                    "player": ["media_player"],
-                    "fernseher": ["media_player"],
-                    "tv": ["media_player"],
-                    "musik": ["media_player"],
-                    "spotify": ["media_player"],
-                    "radio": ["media_player"]
-                }
-
-                for keyword, domains in device_keywords.items():
-                    if keyword in message_lower and entity.get("domain") in domains:
-                        relevance_score += 8
+                # Device-Type Match — O(1) set lookup instead of iterating all keywords
+                if entity.get("domain") in matched_domains:
+                    relevance_score += 8
 
                 # Füge Entity hinzu wenn relevant
                 if relevance_score > 0:
@@ -631,6 +644,28 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             logger.error(f"❌ Fehler beim Erstellen des Entity-Kontexts: {e}")
             return "VERFÜGBARE ENTITIES: (Fehler beim Laden)"
+
+    async def _find_correction_examples(self, message: str, lang: str) -> str:
+        """
+        Load correction examples from semantic feedback (if any exist).
+
+        Runs as a parallel task alongside _build_entity_context().
+        """
+        try:
+            from services.database import AsyncSessionLocal
+            from services.intent_feedback_service import IntentFeedbackService
+            async with AsyncSessionLocal() as feedback_db:
+                feedback_service = IntentFeedbackService(feedback_db)
+                similar_corrections = await feedback_service.find_similar_corrections(
+                    message, feedback_type="intent"
+                )
+                if similar_corrections:
+                    result = feedback_service.format_as_few_shot(similar_corrections, lang=lang)
+                    logger.info(f"📝 {len(similar_corrections)} correction example(s) injected into intent prompt")
+                    return result
+        except Exception as e:
+            logger.warning(f"⚠️ Intent correction lookup failed: {e}")
+        return ""
 
     async def _get_ha_keywords(self) -> set:
         """Hole dynamische Keywords von Home Assistant"""
