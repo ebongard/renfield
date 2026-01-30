@@ -26,20 +26,21 @@
 #   prompt_tools: [tool_name_1, tool_name_2]
 
 servers:
-  # --- OpenWeatherMap MCP Server ---
+  # --- Open-Meteo MCP Server ---
   # Replaces: plugins/weather.yaml
-  # npm: @tristau/openweathermap-mcp
-  # Requires: OPENWEATHER_API_KEY env var
+  # npm: open-meteo-mcp-server
+  # No API key required — uses the free Open-Meteo API
   - name: weather
     transport: stdio
     command: npx
-    args: ["-y", "@tristau/openweathermap-mcp", "--apikey", "${OPENWEATHER_API_KEY}"]
+    args: ["-y", "open-meteo-mcp-server"]
     enabled: "${WEATHER_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.weather.get_daily_forecast
+    example_intent: mcp.weather.weather_forecast
+    # Only show weather_forecast in prompt — geocoding is handled
+    # automatically by _geocode_location_arguments() in mcp_client.py
     prompt_tools:
-      - get_current_weather
-      - get_daily_forecast
+      - weather_forecast
     examples:
       de:
         - "Wie wird das Wetter morgen?"

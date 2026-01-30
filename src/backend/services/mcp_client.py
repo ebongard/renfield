@@ -166,6 +166,157 @@ class TokenBucketRateLimiter:
         self.last_update = time.monotonic()
 
 
+def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
+    """
+    Coerce LLM-produced flat arguments to match nested JSON schemas.
+
+    Handles two common mismatches:
+    1. Flat string → nested object: LLM produces {"location": "Berlin"} but schema
+       expects {"location": {"city": "Berlin"}}. Wraps using first string property.
+    2. Location string → lat/lon: LLM produces {"location": "Berlin"} but schema
+       expects {"latitude": number, "longitude": number}. Drops the location key
+       (geocoding is handled async by _geocode_location_arguments).
+
+    Returns:
+        Coerced copy of arguments (original is not mutated).
+    """
+    if not input_schema:
+        return arguments
+
+    properties = input_schema.get("properties", {})
+    if not properties:
+        return arguments
+
+    coerced = dict(arguments)
+    for key, value in arguments.items():
+        if not isinstance(value, str):
+            continue
+        prop_schema = properties.get(key, {})
+        if prop_schema.get("type") == "object":
+            # Value is a string but schema expects an object — wrap it
+            nested_props = prop_schema.get("properties", {})
+            target_field = None
+            for nested_key, nested_schema in nested_props.items():
+                if nested_schema.get("type") == "string":
+                    target_field = nested_key
+                    break
+            if target_field:
+                logger.info(
+                    f"🔄 Coercing '{key}': \"{value}\" → {{\"{target_field}\": \"{value}\"}}"
+                )
+                coerced[key] = {target_field: value}
+        elif key == "location" and key not in properties:
+            # LLM produced a "location" key but schema has no such property.
+            # This is kept for _geocode_location_arguments to handle.
+            pass
+
+    return coerced
+
+
+async def _geocode_location_arguments(arguments: Dict, input_schema: Dict) -> Dict:
+    """
+    Auto-geocode when LLM provides a location name but tool needs lat/lon.
+
+    The LLM often extracts {"location": "Berlin"} for weather tools, but tools
+    like Open-Meteo require {"latitude": 52.52, "longitude": 13.405}.
+    This function detects the mismatch and resolves it via the Open-Meteo
+    geocoding API (free, no key required).
+
+    Returns:
+        Arguments with location resolved to latitude/longitude if applicable.
+    """
+    if not input_schema:
+        return arguments
+
+    properties = input_schema.get("properties", {})
+    required = set(input_schema.get("required", []))
+
+    # Check: does schema require lat/lon but LLM provided a location string?
+    has_lat = "latitude" in properties
+    has_lon = "longitude" in properties
+    location_value = arguments.get("location")
+
+    if not (has_lat and has_lon and isinstance(location_value, str)):
+        return arguments
+
+    # Geocode using Open-Meteo API (free, no key) with retry
+    import httpx
+
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=8.0) as client:
+                resp = await client.get(
+                    "https://geocoding-api.open-meteo.com/v1/search",
+                    params={"name": location_value, "count": 5, "language": "de"},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                results = data.get("results", [])
+                if results:
+                    # Pick the result with the highest population to avoid
+                    # matching small towns (e.g. York, NE instead of New York City)
+                    geo = max(results, key=lambda r: r.get("population", 0))
+
+                    # Sanity check: if the best result's name doesn't match the
+                    # query well (e.g. "York" for "New York"), retry with " City".
+                    # A partial substring match ("york" in "new york") is not
+                    # sufficient — the result name should START with or EQUAL
+                    # the query, or vice versa.
+                    query_lower = location_value.lower().strip()
+                    geo_name_lower = geo.get("name", "").lower()
+                    is_good_match = (
+                        query_lower == geo_name_lower
+                        or geo_name_lower.startswith(query_lower)
+                        or query_lower.startswith(geo_name_lower + " ")  # e.g. "new york" starts with "new york"
+                    )
+                    if not is_good_match:
+                        retry_resp = await client.get(
+                            "https://geocoding-api.open-meteo.com/v1/search",
+                            params={"name": f"{location_value} City", "count": 3, "language": "de"},
+                        )
+                        retry_resp.raise_for_status()
+                        retry_results = retry_resp.json().get("results", [])
+                        if retry_results:
+                            retry_best = max(retry_results, key=lambda r: r.get("population", 0))
+                            if retry_best.get("population", 0) > geo.get("population", 0):
+                                geo = retry_best
+                    coerced = {k: v for k, v in arguments.items() if k != "location"}
+                    coerced["latitude"] = geo["latitude"]
+                    coerced["longitude"] = geo["longitude"]
+
+                    # Default: include current weather + basic daily forecast if nothing specified
+                    if "current_weather" in properties and "current_weather" not in coerced:
+                        coerced["current_weather"] = True
+                    if "daily" in properties and "daily" not in coerced:
+                        coerced["daily"] = [
+                            "temperature_2m_max", "temperature_2m_min",
+                            "precipitation_sum", "weather_code",
+                        ]
+                    if "timezone" in properties and "timezone" not in coerced:
+                        coerced["timezone"] = geo.get("timezone", "auto")
+                    if "forecast_days" in properties and "forecast_days" not in coerced:
+                        coerced["forecast_days"] = 3
+
+                    logger.info(
+                        f"🌍 Geocoded '{location_value}' → "
+                        f"lat={geo['latitude']}, lon={geo['longitude']} "
+                        f"({geo.get('name', '')}, {geo.get('country', '')})"
+                    )
+                    return coerced
+                else:
+                    logger.warning(f"🌍 Geocoding failed: no results for '{location_value}'")
+                    break  # No point retrying if API returned empty results
+        except Exception as e:
+            logger.warning(
+                f"🌍 Geocoding error for '{location_value}' "
+                f"(attempt {attempt + 1}/2): {type(e).__name__}: {e}"
+            )
+            if attempt == 0:
+                await asyncio.sleep(0.5)  # Brief pause before retry
+
+    return arguments
+
+
 def _validate_tool_input(arguments: Dict, input_schema: Dict) -> None:
     """
     Validate tool arguments against JSON schema.
@@ -548,6 +699,32 @@ class MCPManager:
         """
         tool_info = self._tool_index.get(namespaced_name)
         if not tool_info:
+            # Fuzzy fallback: LLM may hallucinate tool names (e.g. "get_current_weather"
+            # when the actual tool is "weather_forecast"). Try matching by server prefix.
+            parts = namespaced_name.split(".")
+            if len(parts) >= 3 and parts[0] == "mcp":
+                server_name = parts[1]
+                # Find the first prompt_tools entry for this server, or any tool
+                fallback = None
+                for name, info in self._tool_index.items():
+                    if info.server_name == server_name:
+                        if fallback is None:
+                            fallback = info
+                        # Prefer tools listed in prompt_tools config
+                        server_state = self._servers.get(server_name)
+                        if server_state and server_state.config.prompt_tools:
+                            if info.original_name in server_state.config.prompt_tools:
+                                fallback = info
+                                break
+                if fallback:
+                    logger.info(
+                        f"🔄 Tool '{namespaced_name}' not found, falling back to "
+                        f"'{fallback.namespaced_name}' (same server: {server_name})"
+                    )
+                    tool_info = fallback
+                    namespaced_name = fallback.namespaced_name
+
+        if not tool_info:
             return {
                 "success": False,
                 "message": f"Unknown MCP tool: {namespaced_name}",
@@ -571,6 +748,12 @@ class MCPManager:
                     "message": f"Rate limit exceeded for MCP server '{tool_info.server_name}'",
                     "data": None,
                 }
+
+        # === Argument Coercion (LLM flat → schema nested) ===
+        arguments = _coerce_arguments(arguments, tool_info.input_schema)
+
+        # === Geocode location names to lat/lon if needed ===
+        arguments = await _geocode_location_arguments(arguments, tool_info.input_schema)
 
         # === Input Validation ===
         try:

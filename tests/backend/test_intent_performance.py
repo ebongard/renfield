@@ -324,13 +324,13 @@ class TestNumPredictConfig:
     """Test that num_predict is set correctly."""
 
     @pytest.mark.unit
-    def test_num_predict_is_200(self):
-        """intent.yaml should have num_predict=200 (not 500)."""
+    def test_num_predict_is_300(self):
+        """intent.yaml should have num_predict=300 (enough for weather/MCP intents)."""
         from services.prompt_manager import prompt_manager
         llm_options = prompt_manager.get_config("intent", "llm_options")
         if llm_options:
-            assert llm_options.get("num_predict") == 200, \
-                f"num_predict should be 200 but is {llm_options.get('num_predict')}"
+            assert llm_options.get("num_predict") == 300, \
+                f"num_predict should be 300 but is {llm_options.get('num_predict')}"
 
 
 # =============================================================================

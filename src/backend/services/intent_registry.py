@@ -290,6 +290,12 @@ class IntentRegistry:
                 # Include parameter names from input_schema so LLM uses correct params
                 schema = tool.get("input_schema", {})
                 params = list(schema.get("properties", {}).keys())
+
+                # Simplify lat/lon tools: show only "location" so the LLM provides a city name
+                # (auto-geocoded at execution time, other params auto-filled)
+                if "latitude" in params and "longitude" in params:
+                    params = ["location"]
+
                 if params:
                     params_str = ", ".join(params)
                     section_lines.append(f"- {intent_name}: {description} (parameters: {params_str})")

@@ -32,7 +32,7 @@ de:
       * "Nachrichten", "News", "Schlagzeilen" → mcp.news.search_articles / mcp.news.get_top_headlines
       * "Dokumente", "Rechnungen", "Belege", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
       * "Workflow", "n8n", "Automatisierung" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
-      * "Wetter", "Temperatur", "Regen" → mcp.weather.get_current_weather / mcp.weather.get_daily_forecast
+      * "Wetter", "Temperatur", "Regen" → mcp.weather.weather_forecast
       * "Suche", "Google", "Web" → mcp.search.web_search
       * "Filme", "Serien", "Jellyfin", "Medien" → mcp.jellyfin.list_items / mcp.jellyfin.search_items
       * "Licht", "Schalter", "Heizung", Smart Home → mcp.homeassistant.HassTurnOn / HassTurnOff / etc.
@@ -96,7 +96,7 @@ en:
       * "news", "headlines", "articles" → mcp.news.search_articles / mcp.news.get_top_headlines
       * "documents", "invoices", "receipts", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
       * "workflow", "n8n", "automation" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
-      * "weather", "temperature", "rain" → mcp.weather.get_current_weather / mcp.weather.get_daily_forecast
+      * "weather", "temperature", "rain" → mcp.weather.weather_forecast
       * "search", "Google", "web" → mcp.search.web_search
       * "movies", "series", "Jellyfin", "media" → mcp.jellyfin.list_items / mcp.jellyfin.search_items
       * "light", "switch", "heating", smart home → mcp.homeassistant.HassTurnOn / HassTurnOff / etc.
@@ -137,4 +137,4 @@ en:
 llm_options:
   temperature: 0.0
   top_p: 0.1
-  num_predict: 200
+  num_predict: 300

@@ -20,6 +20,7 @@ from services.mcp_client import (
     ExponentialBackoff,
     _substitute_env_vars,
     _resolve_value,
+    _coerce_arguments,
     _validate_tool_input,
     _truncate_response,
     MAX_RESPONSE_SIZE,
@@ -651,6 +652,111 @@ class TestMCPIntentRouting:
         })
 
         assert result["success"] is True
+
+
+# ============================================================================
+# Argument Coercion (LLM flat → schema nested)
+# ============================================================================
+
+class TestArgumentCoercion:
+    """Test _coerce_arguments for LLM flat values → nested object schemas."""
+
+    WEATHER_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "location": {
+                "type": "object",
+                "properties": {
+                    "lat": {"type": "number", "description": "Latitude"},
+                    "lon": {"type": "number", "description": "Longitude"},
+                    "city": {"type": "string", "description": "City name"},
+                    "state": {"type": "string", "description": "State"},
+                    "country": {"type": "string", "description": "Country code"},
+                    "zipCode": {"type": "string", "description": "Zip code"},
+                },
+                "required": [],
+                "additionalProperties": False,
+            },
+            "units": {"type": "string", "enum": ["standard", "metric", "imperial"]},
+        },
+        "required": [],
+    }
+
+    @pytest.mark.unit
+    def test_coerce_string_to_nested_object(self):
+        """String 'Berlin' should become {"city": "Berlin"} for location."""
+        args = {"location": "Berlin"}
+        result = _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert result["location"] == {"city": "Berlin"}
+
+    @pytest.mark.unit
+    def test_coerce_preserves_already_correct_object(self):
+        """Already-correct nested object should pass through unchanged."""
+        args = {"location": {"city": "Berlin", "country": "DE"}}
+        result = _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert result["location"] == {"city": "Berlin", "country": "DE"}
+
+    @pytest.mark.unit
+    def test_coerce_preserves_non_object_params(self):
+        """String params matching string schema should not be wrapped."""
+        args = {"units": "metric"}
+        result = _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert result["units"] == "metric"
+
+    @pytest.mark.unit
+    def test_coerce_mixed_params(self):
+        """Mix of string-needing-coercion and correct params."""
+        args = {"location": "London", "units": "imperial"}
+        result = _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert result["location"] == {"city": "London"}
+        assert result["units"] == "imperial"
+
+    @pytest.mark.unit
+    def test_coerce_empty_schema(self):
+        """Empty schema should return arguments unchanged."""
+        args = {"foo": "bar"}
+        assert _coerce_arguments(args, {}) == args
+
+    @pytest.mark.unit
+    def test_coerce_no_schema(self):
+        """None schema should return arguments unchanged."""
+        args = {"foo": "bar"}
+        assert _coerce_arguments(args, None) == args
+
+    @pytest.mark.unit
+    def test_coerce_does_not_mutate_original(self):
+        """Original arguments dict should not be mutated."""
+        args = {"location": "Paris"}
+        original_location = args["location"]
+        _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert args["location"] == original_location  # Still "Paris", not wrapped
+
+    @pytest.mark.unit
+    def test_coerce_number_value_not_touched(self):
+        """Non-string values should not be coerced."""
+        args = {"location": 42}
+        result = _coerce_arguments(args, self.WEATHER_SCHEMA)
+        assert result["location"] == 42  # Not a string, leave as-is
+
+    @pytest.mark.unit
+    def test_coerce_object_without_string_properties(self):
+        """Object schema with no string properties should not coerce."""
+        schema = {
+            "type": "object",
+            "properties": {
+                "coords": {
+                    "type": "object",
+                    "properties": {
+                        "lat": {"type": "number"},
+                        "lon": {"type": "number"},
+                    },
+                },
+            },
+        }
+        args = {"coords": "somewhere"}
+        result = _coerce_arguments(args, schema)
+        # No string property to map into — value stays as-is
+        assert result["coords"] == "somewhere"
 
 
 # ============================================================================
