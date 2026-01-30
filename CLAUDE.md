@@ -1747,8 +1747,6 @@ renfield/
 Additional documentation files in the repository:
 
 - `README.md` - Main user documentation
-- `PROJECT_OVERVIEW.md` - High-level architecture
-- `QUICKSTART.md` - Quick setup guide
 - `INSTALLATION.md` - Detailed installation guide
 - `FEATURES.md` - Feature documentation
 - `EXTERNAL_OLLAMA.md` - External Ollama instance setup

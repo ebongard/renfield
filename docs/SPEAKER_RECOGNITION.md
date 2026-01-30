@@ -252,14 +252,10 @@ CREATE TABLE speaker_embeddings (
 In neueren torchaudio-Versionen (2.1+) wurden bestimmte Backend-APIs entfernt.
 **Workaround**: Monkey-Patch in `speaker_service.py`
 
-Siehe: [BUGFIXES.md](BUGFIXES.md#-problem-6-speechbraintorchaudio-inkompatibilität-technical-debt)
-
 ### huggingface_hub Inkompatibilität
 
 SpeechBrain verwendet veraltete `use_auth_token` Parameter.
 **Workaround**: Version-Pin `huggingface_hub<0.24.0`
-
-Siehe: [BUGFIXES.md](BUGFIXES.md#-problem-7-speechbrainhuggingface_hub-inkompatibilität-technical-debt)
 
 ## Troubleshooting
 
