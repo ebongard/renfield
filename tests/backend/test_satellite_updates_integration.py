@@ -241,21 +241,32 @@ class TestSatelliteUpdateAPIFlow:
                 mock_settings.advertise_host = "localhost"
                 mock_settings.advertise_port = 8000
 
-                # Initiate update
-                response = await async_client.post("/api/satellites/ws-test-sat/update")
-                assert response.status_code == 200
+                # Mock get_package_info since /app/satellite doesn't exist in CI
+                fake_package_info = {
+                    "path": "/tmp/fake-package.tar.gz",
+                    "checksum": "abc123",
+                    "size": 1024,
+                    "version": "2.0.0"
+                }
+                with patch(
+                    'services.satellite_update_service.SatelliteUpdateService.get_package_info',
+                    return_value=fake_package_info
+                ):
+                    # Initiate update
+                    response = await async_client.post("/api/satellites/ws-test-sat/update")
+                    assert response.status_code == 200
 
-                data = response.json()
-                assert data["success"] is True
-                assert data["target_version"] == "2.0.0"
+                    data = response.json()
+                    assert data["success"] is True
+                    assert data["target_version"] == "2.0.0"
 
-                # Verify WebSocket message was sent
-                mock_ws.send_json.assert_called_once()
-                call_args = mock_ws.send_json.call_args[0][0]
-                assert call_args["type"] == "update_request"
-                assert call_args["target_version"] == "2.0.0"
-                assert "package_url" in call_args
-                assert "checksum" in call_args
+                    # Verify WebSocket message was sent
+                    mock_ws.send_json.assert_called_once()
+                    call_args = mock_ws.send_json.call_args[0][0]
+                    assert call_args["type"] == "update_request"
+                    assert call_args["target_version"] == "2.0.0"
+                    assert "package_url" in call_args
+                    assert "checksum" in call_args
 
         finally:
             # Cleanup
@@ -305,8 +316,10 @@ class TestVersionComparisonIntegration:
         )
 
         try:
-            with patch('utils.config.settings') as mock_settings:
-                mock_settings.satellite_latest_version = "2.0.0"
+            with patch('api.routes.satellites.settings') as mock_route_settings, \
+                 patch('services.satellite_update_service.settings') as mock_svc_settings:
+                mock_route_settings.satellite_latest_version = "2.0.0"
+                mock_svc_settings.satellite_latest_version = "2.0.0"
 
                 response = await async_client.get("/api/satellites")
                 assert response.status_code == 200
