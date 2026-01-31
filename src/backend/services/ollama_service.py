@@ -283,7 +283,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             }
 
             prompt_length = len(json_system_message) + len(prompt)
-            logger.debug(f"Intent prompt length: ~{prompt_length} chars")
+            logger.debug(f"Intent prompt length: ~{prompt_length} chars (~{prompt_length // 4} tokens est.)")
 
             response_data = await self.client.chat(
                 model=self.model,
@@ -308,7 +308,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             import json
             import re
 
-            logger.debug(f"Raw response: {response[:200] if response else '(empty)'}")
+            logger.debug(f"Raw LLM response ({len(response) if response else 0} chars): {response[:300] if response else '(empty)'}")
             
             # Entferne Markdown-Code-Blocks
             response = response.strip()
@@ -374,51 +374,70 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 else:
                     intent_data = raw_data
             except json.JSONDecodeError as e:
-                logger.error(f"❌ JSON Parse Error: {e}")
-                logger.error(f"Attempted to parse: {response[:200]}")
-                logger.warning("⚠️  LLM hat mit Text statt JSON geantwortet")
+                logger.warning(f"⚠️ JSON Parse Error: {e}")
+                logger.warning(f"Attempted to parse: {response[:200]}")
+                intent_data = None
 
-                # Letzter Versuch: Prüfe ob wir einen Home Assistant Intent vermuten können
-                message_lower = message.lower()
-                ha_action_keywords = ["schalte", "mach", "stelle", "ist", "zeige", "öffne", "schließe"]
+                # Retry once on truncated JSON (starts with { but incomplete)
+                if response and response.strip().startswith('{'):
+                    logger.warning("⚠️ Truncated JSON detected, retrying with higher num_predict...")
+                    try:
+                        retry_options = {**llm_call_options, "num_predict": 500}
+                        response_data = await self.client.chat(
+                            model=self.model,
+                            messages=messages,
+                            options=retry_options
+                        )
+                        retry_response = response_data.message.content
+                        if retry_response and retry_response.strip():
+                            intent_data = self._parse_intent_json(retry_response)
+                            if intent_data:
+                                logger.info(f"✅ Retry successful: {intent_data.get('intent')}")
+                    except Exception as retry_err:
+                        logger.warning(f"⚠️ Retry also failed: {retry_err}")
 
-                has_action = any(keyword in message_lower for keyword in ha_action_keywords)
-                has_device = any(keyword in message_lower for keyword in ["licht", "lampe", "fenster", "tür", "heizung", "rolladen"])
+                if intent_data is None:
+                    # Letzter Versuch: Prüfe ob wir einen Home Assistant Intent vermuten können
+                    message_lower = message.lower()
+                    ha_action_keywords = ["schalte", "mach", "stelle", "ist", "zeige", "öffne", "schließe"]
 
-                if has_action and has_device:
-                    logger.warning("⚠️  Vermute Home Assistant Intent - verwende Fallback mit Entity-Suche")
-                    # Versuche zumindest die Entity zu finden
-                    from integrations.homeassistant import HomeAssistantClient
-                    ha_client = HomeAssistantClient()
-                    search_results = await ha_client.search_entities(message)
+                    has_action = any(keyword in message_lower for keyword in ha_action_keywords)
+                    has_device = any(keyword in message_lower for keyword in ["licht", "lampe", "fenster", "tür", "heizung", "rolladen"])
 
-                    if search_results:
-                        # Nehme erste gefundene Entity
-                        entity_id = search_results[0]["entity_id"]
+                    if has_action and has_device:
+                        logger.warning("⚠️  Vermute Home Assistant Intent - verwende Fallback mit Entity-Suche")
+                        # Versuche zumindest die Entity zu finden
+                        from integrations.homeassistant import HomeAssistantClient
+                        ha_client = HomeAssistantClient()
+                        search_results = await ha_client.search_entities(message)
 
-                        # Bestimme Intent basierend auf Aktion
-                        if any(word in message_lower for word in ["ein", "an", "schalte ein"]):
-                            intent = "homeassistant.turn_on"
-                        elif any(word in message_lower for word in ["aus", "schalte aus"]):
-                            intent = "homeassistant.turn_off"
-                        elif any(word in message_lower for word in ["ist", "status", "zustand"]):
-                            intent = "homeassistant.get_state"
-                        else:
-                            intent = "homeassistant.turn_on"  # Default
+                        if search_results:
+                            # Nehme erste gefundene Entity
+                            entity_id = search_results[0]["entity_id"]
 
-                        logger.info(f"✅ Fallback Intent: {intent} mit Entity: {entity_id}")
-                        return {
-                            "intent": intent,
-                            "parameters": {"entity_id": entity_id},
-                            "confidence": 0.6  # Niedrigere Confidence für Fallback
-                        }
+                            # Bestimme Intent basierend auf Aktion
+                            if any(word in message_lower for word in ["ein", "an", "schalte ein"]):
+                                intent = "homeassistant.turn_on"
+                            elif any(word in message_lower for word in ["aus", "schalte aus"]):
+                                intent = "homeassistant.turn_off"
+                            elif any(word in message_lower for word in ["ist", "status", "zustand"]):
+                                intent = "homeassistant.get_state"
+                            else:
+                                intent = "homeassistant.turn_on"  # Default
 
-                # Fallback zu general.conversation
-                return {
-                    "intent": "general.conversation",
-                    "parameters": {},
-                    "confidence": 1.0
-                }
+                            logger.info(f"✅ Fallback Intent: {intent} mit Entity: {entity_id}")
+                            return {
+                                "intent": intent,
+                                "parameters": {"entity_id": entity_id},
+                                "confidence": 0.6  # Niedrigere Confidence für Fallback
+                            }
+
+                    # Fallback zu general.conversation
+                    return {
+                        "intent": "general.conversation",
+                        "parameters": {},
+                        "confidence": 1.0
+                    }
             
             # Validierung: Wenn es keine HA-relevante Frage ist, erzwinge general.conversation
             if intent_data.get("intent", "").startswith("homeassistant."):
@@ -502,6 +521,72 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         # Old format: single intent dict
         return [raw]
     
+    @staticmethod
+    def _parse_intent_json(raw_response: str) -> Optional[Dict]:
+        """Parse intent JSON from LLM response, handling markdown and truncation."""
+        import json
+        import re
+
+        if not raw_response or not raw_response.strip():
+            return None
+
+        response = raw_response.strip()
+
+        # Strip markdown code blocks
+        if "```" in response:
+            match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
+            if match:
+                response = match.group(1)
+            else:
+                parts = response.split("```")
+                if len(parts) >= 2:
+                    response = parts[1].strip()
+                    if response.startswith("json"):
+                        response = response[4:].strip()
+
+        # Balanced braces extraction
+        first_brace = response.find('{')
+        if first_brace >= 0:
+            depth = 0
+            in_string = False
+            escape_next = False
+            end_pos = -1
+            for i in range(first_brace, len(response)):
+                c = response[i]
+                if escape_next:
+                    escape_next = False
+                    continue
+                if c == '\\' and in_string:
+                    escape_next = True
+                    continue
+                if c == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if c == '{':
+                    depth += 1
+                elif c == '}':
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i
+                        break
+            if end_pos > 0:
+                response = response[first_brace:end_pos + 1]
+
+        try:
+            raw_data = json.loads(response)
+            if "intents" in raw_data and isinstance(raw_data["intents"], list) and raw_data["intents"]:
+                intents_list = raw_data["intents"]
+                intents_list.sort(key=lambda x: x.get("confidence", 0), reverse=True)
+                intent_data = dict(intents_list[0])
+                intent_data.setdefault("parameters", {})
+                intent_data["_ranked_intents"] = [dict(i) for i in intents_list]
+                return intent_data
+            return raw_data
+        except json.JSONDecodeError:
+            return None
+
     async def _build_entity_context(
         self,
         message: str,

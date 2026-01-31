@@ -142,29 +142,26 @@ servers:
         - "List my workflows"
 
   # --- Paperless-NGX MCP Server ---
-  # npm: @nloui/paperless-mcp
+  # Custom Python MCP server with compact responses and ID resolution.
+  # Replaces @nloui/paperless-mcp (which returned full OCR content per doc).
   # Requires: PAPERLESS_API_URL, PAPERLESS_API_TOKEN env vars
   # Get API token from: Paperless-NGX → Profile → Auth Tokens
   - name: paperless
     transport: stdio
-    command: npx
-    args: ["-y", "@nloui/paperless-mcp", "${PAPERLESS_API_URL}", "${PAPERLESS_API_TOKEN}"]
+    command: python
+    args: ["-m", "renfield_mcp_paperless"]
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.paperless.search_documents
     prompt_tools:
       - search_documents
-      - list_documents
-      - get_document
-      - list_tags
-      - list_correspondents
     examples:
       de:
-        - "Zeige meine Dokumente in Paperless"
         - "Suche nach Rechnungen in Paperless"
+        - "Finde Dokumente von Telekom"
       en:
-        - "Show my documents in Paperless"
         - "Search for invoices in Paperless"
+        - "Find documents from Telekom"
 
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp

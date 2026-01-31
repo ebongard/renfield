@@ -343,21 +343,82 @@ def _validate_tool_input(arguments: Dict, input_schema: Dict) -> None:
         # Don't fail on schema errors — the MCP server may handle it
 
 
+def _slim_array_items(items: list) -> list:
+    """
+    Strip large text fields from array items to fit more results.
+    Keeps titles, dates, IDs — removes full-text content.
+    """
+    # Fields that are typically large and redundant for summaries
+    large_fields = {"content", "body", "text", "description", "full_text", "raw_text"}
+    slimmed = []
+    for item in items:
+        if isinstance(item, dict):
+            slim = {}
+            for k, v in item.items():
+                if k.lower() in large_fields and isinstance(v, str) and len(v) > 200:
+                    slim[k] = v[:200] + "..."
+                else:
+                    slim[k] = v
+            slimmed.append(slim)
+        else:
+            slimmed.append(item)
+    return slimmed
+
+
 def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
     """
     Truncate response text to max_size bytes.
-
-    Args:
-        text: Response text to truncate
-        max_size: Maximum size in bytes
-
-    Returns:
-        Truncated text with indicator if truncated
+    For JSON with arrays: slims large text fields, then keeps complete items.
     """
     if len(text.encode('utf-8')) <= max_size:
         return text
 
-    # Truncate and add indicator
+    # Try smart JSON truncation: keep complete items in arrays
+    try:
+        import json
+        data = json.loads(text)
+        if isinstance(data, dict):
+            # Find the largest array field (e.g. "results", "documents", etc.)
+            array_key = None
+            array_val = None
+            for k, v in data.items():
+                if isinstance(v, list) and len(v) > 0 and (array_val is None or len(v) > len(array_val)):
+                    array_key = k
+                    array_val = v
+
+            if array_key and array_val:
+                total = len(array_val)
+                # Step 1: Slim large text fields (e.g. OCR content)
+                slimmed = _slim_array_items(array_val)
+
+                # Step 2: Check if slimmed version fits entirely
+                data[array_key] = slimmed
+                full_str = json.dumps(data, ensure_ascii=False)
+                if len(full_str.encode('utf-8')) <= max_size:
+                    return full_str
+
+                # Step 3: Binary search for max items that fit
+                lo, hi = 1, len(slimmed)
+                best = 1
+                while lo <= hi:
+                    mid = (lo + hi) // 2
+                    trial = dict(data)
+                    trial[array_key] = slimmed[:mid]
+                    trial_str = json.dumps(trial, ensure_ascii=False)
+                    if len(trial_str.encode('utf-8')) <= max_size - 100:
+                        best = mid
+                        lo = mid + 1
+                    else:
+                        hi = mid - 1
+                data[array_key] = slimmed[:best]
+                result = json.dumps(data, ensure_ascii=False)
+                if best < total:
+                    result += f"\n\n[... Showing {best} of {total} results]"
+                return result
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+
+    # Fallback: byte-level truncation
     truncated = text.encode('utf-8')[:max_size - 50].decode('utf-8', errors='ignore')
     return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
 

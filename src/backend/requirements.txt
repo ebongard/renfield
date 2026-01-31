@@ -71,5 +71,8 @@ python-dateutil>=2.8.2
 mcp>=1.26.0
 jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 
+# MCP Servers (standalone packages)
+renfield-mcp-paperless @ https://github.com/ebongard/renfield-mcp-paperless/archive/refs/heads/main.tar.gz
+
 # Monitoring & Logging
 loguru==0.7.2
