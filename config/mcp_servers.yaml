@@ -163,6 +163,32 @@ servers:
         - "Search for invoices in Paperless"
         - "Find documents from Telekom"
 
+  # --- Email MCP Server ---
+  # Custom Python MCP server for multi-account email (IMAP/SMTP).
+  # Requires: MAIL_ACCOUNTS_CONFIG env var pointing to YAML config file
+  # See: https://github.com/ebongard/renfield-mcp-mail
+  - name: email
+    transport: stdio
+    command: python
+    args: ["-m", "renfield_mcp_mail"]
+    enabled: "${EMAIL_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.email.search_emails
+    prompt_tools:
+      - list_accounts
+      - search_emails
+      - read_email
+      - send_email
+    examples:
+      de:
+        - "Zeige mir ungelesene Emails"
+        - "Suche Emails von Amazon"
+        - "Sende eine Email an max@example.com"
+      en:
+        - "Show unread emails"
+        - "Search emails from Amazon"
+        - "Send an email to max@example.com"
+
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp
   # Requires: MCP Server integration enabled in HA
