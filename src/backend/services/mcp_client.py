@@ -188,7 +188,34 @@ def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
         return arguments
 
     coerced = dict(arguments)
-    for key, value in arguments.items():
+
+    # Strip invalid values: null for non-nullable fields, wrong types
+    required = set(input_schema.get("required", []))
+    _type_map = {"string": str, "integer": (int,), "number": (int, float), "boolean": (bool,),
+                 "object": (dict,), "array": (list,)}
+    for key, value in list(coerced.items()):
+        prop_schema = properties.get(key, {})
+        prop_type = prop_schema.get("type", "")
+
+        if value is None and key not in required:
+            # Strip null for optional non-nullable fields
+            if prop_type and prop_type != "null" and not (
+                isinstance(prop_type, list) and "null" in prop_type
+            ):
+                logger.info(f"🔄 Stripping null value for optional field '{key}'")
+                del coerced[key]
+        elif value is not None and prop_type in _type_map:
+            # Strip values with wrong type (e.g. {} for a string field)
+            expected = _type_map[prop_type]
+            if not isinstance(value, expected):
+                if key not in required:
+                    logger.info(f"🔄 Stripping '{key}': expected {prop_type}, got {type(value).__name__}")
+                    del coerced[key]
+                elif "default" in prop_schema:
+                    logger.info(f"🔄 Replacing '{key}' (wrong type {type(value).__name__}) with default: {prop_schema['default']}")
+                    coerced[key] = prop_schema["default"]
+
+    for key, value in list(coerced.items()):
         if not isinstance(value, str):
             continue
         prop_schema = properties.get(key, {})
@@ -205,10 +232,56 @@ def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
                     f"🔄 Coercing '{key}': \"{value}\" → {{\"{target_field}\": \"{value}\"}}"
                 )
                 coerced[key] = {target_field: value}
+        elif "enum" in prop_schema:
+            # Value doesn't match enum exactly — try case-insensitive match
+            enum_values = prop_schema["enum"]
+            if value not in enum_values:
+                lower_map = {str(v).lower(): v for v in enum_values}
+                matched = lower_map.get(value.lower())
+                if not matched:
+                    # Try prefix match: "movie" → "Movies"
+                    for ev in enum_values:
+                        if str(ev).lower().startswith(value.lower()) or value.lower().startswith(str(ev).lower()):
+                            matched = ev
+                            break
+                if not matched:
+                    # Fall back to schema default if available
+                    default = prop_schema.get("default")
+                    if default is not None:
+                        matched = default
+                        logger.info(
+                            f"🔄 Enum '{key}': \"{value}\" not in {enum_values}, using default \"{default}\""
+                        )
+                if matched:
+                    logger.info(
+                        f"🔄 Coercing enum '{key}': \"{value}\" → \"{matched}\""
+                    )
+                    coerced[key] = matched
         elif key == "location" and key not in properties:
             # LLM produced a "location" key but schema has no such property.
             # This is kept for _geocode_location_arguments to handle.
             pass
+
+    # Fill missing required fields from schema defaults or constraints
+    for key in required:
+        if key in coerced:
+            continue
+        prop_schema = properties.get(key, {})
+        default = prop_schema.get("default")
+        if default is not None:
+            logger.info(f"🔄 Filling missing required field '{key}' with schema default: {default}")
+            coerced[key] = default
+        elif prop_schema.get("type") == "integer":
+            # Infer from constraints: prefer minimum, else 25 as sensible page size
+            minimum = prop_schema.get("minimum")
+            if minimum is not None:
+                inferred = max(minimum, 25) if prop_schema.get("maximum", 0) >= 25 else minimum
+                logger.info(f"🔄 Filling missing required field '{key}' with inferred default: {inferred}")
+                coerced[key] = inferred
+        elif prop_schema.get("type") == "string" and "enum" in prop_schema:
+            first_enum = prop_schema["enum"][0]
+            logger.info(f"🔄 Filling missing required field '{key}' with first enum value: \"{first_enum}\"")
+            coerced[key] = first_enum
 
     return coerced
 
