@@ -92,27 +92,32 @@ servers:
         - "News about AI"
 
   # --- Jellyfin MCP Server ---
-  # Replaces: plugins/jellyfin.yaml
-  # npm: jellyfin-suggestion-mcp
-  # Requires env vars (mapped from Renfield config):
-  #   JELLYFIN_BASE_URL  ← same as JELLYFIN_URL
-  #   JELLYFIN_TOKEN     ← same as JELLYFIN_API_KEY
-  #   JELLYFIN_USER_ID   ← optional
+  # Custom Python MCP server with 13 specialized tools for Jellyfin.
+  # Replaces: jellyfin-suggestion-mcp npm package + plugins/jellyfin.yaml
+  # Requires: JELLYFIN_URL, JELLYFIN_API_KEY, JELLYFIN_USER_ID env vars
   - name: jellyfin
     transport: stdio
-    command: npx
-    args: ["-y", "jellyfin-suggestion-mcp"]
+    command: python
+    args: ["-m", "renfield_mcp_jellyfin"]
     enabled: "${JELLYFIN_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.jellyfin.list_items
+    example_intent: mcp.jellyfin.search_media
     prompt_tools:
-      - list_items
-      - search_items
+      - search_media
+      - list_albums
+      - list_artists
+      - list_movies
+      - list_series
+      - library_stats
     examples:
       de:
+        - "Suche Musik von Queen"
+        - "Zeige meine Alben"
         - "Welche Filme habe ich?"
         - "Zeige meine Serien"
       en:
+        - "Search music by Queen"
+        - "Show my albums"
         - "What movies do I have?"
         - "Show my series"
 
