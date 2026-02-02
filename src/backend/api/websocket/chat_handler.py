@@ -28,6 +28,92 @@ from .shared import (
 router = APIRouter()
 
 
+def _parse_mcp_raw_data(data: list) -> any:
+    """Parse MCP raw_data format: [{"type": "text", "text": "{JSON}"}] → parsed content.
+
+    MCP execute_tool() returns data as a list of content blocks.
+    The actual result data is a JSON string inside the "text" field.
+    Returns the parsed data (dict or list) or None if not MCP format.
+    """
+    import json
+
+    if not data or not isinstance(data, list):
+        return None
+
+    # Check if this looks like MCP raw_data format
+    # MCP format: all items have "type" and "text" keys
+    if not all(isinstance(item, dict) and "type" in item and "text" in item for item in data):
+        return None
+
+    # Concatenate all text blocks and try to parse as JSON
+    combined_text = "\n".join(item.get("text", "") for item in data if item.get("type") == "text")
+    if not combined_text:
+        return None
+
+    try:
+        parsed = json.loads(combined_text)
+        return parsed
+    except (json.JSONDecodeError, TypeError):
+        # Not valid JSON — return as plain text summary
+        if len(combined_text) > 50:
+            return {"text_summary": combined_text}
+        return None
+
+
+def _build_action_summary(intent: dict, action_result: dict, max_chars: int = 2000) -> str:
+    """Build a compact summary of action results for conversation history.
+
+    This enables follow-up references like "die letzte" or "schick das per mail"
+    by including structured result data (IDs, titles, dates) in the history.
+    """
+    import json
+
+    intent_name = intent.get("intent", "") if intent else ""
+    data = action_result.get("data")
+    if not data:
+        return ""
+
+    # For dict results with nested lists (e.g. {"results": [...], "count": 17})
+    if isinstance(data, dict):
+        results_list = data.get("results") or data.get("items") or data.get("documents")
+        if isinstance(results_list, list):
+            return _build_action_summary(
+                intent, {"success": True, "data": results_list}, max_chars
+            )
+        # Simple dict — compact JSON
+        compact = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        return f"{intent_name} → {compact[:max_chars]}"
+
+    # For list results (e.g. search_documents, MCP tool results)
+    if isinstance(data, list):
+        # MCP tools return [{"type": "text", "text": "{JSON string}"}]
+        # Parse the inner JSON to extract actual result data
+        parsed_data = _parse_mcp_raw_data(data)
+        if parsed_data is not None:
+            return _build_action_summary(intent, {"success": True, "data": parsed_data}, max_chars)
+
+        items = []
+        for item in data[:10]:  # max 10 items
+            if isinstance(item, dict):
+                # Pick key fields: id, title, name, subject, date
+                summary_parts = []
+                for key in ("id", "title", "name", "subject", "created", "date"):
+                    if key in item:
+                        summary_parts.append(f"{key}={item[key]}")
+                if summary_parts:
+                    items.append(", ".join(summary_parts))
+            else:
+                items.append(str(item)[:100])
+        if not items:
+            return ""
+        result = f"{intent_name} → {len(data)} Ergebnisse:\n" + "\n".join(f"  - {i}" for i in items)
+        if len(data) > 10:
+            result += f"\n  ... und {len(data) - 10} weitere"
+        return result[:max_chars]
+
+    return ""
+
+
 async def _route_chat_tts_output(
     room_context: dict,
     response_text: str,
@@ -243,6 +329,11 @@ async def websocket_endpoint(
                     intent_name = intent_candidate.get("intent", "general.conversation")
                     logger.info(f"🎯 Versuche Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
 
+                    if intent_name == "general.unresolved":
+                        # Intent extraction failed (empty/parse error) — skip to agent fallback
+                        logger.info("⏭️ Intent unresolved, skipping to agent fallback...")
+                        continue
+
                     if intent_name == "general.conversation":
                         # Conversation intent — stream directly (optionally with RAG)
                         intent = intent_candidate
@@ -438,9 +529,17 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 })
 
             # Update conversation history with this exchange (in-memory)
+            # Enrich assistant message with action result context for follow-up resolution.
+            # Action summary goes FIRST so it survives truncation in conv_context (500-2000 chars).
+            history_content = full_response
+            if action_result and action_result.get("success") and action_result.get("data"):
+                action_summary = _build_action_summary(intent, action_result)
+                if action_summary:
+                    history_content = f"[Aktionsergebnis: {action_summary}]\n\n{full_response}"
+
             session_state.add_to_history("user", content)
             if full_response:
-                session_state.add_to_history("assistant", full_response)
+                session_state.add_to_history("assistant", history_content)
 
             # Persist messages to DB if session_id is provided
             if msg_session_id and full_response:
@@ -451,9 +550,9 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             msg_session_id, "user", content, db_session,
                             metadata={"room_context": room_context} if room_context else None
                         )
-                        # Save assistant response
+                        # Save assistant response (with action context for follow-ups)
                         await ollama.save_message(
-                            msg_session_id, "assistant", full_response, db_session,
+                            msg_session_id, "assistant", history_content, db_session,
                             metadata={
                                 "intent": intent.get("intent") if intent else None,
                                 "action_success": action_result.get("success") if action_result else None

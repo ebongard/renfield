@@ -510,3 +510,193 @@ class TestWebSocketProtocolEdgeCases:
 
         if msg and isinstance(msg, WSRegisterMessage):
             assert "Gäste" in msg.room
+
+
+# ============================================================================
+# Action Summary Tests (for conversation history enrichment)
+# ============================================================================
+
+class TestBuildActionSummary:
+    """Tests für _build_action_summary() in chat_handler."""
+
+    @pytest.mark.unit
+    def test_list_results_with_key_fields(self):
+        """Test: List results extract key fields."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.paperless.search_documents"}
+        action_result = {
+            "success": True,
+            "data": [
+                {"id": 123, "title": "Rechnung regfish 2024-01", "created": "2024-01-15"},
+                {"id": 456, "title": "Rechnung regfish 2023-12", "created": "2023-12-01"},
+            ]
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "mcp.paperless.search_documents" in summary
+        assert "2 Ergebnisse" in summary
+        assert "id=123" in summary
+        assert "Rechnung regfish 2024-01" in summary
+        assert "id=456" in summary
+
+    @pytest.mark.unit
+    def test_nested_results_dict(self):
+        """Test: Dict with 'results' key delegates to list handling."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.paperless.search_documents"}
+        action_result = {
+            "success": True,
+            "data": {
+                "count": 2,
+                "results": [
+                    {"id": 1, "title": "Doc A"},
+                    {"id": 2, "title": "Doc B"},
+                ]
+            }
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "2 Ergebnisse" in summary
+        assert "id=1" in summary
+        assert "Doc A" in summary
+
+    @pytest.mark.unit
+    def test_empty_data_returns_empty(self):
+        """Test: No data returns empty string."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        assert _build_action_summary({"intent": "test"}, {"success": True, "data": None}) == ""
+        assert _build_action_summary({"intent": "test"}, {"success": True, "data": []}) == ""
+
+    @pytest.mark.unit
+    def test_max_10_items(self):
+        """Test: Only first 10 items are included."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "test"}
+        items = [{"id": i, "title": f"Item {i}"} for i in range(15)]
+        action_result = {"success": True, "data": items}
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "15 Ergebnisse" in summary
+        assert "id=9" in summary  # 10th item (0-indexed)
+        assert "id=10" not in summary  # 11th item should be excluded
+        assert "und 5 weitere" in summary
+
+    @pytest.mark.unit
+    def test_simple_dict_result(self):
+        """Test: Simple dict result becomes compact JSON."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.mail.send_email"}
+        action_result = {"success": True, "data": {"status": "sent", "message_id": "abc"}}
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "mcp.mail.send_email" in summary
+        assert "sent" in summary
+
+    @pytest.mark.unit
+    def test_truncation(self):
+        """Test: Summary is truncated to max_chars."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "test"}
+        items = [{"id": i, "title": f"Very long title number {i} " * 10} for i in range(10)]
+        action_result = {"success": True, "data": items}
+
+        summary = _build_action_summary(intent, action_result, max_chars=200)
+
+        assert len(summary) <= 200
+
+    @pytest.mark.unit
+    def test_mcp_raw_data_format_parsed(self):
+        """Test: MCP raw_data [{"type":"text","text":"{JSON}"}] is parsed correctly."""
+        import json
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.paperless.search_documents"}
+        # Simulate MCP execute_tool() raw_data format
+        inner_data = {
+            "count": 2,
+            "results": [
+                {"id": 123, "title": "Rechnung regfish 2024-01", "created": "2024-01-15"},
+                {"id": 456, "title": "Rechnung regfish 2023-12", "created": "2023-12-01"},
+            ]
+        }
+        action_result = {
+            "success": True,
+            "data": [{"type": "text", "text": json.dumps(inner_data)}]
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "mcp.paperless.search_documents" in summary
+        assert "2 Ergebnisse" in summary
+        assert "id=123" in summary
+        assert "Rechnung regfish 2024-01" in summary
+        assert "id=456" in summary
+
+    @pytest.mark.unit
+    def test_mcp_raw_data_list_results(self):
+        """Test: MCP raw_data with a plain list inside text is parsed."""
+        import json
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.mail.list_emails"}
+        inner_data = [
+            {"id": 1, "subject": "Invoice A", "date": "2024-06-01"},
+            {"id": 2, "subject": "Invoice B", "date": "2024-05-15"},
+        ]
+        action_result = {
+            "success": True,
+            "data": [{"type": "text", "text": json.dumps(inner_data)}]
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "2 Ergebnisse" in summary
+        assert "id=1" in summary
+        assert "Invoice A" in summary
+
+    @pytest.mark.unit
+    def test_mcp_raw_data_not_json_returns_text_summary(self):
+        """Test: MCP raw_data with non-JSON text returns text_summary."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "mcp.tool.action"}
+        action_result = {
+            "success": True,
+            "data": [{"type": "text", "text": "Operation completed successfully. " * 3}]
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        # Should fall through to dict handling with text_summary key
+        assert "mcp.tool.action" in summary
+        assert "Operation completed" in summary
+
+    @pytest.mark.unit
+    def test_non_mcp_list_not_affected(self):
+        """Test: Regular list data (non-MCP format) still works."""
+        from api.websocket.chat_handler import _build_action_summary
+
+        intent = {"intent": "test"}
+        # Regular list without MCP "type"/"text" structure
+        action_result = {
+            "success": True,
+            "data": [
+                {"id": 1, "title": "Regular item"},
+            ]
+        }
+
+        summary = _build_action_summary(intent, action_result)
+
+        assert "1 Ergebnisse" in summary
+        assert "id=1" in summary
+        assert "Regular item" in summary

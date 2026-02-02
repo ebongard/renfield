@@ -49,7 +49,8 @@ class AgentContext:
     tool_results: List[Dict] = field(default_factory=list)
 
     # Maximum number of steps to include in the prompt (sliding window)
-    MAX_HISTORY_STEPS: int = 10
+    # With 32k context window, we can keep all steps from a typical agent run
+    MAX_HISTORY_STEPS: int = 20
 
     # Blob store for large binary data (base64) passed between tool steps.
     # Keys are "$blob:stepN_fieldname", values are the actual base64 strings.
@@ -118,12 +119,11 @@ class AgentContext:
                     f" mit {json.dumps(step.parameters, ensure_ascii=False)}"
                 )
             elif step.step_type == "tool_result":
-                # Truncate tool results to keep context manageable
-                # Note: with tool filtering, the prompt is compact enough for longer results
-                content = step.content[:1000] if step.content else no_result
+                # With 32k context window, tool results can be much more detailed
+                content = step.content[:8000] if step.content else no_result
                 lines.append(f"  {result_label} {content}")
             elif step.step_type == "error":
-                lines.append(f"  {error_label} {step.content[:200]}")
+                lines.append(f"  {error_label} {step.content[:1500]}")
 
         return "\n".join(lines)
 
@@ -154,7 +154,7 @@ class AgentContext:
         return len(set(recent)) == 1
 
 
-def _truncate(text: str, max_length: int = 300) -> str:
+def _truncate(text: str, max_length: int = 2000) -> str:
     """Truncate text to max_length with ellipsis."""
     if len(text) <= max_length:
         return text
@@ -178,7 +178,7 @@ def _extract_blobs(data: any, step_num, blob_store: Dict[str, str], blob_meta: O
     if isinstance(data, dict):
         result = {}
         for key, value in data.items():
-            if key in _BLOB_FIELDS and isinstance(value, str) and len(value) > 200:
+            if key in _BLOB_FIELDS and isinstance(value, str) and len(value) > 500:
                 ref = f"$blob:step{step_num}_{key}"
                 blob_store[ref] = value
                 size_kb = len(value) * 3 // 4 // 1024  # approx decoded size
@@ -343,19 +343,25 @@ class AgentService:
         context: AgentContext,
         conversation_history: Optional[List[Dict]] = None,
         lang: str = "de",
-        filtered_tools: Optional[Dict] = None,
     ) -> str:
         """Build the prompt for the Agent LLM call."""
-        if filtered_tools is not None:
-            tools_prompt = self.tool_registry.build_tools_prompt(tools=filtered_tools)
-        else:
-            tools_prompt = self.tool_registry.build_tools_prompt()
+        tools_prompt = self.tool_registry.build_tools_prompt()
         history_prompt = context.build_history_prompt(lang=lang)
 
-        # Agent loop works without conversation history to prevent
-        # pollution from previous tool results (hallucinated IDs, stale data).
-        # The current message is always self-contained for complex multi-step tasks.
+        # With 32k context, include conversation history for follow-up references
+        # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
         conv_context = ""
+        if conversation_history:
+            recent = conversation_history[-settings.agent_conv_context_messages:]
+            history_lines = []
+            for msg in recent:
+                role = "User" if msg.get("role") == "user" else "Assistant"
+                content = msg.get("content", "")[:2000]
+                history_lines.append(f"  {role}: {content}")
+            conv_context = prompt_manager.get(
+                "agent", "conv_context_template", lang=lang,
+                history_lines="\n".join(history_lines)
+            )
 
         # Determine step directive based on whether we have history
         if context.steps:
@@ -417,8 +423,9 @@ class AgentService:
         start_time = time.monotonic()
         agent_model = settings.agent_model or settings.ollama_model
 
-        # Filter tools to only those relevant to the user's query
-        filtered_tools = self.tool_registry.select_relevant_tools(message)
+        # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
+        # The LLM selects the right tool itself — eliminates keyword-filtering errors.
+        total_tools = len(self.tool_registry.get_tool_names())
 
         # Step 0: Thinking
         yield AgentStep(
@@ -429,10 +436,10 @@ class AgentService:
 
         # Get LLM options from config
         llm_options = prompt_manager.get_config("agent", "llm_options") or {
-            "temperature": 0.1, "top_p": 0.2, "num_predict": 500
+            "temperature": 0.1, "top_p": 0.2, "num_predict": 2048, "num_ctx": 32768
         }
         llm_options_retry = prompt_manager.get_config("agent", "llm_options_retry") or {
-            "temperature": 0.3, "top_p": 0.4, "num_predict": 500
+            "temperature": 0.3, "top_p": 0.4, "num_predict": 2048, "num_ctx": 32768
         }
         json_system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
 
@@ -445,9 +452,9 @@ class AgentService:
                 yield summary_step
                 return
 
-            # Build prompt with accumulated context (using filtered tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang, filtered_tools=filtered_tools)
-            logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {len(filtered_tools)} tools)")
+            # Build prompt with all available tools (32k context fits all tools)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang)
+            logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call
             if not agent_circuit_breaker.allow_request():
@@ -688,9 +695,9 @@ class AgentService:
             elif result_data_for_llm:
                 data_label = "Data" if lang == "en" else "Daten"
                 data_str = json.dumps(result_data_for_llm, ensure_ascii=False)
-                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=2000)
+                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=8000)
             else:
-                result_summary = _truncate(result_message, max_length=500)
+                result_summary = _truncate(result_message, max_length=4000)
 
             # Yield tool_result step
             tool_result_step = AgentStep(
@@ -761,7 +768,7 @@ class AgentService:
 
         # Get LLM options for summary
         llm_options_summary = prompt_manager.get_config("agent", "llm_options_summary") or {
-            "temperature": 0.3, "num_predict": 800
+            "temperature": 0.3, "num_predict": 1500, "num_ctx": 32768
         }
         summary_system = prompt_manager.get("agent", "summary_system_message", lang=lang)
 

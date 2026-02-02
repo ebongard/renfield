@@ -259,6 +259,74 @@ class TestOllamaServiceRankedIntents:
         assert result["intent"] == "general.conversation"
         assert result["confidence"] == 0.8
 
+    @pytest.mark.unit
+    async def test_extract_intent_empty_response_returns_unresolved(self, mock_ollama_client):
+        """Test: Leere LLM-Antwort gibt general.unresolved zurück statt general.conversation"""
+        from services.ollama_service import OllamaService
+
+        # Both attempts return empty
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = ""
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        with patch('services.ollama_service.settings') as mock_settings, \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_settings.ollama_url = "http://localhost:11434"
+            mock_settings.ollama_model = "llama3.2:3b"
+            mock_settings.ollama_chat_model = "llama3.2:3b"
+            mock_settings.ollama_rag_model = "llama3.2:3b"
+            mock_settings.ollama_embed_model = "nomic-embed-text"
+            mock_settings.ollama_intent_model = "llama3.2:3b"
+            mock_settings.ollama_num_ctx = 32768
+            mock_settings.default_lang = "de"
+
+            mock_pm.get.return_value = "mocked prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "num_predict": 500}
+
+            service = OllamaService()
+            service.client = mock_ollama_client
+            service.default_lang = "de"
+
+            result = await service.extract_intent("Schick mir die letzte per mail")
+
+        assert result["intent"] == "general.unresolved"
+        assert result["confidence"] == 0.0
+
+    @pytest.mark.unit
+    async def test_extract_intent_parse_error_returns_unresolved(self, mock_ollama_client):
+        """Test: JSON Parse Error gibt general.unresolved zurück"""
+        from services.ollama_service import OllamaService
+
+        # Return non-JSON garbage
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = "I don't understand what you want"
+        mock_ollama_client.chat = AsyncMock(return_value=mock_response)
+
+        with patch('services.ollama_service.settings') as mock_settings, \
+             patch('services.ollama_service.prompt_manager') as mock_pm:
+            mock_settings.ollama_url = "http://localhost:11434"
+            mock_settings.ollama_model = "llama3.2:3b"
+            mock_settings.ollama_chat_model = "llama3.2:3b"
+            mock_settings.ollama_rag_model = "llama3.2:3b"
+            mock_settings.ollama_embed_model = "nomic-embed-text"
+            mock_settings.ollama_intent_model = "llama3.2:3b"
+            mock_settings.ollama_num_ctx = 32768
+            mock_settings.default_lang = "de"
+
+            mock_pm.get.return_value = "mocked prompt"
+            mock_pm.get_config.return_value = {"temperature": 0.0, "num_predict": 500}
+
+            service = OllamaService()
+            service.client = mock_ollama_client
+            service.default_lang = "de"
+
+            result = await service.extract_intent("Schick mir die letzte per mail")
+
+        assert result["intent"] == "general.unresolved"
+        assert result["confidence"] == 0.0
+
 
 # ============================================================================
 # RAGService Tests

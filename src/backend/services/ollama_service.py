@@ -116,7 +116,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             response = await self.client.chat(
                 model=self.model,
-                messages=messages
+                messages=messages,
+                options={"num_ctx": settings.ollama_num_ctx}
             )
             # ollama>=0.4.0 uses Pydantic models
             llm_circuit_breaker.record_success()
@@ -155,7 +156,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             async for chunk in await self.client.chat(
                 model=self.model,
                 messages=messages,
-                stream=True
+                stream=True,
+                options={"num_ctx": settings.ollama_num_ctx}
             ):
                 # ollama>=0.4.0 uses Pydantic models
                 if chunk.message and chunk.message.content:
@@ -232,15 +234,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         # Build conversation history context for reference resolution
         history_context_prompt = ""
         if conversation_history:
-            # Take last 4 messages max for context (to keep prompt manageable)
-            recent_history = conversation_history[-4:]
+            # With 32k context, include more history for better reference resolution
+            recent_history = conversation_history[-6:]
             if recent_history:
                 history_lines = []
                 for msg in recent_history:
                     role = "User" if lang == "en" else "Nutzer"
                     if msg.get("role") != "user":
                         role = "Assistant" if lang == "en" else "Assistent"
-                    content = msg.get("content", "")[:200]  # Truncate long messages
+                    content = msg.get("content", "")[:2000]
                     history_lines.append(f"  {role}: {content}")
 
                 history_context_prompt = prompt_manager.get(
@@ -279,7 +281,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             llm_call_options = {
                 "temperature": llm_options.get("temperature", 0.0),
                 "top_p": llm_options.get("top_p", 0.1),
-                "num_predict": llm_options.get("num_predict", 300)
+                "num_predict": llm_options.get("num_predict", 500),
+                "num_ctx": llm_options.get("num_ctx", settings.ollama_num_ctx),
             }
 
             prompt_length = len(json_system_message) + len(prompt)
@@ -432,11 +435,11 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                                 "confidence": 0.6  # Niedrigere Confidence für Fallback
                             }
 
-                    # Fallback zu general.conversation
+                    # Fallback: unresolved intent (agent loop can pick this up)
                     return {
-                        "intent": "general.conversation",
+                        "intent": "general.unresolved",
                         "parameters": {},
-                        "confidence": 1.0
+                        "confidence": 0.0
                     }
             
             # Validierung: Wenn es keine HA-relevante Frage ist, erzwinge general.conversation
@@ -688,7 +691,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             # Sortiere nach Relevanz und nimm Top 15
             relevant_entities.sort(key=lambda x: x[0], reverse=True)
-            top_entities = [e[1] for e in relevant_entities[:15]]
+            top_entities = [e[1] for e in relevant_entities[:25]]
 
             # Falls keine relevanten gefunden, zeige die häufigsten Typen
             if not top_entities:
@@ -696,10 +699,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 seen_domains = set()
                 for entity in entity_map:
                     domain = entity.get("domain")
-                    if domain not in seen_domains or len(top_entities) < 15:
+                    if domain not in seen_domains or len(top_entities) < 25:
                         top_entities.append(entity)
                         seen_domains.add(domain)
-                        if len(top_entities) >= 15:
+                        if len(top_entities) >= 25:
                             break
 
             # Formatiere als kompakte Liste
@@ -935,7 +938,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             response = await self.client.chat(
                 model=model,
-                messages=messages
+                messages=messages,
+                options={"num_ctx": settings.ollama_num_ctx}
             )
             # ollama>=0.4.0 uses Pydantic models
             return response.message.content
@@ -985,7 +989,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             async for chunk in await self.client.chat(
                 model=model,
                 messages=messages,
-                stream=True
+                stream=True,
+                options={"num_ctx": settings.ollama_num_ctx}
             ):
                 # ollama>=0.4.0 uses Pydantic models
                 if chunk.message and chunk.message.content:
