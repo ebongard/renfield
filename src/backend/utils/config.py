@@ -104,7 +104,7 @@ class Settings(BaseSettings):
     
     # Agent (ReAct Loop)
     agent_enabled: bool = False           # Opt-in, disabled by default
-    agent_max_steps: int = 5              # Max reasoning steps per request
+    agent_max_steps: int = 12             # Max reasoning steps per request
     agent_step_timeout: float = 30.0      # Timeout per LLM call (seconds)
     agent_total_timeout: float = 120.0    # Total timeout for entire agent run
     agent_model: Optional[str] = None     # Optional: separate model for agent (default: ollama_model)

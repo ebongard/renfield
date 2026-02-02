@@ -51,6 +51,14 @@ class AgentContext:
     # Maximum number of steps to include in the prompt (sliding window)
     MAX_HISTORY_STEPS: int = 10
 
+    # Blob store for large binary data (base64) passed between tool steps.
+    # Keys are "$blob:stepN_fieldname", values are the actual base64 strings.
+    blob_store: Dict[str, str] = field(default_factory=dict)
+
+    # Metadata for blobs (filename, mime_type) keyed by step number.
+    # E.g. {2: {"filename": "invoice.pdf", "mime_type": "application/pdf"}}
+    blob_meta: Dict[int, Dict[str, str]] = field(default_factory=dict)
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -111,7 +119,8 @@ class AgentContext:
                 )
             elif step.step_type == "tool_result":
                 # Truncate tool results to keep context manageable
-                content = step.content[:300] if step.content else no_result
+                # Note: with tool filtering, the prompt is compact enough for longer results
+                content = step.content[:1000] if step.content else no_result
                 lines.append(f"  {result_label} {content}")
             elif step.step_type == "error":
                 lines.append(f"  {error_label} {step.content[:200]}")
@@ -152,37 +161,158 @@ def _truncate(text: str, max_length: int = 300) -> str:
     return text[:max_length] + "..."
 
 
+# Fields that contain large binary data (base64-encoded)
+_BLOB_FIELDS = {"content_base64"}
+
+
+def _extract_blobs(data: any, step_num, blob_store: Dict[str, str], blob_meta: Optional[Dict[int, Dict[str, str]]] = None) -> any:
+    """
+    Extract large binary fields from tool result data, store them in the
+    blob store, and replace with $blob:stepN_field references.
+
+    Handles nested JSON strings from MCP tool results (e.g.
+    [{"type": "text", "text": '{"content_base64": "..."}'}]).
+
+    Returns a modified copy of the data with blobs replaced by references.
+    """
+    if isinstance(data, dict):
+        result = {}
+        for key, value in data.items():
+            if key in _BLOB_FIELDS and isinstance(value, str) and len(value) > 200:
+                ref = f"$blob:step{step_num}_{key}"
+                blob_store[ref] = value
+                size_kb = len(value) * 3 // 4 // 1024  # approx decoded size
+                result[key] = ref
+                result[f"_{key}_size"] = f"{size_kb}KB"
+                logger.debug(f"🗄️ Stored blob {ref} ({size_kb}KB)")
+                # Store metadata (filename, mime_type) for auto-attach
+                if blob_meta is not None:
+                    # Extract integer step from "2" or "2_0" (list index suffix)
+                    if isinstance(step_num, int):
+                        step_key = step_num
+                    else:
+                        base = str(step_num).split("_")[0]
+                        step_key = int(base) if base.isdigit() else None
+                    if step_key is not None:
+                        meta = blob_meta.setdefault(step_key, {})
+                        if "filename" in data:
+                            meta["filename"] = data["filename"]
+                        if "mime_type" in data:
+                            meta["mime_type"] = data["mime_type"]
+                        meta["blob_ref"] = ref
+            elif key == "text" and isinstance(value, str) and "content_base64" in value:
+                # MCP raw_data format: {"type": "text", "text": "<json_string>"}
+                # Parse the nested JSON, extract blobs, re-serialize
+                try:
+                    parsed = json.loads(value)
+                    cleaned = _extract_blobs(parsed, step_num, blob_store, blob_meta)
+                    result[key] = json.dumps(cleaned, ensure_ascii=False)
+                except (json.JSONDecodeError, TypeError):
+                    result[key] = value
+            elif isinstance(value, (dict, list)):
+                result[key] = _extract_blobs(value, step_num, blob_store, blob_meta)
+            else:
+                result[key] = value
+        return result
+    elif isinstance(data, list):
+        return [_extract_blobs(item, f"{step_num}_{i}", blob_store, blob_meta) for i, item in enumerate(data)]
+    return data
+
+
+def _resolve_blobs(params: any, blob_store: Dict[str, str]) -> any:
+    """
+    Resolve $blob:stepN_field references in tool call parameters back to
+    actual data from the blob store.
+    """
+    if isinstance(params, dict):
+        return {k: _resolve_blobs(v, blob_store) for k, v in params.items()}
+    elif isinstance(params, list):
+        return [_resolve_blobs(item, blob_store) for item in params]
+    elif isinstance(params, str) and params.startswith("$blob:") and params in blob_store:
+        logger.debug(f"🗄️ Resolved blob reference {params}")
+        return blob_store[params]
+    return params
+
+
 def _parse_agent_json(raw: str) -> Optional[Dict]:
     """
     Robustly parse JSON from LLM output.
 
     Handles:
-    - Clean JSON
+    - Clean JSON (including deeply nested structures)
     - Markdown code blocks (```json ... ```)
     - JSON embedded in text
     - Common formatting issues
     """
     raw = raw.strip()
-
-    # Method 1: Markdown code block
-    if "```" in raw:
-        match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', raw, re.DOTALL)
-        if match:
-            raw = match.group(1)
-
-    # Method 2: Extract first JSON object
-    json_match = re.search(r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}', raw, re.DOTALL)
-    if json_match:
-        raw = json_match.group(0)
-
-    # Method 3: Trim after last closing brace
-    if '}' in raw:
-        raw = raw[:raw.rfind('}') + 1]
-
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
+    if not raw:
         return None
+
+    # Method 1: Direct parse (handles clean JSON of any nesting depth)
+    try:
+        result = json.loads(raw)
+        if isinstance(result, dict):
+            return result
+    except json.JSONDecodeError:
+        pass
+
+    # Method 2: Markdown code block
+    if "```" in raw:
+        match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', raw, re.DOTALL)
+        if match:
+            try:
+                result = json.loads(match.group(1))
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+    # Method 3: Find balanced JSON object using brace counting
+    start = raw.find('{')
+    if start >= 0:
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(raw)):
+            c = raw[i]
+            if escape:
+                escape = False
+                continue
+            if c == '\\' and in_string:
+                escape = True
+                continue
+            if c == '"' and not escape:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if c == '{':
+                depth += 1
+            elif c == '}':
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start:i + 1]
+                    try:
+                        result = json.loads(candidate)
+                        if isinstance(result, dict):
+                            return result
+                    except json.JSONDecodeError:
+                        break
+
+    # Method 4: Trim after last closing brace (last resort)
+    if '}' in raw:
+        trimmed = raw[:raw.rfind('}') + 1]
+        # Find the first opening brace
+        first_brace = trimmed.find('{')
+        if first_brace >= 0:
+            try:
+                result = json.loads(trimmed[first_brace:])
+                if isinstance(result, dict):
+                    return result
+            except json.JSONDecodeError:
+                pass
+
+    return None
 
 
 class AgentService:
@@ -213,24 +343,19 @@ class AgentService:
         context: AgentContext,
         conversation_history: Optional[List[Dict]] = None,
         lang: str = "de",
+        filtered_tools: Optional[Dict] = None,
     ) -> str:
         """Build the prompt for the Agent LLM call."""
-        tools_prompt = self.tool_registry.build_tools_prompt()
+        if filtered_tools is not None:
+            tools_prompt = self.tool_registry.build_tools_prompt(tools=filtered_tools)
+        else:
+            tools_prompt = self.tool_registry.build_tools_prompt()
         history_prompt = context.build_history_prompt(lang=lang)
 
+        # Agent loop works without conversation history to prevent
+        # pollution from previous tool results (hallucinated IDs, stale data).
+        # The current message is always self-contained for complex multi-step tasks.
         conv_context = ""
-        if conversation_history:
-            recent = conversation_history[-4:]
-            lines = []
-            for msg in recent:
-                role = "User" if lang == "en" else "Nutzer"
-                if msg.get("role") != "user":
-                    role = "Assistant" if lang == "en" else "Assistent"
-                lines.append(f"  {role}: {msg.get('content', '')[:200]}")
-            conv_context = prompt_manager.get(
-                "agent", "conv_context_template", lang=lang,
-                history_lines="\n".join(lines)
-            )
 
         # Determine step directive based on whether we have history
         if context.steps:
@@ -292,6 +417,9 @@ class AgentService:
         start_time = time.monotonic()
         agent_model = settings.agent_model or settings.ollama_model
 
+        # Filter tools to only those relevant to the user's query
+        filtered_tools = self.tool_registry.select_relevant_tools(message)
+
         # Step 0: Thinking
         yield AgentStep(
             step_number=0,
@@ -317,9 +445,9 @@ class AgentService:
                 yield summary_step
                 return
 
-            # Build prompt with accumulated context
-            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang)
-            logger.debug(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars)")
+            # Build prompt with accumulated context (using filtered tools)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang, filtered_tools=filtered_tools)
+            logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {len(filtered_tools)} tools)")
 
             # Check circuit breaker before LLM call
             if not agent_circuit_breaker.allow_request():
@@ -351,7 +479,7 @@ class AgentService:
 
                 # Track token usage
                 context.track_tokens(prompt, response_text)
-                logger.debug(f"🤖 Agent step {step_num} response_len={len(response_text)}")
+                logger.info(f"🤖 Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
             except asyncio.TimeoutError:
                 agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
@@ -377,6 +505,12 @@ class AgentService:
             # Parse JSON response
             parsed = _parse_agent_json(response_text)
 
+            # Treat JSON without "action" field as malformed (LLM output just parameters)
+            if parsed and "action" not in parsed:
+                logger.info(f"🔄 Agent step {step_num}: JSON missing 'action' field, treating as empty for retry")
+                parsed = None
+                response_text = ""
+
             # Retry once on empty response with a nudge prompt
             if not parsed and not response_text.strip():
                 logger.info(f"🔄 Agent step {step_num}: Empty LLM response, retrying with nudge...")
@@ -396,13 +530,17 @@ class AgentService:
                     )
                     response_text = retry_response.message.content or ""
                     context.track_tokens(nudge, response_text)
-                    logger.debug(f"🔄 Agent step {step_num} retry: {len(response_text)} chars")
+                    logger.info(f"🔄 Agent step {step_num} retry ({len(response_text)} chars): {response_text[:200]}")
                     parsed = _parse_agent_json(response_text)
                 except Exception as e:
                     logger.warning(f"🔄 Agent step {step_num} retry failed: {e}")
 
+            # Try to recover truncated send_email calls (LLM pasted base64 content)
+            if not parsed and "send_email" in response_text and context.blob_store:
+                parsed = _recover_send_email(response_text, context)
+
             if not parsed:
-                logger.warning(f"⚠️ Agent step {step_num}: JSON parse failed (len={len(response_text)})")
+                logger.warning(f"⚠️ Agent step {step_num}: JSON parse failed (len={len(response_text)}): {response_text[:500]}")
                 # If we have collected tool results, summarize them via LLM
                 has_results = any(s.step_type == "tool_result" and s.success for s in context.steps)
                 if has_results:
@@ -459,22 +597,41 @@ class AgentService:
             parameters = parsed.get("parameters", {})
             reason = parsed.get("reason", "")
 
-            # Yield tool_call step
+            # Auto-attach downloaded documents to email calls
+            if "send_email" in action and context.blob_store:
+                parameters = _auto_attach_blobs(parameters, context)
+
+            # Resolve any $blob: references from previous tool results
+            resolved_parameters = _resolve_blobs(parameters, context.blob_store)
+
+            # Yield tool_call step (with display-safe params — no base64 content)
+            display_params = {
+                k: (f"[{len(v)} chars]" if isinstance(v, str) and len(v) > 200 else v)
+                for k, v in parameters.items()
+            } if parameters else parameters
+            # Truncate attachment content in display
+            if "attachments" in (display_params or {}):
+                display_params["attachments"] = [
+                    {k: (f"[{len(v)} chars]" if k == "content_base64" and isinstance(v, str) else v)
+                     for k, v in att.items()}
+                    for att in display_params.get("attachments", [])
+                    if isinstance(att, dict)
+                ]
             tool_call_step = AgentStep(
                 step_number=step_num,
                 step_type="tool_call",
                 tool=action,
-                parameters=parameters,
+                parameters=display_params,
                 reason=reason,
             )
             context.steps.append(tool_call_step)
             yield tool_call_step
 
-            # Execute the tool
+            # Execute the tool (with resolved blob data)
             try:
                 intent_data = {
                     "intent": action,
-                    "parameters": parameters,
+                    "parameters": resolved_parameters,
                     "confidence": 1.0,
                 }
                 result = await executor.execute(intent_data)
@@ -487,18 +644,53 @@ class AgentService:
                     "action_taken": False,
                 }
 
-            logger.debug(f"🤖 Agent step {step_num} tool result: success={result.get('success')}")
-            # Build result summary including actual data for the LLM
-            no_result = "No result" if lang == "en" else "Kein Ergebnis"
-            data_label = "Data" if lang == "en" else "Daten"
-            result_message = result.get("message", no_result)
+            logger.info(f"🤖 Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
+
+            # Extract large binary blobs before building LLM summary
             result_data = result.get("data")
+            blob_count_before = len(context.blob_store)
             if result_data:
-                # Include key data so the LLM can reason about values
-                data_str = json.dumps(result_data, ensure_ascii=False)
-                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=500)
+                result_data_for_llm = _extract_blobs(result_data, step_num, context.blob_store, context.blob_meta)
             else:
-                result_summary = _truncate(result_message)
+                result_data_for_llm = result_data
+            blob_count_after = len(context.blob_store)
+            if blob_count_after > blob_count_before:
+                logger.info(f"🗄️ Step {step_num}: Extracted {blob_count_after - blob_count_before} blob(s) from data")
+
+            # Also extract blobs from the message text (may contain JSON with content_base64)
+            raw_message = result.get("message", "")
+            if "content_base64" in raw_message:
+                logger.info(f"🗄️ Step {step_num}: Found content_base64 in message ({len(raw_message)} chars)")
+                try:
+                    parsed_msg = json.loads(raw_message)
+                    cleaned_msg = _extract_blobs(parsed_msg, step_num, context.blob_store, context.blob_meta)
+                    result_message = json.dumps(cleaned_msg, ensure_ascii=False)
+                    blob_count_after = len(context.blob_store)  # update after message extraction
+                except (json.JSONDecodeError, TypeError):
+                    result_message = raw_message
+            else:
+                result_message = raw_message
+
+            # Build result summary for the LLM history prompt.
+            # For download results with blobs: show clean metadata only (no blob refs).
+            # The LLM doesn't need to know about blob mechanics — auto-attach handles it.
+            no_result = "No result" if lang == "en" else "Kein Ergebnis"
+            result_message = result_message or no_result
+
+            if blob_count_after > blob_count_before:
+                # This step produced blobs — show clean metadata summary
+                meta = context.blob_meta.get(step_num, {})
+                fname = meta.get("filename", "document.pdf")
+                mtype = meta.get("mime_type", "unknown")
+                attach_note = "Will be auto-attached to email." if lang == "en" else "Wird automatisch an E-Mail angehängt."
+                result_summary = f"Document downloaded: {fname} ({mtype}). {attach_note}"
+                logger.info(f"📎 Step {step_num} summary: {result_summary}")
+            elif result_data_for_llm:
+                data_label = "Data" if lang == "en" else "Daten"
+                data_str = json.dumps(result_data_for_llm, ensure_ascii=False)
+                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=2000)
+            else:
+                result_summary = _truncate(result_message, max_length=500)
 
             # Yield tool_result step
             tool_result_step = AgentStep(
@@ -625,6 +817,94 @@ class AgentService:
             content=content,
             reason=reason,
         )
+
+
+def _auto_attach_blobs(parameters: Dict, context: AgentContext) -> Dict:
+    """
+    Auto-attach downloaded documents to email parameters.
+
+    When the LLM calls send_email, it often fails to properly reference
+    blob data (3B models can't follow $blob: reference instructions reliably).
+    This function automatically builds the attachments array from previously
+    downloaded documents stored in the blob store.
+    """
+    if not context.blob_meta:
+        return parameters
+
+    # Build attachments from blob store metadata
+    auto_attachments = []
+    for step_key, meta in sorted(context.blob_meta.items()):
+        blob_ref = meta.get("blob_ref")
+        if not blob_ref or blob_ref not in context.blob_store:
+            continue
+        auto_attachments.append({
+            "filename": meta.get("filename", f"document_{step_key}.pdf"),
+            "mime_type": meta.get("mime_type", "application/pdf"),
+            "content_base64": context.blob_store[blob_ref],
+        })
+
+    if not auto_attachments:
+        return parameters
+
+    # Replace whatever attachments the LLM tried to construct
+    parameters = dict(parameters)  # don't mutate original
+    parameters["attachments"] = auto_attachments
+    logger.info(f"📎 Auto-attached {len(auto_attachments)} document(s) to email")
+    return parameters
+
+
+def _recover_send_email(response_text: str, context: AgentContext) -> Optional[Dict]:
+    """
+    Recover a truncated send_email JSON from LLM output.
+
+    When the LLM tries to paste actual base64 content into send_email,
+    the output gets truncated by num_predict. This function detects the
+    pattern and reconstructs the call using blob store data.
+    """
+    # Check if this looks like a truncated send_email attempt
+    if "send_email" not in response_text:
+        return None
+
+    # Try to extract the basic fields before the attachments array
+    try:
+        # Find the action and basic parameters
+        action_match = re.search(r'"action"\s*:\s*"([^"]*send_email[^"]*)"', response_text)
+        if not action_match:
+            return None
+
+        action = action_match.group(1)
+
+        # Extract simple string fields
+        account_match = re.search(r'"account"\s*:\s*"([^"]*)"', response_text)
+        to_match = re.search(r'"to"\s*:\s*"([^"]*)"', response_text)
+        subject_match = re.search(r'"subject"\s*:\s*"([^"]*)"', response_text)
+        body_match = re.search(r'"body"\s*:\s*"((?:[^"\\]|\\.)*)"', response_text)
+
+        if not (to_match and subject_match):
+            return None
+
+        parameters = {
+            "to": to_match.group(1),
+            "subject": subject_match.group(1),
+            "body": body_match.group(1) if body_match else "",
+        }
+        if account_match:
+            parameters["account"] = account_match.group(1)
+
+        # Attachments will be auto-attached from blob store
+        reason_match = re.search(r'"reason"\s*:\s*"((?:[^"\\]|\\.)*)"', response_text)
+
+        recovered = {
+            "action": action,
+            "parameters": parameters,
+            "reason": reason_match.group(1) if reason_match else "Recovered from truncated output",
+        }
+        logger.info(f"🔧 Recovered truncated send_email call: to={parameters['to']}, subject={parameters['subject']}")
+        return recovered
+
+    except Exception as e:
+        logger.debug(f"🔧 send_email recovery failed: {e}")
+        return None
 
 
 def step_to_ws_message(step: AgentStep) -> Dict:

@@ -166,7 +166,7 @@ User → ComplexityDetector → simple? → Single-Intent (as before)
 **Configuration** (all opt-in, disabled by default):
 ```bash
 AGENT_ENABLED=false          # Enable agent loop
-AGENT_MAX_STEPS=5            # Max reasoning steps
+AGENT_MAX_STEPS=8            # Max reasoning steps
 AGENT_STEP_TIMEOUT=30.0      # Per-step LLM timeout (seconds)
 AGENT_TOTAL_TIMEOUT=120.0    # Total timeout
 AGENT_MODEL=                 # Optional: separate model for agent

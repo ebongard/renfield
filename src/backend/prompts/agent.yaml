@@ -29,6 +29,9 @@ de:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
     - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
+    - Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool
+    - Wenn du Dokument-IDs brauchst, nutze zuerst search_documents
+    - Heruntergeladene Dokumente werden AUTOMATISCH als E-Mail-Anhänge eingefügt. Übergib bei send_email KEINE attachments — das System erledigt das.
     - Gib final_answer wenn alle Informationen gesammelt sind
     - Die finale Antwort muss natürlich und auf Deutsch sein
     - Antworte NUR mit JSON, kein anderer Text
@@ -101,6 +104,9 @@ en:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
     - Use results from previous steps for decisions
+    - NEVER invent IDs or values — always fetch them via a search tool first
+    - If you need document IDs, use search_documents first
+    - Downloaded documents are AUTOMATICALLY attached to emails. Do NOT pass attachments to send_email — the system handles this.
     - Give final_answer when all information is gathered
     - The final answer must be natural and in English
     - Reply ONLY with JSON, no other text
@@ -150,12 +156,12 @@ en:
 llm_options:
   temperature: 0.1
   top_p: 0.2
-  num_predict: 500
+  num_predict: 1000
 
 llm_options_retry:
   temperature: 0.3
   top_p: 0.4
-  num_predict: 500
+  num_predict: 1000
 
 llm_options_summary:
   temperature: 0.3

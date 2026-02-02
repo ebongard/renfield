@@ -12,6 +12,10 @@ from services.agent_service import (
     AgentContext,
     _parse_agent_json,
     _truncate,
+    _extract_blobs,
+    _resolve_blobs,
+    _auto_attach_blobs,
+    _recover_send_email,
     step_to_ws_message,
 )
 from services.agent_tools import AgentToolRegistry
@@ -85,6 +89,49 @@ class TestParseAgentJson:
     def test_whitespace_only(self):
         assert _parse_agent_json("   \n  ") is None
 
+    @pytest.mark.unit
+    def test_deeply_nested_json_with_arrays(self):
+        """Test parsing JSON with nested objects inside arrays (e.g. send_email with attachments)."""
+        raw = json.dumps({
+            "action": "mcp.email.send_email",
+            "parameters": {
+                "account": "regfish",
+                "to": "test@example.com",
+                "subject": "Invoices",
+                "body": "Here are your invoices.",
+                "attachments": [
+                    {"filename": "invoice1.pdf", "mime_type": "application/pdf", "content_base64": "$blob:step2_content_base64"},
+                    {"filename": "invoice2.pdf", "mime_type": "application/pdf", "content_base64": "$blob:step3_content_base64"},
+                ]
+            },
+            "reason": "Send the two invoices"
+        })
+        result = _parse_agent_json(raw)
+        assert result is not None
+        assert result["action"] == "mcp.email.send_email"
+        assert len(result["parameters"]["attachments"]) == 2
+        assert result["parameters"]["attachments"][0]["filename"] == "invoice1.pdf"
+
+    @pytest.mark.unit
+    def test_deeply_nested_json_with_surrounding_text(self):
+        """Deeply nested JSON embedded in text should still be parsed."""
+        inner = json.dumps({
+            "action": "mcp.email.send_email",
+            "parameters": {
+                "account": "test",
+                "to": "a@b.com",
+                "subject": "Test",
+                "body": "Hello",
+                "attachments": [{"filename": "f.pdf", "content_base64": "$blob:step1_content_base64"}]
+            },
+            "reason": "test"
+        })
+        raw = f"Here is my response: {inner} That's all."
+        result = _parse_agent_json(raw)
+        assert result is not None
+        assert result["action"] == "mcp.email.send_email"
+        assert len(result["parameters"]["attachments"]) == 1
+
 
 # ============================================================================
 # Test _truncate
@@ -107,6 +154,105 @@ class TestTruncate:
         result = _truncate(text, 300)
         assert len(result) == 303  # 300 + "..."
         assert result.endswith("...")
+
+
+# ============================================================================
+# Test _extract_blobs / _resolve_blobs
+# ============================================================================
+
+class TestExtractBlobs:
+
+    @pytest.mark.unit
+    def test_extracts_content_base64(self):
+        blob_store = {}
+        data = {"id": 1, "filename": "test.pdf", "content_base64": "A" * 500}
+        result = _extract_blobs(data, 2, blob_store)
+        assert result["content_base64"] == "$blob:step2_content_base64"
+        assert "$blob:step2_content_base64" in blob_store
+        assert blob_store["$blob:step2_content_base64"] == "A" * 500
+        assert "_content_base64_size" in result
+
+    @pytest.mark.unit
+    def test_ignores_small_values(self):
+        blob_store = {}
+        data = {"id": 1, "content_base64": "short"}
+        result = _extract_blobs(data, 1, blob_store)
+        assert result["content_base64"] == "short"
+        assert len(blob_store) == 0
+
+    @pytest.mark.unit
+    def test_handles_nested_json_in_text(self):
+        """MCP raw_data format: {"type": "text", "text": "<json>"}"""
+        blob_store = {}
+        inner_json = json.dumps({"id": 1, "content_base64": "X" * 500})
+        data = [{"type": "text", "text": inner_json}]
+        result = _extract_blobs(data, 3, blob_store)
+        # List index appended: step3_0
+        assert "$blob:step3_0_content_base64" in blob_store
+        parsed_text = json.loads(result[0]["text"])
+        assert parsed_text["content_base64"] == "$blob:step3_0_content_base64"
+
+    @pytest.mark.unit
+    def test_no_blobs_passes_through(self):
+        blob_store = {}
+        data = {"id": 1, "title": "Normal result"}
+        result = _extract_blobs(data, 1, blob_store)
+        assert result == data
+        assert len(blob_store) == 0
+
+    @pytest.mark.unit
+    def test_handles_list_input(self):
+        blob_store = {}
+        data = [{"content_base64": "B" * 300}, {"content_base64": "C" * 300}]
+        result = _extract_blobs(data, 5, blob_store)
+        assert len(blob_store) == 2
+
+
+class TestResolveBlobs:
+
+    @pytest.mark.unit
+    def test_resolves_string_reference(self):
+        blob_store = {"$blob:step2_content_base64": "ACTUAL_DATA"}
+        params = {"attachments": [{"content_base64": "$blob:step2_content_base64", "filename": "test.pdf"}]}
+        result = _resolve_blobs(params, blob_store)
+        assert result["attachments"][0]["content_base64"] == "ACTUAL_DATA"
+        assert result["attachments"][0]["filename"] == "test.pdf"
+
+    @pytest.mark.unit
+    def test_no_refs_passes_through(self):
+        blob_store = {}
+        params = {"to": "a@b.com", "subject": "Test"}
+        result = _resolve_blobs(params, blob_store)
+        assert result == params
+
+    @pytest.mark.unit
+    def test_unknown_ref_passes_through(self):
+        blob_store = {}
+        params = {"content_base64": "$blob:step99_content_base64"}
+        result = _resolve_blobs(params, blob_store)
+        assert result["content_base64"] == "$blob:step99_content_base64"
+
+    @pytest.mark.unit
+    def test_resolves_nested_deeply(self):
+        blob_store = {"$blob:step1_content_base64": "DATA"}
+        params = {"items": [{"nested": {"content_base64": "$blob:step1_content_base64"}}]}
+        result = _resolve_blobs(params, blob_store)
+        assert result["items"][0]["nested"]["content_base64"] == "DATA"
+
+
+class TestAgentContextBlobStore:
+
+    @pytest.mark.unit
+    def test_blob_store_initialized_empty(self):
+        ctx = AgentContext(original_message="test")
+        assert ctx.blob_store == {}
+
+    @pytest.mark.unit
+    def test_blob_store_persists_across_steps(self):
+        ctx = AgentContext(original_message="test")
+        ctx.blob_store["$blob:step1_content_base64"] = "DATA1"
+        ctx.blob_store["$blob:step2_content_base64"] = "DATA2"
+        assert len(ctx.blob_store) == 2
 
 
 # ============================================================================
@@ -214,14 +360,14 @@ class TestAgentContext:
         ctx.steps.append(AgentStep(
             step_number=1,
             step_type="tool_result",
-            content="x" * 500,
+            content="x" * 1500,
             tool="test",
             success=True,
         ))
 
         prompt = ctx.build_history_prompt()
-        # Result should be truncated to 300 chars in the prompt
-        assert len(prompt) < 500
+        # Result should be truncated to 1000 chars in the prompt
+        assert len(prompt) < 1100
 
 
 # ============================================================================
@@ -563,8 +709,8 @@ class TestAgentServiceRun:
         assert "final_answer" in step_types
 
     @pytest.mark.unit
-    async def test_conversation_history_included(self):
-        """Conversation history should be included in the agent prompt."""
+    async def test_conversation_history_excluded_from_agent(self):
+        """Agent loop ignores conversation history to prevent pollution."""
         registry = self._make_registry()
         ollama = self._make_ollama_mock([
             '{"action": "final_answer", "answer": "OK", "reason": "Done"}'
@@ -578,7 +724,7 @@ class TestAgentServiceRun:
 
         agent = AgentService(registry, max_steps=5)
 
-        # We need to verify the prompt contains history. Capture the chat call.
+        # Capture the chat call to verify history is not in prompt.
         chat_calls = []
         original_chat = ollama.client.chat
 
@@ -595,8 +741,8 @@ class TestAgentServiceRun:
 
         assert len(chat_calls) >= 1
         prompt_content = chat_calls[0]["messages"][1]["content"]
-        assert "KONVERSATIONS-KONTEXT" in prompt_content
-        assert "Was ist das Wetter?" in prompt_content
+        assert "KONVERSATIONS-KONTEXT" not in prompt_content
+        assert "Was ist das Wetter?" not in prompt_content
 
 
 # ============================================================================
@@ -1089,3 +1235,109 @@ class TestAgentCircuitBreakerIntegration:
 
         # Reset for other tests
         agent_circuit_breaker.reset()
+
+
+class TestAutoAttachBlobs:
+    """Test auto-attach of downloaded documents to email calls."""
+
+    @pytest.mark.unit
+    def test_auto_attach_with_blobs(self):
+        """Should build attachments from blob store metadata."""
+        context = AgentContext(original_message="test")
+        context.blob_store = {
+            "$blob:step2_content_base64": "AAAA",
+            "$blob:step3_content_base64": "BBBB",
+        }
+        context.blob_meta = {
+            2: {"filename": "invoice1.pdf", "mime_type": "application/pdf", "blob_ref": "$blob:step2_content_base64"},
+            3: {"filename": "invoice2.pdf", "mime_type": "application/pdf", "blob_ref": "$blob:step3_content_base64"},
+        }
+        params = {"account": "test", "to": "a@b.com", "subject": "Test", "body": "Hi"}
+        result = _auto_attach_blobs(params, context)
+        assert len(result["attachments"]) == 2
+        assert result["attachments"][0]["filename"] == "invoice1.pdf"
+        assert result["attachments"][0]["content_base64"] == "AAAA"
+        assert result["attachments"][1]["filename"] == "invoice2.pdf"
+        # Original params unchanged
+        assert "attachments" not in params
+
+    @pytest.mark.unit
+    def test_auto_attach_no_blobs(self):
+        """Should return params unchanged when no blob metadata."""
+        context = AgentContext(original_message="test")
+        params = {"account": "test", "to": "a@b.com", "subject": "Test", "body": "Hi"}
+        result = _auto_attach_blobs(params, context)
+        assert result is params  # same object, unchanged
+
+    @pytest.mark.unit
+    def test_auto_attach_replaces_llm_attachments(self):
+        """Should replace any attachments the LLM tried to construct."""
+        context = AgentContext(original_message="test")
+        context.blob_store = {"$blob:step2_content_base64": "PDF_DATA"}
+        context.blob_meta = {2: {"filename": "doc.pdf", "mime_type": "application/pdf", "blob_ref": "$blob:step2_content_base64"}}
+        params = {
+            "to": "a@b.com", "subject": "Test", "body": "Hi",
+            "attachments": [{"filename": "wrong.pdf", "content_base64": "truncated..."}]
+        }
+        result = _auto_attach_blobs(params, context)
+        assert len(result["attachments"]) == 1
+        assert result["attachments"][0]["content_base64"] == "PDF_DATA"
+
+
+class TestRecoverSendEmail:
+    """Test recovery of truncated send_email JSON."""
+
+    @pytest.mark.unit
+    def test_recover_truncated_json(self):
+        """Should extract basic fields from truncated send_email response."""
+        context = AgentContext(original_message="test")
+        truncated = '{"action":"mcp.email.send_email","parameters":{"account":"regfish","to":"a@b.com","subject":"Invoices","body":"Here are your invoices","attachments":[{"filename":"doc.pdf","content_base64":"JVBERi0xLjcK...'
+        result = _recover_send_email(truncated, context)
+        assert result is not None
+        assert result["action"] == "mcp.email.send_email"
+        assert result["parameters"]["to"] == "a@b.com"
+        assert result["parameters"]["subject"] == "Invoices"
+        assert result["parameters"]["account"] == "regfish"
+
+    @pytest.mark.unit
+    def test_no_send_email_returns_none(self):
+        """Should return None for non-send_email responses."""
+        context = AgentContext(original_message="test")
+        result = _recover_send_email('{"action":"search_documents"', context)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_missing_required_fields_returns_none(self):
+        """Should return None if to/subject can't be extracted."""
+        context = AgentContext(original_message="test")
+        result = _recover_send_email('{"action":"send_email","param', context)
+        assert result is None
+
+
+class TestExtractBlobsMeta:
+    """Test that blob extraction also stores metadata."""
+
+    @pytest.mark.unit
+    def test_stores_filename_and_mime_type(self):
+        """Blob extraction should store filename and mime_type in blob_meta."""
+        blob_store = {}
+        blob_meta = {}
+        data = {
+            "filename": "invoice.pdf",
+            "mime_type": "application/pdf",
+            "content_base64": "A" * 300,
+        }
+        result = _extract_blobs(data, 2, blob_store, blob_meta)
+        assert "$blob:step2_content_base64" in blob_store
+        assert 2 in blob_meta
+        assert blob_meta[2]["filename"] == "invoice.pdf"
+        assert blob_meta[2]["mime_type"] == "application/pdf"
+        assert blob_meta[2]["blob_ref"] == "$blob:step2_content_base64"
+
+    @pytest.mark.unit
+    def test_no_meta_without_blob_meta_param(self):
+        """Blob extraction without blob_meta param should not crash."""
+        blob_store = {}
+        data = {"content_base64": "A" * 300}
+        result = _extract_blobs(data, 2, blob_store)
+        assert "$blob:step2_content_base64" in blob_store
