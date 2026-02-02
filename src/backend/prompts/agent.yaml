@@ -31,7 +31,7 @@ de:
     - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
     - Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool
     - Wenn du Dokument-IDs brauchst, nutze zuerst search_documents
-    - Heruntergeladene Dokumente werden AUTOMATISCH als E-Mail-Anhänge eingefügt. Übergib bei send_email KEINE attachments — das System erledigt das.
+    - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
     - Gib final_answer wenn alle Informationen gesammelt sind
     - Die finale Antwort muss natürlich und auf Deutsch sein
     - Antworte NUR mit JSON, kein anderer Text
@@ -106,7 +106,7 @@ en:
     - Use results from previous steps for decisions
     - NEVER invent IDs or values — always fetch them via a search tool first
     - If you need document IDs, use search_documents first
-    - Downloaded documents are AUTOMATICALLY attached to emails. Do NOT pass attachments to send_email — the system handles this.
+    - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
     - Give final_answer when all information is gathered
     - The final answer must be natural and in English
     - Reply ONLY with JSON, no other text
