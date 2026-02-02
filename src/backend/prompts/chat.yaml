@@ -90,9 +90,11 @@ en:
 llm_options:
   temperature: 0.7
   top_p: 0.9
-  num_predict: 500
+  num_predict: 1500
+  num_ctx: 32768
 
 rag_llm_options:
   temperature: 0.3
   top_p: 0.8
-  num_predict: 800
+  num_predict: 2000
+  num_ctx: 32768

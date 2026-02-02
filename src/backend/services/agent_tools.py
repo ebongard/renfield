@@ -48,6 +48,9 @@ class AgentToolRegistry:
         if mcp_manager:
             self._register_mcp_tools(mcp_manager)
 
+        # Register internal agent tools (room resolution, media playback)
+        self._register_internal_tools()
+
     def _register_plugin_tools(self, plugin_registry: "PluginRegistry") -> None:
         """Register all plugin intents as agent tools."""
         for intent_def in plugin_registry.get_all_intents():
@@ -63,6 +66,23 @@ class AgentToolRegistry:
             )
             self._tools[tool.name] = tool
             logger.debug(f"🔧 Agent tool registered: {tool.name}")
+
+    def _register_internal_tools(self) -> None:
+        """Register internal agent tools (room resolution, media playback)."""
+        from services.internal_tools import InternalToolService
+
+        for name, definition in InternalToolService.TOOLS.items():
+            params = {}
+            for param_name, param_desc in definition.get("parameters", {}).items():
+                params[param_name] = param_desc
+
+            tool = ToolDefinition(
+                name=name,
+                description=definition["description"],
+                parameters=params,
+            )
+            self._tools[tool.name] = tool
+            logger.debug(f"Internal agent tool registered: {tool.name}")
 
     def _register_mcp_tools(self, mcp_manager: "MCPManager") -> None:
         """Register all MCP tools as agent tools."""
@@ -213,6 +233,11 @@ class AgentToolRegistry:
         selected: Dict[str, ToolDefinition] = {}
         for name, tool in self._tools.items():
             if any(name.startswith(prefix) for prefix in matched_prefixes):
+                selected[name] = tool
+
+        # Always include internal tools (minimal token cost, LLM decides usage)
+        for name, tool in self._tools.items():
+            if name.startswith("internal."):
                 selected[name] = tool
 
         if not selected:

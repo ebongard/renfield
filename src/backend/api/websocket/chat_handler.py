@@ -60,6 +60,38 @@ def _parse_mcp_raw_data(data: list) -> any:
         return None
 
 
+def _build_agent_action_result(tool_results: list) -> dict:
+    """Build a synthetic action_result from agent tool results for conversation history.
+
+    Agent loop responses don't have action_result like single-intent paths.
+    This collects the most useful tool results (searches, not downloads) and
+    builds a result dict that _build_action_summary can process.
+    """
+    # Prefer search/list results over download/send results for the summary
+    # (search results contain IDs and titles needed for follow-ups)
+    best_data = None
+    best_intent = None
+    for tool_name, data in tool_results:
+        if not data:
+            continue
+        # Prioritize search/list tools (contain IDs the user might reference)
+        if any(kw in (tool_name or "") for kw in ("search", "list", "get_")):
+            best_data = data
+            best_intent = tool_name
+        elif best_data is None:
+            best_data = data
+            best_intent = tool_name
+
+    if best_data is None:
+        return None
+
+    return {
+        "success": True,
+        "data": best_data,
+        "_agent_intent": best_intent,
+    }
+
+
 def _build_action_summary(intent: dict, action_result: dict, max_chars: int = 2000) -> str:
     """Build a compact summary of action results for conversation history.
 
@@ -290,6 +322,7 @@ async def websocket_endpoint(
                     agent = AgentService(tool_registry)
                     executor = ActionExecutor(plugin_registry, mcp_manager=mcp_manager)
 
+                    agent_tool_results = []
                     async for step in agent.run(
                         message=content,
                         ollama=ollama,
@@ -302,8 +335,14 @@ async def websocket_endpoint(
 
                         if step.step_type == "final_answer":
                             full_response = step.content
+                        if step.step_type == "tool_result" and step.success and step.data:
+                            agent_tool_results.append((step.tool, step.data))
                         if step.step_type in ("tool_call", "tool_result"):
                             agent_steps_count += 1
+
+                    # Build action summary from agent tool results for conversation history
+                    if agent_tool_results:
+                        action_result = _build_agent_action_result(agent_tool_results)
 
                     logger.info(f"🤖 Agent Loop abgeschlossen: {agent_steps_count} Steps")
 
@@ -377,6 +416,7 @@ async def websocket_endpoint(
                         agent = AgentService(tool_registry)
                         fallback_executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
 
+                        agent_tool_results = []
                         async for step in agent.run(
                             message=content,
                             ollama=ollama,
@@ -389,8 +429,14 @@ async def websocket_endpoint(
 
                             if step.step_type == "final_answer":
                                 full_response = step.content
+                            if step.step_type == "tool_result" and step.success and step.data:
+                                agent_tool_results.append((step.tool, step.data))
                             if step.step_type in ("tool_call", "tool_result"):
                                 agent_steps_count += 1
+
+                        # Build action summary from agent tool results for conversation history
+                        if agent_tool_results:
+                            action_result = _build_agent_action_result(agent_tool_results)
 
                         logger.info(f"🤖 Agent Fallback abgeschlossen: {agent_steps_count} Steps")
 
@@ -533,9 +579,13 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # Action summary goes FIRST so it survives truncation in conv_context (500-2000 chars).
             history_content = full_response
             if action_result and action_result.get("success") and action_result.get("data"):
-                action_summary = _build_action_summary(intent, action_result)
+                # Use agent's tool name if available (from _build_agent_action_result)
+                summary_intent = intent
+                if action_result.get("_agent_intent"):
+                    summary_intent = {"intent": action_result["_agent_intent"]}
+                action_summary = _build_action_summary(summary_intent, action_result)
                 if action_summary:
-                    history_content = f"[Aktionsergebnis: {action_summary}]\n\n{full_response}"
+                    history_content = f"[Aktionsergebnis — Verwende diese Daten für Folgeanfragen (IDs, Titel, etc.):\n{action_summary}]\n\n{full_response}"
 
             session_state.add_to_history("user", content)
             if full_response:

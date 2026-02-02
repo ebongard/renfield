@@ -154,6 +154,33 @@ class TestComplexityDetectorNeedsAgent:
         msg = "What is the weather like and how are the stock prices today?"
         assert ComplexityDetector.needs_agent(msg) is True
 
+    # === Playback + multi-action patterns ===
+
+    @pytest.mark.unit
+    def test_multi_action_suche_und_spiele(self):
+        msg = "Suche Musik von ZZ Top und spiele das erste Album im Arbeitszimmer"
+        assert ComplexityDetector.needs_agent(msg) is True
+
+    @pytest.mark.unit
+    def test_multi_action_finde_und_hoere(self):
+        msg = "Finde Alben von Queen und höre das beste im Wohnzimmer"
+        assert ComplexityDetector.needs_agent(msg) is True
+
+    @pytest.mark.unit
+    def test_multi_action_search_and_play(self):
+        msg = "Search for Pink Floyd albums and play the first one in the office"
+        assert ComplexityDetector.needs_agent(msg) is True
+
+    @pytest.mark.unit
+    def test_multi_action_find_and_listen(self):
+        msg = "Find jazz playlists and listen to one in the bedroom"
+        assert ComplexityDetector.needs_agent(msg) is True
+
+    @pytest.mark.unit
+    def test_simple_play_command(self):
+        """Single play command should NOT trigger agent."""
+        assert ComplexityDetector.needs_agent("Spiele Musik von Queen") is False
+
     # === Full example from Issue #49 ===
 
     @pytest.mark.unit

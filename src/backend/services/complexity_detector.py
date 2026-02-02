@@ -47,16 +47,16 @@ class ComplexityDetector:
     MULTI_ACTION_PATTERNS: List[re.Pattern] = [
         # German: action verb + "und" + action verb
         re.compile(
-            r'\b(schalte|mach|stelle|öffne|schließe|starte|stoppe|suche|finde|hole|zeige|sende|schicke)\b'
+            r'\b(schalte|mach|stelle|öffne|schließe|starte|stoppe|suche|finde|hole|zeige|sende|schicke|spiele|höre)\b'
             r'.*\bund\b.*'
-            r'\b(schalte|mach|stelle|öffne|schließe|starte|stoppe|suche|finde|hole|zeige|sende|schicke)\b',
+            r'\b(schalte|mach|stelle|öffne|schließe|starte|stoppe|suche|finde|hole|zeige|sende|schicke|spiele|höre)\b',
             re.IGNORECASE
         ),
         # English: action verb + "and" + action verb
         re.compile(
-            r'\b(turn|switch|set|open|close|start|stop|search|find|get|show|send)\b'
+            r'\b(turn|switch|set|open|close|start|stop|search|find|get|show|send|play|listen)\b'
             r'.*\band\b.*'
-            r'\b(turn|switch|set|open|close|start|stop|search|find|get|show|send)\b',
+            r'\b(turn|switch|set|open|close|start|stop|search|find|get|show|send|play|listen)\b',
             re.IGNORECASE
         ),
     ]

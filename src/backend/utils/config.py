@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     ollama_rag_model: str = "llama3.2:latest"   # Für RAG-Antworten (via .env überschreibbar)
     ollama_embed_model: str = "nomic-embed-text" # Für Embeddings (768 Dimensionen)
     ollama_intent_model: str = "llama3.2:3b"    # Für Intent-Erkennung
-    
+    ollama_num_ctx: int = 32768                   # Context window für alle Ollama-Calls
+
     # Home Assistant
     home_assistant_url: Optional[str] = None
     home_assistant_token: Optional[str] = None
@@ -108,6 +109,8 @@ class Settings(BaseSettings):
     agent_step_timeout: float = 30.0      # Timeout per LLM call (seconds)
     agent_total_timeout: float = 120.0    # Total timeout for entire agent run
     agent_model: Optional[str] = None     # Optional: separate model for agent (default: ollama_model)
+    agent_ollama_url: Optional[str] = None # Optional: separate Ollama instance for agent (default: ollama_url)
+    agent_conv_context_messages: int = 6  # Number of conversation history messages in agent loop
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
@@ -145,8 +148,34 @@ class Settings(BaseSettings):
     # Security
     secret_key: str = "changeme-in-production-use-strong-random-key"
 
-    # Jellyfin (Plugin)
+    # Jellyfin
+    jellyfin_enabled: bool = False
+    jellyfin_url: Optional[str] = None
+    jellyfin_base_url: Optional[str] = None
     jellyfin_api_key: Optional[str] = None
+    jellyfin_token: Optional[str] = None
+    jellyfin_user_id: Optional[str] = None
+
+    # Paperless-NGX
+    paperless_enabled: bool = False
+    paperless_api_url: Optional[str] = None
+    paperless_api_token: Optional[str] = None
+
+    # Email MCP
+    email_mcp_enabled: bool = False
+    mail_regfish_password: Optional[str] = None
+
+    # SearXNG
+    searxng_api_url: Optional[str] = None
+    searxng_instances: Optional[str] = None
+
+    # n8n MCP
+    n8n_base_url: Optional[str] = None
+    n8n_api_key: Optional[str] = None
+    n8n_mcp_enabled: bool = False
+
+    # Home Assistant MCP
+    ha_mcp_enabled: bool = False
 
     # === Authentication ===
     # Set to True to enable authentication (default: False for development)

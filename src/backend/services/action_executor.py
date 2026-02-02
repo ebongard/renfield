@@ -82,6 +82,12 @@ class ActionExecutor:
                 "action_taken": False
             }
 
+        # Internal agent tools (room resolution, media playback)
+        if intent.startswith("internal."):
+            from services.internal_tools import InternalToolService
+            internal_tools = InternalToolService()
+            return await internal_tools.execute(intent, parameters)
+
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")

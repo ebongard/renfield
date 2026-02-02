@@ -141,18 +141,18 @@ class TestTruncate:
 
     @pytest.mark.unit
     def test_short_text(self):
-        assert _truncate("Hello", 300) == "Hello"
+        assert _truncate("Hello", 2000) == "Hello"
 
     @pytest.mark.unit
     def test_exact_length(self):
-        text = "a" * 300
-        assert _truncate(text, 300) == text
+        text = "a" * 2000
+        assert _truncate(text, 2000) == text
 
     @pytest.mark.unit
     def test_long_text(self):
-        text = "a" * 500
-        result = _truncate(text, 300)
-        assert len(result) == 303  # 300 + "..."
+        text = "a" * 3000
+        result = _truncate(text, 2000)
+        assert len(result) == 2003  # 2000 + "..."
         assert result.endswith("...")
 
 
@@ -165,11 +165,11 @@ class TestExtractBlobs:
     @pytest.mark.unit
     def test_extracts_content_base64(self):
         blob_store = {}
-        data = {"id": 1, "filename": "test.pdf", "content_base64": "A" * 500}
+        data = {"id": 1, "filename": "test.pdf", "content_base64": "A" * 600}
         result = _extract_blobs(data, 2, blob_store)
         assert result["content_base64"] == "$blob:step2_content_base64"
         assert "$blob:step2_content_base64" in blob_store
-        assert blob_store["$blob:step2_content_base64"] == "A" * 500
+        assert blob_store["$blob:step2_content_base64"] == "A" * 600
         assert "_content_base64_size" in result
 
     @pytest.mark.unit
@@ -184,7 +184,7 @@ class TestExtractBlobs:
     def test_handles_nested_json_in_text(self):
         """MCP raw_data format: {"type": "text", "text": "<json>"}"""
         blob_store = {}
-        inner_json = json.dumps({"id": 1, "content_base64": "X" * 500})
+        inner_json = json.dumps({"id": 1, "content_base64": "X" * 600})
         data = [{"type": "text", "text": inner_json}]
         result = _extract_blobs(data, 3, blob_store)
         # List index appended: step3_0
@@ -203,7 +203,7 @@ class TestExtractBlobs:
     @pytest.mark.unit
     def test_handles_list_input(self):
         blob_store = {}
-        data = [{"content_base64": "B" * 300}, {"content_base64": "C" * 300}]
+        data = [{"content_base64": "B" * 600}, {"content_base64": "C" * 600}]
         result = _extract_blobs(data, 5, blob_store)
         assert len(blob_store) == 2
 
@@ -271,8 +271,8 @@ class TestAgentContext:
         """Context sliding window should limit steps included in prompt."""
         ctx = AgentContext(original_message="test")
 
-        # Add more steps than MAX_HISTORY_STEPS
-        for i in range(15):
+        # Add more steps than MAX_HISTORY_STEPS (20)
+        for i in range(25):
             ctx.steps.append(AgentStep(
                 step_number=i,
                 step_type="tool_call",
@@ -281,11 +281,11 @@ class TestAgentContext:
             ))
 
         prompt = ctx.build_history_prompt()
-        # Should only include last 10 steps (MAX_HISTORY_STEPS)
+        # Should only include last 20 steps (MAX_HISTORY_STEPS)
         assert "tool_0" not in prompt
         assert "tool_4" not in prompt  # First 5 should be excluded
         assert "tool_5" in prompt or "tool_6" in prompt  # Later ones included
-        assert "tool_14" in prompt  # Last one definitely included
+        assert "tool_24" in prompt  # Last one definitely included
 
     @pytest.mark.unit
     def test_detect_infinite_loop_no_repetition(self):
@@ -360,14 +360,14 @@ class TestAgentContext:
         ctx.steps.append(AgentStep(
             step_number=1,
             step_type="tool_result",
-            content="x" * 1500,
+            content="x" * 10000,
             tool="test",
             success=True,
         ))
 
         prompt = ctx.build_history_prompt()
-        # Result should be truncated to 1000 chars in the prompt
-        assert len(prompt) < 1100
+        # Result should be truncated to 8000 chars in the prompt
+        assert len(prompt) < 8200
 
 
 # ============================================================================
@@ -741,8 +741,9 @@ class TestAgentServiceRun:
 
         assert len(chat_calls) >= 1
         prompt_content = chat_calls[0]["messages"][1]["content"]
-        assert "KONVERSATIONS-KONTEXT" not in prompt_content
-        assert "Was ist das Wetter?" not in prompt_content
+        # With 32k context, conversation history IS included for follow-up references
+        assert "KONVERSATIONS-KONTEXT" in prompt_content
+        assert "Was ist das Wetter?" in prompt_content
 
 
 # ============================================================================
@@ -1314,6 +1315,139 @@ class TestRecoverSendEmail:
         assert result is None
 
 
+class TestAgentMusicPlaybackChain:
+    """Test agent chains: search → get_stream_url → play_in_room."""
+
+    def _make_registry_with_music_tools(self):
+        """Create a tool registry with Jellyfin + internal tools."""
+        mock_mcp = MagicMock()
+        tools = []
+        for name, desc, params in [
+            ("mcp.jellyfin.search_media", "Search for media in Jellyfin", {"query": "Search query (required)", "type": "Media type"}),
+            ("mcp.jellyfin.get_stream_url", "Get a playable stream URL for a media item", {"item_id": "Item ID (required)"}),
+            ("mcp.homeassistant.get_state", "Get device state", {"entity_id": "Entity ID (required)"}),
+        ]:
+            mock_tool = MagicMock()
+            mock_tool.namespaced_name = name
+            mock_tool.description = desc
+            mock_tool.input_schema = {
+                "properties": {k: {"type": "string", "description": v} for k, v in params.items()},
+                "required": [k for k, v in params.items() if "(required)" in v],
+            }
+            tools.append(mock_tool)
+        mock_mcp.get_all_tools.return_value = tools
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        # Internal tools are registered automatically via _register_internal_tools()
+        return registry
+
+    @pytest.mark.unit
+    async def test_search_stream_play_chain(self):
+        """Agent chains: search_media → get_stream_url → play_in_room → final_answer."""
+        registry = self._make_registry_with_music_tools()
+
+        # Verify internal tools are registered
+        assert registry.is_valid_tool("internal.play_in_room")
+        assert registry.is_valid_tool("internal.resolve_room_player")
+
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+
+            if call_count == 1:
+                resp.message.content = json.dumps({
+                    "action": "mcp.jellyfin.search_media",
+                    "parameters": {"query": "ZZ Top", "type": "MusicAlbum"},
+                    "reason": "Search for ZZ Top albums"
+                })
+            elif call_count == 2:
+                resp.message.content = json.dumps({
+                    "action": "mcp.jellyfin.get_stream_url",
+                    "parameters": {"item_id": "abc123"},
+                    "reason": "Get stream URL for first album"
+                })
+            elif call_count == 3:
+                resp.message.content = json.dumps({
+                    "action": "internal.play_in_room",
+                    "parameters": {
+                        "media_url": "http://jellyfin:8096/Audio/abc123/universal",
+                        "room_name": "Arbeitszimmer"
+                    },
+                    "reason": "Play album in Arbeitszimmer"
+                })
+            else:
+                resp.message.content = json.dumps({
+                    "action": "final_answer",
+                    "answer": "Ich spiele das erste ZZ Top Album im Arbeitszimmer ab.",
+                    "reason": "Playback started successfully"
+                })
+            return resp
+
+        ollama.client.chat = mock_chat
+
+        executor = AsyncMock()
+        executor.execute = AsyncMock(side_effect=[
+            # search_media result
+            {
+                "success": True,
+                "message": "Found 3 albums",
+                "action_taken": True,
+                "data": {"items": [{"id": "abc123", "name": "ZZ Top's First Album", "year": 1971}]}
+            },
+            # get_stream_url result
+            {
+                "success": True,
+                "message": "Stream URL generated",
+                "action_taken": True,
+                "data": {"api_stream": "http://jellyfin:8096/Audio/abc123/universal"}
+            },
+            # play_in_room result
+            {
+                "success": True,
+                "message": "Playing on Arbeitszimmer Speaker",
+                "action_taken": True,
+                "data": {"entity_id": "media_player.arbeitszimmer_speaker"}
+            },
+        ])
+
+        agent = AgentService(registry, max_steps=8)
+        steps = await collect_steps(
+            agent, message="Welche Musik habe ich von ZZ Top? Spiele das erste Album im Arbeitszimmer ab.",
+            ollama=ollama, executor=executor
+        )
+
+        step_types = [s.step_type for s in steps]
+        assert "thinking" in step_types
+        assert step_types.count("tool_call") == 3
+        assert step_types.count("tool_result") == 3
+        assert "final_answer" in step_types
+
+        # Verify tool call sequence
+        tool_calls = [s for s in steps if s.step_type == "tool_call"]
+        assert tool_calls[0].tool == "mcp.jellyfin.search_media"
+        assert tool_calls[1].tool == "mcp.jellyfin.get_stream_url"
+        assert tool_calls[2].tool == "internal.play_in_room"
+
+    @pytest.mark.unit
+    def test_internal_tools_always_in_selection(self):
+        """Internal tools should always be included in keyword-filtered selection."""
+        registry = self._make_registry_with_music_tools()
+
+        # Query that only matches jellyfin keywords
+        selected = registry.select_relevant_tools("Suche Musik von Queen")
+        assert "internal.play_in_room" in selected
+        assert "internal.resolve_room_player" in selected
+        # Should also include jellyfin tools
+        assert any(k.startswith("mcp.jellyfin") for k in selected)
+
+
 class TestExtractBlobsMeta:
     """Test that blob extraction also stores metadata."""
 
@@ -1325,7 +1459,7 @@ class TestExtractBlobsMeta:
         data = {
             "filename": "invoice.pdf",
             "mime_type": "application/pdf",
-            "content_base64": "A" * 300,
+            "content_base64": "A" * 600,
         }
         result = _extract_blobs(data, 2, blob_store, blob_meta)
         assert "$blob:step2_content_base64" in blob_store
@@ -1338,6 +1472,6 @@ class TestExtractBlobsMeta:
     def test_no_meta_without_blob_meta_param(self):
         """Blob extraction without blob_meta param should not crash."""
         blob_store = {}
-        data = {"content_base64": "A" * 300}
+        data = {"content_base64": "A" * 600}
         result = _extract_blobs(data, 2, blob_store)
         assert "$blob:step2_content_base64" in blob_store

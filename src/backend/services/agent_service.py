@@ -28,6 +28,51 @@ if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
 
 
+def _compress_history_message(content: str, max_chars: int = 500) -> str:
+    """Compress a conversation history message for the agent prompt.
+
+    Action result blocks can be very large (full document lists, base64 data).
+    This extracts the essential summary and truncates the natural-language response.
+    """
+    if not content:
+        return ""
+
+    # Split action result prefix from the natural-language response
+    # Format: "[Aktionsergebnis — ...: \n<data>]\n\n<response>"
+    action_prefix = ""
+    response_text = content
+    if content.startswith("[Aktionsergebnis"):
+        # Find the closing bracket
+        bracket_end = content.find("]\n\n")
+        if bracket_end > 0:
+            action_block = content[1:bracket_end]  # strip [ and ]
+            response_text = content[bracket_end + 3:]
+
+            # Extract intent and first few result items from the action block
+            # Typical format: "Aktionsergebnis — ...: \nmcp.paperless.search_documents → 75 Ergebnisse:\n  - id=2299, title=..."
+            lines = action_block.split("\n")
+            # Keep header + up to 3 result items
+            compressed_lines = []
+            item_count = 0
+            for line in lines:
+                if line.strip().startswith("- "):
+                    item_count += 1
+                    if item_count <= 3:
+                        compressed_lines.append(line)
+                    elif item_count == 4:
+                        compressed_lines.append("  ... (weitere Ergebnisse gekürzt)")
+                else:
+                    compressed_lines.append(line)
+            action_prefix = "[" + "\n".join(compressed_lines) + "] "
+
+    # Truncate the natural-language response
+    remaining = max(100, max_chars - len(action_prefix))
+    if len(response_text) > remaining:
+        response_text = response_text[:remaining] + "..."
+
+    return action_prefix + response_text
+
+
 @dataclass
 class AgentStep:
     """Represents one step in the Agent Loop."""
@@ -356,7 +401,7 @@ class AgentService:
             history_lines = []
             for msg in recent:
                 role = "User" if msg.get("role") == "user" else "Assistant"
-                content = msg.get("content", "")[:2000]
+                content = _compress_history_message(msg.get("content", ""))
                 history_lines.append(f"  {role}: {content}")
             conv_context = prompt_manager.get(
                 "agent", "conv_context_template", lang=lang,
@@ -423,6 +468,14 @@ class AgentService:
         start_time = time.monotonic()
         agent_model = settings.agent_model or settings.ollama_model
 
+        # Use separate Ollama instance for agent if configured
+        if settings.agent_ollama_url:
+            import ollama as ollama_lib
+            agent_client = ollama_lib.AsyncClient(host=settings.agent_ollama_url)
+            logger.info(f"🤖 Agent using separate Ollama: {settings.agent_ollama_url} / {agent_model}")
+        else:
+            agent_client = ollama.client
+
         # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
         # The LLM selects the right tool itself — eliminates keyword-filtering errors.
         total_tools = len(self.tool_registry.get_tool_names())
@@ -448,7 +501,7 @@ class AgentService:
             elapsed = time.monotonic() - start_time
             if elapsed > self.total_timeout:
                 logger.warning(f"⏰ Agent total timeout after {elapsed:.1f}s at step {step_num}")
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
                 yield summary_step
                 return
 
@@ -464,14 +517,14 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_circuit_open", lang=lang),
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
                 yield summary_step
                 return
 
             # Call LLM with per-step timeout
             try:
                 raw_response = await asyncio.wait_for(
-                    ollama.client.chat(
+                    agent_client.chat(
                         model=agent_model,
                         messages=[
                             {"role": "system", "content": json_system_message},
@@ -495,7 +548,7 @@ class AgentService:
                     step_type="error",
                     content=prompt_manager.get("agent", "error_timeout", lang=lang, step=step_num),
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
                 yield summary_step
                 return
             except Exception as e:
@@ -525,7 +578,7 @@ class AgentService:
                 nudge = prompt + retry_nudge
                 try:
                     retry_response = await asyncio.wait_for(
-                        ollama.client.chat(
+                        agent_client.chat(
                             model=agent_model,
                             messages=[
                                 {"role": "system", "content": json_system_message},
@@ -552,17 +605,28 @@ class AgentService:
                 has_results = any(s.step_type == "tool_result" and s.success for s in context.steps)
                 if has_results:
                     logger.info(f"📝 Agent step {step_num}: Summarizing collected results via LLM...")
-                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang)
+                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
                     yield summary_step
                 elif response_text.strip():
                     # No tool results but LLM gave some text — use it as answer
-                    reason_text = "JSON parsing failed, using raw response" if lang == "en" else "JSON-Parsing fehlgeschlagen, Rohantwort verwendet"
-                    yield AgentStep(
-                        step_number=step_num,
-                        step_type="final_answer",
-                        content=response_text.strip(),
-                        reason=reason_text,
-                    )
+                    # Guard: don't leak truncated/malformed JSON as user-facing text
+                    raw = response_text.strip()
+                    if raw.startswith("{") or raw.startswith("["):
+                        logger.warning(f"⚠️ Agent step {step_num}: Suppressing malformed JSON from response")
+                        yield AgentStep(
+                            step_number=step_num,
+                            step_type="final_answer",
+                            content=prompt_manager.get("agent", "error_incomplete", lang=lang),
+                            reason="Malformed JSON suppressed",
+                        )
+                    else:
+                        reason_text = "JSON parsing failed, using raw response" if lang == "en" else "JSON-Parsing fehlgeschlagen, Rohantwort verwendet"
+                        yield AgentStep(
+                            step_number=step_num,
+                            step_type="final_answer",
+                            content=raw,
+                            reason=reason_text,
+                        )
                 else:
                     reason_text = "Empty LLM response" if lang == "en" else "Leere LLM-Antwort"
                     yield AgentStep(
@@ -721,13 +785,13 @@ class AgentService:
                     content=prompt_manager.get("agent", "error_loop_detected", lang=lang, tool=action),
                     tool=action,
                 )
-                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang)
+                summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
                 yield summary_step
                 return
 
         # Max steps reached — summarize collected results via LLM
         logger.warning(f"⚠️ Agent reached max steps ({self.max_steps})")
-        summary_step = await self._build_summary_answer(context, self.max_steps, message, ollama, agent_model, lang=lang)
+        summary_step = await self._build_summary_answer(context, self.max_steps, message, ollama, agent_model, lang=lang, agent_client=agent_client)
         yield summary_step
 
     async def _build_summary_answer(
@@ -738,6 +802,7 @@ class AgentService:
         ollama: "OllamaService",
         agent_model: str,
         lang: str = "de",
+        agent_client=None,
     ) -> AgentStep:
         """
         Summarize collected tool results into a natural-language answer via LLM.
@@ -772,9 +837,10 @@ class AgentService:
         }
         summary_system = prompt_manager.get("agent", "summary_system_message", lang=lang)
 
+        client = agent_client or ollama.client
         try:
             raw_response = await asyncio.wait_for(
-                ollama.client.chat(
+                client.chat(
                     model=agent_model,
                     messages=[
                         {"role": "system", "content": summary_system},

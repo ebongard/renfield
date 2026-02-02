@@ -1,0 +1,16 @@
+accounts:
+  - name: regfish
+    email: dev@renfield.de
+    provider: generic
+    imap:
+      host: mailserv.regfish.com
+      port: 993
+      security: ssl
+    smtp:
+      host: mailserv.regfish.com
+      port: 587
+      security: starttls
+    auth:
+      method: password
+      username: 41172-001b
+      password_env: MAIL_REGFISH_PASSWORD
