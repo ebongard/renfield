@@ -20,9 +20,9 @@
 #     en: ["Example query in English"]
 #
 # prompt_tools:
-#   Controls which tools appear in the LLM intent prompt.
-#   Only listed tools are shown — all tools remain available for execution.
-#   Omit this field to show all tools of a server in the prompt.
+#   Controls which tools are registered from this server.
+#   Only listed tools are discovered, available in prompts, and executable.
+#   Omit this field to register all tools of a server.
 #   prompt_tools: [tool_name_1, tool_name_2]
 
 servers:
@@ -91,29 +91,35 @@ servers:
         - "News about AI"
 
   # --- Jellyfin MCP Server ---
-  # Replaces: plugins/jellyfin.yaml
-  # npm: jellyfin-suggestion-mcp
-  # Requires env vars (mapped from Renfield config):
-  #   JELLYFIN_BASE_URL  ← same as JELLYFIN_URL
-  #   JELLYFIN_TOKEN     ← same as JELLYFIN_API_KEY
-  #   JELLYFIN_USER_ID   ← optional
+  # Custom Python MCP server with 13 specialized tools for Jellyfin.
+  # Replaces: jellyfin-suggestion-mcp npm package + plugins/jellyfin.yaml
+  # Requires: JELLYFIN_URL, JELLYFIN_API_KEY, JELLYFIN_USER_ID env vars
   - name: jellyfin
     transport: stdio
-    command: npx
-    args: ["-y", "jellyfin-suggestion-mcp"]
+    command: python
+    args: ["-m", "renfield_mcp_jellyfin"]
     enabled: "${JELLYFIN_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.jellyfin.list_items
+    example_intent: mcp.jellyfin.search_media
     prompt_tools:
-      - list_items
-      - search_items
+      - search_media
+      - get_stream_url
+      - list_albums
+      - list_artists
+      - list_movies
+      - list_series
+      - library_stats
     examples:
       de:
+        - "Suche Musik von Queen"
+        - "Spiele Pink Floyd im Wohnzimmer"
+        - "Welche Alben habe ich von ZZ Top?"
         - "Welche Filme habe ich?"
-        - "Zeige meine Serien"
       en:
+        - "Search music by Queen"
+        - "Play Pink Floyd in the living room"
+        - "What albums do I have from ZZ Top?"
         - "What movies do I have?"
-        - "Show my series"
 
   # --- n8n MCP Server ---
   # npm: mcp-n8n
@@ -141,22 +147,20 @@ servers:
         - "List my workflows"
 
   # --- Paperless-NGX MCP Server ---
-  # npm: @nloui/paperless-mcp
+  # Custom Python MCP server with 2 tools for Paperless-NGX.
+  # Replaces: @nloui/paperless-mcp npm package
   # Requires: PAPERLESS_API_URL, PAPERLESS_API_TOKEN env vars
   # Get API token from: Paperless-NGX → Profile → Auth Tokens
   - name: paperless
     transport: stdio
-    command: npx
-    args: ["-y", "@nloui/paperless-mcp", "${PAPERLESS_API_URL}", "${PAPERLESS_API_TOKEN}"]
+    command: python
+    args: ["-m", "renfield_mcp_paperless"]
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.paperless.search_documents
     prompt_tools:
       - search_documents
-      - list_documents
-      - get_document
-      - list_tags
-      - list_correspondents
+      - download_document
     examples:
       de:
         - "Zeige meine Dokumente in Paperless"

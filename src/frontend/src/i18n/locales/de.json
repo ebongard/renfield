@@ -481,7 +481,12 @@
     "toolName": "Tool-Name (MCP)",
     "server": "Server",
     "description": "Beschreibung",
-    "inputSchema": "Eingabe-Schema"
+    "inputSchema": "Eingabe-Schema",
+    "toolActive": "Aktiv",
+    "toolInactive": "Inaktiv",
+    "resetDefaults": "Auf Standard zurücksetzen",
+    "toolToggleError": "Tool-Aktivierung konnte nicht aktualisiert werden",
+    "activeTools": "aktiv"
   },
   "intents": {
     "title": "Intent-Übersicht",

@@ -47,6 +47,7 @@ export default function IntegrationsPage() {
   const [selectedTool, setSelectedTool] = useState(null);
   const [selectedPlugin, setSelectedPlugin] = useState(null);
   const [expandedIntents, setExpandedIntents] = useState({});
+  const [togglingTools, setTogglingTools] = useState({});
 
   const canManagePlugins = hasPermission('plugins.manage');
 
@@ -146,6 +147,75 @@ export default function IntegrationsPage() {
 
   const getToolsForServer = (serverName) => {
     return mcpTools.filter(tool => tool.server === serverName);
+  };
+
+  const toggleTool = async (serverName, toolOriginalName, currentlyActive) => {
+    const serverTools = getToolsForServer(serverName);
+    const toggleKey = `${serverName}.${toolOriginalName}`;
+    setTogglingTools(prev => ({ ...prev, [toggleKey]: true }));
+
+    // Build new active list
+    let newActiveTools;
+    if (currentlyActive) {
+      // Deactivate: keep all currently active except this one
+      newActiveTools = serverTools
+        .filter(t => t.active && t.original_name !== toolOriginalName)
+        .map(t => t.original_name);
+    } else {
+      // Activate: add this one to currently active
+      newActiveTools = [
+        ...serverTools.filter(t => t.active).map(t => t.original_name),
+        toolOriginalName,
+      ];
+    }
+
+    // Optimistic update
+    setMcpTools(prev => prev.map(t =>
+      t.server === serverName && t.original_name === toolOriginalName
+        ? { ...t, active: !currentlyActive }
+        : t
+    ));
+
+    try {
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await apiClient.patch(
+        `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
+        { active_tools: newActiveTools },
+        { headers }
+      );
+      setMcpStatus(res.data);
+    } catch (err) {
+      // Revert optimistic update
+      setMcpTools(prev => prev.map(t =>
+        t.server === serverName && t.original_name === toolOriginalName
+          ? { ...t, active: currentlyActive }
+          : t
+      ));
+      setError(err.response?.data?.detail || t('integrations.toolToggleError'));
+    } finally {
+      setTogglingTools(prev => ({ ...prev, [toggleKey]: false }));
+    }
+  };
+
+  const resetServerTools = async (serverName) => {
+    setTogglingTools(prev => ({ ...prev, [serverName]: true }));
+    try {
+      const token = getAccessToken();
+      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      const res = await apiClient.patch(
+        `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
+        { active_tools: null },
+        { headers }
+      );
+      setMcpStatus(res.data);
+      await loadData();
+      setSuccess(t('integrations.resetDefaults'));
+    } catch (err) {
+      setError(err.response?.data?.detail || t('integrations.toolToggleError'));
+    } finally {
+      setTogglingTools(prev => ({ ...prev, [serverName]: false }));
+    }
   };
 
   const getTransportBadge = (transport) => {
@@ -307,7 +377,7 @@ export default function IntegrationsPage() {
                     </div>
                     <div className="flex items-center space-x-4">
                       <span className="text-sm text-gray-500 dark:text-gray-400">
-                        {server.tool_count} {t('integrations.tools')}
+                        {server.tool_count}/{server.total_tool_count || server.tool_count} {t('integrations.tools')}
                       </span>
                       {server.connected ? (
                         <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
@@ -344,25 +414,75 @@ export default function IntegrationsPage() {
                       {/* Tools List */}
                       {serverTools.length > 0 ? (
                         <div>
-                          <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
-                            {t('integrations.availableTools')} ({serverTools.length})
-                          </h4>
+                          <div className="flex items-center justify-between mb-3">
+                            <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                              {t('integrations.availableTools')} ({serverTools.filter(t => t.active).length}/{serverTools.length} {t('integrations.activeTools')})
+                            </h4>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                resetServerTools(server.name);
+                              }}
+                              disabled={togglingTools[server.name]}
+                              className="text-xs text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-400 transition-colors"
+                            >
+                              {togglingTools[server.name] ? (
+                                <Loader className="w-3 h-3 animate-spin inline mr-1" />
+                              ) : null}
+                              {t('integrations.resetDefaults')}
+                            </button>
+                          </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                            {serverTools.map((tool) => (
-                              <button
-                                key={tool.name}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedTool(tool);
-                                }}
-                                className="flex items-center space-x-2 p-2 rounded-lg bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors text-left"
-                              >
-                                <Wrench className="w-4 h-4 text-indigo-500 flex-shrink-0" />
-                                <span className="text-sm text-gray-700 dark:text-gray-300 truncate">
-                                  {tool.original_name}
-                                </span>
-                              </button>
-                            ))}
+                            {serverTools.map((tool) => {
+                              const toggleKey = `${server.name}.${tool.original_name}`;
+                              const isToggling = togglingTools[toggleKey];
+                              return (
+                                <div
+                                  key={tool.name}
+                                  className={`flex items-center p-2 rounded-lg transition-colors ${
+                                    tool.active
+                                      ? 'bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750'
+                                      : 'bg-gray-50/50 dark:bg-gray-800/50 opacity-50'
+                                  }`}
+                                >
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleTool(server.name, tool.original_name, tool.active);
+                                    }}
+                                    disabled={isToggling}
+                                    className={`mr-2 relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                                      tool.active ? 'bg-indigo-500' : 'bg-gray-300 dark:bg-gray-600'
+                                    }`}
+                                    title={tool.active ? t('integrations.toolActive') : t('integrations.toolInactive')}
+                                  >
+                                    <span
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                                        tool.active ? 'translate-x-4' : 'translate-x-0'
+                                      }`}
+                                    />
+                                  </button>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedTool(tool);
+                                    }}
+                                    className="flex items-center space-x-2 text-left flex-1 min-w-0"
+                                  >
+                                    <Wrench className={`w-4 h-4 flex-shrink-0 ${
+                                      tool.active ? 'text-indigo-500' : 'text-gray-400 dark:text-gray-600'
+                                    }`} />
+                                    <span className={`text-sm truncate ${
+                                      tool.active
+                                        ? 'text-gray-700 dark:text-gray-300'
+                                        : 'text-gray-400 dark:text-gray-500'
+                                    }`}>
+                                      {tool.original_name}
+                                    </span>
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       ) : (

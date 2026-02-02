@@ -437,6 +437,97 @@ class TestConnectPartialFailure:
 
 
 # ============================================================================
+# prompt_tools Discovery Filter
+# ============================================================================
+
+class TestPromptToolsDiscoveryFilter:
+    """Test that prompt_tools filters tools at discovery time."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_prompt_tools_filters_discovered_tools(self):
+        """connect_all with prompt_tools should only register listed tools."""
+        manager = MCPManager()
+
+        config = MCPServerConfig(
+            name="filtered",
+            url="http://test:8080/mcp",
+            prompt_tools=["allowed_tool", "another_allowed"],
+        )
+        state = MCPServerState(config=config)
+        manager._servers["filtered"] = state
+
+        # Simulate _connect_server with prompt_tools filtering (matches real code)
+        async def mock_connect(s):
+            all_tools_raw = [
+                ("allowed_tool", "Allowed"),
+                ("another_allowed", "Also allowed"),
+                ("blocked_tool", "Should be filtered out"),
+            ]
+            # Build all_discovered_tools (unfiltered)
+            all_discovered = []
+            for name, desc in all_tools_raw:
+                namespaced = f"mcp.{s.config.name}.{name}"
+                info = MCPToolInfo(s.config.name, name, namespaced, desc)
+                all_discovered.append(info)
+            s.all_discovered_tools = all_discovered
+
+            # Filter to active
+            active = manager._get_active_tools(s.config)
+            allowed = set(active) if active else None
+            tools = []
+            for tool_info in all_discovered:
+                if allowed and tool_info.original_name not in allowed:
+                    continue
+                tools.append(tool_info)
+                manager._tool_index[tool_info.namespaced_name] = tool_info
+            s.connected = True
+            s.tools = tools
+
+        with patch.object(manager, "_connect_server", side_effect=mock_connect):
+            await manager.connect_all()
+
+        # Only 2 of 3 tools should be registered
+        assert state.connected is True
+        assert len(state.tools) == 2
+        assert len(state.all_discovered_tools) == 3
+        assert len(manager._tool_index) == 2
+        assert "mcp.filtered.allowed_tool" in manager._tool_index
+        assert "mcp.filtered.another_allowed" in manager._tool_index
+        assert "mcp.filtered.blocked_tool" not in manager._tool_index
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_prompt_tools_registers_all(self):
+        """Without prompt_tools, all discovered tools should be registered."""
+        manager = MCPManager()
+
+        config = MCPServerConfig(
+            name="unfiltered",
+            url="http://test:8080/mcp",
+            # No prompt_tools — should register all
+        )
+        state = MCPServerState(config=config)
+        manager._servers["unfiltered"] = state
+
+        async def fake_connect(s):
+            all_discovered = []
+            for name in ["tool_a", "tool_b", "tool_c"]:
+                namespaced = f"mcp.{s.config.name}.{name}"
+                info = MCPToolInfo(s.config.name, name, namespaced, f"Desc {name}")
+                all_discovered.append(info)
+                manager._tool_index[namespaced] = info
+            s.connected = True
+            s.all_discovered_tools = all_discovered
+            s.tools = list(all_discovered)
+
+        with patch.object(manager, "_connect_server", side_effect=fake_connect):
+            await manager.connect_all()
+
+        assert len(manager._tool_index) == 3
+
+
+# ============================================================================
 # Status
 # ============================================================================
 
@@ -460,6 +551,7 @@ class TestGetStatus:
             config=MCPServerConfig(name="srv"),
             connected=True,
             tools=[tool],
+            all_discovered_tools=[tool, MCPToolInfo("srv", "t2", "mcp.srv.t2", "desc2")],
         )
 
         status = manager.get_status()
@@ -468,6 +560,7 @@ class TestGetStatus:
         assert status["servers"][0]["name"] == "srv"
         assert status["servers"][0]["connected"] is True
         assert status["servers"][0]["tool_count"] == 1
+        assert status["servers"][0]["total_tool_count"] == 2
 
 
 # ============================================================================
@@ -1293,3 +1386,265 @@ class TestBackoffInReconnect:
 
         # Should have called connect since backoff expired
         assert connect_called is True
+
+
+# ============================================================================
+# All Discovered Tools & Refilter
+# ============================================================================
+
+class TestAllDiscoveredToolsAndRefilter:
+    """Test all_discovered_tools storage and _refilter_server()."""
+
+    @pytest.mark.unit
+    def test_all_discovered_tools_stored(self):
+        """all_discovered_tools should store full unfiltered list."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["t1"])
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1"),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2"),
+            MCPToolInfo("srv", "t3", "mcp.srv.t3", "Tool 3"),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = [all_tools[0]]
+        manager._tool_index["mcp.srv.t1"] = all_tools[0]
+        manager._servers["srv"] = state
+
+        assert len(state.all_discovered_tools) == 3
+        assert len(state.tools) == 1
+
+    @pytest.mark.unit
+    def test_refilter_server_updates_tools(self):
+        """_refilter_server() should rebuild tools and index from all_discovered_tools."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["t1"])
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1"),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2"),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = [all_tools[0]]
+        manager._tool_index["mcp.srv.t1"] = all_tools[0]
+        manager._servers["srv"] = state
+
+        # Now override to enable all tools
+        manager._tool_overrides["srv"] = ["t1", "t2"]
+        manager._refilter_server("srv")
+
+        assert len(state.tools) == 2
+        assert "mcp.srv.t1" in manager._tool_index
+        assert "mcp.srv.t2" in manager._tool_index
+
+    @pytest.mark.unit
+    def test_refilter_server_removes_deactivated(self):
+        """_refilter_server() should remove deactivated tools from index."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv")
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1"),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2"),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = list(all_tools)
+        for t in all_tools:
+            manager._tool_index[t.namespaced_name] = t
+        manager._servers["srv"] = state
+
+        # Filter to only t1
+        manager._tool_overrides["srv"] = ["t1"]
+        manager._refilter_server("srv")
+
+        assert len(state.tools) == 1
+        assert "mcp.srv.t1" in manager._tool_index
+        assert "mcp.srv.t2" not in manager._tool_index
+
+    @pytest.mark.unit
+    def test_refilter_nonexistent_server(self):
+        """_refilter_server() with unknown server should not crash."""
+        manager = MCPManager()
+        manager._refilter_server("nonexistent")  # Should not raise
+
+
+# ============================================================================
+# get_all_tools_with_status
+# ============================================================================
+
+class TestGetAllToolsWithStatus:
+    """Test MCPManager.get_all_tools_with_status()."""
+
+    @pytest.mark.unit
+    def test_returns_all_tools_with_active_flag(self):
+        """Should return all discovered tools with correct active flags."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["t1"])
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1", {"properties": {}}),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2", {"properties": {}}),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = [all_tools[0]]  # Only t1 is active
+        manager._servers["srv"] = state
+
+        result = manager.get_all_tools_with_status()
+
+        assert len(result) == 2
+
+        t1 = next(t for t in result if t["original_name"] == "t1")
+        t2 = next(t for t in result if t["original_name"] == "t2")
+
+        assert t1["active"] is True
+        assert t1["name"] == "mcp.srv.t1"
+        assert t1["server"] == "srv"
+
+        assert t2["active"] is False
+        assert t2["name"] == "mcp.srv.t2"
+
+    @pytest.mark.unit
+    def test_returns_empty_when_no_servers(self):
+        """Should return empty list when no servers configured."""
+        manager = MCPManager()
+        assert manager.get_all_tools_with_status() == []
+
+
+# ============================================================================
+# _get_active_tools
+# ============================================================================
+
+class TestGetActiveTools:
+    """Test MCPManager._get_active_tools()."""
+
+    @pytest.mark.unit
+    def test_db_override_wins(self):
+        """DB override should take precedence over YAML prompt_tools."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["yaml_tool"])
+        manager._tool_overrides["srv"] = ["db_tool1", "db_tool2"]
+
+        result = manager._get_active_tools(config)
+        assert result == ["db_tool1", "db_tool2"]
+
+    @pytest.mark.unit
+    def test_yaml_fallback(self):
+        """Without DB override, YAML prompt_tools should be used."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["yaml_tool"])
+
+        result = manager._get_active_tools(config)
+        assert result == ["yaml_tool"]
+
+    @pytest.mark.unit
+    def test_none_when_no_filter(self):
+        """Without override or prompt_tools, should return None (all tools)."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv")
+
+        result = manager._get_active_tools(config)
+        assert result is None
+
+
+# ============================================================================
+# set_tool_override
+# ============================================================================
+
+class TestSetToolOverride:
+    """Test MCPManager.set_tool_override()."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_set_override_persists_and_refilters(self):
+        """set_tool_override should update internal state and re-filter."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv")
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1"),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2"),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = list(all_tools)
+        for t in all_tools:
+            manager._tool_index[t.namespaced_name] = t
+        manager._servers["srv"] = state
+
+        # Mock DB session
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.add = MagicMock()
+        mock_db.commit = AsyncMock()
+
+        await manager.set_tool_override("srv", ["t1"], mock_db)
+
+        assert manager._tool_overrides["srv"] == ["t1"]
+        assert len(state.tools) == 1
+        assert state.tools[0].original_name == "t1"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reset_override_removes_and_refilters(self):
+        """set_tool_override(None) should remove override and reset to defaults."""
+        manager = MCPManager()
+        config = MCPServerConfig(name="srv", prompt_tools=["t1"])
+        state = MCPServerState(config=config, connected=True)
+
+        all_tools = [
+            MCPToolInfo("srv", "t1", "mcp.srv.t1", "Tool 1"),
+            MCPToolInfo("srv", "t2", "mcp.srv.t2", "Tool 2"),
+        ]
+        state.all_discovered_tools = all_tools
+        state.tools = list(all_tools)
+        for t in all_tools:
+            manager._tool_index[t.namespaced_name] = t
+        manager._servers["srv"] = state
+        manager._tool_overrides["srv"] = ["t1", "t2"]
+
+        # Mock DB session
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None  # No setting to delete
+        mock_db.execute = AsyncMock(return_value=mock_result)
+        mock_db.commit = AsyncMock()
+
+        await manager.set_tool_override("srv", None, mock_db)
+
+        assert "srv" not in manager._tool_overrides
+        # Should have refiltered to YAML defaults (prompt_tools=["t1"])
+        assert len(state.tools) == 1
+        assert state.tools[0].original_name == "t1"
+
+
+# ============================================================================
+# get_status includes total_tool_count
+# ============================================================================
+
+class TestGetStatusTotalToolCount:
+    """Test that get_status() includes total_tool_count."""
+
+    @pytest.mark.unit
+    def test_total_tool_count_in_status(self):
+        """Status should include total_tool_count per server."""
+        manager = MCPManager()
+        tool1 = MCPToolInfo("srv", "t1", "mcp.srv.t1", "desc1")
+        tool2 = MCPToolInfo("srv", "t2", "mcp.srv.t2", "desc2")
+        manager._tool_index["mcp.srv.t1"] = tool1
+        manager._servers["srv"] = MCPServerState(
+            config=MCPServerConfig(name="srv"),
+            connected=True,
+            tools=[tool1],
+            all_discovered_tools=[tool1, tool2],
+        )
+
+        status = manager.get_status()
+        assert status["servers"][0]["tool_count"] == 1
+        assert status["servers"][0]["total_tool_count"] == 2

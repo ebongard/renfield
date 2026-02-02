@@ -39,7 +39,7 @@ except ImportError:
 
 
 # === Constants ===
-MAX_RESPONSE_SIZE = 10 * 1024  # 10KB max response size
+MAX_RESPONSE_SIZE = 40 * 1024  # 40KB max response size (fits in 32k context window)
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
 
 # Exponential Backoff constants for reconnection
@@ -206,8 +206,9 @@ def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
                 del coerced[key]
         elif value is not None and prop_type in _type_map:
             # Strip values with wrong type (e.g. {} for a string field)
+            # Skip "object" types here — Phase 2 below handles string→object coercion
             expected = _type_map[prop_type]
-            if not isinstance(value, expected):
+            if not isinstance(value, expected) and prop_type != "object":
                 if key not in required:
                     logger.info(f"🔄 Stripping '{key}': expected {prop_type}, got {type(value).__name__}")
                     del coerced[key]
@@ -516,7 +517,7 @@ class MCPServerConfig:
     refresh_interval: int = 300
     examples: Dict[str, List[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
     example_intent: Optional[str] = None  # Override intent name used in prompt examples
-    prompt_tools: Optional[List[str]] = None  # Tool names to include in LLM prompt (None = all)
+    prompt_tools: Optional[List[str]] = None  # Tool names to register from server (None = all)
 
 
 @dataclass
@@ -535,6 +536,7 @@ class MCPServerState:
     config: MCPServerConfig
     connected: bool = False
     tools: List[MCPToolInfo] = field(default_factory=list)
+    all_discovered_tools: List[MCPToolInfo] = field(default_factory=list)  # Unfiltered full list
     last_error: Optional[str] = None
     session: Any = None  # mcp.ClientSession
     exit_stack: Optional[AsyncExitStack] = None
@@ -590,6 +592,7 @@ class MCPManager:
     def __init__(self):
         self._servers: Dict[str, MCPServerState] = {}
         self._tool_index: Dict[str, MCPToolInfo] = {}  # namespaced_name -> MCPToolInfo
+        self._tool_overrides: Dict[str, Optional[List[str]]] = {}  # DB overrides per server
         self._refresh_task: Optional[asyncio.Task] = None
 
     def load_config(self, path: str) -> None:
@@ -772,7 +775,8 @@ class MCPManager:
                 timeout=settings.mcp_connect_timeout,
             )
 
-            tools = []
+            # Build full list of all discovered tools (for admin UI)
+            all_tools = []
             for tool in tools_result.tools:
                 namespaced = f"mcp.{config.name}.{tool.name}"
                 info = MCPToolInfo(
@@ -782,20 +786,32 @@ class MCPManager:
                     description=tool.description or "",
                     input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
                 )
-                tools.append(info)
-                self._tool_index[namespaced] = info
+                all_tools.append(info)
 
             state.session = session
             state.exit_stack = exit_stack
             state.connected = True
-            state.tools = tools
+            state.all_discovered_tools = all_tools
             state.last_error = None
+
+            # Filter to active tools only (DB override > YAML prompt_tools > all)
+            active_tools_list = self._get_active_tools(config)
+            allowed = set(active_tools_list) if active_tools_list else None
+            state.tools = []
+            for tool_info in all_tools:
+                if allowed and tool_info.original_name not in allowed:
+                    continue
+                state.tools.append(tool_info)
+                self._tool_index[tool_info.namespaced_name] = tool_info
 
             # Reset backoff on successful connection
             if state.backoff:
                 state.backoff.record_success()
 
-            logger.info(f"MCP server '{config.name}' connected: {len(tools)} tools")
+            if allowed:
+                logger.info(f"MCP server '{config.name}' connected: {len(state.tools)}/{len(all_tools)} tools (filtered)")
+            else:
+                logger.info(f"MCP server '{config.name}' connected: {len(state.tools)} tools")
 
         except Exception as e:
             state.connected = False
@@ -982,6 +998,13 @@ class MCPManager:
                 result[name] = state.config.prompt_tools
         return result
 
+    def _get_active_tools(self, config: MCPServerConfig) -> Optional[List[str]]:
+        """Get active tools list: DB override > YAML prompt_tools > None (all)."""
+        override = self._tool_overrides.get(config.name)
+        if override is not None:
+            return override
+        return config.prompt_tools
+
     def is_mcp_tool(self, name: str) -> bool:
         """Check if a name is a known MCP tool."""
         return name in self._tool_index
@@ -995,6 +1018,7 @@ class MCPManager:
                 "transport": state.config.transport.value,
                 "connected": state.connected,
                 "tool_count": len(state.tools),
+                "total_tool_count": len(state.all_discovered_tools),
                 "last_error": state.last_error,
             }
             # Include backoff info for disconnected servers
@@ -1017,13 +1041,12 @@ class MCPManager:
                         state.session.list_tools(),
                         timeout=settings.mcp_connect_timeout,
                     )
-                    # Remove old tools for this server
-                    old_names = [t.namespaced_name for t in state.tools]
-                    for old_name in old_names:
+                    # Remove old tools from index
+                    for old_name in [t.namespaced_name for t in state.tools]:
                         self._tool_index.pop(old_name, None)
 
-                    # Re-register
-                    state.tools = []
+                    # Store all discovered tools (unfiltered)
+                    state.all_discovered_tools = []
                     for tool in tools_result.tools:
                         namespaced = f"mcp.{state.config.name}.{tool.name}"
                         info = MCPToolInfo(
@@ -1033,8 +1056,17 @@ class MCPManager:
                             description=tool.description or "",
                             input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
                         )
-                        state.tools.append(info)
-                        self._tool_index[namespaced] = info
+                        state.all_discovered_tools.append(info)
+
+                    # Re-register with active filter applied
+                    active = self._get_active_tools(state.config)
+                    allowed = set(active) if active else None
+                    state.tools = []
+                    for tool_info in state.all_discovered_tools:
+                        if allowed and tool_info.original_name not in allowed:
+                            continue
+                        state.tools.append(tool_info)
+                        self._tool_index[tool_info.namespaced_name] = tool_info
 
                 except Exception as e:
                     logger.warning(f"MCP refresh failed for '{state.config.name}': {e}")
@@ -1056,6 +1088,79 @@ class MCPManager:
                     f"(attempt {state.backoff.attempt_count + 1 if state.backoff else 1})..."
                 )
                 await self._connect_server(state)
+
+    def _refilter_server(self, server_name: str) -> None:
+        """Re-build state.tools + _tool_index from all_discovered_tools using current filter."""
+        state = self._servers.get(server_name)
+        if not state:
+            return
+        # Remove old entries from index
+        for t in state.tools:
+            self._tool_index.pop(t.namespaced_name, None)
+        # Re-filter
+        active = self._get_active_tools(state.config)
+        allowed = set(active) if active else None
+        state.tools = []
+        for tool in state.all_discovered_tools:
+            if allowed and tool.original_name not in allowed:
+                continue
+            state.tools.append(tool)
+            self._tool_index[tool.namespaced_name] = tool
+
+    async def load_tool_overrides(self, db) -> None:
+        """Load per-server tool activation overrides from SystemSetting."""
+        from models.database import SystemSetting
+        from sqlalchemy import select
+
+        for name in self._servers:
+            key = f"mcp.{name}.active_tools"
+            result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+            setting = result.scalar_one_or_none()
+            if setting:
+                self._tool_overrides[name] = json.loads(setting.value)
+                logger.info(f"MCP tool override loaded for '{name}': {len(self._tool_overrides[name])} active tools")
+
+    async def set_tool_override(self, server_name: str, active_tools: Optional[List[str]], db) -> None:
+        """Update active tools for a server. None = reset to YAML default."""
+        from models.database import SystemSetting
+        from sqlalchemy import select
+
+        key = f"mcp.{server_name}.active_tools"
+        if active_tools is None:
+            # Reset to default — delete override
+            self._tool_overrides.pop(server_name, None)
+            result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+            setting = result.scalar_one_or_none()
+            if setting:
+                await db.delete(setting)
+        else:
+            self._tool_overrides[server_name] = active_tools
+            # Upsert SystemSetting
+            result = await db.execute(select(SystemSetting).where(SystemSetting.key == key))
+            setting = result.scalar_one_or_none()
+            if setting:
+                setting.value = json.dumps(active_tools)
+            else:
+                db.add(SystemSetting(key=key, value=json.dumps(active_tools)))
+        await db.commit()
+        # Re-apply filter to already-discovered tools
+        self._refilter_server(server_name)
+
+    def get_all_tools_with_status(self) -> List[Dict]:
+        """Return all discovered tools with active flag for admin UI."""
+        result = []
+        for state in self._servers.values():
+            active_names = {t.namespaced_name for t in state.tools}
+            for tool in state.all_discovered_tools:
+                result.append({
+                    "name": tool.namespaced_name,
+                    "server": tool.server_name,
+                    "original_name": tool.original_name,
+                    "description": tool.description,
+                    "input_schema": tool.input_schema,
+                    "active": tool.namespaced_name in active_names,
+                })
+        return result
 
     async def start_refresh_loop(self) -> None:
         """Start background task for periodic health checks and tool refreshes."""

@@ -201,6 +201,8 @@ def load_config(config_path: Optional[str] = None) -> Config:
         led = config_data["led"]
         config.led.brightness = led.get("brightness", config.led.brightness)
         config.led.num_leds = led.get("num_leds", config.led.num_leds)
+        config.led.spi_bus = led.get("spi_bus", config.led.spi_bus)
+        config.led.spi_device = led.get("spi_device", config.led.spi_device)
 
     if "button" in config_data:
         btn = config_data["button"]

@@ -138,6 +138,8 @@ class Satellite:
         # LED controller
         self.leds = LEDController(
             num_leds=self.config.led.num_leds,
+            spi_bus=self.config.led.spi_bus,
+            spi_device=self.config.led.spi_device,
             brightness=self.config.led.brightness,
         )
 

@@ -150,6 +150,13 @@ async def _init_mcp(app: "FastAPI"):
         manager = MCPManager()
         manager.load_config(settings.mcp_config_path)
         await manager.connect_all()
+
+        # Load DB-persisted tool overrides and re-filter servers
+        async with AsyncSessionLocal() as db_session:
+            await manager.load_tool_overrides(db_session)
+        for server_name in manager._servers:
+            manager._refilter_server(server_name)
+
         await manager.start_refresh_loop()
         app.state.mcp_manager = manager
 
