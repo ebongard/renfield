@@ -92,6 +92,7 @@
     "yourMessage": "Deine Nachricht",
     "assistantResponse": "Antwort von Renfield",
     "readAloud": "Vorlesen",
+    "intent": "Intent",
     "startConversation": "Starte ein Gespräch mit Renfield",
     "useTextOrMic": "Du kannst Text eingeben oder das Mikrofon nutzen",
     "loadingConversation": "Lade Konversation...",

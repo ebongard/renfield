@@ -84,11 +84,12 @@ export default function ChatMessages({
               </button>
             )}
 
-            {/* Intent Correction Button for assistant messages */}
-            {message.role === 'assistant' && !message.streaming && message.intentInfo && onFeedbackSubmit && (
+            {/* Intent info + Correction Button */}
+            {message.role === 'assistant' && !message.streaming && message.intentInfo && (
               <IntentCorrectionButton
                 messageText={message.userQuery || ''}
                 detectedIntent={message.intentInfo.intent}
+                detectedConfidence={message.intentInfo.confidence}
                 feedbackType="intent"
                 onCorrect={onFeedbackSubmit}
                 proactive={message.feedbackRequested === true}

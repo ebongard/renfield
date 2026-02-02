@@ -53,12 +53,14 @@ async function fetchMcpIntentOptions() {
 export default function IntentCorrectionButton({
   messageText,
   detectedIntent,
+  detectedConfidence,
   feedbackType = 'intent',
   onCorrect,
   proactive = false,
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(proactive);
+  const [intentExpanded, setIntentExpanded] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [mcpOptions, setMcpOptions] = useState([]);
 
@@ -107,22 +109,46 @@ export default function IntentCorrectionButton({
     );
   }
 
+  const pct = detectedConfidence != null ? Math.round(detectedConfidence * 100) : null;
+
   return (
     <div className="mt-1 relative">
-      {proactive && !open && (
-        <span className="text-xs text-amber-600 dark:text-amber-400 mr-2">
-          {t('feedback.proactiveQuestion')}
-        </span>
-      )}
-      <button
-        onClick={() => setOpen(!open)}
-        className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center space-x-1"
-        aria-label={t('feedback.wrongIntent')}
-      >
-        <AlertCircle className="w-3 h-3" aria-hidden="true" />
-        <span>{feedbackType === 'complexity' ? t('feedback.wrongComplexity') : t('feedback.wrongIntent')}</span>
-        <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
-      </button>
+      <div className="flex items-center gap-2 flex-wrap">
+        {/* Intent info (collapsible) */}
+        {detectedIntent && pct != null && (
+          <button
+            onClick={() => setIntentExpanded(!intentExpanded)}
+            className="text-xs text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 flex items-center gap-1"
+          >
+            <span>{intentExpanded ? '▾' : '▸'}</span>
+            {intentExpanded ? (
+              <span><code>{detectedIntent}</code> · {pct}%</span>
+            ) : (
+              <span>{t('chat.intent')}</span>
+            )}
+          </button>
+        )}
+
+        {/* Proactive hint */}
+        {proactive && !open && (
+          <span className="text-xs text-amber-600 dark:text-amber-400">
+            {t('feedback.proactiveQuestion')}
+          </span>
+        )}
+
+        {/* Correction toggle */}
+        {onCorrect && (
+          <button
+            onClick={() => setOpen(!open)}
+            className="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 flex items-center space-x-1"
+            aria-label={t('feedback.wrongIntent')}
+          >
+            <AlertCircle className="w-3 h-3" aria-hidden="true" />
+            <span>{feedbackType === 'complexity' ? t('feedback.wrongComplexity') : t('feedback.wrongIntent')}</span>
+            <ChevronDown className={`w-3 h-3 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
+          </button>
+        )}
+      </div>
 
       {open && (
         <div className="absolute bottom-full left-0 mb-1 z-10 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-2 min-w-48">
