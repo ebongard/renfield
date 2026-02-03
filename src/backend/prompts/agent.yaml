@@ -66,9 +66,9 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
-    - Fuer Licht/Schalter: Nutze HassTurnOn/HassTurnOff mit dem passenden Entity-Namen
-    - Fuer Helligkeiten/Farben: Nutze HassLightSet
-    - Fuer Sensorwerte: Nutze HassGetState
+    - Fuer Licht/Schalter: Nutze HassTurnOn/HassTurnOff mit nur "name" und optional "area". Uebergib NIEMALS "domain" oder "device_class"!
+    - Fuer Helligkeiten/Farben: Nutze HassLightSet mit nur "name", "area" und den gewuenschten Werten
+    - Fuer Sensorwerte: Nutze HassGetState mit nur "name" und optional "area"
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -306,9 +306,9 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For lights/switches: Use HassTurnOn/HassTurnOff with the matching entity name
-    - For brightness/colors: Use HassLightSet
-    - For sensor values: Use HassGetState
+    - For lights/switches: Use HassTurnOn/HassTurnOff with only "name" and optionally "area". NEVER pass "domain" or "device_class"!
+    - For brightness/colors: Use HassLightSet with only "name", "area" and the desired values
+    - For sensor values: Use HassGetState with only "name" and optionally "area"
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 

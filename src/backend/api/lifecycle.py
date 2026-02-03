@@ -208,7 +208,11 @@ async def _init_agent_router(app: "FastAPI"):
             return
 
         mcp_manager = getattr(app.state, 'mcp_manager', None)
-        router = AgentRouter(roles_config, mcp_manager=mcp_manager)
+        router = AgentRouter(
+            roles_config,
+            mcp_manager=mcp_manager,
+            classify_timeout=settings.agent_router_timeout,
+        )
         app.state.agent_router = router
         app.state.agent_roles_config = roles_config
         logger.info(f"✅ Agent Router bereit: {len(router.roles)} Rollen")

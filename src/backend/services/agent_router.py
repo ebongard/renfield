@@ -134,8 +134,10 @@ class AgentRouter:
         self,
         roles_config: dict,
         mcp_manager: Optional["MCPManager"] = None,
+        classify_timeout: float = 30.0,
     ):
         all_roles = _parse_roles(roles_config)
+        self.classify_timeout = classify_timeout
 
         # Get connected MCP servers
         connected_servers = None
@@ -213,15 +215,16 @@ class AgentRouter:
             "temperature": 0.0, "top_p": 0.1, "num_predict": 128, "num_ctx": 4096
         }
 
-        # Use intent model for classification (smaller, faster)
-        router_model = settings.ollama_intent_model or settings.ollama_model
-
-        # Use agent Ollama if configured, otherwise default
+        # Choose model + client based on available Ollama instances.
+        # If a separate agent Ollama is configured, use its model (the intent
+        # model likely doesn't exist there). Otherwise use intent model on default.
         if settings.agent_ollama_url:
             import ollama as ollama_lib
             client = ollama_lib.AsyncClient(host=settings.agent_ollama_url)
+            router_model = settings.agent_model or settings.ollama_model
         else:
             client = ollama.client
+            router_model = settings.ollama_intent_model or settings.ollama_model
 
         try:
             raw_response = await asyncio.wait_for(
@@ -232,7 +235,7 @@ class AgentRouter:
                     ],
                     options=llm_options,
                 ),
-                timeout=10.0,
+                timeout=self.classify_timeout,
             )
             response_text = raw_response.message.content or ""
             logger.debug(f"Router LLM response: {response_text[:200]}")

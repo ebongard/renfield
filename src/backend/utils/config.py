@@ -112,6 +112,7 @@ class Settings(BaseSettings):
     agent_ollama_url: Optional[str] = None # Optional: separate Ollama instance for agent (default: ollama_url)
     agent_conv_context_messages: int = 6  # Number of conversation history messages in agent loop
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
+    agent_router_timeout: float = 30.0    # Timeout for router classification LLM call (seconds)
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default
