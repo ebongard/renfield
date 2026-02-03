@@ -184,6 +184,33 @@ class TestParseRoles:
         assert "Recherche" in role.description["de"]
         assert "Research" in role.description["en"]
 
+    @pytest.mark.unit
+    def test_per_role_model_override(self):
+        """Test that per-role model and ollama_url are parsed."""
+        config = {
+            "roles": {
+                "smart_home": {
+                    "description": {"de": "Smart Home", "en": "Smart home"},
+                    "mcp_servers": ["homeassistant"],
+                    "max_steps": 4,
+                    "prompt_key": "agent_prompt_smart_home",
+                    "model": "llama3.2:3b",
+                    "ollama_url": "http://ollama:11434",
+                },
+                "general": {
+                    "description": {"de": "Allgemein", "en": "General"},
+                    "max_steps": 12,
+                    "prompt_key": "agent_prompt",
+                    # No model/ollama_url → should be None
+                },
+            }
+        }
+        roles = _parse_roles(config)
+        assert roles["smart_home"].model == "llama3.2:3b"
+        assert roles["smart_home"].ollama_url == "http://ollama:11434"
+        assert roles["general"].model is None
+        assert roles["general"].ollama_url is None
+
 
 # ============================================================================
 # Test _filter_available_roles

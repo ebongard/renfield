@@ -49,6 +49,8 @@ de:
 
     AUFGABE: "{message}"
 
+    {room_context}
+
     {tools_prompt}
 
     {history_prompt}
@@ -66,9 +68,15 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
-    - Fuer Licht/Schalter: Nutze HassTurnOn/HassTurnOff mit nur "name" und optional "area". Uebergib NIEMALS "domain" oder "device_class"!
-    - Fuer Helligkeiten/Farben: Nutze HassLightSet mit nur "name", "area" und den gewuenschten Werten
-    - Fuer Sensorwerte: Nutze HassGetState mit nur "name" und optional "area"
+    - Du MUSST IMMER zuerst ein Tool aufrufen. Gib NIEMALS final_answer ohne vorher ein Tool probiert zu haben!
+    - Nutze NIEMALS "name" fuer generische Begriffe wie "Licht", "Lampe", "Heizung"
+    - "Licht aus" (mit Raum-Kontext) → HassTurnOff mit {{"area": "<aktueller_raum>", "domain": ["light"]}}
+    - "Licht aus in der Kueche" → HassTurnOff mit {{"area": "Kueche", "domain": ["light"]}}
+    - "Deckenlicht Kueche aus" → HassTurnOff mit {{"name": "Deckenlicht Kueche"}}
+    - Wenn kein Raum im Befehl UND kein Raum-Kontext → nutze nur "domain" ohne "area"
+    - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
+    - Fuer Sensorwerte: Nutze HassGetState mit "name" und optional "area"
+    - Uebergib NIEMALS "device_class"
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -203,6 +211,12 @@ de:
 
     {step_directive}
 
+  # Room context template (injected when user is in a detected room)
+  room_context_template: |
+    RAUM-KONTEXT: Der Benutzer befindet sich im Raum "{room_name}".
+    Alle Aktionen ohne explizite Raumangabe beziehen sich auf diesen Raum.
+    Nutze "area": "{room_name}" fuer alle HA-Tool-Aufrufe, es sei denn der Benutzer nennt einen anderen Raum.
+
   # Conversation context template
   conv_context_template: |
     KONVERSATIONS-KONTEXT:
@@ -289,6 +303,8 @@ en:
 
     TASK: "{message}"
 
+    {room_context}
+
     {tools_prompt}
 
     {history_prompt}
@@ -306,9 +322,15 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For lights/switches: Use HassTurnOn/HassTurnOff with only "name" and optionally "area". NEVER pass "domain" or "device_class"!
-    - For brightness/colors: Use HassLightSet with only "name", "area" and the desired values
-    - For sensor values: Use HassGetState with only "name" and optionally "area"
+    - You MUST ALWAYS call a tool first. NEVER give final_answer without trying a tool first!
+    - NEVER use "name" for generic terms like "light", "lamp", "heater"
+    - "Turn off lights" (with room context) → HassTurnOff with {{"area": "<current_room>", "domain": ["light"]}}
+    - "Turn off lights in kitchen" → HassTurnOff with {{"area": "Kitchen", "domain": ["light"]}}
+    - "Kitchen ceiling light off" → HassTurnOff with {{"name": "Kitchen Ceiling Light"}}
+    - If no room in command AND no room context → use only "domain" without "area"
+    - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
+    - For sensor values: Use HassGetState with "name" and optionally "area"
+    - NEVER pass "device_class"
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 
@@ -442,6 +464,12 @@ en:
     - Reply ONLY with JSON
 
     {step_directive}
+
+  # Room context template (injected when user is in a detected room)
+  room_context_template: |
+    ROOM CONTEXT: The user is in room "{room_name}".
+    All actions without an explicit room reference apply to this room.
+    Use "area": "{room_name}" for all HA tool calls, unless the user names a different room.
 
   # Conversation context template
   conv_context_template: |

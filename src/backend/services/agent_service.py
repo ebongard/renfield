@@ -392,11 +392,20 @@ class AgentService:
         message: str,
         context: AgentContext,
         conversation_history: Optional[List[Dict]] = None,
+        room_context: Optional[Dict] = None,
         lang: str = "de",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
         tools_prompt = self.tool_registry.build_tools_prompt()
         history_prompt = context.build_history_prompt(lang=lang)
+
+        # Build room context string for the prompt
+        room_context_str = ""
+        if room_context and room_context.get("room_name"):
+            room_context_str = prompt_manager.get(
+                "agent", "room_context_template", lang=lang,
+                room_name=room_context["room_name"]
+            )
 
         # With 32k context, include conversation history for follow-up references
         # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
@@ -439,6 +448,7 @@ class AgentService:
         prompt = prompt_manager.get(
             "agent", self._prompt_key, lang=lang,
             message=message,
+            room_context=room_context_str,
             conv_context=conv_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
@@ -452,6 +462,7 @@ class AgentService:
             prompt = prompt_manager.get(
                 "agent", "agent_prompt", lang=lang,
                 message=message,
+                room_context=room_context_str,
                 conv_context=conv_context,
                 tools_prompt=tools_prompt,
                 tool_corrections=tool_corrections,
@@ -486,15 +497,21 @@ class AgentService:
 
         context = AgentContext(original_message=message)
         start_time = time.monotonic()
-        agent_model = settings.agent_model or settings.ollama_model
+
+        # Per-role model/URL override > global agent settings > default
+        role_model = self.role.model if self.role else None
+        role_url = self.role.ollama_url if self.role else None
+        agent_model = role_model or settings.agent_model or settings.ollama_model
+        agent_ollama_url = role_url or settings.agent_ollama_url
 
         # Use separate Ollama instance for agent if configured
-        if settings.agent_ollama_url:
+        if agent_ollama_url:
             import ollama as ollama_lib
-            agent_client = ollama_lib.AsyncClient(host=settings.agent_ollama_url)
-            logger.info(f"🤖 Agent using separate Ollama: {settings.agent_ollama_url} / {agent_model}")
+            agent_client = ollama_lib.AsyncClient(host=agent_ollama_url)
+            logger.info(f"🤖 Agent [{self.role.name if self.role else 'default'}] using Ollama: {agent_ollama_url} / {agent_model}")
         else:
             agent_client = ollama.client
+            logger.info(f"🤖 Agent [{self.role.name if self.role else 'default'}] using default Ollama / {agent_model}")
 
         # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
         # The LLM selects the right tool itself — eliminates keyword-filtering errors.
@@ -526,7 +543,7 @@ class AgentService:
                 return
 
             # Build prompt with all available tools (32k context fits all tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, lang=lang)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang)
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call

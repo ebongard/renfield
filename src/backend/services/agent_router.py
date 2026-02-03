@@ -37,6 +37,8 @@ class AgentRole:
     max_steps: int = 8
     prompt_key: str = "agent_prompt"
     has_agent_loop: bool = True  # False for conversation and knowledge roles
+    model: Optional[str] = None  # Per-role model override
+    ollama_url: Optional[str] = None  # Per-role Ollama URL override
 
 
 # Pre-built fallback roles
@@ -86,6 +88,8 @@ def _parse_roles(config: dict) -> Dict[str, AgentRole]:
             max_steps=role_data.get("max_steps", 8),
             prompt_key=role_data.get("prompt_key", "agent_prompt"),
             has_agent_loop=has_agent_loop,
+            model=role_data.get("model"),
+            ollama_url=role_data.get("ollama_url"),
         )
         roles[name] = role
 

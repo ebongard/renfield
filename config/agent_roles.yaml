@@ -9,6 +9,8 @@
 #   internal_tools:  List of internal tool names to include (null = all)
 #   max_steps:       Maximum agent loop steps for this role
 #   prompt_key:      Key in agent.yaml for the role-specific prompt
+#   model:           Optional per-role model override (default: AGENT_MODEL or OLLAMA_MODEL)
+#   ollama_url:      Optional per-role Ollama URL override (default: AGENT_OLLAMA_URL or OLLAMA_URL)
 
 roles:
   smart_home:
@@ -19,6 +21,7 @@ roles:
     internal_tools: [internal.resolve_room_player, internal.play_in_room]
     max_steps: 4
     prompt_key: agent_prompt_smart_home
+    model: "qwen3:8b"
 
   research:
     description:
