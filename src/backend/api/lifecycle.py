@@ -189,6 +189,37 @@ async def _init_mcp(app: "FastAPI"):
         app.state.mcp_manager = None
 
 
+async def _init_agent_router(app: "FastAPI"):
+    """Initialize the Agent Router with role definitions."""
+    if not settings.agent_enabled:
+        app.state.agent_router = None
+        app.state.agent_roles_config = None
+        logger.info("Agent Router deaktiviert (agent_enabled=false)")
+        return
+
+    try:
+        from services.agent_router import AgentRouter, load_roles_config
+
+        roles_config = load_roles_config(settings.agent_roles_path)
+        if not roles_config:
+            logger.warning(f"Agent roles config empty or not found: {settings.agent_roles_path}")
+            app.state.agent_router = None
+            app.state.agent_roles_config = None
+            return
+
+        mcp_manager = getattr(app.state, 'mcp_manager', None)
+        router = AgentRouter(roles_config, mcp_manager=mcp_manager)
+        app.state.agent_router = router
+        app.state.agent_roles_config = roles_config
+        logger.info(f"✅ Agent Router bereit: {len(router.roles)} Rollen")
+    except Exception as e:
+        logger.error(f"❌ Agent Router konnte nicht initialisiert werden: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        app.state.agent_router = None
+        app.state.agent_roles_config = None
+
+
 async def _init_zeroconf(app: "FastAPI"):
     """Initialize Zeroconf service for satellite auto-discovery."""
     zeroconf_service = None
@@ -253,6 +284,7 @@ async def lifespan(app: "FastAPI"):
     await _init_task_queue(app)
     await _init_plugins(app)
     await _init_mcp(app)
+    await _init_agent_router(app)
 
     # Background preloading
     _schedule_whisper_preload()

@@ -26,6 +26,7 @@ from services.prompt_manager import prompt_manager
 if TYPE_CHECKING:
     from services.ollama_service import OllamaService
     from services.action_executor import ActionExecutor
+    from services.agent_router import AgentRole
 
 
 def _compress_history_message(content: str, max_chars: int = 500) -> str:
@@ -376,11 +377,15 @@ class AgentService:
         max_steps: Optional[int] = None,
         step_timeout: Optional[float] = None,
         total_timeout: Optional[float] = None,
+        role: Optional["AgentRole"] = None,
     ):
         self.tool_registry = tool_registry
-        self.max_steps = max_steps or settings.agent_max_steps
+        self.role = role
+        # Role overrides take priority, then explicit params, then settings
+        self.max_steps = max_steps or (role.max_steps if role else None) or settings.agent_max_steps
         self.step_timeout = step_timeout or settings.agent_step_timeout
         self.total_timeout = total_timeout or settings.agent_total_timeout
+        self._prompt_key = (role.prompt_key if role else None) or "agent_prompt"
 
     async def _build_agent_prompt(
         self,
@@ -430,9 +435,9 @@ class AgentService:
         except Exception as e:
             logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
 
-        # Build prompt from externalized template
-        return prompt_manager.get(
-            "agent", "agent_prompt", lang=lang,
+        # Build prompt from externalized template (role-specific or default)
+        prompt = prompt_manager.get(
+            "agent", self._prompt_key, lang=lang,
             message=message,
             conv_context=conv_context,
             tools_prompt=tools_prompt,
@@ -440,6 +445,21 @@ class AgentService:
             history_prompt=history_prompt,
             step_directive=step_directive
         )
+
+        # If role-specific prompt not found, fall back to default agent_prompt
+        if not prompt and self._prompt_key != "agent_prompt":
+            logger.debug(f"Prompt key '{self._prompt_key}' not found, falling back to 'agent_prompt'")
+            prompt = prompt_manager.get(
+                "agent", "agent_prompt", lang=lang,
+                message=message,
+                conv_context=conv_context,
+                tools_prompt=tools_prompt,
+                tool_corrections=tool_corrections,
+                history_prompt=history_prompt,
+                step_directive=step_directive
+            )
+
+        return prompt
 
     async def run(
         self,

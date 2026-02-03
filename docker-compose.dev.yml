@@ -87,6 +87,7 @@ services:
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
+      - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro  # Email MCP account config
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper

@@ -1,0 +1,75 @@
+# Agent Role Definitions
+# ======================
+# Each role defines a specialized agent with filtered tools and step limits.
+# The AgentRouter classifies user messages into exactly one role.
+#
+# Fields:
+#   description:     Bilingual description (de/en) shown to the router LLM
+#   mcp_servers:     List of MCP server names to include (null = all servers)
+#   internal_tools:  List of internal tool names to include (null = all)
+#   max_steps:       Maximum agent loop steps for this role
+#   prompt_key:      Key in agent.yaml for the role-specific prompt
+
+roles:
+  smart_home:
+    description:
+      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern"
+      en: "Smart home: control lights, switches, sensors, heating, scenes"
+    mcp_servers: [homeassistant]
+    internal_tools: [internal.resolve_room_player, internal.play_in_room]
+    max_steps: 4
+    prompt_key: agent_prompt_smart_home
+
+  research:
+    description:
+      de: "Recherche: Websuche, Nachrichten, Wetterdaten"
+      en: "Research: web search, news, weather data"
+    mcp_servers: [search, news, weather]
+    max_steps: 6
+    prompt_key: agent_prompt_research
+
+  documents:
+    description:
+      de: "Dokumente und E-Mail: Suche, Download, Versand von Dokumenten"
+      en: "Documents and email: search, download, send documents"
+    mcp_servers: [paperless, email]
+    max_steps: 8
+    prompt_key: agent_prompt_documents
+
+  media:
+    description:
+      de: "Medien: Musik, Filme, Serien suchen und abspielen"
+      en: "Media: search and play music, movies, series"
+    mcp_servers: [jellyfin]
+    internal_tools: [internal.resolve_room_player, internal.play_in_room]
+    max_steps: 6
+    prompt_key: agent_prompt_media
+
+  workflow:
+    description:
+      de: "Automatisierungen: n8n Workflows erstellen und verwalten"
+      en: "Automations: create and manage n8n workflows"
+    mcp_servers: [n8n]
+    max_steps: 4
+    prompt_key: agent_prompt_workflow
+
+  knowledge:
+    description:
+      de: "Wissensdatenbank: Suche in eigenen hochgeladenen Dokumenten"
+      en: "Knowledge base: search in own uploaded documents"
+    # No agent loop - uses RAG path directly
+
+  general:
+    description:
+      de: "Allgemein: Komplexe oder domainuebergreifende Anfragen"
+      en: "General: complex or cross-domain queries"
+    mcp_servers: null
+    internal_tools: null
+    max_steps: 12
+    prompt_key: agent_prompt
+
+  conversation:
+    description:
+      de: "Konversation: Smalltalk, Allgemeinwissen, Meinungen, keine Aktion noetig"
+      en: "Conversation: smalltalk, general knowledge, opinions, no action needed"
+    # No agent loop - direct LLM response

@@ -37,7 +37,23 @@ class AgentToolRegistry:
     - Plugins (legacy YAML-based plugins)
     """
 
-    def __init__(self, plugin_registry: Optional["PluginRegistry"] = None, mcp_manager: Optional["MCPManager"] = None):
+    def __init__(
+        self,
+        plugin_registry: Optional["PluginRegistry"] = None,
+        mcp_manager: Optional["MCPManager"] = None,
+        server_filter: Optional[List[str]] = None,
+        internal_filter: Optional[List[str]] = None,
+    ):
+        """Initialize the tool registry.
+
+        Args:
+            plugin_registry: Legacy plugin registry
+            mcp_manager: MCP server manager
+            server_filter: If set, only include MCP tools from these server names.
+                          None means include all servers.
+            internal_filter: If set, only include these internal tool names.
+                            None means include all internal tools.
+        """
         self._tools: Dict[str, ToolDefinition] = {}
 
         # Register plugin tools
@@ -46,10 +62,10 @@ class AgentToolRegistry:
 
         # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
-            self._register_mcp_tools(mcp_manager)
+            self._register_mcp_tools(mcp_manager, server_filter=server_filter)
 
         # Register internal agent tools (room resolution, media playback)
-        self._register_internal_tools()
+        self._register_internal_tools(internal_filter=internal_filter)
 
     def _register_plugin_tools(self, plugin_registry: "PluginRegistry") -> None:
         """Register all plugin intents as agent tools."""
@@ -67,11 +83,18 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"🔧 Agent tool registered: {tool.name}")
 
-    def _register_internal_tools(self) -> None:
-        """Register internal agent tools (room resolution, media playback)."""
+    def _register_internal_tools(self, internal_filter: Optional[List[str]] = None) -> None:
+        """Register internal agent tools (room resolution, media playback).
+
+        Args:
+            internal_filter: If set, only register these tool names. None = all.
+        """
         from services.internal_tools import InternalToolService
 
         for name, definition in InternalToolService.TOOLS.items():
+            if internal_filter is not None and name not in internal_filter:
+                continue
+
             params = {}
             for param_name, param_desc in definition.get("parameters", {}).items():
                 params[param_name] = param_desc
@@ -84,9 +107,16 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"Internal agent tool registered: {tool.name}")
 
-    def _register_mcp_tools(self, mcp_manager: "MCPManager") -> None:
-        """Register all MCP tools as agent tools."""
+    def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: Optional[List[str]] = None) -> None:
+        """Register MCP tools as agent tools.
+
+        Args:
+            mcp_manager: MCP server manager
+            server_filter: If set, only include tools from these server names. None = all.
+        """
         for mcp_tool in mcp_manager.get_all_tools():
+            if server_filter is not None and mcp_tool.server_name not in server_filter:
+                continue
             params = {}
             schema_props = mcp_tool.input_schema.get("properties", {})
             required_params = mcp_tool.input_schema.get("required", [])

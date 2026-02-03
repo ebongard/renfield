@@ -209,6 +209,96 @@ async def _route_chat_tts_output(
         return False
 
 
+async def _stream_rag_response(
+    content: str,
+    knowledge_base_id,
+    ollama,
+    session_state: "ConversationSessionState",
+    websocket: WebSocket,
+) -> str:
+    """Stream a RAG-enhanced or plain conversation response.
+
+    Handles RAG context lookup, caching, follow-up detection, and fallback
+    to plain conversation if no RAG context is found.
+
+    Returns:
+        The full response text.
+    """
+    full_response = ""
+
+    if settings.rag_enabled:
+        try:
+            from services.rag_service import RAGService
+
+            rag_context = None
+            is_followup = is_followup_question(content, session_state.last_query)
+
+            if is_followup and session_state.is_rag_context_valid():
+                rag_context = session_state.last_rag_context
+                logger.info(f"📚 RAG Follow-up erkannt, nutze gecachten Kontext ({len(rag_context)} Zeichen)")
+            else:
+                async with AsyncSessionLocal() as db_session:
+                    rag_service = RAGService(db_session)
+
+                    logger.info(f"📚 RAG Suche: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
+
+                    search_results = await rag_service.search(
+                        query=content,
+                        knowledge_base_id=knowledge_base_id
+                    )
+
+                    if search_results:
+                        rag_context = await rag_service.get_context(
+                            query=content,
+                            knowledge_base_id=knowledge_base_id
+                        )
+                        session_state.update_rag_context(
+                            context=rag_context,
+                            results=search_results,
+                            query=content,
+                            kb_id=knowledge_base_id
+                        )
+                        logger.info(f"📚 RAG Kontext gefunden und gecacht ({len(rag_context)} Zeichen)")
+
+            if rag_context:
+                await websocket.send_json({
+                    "type": "rag_context",
+                    "has_context": True,
+                    "knowledge_base_id": knowledge_base_id,
+                    "is_followup": is_followup
+                })
+
+                async for chunk in ollama.chat_stream_with_rag(
+                    content,
+                    rag_context,
+                    history=session_state.conversation_history if is_followup else None
+                ):
+                    full_response += chunk
+                    await websocket.send_json({"type": "stream", "content": chunk})
+
+                session_state.add_to_history("user", content)
+                session_state.add_to_history("assistant", full_response)
+                return full_response
+            else:
+                logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
+                await websocket.send_json({
+                    "type": "rag_context",
+                    "has_context": False,
+                    "knowledge_base_id": knowledge_base_id
+                })
+        except Exception as e:
+            logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+
+    # Fallback: plain conversation
+    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+        full_response += chunk
+        await websocket.send_json({"type": "stream", "content": chunk})
+
+    return full_response
+
+
 @router.websocket("/ws")
 async def websocket_endpoint(
     websocket: WebSocket,
@@ -298,28 +388,64 @@ async def websocket_endpoint(
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to load conversation history: {e}")
 
-            # === Agent Loop Check ===
-            # If agent is enabled and message is complex, use the Agent Loop
+            # === Unified Router / Legacy Dual-Path ===
             agent_used = False
             full_response = ""
             intent = None
             action_result = None
             agent_steps_count = 0
 
-            if settings.agent_enabled:
-                from services.complexity_detector import ComplexityDetector
-                if await ComplexityDetector.needs_agent_with_feedback(content):
+            # Get router from app state (initialized at startup if agent_enabled)
+            agent_router = getattr(app.state, 'agent_router', None)
+
+            if settings.agent_enabled and agent_router:
+                # === Unified Router Path ===
+                # Every message goes through router → specialized agent
+                from services.agent_tools import AgentToolRegistry
+                from services.agent_service import AgentService, step_to_ws_message
+                from services.action_executor import ActionExecutor
+
+                mcp_manager = getattr(app.state, 'mcp_manager', None)
+
+                role = await agent_router.classify(
+                    content, ollama,
+                    conversation_history=session_state.conversation_history if session_state.conversation_history else None,
+                    lang=ollama.default_lang,
+                )
+                logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
+
+                if role.name == "conversation":
+                    # Direct LLM response — no tools, no agent loop
+                    intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
+
+                    if use_rag and settings.rag_enabled:
+                        # RAG-enhanced conversation
+                        full_response = await _stream_rag_response(
+                            content, knowledge_base_id, ollama, session_state, websocket
+                        )
+                    else:
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                            full_response += chunk
+                            await websocket.send_json({"type": "stream", "content": chunk})
+
+                elif role.name == "knowledge":
+                    # RAG search → LLM response (dedicated knowledge base path)
+                    intent = {"intent": "knowledge.ask", "parameters": {}, "confidence": 1.0}
+
+                    full_response = await _stream_rag_response(
+                        content, knowledge_base_id, ollama, session_state, websocket
+                    )
+
+                else:
+                    # Specialized agent loop (smart_home, documents, media, research, workflow, general)
                     agent_used = True
-                    matched_patterns = ComplexityDetector.detect_patterns(content)
-                    logger.info(f"🤖 Agent Loop aktiviert für: '{content[:80]}...' (patterns: {matched_patterns})")
-
-                    from services.agent_tools import AgentToolRegistry
-                    from services.agent_service import AgentService, step_to_ws_message
-                    from services.action_executor import ActionExecutor
-
-                    mcp_manager = getattr(app.state, 'mcp_manager', None)
-                    tool_registry = AgentToolRegistry(plugin_registry=plugin_registry, mcp_manager=mcp_manager)
-                    agent = AgentService(tool_registry)
+                    tool_registry = AgentToolRegistry(
+                        plugin_registry=plugin_registry,
+                        mcp_manager=mcp_manager,
+                        server_filter=role.mcp_servers,
+                        internal_filter=role.internal_tools,
+                    )
+                    agent = AgentService(tool_registry, role=role)
                     executor = ActionExecutor(plugin_registry, mcp_manager=mcp_manager)
 
                     agent_tool_results = []
@@ -344,14 +470,14 @@ async def websocket_endpoint(
                     if agent_tool_results:
                         action_result = _build_agent_action_result(agent_tool_results)
 
-                    logger.info(f"🤖 Agent Loop abgeschlossen: {agent_steps_count} Steps")
+                    logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
 
                     # Set intent info so frontend can show correction button
                     if not intent:
-                        intent = {"intent": "agent.multi_step", "confidence": 1.0, "parameters": {}}
+                        intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
 
-            if not agent_used:
-                # === Ranked Intent Path with Fallback Chain ===
+            else:
+                # === Legacy Ranked Intent Path (agent_enabled=false or no router) ===
                 logger.info("🔍 Extrahiere Ranked Intents...")
                 ranked_intents = await ollama.extract_ranked_intents(
                     content,
@@ -369,31 +495,25 @@ async def websocket_endpoint(
                     logger.info(f"🎯 Versuche Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
 
                     if intent_name == "general.unresolved":
-                        # Intent extraction failed (empty/parse error) — skip to agent fallback
-                        logger.info("⏭️ Intent unresolved, skipping to agent fallback...")
+                        logger.info("⏭️ Intent unresolved, skipping...")
                         continue
 
                     if intent_name == "general.conversation":
-                        # Conversation intent — stream directly (optionally with RAG)
                         intent = intent_candidate
                         intent_used = intent_candidate
                         break
 
-                    # Execute action for this intent
                     executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
                     candidate_result = await executor.execute(intent_candidate)
 
-                    # Check if result is usable (success AND not empty)
                     if candidate_result.get("success") and not candidate_result.get("empty_result"):
                         intent = intent_candidate
                         action_result = candidate_result
                         intent_used = intent_candidate
                         logger.info(f"✅ Intent {intent_name} erfolgreich: {candidate_result.get('message', '')[:80]}")
 
-                        # Update action context for pronoun resolution
                         session_state.update_action_context(intent, action_result)
 
-                        # Send action result to frontend
                         await websocket.send_json({
                             "type": "action",
                             "intent": intent,
@@ -401,58 +521,16 @@ async def websocket_endpoint(
                         })
                         break
 
-                    # Intent produced empty/failed result — try next
                     logger.info(f"⏭️ Intent {intent_name} lieferte kein Ergebnis, versuche nächsten...")
 
-                # If no ranked intent worked, try Agent Loop or fall back to conversation
                 if not intent_used:
-                    if settings.agent_enabled:
-                        logger.info("🤖 Alle Ranked Intents fehlgeschlagen, starte Agent Loop als Fallback...")
-                        from services.agent_tools import AgentToolRegistry
-                        from services.agent_service import AgentService, step_to_ws_message
+                    logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
+                    intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
+                    intent_used = intent
 
-                        agent_used = True
-                        tool_registry = AgentToolRegistry(plugin_registry=plugin_registry, mcp_manager=mcp_mgr)
-                        agent = AgentService(tool_registry)
-                        fallback_executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
-
-                        agent_tool_results = []
-                        async for step in agent.run(
-                            message=content,
-                            ollama=ollama,
-                            executor=fallback_executor,
-                            conversation_history=session_state.conversation_history if session_state.conversation_history else None,
-                            room_context=room_context,
-                        ):
-                            ws_msg = step_to_ws_message(step)
-                            await websocket.send_json(ws_msg)
-
-                            if step.step_type == "final_answer":
-                                full_response = step.content
-                            if step.step_type == "tool_result" and step.success and step.data:
-                                agent_tool_results.append((step.tool, step.data))
-                            if step.step_type in ("tool_call", "tool_result"):
-                                agent_steps_count += 1
-
-                        # Build action summary from agent tool results for conversation history
-                        if agent_tool_results:
-                            action_result = _build_agent_action_result(agent_tool_results)
-
-                        logger.info(f"🤖 Agent Fallback abgeschlossen: {agent_steps_count} Steps")
-
-                        # Set intent info so frontend can show correction button
-                        if not intent:
-                            intent = {"intent": "agent.fallback", "confidence": 1.0, "parameters": {}}
-                    else:
-                        # Absolute fallback: general.conversation
-                        logger.info("💬 Alle Intents fehlgeschlagen, Fallback zu Konversation")
-                        intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
-                        intent_used = intent
-
-                # Generate response (only if agent didn't already produce one)
-                if not agent_used or (agent_used and not full_response):
+                # Generate response for legacy path
+                if not agent_used:
                     if action_result and action_result.get("success"):
-                        # Successful action — generate response from result
                         result_info = action_result.get('message', '')
 
                         if action_result.get('data'):
@@ -470,109 +548,21 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
 
                         async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history):
                             full_response += chunk
-                            await websocket.send_json({
-                                "type": "stream",
-                                "content": chunk
-                            })
+                            await websocket.send_json({"type": "stream", "content": chunk})
 
                     elif action_result and not action_result.get("success"):
-                        # Action failed
                         full_response = f"Entschuldigung, das konnte ich nicht ausführen: {action_result.get('message')}"
-                        await websocket.send_json({
-                            "type": "stream",
-                            "content": full_response
-                        })
+                        await websocket.send_json({"type": "stream", "content": full_response})
 
                     else:
-                        # Normal conversation (optionally with RAG)
                         if use_rag and settings.rag_enabled:
-                            # RAG-enhanced conversation with context persistence
-                            try:
-                                from services.rag_service import RAGService
-
-                                rag_context = None
-                                is_followup = is_followup_question(content, session_state.last_query)
-
-                                # Check if this is a follow-up question and we have valid cached context
-                                if is_followup and session_state.is_rag_context_valid():
-                                    rag_context = session_state.last_rag_context
-                                    logger.info(f"📚 RAG Follow-up erkannt, nutze gecachten Kontext ({len(rag_context)} Zeichen)")
-                                else:
-                                    async with AsyncSessionLocal() as db_session:
-                                        rag_service = RAGService(db_session)
-
-                                        logger.info(f"📚 RAG Suche: query='{content[:50]}...', kb_id={knowledge_base_id}, is_followup={is_followup}")
-
-                                        search_results = await rag_service.search(
-                                            query=content,
-                                            knowledge_base_id=knowledge_base_id
-                                        )
-
-                                        if search_results:
-                                            rag_context = await rag_service.get_context(
-                                                query=content,
-                                                knowledge_base_id=knowledge_base_id
-                                            )
-                                            session_state.update_rag_context(
-                                                context=rag_context,
-                                                results=search_results,
-                                                query=content,
-                                                kb_id=knowledge_base_id
-                                            )
-                                            logger.info(f"📚 RAG Kontext gefunden und gecacht ({len(rag_context)} Zeichen)")
-
-                                if rag_context:
-                                    await websocket.send_json({
-                                        "type": "rag_context",
-                                        "has_context": True,
-                                        "knowledge_base_id": knowledge_base_id,
-                                        "is_followup": is_followup
-                                    })
-
-                                    async for chunk in ollama.chat_stream_with_rag(
-                                        content,
-                                        rag_context,
-                                        history=session_state.conversation_history if is_followup else None
-                                    ):
-                                        full_response += chunk
-                                        await websocket.send_json({
-                                            "type": "stream",
-                                            "content": chunk
-                                        })
-
-                                    session_state.add_to_history("user", content)
-                                    session_state.add_to_history("assistant", full_response)
-                                else:
-                                    logger.info("📚 Kein RAG Kontext gefunden, nutze normale Konversation")
-                                    await websocket.send_json({
-                                        "type": "rag_context",
-                                        "has_context": False,
-                                        "knowledge_base_id": knowledge_base_id
-                                    })
-                                    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
-                                        full_response += chunk
-                                        await websocket.send_json({
-                                            "type": "stream",
-                                            "content": chunk
-                                        })
-                            except Exception as e:
-                                logger.error(f"❌ RAG-Fehler, Fallback zu normaler Konversation: {e}")
-                                import traceback
-                                logger.error(traceback.format_exc())
-                                async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
-                                    full_response += chunk
-                                    await websocket.send_json({
-                                        "type": "stream",
-                                        "content": chunk
-                                    })
+                            full_response = await _stream_rag_response(
+                                content, knowledge_base_id, ollama, session_state, websocket
+                            )
                         else:
-                            # Standard conversation without RAG
                             async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
                                 full_response += chunk
-                                await websocket.send_json({
-                                    "type": "stream",
-                                    "content": chunk
-                                })
+                                await websocket.send_json({"type": "stream", "content": chunk})
 
             # Update conversation history with this exchange (in-memory)
             # Enrich assistant message with action result context for follow-up resolution.

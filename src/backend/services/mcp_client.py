@@ -970,6 +970,10 @@ class MCPManager:
         """Return all discovered MCP tools."""
         return list(self._tool_index.values())
 
+    def get_connected_server_names(self) -> List[str]:
+        """Return names of all currently connected MCP servers."""
+        return [name for name, state in self._servers.items() if state.connected]
+
     def get_server_examples(self) -> Dict[str, Dict]:
         """Return configured examples for all servers.
 

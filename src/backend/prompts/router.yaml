@@ -1,0 +1,50 @@
+# Agent Router Prompts
+# Used by AgentRouter to classify user messages into roles.
+# Supports multilingual prompts (de/en)
+
+de:
+  # Router classification prompt
+  # Available variables: {message}, {history_context}, {role_descriptions}
+  classify_prompt: |
+    Klassifiziere diese Nachricht in GENAU EINE Kategorie.
+
+    Nachricht: "{message}"
+    {history_context}
+
+    KATEGORIEN:
+    {role_descriptions}
+
+    Antworte NUR mit JSON: {{"role": "<kategorie>", "reason": "..."}}
+
+  # Conversation history context template
+  # Available variables: {history_lines}
+  history_context_template: |
+    Letzte Nachrichten:
+    {history_lines}
+
+en:
+  # Router classification prompt
+  # Available variables: {message}, {history_context}, {role_descriptions}
+  classify_prompt: |
+    Classify this message into EXACTLY ONE category.
+
+    Message: "{message}"
+    {history_context}
+
+    CATEGORIES:
+    {role_descriptions}
+
+    Reply ONLY with JSON: {{"role": "<category>", "reason": "..."}}
+
+  # Conversation history context template
+  # Available variables: {history_lines}
+  history_context_template: |
+    Recent messages:
+    {history_lines}
+
+# LLM options for router classification (fast, deterministic)
+llm_options:
+  temperature: 0.0
+  top_p: 0.1
+  num_predict: 128
+  num_ctx: 4096
