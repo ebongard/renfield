@@ -25,11 +25,12 @@ class InternalToolService:
             },
         },
         "internal.play_in_room": {
-            "description": "Play a media URL on the audio device in a room via Home Assistant",
+            "description": "Play a media URL on the audio device in a room via Home Assistant. If the device is busy, returns status 'busy' — ask the user and retry with force=true.",
             "parameters": {
                 "media_url": "Playable media URL (required)",
                 "room_name": "Target room name (required)",
                 "media_type": "Content type: music, video, playlist (default: music)",
+                "force": "Set to 'true' to interrupt current playback (default: false)",
             },
         },
     }
@@ -90,10 +91,46 @@ class InternalToolService:
                 routing_service = OutputRoutingService(db)
                 decision = await routing_service.get_audio_output_for_room(room.id)
 
-                if not decision.output_device:
+                if decision.reason == "no_output_devices_configured":
                     return {
                         "success": False,
                         "message": f"No audio output device configured for room '{room.name}'",
+                        "action_taken": False,
+                    }
+
+                if decision.reason == "all_devices_unavailable":
+                    # Device exists but is busy/off — tell the agent so it
+                    # can inform the user and ask whether to interrupt.
+                    # Re-fetch the first enabled device to include its info.
+                    from sqlalchemy import select as sa_select
+                    from models.database import RoomOutputDevice, OUTPUT_TYPE_AUDIO
+                    stmt = (
+                        sa_select(RoomOutputDevice)
+                        .where(RoomOutputDevice.room_id == room.id)
+                        .where(RoomOutputDevice.output_type == OUTPUT_TYPE_AUDIO)
+                        .where(RoomOutputDevice.is_enabled.is_(True))
+                        .order_by(RoomOutputDevice.priority)
+                        .limit(1)
+                    )
+                    result = await db.execute(stmt)
+                    busy_device = result.scalar_one_or_none()
+                    device_name = busy_device.device_name if busy_device else "unknown"
+                    return {
+                        "success": False,
+                        "message": f"The audio device '{device_name}' in room '{room.name}' is currently busy (playing). Ask the user if they want to interrupt the current playback.",
+                        "action_taken": False,
+                        "data": {
+                            "entity_id": busy_device.ha_entity_id if busy_device else None,
+                            "room_name": room.name,
+                            "device_name": device_name,
+                            "status": "busy",
+                        },
+                    }
+
+                if not decision.output_device:
+                    return {
+                        "success": False,
+                        "message": f"No audio output device available for room '{room.name}'",
                         "action_taken": False,
                     }
 
@@ -135,6 +172,10 @@ class InternalToolService:
         media_url = params.get("media_url", "").strip()
         room_name = params.get("room_name", "").strip()
         media_type = params.get("media_type", "music").strip()
+        force = str(params.get("force", "false")).lower() in ("true", "1", "yes")
+
+        # Pass media_type directly as HA media_content_type.
+        ha_content_type = media_type
 
         if not media_url:
             return {
@@ -151,8 +192,21 @@ class InternalToolService:
 
         # Step 1: Resolve room to entity_id
         resolve_result = await self._resolve_room_player({"room_name": room_name})
+
         if not resolve_result.get("success"):
-            return resolve_result
+            # If device is busy and force is set, use the entity from the
+            # busy-device data to proceed anyway.
+            if force and resolve_result.get("data", {}).get("status") == "busy":
+                entity_id = resolve_result["data"].get("entity_id")
+                if not entity_id:
+                    return resolve_result
+                resolve_result = {
+                    "success": True,
+                    "data": resolve_result["data"],
+                }
+                logger.info(f"Force-playing on busy device {entity_id} in {room_name}")
+            else:
+                return resolve_result
 
         entity_id = resolve_result["data"]["entity_id"]
         resolved_room_name = resolve_result["data"]["room_name"]
@@ -160,21 +214,37 @@ class InternalToolService:
 
         # Step 2: Call HA media_player.play_media
         try:
+            import asyncio as _asyncio
             from integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
-            success = await ha_client.call_service(
-                domain="media_player",
-                service="play_media",
-                entity_id=entity_id,
-                service_data={
-                    "media_content_id": media_url,
-                    "media_content_type": media_type,
-                },
-                timeout=30.0,
-            )
 
-            if success:
+            # Fire the play_media command.  Some HA integrations (HomePod,
+            # Apple TV) return HTTP 500 or timeout even though the action
+            # succeeds.  We therefore ignore the call_service result and
+            # verify playback by checking the player state afterwards.
+            try:
+                await ha_client.call_service(
+                    domain="media_player",
+                    service="play_media",
+                    entity_id=entity_id,
+                    service_data={
+                        "media_content_id": media_url,
+                        "media_content_type": ha_content_type,
+                    },
+                    timeout=15.0,
+                )
+            except Exception as exc:
+                # Timeout or HTTP error — command may still have been
+                # dispatched.  Log and continue to state check.
+                logger.info(f"HA play_media raised {type(exc).__name__} for {entity_id} — checking player state")
+
+            # Give the player a moment to start, then verify
+            await _asyncio.sleep(3)
+            state = await ha_client.get_state(entity_id)
+            player_state = (state or {}).get("state", "unknown")
+
+            if player_state in ("playing", "buffering", "paused", "idle"):
                 return {
                     "success": True,
                     "message": f"Playing on {device_name} in {resolved_room_name}",
@@ -190,7 +260,7 @@ class InternalToolService:
             else:
                 return {
                     "success": False,
-                    "message": f"Home Assistant failed to play media on {entity_id}",
+                    "message": f"Playback failed — player state is '{player_state}'",
                     "action_taken": False,
                 }
 

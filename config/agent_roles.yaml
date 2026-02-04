@@ -15,8 +15,8 @@
 roles:
   smart_home:
     description:
-      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern"
-      en: "Smart home: control lights, switches, sensors, heating, scenes"
+      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern (NICHT Musik/Medien abspielen)"
+      en: "Smart home: control lights, switches, sensors, heating, scenes (NOT playing music/media)"
     mcp_servers: [homeassistant]
     internal_tools: [internal.resolve_room_player, internal.play_in_room]
     max_steps: 4
@@ -41,12 +41,13 @@ roles:
 
   media:
     description:
-      de: "Medien: Musik, Filme, Serien suchen und abspielen"
-      en: "Media: search and play music, movies, series"
+      de: "Medien: Musik, Filme, Serien suchen und abspielen (auch in bestimmten Raeumen)"
+      en: "Media: search and play music, movies, series (also in specific rooms)"
     mcp_servers: [jellyfin]
     internal_tools: [internal.resolve_room_player, internal.play_in_room]
     max_steps: 6
     prompt_key: agent_prompt_media
+    model: "qwen2.5:14b"
 
   workflow:
     description:
