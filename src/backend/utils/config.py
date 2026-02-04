@@ -2,7 +2,7 @@
 Konfiguration und Settings
 """
 from pydantic_settings import BaseSettings
-from pydantic import model_validator
+from pydantic import Field, SecretStr, model_validator
 from typing import Optional, List, Dict
 from pathlib import Path
 from functools import lru_cache
@@ -13,11 +13,14 @@ class Settings(BaseSettings):
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: Optional[str] = None
     postgres_user: str = "renfield"
-    postgres_password: str = "changeme"
+    postgres_password: SecretStr = "changeme"
     postgres_host: str = "postgres"
-    postgres_port: int = 5432
+    postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str = "renfield"
-    
+    db_pool_size: int = Field(default=5, ge=1, le=100)
+    db_max_overflow: int = Field(default=10, ge=0, le=200)
+    db_pool_recycle: int = Field(default=3600, ge=60, le=86400)
+
     # Redis
     redis_url: str = "redis://redis:6379"
     
@@ -32,10 +35,10 @@ class Settings(BaseSettings):
 
     # Home Assistant
     home_assistant_url: Optional[str] = None
-    home_assistant_token: Optional[str] = None
+    home_assistant_token: Optional[SecretStr] = None
     
     # n8n
-    n8n_webhook_url: Optional[str] = None
+    n8n_api_url: Optional[str] = None     # Used by n8n-mcp package (czlonkowski)
     
     # Frigate
     frigate_url: Optional[str] = None
@@ -47,23 +50,19 @@ class Settings(BaseSettings):
     # Weather Plugin
     weather_enabled: bool = False
     openweather_api_url: Optional[str] = "https://api.openweathermap.org/data/2.5"
-    openweather_api_key: Optional[str] = None
+    openweather_api_key: Optional[SecretStr] = None
 
     # News Plugin
     news_enabled: bool = False
     newsapi_url: Optional[str] = "https://newsapi.org/v2"
-    newsapi_key: Optional[str] = None
+    newsapi_key: Optional[SecretStr] = None
 
     # Search Plugin
     search_enabled: bool = False
     duckduckgo_api_url: Optional[str] = "https://api.duckduckgo.com"
 
-    # Music Plugin
-    music_enabled: bool = False
-    spotify_api_url: Optional[str] = "https://api.spotify.com"
-    spotify_client_id: Optional[str] = None
-    spotify_client_secret: Optional[str] = None
-    spotify_access_token: Optional[str] = None
+    # Music Plugin (reserved for future use)
+    # spotify_* fields removed — unused. Re-add when music integration is implemented.
 
     # Sprache
     default_language: str = "de"
@@ -105,9 +104,9 @@ class Settings(BaseSettings):
     
     # Agent (ReAct Loop)
     agent_enabled: bool = False           # Opt-in, disabled by default
-    agent_max_steps: int = 12             # Max reasoning steps per request
-    agent_step_timeout: float = 30.0      # Timeout per LLM call (seconds)
-    agent_total_timeout: float = 120.0    # Total timeout for entire agent run
+    agent_max_steps: int = Field(default=12, ge=1, le=50)
+    agent_step_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
+    agent_total_timeout: float = Field(default=120.0, ge=5.0, le=600.0)
     agent_model: Optional[str] = None     # Optional: separate model for agent (default: ollama_model)
     agent_ollama_url: Optional[str] = None # Optional: separate Ollama instance for agent (default: ollama_url)
     agent_conv_context_messages: int = 6  # Number of conversation history messages in agent loop
@@ -120,18 +119,26 @@ class Settings(BaseSettings):
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
+    mcp_max_response_size: int = Field(default=10240, ge=1024, le=524288)  # 10KB max response
+
+    # Agent Advanced
+    agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
+    agent_response_truncation: int = Field(default=2000, ge=100, le=50000)  # Max chars for tool response truncation
+
+    # Embeddings
+    embedding_dimension: int = Field(default=768, ge=128, le=4096)   # Embedding vector dimension
 
     # RAG (Retrieval-Augmented Generation)
     rag_enabled: bool = True
-    rag_chunk_size: int = 512           # Token-Limit pro Chunk
-    rag_chunk_overlap: int = 50         # Überlappung zwischen Chunks
-    rag_top_k: int = 5                  # Anzahl der relevantesten Chunks
-    rag_similarity_threshold: float = 0.4  # Minimum Similarity für Ergebnisse (0-1)
+    rag_chunk_size: int = Field(default=512, ge=64, le=4096)
+    rag_chunk_overlap: int = Field(default=50, ge=0, le=512)
+    rag_top_k: int = Field(default=5, ge=1, le=50)
+    rag_similarity_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
 
     # Hybrid Search (Dense + BM25 via PostgreSQL Full-Text Search)
     rag_hybrid_enabled: bool = True           # Enable hybrid search (BM25 + dense)
-    rag_hybrid_bm25_weight: float = 0.3       # Weight for BM25 in RRF (0.0-1.0)
-    rag_hybrid_dense_weight: float = 0.7      # Weight for dense search in RRF (0.0-1.0)
+    rag_hybrid_bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    rag_hybrid_dense_weight: float = Field(default=0.7, ge=0.0, le=1.0)
     rag_hybrid_rrf_k: int = 60                # RRF constant k (standard: 60)
     rag_hybrid_fts_config: str = "simple"     # PostgreSQL FTS config: simple/german/english
 
@@ -141,31 +148,31 @@ class Settings(BaseSettings):
 
     # Document Upload
     upload_dir: str = "/app/data/uploads"
-    max_file_size_mb: int = 50
+    max_file_size_mb: int = Field(default=50, ge=1, le=500)
     allowed_extensions: str = "pdf,docx,doc,txt,md,html,pptx,xlsx"  # Comma-separated
 
     # Logging
     log_level: str = "INFO"
     
     # Security
-    secret_key: str = "changeme-in-production-use-strong-random-key"
+    secret_key: SecretStr = "changeme-in-production-use-strong-random-key"
 
     # Jellyfin
     jellyfin_enabled: bool = False
     jellyfin_url: Optional[str] = None
     jellyfin_base_url: Optional[str] = None
-    jellyfin_api_key: Optional[str] = None
-    jellyfin_token: Optional[str] = None
+    jellyfin_api_key: Optional[SecretStr] = None
+    jellyfin_token: Optional[SecretStr] = None
     jellyfin_user_id: Optional[str] = None
 
     # Paperless-NGX
     paperless_enabled: bool = False
     paperless_api_url: Optional[str] = None
-    paperless_api_token: Optional[str] = None
+    paperless_api_token: Optional[SecretStr] = None
 
     # Email MCP
     email_mcp_enabled: bool = False
-    mail_regfish_password: Optional[str] = None
+    mail_regfish_password: Optional[SecretStr] = None
 
     # SearXNG
     searxng_api_url: Optional[str] = None
@@ -173,7 +180,7 @@ class Settings(BaseSettings):
 
     # n8n MCP
     n8n_base_url: Optional[str] = None
-    n8n_api_key: Optional[str] = None
+    n8n_api_key: Optional[SecretStr] = None
     n8n_mcp_enabled: bool = False
 
     # Home Assistant MCP
@@ -200,7 +207,7 @@ class Settings(BaseSettings):
 
     # Default admin credentials (only used on first startup)
     default_admin_username: str = "admin"
-    default_admin_password: str = "changeme"  # MUST be changed in production!
+    default_admin_password: SecretStr = "changeme"  # MUST be changed in production!
 
     # CORS
     cors_origins: str = "*"  # Comma-separated list or "*" for development
@@ -235,6 +242,25 @@ class Settings(BaseSettings):
     device_session_timeout: float = 30.0  # Max voice session duration in seconds
     device_heartbeat_timeout: float = 60.0  # Disconnect after no heartbeat for this duration
 
+    # Integration Timeouts
+    ha_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    frigate_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    n8n_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
+
+    # Agent LLM Defaults (fallback when prompt_manager has no config)
+    agent_default_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    agent_default_num_predict: int = Field(default=2048, ge=64, le=32768)
+
+    # Circuit Breaker
+    cb_failure_threshold: int = Field(default=3, ge=1, le=50)
+    cb_llm_recovery_timeout: float = Field(default=30.0, ge=1.0, le=600.0)
+    cb_agent_recovery_timeout: float = Field(default=60.0, ge=1.0, le=600.0)
+
+    # Cache TTLs (seconds)
+    ha_cache_ttl: int = Field(default=300, ge=10, le=86400)
+    satellite_package_cache_ttl: int = Field(default=300, ge=10, le=86400)
+    intent_feedback_cache_ttl: int = Field(default=300, ge=10, le=86400)
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         """Gibt allowed_extensions als Liste zurück"""
@@ -266,7 +292,7 @@ class Settings(BaseSettings):
         """Baut DATABASE_URL aus Einzelteilen zusammen, falls nicht explizit gesetzt."""
         if self.database_url is None:
             self.database_url = (
-                f"postgresql://{self.postgres_user}:{self.postgres_password}"
+                f"postgresql://{self.postgres_user}:{self.postgres_password.get_secret_value()}"
                 f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
             )
         return self
