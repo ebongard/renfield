@@ -2,26 +2,11 @@ import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader } from 'lucide-react';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
+import { useChatContext } from './context/ChatContext';
 
-/**
- * Chat messages display component.
- * Shows message history with auto-scroll and TTS playback button.
- *
- * @param {Object} props - Component props
- * @param {Array} props.messages - Array of message objects {role, content, streaming}
- * @param {boolean} props.loading - Whether a response is being processed
- * @param {boolean} props.historyLoading - Whether conversation history is loading
- * @param {Function} props.onSpeakText - Callback to speak message content
- * @param {Function} props.onFeedbackSubmit - Callback for intent correction feedback
- */
-export default function ChatMessages({
-  messages = [],
-  loading = false,
-  historyLoading = false,
-  onSpeakText,
-  onFeedbackSubmit,
-}) {
+export default function ChatMessages() {
   const { t } = useTranslation();
+  const { messages, loading, historyLoading, speakText, handleFeedbackSubmit } = useChatContext();
   const messagesEndRef = useRef(null);
 
   // Auto-scroll to bottom when messages change
@@ -73,9 +58,9 @@ export default function ChatMessages({
             <p className="whitespace-pre-wrap">{message.content}</p>
 
             {/* TTS Button for assistant messages */}
-            {message.role === 'assistant' && !message.streaming && onSpeakText && (
+            {message.role === 'assistant' && !message.streaming && speakText && (
               <button
-                onClick={() => onSpeakText(message.content)}
+                onClick={() => speakText(message.content)}
                 className="mt-2 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white flex items-center space-x-1"
                 aria-label={t('chat.readAloud')}
               >
@@ -91,7 +76,7 @@ export default function ChatMessages({
                 detectedIntent={message.intentInfo.intent}
                 detectedConfidence={message.intentInfo.confidence}
                 feedbackType="intent"
-                onCorrect={onFeedbackSubmit}
+                onCorrect={handleFeedbackSubmit}
                 proactive={message.feedbackRequested === true}
               />
             )}

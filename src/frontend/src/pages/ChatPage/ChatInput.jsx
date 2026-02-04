@@ -3,39 +3,16 @@ import { useTranslation } from 'react-i18next';
 import { Send, Mic, MicOff, BookOpen, ChevronDown } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
+import { useChatContext } from './context/ChatContext';
 
-/**
- * Chat input component with RAG toggle and recording controls.
- *
- * @param {Object} props - Component props
- * @param {string} props.input - Current input value
- * @param {Function} props.onInputChange - Callback when input changes
- * @param {Function} props.onSendMessage - Callback to send message
- * @param {boolean} props.loading - Whether a message is being processed
- * @param {boolean} props.recording - Whether currently recording
- * @param {Function} props.onToggleRecording - Callback to toggle recording
- * @param {number} props.audioLevel - Current audio level (0-100)
- * @param {number} props.silenceTimeRemaining - Time until auto-stop (ms)
- * @param {boolean} props.useRag - Whether RAG is enabled
- * @param {Function} props.onToggleRag - Callback to toggle RAG
- * @param {number|null} props.selectedKnowledgeBase - Selected KB ID or null for all
- * @param {Function} props.onSelectKnowledgeBase - Callback to select KB
- */
-export default function ChatInput({
-  input = '',
-  onInputChange,
-  onSendMessage,
-  loading = false,
-  recording = false,
-  onToggleRecording,
-  audioLevel = 0,
-  silenceTimeRemaining = 0,
-  useRag = false,
-  onToggleRag,
-  selectedKnowledgeBase = null,
-  onSelectKnowledgeBase,
-}) {
+export default function ChatInput() {
   const { t } = useTranslation();
+  const {
+    input, setInput, sendMessage, loading, recording, toggleRecording,
+    audioLevel, silenceTimeRemaining,
+    useRag, toggleRag, selectedKnowledgeBase, setSelectedKnowledgeBase,
+  } = useChatContext();
+
   const [knowledgeBases, setKnowledgeBases] = useState([]);
   const [showRagSettings, setShowRagSettings] = useState(false);
 
@@ -58,12 +35,12 @@ export default function ChatInput({
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      onSendMessage?.(input, false);
+      sendMessage?.(input, false);
     }
   };
 
   const handleSelectKb = (kbId) => {
-    onSelectKnowledgeBase?.(kbId);
+    setSelectedKnowledgeBase?.(kbId);
     setShowRagSettings(false);
   };
 
@@ -73,7 +50,7 @@ export default function ChatInput({
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-3">
           <button
-            onClick={onToggleRag}
+            onClick={toggleRag}
             className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
               useRag
                 ? 'bg-primary-100 text-primary-700 border border-primary-300 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/50'
@@ -154,7 +131,7 @@ export default function ChatInput({
           id="chat-input"
           type="text"
           value={input}
-          onChange={(e) => onInputChange?.(e.target.value)}
+          onChange={(e) => setInput?.(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={t('chat.placeholder')}
           className="input flex-1"
@@ -164,7 +141,7 @@ export default function ChatInput({
         {loading && <span id="chat-loading-hint" className="sr-only">{t('chat.processingMessage')}</span>}
 
         <button
-          onClick={onToggleRecording}
+          onClick={toggleRecording}
           className={`p-3 rounded-lg transition-colors ${
             recording
               ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
@@ -178,7 +155,7 @@ export default function ChatInput({
         </button>
 
         <button
-          onClick={() => onSendMessage?.(input, false)}
+          onClick={() => sendMessage?.(input, false)}
           disabled={loading || !input.trim()}
           className="btn btn-primary"
           aria-label={t('chat.sendMessage')}

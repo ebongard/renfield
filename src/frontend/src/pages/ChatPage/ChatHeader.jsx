@@ -1,21 +1,11 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader, Ear, EarOff, Settings } from 'lucide-react';
+import { useChatContext } from './context/ChatContext';
 
-/**
- * Chat header component with wake word controls and connection status.
- *
- * @param {Object} props - Component props
- * @param {boolean} props.wsConnected - WebSocket connection status
- * @param {Object} props.wakeWord - Wake word state and methods from useWakeWord hook
- * @param {boolean} props.recording - Whether currently recording audio
- */
-export default function ChatHeader({
-  wsConnected = false,
-  wakeWord = {},
-  recording = false,
-}) {
+export default function ChatHeader() {
   const { t } = useTranslation();
+  const { wsConnected, wakeWord, recording } = useChatContext();
   const [showWakeWordSettings, setShowWakeWordSettings] = useState(false);
 
   const {
