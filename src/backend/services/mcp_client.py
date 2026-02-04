@@ -39,7 +39,7 @@ except ImportError:
 
 
 # === Constants ===
-MAX_RESPONSE_SIZE = 40 * 1024  # 40KB max response size (fits in 32k context window)
+MAX_RESPONSE_SIZE = settings.mcp_max_response_size
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
 
 # Exponential Backoff constants for reconnection

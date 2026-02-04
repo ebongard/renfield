@@ -22,7 +22,7 @@ class HomeAssistantClient:
 
     def __init__(self):
         self.base_url = settings.home_assistant_url
-        self.token = settings.home_assistant_token
+        self.token = settings.home_assistant_token.get_secret_value() if settings.home_assistant_token else None
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
@@ -30,7 +30,7 @@ class HomeAssistantClient:
         # Keyword Cache
         self._keywords_cache = None
         self._keywords_last_updated = None
-        self._cache_ttl = 300  # 5 Minuten Cache
+        self._cache_ttl = settings.ha_cache_ttl
     
     async def get_states(self) -> List[Dict]:
         """Alle Entity States abrufen"""
@@ -39,7 +39,7 @@ class HomeAssistantClient:
                 response = await client.get(
                     f"{self.base_url}/api/states",
                     headers=self.headers,
-                    timeout=10.0
+                    timeout=settings.ha_timeout
                 )
                 response.raise_for_status()
                 return response.json()
@@ -54,7 +54,7 @@ class HomeAssistantClient:
                 response = await client.get(
                     f"{self.base_url}/api/states/{entity_id}",
                     headers=self.headers,
-                    timeout=10.0
+                    timeout=settings.ha_timeout
                 )
                 response.raise_for_status()
                 return response.json()
@@ -68,7 +68,7 @@ class HomeAssistantClient:
         service: str,
         entity_id: Optional[str] = None,
         service_data: Optional[Dict] = None,
-        timeout: float = 10.0
+        timeout: Optional[float] = None
     ) -> bool:
         """Service aufrufen"""
         try:
@@ -81,7 +81,7 @@ class HomeAssistantClient:
                     f"{self.base_url}/api/services/{domain}/{service}",
                     headers=self.headers,
                     json=data,
-                    timeout=timeout
+                    timeout=timeout or settings.ha_timeout
                 )
                 response.raise_for_status()
                 logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")
@@ -471,7 +471,7 @@ class HomeAssistantClient:
                 response = await client.get(
                     f"{self.base_url}/api/config/area_registry",
                     headers=self.headers,
-                    timeout=10.0
+                    timeout=settings.ha_timeout
                 )
 
                 if response.status_code == 200:

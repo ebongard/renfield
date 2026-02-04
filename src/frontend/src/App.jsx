@@ -1,26 +1,29 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
 import ChatPage from './pages/ChatPage';
-import TasksPage from './pages/TasksPage';
-import CameraPage from './pages/CameraPage';
-import HomeAssistantPage from './pages/HomeAssistantPage';
-import SpeakersPage from './pages/SpeakersPage';
-import RoomsPage from './pages/RoomsPage';
-import KnowledgePage from './pages/KnowledgePage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
-import UsersPage from './pages/UsersPage';
-import RolesPage from './pages/RolesPage';
-import IntegrationsPage from './pages/IntegrationsPage';
-import SettingsPage from './pages/SettingsPage';
-import SatellitesPage from './pages/SatellitesPage';
-import IntentsPage from './pages/IntentsPage';
 import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
+import LoadingSpinner from './components/LoadingSpinner';
+
+// Lazy-loaded admin/secondary pages
+const TasksPage = lazy(() => import('./pages/TasksPage'));
+const CameraPage = lazy(() => import('./pages/CameraPage'));
+const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
+const SpeakersPage = lazy(() => import('./pages/SpeakersPage'));
+const RoomsPage = lazy(() => import('./pages/RoomsPage'));
+const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const RolesPage = lazy(() => import('./pages/RolesPage'));
+const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const SatellitesPage = lazy(() => import('./pages/SatellitesPage'));
+const IntentsPage = lazy(() => import('./pages/IntentsPage'));
 
 function App() {
   return (
@@ -28,6 +31,7 @@ function App() {
       <ThemeProvider>
         <AuthProvider>
           <DeviceProvider>
+          <Suspense fallback={<LoadingSpinner />}>
           <Routes>
             {/* Public routes without layout */}
             <Route path="/login" element={<LoginPage />} />
@@ -102,6 +106,7 @@ function App() {
               </Layout>
             } />
           </Routes>
+          </Suspense>
           </DeviceProvider>
         </AuthProvider>
       </ThemeProvider>

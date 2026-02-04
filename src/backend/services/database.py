@@ -10,7 +10,11 @@ from loguru import logger
 engine = create_async_engine(
     settings.database_url.replace("postgresql://", "postgresql+asyncpg://"),
     echo=False,
-    future=True
+    future=True,
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle,
+    pool_pre_ping=True,
 )
 
 # Session Factory

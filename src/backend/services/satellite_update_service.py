@@ -34,7 +34,7 @@ class SatelliteUpdateService:
         # Cache for built packages
         self._package_cache: Optional[Dict[str, Any]] = None
         self._package_cache_time: float = 0
-        self._package_cache_ttl: float = 300  # 5 minutes
+        self._package_cache_ttl: float = settings.satellite_package_cache_ttl
 
         logger.info("📦 SatelliteUpdateService initialized")
 

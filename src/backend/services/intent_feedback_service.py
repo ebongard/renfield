@@ -31,7 +31,7 @@ class IntentFeedbackService:
 
     # Cache for correction counts (avoid DB query on every intent extraction)
     _count_cache: Dict[str, tuple] = {}  # {feedback_type: (count, timestamp)}
-    _CACHE_TTL = 300  # seconds (corrections are rare, 5 min is fine)
+    _CACHE_TTL = settings.intent_feedback_cache_ttl
 
     def __init__(self, db: AsyncSession):
         self.db = db

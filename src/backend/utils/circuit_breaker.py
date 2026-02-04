@@ -185,18 +185,20 @@ class CircuitBreaker:
 # === Global Circuit Breaker Instances ===
 # These can be imported and used across the application
 
+from utils.config import settings
+
 # Circuit breaker for Ollama LLM calls
 llm_circuit_breaker = CircuitBreaker(
     name="ollama_llm",
-    failure_threshold=3,
-    recovery_timeout=30.0,
+    failure_threshold=settings.cb_failure_threshold,
+    recovery_timeout=settings.cb_llm_recovery_timeout,
     half_open_max_calls=1,
 )
 
 # Circuit breaker for Agent Loop LLM calls (separate to avoid affecting chat)
 agent_circuit_breaker = CircuitBreaker(
     name="agent_llm",
-    failure_threshold=3,
-    recovery_timeout=60.0,  # Longer recovery for agent
+    failure_threshold=settings.cb_failure_threshold,
+    recovery_timeout=settings.cb_agent_recovery_timeout,
     half_open_max_calls=1,
 )

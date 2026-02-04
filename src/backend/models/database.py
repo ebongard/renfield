@@ -5,6 +5,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, F
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from utils.config import settings
 
 try:
     from pgvector.sqlalchemy import Vector
@@ -37,7 +38,7 @@ class Message(Base):
     __tablename__ = "messages"
     
     id = Column(Integer, primary_key=True, index=True)
-    conversation_id = Column(Integer, ForeignKey("conversations.id"))
+    conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True)
     role = Column(String)  # 'user' oder 'assistant'
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -114,7 +115,7 @@ class SpeakerEmbedding(Base):
     __tablename__ = "speaker_embeddings"
 
     id = Column(Integer, primary_key=True, index=True)
-    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=False)
+    speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=False, index=True)
     embedding = Column(Text, nullable=False)         # Base64-encoded numpy array
     sample_duration = Column(Integer, nullable=True)  # Dauer des Samples in Millisekunden
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -191,7 +192,7 @@ class RoomDevice(Base):
     __tablename__ = "room_devices"
 
     id = Column(Integer, primary_key=True, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
     device_id = Column(String(100), nullable=False, unique=True, index=True)
 
     # Device Classification
@@ -429,8 +430,8 @@ class Document(Base):
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
 
 
-# Document Chunk Embedding Dimension (nomic-embed-text = 768)
-EMBEDDING_DIMENSION = 768
+# Document Chunk Embedding Dimension (configurable, default: nomic-embed-text = 768)
+EMBEDDING_DIMENSION = settings.embedding_dimension
 
 
 class DocumentChunk(Base):
@@ -589,7 +590,7 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
 
     # Role assignment
-    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False)
+    role_id = Column(Integer, ForeignKey("roles.id"), nullable=False, index=True)
 
     # Account status
     is_active = Column(Boolean, default=True, nullable=False)

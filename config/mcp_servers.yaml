@@ -121,30 +121,46 @@ servers:
         - "What movies do I have?"
         - "Show my series"
 
-  # --- n8n MCP Server ---
-  # npm: mcp-n8n
-  # Requires: N8N_BASE_URL, N8N_API_KEY env vars
+  # --- n8n MCP Server (Workflow Builder + Node Catalog) ---
+  # npm: n8n-mcp (czlonkowski/n8n-mcp)
+  # Provides: Workflow CRUD, node catalog (1,084+ nodes),
+  #           template search (2,709 templates), validation + auto-fix
+  # Requires: N8N_API_URL, N8N_API_KEY env vars
   # Get API key from: n8n → Settings → API → Create API Key
   - name: n8n
     transport: stdio
     command: npx
-    args: ["-y", "mcp-n8n"]
+    args: ["-y", "n8n-mcp"]
     enabled: "${N8N_MCP_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.n8n.n8n_list_workflows_summary
+    example_intent: mcp.n8n.n8n_list_workflows
     prompt_tools:
-      - n8n_list_workflows_summary
-      - n8n_activate_workflow
-      - n8n_deactivate_workflow
+      # Workflow Management
+      - n8n_list_workflows
       - n8n_get_workflow
-      - n8n_list_executions
+      - n8n_create_workflow
+      - n8n_update_full_workflow
+      - n8n_deploy_template
+      # Execution
+      - n8n_test_workflow
+      - n8n_executions
+      # Node Catalog
+      - search_nodes
+      - get_node
+      - search_templates
+      - get_template
+      # Validation
+      - n8n_validate_workflow
+      - n8n_autofix_workflow
     examples:
       de:
-        - "Starte den Backup-Workflow"
-        - "Liste meine Workflows"
+        - "Erstell einen Workflow der jeden Montag das Wetter per Telegram schickt"
+        - "Liste meine n8n Workflows"
+        - "Welche n8n Nodes gibt es fuer Telegram?"
       en:
-        - "Start the backup workflow"
-        - "List my workflows"
+        - "Create a workflow that sends weather via Telegram every Monday"
+        - "List my n8n workflows"
+        - "What n8n nodes are available for Telegram?"
 
   # --- Paperless-NGX MCP Server ---
   # Custom Python MCP server with compact responses and ID resolution.

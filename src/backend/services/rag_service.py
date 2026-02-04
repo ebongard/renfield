@@ -140,9 +140,9 @@ class RAGService:
             doc.file_size = metadata.get("file_size")
             doc.page_count = metadata.get("page_count")
 
-            # 3. Chunks mit Embeddings erstellen
+            # 3. Chunks mit Embeddings erstellen (batch insert)
             chunks = result["chunks"]
-            chunk_count = 0
+            chunk_objects = []
 
             for chunk_data in chunks:
                 text = chunk_data["text"]
@@ -158,7 +158,7 @@ class RAGService:
                     logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
                     continue
 
-                chunk = DocumentChunk(
+                chunk_objects.append(DocumentChunk(
                     document_id=doc.id,
                     content=text,
                     embedding=embedding,
@@ -167,9 +167,11 @@ class RAGService:
                     section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
                     chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
                     chunk_metadata=chunk_data["metadata"]
-                )
-                self.db.add(chunk)
-                chunk_count += 1
+                ))
+
+            chunk_count = len(chunk_objects)
+            if chunk_objects:
+                self.db.add_all(chunk_objects)
 
             doc.chunk_count = chunk_count
             doc.status = DOC_STATUS_COMPLETED
@@ -678,14 +680,28 @@ class RAGService:
         return kb
 
     async def list_knowledge_bases(self) -> List[KnowledgeBase]:
-        """Listet alle Knowledge Bases auf"""
+        """Listet alle Knowledge Bases auf (without eager-loading documents)"""
+        # Use a count subquery instead of selectinload to avoid loading all documents
+        doc_count_subq = (
+            select(func.count(Document.id))
+            .where(Document.knowledge_base_id == KnowledgeBase.id)
+            .correlate(KnowledgeBase)
+            .scalar_subquery()
+            .label("document_count")
+        )
         stmt = (
-            select(KnowledgeBase)
-            .options(selectinload(KnowledgeBase.documents))
+            select(KnowledgeBase, doc_count_subq)
             .order_by(KnowledgeBase.created_at.desc())
         )
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        rows = result.all()
+
+        # Attach document_count as a transient attribute
+        kbs = []
+        for kb, doc_count in rows:
+            kb._document_count = doc_count
+            kbs.append(kb)
+        return kbs
 
     async def get_knowledge_base(self, kb_id: int) -> Optional[KnowledgeBase]:
         """Holt eine Knowledge Base nach ID"""

@@ -96,7 +96,7 @@ class AgentContext:
 
     # Maximum number of steps to include in the prompt (sliding window)
     # With 32k context window, we can keep all steps from a typical agent run
-    MAX_HISTORY_STEPS: int = 20
+    MAX_HISTORY_STEPS: int = settings.agent_history_limit
 
     # Blob store for large binary data (base64) passed between tool steps.
     # Keys are "$blob:stepN_fieldname", values are the actual base64 strings.
@@ -200,7 +200,7 @@ class AgentContext:
         return len(set(recent)) == 1
 
 
-def _truncate(text: str, max_length: int = 2000) -> str:
+def _truncate(text: str, max_length: int = settings.agent_response_truncation) -> str:
     """Truncate text to max_length with ellipsis."""
     if len(text) <= max_length:
         return text
@@ -796,7 +796,7 @@ class AgentService:
             elif result_data_for_llm:
                 data_label = "Data" if lang == "en" else "Daten"
                 data_str = json.dumps(result_data_for_llm, ensure_ascii=False)
-                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=8000)
+                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=4000)
             else:
                 result_summary = _truncate(result_message, max_length=4000)
 

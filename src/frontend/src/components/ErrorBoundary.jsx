@@ -7,6 +7,7 @@
 
 import React from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { withTranslation } from 'react-i18next';
 
 class ErrorBoundary extends React.Component {
   constructor(props) {
@@ -37,6 +38,8 @@ class ErrorBoundary extends React.Component {
   };
 
   render() {
+    const { t } = this.props;
+
     if (this.state.hasError) {
       // Custom fallback UI
       if (this.props.fallback) {
@@ -53,19 +56,19 @@ class ErrorBoundary extends React.Component {
 
             {/* Title */}
             <h1 className="text-xl font-bold text-white mb-2">
-              Etwas ist schiefgelaufen
+              {t('errorBoundary.title')}
             </h1>
 
             {/* Message */}
             <p className="text-gray-400 mb-6">
-              Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es erneut oder lade die Seite neu.
+              {t('errorBoundary.message')}
             </p>
 
             {/* Error details (only in development) */}
             {import.meta.env.DEV && this.state.error && (
               <details className="mb-6 text-left">
                 <summary className="text-sm text-gray-500 cursor-pointer hover:text-gray-400">
-                  Technische Details anzeigen
+                  {t('errorBoundary.showDetails')}
                 </summary>
                 <pre className="mt-2 p-3 bg-gray-800 rounded-lg text-xs text-red-400 overflow-auto max-h-40">
                   {this.state.error.toString()}
@@ -80,14 +83,14 @@ class ErrorBoundary extends React.Component {
                 onClick={this.handleRetry}
                 className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white flex items-center justify-center space-x-2"
               >
-                <span>Erneut versuchen</span>
+                <span>{t('errorBoundary.retry')}</span>
               </button>
               <button
                 onClick={this.handleReload}
                 className="flex-1 btn btn-primary flex items-center justify-center space-x-2"
               >
                 <RefreshCw className="w-4 h-4" aria-hidden="true" />
-                <span>Seite neu laden</span>
+                <span>{t('errorBoundary.reload')}</span>
               </button>
             </div>
           </div>
@@ -99,4 +102,4 @@ class ErrorBoundary extends React.Component {
   }
 }
 
-export default ErrorBoundary;
+export default withTranslation()(ErrorBoundary);

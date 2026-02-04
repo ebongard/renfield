@@ -9,7 +9,8 @@ from datetime import datetime
 from loguru import logger
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, literal_column
+from sqlalchemy.orm import aliased
 
 from models.database import Conversation, Message
 
@@ -242,38 +243,54 @@ class ConversationService:
             Liste von Konversations-Zusammenfassungen
         """
         try:
+            # Count subquery: message count per conversation
+            count_subq = (
+                select(
+                    Message.conversation_id,
+                    func.count(Message.id).label("message_count")
+                )
+                .group_by(Message.conversation_id)
+                .subquery()
+            )
+
+            # Preview subquery: first user message per conversation
+            preview_subq = (
+                select(
+                    Message.conversation_id,
+                    Message.content,
+                    func.row_number().over(
+                        partition_by=Message.conversation_id,
+                        order_by=Message.timestamp.asc()
+                    ).label("rn")
+                )
+                .where(Message.role == "user")
+                .subquery()
+            )
+            first_msg = aliased(preview_subq)
+
+            # Main query joining both subqueries
             result = await self.db.execute(
-                select(Conversation)
+                select(
+                    Conversation,
+                    func.coalesce(count_subq.c.message_count, 0).label("message_count"),
+                    first_msg.c.content.label("preview_content"),
+                )
+                .outerjoin(count_subq, Conversation.id == count_subq.c.conversation_id)
+                .outerjoin(first_msg, (Conversation.id == first_msg.c.conversation_id) & (first_msg.c.rn == 1))
                 .order_by(Conversation.updated_at.desc())
                 .limit(limit)
                 .offset(offset)
             )
-            conversations = result.scalars().all()
+            rows = result.all()
 
             summaries = []
-            for conv in conversations:
-                # Zähle Nachrichten
-                result = await self.db.execute(
-                    select(func.count(Message.id))
-                    .where(Message.conversation_id == conv.id)
-                )
-                message_count = result.scalar()
-
-                # Hole erste User-Nachricht als Vorschau
-                result = await self.db.execute(
-                    select(Message)
-                    .where(Message.conversation_id == conv.id, Message.role == "user")
-                    .order_by(Message.timestamp.asc())
-                    .limit(1)
-                )
-                first_user_msg = result.scalar_one_or_none()
-
+            for conv, message_count, preview_content in rows:
                 summaries.append({
                     "session_id": conv.session_id,
                     "created_at": conv.created_at.isoformat(),
                     "updated_at": conv.updated_at.isoformat(),
                     "message_count": message_count,
-                    "preview": first_user_msg.content[:100] if first_user_msg else "Leere Konversation"
+                    "preview": preview_content[:100] if preview_content else "Leere Konversation"
                 })
 
             logger.info(f"Geladen: {len(summaries)} Konversationen")
@@ -299,43 +316,34 @@ class ConversationService:
             Liste von Konversationen mit passenden Nachrichten
         """
         try:
-            # Suche in Message-Content
+            # Search messages and join conversations in a single query
             result = await self.db.execute(
-                select(Message)
+                select(Message, Conversation)
+                .join(Conversation, Message.conversation_id == Conversation.id)
                 .where(Message.content.ilike(f"%{query}%"))
                 .order_by(Message.timestamp.desc())
                 .limit(limit)
             )
-            messages = result.scalars().all()
+            rows = result.all()
 
-            # Gruppiere nach Conversation
-            conversation_ids = list(set(msg.conversation_id for msg in messages))
-
-            results = []
-            for conv_id in conversation_ids[:limit]:
-                result = await self.db.execute(
-                    select(Conversation).where(Conversation.id == conv_id)
-                )
-                conv = result.scalar_one_or_none()
-
-                if conv:
-                    # Finde matching messages
-                    matching_msgs = [
-                        {
-                            "role": msg.role,
-                            "content": msg.content,
-                            "timestamp": msg.timestamp.isoformat()
-                        }
-                        for msg in messages if msg.conversation_id == conv_id
-                    ]
-
-                    results.append({
+            # Group by conversation
+            from collections import OrderedDict
+            conv_groups: OrderedDict[int, dict] = OrderedDict()
+            for msg, conv in rows:
+                if conv.id not in conv_groups:
+                    conv_groups[conv.id] = {
                         "session_id": conv.session_id,
                         "created_at": conv.created_at.isoformat(),
                         "updated_at": conv.updated_at.isoformat(),
-                        "matching_messages": matching_msgs
-                    })
+                        "matching_messages": []
+                    }
+                conv_groups[conv.id]["matching_messages"].append({
+                    "role": msg.role,
+                    "content": msg.content,
+                    "timestamp": msg.timestamp.isoformat()
+                })
 
+            results = list(conv_groups.values())
             logger.info(f"Gefunden: {len(results)} Konversationen mit '{query}'")
             return results
 

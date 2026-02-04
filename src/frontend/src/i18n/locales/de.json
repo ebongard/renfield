@@ -671,5 +671,18 @@
     "serverError": "Serverfehler",
     "validationError": "Validierungsfehler",
     "couldNotProcess": "Entschuldigung, es gab einen Fehler bei der Verarbeitung deiner Anfrage."
+  },
+  "errorBoundary": {
+    "title": "Etwas ist schiefgelaufen",
+    "message": "Ein unerwarteter Fehler ist aufgetreten. Bitte versuche es erneut oder lade die Seite neu.",
+    "showDetails": "Technische Details anzeigen",
+    "retry": "Erneut versuchen",
+    "reload": "Seite neu laden"
+  },
+  "confirmDialog": {
+    "defaultTitle": "Bestätigung",
+    "confirm": "Bestätigen",
+    "cancel": "Abbrechen",
+    "loading": "Wird ausgeführt..."
   }
 }

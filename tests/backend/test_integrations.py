@@ -4,7 +4,6 @@ Tests für Integration Clients
 Testet:
 - HomeAssistantClient
 - FrigateClient
-- N8NClient
 """
 
 import pytest
@@ -297,78 +296,6 @@ class TestFrigateClient:
 
 
 # ============================================================================
-# N8NClient Tests
-# ============================================================================
-
-class TestN8NClient:
-    """Tests für N8NClient"""
-
-    @pytest.fixture
-    def n8n_client(self):
-        """Create N8NClient with test settings"""
-        with patch('integrations.n8n.settings') as mock_settings:
-            mock_settings.n8n_webhook_url = "http://n8n.local:5678/webhook"
-
-            from integrations.n8n import N8NClient
-            return N8NClient()
-
-    @pytest.mark.unit
-    def test_client_initialization(self, n8n_client):
-        """Test: Client wird korrekt initialisiert"""
-        assert n8n_client.base_url == "http://n8n.local:5678/webhook"
-
-    @pytest.mark.unit
-    async def test_trigger_workflow(self, n8n_client):
-        """Test: trigger_workflow sendet Webhook"""
-        mock_response = {"executionId": "exec-123"}
-
-        with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = MagicMock(
-                status_code=200,
-                json=lambda: mock_response
-            )
-            mock_post.return_value.raise_for_status = MagicMock()
-
-            result = await n8n_client.trigger_workflow(
-                "test-workflow",
-                {"param": "value"}
-            )
-
-            assert result["success"] is True
-
-    @pytest.mark.unit
-    async def test_trigger_workflow_with_data(self, n8n_client):
-        """Test: trigger_workflow sendet Daten"""
-        with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = MagicMock(status_code=200, json=lambda: {})
-            mock_post.return_value.raise_for_status = MagicMock()
-
-            await n8n_client.trigger_workflow(
-                "backup-workflow",
-                {"source": "/data", "target": "/backup"}
-            )
-
-            call_args = mock_post.call_args
-            json_data = call_args[1]["json"]
-            assert "source" in json_data or "data" in str(call_args)
-
-    @pytest.mark.unit
-    async def test_trigger_workflow_error(self, n8n_client):
-        """Test: trigger_workflow behandelt Fehler"""
-        with patch.object(httpx.AsyncClient, 'post', new_callable=AsyncMock) as mock_post:
-            mock_post.side_effect = httpx.ConnectError("Webhook failed")
-
-            result = await n8n_client.trigger_workflow("failing-workflow", {})
-
-            assert result["success"] is False
-
-    @pytest.mark.unit
-    def test_is_configured(self, n8n_client):
-        """Test: is_configured prüft base_url"""
-        assert n8n_client.base_url is not None
-
-
-# ============================================================================
 # Integration Client Edge Cases
 # ============================================================================
 
@@ -417,14 +344,3 @@ class TestIntegrationEdgeCases:
             result = await client.get_events()
             assert result == []
 
-    @pytest.mark.unit
-    async def test_n8n_client_not_configured(self):
-        """Test: n8n Client ohne Konfiguration"""
-        with patch('integrations.n8n.settings') as mock_settings:
-            mock_settings.n8n_webhook_url = None
-
-            from integrations.n8n import N8NClient
-            client = N8NClient()
-
-            result = await client.trigger_workflow("test", {})
-            assert result["success"] is False

@@ -14,8 +14,9 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
-    /* Linting - Start permissive, tighten later */
+    /* Linting - Incremental strictness */
     "strict": false,
+    "noImplicitAny": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,

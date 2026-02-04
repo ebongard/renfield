@@ -166,7 +166,7 @@ class TestSecretsAndDatabaseUrl:
             from utils.config import Settings
 
             settings = Settings(database_url=None)
-            assert settings.postgres_password == "env-secret-pw"
+            assert settings.postgres_password.get_secret_value() == "env-secret-pw"
             assert "env-secret-pw" in settings.database_url
 
     @pytest.mark.unit

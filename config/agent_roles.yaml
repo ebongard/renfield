@@ -51,10 +51,10 @@ roles:
 
   workflow:
     description:
-      de: "Automatisierungen: n8n Workflows erstellen und verwalten"
-      en: "Automations: create and manage n8n workflows"
+      de: "Automatisierungen: n8n Workflows erstellen, bearbeiten, verwalten, ausfuehren"
+      en: "Automations: create, edit, manage, execute n8n workflows"
     mcp_servers: [n8n]
-    max_steps: 4
+    max_steps: 10
     prompt_key: agent_prompt_workflow
 
   knowledge:

@@ -5,7 +5,7 @@ Endpoints für Dokument-Upload, Management und RAG-Suche.
 With RPBAC permission checks for secure access control.
 Pydantic schemas are defined in knowledge_schemas.py.
 """
-from typing import List, Optional
+from typing import Dict, List, Optional, Set
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -483,6 +483,14 @@ async def list_knowledge_bases(
         elif has_permission(user_perms, Permission.KB_NONE):
             return []
         else:
+            # Batch-load all KB IDs the user has explicit permissions for
+            perm_result = await db.execute(
+                select(KBPermission.knowledge_base_id).where(
+                    KBPermission.user_id == user.id
+                )
+            )
+            user_kb_ids: Set[int] = set(perm_result.scalars().all())
+
             accessible_bases = []
             for kb in all_bases:
                 # Own KB
@@ -491,16 +499,9 @@ async def list_knowledge_bases(
                 # Public KB (for kb.shared users)
                 elif kb.is_public and has_permission(user_perms, Permission.KB_SHARED):
                     accessible_bases.append(kb)
-                else:
-                    # Check explicit permission
-                    result = await db.execute(
-                        select(KBPermission).where(
-                            KBPermission.knowledge_base_id == kb.id,
-                            KBPermission.user_id == user.id
-                        )
-                    )
-                    if result.scalar_one_or_none():
-                        accessible_bases.append(kb)
+                # Explicit permission (checked via batch-loaded set)
+                elif kb.id in user_kb_ids:
+                    accessible_bases.append(kb)
     elif settings.auth_enabled and not user:
         # Auth enabled but no user = no access
         return []
@@ -508,18 +509,20 @@ async def list_knowledge_bases(
         # Auth disabled = full access
         accessible_bases = all_bases
 
+    # Batch-load all owner usernames in a single query
+    owner_ids = {kb.owner_id for kb in accessible_bases if kb.owner_id}
+    owner_map: Dict[int, str] = {}
+    if owner_ids:
+        owner_result = await db.execute(
+            select(User.id, User.username).where(User.id.in_(owner_ids))
+        )
+        owner_map = {row.id: row.username for row in owner_result.all()}
+
     # Build response with user-specific info
     response = []
     for kb in accessible_bases:
         perm = await get_user_kb_permission(kb, user, db) if user else "admin"
-
-        # Get owner username
-        owner_username = None
-        if kb.owner_id:
-            result = await db.execute(select(User).where(User.id == kb.owner_id))
-            owner = result.scalar_one_or_none()
-            if owner:
-                owner_username = owner.username
+        owner_username = owner_map.get(kb.owner_id) if kb.owner_id else None
 
         response.append(KnowledgeBaseResponse(
             id=kb.id,
@@ -529,7 +532,7 @@ async def list_knowledge_bases(
             is_public=kb.is_public if hasattr(kb, 'is_public') else False,
             owner_id=kb.owner_id if hasattr(kb, 'owner_id') else None,
             owner_username=owner_username,
-            document_count=len(kb.documents) if kb.documents else 0,
+            document_count=getattr(kb, '_document_count', len(kb.documents) if kb.documents else 0),
             created_at=kb.created_at.isoformat() if kb.created_at else "",
             updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
             permission=perm
@@ -763,19 +766,24 @@ async def list_kb_permissions(
     )
     permissions = result.scalars().all()
 
+    # Batch-load all referenced users in a single query
+    all_user_ids = set()
+    for perm in permissions:
+        all_user_ids.add(perm.user_id)
+        if perm.granted_by:
+            all_user_ids.add(perm.granted_by)
+
+    user_map: Dict[int, User] = {}
+    if all_user_ids:
+        user_result = await db.execute(
+            select(User).where(User.id.in_(all_user_ids))
+        )
+        user_map = {u.id: u for u in user_result.scalars().all()}
+
     response = []
     for perm in permissions:
-        # Get user info
-        user_result = await db.execute(select(User).where(User.id == perm.user_id))
-        perm_user = user_result.scalar_one_or_none()
-
-        # Get granter info
-        granter_username = None
-        if perm.granted_by:
-            granter_result = await db.execute(select(User).where(User.id == perm.granted_by))
-            granter = granter_result.scalar_one_or_none()
-            if granter:
-                granter_username = granter.username
+        perm_user = user_map.get(perm.user_id)
+        granter = user_map.get(perm.granted_by) if perm.granted_by else None
 
         response.append(KBPermissionResponse(
             id=perm.id,
@@ -783,7 +791,7 @@ async def list_kb_permissions(
             username=perm_user.username if perm_user else "Unknown",
             permission=perm.permission,
             granted_by=perm.granted_by,
-            granted_by_username=granter_username,
+            granted_by_username=granter.username if granter else None,
             created_at=perm.created_at.isoformat() if perm.created_at else ""
         ))
 

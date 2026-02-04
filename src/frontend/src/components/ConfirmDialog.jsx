@@ -5,21 +5,28 @@
  * Supports customizable title, message, and button labels.
  */
 
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import Modal from './Modal';
 import { AlertTriangle, Loader } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export default function ConfirmDialog({
   isOpen,
   onClose,
   onConfirm,
-  title = 'Bestätigung',
+  title,
   message,
-  confirmLabel = 'Bestätigen',
-  cancelLabel = 'Abbrechen',
+  confirmLabel,
+  cancelLabel,
   variant = 'danger', // 'danger' | 'warning' | 'info'
   isLoading = false,
 }) {
+  const { t } = useTranslation();
+
+  const resolvedTitle = title || t('confirmDialog.defaultTitle');
+  const resolvedConfirmLabel = confirmLabel || t('confirmDialog.confirm');
+  const resolvedCancelLabel = cancelLabel || t('confirmDialog.cancel');
+
   const handleConfirm = () => {
     onConfirm();
   };
@@ -57,7 +64,7 @@ export default function ConfirmDialog({
 
         {/* Title */}
         <h2 id="confirm-title" className="text-xl font-bold text-white mb-2">
-          {title}
+          {resolvedTitle}
         </h2>
 
         {/* Message */}
@@ -74,7 +81,7 @@ export default function ConfirmDialog({
             disabled={isLoading}
             className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white disabled:opacity-50"
           >
-            {cancelLabel}
+            {resolvedCancelLabel}
           </button>
           <button
             onClick={handleConfirm}
@@ -82,9 +89,9 @@ export default function ConfirmDialog({
             className={`flex-1 btn ${styles.button} disabled:opacity-50 flex items-center justify-center`}
           >
             {isLoading ? (
-              <Loader className="w-4 h-4 animate-spin" aria-label="Wird ausgeführt..." />
+              <Loader className="w-4 h-4 animate-spin" aria-label={t('confirmDialog.loading')} />
             ) : (
-              confirmLabel
+              resolvedConfirmLabel
             )}
           </button>
         </div>
@@ -101,8 +108,8 @@ export default function ConfirmDialog({
  *
  * const handleDelete = async () => {
  *   const confirmed = await confirm({
- *     title: 'Löschen?',
- *     message: 'Diese Aktion kann nicht rückgängig gemacht werden.',
+ *     title: 'Delete?',
+ *     message: 'This action cannot be undone.',
  *   });
  *   if (confirmed) {
  *     // do delete
@@ -111,20 +118,19 @@ export default function ConfirmDialog({
  *
  * return (
  *   <>
- *     <button onClick={handleDelete}>Löschen</button>
+ *     <button onClick={handleDelete}>Delete</button>
  *     {ConfirmDialogComponent}
  *   </>
  * );
  */
-import { useState, useCallback } from 'react';
 
 export function useConfirmDialog() {
   const [state, setState] = useState({
     isOpen: false,
-    title: 'Bestätigung',
+    title: null,
     message: '',
-    confirmLabel: 'Bestätigen',
-    cancelLabel: 'Abbrechen',
+    confirmLabel: null,
+    cancelLabel: null,
     variant: 'danger',
     resolve: null,
   });
@@ -133,10 +139,10 @@ export function useConfirmDialog() {
     return new Promise((resolve) => {
       setState({
         isOpen: true,
-        title: options.title || 'Bestätigung',
+        title: options.title || null,
         message: options.message || '',
-        confirmLabel: options.confirmLabel || 'Bestätigen',
-        cancelLabel: options.cancelLabel || 'Abbrechen',
+        confirmLabel: options.confirmLabel || null,
+        cancelLabel: options.cancelLabel || null,
         variant: options.variant || 'danger',
         resolve,
       });

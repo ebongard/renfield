@@ -6,6 +6,7 @@ Includes optional audio preprocessing for better transcription quality:
 - Audio normalization (consistent volume levels)
 """
 import whisper
+from datetime import datetime
 from pathlib import Path
 from loguru import logger
 from utils.config import settings
@@ -272,14 +273,22 @@ class WhisperService:
                 all_speakers = result.scalars().all()
 
                 # Build list of speakers WITH embeddings for identification
+                # Limit to most recent 10 embeddings per speaker to avoid loading
+                # unbounded data as continuous learning adds more embeddings over time
+                MAX_EMBEDDINGS_PER_SPEAKER = 10
                 known_speakers = []
                 speakers_with_embeddings = []
                 for speaker in all_speakers:
                     if speaker.embeddings:
                         speakers_with_embeddings.append(speaker)
+                        recent_embeddings = sorted(
+                            speaker.embeddings,
+                            key=lambda e: e.created_at or datetime.min,
+                            reverse=True
+                        )[:MAX_EMBEDDINGS_PER_SPEAKER]
                         embeddings = [
                             service.embedding_from_base64(emb.embedding)
-                            for emb in speaker.embeddings
+                            for emb in recent_embeddings
                         ]
                         if embeddings:
                             averaged = np.mean(embeddings, axis=0)

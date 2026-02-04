@@ -125,6 +125,9 @@ RUN mkdir -p /usr/share/piper/voices \
 # Remove wget after downloads complete (security hardening)
 RUN apt-get purge -y wget && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
 
+# Pre-install MCP stdio server packages (avoids npx download delay on first use)
+RUN npm install -g n8n-mcp@latest
+
 # App Code
 COPY . .
 

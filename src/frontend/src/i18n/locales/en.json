@@ -671,5 +671,18 @@
     "serverError": "Server error",
     "validationError": "Validation error",
     "couldNotProcess": "Sorry, there was an error processing your request."
+  },
+  "errorBoundary": {
+    "title": "Something went wrong",
+    "message": "An unexpected error occurred. Please try again or reload the page.",
+    "showDetails": "Show technical details",
+    "retry": "Try again",
+    "reload": "Reload page"
+  },
+  "confirmDialog": {
+    "defaultTitle": "Confirmation",
+    "confirm": "Confirm",
+    "cancel": "Cancel",
+    "loading": "Processing..."
   }
 }

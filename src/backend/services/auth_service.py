@@ -87,7 +87,7 @@ def create_access_token(
         "type": "access"
     })
 
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -105,7 +105,7 @@ def create_refresh_token(user_id: int) -> str:
         "type": "refresh"
     }
 
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.secret_key.get_secret_value(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -117,7 +117,7 @@ def decode_token(token: str) -> Optional[dict]:
         Decoded payload if valid, None otherwise
     """
     try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.secret_key.get_secret_value(), algorithms=[ALGORITHM])
         return payload
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")
@@ -428,7 +428,7 @@ async def ensure_admin_user(db: AsyncSession) -> Optional[User]:
     # Create default admin user
     admin_user = User(
         username=settings.default_admin_username,
-        password_hash=get_password_hash(settings.default_admin_password),
+        password_hash=get_password_hash(settings.default_admin_password.get_secret_value()),
         role_id=admin_role.id,
         is_active=True
     )

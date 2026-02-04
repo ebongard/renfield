@@ -34,7 +34,7 @@ class FrigateClient:
                 response = await client.get(
                     f"{self.base_url}/api/events",
                     params=params,
-                    timeout=10.0
+                    timeout=settings.frigate_timeout
                 )
                 response.raise_for_status()
                 return response.json()
@@ -48,7 +48,7 @@ class FrigateClient:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.base_url}/api/events/{event_id}/snapshot.jpg",
-                    timeout=10.0
+                    timeout=settings.frigate_timeout
                 )
                 response.raise_for_status()
                 return response.content
@@ -62,7 +62,7 @@ class FrigateClient:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.base_url}/api/config",
-                    timeout=10.0
+                    timeout=settings.frigate_timeout
                 )
                 response.raise_for_status()
                 config = response.json()
