@@ -6,6 +6,7 @@ import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
 import { useChatWebSocket, useAudioRecording } from '../hooks';
+import { useConfirmDialog } from '../../../components/ConfirmDialog';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
 
@@ -19,6 +20,7 @@ export function useChatContext() {
 
 export function ChatProvider({ children }) {
   const { t } = useTranslation();
+  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   // Message state
   const [messages, setMessages] = useState([]);
@@ -547,15 +549,19 @@ export function ChatProvider({ children }) {
 
   // Delete conversation
   const handleDeleteConversation = useCallback(async (id) => {
-    if (!window.confirm(t('chat.deleteConversation'))) {
-      return;
-    }
+    const confirmed = await confirm({
+      title: t('chat.deleteConversationTitle'),
+      message: t('chat.deleteConversation'),
+      confirmLabel: t('chat.deleteConversationConfirm'),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
 
     const success = await deleteConversation(id);
     if (success && id === sessionId) {
       startNewChat();
     }
-  }, [deleteConversation, sessionId, startNewChat, t]);
+  }, [deleteConversation, sessionId, startNewChat, t, confirm]);
 
   // Toggle RAG
   const toggleRag = useCallback(() => {
@@ -619,5 +625,10 @@ export function ChatProvider({ children }) {
     speakText, handleFeedbackSubmit,
   ]);
 
-  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
+  return (
+    <ChatContext.Provider value={value}>
+      {children}
+      {ConfirmDialogComponent}
+    </ChatContext.Provider>
+  );
 }

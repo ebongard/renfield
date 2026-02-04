@@ -122,14 +122,14 @@ export default function Modal({
         {(title || showCloseButton) && (
           <div className="flex items-center justify-between mb-4">
             {title && (
-              <h2 id="modal-title" className="text-xl font-bold text-white">
+              <h2 id="modal-title" className="text-xl font-bold text-gray-900 dark:text-white">
                 {title}
               </h2>
             )}
             {showCloseButton && (
               <button
                 onClick={onClose}
-                className="p-2 hover:bg-gray-700 rounded-lg transition-colors ml-auto"
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors ml-auto"
                 aria-label="Dialog schließen"
               >
                 <X className="w-5 h-5 text-gray-400" aria-hidden="true" />

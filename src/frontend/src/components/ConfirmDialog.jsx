@@ -63,13 +63,13 @@ export default function ConfirmDialog({
         </div>
 
         {/* Title */}
-        <h2 id="confirm-title" className="text-xl font-bold text-white mb-2">
+        <h2 id="confirm-title" className="text-xl font-bold text-gray-900 dark:text-white mb-2">
           {resolvedTitle}
         </h2>
 
         {/* Message */}
         {message && (
-          <p className="text-gray-400 mb-6">
+          <p className="text-gray-600 dark:text-gray-400 mb-6">
             {message}
           </p>
         )}
@@ -79,7 +79,7 @@ export default function ConfirmDialog({
           <button
             onClick={onClose}
             disabled={isLoading}
-            className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white disabled:opacity-50"
+            className="flex-1 btn btn-secondary disabled:opacity-50"
           >
             {resolvedCancelLabel}
           </button>
