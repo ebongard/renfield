@@ -47,12 +47,14 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://
 # - Use constraints to prevent transitive deps from replacing cu128 torch/nvidia packages
 # - Install openai-whisper separately with --no-deps (works fine with triton 3.x at runtime)
 COPY requirements.txt .
-RUN grep -v -E "^(torch(audio|vision)?|openai-whisper)([>=<]|$)" requirements.txt > requirements-filtered.txt \
+RUN grep -v -E "^(torch(audio|vision)?|openai-whisper)([>=<]|$)" requirements.txt | grep -v "github.com" > requirements-filtered.txt \
+    && grep "github.com" requirements.txt > requirements-github.txt || true \
     && pip freeze | grep -E "^(torch|torchaudio|torchvision|nvidia-|triton)" > /tmp/constraints.txt \
     && pip install --no-cache-dir -c /tmp/constraints.txt -r requirements-filtered.txt \
     && pip install --no-cache-dir --no-deps openai-whisper==20231117 \
     && pip install --no-cache-dir tiktoken more-itertools numba \
-    && rm requirements-filtered.txt /tmp/constraints.txt
+    && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi \
+    && rm requirements-filtered.txt requirements-github.txt /tmp/constraints.txt
 
 
 # ============================================================================

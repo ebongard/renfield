@@ -47,8 +47,11 @@ RUN ARCH=$(uname -m) && \
 # Install remaining Python dependencies
 COPY requirements.txt ./
 # Remove torch/torchaudio from requirements (already installed CPU-only)
-RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" > requirements-filtered.txt \
-    && pip install --no-cache-dir -r requirements-filtered.txt
+# Separate GitHub-hosted MCP packages (need --no-cache-dir to always fetch latest)
+RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" | grep -v "github.com" > requirements-filtered.txt \
+    && grep "github.com" requirements.txt > requirements-github.txt || true \
+    && pip install --no-cache-dir -r requirements-filtered.txt \
+    && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
 
 
 # ============================================================================
