@@ -11,17 +11,23 @@ Handles:
 import re
 import unicodedata
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
+
+from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from loguru import logger
 
 from models.database import (
-    Room, RoomDevice,
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL,
-    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK, DEVICE_TYPES,
-    DEFAULT_CAPABILITIES
+    DEFAULT_CAPABILITIES,
+    DEVICE_TYPE_SATELLITE,
+    DEVICE_TYPE_WEB_BROWSER,
+    DEVICE_TYPE_WEB_KIOSK,
+    DEVICE_TYPE_WEB_PANEL,
+    DEVICE_TYPE_WEB_TABLET,
+    DEVICE_TYPES,
+    Room,
+    RoomDevice,
 )
 
 
@@ -104,8 +110,8 @@ class RoomService:
         self,
         name: str,
         source: str = "renfield",
-        ha_area_id: Optional[str] = None,
-        icon: Optional[str] = None
+        ha_area_id: str | None = None,
+        icon: str | None = None
     ) -> Room:
         """
         Create a new room.
@@ -136,7 +142,7 @@ class RoomService:
         # Re-fetch with eager loading to avoid lazy load issues
         return await self.get_room(room.id)
 
-    async def get_room(self, room_id: int) -> Optional[Room]:
+    async def get_room(self, room_id: int) -> Room | None:
         """Get room by ID with devices loaded"""
         result = await self.db.execute(
             select(Room)
@@ -145,7 +151,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_room_by_name(self, name: str) -> Optional[Room]:
+    async def get_room_by_name(self, name: str) -> Room | None:
         """Get room by exact name"""
         result = await self.db.execute(
             select(Room)
@@ -154,7 +160,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_room_by_alias(self, alias: str) -> Optional[Room]:
+    async def get_room_by_alias(self, alias: str) -> Room | None:
         """Get room by normalized alias (for voice commands)"""
         normalized = normalize_room_name(alias)
         result = await self.db.execute(
@@ -164,7 +170,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_room_by_ha_area_id(self, ha_area_id: str) -> Optional[Room]:
+    async def get_room_by_ha_area_id(self, ha_area_id: str) -> Room | None:
         """Get room by Home Assistant area ID"""
         result = await self.db.execute(
             select(Room)
@@ -173,7 +179,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_all_rooms(self) -> List[Room]:
+    async def get_all_rooms(self) -> list[Room]:
         """Get all rooms with devices loaded"""
         result = await self.db.execute(
             select(Room)
@@ -185,10 +191,10 @@ class RoomService:
     async def update_room(
         self,
         room_id: int,
-        name: Optional[str] = None,
-        icon: Optional[str] = None,
-        ha_area_id: Optional[str] = None
-    ) -> Optional[Room]:
+        name: str | None = None,
+        icon: str | None = None,
+        ha_area_id: str | None = None
+    ) -> Room | None:
         """
         Update room details.
 
@@ -245,7 +251,7 @@ class RoomService:
 
     # --- Home Assistant Sync Operations ---
 
-    async def link_to_ha_area(self, room_id: int, ha_area_id: str) -> Optional[Room]:
+    async def link_to_ha_area(self, room_id: int, ha_area_id: str) -> Room | None:
         """Link a room to a Home Assistant area"""
         room = await self.get_room(room_id)
         if not room:
@@ -259,7 +265,7 @@ class RoomService:
         # Re-fetch with eager loading to avoid lazy load issues
         return await self.get_room(room_id)
 
-    async def unlink_from_ha(self, room_id: int) -> Optional[Room]:
+    async def unlink_from_ha(self, room_id: int) -> Room | None:
         """Remove Home Assistant area link from room"""
         room = await self.get_room(room_id)
         if not room:
@@ -275,9 +281,9 @@ class RoomService:
 
     async def import_ha_areas(
         self,
-        ha_areas: List[Dict[str, Any]],
+        ha_areas: list[dict[str, Any]],
         conflict_resolution: str = "skip"
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Import areas from Home Assistant.
 
@@ -347,12 +353,12 @@ class RoomService:
 
             except Exception as e:
                 logger.error(f"Error importing area {area_name}: {e}")
-                results["errors"].append(f"{area_name}: {str(e)}")
+                results["errors"].append(f"{area_name}: {e!s}")
 
         logger.info(f"HA Import complete: {results}")
         return results
 
-    async def get_rooms_for_export(self) -> List[Room]:
+    async def get_rooms_for_export(self) -> list[Room]:
         """Get rooms that can be exported to Home Assistant (no HA link yet)"""
         result = await self.db.execute(
             select(Room)
@@ -368,13 +374,13 @@ class RoomService:
         device_id: str,
         room_name: str,
         device_type: str = DEVICE_TYPE_WEB_BROWSER,
-        device_name: Optional[str] = None,
-        capabilities: Optional[Dict[str, Any]] = None,
+        device_name: str | None = None,
+        capabilities: dict[str, Any] | None = None,
         is_stationary: bool = True,
-        user_agent: Optional[str] = None,
-        ip_address: Optional[str] = None,
+        user_agent: str | None = None,
+        ip_address: str | None = None,
         auto_create_room: bool = True
-    ) -> Optional[RoomDevice]:
+    ) -> RoomDevice | None:
         """
         Register a device to a room.
 
@@ -460,7 +466,7 @@ class RoomService:
         logger.info(f"Registered device {device_id} ({device_type}) to room {room.name}")
         return device
 
-    async def get_device(self, device_id: str) -> Optional[RoomDevice]:
+    async def get_device(self, device_id: str) -> RoomDevice | None:
         """Get device by ID with room loaded"""
         result = await self.db.execute(
             select(RoomDevice)
@@ -469,7 +475,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_device_by_id(self, db_id: int) -> Optional[RoomDevice]:
+    async def get_device_by_id(self, db_id: int) -> RoomDevice | None:
         """Get device by database ID"""
         result = await self.db.execute(
             select(RoomDevice)
@@ -478,7 +484,7 @@ class RoomService:
         )
         return result.scalar_one_or_none()
 
-    async def get_devices_in_room(self, room_id: int) -> List[RoomDevice]:
+    async def get_devices_in_room(self, room_id: int) -> list[RoomDevice]:
         """Get all devices in a room"""
         result = await self.db.execute(
             select(RoomDevice)
@@ -487,15 +493,15 @@ class RoomService:
         )
         return list(result.scalars().all())
 
-    async def get_online_devices_in_room(self, room_id: int) -> List[RoomDevice]:
+    async def get_online_devices_in_room(self, room_id: int) -> list[RoomDevice]:
         """Get online devices in a room"""
         result = await self.db.execute(
             select(RoomDevice)
-            .where(RoomDevice.room_id == room_id, RoomDevice.is_online == True)
+            .where(RoomDevice.room_id == room_id, RoomDevice.is_online.is_(True))
         )
         return list(result.scalars().all())
 
-    async def get_all_devices(self) -> List[RoomDevice]:
+    async def get_all_devices(self) -> list[RoomDevice]:
         """Get all devices with rooms loaded"""
         result = await self.db.execute(
             select(RoomDevice)
@@ -504,7 +510,7 @@ class RoomService:
         )
         return list(result.scalars().all())
 
-    async def set_device_online(self, device_id: str, is_online: bool, ip_address: Optional[str] = None):
+    async def set_device_online(self, device_id: str, is_online: bool, ip_address: str | None = None):
         """Update device online status and optionally IP address"""
         values = {
             "is_online": is_online,
@@ -523,7 +529,7 @@ class RoomService:
         )
         await self.db.commit()
 
-    async def update_device_ip(self, device_id: str, ip_address: str) -> Optional[RoomDevice]:
+    async def update_device_ip(self, device_id: str, ip_address: str) -> RoomDevice | None:
         """
         Update device IP address.
 
@@ -548,7 +554,7 @@ class RoomService:
 
         return device
 
-    async def get_stationary_device_by_ip(self, ip_address: str) -> Optional[RoomDevice]:
+    async def get_stationary_device_by_ip(self, ip_address: str) -> RoomDevice | None:
         """
         Find a stationary device by IP address.
 
@@ -567,12 +573,12 @@ class RoomService:
             .options(selectinload(RoomDevice.room))
             .where(
                 RoomDevice.ip_address == ip_address,
-                RoomDevice.is_stationary == True
+                RoomDevice.is_stationary.is_(True)
             )
         )
         return result.scalars().first()
 
-    async def get_room_context_by_ip(self, ip_address: str) -> Optional[Dict[str, Any]]:
+    async def get_room_context_by_ip(self, ip_address: str) -> dict[str, Any] | None:
         """
         Get room context for automatic room detection.
 
@@ -598,8 +604,8 @@ class RoomService:
     async def update_device_capabilities(
         self,
         device_id: str,
-        capabilities: Dict[str, Any]
-    ) -> Optional[RoomDevice]:
+        capabilities: dict[str, Any]
+    ) -> RoomDevice | None:
         """Update device capabilities"""
         device = await self.get_device(device_id)
         if not device:
@@ -634,7 +640,7 @@ class RoomService:
         """Delete a device (alias for unregister_device)"""
         return await self.unregister_device(device_id)
 
-    async def move_device_to_room(self, device_id: str, room_id: int) -> Optional[RoomDevice]:
+    async def move_device_to_room(self, device_id: str, room_id: int) -> RoomDevice | None:
         """
         Move a device to a different room.
 
@@ -669,7 +675,7 @@ class RoomService:
         self,
         room_id: int,
         satellite_id: str
-    ) -> Optional[RoomDevice]:
+    ) -> RoomDevice | None:
         """Legacy method: Assign a satellite to a room."""
         room = await self.get_room(room_id)
         if not room:
@@ -687,7 +693,7 @@ class RoomService:
         satellite_id: str,
         room_name: str,
         auto_create: bool = True
-    ) -> Optional[Room]:
+    ) -> Room | None:
         """Legacy method: Get or create room for a satellite registration."""
         device = await self.register_device(
             device_id=satellite_id,
@@ -704,7 +710,7 @@ class RoomService:
         """Legacy method: Update satellite online status"""
         await self.set_device_online(satellite_id, is_online)
 
-    async def get_satellite_assignment(self, satellite_id: str) -> Optional[RoomDevice]:
+    async def get_satellite_assignment(self, satellite_id: str) -> RoomDevice | None:
         """Legacy method: Get satellite assignment with room loaded"""
         return await self.get_device(satellite_id)
 
@@ -714,7 +720,7 @@ class RoomService:
 
     # --- Helper Methods ---
 
-    def room_to_dict(self, room: Room) -> Dict[str, Any]:
+    def room_to_dict(self, room: Room) -> dict[str, Any]:
         """Convert Room to dictionary for API responses"""
         devices = room.devices if room.devices else []
 
@@ -743,7 +749,7 @@ class RoomService:
             ]
         }
 
-    def device_to_dict(self, device: RoomDevice) -> Dict[str, Any]:
+    def device_to_dict(self, device: RoomDevice) -> dict[str, Any]:
         """Convert RoomDevice to dictionary for API responses"""
         return {
             "id": device.id,

@@ -5,9 +5,9 @@ Noise reduction and normalization for better STT quality
 This module provides audio preprocessing capabilities that can be applied
 to any audio input (web, satellite, API) before Whisper transcription.
 """
+
 import numpy as np
 from loguru import logger
-from typing import Optional
 
 # Optional: noisereduce (pip install noisereduce)
 try:
@@ -52,7 +52,7 @@ class AudioPreprocessor:
             f"target_db={self.target_db}"
         )
 
-    def normalize(self, audio: np.ndarray, target_db: Optional[float] = None) -> np.ndarray:
+    def normalize(self, audio: np.ndarray, target_db: float | None = None) -> np.ndarray:
         """
         Normalize audio to target dB level.
 

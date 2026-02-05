@@ -1,12 +1,13 @@
 """
 Plugin loader - parses and validates YAML plugin definitions
 """
-import yaml
-from pathlib import Path
-from typing import Dict, List, Optional
-from loguru import logger
-from .plugin_schema import PluginDefinition
 import os
+from pathlib import Path
+
+import yaml
+from loguru import logger
+
+from .plugin_schema import PluginDefinition
 
 
 class PluginLoader:
@@ -42,10 +43,10 @@ class PluginLoader:
                 # Use original path as fallback
                 self.plugin_dir = plugin_path
 
-        self.loaded_plugins: Dict[str, PluginDefinition] = {}
+        self.loaded_plugins: dict[str, PluginDefinition] = {}
         logger.debug(f"🔍 Plugin directory resolved to: {self.plugin_dir.absolute()}")
 
-    def _scan_plugin_files(self) -> List[Path]:
+    def _scan_plugin_files(self) -> list[Path]:
         """
         Scan plugin directory for YAML files.
 
@@ -60,7 +61,7 @@ class PluginLoader:
         logger.debug(f"🔍 Found {len(yaml_files)} plugin files in {self.plugin_dir}")
         return yaml_files
 
-    def load_all_plugins(self) -> Dict[str, PluginDefinition]:
+    def load_all_plugins(self) -> dict[str, PluginDefinition]:
         """
         Load all plugins from plugin directory
 
@@ -96,10 +97,10 @@ class PluginLoader:
         logger.info(f"🎉 Loaded {len(self.loaded_plugins)} plugins")
         return self.loaded_plugins
 
-    def _load_plugin_file(self, file_path: Path) -> Optional[PluginDefinition]:
+    def _load_plugin_file(self, file_path: Path) -> PluginDefinition | None:
         """Load and validate single plugin YAML file"""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, encoding='utf-8') as f:
                 raw_data = yaml.safe_load(f)
 
             if not raw_data:
@@ -123,7 +124,7 @@ class PluginLoader:
             logger.error(f"❌ Plugin validation error in {file_path}: {e}")
             return None
 
-    def _transform_yaml_structure(self, raw_data: Dict) -> Dict:
+    def _transform_yaml_structure(self, raw_data: dict) -> dict:
         """
         Transform flat YAML structure into nested Pydantic structure
 

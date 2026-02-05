@@ -1,10 +1,11 @@
 """
 Datenbank Service
 """
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 from models.database import Base
 from utils.config import settings
-from loguru import logger
 
 # Async Engine erstellen
 engine = create_async_engine(

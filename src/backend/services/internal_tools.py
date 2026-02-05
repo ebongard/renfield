@@ -10,14 +10,13 @@ This keeps playback logic provider-agnostic: Jellyfin, Spotify, or any
 future provider just needs to supply a stream URL. The internal tools
 handle routing it to the correct room device.
 """
-from typing import Dict, Optional
 from loguru import logger
 
 
 class InternalToolService:
     """Provider-agnostic internal tools for the Agent Loop."""
 
-    TOOLS: Dict[str, Dict] = {
+    TOOLS: dict[str, dict] = {
         "internal.resolve_room_player": {
             "description": "Find the media_player entity for a room by name",
             "parameters": {
@@ -69,8 +68,8 @@ class InternalToolService:
 
         try:
             from services.database import AsyncSessionLocal
-            from services.room_service import RoomService
             from services.output_routing_service import OutputRoutingService
+            from services.room_service import RoomService
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)
@@ -103,7 +102,8 @@ class InternalToolService:
                     # can inform the user and ask whether to interrupt.
                     # Re-fetch the first enabled device to include its info.
                     from sqlalchemy import select as sa_select
-                    from models.database import RoomOutputDevice, OUTPUT_TYPE_AUDIO
+
+                    from models.database import OUTPUT_TYPE_AUDIO, RoomOutputDevice
                     stmt = (
                         sa_select(RoomOutputDevice)
                         .where(RoomOutputDevice.room_id == room.id)
@@ -158,7 +158,7 @@ class InternalToolService:
             logger.error(f"Error resolving room player for '{room_name}': {e}")
             return {
                 "success": False,
-                "message": f"Error resolving room: {str(e)}",
+                "message": f"Error resolving room: {e!s}",
                 "action_taken": False,
             }
 
@@ -215,6 +215,7 @@ class InternalToolService:
         # Step 2: Call HA media_player.play_media
         try:
             import asyncio as _asyncio
+
             from integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
@@ -268,6 +269,6 @@ class InternalToolService:
             logger.error(f"Error playing media in '{room_name}': {e}")
             return {
                 "success": False,
-                "message": f"Error playing media: {str(e)}",
+                "message": f"Error playing media: {e!s}",
                 "action_taken": False,
             }

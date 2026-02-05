@@ -5,12 +5,14 @@ Includes optional audio preprocessing for better transcription quality:
 - Noise reduction (removes background noise like fans, AC)
 - Audio normalization (consistent volume levels)
 """
-import whisper
+import tempfile
 from datetime import datetime
 from pathlib import Path
+
+import whisper
 from loguru import logger
+
 from utils.config import settings
-import tempfile
 
 # Optional: librosa and soundfile for audio preprocessing
 try:
@@ -44,21 +46,21 @@ class WhisperService:
 
         if settings.whisper_preprocess_enabled and not LIBROSA_AVAILABLE:
             logger.warning("Audio preprocessing requested but librosa not installed")
-    
+
     def load_model(self):
         """Modell laden"""
         if self.model is None:
             try:
                 logger.info(f"📥 Lade Whisper Modell '{self.model_size}'...")
-                
+
                 # OpenAI Whisper verwenden
                 self.model = whisper.load_model(self.model_size)
-                
-                logger.info(f"✅ Whisper Modell geladen")
+
+                logger.info("✅ Whisper Modell geladen")
             except Exception as e:
                 logger.error(f"❌ Fehler beim Laden des Whisper Modells: {e}")
                 raise
-    
+
     async def transcribe_file(self, audio_path: str, language: str = None) -> str:
         """
         Audio-Datei transkribieren mit optionalem Preprocessing.
@@ -152,7 +154,7 @@ class WhisperService:
         except Exception as e:
             logger.warning(f"⚠️ Preprocessing failed, using original audio: {e}")
             return None
-    
+
     async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None) -> str:
         """
         Audio aus Bytes transkribieren.
@@ -247,11 +249,12 @@ class WhisperService:
                 return {"text": text, **speaker_info}
 
             try:
-                from services.speaker_service import get_speaker_service
-                from models.database import Speaker, SpeakerEmbedding
-                from sqlalchemy import select, func
-                from sqlalchemy.orm import selectinload
                 import numpy as np
+                from sqlalchemy import select
+                from sqlalchemy.orm import selectinload
+
+                from models.database import Speaker, SpeakerEmbedding
+                from services.speaker_service import get_speaker_service
 
                 service = get_speaker_service()
 
@@ -301,7 +304,7 @@ class WhisperService:
                 if known_speakers:
                     result = service.identify_speaker(embedding, known_speakers)
                     if result:
-                        speaker_id, speaker_name, confidence = result
+                        speaker_id, _speaker_name, confidence = result
                         # Find the speaker object
                         for speaker in speakers_with_embeddings:
                             if speaker.id == speaker_id:
@@ -395,9 +398,9 @@ class WhisperService:
         Limits to max 10 embeddings per speaker to prevent unbounded growth.
         """
         try:
-            from models.database import Speaker, SpeakerEmbedding
-            from sqlalchemy import select, func
-            from sqlalchemy.orm import selectinload
+            from sqlalchemy import func, select
+
+            from models.database import SpeakerEmbedding
 
             # Check current embedding count
             result = await db_session.execute(

@@ -12,8 +12,9 @@ Includes keyword-based tool relevance filtering to reduce prompt size
 for small LLMs by selecting only tools relevant to the user's query.
 """
 import re
-from typing import Dict, List, Optional, Set, TYPE_CHECKING
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Optional
+
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -26,7 +27,7 @@ class ToolDefinition:
     """Definition of a tool available to the Agent."""
     name: str
     description: str
-    parameters: Dict[str, str] = field(default_factory=dict)  # param_name -> description
+    parameters: dict[str, str] = field(default_factory=dict)  # param_name -> description
 
 
 class AgentToolRegistry:
@@ -41,8 +42,8 @@ class AgentToolRegistry:
         self,
         plugin_registry: Optional["PluginRegistry"] = None,
         mcp_manager: Optional["MCPManager"] = None,
-        server_filter: Optional[List[str]] = None,
-        internal_filter: Optional[List[str]] = None,
+        server_filter: list[str] | None = None,
+        internal_filter: list[str] | None = None,
     ):
         """Initialize the tool registry.
 
@@ -54,7 +55,7 @@ class AgentToolRegistry:
             internal_filter: If set, only include these internal tool names.
                             None means include all internal tools.
         """
-        self._tools: Dict[str, ToolDefinition] = {}
+        self._tools: dict[str, ToolDefinition] = {}
 
         # Register plugin tools
         if plugin_registry:
@@ -83,7 +84,7 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"🔧 Agent tool registered: {tool.name}")
 
-    def _register_internal_tools(self, internal_filter: Optional[List[str]] = None) -> None:
+    def _register_internal_tools(self, internal_filter: list[str] | None = None) -> None:
         """Register internal agent tools (room resolution, media playback).
 
         Args:
@@ -107,7 +108,7 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"Internal agent tool registered: {tool.name}")
 
-    def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: Optional[List[str]] = None) -> None:
+    def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: list[str] | None = None) -> None:
         """Register MCP tools as agent tools.
 
         Args:
@@ -134,11 +135,11 @@ class AgentToolRegistry:
             self._tools[tool.name] = tool
             logger.debug(f"MCP agent tool registered: {tool.name}")
 
-    def get_tool(self, name: str) -> Optional[ToolDefinition]:
+    def get_tool(self, name: str) -> ToolDefinition | None:
         """Get a tool definition by name."""
         return self._tools.get(name)
 
-    def get_tool_names(self) -> List[str]:
+    def get_tool_names(self) -> list[str]:
         """Get list of all registered tool names."""
         return list(self._tools.keys())
 
@@ -146,7 +147,7 @@ class AgentToolRegistry:
         """Check if a tool name is valid."""
         return name in self._tools
 
-    def build_tools_prompt(self, tools: Optional[Dict[str, "ToolDefinition"]] = None) -> str:
+    def build_tools_prompt(self, tools: dict[str, "ToolDefinition"] | None = None) -> str:
         """
         Build a compact text description of tools for the LLM prompt.
 
@@ -175,7 +176,7 @@ class AgentToolRegistry:
 
     # Keyword mapping: query keywords -> MCP server prefixes / tool name fragments
     # Each entry: set of query keywords -> set of server prefixes to include
-    _SERVER_KEYWORD_MAP: Dict[str, List[str]] = {
+    _SERVER_KEYWORD_MAP: dict[str, list[str]] = {
         # Document management
         "paperless": ["mcp.paperless"],
         "dokument": ["mcp.paperless"],
@@ -225,7 +226,7 @@ class AgentToolRegistry:
         "internet": ["mcp.search"],
     }
 
-    def select_relevant_tools(self, query: str, max_tools: int = 20) -> Dict[str, "ToolDefinition"]:
+    def select_relevant_tools(self, query: str, max_tools: int = 20) -> dict[str, "ToolDefinition"]:
         """
         Select tools relevant to the user's query using keyword matching.
 
@@ -248,7 +249,7 @@ class AgentToolRegistry:
         query_words = set(re.findall(r'[a-zäöüß]+', query_lower))
 
         # Find matching server prefixes
-        matched_prefixes: Set[str] = set()
+        matched_prefixes: set[str] = set()
         for keyword, prefixes in self._SERVER_KEYWORD_MAP.items():
             # Match if keyword appears as a word or substring in query
             if keyword in query_words or keyword in query_lower:
@@ -260,7 +261,7 @@ class AgentToolRegistry:
             return self._tools
 
         # Select tools whose names start with any matched prefix
-        selected: Dict[str, ToolDefinition] = {}
+        selected: dict[str, ToolDefinition] = {}
         for name, tool in self._tools.items():
             if any(name.startswith(prefix) for prefix in matched_prefixes):
                 selected[name] = tool

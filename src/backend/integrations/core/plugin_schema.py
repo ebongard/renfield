@@ -1,9 +1,10 @@
 """
 Plugin schema definitions using Pydantic for validation
 """
-from pydantic import BaseModel, validator
-from typing import Dict, List, Optional, Any
 from enum import Enum
+from typing import Any
+
+from pydantic import BaseModel, validator
 
 
 class ParameterType(str, Enum):
@@ -22,9 +23,9 @@ class PluginParameter(BaseModel):
     type: ParameterType
     required: bool = False
     description: str
-    default: Optional[Any] = None
-    enum: Optional[List[Any]] = None  # Valid values
-    pattern: Optional[str] = None      # Regex pattern for strings
+    default: Any | None = None
+    enum: list[Any] | None = None  # Valid values
+    pattern: str | None = None      # Regex pattern for strings
 
 
 class HTTPMethod(str, Enum):
@@ -40,23 +41,23 @@ class APIDefinition(BaseModel):
     """API call definition"""
     method: HTTPMethod
     url: str  # Supports templating: {config.api_key}, {params.location}
-    headers: Optional[Dict[str, str]] = None
-    body: Optional[Dict[str, Any]] = None
-    timeout: Optional[int] = 10
-    response_mapping: Optional[Dict[str, str]] = None  # JSONPath mappings
+    headers: dict[str, str] | None = None
+    body: dict[str, Any] | None = None
+    timeout: int | None = 10
+    response_mapping: dict[str, str] | None = None  # JSONPath mappings
 
 
 class IntentDefinition(BaseModel):
     """Intent definition"""
     name: str  # e.g., "weather.get_current"
     description: str
-    parameters: List[PluginParameter] = []
-    examples: List[str] = []  # Legacy: German-only examples
-    examples_de: List[str] = []  # German examples (takes priority over `examples`)
-    examples_en: List[str] = []  # English examples
+    parameters: list[PluginParameter] = []
+    examples: list[str] = []  # Legacy: German-only examples
+    examples_de: list[str] = []  # German examples (takes priority over `examples`)
+    examples_en: list[str] = []  # English examples
     api: APIDefinition
 
-    def get_examples(self, lang: str = "de") -> List[str]:
+    def get_examples(self, lang: str = "de") -> list[str]:
         """Get examples in specified language with fallback to legacy field."""
         if lang == "en" and self.examples_en:
             return self.examples_en
@@ -73,9 +74,9 @@ class IntentDefinition(BaseModel):
 
 class PluginConfig(BaseModel):
     """Plugin configuration requirements"""
-    url: Optional[str] = None          # ENV var name for API URL
-    api_key: Optional[str] = None      # ENV var name for API key
-    additional: Optional[Dict[str, str]] = None  # Other config vars
+    url: str | None = None          # ENV var name for API URL
+    api_key: str | None = None      # ENV var name for API key
+    additional: dict[str, str] | None = None  # Other config vars
 
 
 class ErrorMapping(BaseModel):
@@ -89,7 +90,7 @@ class PluginMetadata(BaseModel):
     name: str  # e.g., "weather"
     version: str = "1.0.0"
     description: str
-    author: Optional[str] = None
+    author: str | None = None
     enabled_var: str  # ENV var name (e.g., WEATHER_ENABLED)
 
 
@@ -97,9 +98,9 @@ class PluginDefinition(BaseModel):
     """Complete plugin definition"""
     metadata: PluginMetadata
     config: PluginConfig
-    intents: List[IntentDefinition]
-    error_mappings: Optional[List[ErrorMapping]] = []
-    rate_limit: Optional[int] = None  # Requests per minute
+    intents: list[IntentDefinition]
+    error_mappings: list[ErrorMapping] | None = []
+    rate_limit: int | None = None  # Requests per minute
 
     class Config:
         use_enum_values = True

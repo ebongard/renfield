@@ -5,7 +5,6 @@ This module defines all granular permissions used in Renfield.
 Permissions are grouped by resource type and follow the format: resource.action
 """
 from enum import Enum
-from typing import List
 
 
 class Permission(str, Enum):
@@ -140,7 +139,7 @@ PERMISSION_HIERARCHY = {
 }
 
 
-def has_permission(user_permissions: List[str], required: Permission) -> bool:
+def has_permission(user_permissions: list[str], required: Permission) -> bool:
     """
     Check if a user has the required permission.
 
@@ -173,7 +172,7 @@ def has_permission(user_permissions: List[str], required: Permission) -> bool:
     return False
 
 
-def has_any_permission(user_permissions: List[str], required: List[Permission]) -> bool:
+def has_any_permission(user_permissions: list[str], required: list[Permission]) -> bool:
     """
     Check if a user has any of the required permissions.
 
@@ -187,7 +186,7 @@ def has_any_permission(user_permissions: List[str], required: List[Permission]) 
     return any(has_permission(user_permissions, perm) for perm in required)
 
 
-def has_all_permissions(user_permissions: List[str], required: List[Permission]) -> bool:
+def has_all_permissions(user_permissions: list[str], required: list[Permission]) -> bool:
     """
     Check if a user has all of the required permissions.
 
@@ -201,7 +200,7 @@ def has_all_permissions(user_permissions: List[str], required: List[Permission])
     return all(has_permission(user_permissions, perm) for perm in required)
 
 
-def get_all_permissions() -> List[dict]:
+def get_all_permissions() -> list[dict]:
     """
     Get all available permissions with descriptions.
 

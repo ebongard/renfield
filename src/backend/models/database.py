@@ -1,10 +1,12 @@
 """
 Datenbank Models
 """
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, JSON, ForeignKey, Float, Index
+from datetime import datetime
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
-from datetime import datetime
+
 from utils.config import settings
 
 try:
@@ -36,21 +38,21 @@ class Conversation(Base):
 class Message(Base):
     """Einzelne Nachrichten"""
     __tablename__ = "messages"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True)
     role = Column(String)  # 'user' oder 'assistant'
     content = Column(Text)
     timestamp = Column(DateTime, default=datetime.utcnow)
     message_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
-    
+
     # Beziehungen
     conversation = relationship("Conversation", back_populates="messages")
 
 class Task(Base):
     """Aufgaben"""
     __tablename__ = "tasks"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String)
     description = Column(Text, nullable=True)
@@ -67,7 +69,7 @@ class Task(Base):
 class CameraEvent(Base):
     """Kamera-Events"""
     __tablename__ = "camera_events"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     camera_name = Column(String)
     event_type = Column(String)  # 'person', 'car', 'animal'
@@ -546,7 +548,7 @@ class Role(Base):
 
     def has_permission(self, permission: str) -> bool:
         """Check if this role has a specific permission."""
-        from models.permissions import has_permission, Permission
+        from models.permissions import Permission, has_permission
         try:
             perm = Permission(permission)
             return has_permission(self.permissions or [], perm)

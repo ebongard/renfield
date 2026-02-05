@@ -7,23 +7,23 @@ This module handles:
 - Graceful shutdown with device notification
 """
 
-from contextlib import asynccontextmanager
-from typing import List, TYPE_CHECKING
 import asyncio
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
-from services.database import init_db, AsyncSessionLocal
+from services.database import AsyncSessionLocal, init_db
+from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
-from services.device_manager import get_device_manager
 from utils.config import settings
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 # Track background tasks for graceful shutdown
-_startup_tasks: List[asyncio.Task] = []
+_startup_tasks: list[asyncio.Task] = []
 
 
 async def _init_database():
@@ -35,7 +35,7 @@ async def _init_database():
 async def _init_auth():
     """Initialize authentication system with default roles and admin user."""
     try:
-        from services.auth_service import ensure_default_roles, ensure_admin_user
+        from services.auth_service import ensure_admin_user, ensure_default_roles
 
         async with AsyncSessionLocal() as db_session:
             # Ensure default roles exist
@@ -144,8 +144,8 @@ async def _init_mcp(app: "FastAPI"):
         return
 
     try:
-        from services.mcp_client import MCPManager
         from services.intent_registry import intent_registry
+        from services.mcp_client import MCPManager
 
         manager = MCPManager()
         manager.load_config(settings.mcp_config_path)

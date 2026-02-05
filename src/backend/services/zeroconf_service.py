@@ -8,7 +8,7 @@ Service Type: _renfield._tcp.local
 """
 
 import socket
-from typing import Optional
+
 from loguru import logger
 
 try:
@@ -26,7 +26,7 @@ SERVICE_TYPE = "_renfield._tcp.local."
 SERVICE_NAME = "Renfield Voice Assistant._renfield._tcp.local."
 
 
-def get_advertise_address() -> tuple[str, Optional[str]]:
+def get_advertise_address() -> tuple[str, str | None]:
     """
     Get the address to advertise for this service.
 
@@ -87,8 +87,8 @@ class ZeroconfService:
         """
         self.port = port
         self.name = name
-        self._zeroconf: Optional["AsyncZeroconf"] = None
-        self._service_info: Optional["ServiceInfo"] = None
+        self._zeroconf: AsyncZeroconf | None = None
+        self._service_info: ServiceInfo | None = None
         self._registered = False
 
     async def start(self):
@@ -141,7 +141,7 @@ class ZeroconfService:
                 logger.info(f"   Host: {advertise_host}:{self.port}")
             else:
                 logger.info(f"   Address: {advertise_ip}:{self.port}")
-            logger.info(f"   Satellites can now auto-discover this server")
+            logger.info("   Satellites can now auto-discover this server")
 
         except Exception as e:
             logger.error(f"❌ Failed to register zeroconf service: {e}")
@@ -168,7 +168,7 @@ class ZeroconfService:
 
 
 # Global singleton
-_zeroconf_service: Optional[ZeroconfService] = None
+_zeroconf_service: ZeroconfService | None = None
 
 
 def get_zeroconf_service(port: int = 8000) -> ZeroconfService:

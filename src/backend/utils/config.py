@@ -1,17 +1,17 @@
 """
 Konfiguration und Settings
 """
-from pydantic_settings import BaseSettings
-from pydantic import Field, SecretStr, model_validator
-from typing import Optional, List, Dict
-from pathlib import Path
 from functools import lru_cache
+
+from pydantic import Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings
+
 
 class Settings(BaseSettings):
     """Anwendungs-Einstellungen"""
 
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
-    database_url: Optional[str] = None
+    database_url: str | None = None
     postgres_user: str = "renfield"
     postgres_password: SecretStr = "changeme"
     postgres_host: str = "postgres"
@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://redis:6379"
-    
+
     # Ollama - Multi-Modell Konfiguration
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"  # Legacy: wird als chat_model verwendet
@@ -34,14 +34,14 @@ class Settings(BaseSettings):
     ollama_num_ctx: int = 32768                   # Context window für alle Ollama-Calls
 
     # Home Assistant
-    home_assistant_url: Optional[str] = None
-    home_assistant_token: Optional[SecretStr] = None
-    
+    home_assistant_url: str | None = None
+    home_assistant_token: SecretStr | None = None
+
     # n8n
-    n8n_api_url: Optional[str] = None     # Used by n8n-mcp package (czlonkowski)
-    
+    n8n_api_url: str | None = None     # Used by n8n-mcp package (czlonkowski)
+
     # Frigate
-    frigate_url: Optional[str] = None
+    frigate_url: str | None = None
 
     # Plugin System
     plugins_enabled: bool = True
@@ -49,17 +49,17 @@ class Settings(BaseSettings):
 
     # Weather Plugin
     weather_enabled: bool = False
-    openweather_api_url: Optional[str] = "https://api.openweathermap.org/data/2.5"
-    openweather_api_key: Optional[SecretStr] = None
+    openweather_api_url: str | None = "https://api.openweathermap.org/data/2.5"
+    openweather_api_key: SecretStr | None = None
 
     # News Plugin
     news_enabled: bool = False
-    newsapi_url: Optional[str] = "https://newsapi.org/v2"
-    newsapi_key: Optional[SecretStr] = None
+    newsapi_url: str | None = "https://newsapi.org/v2"
+    newsapi_key: SecretStr | None = None
 
     # Search Plugin
     search_enabled: bool = False
-    duckduckgo_api_url: Optional[str] = "https://api.duckduckgo.com"
+    duckduckgo_api_url: str | None = "https://api.duckduckgo.com"
 
     # Music Plugin (reserved for future use)
     # spotify_* fields removed — unused. Re-add when music integration is implemented.
@@ -89,7 +89,7 @@ class Settings(BaseSettings):
     rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
 
     # Output Routing
-    advertise_host: Optional[str] = None  # Hostname/IP that external services (like HA) can reach
+    advertise_host: str | None = None  # Hostname/IP that external services (like HA) can reach
     advertise_port: int = 8000            # Port for advertise_host
     backend_internal_url: str = "http://backend:8000"  # Internal URL for Docker networking (fallback when advertise_host not set)
 
@@ -101,14 +101,14 @@ class Settings(BaseSettings):
 
     # Satellite OTA Updates
     satellite_latest_version: str = "1.0.0"  # Latest available satellite version
-    
+
     # Agent (ReAct Loop)
     agent_enabled: bool = False           # Opt-in, disabled by default
     agent_max_steps: int = Field(default=12, ge=1, le=50)
     agent_step_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
     agent_total_timeout: float = Field(default=120.0, ge=5.0, le=600.0)
-    agent_model: Optional[str] = None     # Optional: separate model for agent (default: ollama_model)
-    agent_ollama_url: Optional[str] = None # Optional: separate Ollama instance for agent (default: ollama_url)
+    agent_model: str | None = None     # Optional: separate model for agent (default: ollama_model)
+    agent_ollama_url: str | None = None # Optional: separate Ollama instance for agent (default: ollama_url)
     agent_conv_context_messages: int = 6  # Number of conversation history messages in agent loop
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
     agent_router_timeout: float = 30.0    # Timeout for router classification LLM call (seconds)
@@ -151,36 +151,39 @@ class Settings(BaseSettings):
     max_file_size_mb: int = Field(default=50, ge=1, le=500)
     allowed_extensions: str = "pdf,docx,doc,txt,md,html,pptx,xlsx"  # Comma-separated
 
+    # Monitoring
+    metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
+
     # Logging
     log_level: str = "INFO"
-    
+
     # Security
     secret_key: SecretStr = "changeme-in-production-use-strong-random-key"
 
     # Jellyfin
     jellyfin_enabled: bool = False
-    jellyfin_url: Optional[str] = None
-    jellyfin_base_url: Optional[str] = None
-    jellyfin_api_key: Optional[SecretStr] = None
-    jellyfin_token: Optional[SecretStr] = None
-    jellyfin_user_id: Optional[str] = None
+    jellyfin_url: str | None = None
+    jellyfin_base_url: str | None = None
+    jellyfin_api_key: SecretStr | None = None
+    jellyfin_token: SecretStr | None = None
+    jellyfin_user_id: str | None = None
 
     # Paperless-NGX
     paperless_enabled: bool = False
-    paperless_api_url: Optional[str] = None
-    paperless_api_token: Optional[SecretStr] = None
+    paperless_api_url: str | None = None
+    paperless_api_token: SecretStr | None = None
 
     # Email MCP
     email_mcp_enabled: bool = False
-    mail_regfish_password: Optional[SecretStr] = None
+    mail_regfish_password: SecretStr | None = None
 
     # SearXNG
-    searxng_api_url: Optional[str] = None
-    searxng_instances: Optional[str] = None
+    searxng_api_url: str | None = None
+    searxng_instances: str | None = None
 
     # n8n MCP
-    n8n_base_url: Optional[str] = None
-    n8n_api_key: Optional[SecretStr] = None
+    n8n_base_url: str | None = None
+    n8n_api_key: SecretStr | None = None
     n8n_mcp_enabled: bool = False
 
     # Home Assistant MCP
@@ -262,17 +265,17 @@ class Settings(BaseSettings):
     intent_feedback_cache_ttl: int = Field(default=300, ge=10, le=86400)
 
     @property
-    def allowed_extensions_list(self) -> List[str]:
+    def allowed_extensions_list(self) -> list[str]:
         """Gibt allowed_extensions als Liste zurück"""
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",")]
 
     @property
-    def supported_languages_list(self) -> List[str]:
+    def supported_languages_list(self) -> list[str]:
         """Returns supported_languages as a list"""
         return [lang.strip().lower() for lang in self.supported_languages.split(",")]
 
     @property
-    def piper_voice_map(self) -> Dict[str, str]:
+    def piper_voice_map(self) -> dict[str, str]:
         """
         Returns piper_voices as a dictionary mapping language code to voice name.
         Example: {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
@@ -307,7 +310,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """Gibt die Settings-Instanz zurück (cached)"""
     return settings

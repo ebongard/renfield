@@ -7,16 +7,14 @@ This module contains:
 - Whisper service singleton
 """
 
+import re
 from dataclasses import dataclass, field
 from time import time
-from typing import Optional, List
-import re
 
 from fastapi import WebSocket
 
-from models.websocket_messages import create_error_response, WSErrorCode
+from models.websocket_messages import WSErrorCode, create_error_response
 from services.whisper_service import WhisperService
-
 
 # =============================================================================
 # Session State Management
@@ -33,21 +31,21 @@ class ConversationSessionState:
     - Last entities/actions (for pronoun resolution)
     """
     # General conversation history (for all message types)
-    conversation_history: List[dict] = field(default_factory=list)
+    conversation_history: list[dict] = field(default_factory=list)
     history_loaded: bool = False  # Whether history was loaded from DB
-    db_session_id: Optional[str] = None  # Session ID for DB persistence
+    db_session_id: str | None = None  # Session ID for DB persistence
 
     # RAG-specific state
-    last_rag_context: Optional[str] = None  # Last retrieved document context
-    last_rag_results: Optional[List[dict]] = None  # Raw search results
-    last_query: Optional[str] = None  # Last user query
+    last_rag_context: str | None = None  # Last retrieved document context
+    last_rag_results: list[dict] | None = None  # Raw search results
+    last_query: str | None = None  # Last user query
     last_rag_timestamp: float = 0  # When last RAG search was performed
-    knowledge_base_id: Optional[int] = None  # Current knowledge base
+    knowledge_base_id: int | None = None  # Current knowledge base
 
     # Last action context (for pronoun resolution like "es" referring to last entity)
-    last_intent: Optional[dict] = None
-    last_action_result: Optional[dict] = None
-    last_entities: List[str] = field(default_factory=list)
+    last_intent: dict | None = None
+    last_action_result: dict | None = None
+    last_entities: list[str] = field(default_factory=list)
 
     # Configuration
     CONTEXT_TIMEOUT_SECONDS: int = 300  # 5 minutes
@@ -66,7 +64,7 @@ class ConversationSessionState:
         if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
             self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES:]
 
-    def update_rag_context(self, context: str, results: List[dict], query: str, kb_id: Optional[int] = None):
+    def update_rag_context(self, context: str, results: list[dict], query: str, kb_id: int | None = None):
         """Update the RAG context after a successful search."""
         self.last_rag_context = context
         self.last_rag_results = results
@@ -110,7 +108,7 @@ RAGSessionState = ConversationSessionState
 # Helper Functions
 # =============================================================================
 
-def is_followup_question(query: str, previous_query: Optional[str] = None) -> bool:
+def is_followup_question(query: str, previous_query: str | None = None) -> bool:
     """
     Detect if a query is likely a follow-up question about previous context.
 
@@ -160,7 +158,7 @@ def is_followup_question(query: str, previous_query: Optional[str] = None) -> bo
 # Whisper Service Singleton
 # =============================================================================
 
-_whisper_service: Optional[WhisperService] = None
+_whisper_service: WhisperService | None = None
 
 
 def get_whisper_service() -> WhisperService:

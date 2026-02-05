@@ -1,7 +1,7 @@
 """
 Standardized plugin response formatting
 """
-from typing import Dict, Any, Optional
+from typing import Any
 
 
 class PluginResponse:
@@ -10,9 +10,9 @@ class PluginResponse:
     @staticmethod
     def success(
         message: str,
-        data: Optional[Dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
         action_taken: bool = True
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create success response"""
         return {
             "success": True,
@@ -24,9 +24,9 @@ class PluginResponse:
     @staticmethod
     def error(
         message: str,
-        error_code: Optional[str] = None,
+        error_code: str | None = None,
         action_taken: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create error response"""
         response = {
             "success": False,
@@ -40,7 +40,7 @@ class PluginResponse:
         return response
 
     @staticmethod
-    def not_found(entity: str) -> Dict[str, Any]:
+    def not_found(entity: str) -> dict[str, Any]:
         """Create not found response"""
         return PluginResponse.error(
             message=f"{entity} not found",
@@ -48,7 +48,7 @@ class PluginResponse:
         )
 
     @staticmethod
-    def invalid_parameters(details: str) -> Dict[str, Any]:
+    def invalid_parameters(details: str) -> dict[str, Any]:
         """Create invalid parameters response"""
         return PluginResponse.error(
             message=f"Invalid parameters: {details}",

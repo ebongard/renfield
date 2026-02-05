@@ -5,14 +5,14 @@ Provides global rate limiting for REST API endpoints using slowapi.
 Configurable per-endpoint limits via settings.
 """
 
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from typing import Optional
-import logging
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
 
 from utils.config import settings
 
@@ -143,13 +143,13 @@ def limit_custom(limit_string: str):
 
 # Export limiter instance for direct use
 __all__ = [
+    'get_client_ip',
+    'limit_admin',
+    'limit_auth',
+    'limit_chat',
+    'limit_custom',
+    'limit_default',
+    'limit_voice',
     'limiter',
     'setup_rate_limiter',
-    'limit_default',
-    'limit_auth',
-    'limit_voice',
-    'limit_chat',
-    'limit_admin',
-    'limit_custom',
-    'get_client_ip',
 ]

@@ -1,15 +1,17 @@
 """
 Generic plugin executor - executes YAML-defined plugins
 """
-import httpx
 import os
 import re
-from typing import Dict, Any, Optional
-from loguru import logger
-from .plugin_schema import PluginDefinition, IntentDefinition
-from .plugin_response import PluginResponse
-from datetime import datetime, timedelta
 from collections import deque
+from datetime import datetime, timedelta
+from typing import Any
+
+import httpx
+from loguru import logger
+
+from .plugin_response import PluginResponse
+from .plugin_schema import IntentDefinition, PluginDefinition
 
 
 class GenericPlugin:
@@ -20,7 +22,7 @@ class GenericPlugin:
         self.config_cache = self._load_config()
         self.rate_limiter = self._create_rate_limiter()
 
-    def _load_config(self) -> Dict[str, Any]:
+    def _load_config(self) -> dict[str, Any]:
         """Load configuration from environment variables or Pydantic Settings (secrets)"""
         config = {}
 
@@ -37,7 +39,7 @@ class GenericPlugin:
         return config
 
     @staticmethod
-    def _resolve_config_var(env_var_name: str) -> Optional[str]:
+    def _resolve_config_var(env_var_name: str) -> str | None:
         """Resolve config variable from env var or Pydantic Settings (Docker secrets)"""
         # First try environment variable
         value = os.getenv(env_var_name)
@@ -56,7 +58,7 @@ class GenericPlugin:
 
         return None
 
-    def _create_rate_limiter(self) -> Optional[Dict]:
+    def _create_rate_limiter(self) -> dict | None:
         """Create rate limiter if configured"""
         if self.definition.rate_limit:
             return {
@@ -88,7 +90,7 @@ class GenericPlugin:
         self.rate_limiter['requests'].append(now)
         return True
 
-    async def execute(self, intent_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
+    async def execute(self, intent_name: str, parameters: dict[str, Any]) -> dict[str, Any]:
         """
         Execute plugin intent with given parameters
 
@@ -132,8 +134,8 @@ class GenericPlugin:
     def _apply_defaults(
         self,
         intent_def: IntentDefinition,
-        parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        parameters: dict[str, Any]
+    ) -> dict[str, Any]:
         """
         Apply default values for parameters that are not provided
 
@@ -156,7 +158,7 @@ class GenericPlugin:
 
         return result
 
-    def _find_intent(self, intent_name: str) -> Optional[IntentDefinition]:
+    def _find_intent(self, intent_name: str) -> IntentDefinition | None:
         """Find intent definition by name"""
         for intent in self.definition.intents:
             if intent.name == intent_name:
@@ -166,8 +168,8 @@ class GenericPlugin:
     def _validate_parameters(
         self,
         intent_def: IntentDefinition,
-        parameters: Dict[str, Any]
-    ) -> Optional[str]:
+        parameters: dict[str, Any]
+    ) -> str | None:
         """
         Validate parameters against intent definition
 
@@ -208,8 +210,8 @@ class GenericPlugin:
     async def _execute_api_call(
         self,
         intent_def: IntentDefinition,
-        parameters: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        parameters: dict[str, Any]
+    ) -> dict[str, Any]:
         """Execute API call defined in intent"""
         api_def = intent_def.api
 
@@ -283,9 +285,9 @@ class GenericPlugin:
                 error_msg = self._map_error(e.response.status_code)
                 return PluginResponse.error(error_msg or str(e))
             except httpx.RequestError as e:
-                return PluginResponse.error(f"Request failed: {str(e)}")
+                return PluginResponse.error(f"Request failed: {e!s}")
 
-    def _substitute_template(self, template: str, parameters: Dict[str, Any], url_encode: bool = False) -> str:
+    def _substitute_template(self, template: str, parameters: dict[str, Any], url_encode: bool = False) -> str:
         """
         Substitute template variables with values
 
@@ -320,7 +322,7 @@ class GenericPlugin:
 
         return result
 
-    def _substitute_body(self, body_template: Dict, parameters: Dict[str, Any]) -> Dict:
+    def _substitute_body(self, body_template: dict, parameters: dict[str, Any]) -> dict:
         """Recursively substitute template variables in body"""
         result = {}
 
@@ -339,7 +341,7 @@ class GenericPlugin:
 
         return result
 
-    def _map_response(self, response_data: Dict, mapping: Dict[str, str]) -> Dict:
+    def _map_response(self, response_data: dict, mapping: dict[str, str]) -> dict:
         """
         Map response data using JSONPath-style mappings
 
@@ -391,7 +393,7 @@ class GenericPlugin:
 
         return current
 
-    def _map_error(self, status_code: int) -> Optional[str]:
+    def _map_error(self, status_code: int) -> str | None:
         """Map HTTP status code to user-friendly message"""
         if not self.definition.error_mappings:
             return None

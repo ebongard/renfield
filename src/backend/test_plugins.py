@@ -61,7 +61,7 @@ async def test_plugin_loading():
         print(f"  Parameters: {params or 'none'}")
 
         if intent_def.examples:
-            print(f"  Examples:")
+            print("  Examples:")
             for example in intent_def.examples[:2]:
                 print(f"    - \"{example}\"")
         print()

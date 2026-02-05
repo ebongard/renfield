@@ -8,7 +8,6 @@ Zero-cost: No LLM call, pure regex matching on German and English patterns.
 Semantic feedback override: Checks past corrections before regex fallback.
 """
 import re
-from typing import List, Optional, Tuple
 
 from loguru import logger
 
@@ -17,7 +16,7 @@ class ComplexityDetector:
     """Detects whether a user query requires the multi-step Agent Loop."""
 
     # Conditional patterns: "wenn ... dann", "falls ... dann", etc.
-    CONDITIONAL_PATTERNS: List[re.Pattern] = [
+    CONDITIONAL_PATTERNS: list[re.Pattern] = [
         re.compile(r'\bwenn\b.*\bdann\b', re.IGNORECASE),
         re.compile(r'\bfalls\b.*\bdann\b', re.IGNORECASE),
         re.compile(r'\bsofern\b.*\bdann\b', re.IGNORECASE),
@@ -25,7 +24,7 @@ class ComplexityDetector:
     ]
 
     # Sequential patterns: "und dann", "danach", "anschließend"
-    SEQUENCE_PATTERNS: List[re.Pattern] = [
+    SEQUENCE_PATTERNS: list[re.Pattern] = [
         re.compile(r'\bund dann\b', re.IGNORECASE),
         re.compile(r'\bdanach\b', re.IGNORECASE),
         re.compile(r'\banschließend\b', re.IGNORECASE),
@@ -35,7 +34,7 @@ class ComplexityDetector:
     ]
 
     # Comparison patterns: "wärmer als", "höher als", "mehr als"
-    COMPARISON_PATTERNS: List[re.Pattern] = [
+    COMPARISON_PATTERNS: list[re.Pattern] = [
         re.compile(r'\b(wärmer|kälter|höher|niedriger|mehr|weniger|größer|kleiner|teurer|billiger)\s+als\b', re.IGNORECASE),
         re.compile(r'\b(warmer|colder|higher|lower|more|less|greater|cheaper)\s+than\b', re.IGNORECASE),
         re.compile(r'\büber\s+\d+', re.IGNORECASE),
@@ -44,7 +43,7 @@ class ComplexityDetector:
     ]
 
     # Multi-action patterns: "schalte X ein und mach Y"
-    MULTI_ACTION_PATTERNS: List[re.Pattern] = [
+    MULTI_ACTION_PATTERNS: list[re.Pattern] = [
         # German: action verb + "und" + action verb
         re.compile(
             r'\b(schalte|mach|stelle|öffne|schließe|starte|stoppe|suche|finde|hole|zeige|sende|schicke|spiele|höre)\b'
@@ -62,7 +61,7 @@ class ComplexityDetector:
     ]
 
     # Combined question patterns: "wie ist X und Y"
-    COMBINED_QUESTION_PATTERNS: List[re.Pattern] = [
+    COMBINED_QUESTION_PATTERNS: list[re.Pattern] = [
         re.compile(
             r'\b(wie|was|wer|wo|wann)\b.*\bund\b.*\b(wie|was|wer|wo|wann)\b',
             re.IGNORECASE
@@ -74,7 +73,7 @@ class ComplexityDetector:
     ]
 
     # All pattern groups with labels for debugging
-    ALL_PATTERN_GROUPS: List[Tuple[str, List[re.Pattern]]] = [
+    ALL_PATTERN_GROUPS: list[tuple[str, list[re.Pattern]]] = [
         ("conditional", CONDITIONAL_PATTERNS),
         ("sequence", SEQUENCE_PATTERNS),
         ("comparison", COMPARISON_PATTERNS),
@@ -130,7 +129,7 @@ class ComplexityDetector:
         return cls.needs_agent(message)
 
     @classmethod
-    def detect_patterns(cls, message: str) -> List[str]:
+    def detect_patterns(cls, message: str) -> list[str]:
         """
         Detect which complexity patterns match (for debugging/logging).
 

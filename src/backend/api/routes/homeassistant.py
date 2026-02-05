@@ -6,15 +6,16 @@ With RPBAC permission checks:
 - ha.control: Turn devices on/off, set values
 - ha.full: Call arbitrary services
 """
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
+from pydantic import BaseModel
 
 from integrations.homeassistant import HomeAssistantClient
-from services.auth_service import require_permission
 from models.database import User
 from models.permissions import Permission
+from services.auth_service import require_permission
 
 router = APIRouter()
 ha_client = HomeAssistantClient()
@@ -22,8 +23,8 @@ ha_client = HomeAssistantClient()
 class ServiceCall(BaseModel):
     domain: str
     service: str
-    entity_id: Optional[str] = None
-    service_data: Optional[Dict] = None
+    entity_id: str | None = None
+    service_data: dict | None = None
 
 class SetValue(BaseModel):
     entity_id: str

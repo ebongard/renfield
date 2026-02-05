@@ -1,17 +1,17 @@
 """
 Feedback API Routes — Intent correction learning
 """
+
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, field_validator
-from typing import Optional
 from loguru import logger
+from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.database import get_db
-from services.auth_service import get_current_user
-from services.api_rate_limiter import limiter
-from utils.config import settings
 from models.database import User
+from services.api_rate_limiter import limiter
+from services.auth_service import get_current_user
+from services.database import get_db
+from utils.config import settings
 
 router = APIRouter()
 
@@ -23,7 +23,7 @@ class CorrectionRequest(BaseModel):
     feedback_type: str
     original_value: str
     corrected_value: str
-    context: Optional[dict] = None
+    context: dict | None = None
 
     @field_validator("feedback_type")
     @classmethod
@@ -48,7 +48,7 @@ async def submit_correction(
     request: Request,
     body: CorrectionRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Submit a correction for wrong intent/tool/complexity classification."""
     try:
@@ -79,11 +79,11 @@ async def submit_correction(
 
 @router.get("/corrections")
 async def list_corrections(
-    feedback_type: Optional[str] = None,
+    feedback_type: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user),
 ):
     """List all corrections (admin view)."""
     try:
@@ -115,7 +115,7 @@ async def list_corrections(
 async def delete_correction(
     correction_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Delete a specific correction."""
     try:

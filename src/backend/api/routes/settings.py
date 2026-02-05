@@ -5,25 +5,23 @@ Provides configuration endpoints for frontend components.
 Supports both read (all users) and write (admin only) operations.
 """
 from pathlib import Path
-from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
-from utils.config import settings
-from services.database import get_db
-from services.auth_service import require_permission
-from services.wakeword_config_manager import (
-    get_wakeword_config_manager,
-    AVAILABLE_KEYWORDS,
-    VALID_KEYWORDS,
-)
 from models.database import User
 from models.permissions import Permission
-
+from services.auth_service import require_permission
+from services.database import get_db
+from services.wakeword_config_manager import (
+    AVAILABLE_KEYWORDS,
+    VALID_KEYWORDS,
+    get_wakeword_config_manager,
+)
+from utils.config import settings
 
 router = APIRouter()
 
@@ -34,17 +32,17 @@ router = APIRouter()
 
 class WakeWordUpdateRequest(BaseModel):
     """Request body for updating wake word settings"""
-    keyword: Optional[str] = Field(
+    keyword: str | None = Field(
         None,
         description="Wake word keyword ID (e.g., 'alexa', 'hey_jarvis')"
     )
-    threshold: Optional[float] = Field(
+    threshold: float | None = Field(
         None,
         ge=0.1,
         le=1.0,
         description="Detection threshold (0.1 - 1.0)"
     )
-    cooldown_ms: Optional[int] = Field(
+    cooldown_ms: int | None = Field(
         None,
         ge=500,
         le=10000,
@@ -68,16 +66,16 @@ class DeviceSyncStatusResponse(BaseModel):
     device_id: str
     device_type: str
     synced: bool
-    active_keywords: List[str] = []
-    failed_keywords: List[str] = []
-    last_ack_time: Optional[str] = None
-    error: Optional[str] = None
+    active_keywords: list[str] = []
+    failed_keywords: list[str] = []
+    last_ack_time: str | None = None
+    error: str | None = None
 
 
 class AllDeviceSyncStatusResponse(BaseModel):
     """Response for all device sync statuses"""
     config_version: int
-    devices: List[DeviceSyncStatusResponse]
+    devices: list[DeviceSyncStatusResponse]
     all_synced: bool
     synced_count: int
     pending_count: int
@@ -88,8 +86,8 @@ class ModelInfoResponse(BaseModel):
     model_id: str
     available: bool
     model_type: str = "tflite"
-    file_size: Optional[int] = None
-    download_url: Optional[str] = None
+    file_size: int | None = None
+    download_url: str | None = None
 
 
 # =============================================================================
@@ -243,7 +241,7 @@ async def get_single_device_sync_status(device_id: str):
 TFLITE_MODELS_PATH = Path("/app/wakeword-models")
 
 
-def _find_model_file(model_id: str) -> Optional[Path]:
+def _find_model_file(model_id: str) -> Path | None:
     """
     Find a TFLite model file for the given model ID.
 

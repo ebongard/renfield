@@ -3,37 +3,36 @@ Pydantic schemas for Knowledge API
 
 Extracted from knowledge.py for better maintainability.
 """
-from typing import List, Optional
-from pydantic import BaseModel, Field
 
+from pydantic import BaseModel, Field
 
 # --- Knowledge Base Models ---
 
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
-    description: Optional[str] = None
+    description: str | None = None
     is_public: bool = False
 
 
 class KnowledgeBaseUpdate(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=255)
-    description: Optional[str] = None
-    is_public: Optional[bool] = None
-    is_active: Optional[bool] = None
+    name: str | None = Field(None, min_length=1, max_length=255)
+    description: str | None = None
+    is_public: bool | None = None
+    is_active: bool | None = None
 
 
 class KnowledgeBaseResponse(BaseModel):
     id: int
     name: str
-    description: Optional[str]
+    description: str | None
     is_active: bool
     is_public: bool = False
-    owner_id: Optional[int] = None
-    owner_username: Optional[str] = None
+    owner_id: int | None = None
+    owner_username: str | None = None
     document_count: int = 0
     created_at: str
     updated_at: str
-    permission: Optional[str] = None  # User's permission level on this KB
+    permission: str | None = None  # User's permission level on this KB
 
 
 # --- Permission Models ---
@@ -48,8 +47,8 @@ class KBPermissionResponse(BaseModel):
     user_id: int
     username: str
     permission: str
-    granted_by: Optional[int]
-    granted_by_username: Optional[str]
+    granted_by: int | None
+    granted_by_username: str | None
     created_at: str
 
 
@@ -58,16 +57,16 @@ class KBPermissionResponse(BaseModel):
 class DocumentResponse(BaseModel):
     id: int
     filename: str
-    title: Optional[str]
-    file_type: Optional[str]
-    file_size: Optional[int]
+    title: str | None
+    file_type: str | None
+    file_size: int | None
     status: str
-    error_message: Optional[str]
+    error_message: str | None
     chunk_count: int
-    page_count: Optional[int]
-    knowledge_base_id: Optional[int]
+    page_count: int | None
+    knowledge_base_id: int | None
     created_at: str
-    processed_at: Optional[str]
+    processed_at: str | None
 
 
 # --- Search Models ---
@@ -75,23 +74,23 @@ class DocumentResponse(BaseModel):
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(default=5, ge=1, le=20)
-    knowledge_base_id: Optional[int] = None
-    similarity_threshold: Optional[float] = Field(default=None, ge=0, le=1)
+    knowledge_base_id: int | None = None
+    similarity_threshold: float | None = Field(default=None, ge=0, le=1)
 
 
 class SearchResultChunk(BaseModel):
     id: int
     content: str
     chunk_index: int
-    page_number: Optional[int]
-    section_title: Optional[str]
+    page_number: int | None
+    section_title: str | None
     chunk_type: str
 
 
 class SearchResultDocument(BaseModel):
     id: int
     filename: str
-    title: Optional[str]
+    title: str | None
 
 
 class SearchResult(BaseModel):
@@ -102,7 +101,7 @@ class SearchResult(BaseModel):
 
 class SearchResponse(BaseModel):
     query: str
-    results: List[SearchResult]
+    results: list[SearchResult]
     count: int
 
 

@@ -17,11 +17,7 @@ Usage:
     truncated = token_counter.truncate_to_budget(text, max_tokens=2000)
 """
 
-import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
-
-from loguru import logger
 
 
 @dataclass
@@ -114,7 +110,7 @@ class TokenCounter:
 
         return max(1, tokens)
 
-    def count_messages(self, messages: List[dict]) -> int:
+    def count_messages(self, messages: list[dict]) -> int:
         """
         Estimate token count for a list of chat messages.
 
@@ -153,7 +149,7 @@ class TokenCounter:
         max_tokens: int,
         reserved: int = 0,
         suffix: str = "...[truncated]"
-    ) -> Tuple[str, bool]:
+    ) -> tuple[str, bool]:
         """
         Truncate text to fit within token budget.
 
@@ -187,12 +183,12 @@ class TokenCounter:
 
     def truncate_messages_to_budget(
         self,
-        messages: List[dict],
+        messages: list[dict],
         max_tokens: int,
         reserved: int = 500,
         keep_system: bool = True,
         keep_last_n: int = 2
-    ) -> List[dict]:
+    ) -> list[dict]:
         """
         Truncate message history to fit within budget.
 
@@ -308,7 +304,7 @@ def count_tokens(text: str) -> int:
     return token_counter.count(text)
 
 
-def count_message_tokens(messages: List[dict]) -> int:
+def count_message_tokens(messages: list[dict]) -> int:
     """Estimate tokens in message list."""
     return token_counter.count_messages(messages)
 

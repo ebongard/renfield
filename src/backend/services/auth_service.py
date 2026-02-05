@@ -4,21 +4,21 @@ Authentication Service for Renfield
 Provides JWT-based authentication, password hashing, and permission checks.
 """
 from datetime import datetime, timedelta
-from typing import Optional, List, Union
-from jose import JWTError, jwt
-from passlib.context import CryptContext
+from typing import Union
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
+from jose import JWTError, jwt
+from loguru import logger
+from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from loguru import logger
 
-from utils.config import settings
+from models.database import Role, User
+from models.permissions import DEFAULT_ROLES, Permission
 from services.database import get_db
-from models.database import User, Role
-from models.permissions import Permission, DEFAULT_ROLES
-
+from utils.config import settings
 
 # Password hashing context
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -63,7 +63,7 @@ def validate_password(password: str) -> tuple[bool, str]:
 
 def create_access_token(
     data: dict,
-    expires_delta: Optional[timedelta] = None
+    expires_delta: timedelta | None = None
 ) -> str:
     """
     Create a JWT access token.
@@ -109,7 +109,7 @@ def create_refresh_token(user_id: int) -> str:
     return encoded_jwt
 
 
-def decode_token(token: str) -> Optional[dict]:
+def decode_token(token: str) -> dict | None:
     """
     Decode and validate a JWT token.
 
@@ -132,7 +132,7 @@ async def authenticate_user(
     db: AsyncSession,
     username: str,
     password: str
-) -> Optional[User]:
+) -> User | None:
     """
     Authenticate a user by username and password.
 
@@ -163,7 +163,7 @@ async def authenticate_user(
     return user
 
 
-async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[User]:
+async def get_user_by_id(db: AsyncSession, user_id: int) -> User | None:
     """Get a user by ID with role loaded."""
     result = await db.execute(
         select(User)
@@ -173,7 +173,7 @@ async def get_user_by_id(db: AsyncSession, user_id: int) -> Optional[User]:
     return result.scalar_one_or_none()
 
 
-async def get_user_by_username(db: AsyncSession, username: str) -> Optional[User]:
+async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
     """Get a user by username with role loaded."""
     result = await db.execute(
         select(User)
@@ -190,7 +190,7 @@ async def get_user_by_username(db: AsyncSession, username: str) -> Optional[User
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
-) -> Optional[User]:
+) -> User | None:
     """
     FastAPI dependency to get the current authenticated user.
 
@@ -252,7 +252,7 @@ async def get_current_user(
 async def get_optional_user(
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
-) -> Optional[User]:
+) -> User | None:
     """
     FastAPI dependency to optionally get the current user.
 
@@ -325,7 +325,7 @@ def require_permission(permission: Union[Permission, str]):
     return permission_checker
 
 
-def require_any_permission(permissions: List[Union[Permission, str]]):
+def require_any_permission(permissions: list[Union[Permission, str]]):
     """
     Create a FastAPI dependency that requires any of the specified permissions.
     """
@@ -361,19 +361,19 @@ def require_any_permission(permissions: List[Union[Permission, str]]):
 # Role Management
 # =============================================================================
 
-async def get_role_by_name(db: AsyncSession, name: str) -> Optional[Role]:
+async def get_role_by_name(db: AsyncSession, name: str) -> Role | None:
     """Get a role by name."""
     result = await db.execute(select(Role).where(Role.name == name))
     return result.scalar_one_or_none()
 
 
-async def get_role_by_id(db: AsyncSession, role_id: int) -> Optional[Role]:
+async def get_role_by_id(db: AsyncSession, role_id: int) -> Role | None:
     """Get a role by ID."""
     result = await db.execute(select(Role).where(Role.id == role_id))
     return result.scalar_one_or_none()
 
 
-async def ensure_default_roles(db: AsyncSession) -> List[Role]:
+async def ensure_default_roles(db: AsyncSession) -> list[Role]:
     """
     Ensure default system roles exist.
 
@@ -402,7 +402,7 @@ async def ensure_default_roles(db: AsyncSession) -> List[Role]:
     return roles
 
 
-async def ensure_admin_user(db: AsyncSession) -> Optional[User]:
+async def ensure_admin_user(db: AsyncSession) -> User | None:
     """
     Ensure a default admin user exists.
 
@@ -454,7 +454,7 @@ async def create_user(
     username: str,
     password: str,
     role_id: int,
-    email: Optional[str] = None
+    email: str | None = None
 ) -> User:
     """
     Create a new user.

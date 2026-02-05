@@ -16,11 +16,9 @@ Usage:
         ...
 """
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
-from loguru import logger
+from typing import TYPE_CHECKING
 
 from utils.config import settings
-from services.prompt_manager import prompt_manager
 
 if TYPE_CHECKING:
     from integrations.core.plugin_registry import PluginRegistry
@@ -33,7 +31,7 @@ class IntentParam:
     description: str
     required: bool = False
     param_type: str = "string"  # string, integer, float, boolean
-    enum: Optional[List[str]] = None  # Valid values
+    enum: list[str] | None = None  # Valid values
 
 
 @dataclass
@@ -42,15 +40,15 @@ class IntentDef:
     name: str  # e.g., "homeassistant.turn_on"
     description_de: str
     description_en: str
-    parameters: List[IntentParam] = field(default_factory=list)
-    examples_de: List[str] = field(default_factory=list)
-    examples_en: List[str] = field(default_factory=list)
+    parameters: list[IntentParam] = field(default_factory=list)
+    examples_de: list[str] = field(default_factory=list)
+    examples_en: list[str] = field(default_factory=list)
 
     def get_description(self, lang: str = "de") -> str:
         """Get description in specified language."""
         return self.description_en if lang == "en" else self.description_de
 
-    def get_examples(self, lang: str = "de") -> List[str]:
+    def get_examples(self, lang: str = "de") -> list[str]:
         """Get examples in specified language."""
         return self.examples_en if lang == "en" else self.examples_de
 
@@ -61,7 +59,7 @@ class IntegrationIntents:
     integration_name: str
     title_de: str
     title_en: str
-    intents: List[IntentDef]
+    intents: list[IntentDef]
     is_enabled_func: callable  # Function that returns True if integration is enabled
 
     def get_title(self, lang: str = "de") -> str:
@@ -132,13 +130,13 @@ class IntentRegistry:
     """
 
     def __init__(self):
-        self._plugin_registry: Optional["PluginRegistry"] = None
-        self._mcp_tools: List[Dict] = []
-        self._mcp_examples: Dict[str, Dict[str, List[str]]] = {}  # server_name → {"de": [...], "en": [...]}
-        self._mcp_prompt_tools: Dict[str, List[str]] = {}  # server_name → [tool_name, ...]
+        self._plugin_registry: PluginRegistry | None = None
+        self._mcp_tools: list[dict] = []
+        self._mcp_examples: dict[str, dict[str, list[str]]] = {}  # server_name → {"de": [...], "en": [...]}
+        self._mcp_prompt_tools: dict[str, list[str]] = {}  # server_name → [tool_name, ...]
         # Prompt cache: invalidated when tools/plugins change
-        self._prompt_cache: Dict[str, str] = {}  # key → cached output
-        self._examples_cache: Dict[str, str] = {}  # key → cached output
+        self._prompt_cache: dict[str, str] = {}  # key → cached output
+        self._examples_cache: dict[str, str] = {}  # key → cached output
 
     def _invalidate_prompt_cache(self) -> None:
         """Clear cached prompt outputs when configuration changes."""
@@ -150,12 +148,12 @@ class IntentRegistry:
         self._plugin_registry = registry
         self._invalidate_prompt_cache()
 
-    def set_mcp_tools(self, tools: List[Dict]) -> None:
+    def set_mcp_tools(self, tools: list[dict]) -> None:
         """Set available MCP tools for intent prompt."""
         self._mcp_tools = tools
         self._invalidate_prompt_cache()
 
-    def set_mcp_examples(self, examples: Dict[str, Dict[str, List[str]]]) -> None:
+    def set_mcp_examples(self, examples: dict[str, dict[str, list[str]]]) -> None:
         """Set MCP server examples from YAML config.
 
         Args:
@@ -164,7 +162,7 @@ class IntentRegistry:
         self._mcp_examples = examples
         self._invalidate_prompt_cache()
 
-    def set_mcp_prompt_tools(self, prompt_tools: Dict[str, List[str]]) -> None:
+    def set_mcp_prompt_tools(self, prompt_tools: dict[str, list[str]]) -> None:
         """Set per-server prompt_tools filter from YAML config.
 
         Args:
@@ -175,7 +173,7 @@ class IntentRegistry:
         self._mcp_prompt_tools = prompt_tools
         self._invalidate_prompt_cache()
 
-    def get_enabled_integrations(self) -> List[IntegrationIntents]:
+    def get_enabled_integrations(self) -> list[IntegrationIntents]:
         """Get list of enabled core integrations."""
         return [i for i in CORE_INTEGRATIONS if i.is_enabled_func()]
 
@@ -193,13 +191,9 @@ class IntentRegistry:
                 return True
 
         # Check MCP tools
-        for tool in self._mcp_tools:
-            if tool.get("intent") == intent_name:
-                return True
+        return any(tool.get("intent") == intent_name for tool in self._mcp_tools)
 
-        return False
-
-    def get_intent_definition(self, intent_name: str) -> Optional[IntentDef]:
+    def get_intent_definition(self, intent_name: str) -> IntentDef | None:
         """Get definition of an intent by name."""
         for integration in self.get_enabled_integrations():
             for intent in integration.intents:
@@ -247,7 +241,7 @@ class IntentRegistry:
         if self._plugin_registry and settings.plugins_enabled:
             plugin_intents = self._plugin_registry.get_all_intents()
             if plugin_intents:
-                title = "PLUGINS" if lang == "en" else "PLUGINS"
+                title = "PLUGINS"
                 section_lines = [f"=== {title} ==="]
 
                 for intent_def in plugin_intents:
@@ -267,7 +261,7 @@ class IntentRegistry:
         # Only tools listed in prompt_tools YAML config are shown to avoid
         # overwhelming the LLM. All tools remain available for execution.
         if settings.mcp_enabled and self._mcp_tools:
-            title = "MCP TOOLS" if lang == "en" else "MCP TOOLS"
+            title = "MCP TOOLS"
             section_lines = [f"=== {title} ==="]
 
             for tool in self._mcp_tools:
@@ -360,7 +354,7 @@ class IntentRegistry:
         self._examples_cache[cache_key] = result
         return result
 
-    def _build_mcp_examples(self, lang: str = "de") -> List[tuple]:
+    def _build_mcp_examples(self, lang: str = "de") -> list[tuple]:
         """Generate example queries for MCP tools from YAML-configured examples.
 
         Examples are read from self._mcp_examples (populated via set_mcp_examples()
@@ -386,7 +380,7 @@ class IntentRegistry:
 
         return examples
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         """Get status of all integrations and their intents."""
         status = {
             "enabled_integrations": [],

@@ -21,13 +21,17 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any
+
 from fastapi import WebSocket
 from loguru import logger
 
 from models.database import (
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL,
-    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK
+    DEVICE_TYPE_SATELLITE,
+    DEVICE_TYPE_WEB_BROWSER,
+    DEVICE_TYPE_WEB_KIOSK,
+    DEVICE_TYPE_WEB_PANEL,
+    DEVICE_TYPE_WEB_TABLET,
 )
 from utils.config import settings
 
@@ -48,11 +52,11 @@ class DeviceCapabilities:
     has_microphone: bool = False
     has_speaker: bool = False
     has_wakeword: bool = False
-    wakeword_method: Optional[str] = None  # "openwakeword", "browser_wasm"
+    wakeword_method: str | None = None  # "openwakeword", "browser_wasm"
 
     # Visual
     has_display: bool = False
-    display_size: Optional[str] = None  # "small", "medium", "large"
+    display_size: str | None = None  # "small", "medium", "large"
     supports_notifications: bool = False
 
     # Hardware (satellites only)
@@ -61,7 +65,7 @@ class DeviceCapabilities:
     has_button: bool = False
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "DeviceCapabilities":
+    def from_dict(cls, data: dict[str, Any]) -> "DeviceCapabilities":
         """Create from dictionary"""
         return cls(
             has_microphone=data.get("has_microphone", False),
@@ -76,7 +80,7 @@ class DeviceCapabilities:
             has_button=data.get("has_button", False),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary"""
         return {
             "has_microphone": self.has_microphone,
@@ -97,18 +101,18 @@ class ConnectedDevice:
     """Information about a connected device"""
     device_id: str
     device_type: str
-    device_name: Optional[str]
+    device_name: str | None
     room: str
-    room_id: Optional[int]
+    room_id: int | None
     websocket: WebSocket
     capabilities: DeviceCapabilities
     state: DeviceState = DeviceState.IDLE
     connected_at: float = field(default_factory=time.time)
     last_heartbeat: float = field(default_factory=time.time)
-    current_session_id: Optional[str] = None
+    current_session_id: str | None = None
     is_stationary: bool = True
-    user_agent: Optional[str] = None
-    ip_address: Optional[str] = None
+    user_agent: str | None = None
+    ip_address: str | None = None
 
     @property
     def is_satellite(self) -> bool:
@@ -131,15 +135,15 @@ class DeviceSession:
     device_id: str
     device_type: str
     room: str
-    room_id: Optional[int]
+    room_id: int | None
     state: DeviceState
-    audio_chunks: List[bytes] = field(default_factory=list)
+    audio_chunks: list[bytes] = field(default_factory=list)
     audio_sequence: int = 0
     started_at: float = field(default_factory=time.time)
-    transcription: Optional[str] = None
-    response_text: Optional[str] = None
-    speaker_name: Optional[str] = None
-    speaker_alias: Optional[str] = None
+    transcription: str | None = None
+    response_text: str | None = None
+    speaker_name: str | None = None
+    speaker_alias: str | None = None
 
     # Timeout settings
     max_duration_seconds: float = 30.0
@@ -158,8 +162,8 @@ class DeviceManager:
     """
 
     def __init__(self):
-        self.devices: Dict[str, ConnectedDevice] = {}
-        self.sessions: Dict[str, DeviceSession] = {}
+        self.devices: dict[str, ConnectedDevice] = {}
+        self.sessions: dict[str, DeviceSession] = {}
         self._lock = asyncio.Lock()
 
         # Configuration
@@ -177,11 +181,11 @@ class DeviceManager:
         device_type: str,
         room: str,
         websocket: WebSocket,
-        capabilities: Dict[str, Any],
-        device_name: Optional[str] = None,
+        capabilities: dict[str, Any],
+        device_name: str | None = None,
         is_stationary: bool = True,
-        user_agent: Optional[str] = None,
-        ip_address: Optional[str] = None
+        user_agent: str | None = None,
+        ip_address: str | None = None
     ) -> bool:
         """
         Register a new device connection.
@@ -255,10 +259,10 @@ class DeviceManager:
     async def start_session(
         self,
         device_id: str,
-        keyword: Optional[str] = None,
+        keyword: str | None = None,
         confidence: float = 0.0,
-        session_id: Optional[str] = None
-    ) -> Optional[str]:
+        session_id: str | None = None
+    ) -> str | None:
         """
         Start a new voice interaction session.
 
@@ -312,7 +316,7 @@ class DeviceManager:
         session_id: str,
         chunk_b64: str,
         sequence: int
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Buffer an audio chunk from a device.
 
@@ -354,7 +358,7 @@ class DeviceManager:
 
         return True, ""
 
-    def get_audio_buffer(self, session_id: str) -> Optional[bytes]:
+    def get_audio_buffer(self, session_id: str) -> bytes | None:
         """Get the complete audio buffer for a session."""
         if session_id not in self.sessions:
             return None
@@ -396,8 +400,8 @@ class DeviceManager:
         self,
         session_id: str,
         text: str,
-        speaker_name: Optional[str] = None,
-        speaker_alias: Optional[str] = None
+        speaker_name: str | None = None,
+        speaker_alias: str | None = None
     ):
         """Send transcription result to device"""
         if session_id not in self.sessions:
@@ -424,7 +428,7 @@ class DeviceManager:
     async def send_action_result(
         self,
         session_id: str,
-        intent: Dict[str, Any],
+        intent: dict[str, Any],
         success: bool
     ):
         """Send action execution result to device"""
@@ -586,15 +590,15 @@ class DeviceManager:
         if device_id in self.devices:
             self.devices[device_id].last_heartbeat = time.time()
 
-    def get_device(self, device_id: str) -> Optional[ConnectedDevice]:
+    def get_device(self, device_id: str) -> ConnectedDevice | None:
         """Get device info by ID"""
         return self.devices.get(device_id)
 
-    def get_session(self, session_id: str) -> Optional[DeviceSession]:
+    def get_session(self, session_id: str) -> DeviceSession | None:
         """Get session by ID"""
         return self.sessions.get(session_id)
 
-    def get_device_by_session(self, session_id: str) -> Optional[ConnectedDevice]:
+    def get_device_by_session(self, session_id: str) -> ConnectedDevice | None:
         """Get device info for a session"""
         if session_id not in self.sessions:
             return None
@@ -602,20 +606,20 @@ class DeviceManager:
         session = self.sessions[session_id]
         return self.devices.get(session.device_id)
 
-    def get_devices_in_room(self, room: str) -> List[ConnectedDevice]:
+    def get_devices_in_room(self, room: str) -> list[ConnectedDevice]:
         """Get all connected devices in a room"""
         return [d for d in self.devices.values() if d.room == room]
 
-    def get_devices_in_room_by_id(self, room_id: int) -> List[ConnectedDevice]:
+    def get_devices_in_room_by_id(self, room_id: int) -> list[ConnectedDevice]:
         """Get all connected devices in a room by room ID"""
         return [d for d in self.devices.values() if d.room_id == room_id]
 
     async def broadcast_to_room(
         self,
         room: str,
-        message: Dict[str, Any],
-        exclude_device_id: Optional[str] = None,
-        require_capability: Optional[str] = None
+        message: dict[str, Any],
+        exclude_device_id: str | None = None,
+        require_capability: str | None = None
     ):
         """
         Broadcast a message to all devices in a room.
@@ -641,7 +645,7 @@ class DeviceManager:
             except Exception as e:
                 logger.error(f"❌ Failed to broadcast to {device.device_id}: {e}")
 
-    def get_all_devices(self) -> List[Dict[str, Any]]:
+    def get_all_devices(self) -> list[dict[str, Any]]:
         """Get status of all connected devices"""
         result = []
         for device_id, device in self.devices.items():
@@ -690,7 +694,7 @@ class DeviceManager:
 
 
 # Global singleton instance
-_device_manager: Optional[DeviceManager] = None
+_device_manager: DeviceManager | None = None
 
 
 def get_device_manager() -> DeviceManager:

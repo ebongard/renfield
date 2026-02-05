@@ -28,13 +28,11 @@ YAML Structure for multilingual prompts:
       temperature: 0.7
 """
 
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 from loguru import logger
-
 
 # Supported languages
 SUPPORTED_LANGUAGES = ["de", "en"]
@@ -50,7 +48,7 @@ class PromptManager:
     Supports multilingual prompts with de/en language keys.
     """
 
-    def __init__(self, prompts_dir: Optional[str] = None, default_lang: str = DEFAULT_LANGUAGE):
+    def __init__(self, prompts_dir: str | None = None, default_lang: str = DEFAULT_LANGUAGE):
         """
         Initialize the PromptManager.
 
@@ -66,7 +64,7 @@ class PromptManager:
             self._prompts_dir = Path(__file__).parent.parent / "prompts"
 
         self._default_lang = default_lang
-        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache: dict[str, dict[str, Any]] = {}
         self._load_all()
 
     def _load_all(self) -> None:
@@ -83,7 +81,7 @@ class PromptManager:
     def _load_file(self, path: Path) -> None:
         """Load a single YAML file into the cache."""
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 data = yaml.safe_load(f)
 
             if data:
@@ -99,7 +97,7 @@ class PromptManager:
         self._load_all()
         logger.info("Prompts reloaded")
 
-    def get(self, file: str, key: str, default: str = "", lang: Optional[str] = None, **kwargs) -> str:
+    def get(self, file: str, key: str, default: str = "", lang: str | None = None, **kwargs) -> str:
         """
         Get a prompt string with optional variable substitution.
 
@@ -154,14 +152,14 @@ class PromptManager:
 
         return prompt
 
-    def _get_localized(self, file_data: Dict, key: str, lang: str) -> Optional[str]:
+    def _get_localized(self, file_data: dict, key: str, lang: str) -> str | None:
         """Get a localized prompt from language-nested structure."""
         lang_data = file_data.get(lang)
         if isinstance(lang_data, dict):
             return lang_data.get(key)
         return None
 
-    def get_config(self, file: str, key: str, default: Any = None, lang: Optional[str] = None) -> Any:
+    def get_config(self, file: str, key: str, default: Any = None, lang: str | None = None) -> Any:
         """
         Get a non-string config value (dict, list, etc.).
 
@@ -207,11 +205,11 @@ class PromptManager:
         return self._default_lang
 
     @property
-    def supported_languages(self) -> List[str]:
+    def supported_languages(self) -> list[str]:
         """Get list of supported languages."""
         return SUPPORTED_LANGUAGES.copy()
 
-    def get_all(self, file: str) -> Dict[str, Any]:
+    def get_all(self, file: str) -> dict[str, Any]:
         """
         Get all prompts/configs from a file.
 

@@ -18,7 +18,8 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Any
+
 from fastapi import WebSocket
 from loguru import logger
 
@@ -46,13 +47,13 @@ class SatelliteCapabilities:
 @dataclass
 class SatelliteMetrics:
     """Live metrics from satellite heartbeat"""
-    audio_rms: Optional[float] = None
-    audio_db: Optional[float] = None
-    is_speech: Optional[bool] = None
-    cpu_percent: Optional[float] = None
-    memory_percent: Optional[float] = None
-    temperature: Optional[float] = None
-    last_wakeword: Optional[Dict[str, Any]] = None
+    audio_rms: float | None = None
+    audio_db: float | None = None
+    is_speech: bool | None = None
+    cpu_percent: float | None = None
+    memory_percent: float | None = None
+    temperature: float | None = None
+    last_wakeword: dict[str, Any] | None = None
     session_count_1h: int = 0
     error_count_1h: int = 0
     updated_at: float = field(default_factory=time.time)
@@ -76,16 +77,16 @@ class SatelliteInfo:
     state: SatelliteState = SatelliteState.IDLE
     connected_at: float = field(default_factory=time.time)
     last_heartbeat: float = field(default_factory=time.time)
-    current_session_id: Optional[str] = None
-    room_id: Optional[int] = None  # Database room ID (populated after DB sync)
+    current_session_id: str | None = None
+    room_id: int | None = None  # Database room ID (populated after DB sync)
     language: str = "de"  # Language code for STT/TTS (e.g., 'de', 'en')
-    metrics: Dict[str, Any] = field(default_factory=dict)  # Live metrics from heartbeat
+    metrics: dict[str, Any] = field(default_factory=dict)  # Live metrics from heartbeat
     # Version and update tracking
     version: str = "unknown"
     update_status: UpdateStatus = UpdateStatus.NONE
-    update_stage: Optional[str] = None  # downloading, verifying, backing_up, etc.
+    update_stage: str | None = None  # downloading, verifying, backing_up, etc.
     update_progress: int = 0  # 0-100
-    update_error: Optional[str] = None
+    update_error: str | None = None
 
 
 @dataclass
@@ -95,11 +96,11 @@ class SatelliteSession:
     satellite_id: str
     room: str
     state: SatelliteState
-    audio_chunks: List[bytes] = field(default_factory=list)
+    audio_chunks: list[bytes] = field(default_factory=list)
     audio_sequence: int = 0
     started_at: float = field(default_factory=time.time)
-    transcription: Optional[str] = None
-    response_text: Optional[str] = None
+    transcription: str | None = None
+    response_text: str | None = None
 
     # Timeout settings
     max_duration_seconds: float = 30.0
@@ -117,8 +118,8 @@ class SatelliteManager:
     """
 
     def __init__(self):
-        self.satellites: Dict[str, SatelliteInfo] = {}
-        self.sessions: Dict[str, SatelliteSession] = {}
+        self.satellites: dict[str, SatelliteInfo] = {}
+        self.sessions: dict[str, SatelliteSession] = {}
         self._lock = asyncio.Lock()
 
         # Configuration - use settings from config
@@ -135,7 +136,7 @@ class SatelliteManager:
         satellite_id: str,
         room: str,
         websocket: WebSocket,
-        capabilities: Dict[str, Any],
+        capabilities: dict[str, Any],
         language: str = "de",
         version: str = "unknown"
     ) -> bool:
@@ -211,8 +212,8 @@ class SatelliteManager:
         satellite_id: str,
         keyword: str,
         confidence: float,
-        session_id: Optional[str] = None
-    ) -> Optional[str]:
+        session_id: str | None = None
+    ) -> str | None:
         """
         Start a new voice interaction session after wake word detection.
 
@@ -270,7 +271,7 @@ class SatelliteManager:
         session_id: str,
         chunk_b64: str,
         sequence: int
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """
         Buffer an audio chunk from a satellite.
 
@@ -312,7 +313,7 @@ class SatelliteManager:
 
         return True, ""
 
-    def get_audio_buffer(self, session_id: str) -> Optional[bytes]:
+    def get_audio_buffer(self, session_id: str) -> bytes | None:
         """
         Get the complete audio buffer for a session.
 
@@ -385,7 +386,7 @@ class SatelliteManager:
     async def send_action_result(
         self,
         session_id: str,
-        intent: Dict[str, Any],
+        intent: dict[str, Any],
         success: bool
     ):
         """Send action execution result to satellite"""
@@ -500,7 +501,7 @@ class SatelliteManager:
 
         logger.info(f"✅ Session ended: {session_id} ({reason}, {duration:.1f}s)")
 
-    def update_heartbeat(self, satellite_id: str, metrics: Optional[Dict[str, Any]] = None, version: Optional[str] = None):
+    def update_heartbeat(self, satellite_id: str, metrics: dict[str, Any] | None = None, version: str | None = None):
         """
         Update satellite heartbeat timestamp and optional metrics.
 
@@ -538,10 +539,10 @@ class SatelliteManager:
                     "is_speech": metrics.get("is_speech"),
                 })
 
-    def _add_event(self, satellite_id: str, event_type: str, details: Dict[str, Any] = None):
+    def _add_event(self, satellite_id: str, event_type: str, details: dict[str, Any] = None):
         """Add an event to satellite history"""
         if not hasattr(self, "_satellite_history"):
-            self._satellite_history: Dict[str, List[Dict[str, Any]]] = {}
+            self._satellite_history: dict[str, list[dict[str, Any]]] = {}
 
         if satellite_id not in self._satellite_history:
             self._satellite_history[satellite_id] = []
@@ -561,7 +562,7 @@ class SatelliteManager:
     def _update_stats(self, satellite_id: str, session_duration: float, success: bool):
         """Update session statistics for a satellite"""
         if not hasattr(self, "_satellite_stats"):
-            self._satellite_stats: Dict[str, Dict[str, Any]] = {}
+            self._satellite_stats: dict[str, dict[str, Any]] = {}
 
         if satellite_id not in self._satellite_stats:
             self._satellite_stats[satellite_id] = {
@@ -583,7 +584,7 @@ class SatelliteManager:
         stats["total_duration"] += session_duration
         stats["avg_duration"] = stats["total_duration"] / stats["total_sessions"]
 
-    def get_satellite_by_session(self, session_id: str) -> Optional[SatelliteInfo]:
+    def get_satellite_by_session(self, session_id: str) -> SatelliteInfo | None:
         """Get satellite info for a session"""
         if session_id not in self.sessions:
             return None
@@ -591,11 +592,11 @@ class SatelliteManager:
         session = self.sessions[session_id]
         return self.satellites.get(session.satellite_id)
 
-    def get_session(self, session_id: str) -> Optional[SatelliteSession]:
+    def get_session(self, session_id: str) -> SatelliteSession | None:
         """Get session by ID"""
         return self.sessions.get(session_id)
 
-    def get_all_satellites(self) -> List[Dict[str, Any]]:
+    def get_all_satellites(self) -> list[dict[str, Any]]:
         """Get status of all connected satellites"""
         result = []
         for sat_id, sat in self.satellites.items():
@@ -630,9 +631,9 @@ class SatelliteManager:
         self,
         satellite_id: str,
         status: UpdateStatus,
-        stage: Optional[str] = None,
+        stage: str | None = None,
         progress: int = 0,
-        error: Optional[str] = None
+        error: str | None = None
     ):
         """
         Update the update status for a satellite.
@@ -661,7 +662,7 @@ class SatelliteManager:
             sat.update_progress = 0
             sat.update_error = None
 
-    def get_satellite(self, satellite_id: str) -> Optional[SatelliteInfo]:
+    def get_satellite(self, satellite_id: str) -> SatelliteInfo | None:
         """Get satellite info by ID"""
         return self.satellites.get(satellite_id)
 
@@ -695,7 +696,7 @@ class SatelliteManager:
 
 
 # Global singleton instance
-_satellite_manager: Optional[SatelliteManager] = None
+_satellite_manager: SatelliteManager | None = None
 
 
 def get_satellite_manager() -> SatelliteManager:

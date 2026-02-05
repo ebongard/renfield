@@ -8,31 +8,30 @@ Provides endpoints for user authentication:
 - Me (get current user info)
 """
 from datetime import datetime
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Request
-from fastapi.security import OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from loguru import logger
 
-from services.database import get_db
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
+from fastapi.security import OAuth2PasswordRequestForm
+from loguru import logger
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.database import Role, User
+from models.permissions import get_all_permissions
+from services.api_rate_limiter import limiter
 from services.auth_service import (
     authenticate_user,
     create_access_token,
     create_refresh_token,
-    decode_token,
-    get_user_by_id,
     create_user,
-    get_role_by_name,
-    require_auth,
+    decode_token,
     get_current_user,
+    get_role_by_name,
+    get_user_by_id,
+    require_auth,
     validate_password,
 )
-from services.api_rate_limiter import limiter
-from utils.config import settings
-from models.database import User, Role
-from models.permissions import get_all_permissions
+from services.database import get_db
 from utils.config import settings
 
 router = APIRouter()
@@ -59,21 +58,21 @@ class RegisterRequest(BaseModel):
     """Request model for user registration."""
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8)
-    email: Optional[EmailStr] = None
+    email: EmailStr | None = None
 
 
 class UserResponse(BaseModel):
     """Response model for user information."""
     id: int
     username: str
-    email: Optional[str]
+    email: str | None
     role: str
     role_id: int
     permissions: list[str]
     is_active: bool
     created_at: datetime
-    last_login: Optional[datetime]
-    speaker_id: Optional[int]
+    last_login: datetime | None
+    speaker_id: int | None
 
     class Config:
         from_attributes = True
@@ -90,7 +89,7 @@ class AuthStatusResponse(BaseModel):
     auth_enabled: bool
     allow_registration: bool
     authenticated: bool
-    user: Optional[UserResponse] = None
+    user: UserResponse | None = None
 
 
 # =============================================================================
@@ -298,7 +297,7 @@ async def change_password(
 
     Requires the current password for verification.
     """
-    from services.auth_service import verify_password, get_password_hash
+    from services.auth_service import get_password_hash, verify_password
 
     # Verify current password
     if not verify_password(request.current_password, user.password_hash):
@@ -326,7 +325,7 @@ async def change_password(
 
 @router.get("/status", response_model=AuthStatusResponse)
 async def get_auth_status(
-    user: Optional[User] = Depends(get_current_user)
+    user: User | None = Depends(get_current_user)
 ):
     """
     Get authentication status and settings.
@@ -374,13 +373,13 @@ async def list_all_permissions():
 class VoiceAuthResponse(BaseModel):
     """Response model for voice authentication."""
     success: bool
-    speaker_id: Optional[int] = None
-    speaker_name: Optional[str] = None
+    speaker_id: int | None = None
+    speaker_name: str | None = None
     confidence: float = 0.0
-    user_id: Optional[int] = None
-    username: Optional[str] = None
-    access_token: Optional[str] = None
-    refresh_token: Optional[str] = None
+    user_id: int | None = None
+    username: str | None = None
+    access_token: str | None = None
+    refresh_token: str | None = None
     message: str
 
 
@@ -452,8 +451,9 @@ async def voice_authenticate(
             )
 
         # Check if speaker is linked to a user
-        from models.database import Speaker, User
         from sqlalchemy.orm import selectinload
+
+        from models.database import Speaker, User
 
         speaker_result = await db.execute(
             select(Speaker).where(Speaker.id == speaker_id)
@@ -526,5 +526,5 @@ async def voice_authenticate(
         logger.error(traceback.format_exc())
         return VoiceAuthResponse(
             success=False,
-            message=f"Voice authentication error: {str(e)}"
+            message=f"Voice authentication error: {e!s}"
         )

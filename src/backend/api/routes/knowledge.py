@@ -5,29 +5,35 @@ Endpoints für Dokument-Upload, Management und RAG-Suche.
 With RPBAC permission checks for secure access control.
 Pydantic schemas are defined in knowledge_schemas.py.
 """
-from typing import Dict, List, Optional, Set
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException, Query, Body
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-import aiofiles
-import os
 import hashlib
+import os
 from pathlib import Path
-from loguru import logger
 
+import aiofiles
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from loguru import logger
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.database import Document, KBPermission, KnowledgeBase, User
+from models.permissions import Permission, has_permission
+from services.auth_service import get_optional_user
 from services.database import get_db
 from services.rag_service import RAGService
-from services.auth_service import get_optional_user
-from models.database import Document, KnowledgeBase, User, KBPermission
-from models.permissions import Permission, has_permission
 from utils.config import settings
 
 # Import all schemas from separate file
 from .knowledge_schemas import (
-    KnowledgeBaseCreate, KnowledgeBaseResponse,
-    KBPermissionCreate, KBPermissionResponse,
     DocumentResponse,
-    SearchRequest, SearchResultChunk, SearchResultDocument, SearchResult, SearchResponse,
+    KBPermissionCreate,
+    KBPermissionResponse,
+    KnowledgeBaseCreate,
+    KnowledgeBaseResponse,
+    SearchRequest,
+    SearchResponse,
+    SearchResult,
+    SearchResultChunk,
+    SearchResultDocument,
     StatsResponse,
 )
 
@@ -45,7 +51,7 @@ def get_rag_service(db: AsyncSession = Depends(get_db)) -> RAGService:
 
 async def check_kb_access(
     kb: KnowledgeBase,
-    user: Optional[User],
+    user: User | None,
     required_action: str = "read",  # read, write, delete
     db: AsyncSession = None
 ) -> bool:
@@ -105,9 +111,9 @@ async def check_kb_access(
 
 async def get_user_kb_permission(
     kb: KnowledgeBase,
-    user: Optional[User],
+    user: User | None,
     db: AsyncSession
-) -> Optional[str]:
+) -> str | None:
     """
     Get the user's permission level on a KB.
 
@@ -151,9 +157,9 @@ async def get_user_kb_permission(
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
-    knowledge_base_id: Optional[int] = Query(None, description="Knowledge Base ID"),
+    knowledge_base_id: int | None = Query(None, description="Knowledge Base ID"),
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -229,7 +235,7 @@ async def upload_document(
         raise HTTPException(
             status_code=409,
             detail={
-                "message": f"Dieses Dokument existiert bereits in der Knowledge Base",
+                "message": "Dieses Dokument existiert bereits in der Knowledge Base",
                 "existing_document": {
                     "id": existing.id,
                     "filename": existing.filename,
@@ -256,7 +262,7 @@ async def upload_document(
 
     except Exception as e:
         logger.error(f"Fehler beim Speichern der Datei: {e}")
-        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
 
     # Dokument verarbeiten und indexieren
     try:
@@ -294,10 +300,10 @@ async def upload_document(
 # Document Management
 # =============================================================================
 
-@router.get("/documents", response_model=List[DocumentResponse])
+@router.get("/documents", response_model=list[DocumentResponse])
 async def list_documents(
-    knowledge_base_id: Optional[int] = Query(None),
-    status: Optional[str] = Query(None),
+    knowledge_base_id: int | None = Query(None),
+    status: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     rag: RAGService = Depends(get_rag_service)
@@ -408,7 +414,7 @@ async def reindex_document(
 async def create_knowledge_base(
     data: KnowledgeBaseCreate,
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -455,10 +461,10 @@ async def create_knowledge_base(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/bases", response_model=List[KnowledgeBaseResponse])
+@router.get("/bases", response_model=list[KnowledgeBaseResponse])
 async def list_knowledge_bases(
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -489,18 +495,12 @@ async def list_knowledge_bases(
                     KBPermission.user_id == user.id
                 )
             )
-            user_kb_ids: Set[int] = set(perm_result.scalars().all())
+            user_kb_ids: set[int] = set(perm_result.scalars().all())
 
             accessible_bases = []
             for kb in all_bases:
                 # Own KB
-                if kb.owner_id == user.id:
-                    accessible_bases.append(kb)
-                # Public KB (for kb.shared users)
-                elif kb.is_public and has_permission(user_perms, Permission.KB_SHARED):
-                    accessible_bases.append(kb)
-                # Explicit permission (checked via batch-loaded set)
-                elif kb.id in user_kb_ids:
+                if kb.owner_id == user.id or (kb.is_public and has_permission(user_perms, Permission.KB_SHARED)) or kb.id in user_kb_ids:
                     accessible_bases.append(kb)
     elif settings.auth_enabled and not user:
         # Auth enabled but no user = no access
@@ -511,7 +511,7 @@ async def list_knowledge_bases(
 
     # Batch-load all owner usernames in a single query
     owner_ids = {kb.owner_id for kb in accessible_bases if kb.owner_id}
-    owner_map: Dict[int, str] = {}
+    owner_map: dict[int, str] = {}
     if owner_ids:
         owner_result = await db.execute(
             select(User.id, User.username).where(User.id.in_(owner_ids))
@@ -627,8 +627,8 @@ async def search_knowledge(
 async def search_knowledge_get(
     q: str = Query(..., min_length=1, description="Suchanfrage"),
     top_k: int = Query(5, ge=1, le=20),
-    knowledge_base_id: Optional[int] = Query(None),
-    threshold: Optional[float] = Query(None, ge=0, le=1, description="Similarity threshold (0-1)"),
+    knowledge_base_id: int | None = Query(None),
+    threshold: float | None = Query(None, ge=0, le=1, description="Similarity threshold (0-1)"),
     rag: RAGService = Depends(get_rag_service)
 ):
     """
@@ -695,7 +695,7 @@ async def get_knowledge_stats(
 @router.post("/reindex-fts")
 async def reindex_fts(
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user)
+    user: User | None = Depends(get_optional_user)
 ):
     """
     Re-populates search_vector (tsvector) for all document chunks.
@@ -735,11 +735,11 @@ async def get_model_status():
 # Knowledge Base Sharing
 # =============================================================================
 
-@router.get("/bases/{kb_id}/permissions", response_model=List[KBPermissionResponse])
+@router.get("/bases/{kb_id}/permissions", response_model=list[KBPermissionResponse])
 async def list_kb_permissions(
     kb_id: int,
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -773,7 +773,7 @@ async def list_kb_permissions(
         if perm.granted_by:
             all_user_ids.add(perm.granted_by)
 
-    user_map: Dict[int, User] = {}
+    user_map: dict[int, User] = {}
     if all_user_ids:
         user_result = await db.execute(
             select(User).where(User.id.in_(all_user_ids))
@@ -803,7 +803,7 @@ async def share_knowledge_base(
     kb_id: int,
     data: KBPermissionCreate,
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -882,7 +882,7 @@ async def revoke_kb_permission(
     kb_id: int,
     permission_id: int,
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -926,7 +926,7 @@ async def set_kb_public(
     kb_id: int,
     is_public: bool = Body(..., embed=True),
     rag: RAGService = Depends(get_rag_service),
-    user: Optional[User] = Depends(get_optional_user),
+    user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
     """

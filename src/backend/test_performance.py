@@ -2,8 +2,8 @@
 """Performance testing for plugin system"""
 import asyncio
 import sys
-from pathlib import Path
 import time
+from pathlib import Path
 
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -166,8 +166,9 @@ async def test_memory_usage():
     print()
 
     try:
-        import psutil
         import os
+
+        import psutil
 
         process = psutil.Process(os.getpid())
 
@@ -213,7 +214,7 @@ async def main():
     print("\n")
 
     # Test 1: Plugin loading time
-    plugins, registry = test_plugin_loading_time()
+    _plugins, registry = test_plugin_loading_time()
 
     # Test 2: Memory usage
     await test_memory_usage()

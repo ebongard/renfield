@@ -22,7 +22,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -166,7 +166,7 @@ class TokenBucketRateLimiter:
         self.last_update = time.monotonic()
 
 
-def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
+def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
     """
     Coerce LLM-produced flat arguments to match nested JSON schemas.
 
@@ -287,7 +287,7 @@ def _coerce_arguments(arguments: Dict, input_schema: Dict) -> Dict:
     return coerced
 
 
-async def _geocode_location_arguments(arguments: Dict, input_schema: Dict) -> Dict:
+async def _geocode_location_arguments(arguments: dict, input_schema: dict) -> dict:
     """
     Auto-geocode when LLM provides a location name but tool needs lat/lon.
 
@@ -303,7 +303,6 @@ async def _geocode_location_arguments(arguments: Dict, input_schema: Dict) -> Di
         return arguments
 
     properties = input_schema.get("properties", {})
-    required = set(input_schema.get("required", []))
 
     # Check: does schema require lat/lon but LLM provided a location string?
     has_lat = "latitude" in properties
@@ -391,7 +390,7 @@ async def _geocode_location_arguments(arguments: Dict, input_schema: Dict) -> Di
     return arguments
 
 
-def _validate_tool_input(arguments: Dict, input_schema: Dict) -> None:
+def _validate_tool_input(arguments: dict, input_schema: dict) -> None:
     """
     Validate tool arguments against JSON schema.
 
@@ -507,17 +506,17 @@ class MCPTransportType(str, Enum):
 class MCPServerConfig:
     """Configuration for a single MCP server."""
     name: str
-    url: Optional[str] = None
+    url: str | None = None
     transport: MCPTransportType = MCPTransportType.STREAMABLE_HTTP
-    auth_token_env: Optional[str] = None
-    headers: Dict[str, str] = field(default_factory=dict)
-    command: Optional[str] = None
-    args: List[str] = field(default_factory=list)
+    auth_token_env: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    command: str | None = None
+    args: list[str] = field(default_factory=list)
     enabled: bool = True
     refresh_interval: int = 300
-    examples: Dict[str, List[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
-    example_intent: Optional[str] = None  # Override intent name used in prompt examples
-    prompt_tools: Optional[List[str]] = None  # Tool names to register from server (None = all)
+    examples: dict[str, list[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
+    example_intent: str | None = None  # Override intent name used in prompt examples
+    prompt_tools: list[str] | None = None  # Tool names to register from server (None = all)
 
 
 @dataclass
@@ -527,7 +526,7 @@ class MCPToolInfo:
     original_name: str
     namespaced_name: str  # "mcp.<server>.<tool>"
     description: str
-    input_schema: Dict = field(default_factory=dict)
+    input_schema: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -535,13 +534,13 @@ class MCPServerState:
     """Runtime state for a connected MCP server."""
     config: MCPServerConfig
     connected: bool = False
-    tools: List[MCPToolInfo] = field(default_factory=list)
-    all_discovered_tools: List[MCPToolInfo] = field(default_factory=list)  # Unfiltered full list
-    last_error: Optional[str] = None
+    tools: list[MCPToolInfo] = field(default_factory=list)
+    all_discovered_tools: list[MCPToolInfo] = field(default_factory=list)  # Unfiltered full list
+    last_error: str | None = None
     session: Any = None  # mcp.ClientSession
-    exit_stack: Optional[AsyncExitStack] = None
-    rate_limiter: Optional[TokenBucketRateLimiter] = None
-    backoff: Optional[ExponentialBackoff] = None  # Reconnection backoff tracker
+    exit_stack: AsyncExitStack | None = None
+    rate_limiter: TokenBucketRateLimiter | None = None
+    backoff: ExponentialBackoff | None = None  # Reconnection backoff tracker
 
 
 def _substitute_env_vars(value: str) -> str:
@@ -590,10 +589,10 @@ class MCPManager:
     """
 
     def __init__(self):
-        self._servers: Dict[str, MCPServerState] = {}
-        self._tool_index: Dict[str, MCPToolInfo] = {}  # namespaced_name -> MCPToolInfo
-        self._tool_overrides: Dict[str, Optional[List[str]]] = {}  # DB overrides per server
-        self._refresh_task: Optional[asyncio.Task] = None
+        self._servers: dict[str, MCPServerState] = {}
+        self._tool_index: dict[str, MCPToolInfo] = {}  # namespaced_name -> MCPToolInfo
+        self._tool_overrides: dict[str, list[str] | None] = {}  # DB overrides per server
+        self._refresh_task: asyncio.Task | None = None
 
     def load_config(self, path: str) -> None:
         """Load MCP server configuration from YAML file."""
@@ -696,9 +695,9 @@ class MCPManager:
         config = state.config
         try:
             from mcp import ClientSession
-            from mcp.client.streamable_http import streamablehttp_client
             from mcp.client.sse import sse_client
             from mcp.client.stdio import StdioServerParameters, stdio_client
+            from mcp.client.streamable_http import streamablehttp_client
 
             exit_stack = AsyncExitStack()
             await exit_stack.__aenter__()
@@ -713,19 +712,19 @@ class MCPManager:
             # Connect based on transport type
             if config.transport == MCPTransportType.STREAMABLE_HTTP:
                 if not config.url:
-                    raise ValueError(f"URL required for streamable_http transport")
+                    raise ValueError("URL required for streamable_http transport")
                 transport = await exit_stack.enter_async_context(
                     streamablehttp_client(url=config.url, headers=headers)
                 )
             elif config.transport == MCPTransportType.SSE:
                 if not config.url:
-                    raise ValueError(f"URL required for SSE transport")
+                    raise ValueError("URL required for SSE transport")
                 transport = await exit_stack.enter_async_context(
                     sse_client(url=config.url, headers=headers)
                 )
             elif config.transport == MCPTransportType.STDIO:
                 if not config.command:
-                    raise ValueError(f"Command required for stdio transport")
+                    raise ValueError("Command required for stdio transport")
                 # Pass current environment to subprocess so MCP servers
                 # can access API keys and configuration.
                 # Also inject Docker secrets (/run/secrets/) as env vars
@@ -835,7 +834,7 @@ class MCPManager:
                     pass
                 state.exit_stack = None
 
-    async def execute_tool(self, namespaced_name: str, arguments: Dict) -> Dict:
+    async def execute_tool(self, namespaced_name: str, arguments: dict) -> dict:
         """
         Execute an MCP tool by its namespaced name.
 
@@ -856,7 +855,7 @@ class MCPManager:
                 server_name = parts[1]
                 # Find the first prompt_tools entry for this server, or any tool
                 fallback = None
-                for name, info in self._tool_index.items():
+                for _name, info in self._tool_index.items():
                     if info.server_name == server_name:
                         if fallback is None:
                             fallback = info
@@ -948,7 +947,7 @@ class MCPManager:
                 "data": raw_data if raw_data else None,
             }
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"MCP tool call timeout: {namespaced_name}")
             return {
                 "success": False,
@@ -966,15 +965,15 @@ class MCPManager:
                 "data": None,
             }
 
-    def get_all_tools(self) -> List[MCPToolInfo]:
+    def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""
         return list(self._tool_index.values())
 
-    def get_connected_server_names(self) -> List[str]:
+    def get_connected_server_names(self) -> list[str]:
         """Return names of all currently connected MCP servers."""
         return [name for name, state in self._servers.items() if state.connected]
 
-    def get_server_examples(self) -> Dict[str, Dict]:
+    def get_server_examples(self) -> dict[str, dict]:
         """Return configured examples for all servers.
 
         Returns:
@@ -989,7 +988,7 @@ class MCPManager:
                 result[name] = data
         return result
 
-    def get_prompt_tools_config(self) -> Dict[str, List[str]]:
+    def get_prompt_tools_config(self) -> dict[str, list[str]]:
         """Return per-server prompt_tools filter from YAML config.
 
         Returns:
@@ -1002,7 +1001,7 @@ class MCPManager:
                 result[name] = state.config.prompt_tools
         return result
 
-    def _get_active_tools(self, config: MCPServerConfig) -> Optional[List[str]]:
+    def _get_active_tools(self, config: MCPServerConfig) -> list[str] | None:
         """Get active tools list: DB override > YAML prompt_tools > None (all)."""
         override = self._tool_overrides.get(config.name)
         if override is not None:
@@ -1013,7 +1012,7 @@ class MCPManager:
         """Check if a name is a known MCP tool."""
         return name in self._tool_index
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         """Return status information for all servers."""
         servers = []
         for name, state in self._servers.items():
@@ -1113,8 +1112,9 @@ class MCPManager:
 
     async def load_tool_overrides(self, db) -> None:
         """Load per-server tool activation overrides from SystemSetting."""
-        from models.database import SystemSetting
         from sqlalchemy import select
+
+        from models.database import SystemSetting
 
         for name in self._servers:
             key = f"mcp.{name}.active_tools"
@@ -1124,10 +1124,11 @@ class MCPManager:
                 self._tool_overrides[name] = json.loads(setting.value)
                 logger.info(f"MCP tool override loaded for '{name}': {len(self._tool_overrides[name])} active tools")
 
-    async def set_tool_override(self, server_name: str, active_tools: Optional[List[str]], db) -> None:
+    async def set_tool_override(self, server_name: str, active_tools: list[str] | None, db) -> None:
         """Update active tools for a server. None = reset to YAML default."""
-        from models.database import SystemSetting
         from sqlalchemy import select
+
+        from models.database import SystemSetting
 
         key = f"mcp.{server_name}.active_tools"
         if active_tools is None:
@@ -1150,7 +1151,7 @@ class MCPManager:
         # Re-apply filter to already-discovered tools
         self._refilter_server(server_name)
 
-    def get_all_tools_with_status(self) -> List[Dict]:
+    def get_all_tools_with_status(self) -> list[dict]:
         """Return all discovered tools with active flag for admin UI."""
         result = []
         for state in self._servers.values():

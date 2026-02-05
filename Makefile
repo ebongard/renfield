@@ -169,7 +169,7 @@ test-unit: ## Run only unit tests (in Docker)
 
 test-coverage: ## Run tests with coverage (in Docker)
 	@echo "$(BLUE)Running tests with coverage...$(NC)"
-	@$(DC) exec -T -e PYTHONPATH=/app backend pytest --cov=/app --cov-report=html --cov-report=term-missing /tests/backend/
+	@$(DC) exec -T -e PYTHONPATH=/app backend pytest --cov=/app --cov-report=html --cov-report=term-missing --cov-fail-under=50 /tests/backend/
 	@echo "$(GREEN)✓ Coverage report generated$(NC)"
 
 test-local: ## Run tests locally (requires local Python env)
@@ -189,7 +189,7 @@ lint: lint-backend lint-frontend ## Lint all code (in Docker)
 
 lint-backend: ## Lint backend Python code (in Docker)
 	@echo "$(BLUE)Linting backend...$(NC)"
-	@$(DC) exec -T backend flake8 --max-line-length=120 --exclude=__pycache__,alembic /app || true
+	@$(DC) exec -T backend ruff check /app --config /app/pyproject.toml
 	@echo "$(GREEN)✓ Backend linted$(NC)"
 
 lint-frontend: ## Lint frontend JavaScript code (in Docker)
@@ -203,8 +203,8 @@ format: format-backend format-frontend ## Format all code (in Docker)
 
 format-backend: ## Format backend Python code (in Docker)
 	@echo "$(BLUE)Formatting backend...$(NC)"
-	@$(DC) exec -T backend python -m black /app 2>/dev/null || echo "$(YELLOW)black not installed$(NC)"
-	@$(DC) exec -T backend python -m isort /app 2>/dev/null || echo "$(YELLOW)isort not installed$(NC)"
+	@$(DC) exec -T backend ruff format /app --config /app/pyproject.toml
+	@$(DC) exec -T backend ruff check --fix /app --config /app/pyproject.toml
 	@echo "$(GREEN)✓ Backend formatted$(NC)"
 
 format-frontend: ## Format frontend JavaScript code (in Docker)

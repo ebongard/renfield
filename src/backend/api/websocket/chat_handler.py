@@ -9,14 +9,14 @@ This module handles:
 - Room context auto-detection
 """
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
-from pydantic import ValidationError
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
+from pydantic import ValidationError
 
-from services.database import AsyncSessionLocal
-from services.websocket_auth import authenticate_websocket, WSAuthError
-from services.websocket_rate_limiter import get_rate_limiter
 from models.websocket_messages import WSChatMessage, WSErrorCode
+from services.database import AsyncSessionLocal
+from services.websocket_auth import WSAuthError, authenticate_websocket
+from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
 
 from .shared import (
@@ -75,10 +75,7 @@ def _build_agent_action_result(tool_results: list) -> dict:
         if not data:
             continue
         # Prioritize search/list tools (contain IDs the user might reference)
-        if any(kw in (tool_name or "") for kw in ("search", "list", "get_")):
-            best_data = data
-            best_intent = tool_name
-        elif best_data is None:
+        if any(kw in (tool_name or "") for kw in ("search", "list", "get_")) or best_data is None:
             best_data = data
             best_intent = tool_name
 
@@ -164,8 +161,8 @@ async def _route_chat_tts_output(
         return False
 
     try:
-        from services.output_routing_service import OutputRoutingService
         from services.audio_output_service import get_audio_output_service
+        from services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -362,7 +359,6 @@ async def websocket_endpoint(
                 message_type = msg.type
                 content = msg.content
                 msg_session_id = msg.session_id
-                request_id = msg.request_id
                 use_rag = msg.use_rag
                 knowledge_base_id = msg.knowledge_base_id
             except ValidationError as e:
@@ -401,9 +397,9 @@ async def websocket_endpoint(
             if settings.agent_enabled and agent_router:
                 # === Unified Router Path ===
                 # Every message goes through router → specialized agent
-                from services.agent_tools import AgentToolRegistry
-                from services.agent_service import AgentService, step_to_ws_message
                 from services.action_executor import ActionExecutor
+                from services.agent_service import AgentService, step_to_ws_message
+                from services.agent_tools import AgentToolRegistry
 
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
 

@@ -35,7 +35,7 @@ async def test_url_encoding():
     registry = PluginRegistry()
     registry.register_plugins(plugins)
 
-    plugin = registry.get_plugin_for_intent('search.instant_answer')
+    registry.get_plugin_for_intent('search.instant_answer')
 
     # Test queries with special characters
     test_queries = [
@@ -53,7 +53,6 @@ async def test_url_encoding():
         print(f"Query: {query}")
 
         # Get the plugin instance to access the method directly
-        from integrations.core.generic_plugin import GenericPlugin
 
         # Find the intent definition
         intent_def = None

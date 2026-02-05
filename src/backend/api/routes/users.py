@@ -11,23 +11,23 @@ Provides endpoints for managing users:
 - Link/unlink speaker (admin)
 """
 from datetime import datetime
-from typing import List, Optional
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field, EmailStr
-from sqlalchemy import select, func
+from loguru import logger
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from loguru import logger
 
-from services.database import get_db
-from services.auth_service import (
-    require_permission,
-    get_password_hash,
-    validate_password,
-    get_role_by_id,
-)
-from models.database import User, Speaker
+from models.database import Speaker, User
 from models.permissions import Permission
+from services.auth_service import (
+    get_password_hash,
+    get_role_by_id,
+    require_permission,
+    validate_password,
+)
+from services.database import get_db
 
 router = APIRouter()
 
@@ -40,16 +40,16 @@ class UserResponse(BaseModel):
     """Response model for user information."""
     id: int
     username: str
-    email: Optional[str]
+    email: str | None
     role_id: int
     role_name: str
-    permissions: List[str]
+    permissions: list[str]
     is_active: bool
-    speaker_id: Optional[int]
-    speaker_name: Optional[str]
+    speaker_id: int | None
+    speaker_name: str | None
     created_at: datetime
     updated_at: datetime
-    last_login: Optional[datetime]
+    last_login: datetime | None
 
     class Config:
         from_attributes = True
@@ -57,7 +57,7 @@ class UserResponse(BaseModel):
 
 class UserListResponse(BaseModel):
     """Response model for user list."""
-    users: List[UserResponse]
+    users: list[UserResponse]
     total: int
     page: int
     page_size: int
@@ -67,17 +67,17 @@ class CreateUserRequest(BaseModel):
     """Request model for creating a user."""
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8)
-    email: Optional[EmailStr] = None
+    email: EmailStr | None = None
     role_id: int
     is_active: bool = True
 
 
 class UpdateUserRequest(BaseModel):
     """Request model for updating a user."""
-    username: Optional[str] = Field(None, min_length=3, max_length=100)
-    email: Optional[EmailStr] = None
-    role_id: Optional[int] = None
-    is_active: Optional[bool] = None
+    username: str | None = Field(None, min_length=3, max_length=100)
+    email: EmailStr | None = None
+    role_id: int | None = None
+    is_active: bool | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -98,9 +98,9 @@ class LinkSpeakerRequest(BaseModel):
 async def list_users(
     page: int = 1,
     page_size: int = 50,
-    search: Optional[str] = None,
-    role_id: Optional[int] = None,
-    is_active: Optional[bool] = None,
+    search: str | None = None,
+    role_id: int | None = None,
+    is_active: bool | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_permission(Permission.USERS_VIEW))
 ):

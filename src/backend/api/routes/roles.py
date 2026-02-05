@@ -8,17 +8,17 @@ Provides endpoints for managing user roles:
 - Delete role (non-system roles only)
 """
 from datetime import datetime
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
-from services.database import get_db
-from services.auth_service import require_permission
+from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database import Role, User
 from models.permissions import Permission, get_all_permissions
+from services.auth_service import require_permission
+from services.database import get_db
 
 router = APIRouter()
 
@@ -31,9 +31,9 @@ class RoleResponse(BaseModel):
     """Response model for role information."""
     id: int
     name: str
-    description: Optional[str]
-    permissions: List[str]
-    allowed_plugins: List[str] = []  # Empty = all plugins allowed
+    description: str | None
+    permissions: list[str]
+    allowed_plugins: list[str] = []  # Empty = all plugins allowed
     is_system: bool
     user_count: int = 0
     created_at: datetime
@@ -46,24 +46,24 @@ class RoleResponse(BaseModel):
 class CreateRoleRequest(BaseModel):
     """Request model for creating a role."""
     name: str = Field(..., min_length=2, max_length=50)
-    description: Optional[str] = Field(None, max_length=255)
-    permissions: List[str] = Field(default_factory=list)
-    allowed_plugins: List[str] = Field(default_factory=list)  # Empty = all plugins
+    description: str | None = Field(None, max_length=255)
+    permissions: list[str] = Field(default_factory=list)
+    allowed_plugins: list[str] = Field(default_factory=list)  # Empty = all plugins
 
 
 class UpdateRoleRequest(BaseModel):
     """Request model for updating a role."""
-    name: Optional[str] = Field(None, min_length=2, max_length=50)
-    description: Optional[str] = Field(None, max_length=255)
-    permissions: Optional[List[str]] = None
-    allowed_plugins: Optional[List[str]] = None
+    name: str | None = Field(None, min_length=2, max_length=50)
+    description: str | None = Field(None, max_length=255)
+    permissions: list[str] | None = None
+    allowed_plugins: list[str] | None = None
 
 
 # =============================================================================
 # Endpoints
 # =============================================================================
 
-@router.get("", response_model=List[RoleResponse])
+@router.get("", response_model=list[RoleResponse])
 async def list_roles(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission(Permission.ROLES_VIEW))

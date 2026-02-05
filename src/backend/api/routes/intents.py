@@ -4,13 +4,11 @@ Intent Registry API Routes
 Provides endpoints for viewing available intents and integration status.
 Admin-only endpoints for system monitoring and debugging.
 """
-from typing import Dict, List, Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from services.intent_registry import intent_registry, IntentDef, CORE_INTEGRATIONS
+from services.intent_registry import CORE_INTEGRATIONS, intent_registry
 from utils.config import settings
-
 
 router = APIRouter()
 
@@ -31,8 +29,8 @@ class IntentResponse(BaseModel):
     """Single intent definition."""
     name: str
     description: str
-    parameters: List[IntentParameterResponse]
-    examples: List[str]
+    parameters: list[IntentParameterResponse]
+    examples: list[str]
 
 
 class IntegrationStatusResponse(BaseModel):
@@ -41,7 +39,7 @@ class IntegrationStatusResponse(BaseModel):
     title: str
     enabled: bool
     intent_count: int
-    intents: List[IntentResponse]
+    intents: list[IntentResponse]
 
 
 class PluginIntentResponse(BaseModel):
@@ -55,7 +53,7 @@ class MCPToolResponse(BaseModel):
     """MCP tool summary."""
     intent: str
     description: str
-    server: Optional[str] = None
+    server: str | None = None
 
 
 class IntentRegistryStatusResponse(BaseModel):
@@ -63,9 +61,9 @@ class IntentRegistryStatusResponse(BaseModel):
     total_intents: int
     enabled_integrations: int
     disabled_integrations: int
-    integrations: List[IntegrationStatusResponse]
-    plugins: List[PluginIntentResponse]
-    mcp_tools: List[MCPToolResponse]
+    integrations: list[IntegrationStatusResponse]
+    plugins: list[PluginIntentResponse]
+    mcp_tools: list[MCPToolResponse]
 
 
 class IntentPromptResponse(BaseModel):

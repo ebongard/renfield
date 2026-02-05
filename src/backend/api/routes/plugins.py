@@ -6,15 +6,15 @@ Provides endpoints for managing plugins:
 - Get plugin details and intents
 - Enable/disable plugins (admin only)
 """
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
-from loguru import logger
 import os
 
-from services.auth_service import require_permission, get_current_user
+from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
+from pydantic import BaseModel
+
 from models.database import User
 from models.permissions import Permission
+from services.auth_service import get_current_user, require_permission
 from utils.config import settings
 
 router = APIRouter()
@@ -28,7 +28,7 @@ class PluginIntent(BaseModel):
     """Model for plugin intent information."""
     name: str
     description: str
-    parameters: List[dict]
+    parameters: list[dict]
 
 
 class PluginInfo(BaseModel):
@@ -36,18 +36,18 @@ class PluginInfo(BaseModel):
     name: str
     version: str
     description: str
-    author: Optional[str] = None
+    author: str | None = None
     enabled: bool
     enabled_var: str
     has_config: bool
-    config_vars: List[str]
-    intents: List[PluginIntent]
-    rate_limit: Optional[int] = None
+    config_vars: list[str]
+    intents: list[PluginIntent]
+    rate_limit: int | None = None
 
 
 class PluginListResponse(BaseModel):
     """Response model for plugin list."""
-    plugins: List[PluginInfo]
+    plugins: list[PluginInfo]
     total: int
     plugins_enabled: bool
 
@@ -87,7 +87,7 @@ def is_plugin_enabled(enabled_var: str) -> bool:
     return value in ("true", "1", "yes", "on")
 
 
-def get_config_vars(plugin_def) -> List[str]:
+def get_config_vars(plugin_def) -> list[str]:
     """Get list of config variable names for a plugin."""
     vars = []
     if plugin_def.config:
@@ -106,7 +106,7 @@ def get_config_vars(plugin_def) -> List[str]:
 
 @router.get("", response_model=PluginListResponse)
 async def list_plugins(
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User | None = Depends(get_current_user)
 ):
     """
     List all available plugins.
@@ -184,7 +184,7 @@ async def list_plugins(
 @router.get("/{plugin_name}", response_model=PluginInfo)
 async def get_plugin(
     plugin_name: str,
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User | None = Depends(get_current_user)
 ):
     """
     Get details for a specific plugin.
@@ -296,7 +296,7 @@ async def toggle_plugin(
         logger.error(f"Failed to toggle plugin {plugin_name}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to toggle plugin: {str(e)}"
+            detail=f"Failed to toggle plugin: {e!s}"
         )
 
     raise HTTPException(
@@ -308,7 +308,7 @@ async def toggle_plugin(
 @router.get("/{plugin_name}/intents")
 async def get_plugin_intents(
     plugin_name: str,
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User | None = Depends(get_current_user)
 ):
     """
     Get all intents for a specific plugin.
@@ -327,7 +327,7 @@ async def get_plugin_intents(
 
 @router.get("/registry/active")
 async def get_active_plugins(
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User | None = Depends(get_current_user)
 ):
     """
     Get currently active (loaded) plugins from the registry.

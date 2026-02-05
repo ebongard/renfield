@@ -18,13 +18,13 @@ Routing Algorithm:
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Optional, List
+
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
-from models.database import RoomOutputDevice, RoomDevice, OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL
 from integrations.homeassistant import HomeAssistantClient
+from models.database import OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL, RoomDevice, RoomOutputDevice
 
 
 class DeviceAvailability(str, Enum):
@@ -38,7 +38,7 @@ class DeviceAvailability(str, Enum):
 @dataclass
 class OutputDecision:
     """Result of output routing decision"""
-    output_device: Optional[RoomOutputDevice]
+    output_device: RoomOutputDevice | None
     target_id: str
     target_type: str  # "renfield" or "homeassistant"
     availability: DeviceAvailability
@@ -58,7 +58,7 @@ class OutputRoutingService:
     async def get_audio_output_for_room(
         self,
         room_id: int,
-        input_device_id: Optional[str] = None
+        input_device_id: str | None = None
     ) -> OutputDecision:
         """
         Get the best available audio output device for a room.
@@ -79,7 +79,7 @@ class OutputRoutingService:
     async def get_visual_output_for_room(
         self,
         room_id: int,
-        input_device_id: Optional[str] = None
+        input_device_id: str | None = None
     ) -> OutputDecision:
         """
         Get the best available visual output device for a room.
@@ -101,7 +101,7 @@ class OutputRoutingService:
         self,
         room_id: int,
         output_type: str,
-        input_device_id: Optional[str] = None
+        input_device_id: str | None = None
     ) -> OutputDecision:
         """
         Core routing logic to find the best output device.
@@ -175,7 +175,7 @@ class OutputRoutingService:
         self,
         room_id: int,
         output_type: str
-    ) -> List[RoomOutputDevice]:
+    ) -> list[RoomOutputDevice]:
         """Get all configured output devices for a room, sorted by priority."""
         stmt = (
             select(RoomOutputDevice)
@@ -205,7 +205,7 @@ class OutputRoutingService:
         """
         Check if a Renfield device is available (connected and idle).
         """
-        from services.device_manager import get_device_manager, DeviceState
+        from services.device_manager import DeviceState, get_device_manager
 
         device_manager = get_device_manager()
         device = device_manager.get_device(device_id)
@@ -261,7 +261,7 @@ class OutputRoutingService:
 
     # --- CRUD Operations ---
 
-    async def get_output_devices_for_room(self, room_id: int) -> List[RoomOutputDevice]:
+    async def get_output_devices_for_room(self, room_id: int) -> list[RoomOutputDevice]:
         """Get all output devices for a room."""
         stmt = (
             select(RoomOutputDevice)
@@ -275,12 +275,12 @@ class OutputRoutingService:
         self,
         room_id: int,
         output_type: str,
-        renfield_device_id: Optional[str] = None,
-        ha_entity_id: Optional[str] = None,
+        renfield_device_id: str | None = None,
+        ha_entity_id: str | None = None,
         priority: int = 1,
         allow_interruption: bool = False,
-        tts_volume: Optional[float] = 0.5,
-        device_name: Optional[str] = None
+        tts_volume: float | None = 0.5,
+        device_name: str | None = None
     ) -> RoomOutputDevice:
         """
         Add a new output device to a room.
@@ -327,12 +327,12 @@ class OutputRoutingService:
     async def update_output_device(
         self,
         device_id: int,
-        priority: Optional[int] = None,
-        allow_interruption: Optional[bool] = None,
-        tts_volume: Optional[float] = None,
-        is_enabled: Optional[bool] = None,
-        device_name: Optional[str] = None
-    ) -> Optional[RoomOutputDevice]:
+        priority: int | None = None,
+        allow_interruption: bool | None = None,
+        tts_volume: float | None = None,
+        is_enabled: bool | None = None,
+        device_name: str | None = None
+    ) -> RoomOutputDevice | None:
         """Update an existing output device."""
         stmt = select(RoomOutputDevice).where(RoomOutputDevice.id == device_id)
         result = await self.db.execute(stmt)
@@ -377,8 +377,8 @@ class OutputRoutingService:
         self,
         room_id: int,
         output_type: str,
-        device_ids: List[int]
-    ) -> List[RoomOutputDevice]:
+        device_ids: list[int]
+    ) -> list[RoomOutputDevice]:
         """
         Reorder output devices by setting new priorities.
 
@@ -407,7 +407,7 @@ class OutputRoutingService:
         # Return updated list
         return await self._get_output_devices(room_id, output_type)
 
-    async def get_available_ha_media_players(self) -> List[dict]:
+    async def get_available_ha_media_players(self) -> list[dict]:
         """
         Get all available Home Assistant media_player entities.
 
@@ -420,7 +420,7 @@ class OutputRoutingService:
             logger.error(f"Failed to get HA media players: {e}")
             return []
 
-    async def get_available_renfield_devices(self, room_id: int) -> List[RoomDevice]:
+    async def get_available_renfield_devices(self, room_id: int) -> list[RoomDevice]:
         """
         Get all Renfield devices in a room that have speaker capability.
         """

@@ -4,12 +4,12 @@ Speaker Recognition Service
 Uses SpeechBrain ECAPA-TDNN for speaker embedding extraction and verification.
 Provides speaker identification, verification, and enrollment capabilities.
 """
-import numpy as np
-from typing import Optional, List, Tuple
-from loguru import logger
-from pathlib import Path
-import tempfile
 import base64
+import tempfile
+from pathlib import Path
+
+import numpy as np
+from loguru import logger
 
 from utils.config import settings
 
@@ -56,8 +56,8 @@ class SpeakerService:
     def __init__(
         self,
         model_source: str = "speechbrain/spkrec-ecapa-voxceleb",
-        device: Optional[str] = None,
-        similarity_threshold: Optional[float] = None
+        device: str | None = None,
+        similarity_threshold: float | None = None
     ):
         """
         Initialize the speaker service.
@@ -104,7 +104,7 @@ class SpeakerService:
             logger.error(f"❌ Failed to load speaker model: {e}")
             raise
 
-    def extract_embedding(self, audio_path: str) -> Optional[np.ndarray]:
+    def extract_embedding(self, audio_path: str) -> np.ndarray | None:
         """
         Extract speaker embedding from audio file.
 
@@ -122,14 +122,15 @@ class SpeakerService:
 
         try:
             # Use librosa for audio loading (handles WebM, MP3, etc. better than torchaudio)
-            import librosa
             import warnings
+
+            import librosa
 
             with warnings.catch_warnings():
                 warnings.filterwarnings("ignore", message="PySoundFile failed")
                 warnings.filterwarnings("ignore", category=FutureWarning)
                 # Load audio, resample to 16kHz mono
-                audio_np, sr = librosa.load(audio_path, sr=16000, mono=True)
+                audio_np, _sr = librosa.load(audio_path, sr=16000, mono=True)
 
             # Check minimum duration (at least 0.5 seconds)
             min_samples = int(0.5 * 16000)
@@ -157,7 +158,7 @@ class SpeakerService:
         self,
         audio_bytes: bytes,
         filename: str = "audio.wav"
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """
         Extract embedding from audio bytes.
 
@@ -211,8 +212,8 @@ class SpeakerService:
     def identify_speaker(
         self,
         query_embedding: np.ndarray,
-        known_speakers: List[Tuple[int, str, np.ndarray]]
-    ) -> Optional[Tuple[int, str, float]]:
+        known_speakers: list[tuple[int, str, np.ndarray]]
+    ) -> tuple[int, str, float] | None:
         """
         Identify speaker from a list of known speakers.
 
@@ -249,8 +250,8 @@ class SpeakerService:
     def verify_speaker(
         self,
         query_embedding: np.ndarray,
-        claimed_embeddings: List[np.ndarray]
-    ) -> Tuple[bool, float]:
+        claimed_embeddings: list[np.ndarray]
+    ) -> tuple[bool, float]:
         """
         Verify if embedding matches claimed speaker.
 
@@ -288,7 +289,7 @@ class SpeakerService:
 
 
 # Global service instance (lazy initialization)
-_speaker_service: Optional[SpeakerService] = None
+_speaker_service: SpeakerService | None = None
 
 
 def get_speaker_service() -> SpeakerService:

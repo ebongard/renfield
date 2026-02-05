@@ -5,11 +5,13 @@ Supports multiple voices based on language.
 Configuration via PIPER_VOICES environment variable:
   PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 """
-from pathlib import Path
-from loguru import logger
-from utils.config import settings
 import subprocess
 import tempfile
+from pathlib import Path
+
+from loguru import logger
+
+from utils.config import settings
 
 
 class PiperService:
@@ -41,7 +43,7 @@ class PiperService:
     def _get_model_path(self, voice: str) -> str:
         """Get the model path for a given voice."""
         return f"/usr/share/piper/voices/{voice}.onnx"
-    
+
     def _check_piper_available(self) -> bool:
         """Prüfe ob Piper verfügbar ist"""
         try:
@@ -60,7 +62,7 @@ class PiperService:
         except Exception as e:
             logger.warning(f"⚠️  Piper TTS Check fehlgeschlagen: {e}")
             return False
-    
+
     def ensure_model_downloaded(self):
         """Stelle sicher, dass das Sprachmodell heruntergeladen ist"""
         if not self.available:
@@ -102,7 +104,7 @@ class PiperService:
                 stderr=subprocess.PIPE
             )
 
-            stdout, stderr = process.communicate(input=text.encode('utf-8'))
+            _stdout, stderr = process.communicate(input=text.encode('utf-8'))
 
             if process.returncode == 0:
                 logger.info(f"✅ TTS erfolgreich ({voice}): {output_path}")

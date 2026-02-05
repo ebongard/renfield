@@ -10,11 +10,12 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Any
+
 from loguru import logger
 
+from services.satellite_manager import UpdateStatus, get_satellite_manager
 from utils.config import settings
-from services.satellite_manager import get_satellite_manager, UpdateStatus
 
 
 class SatelliteUpdateService:
@@ -32,7 +33,7 @@ class SatelliteUpdateService:
         # Path to satellite source code
         self.satellite_source_path = Path("/app/satellite")
         # Cache for built packages
-        self._package_cache: Optional[Dict[str, Any]] = None
+        self._package_cache: dict[str, Any] | None = None
         self._package_cache_time: float = 0
         self._package_cache_ttl: float = settings.satellite_package_cache_ttl
 
@@ -98,7 +99,7 @@ class SatelliteUpdateService:
 
         return files
 
-    def build_update_package(self) -> Optional[Path]:
+    def build_update_package(self) -> Path | None:
         """
         Build an update package (tarball) from the satellite source.
 
@@ -178,7 +179,7 @@ class SatelliteUpdateService:
                 sha256.update(chunk)
         return f"sha256:{sha256.hexdigest()}"
 
-    def get_package_info(self) -> Optional[Dict[str, Any]]:
+    def get_package_info(self) -> dict[str, Any] | None:
         """
         Get information about the current update package.
 
@@ -192,7 +193,7 @@ class SatelliteUpdateService:
 
         return self._package_cache
 
-    async def initiate_update(self, satellite_id: str) -> Dict[str, Any]:
+    async def initiate_update(self, satellite_id: str) -> dict[str, Any]:
         """
         Initiate an update for a specific satellite.
 
@@ -273,7 +274,7 @@ class SatelliteUpdateService:
 
 
 # Global singleton instance
-_satellite_update_service: Optional[SatelliteUpdateService] = None
+_satellite_update_service: SatelliteUpdateService | None = None
 
 
 def get_satellite_update_service() -> SatelliteUpdateService:

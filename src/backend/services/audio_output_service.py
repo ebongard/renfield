@@ -13,11 +13,11 @@ import asyncio
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+
 from loguru import logger
 
-from models.database import RoomOutputDevice
 from integrations.homeassistant import HomeAssistantClient
+from models.database import RoomOutputDevice
 from services.device_manager import get_device_manager
 from utils.config import settings
 
@@ -40,6 +40,7 @@ class AudioOutputService:
         self.ha_client = HomeAssistantClient()
         self._ensure_cache_dir()
         self._last_cleanup = 0
+        self._background_tasks: set[asyncio.Task] = set()
 
     def _ensure_cache_dir(self) -> None:
         """Ensure the TTS cache directory exists."""
@@ -118,7 +119,7 @@ class AudioOutputService:
         self,
         audio_bytes: bytes,
         entity_id: str,
-        tts_volume: Optional[float],
+        tts_volume: float | None,
         session_id: str
     ) -> bool:
         """
@@ -185,11 +186,13 @@ class AudioOutputService:
                     # Estimate playback duration from audio file size
                     # WAV 16kHz mono 16-bit = ~32KB/s
                     duration_seconds = len(audio_bytes) / 32000
-                    asyncio.create_task(
+                    task = asyncio.create_task(
                         self._restore_volume_after_delay(
                             entity_id, original_volume, duration_seconds + 1.0
                         )
                     )
+                    self._background_tasks.add(task)
+                    task.add_done_callback(self._background_tasks.discard)
 
             return success
 
@@ -197,7 +200,7 @@ class AudioOutputService:
             logger.error(f"Failed to play audio on HA media player {entity_id}: {e}")
             return False
 
-    async def _get_ha_volume(self, entity_id: str) -> Optional[float]:
+    async def _get_ha_volume(self, entity_id: str) -> float | None:
         """Get current volume level of a HA media player."""
         try:
             state = await self.ha_client.get_state(entity_id)
@@ -262,7 +265,7 @@ class AudioOutputService:
         except Exception as e:
             logger.error(f"Error during TTS cache cleanup: {e}")
 
-    def get_cached_audio(self, audio_id: str) -> Optional[bytes]:
+    def get_cached_audio(self, audio_id: str) -> bytes | None:
         """
         Get cached audio bytes by ID.
 
@@ -280,7 +283,7 @@ class AudioOutputService:
 
 
 # Global singleton instance
-_audio_output_service: Optional[AudioOutputService] = None
+_audio_output_service: AudioOutputService | None = None
 
 
 def get_audio_output_service() -> AudioOutputService:

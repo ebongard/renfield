@@ -9,24 +9,18 @@ This module handles:
 - Session management
 """
 
-from typing import Optional
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, FastAPI
-from pydantic import ValidationError
+from fastapi import APIRouter, FastAPI, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
+from pydantic import ValidationError
 
+from models.database import DEFAULT_CAPABILITIES, DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPES
+from models.websocket_messages import WSAudioMessage, WSErrorCode, WSRegisterMessage
 from services.database import AsyncSessionLocal
-from services.device_manager import get_device_manager, DeviceState, DeviceManager
-from services.websocket_auth import authenticate_websocket, WSAuthError
-from services.websocket_rate_limiter import get_rate_limiter, get_connection_limiter
+from services.device_manager import DeviceManager, DeviceState, get_device_manager
 from services.wakeword_config_manager import get_wakeword_config_manager
-from models.database import (
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER,
-    DEVICE_TYPES, DEFAULT_CAPABILITIES
-)
-from models.websocket_messages import (
-    WSErrorCode, WSRegisterMessage, WSAudioMessage
-)
+from services.websocket_auth import WSAuthError, authenticate_websocket
+from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
 
 from .shared import get_whisper_service, send_ws_error
@@ -57,8 +51,8 @@ async def _route_tts_output(
         return
 
     try:
-        from services.output_routing_service import OutputRoutingService
         from services.audio_output_service import get_audio_output_service
+        from services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -82,7 +76,7 @@ async def _route_tts_output(
 
                 if not success:
                     # Fallback to input device if output failed
-                    logger.warning(f"Output device playback failed, falling back to input device")
+                    logger.warning("Output device playback failed, falling back to input device")
                     if device.capabilities.has_speaker:
                         await device_manager.send_tts_audio(session_id, tts_audio, is_final=True)
             else:
@@ -114,9 +108,6 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
         return
 
     logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
-
-    # Get device info for capability checks
-    device = device_manager.get_device_by_session(session_id)
 
     # Transcribe with Whisper
     try:
@@ -181,8 +172,8 @@ async def _process_text_input(
     device_manager: DeviceManager,
     session_id: str,
     text: str,
-    speaker_name: Optional[str] = None,
-    speaker_alias: Optional[str] = None
+    speaker_name: str | None = None,
+    speaker_alias: str | None = None
 ):
     """Process text input (from transcription or direct text) through intent → action → response"""
 
@@ -220,7 +211,7 @@ async def _process_text_input(
         action_result = None
         if intent.get("intent") != "general.conversation":
             from services.action_executor import ActionExecutor
-            mcp_mgr = getattr(websocket.app.state, 'mcp_manager', None)
+            mcp_mgr = getattr(app.state, 'mcp_manager', None)
             executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
             action_result = await executor.execute(intent)
             logger.info(f"⚡ Action result: {action_result.get('success')}")
@@ -365,7 +356,6 @@ async def device_websocket(
                     room = reg_msg.room
                     device_name = reg_msg.device_name
                     is_stationary = reg_msg.is_stationary
-                    client_protocol = reg_msg.protocol_version
                 except ValidationError as e:
                     await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, f"Invalid registration: {e}")
                     continue

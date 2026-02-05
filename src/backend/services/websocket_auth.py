@@ -7,8 +7,9 @@ Supports both query parameter and first-message authentication.
 
 import secrets
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
-from fastapi import WebSocket, Query
+from typing import Any
+
+from fastapi import Query, WebSocket
 from loguru import logger
 
 from utils.config import settings
@@ -22,13 +23,13 @@ class WSTokenStore:
     """
 
     def __init__(self):
-        self._tokens: Dict[str, Dict[str, Any]] = {}
+        self._tokens: dict[str, dict[str, Any]] = {}
 
     def create_token(
         self,
-        device_id: Optional[str] = None,
-        device_type: Optional[str] = None,
-        user_id: Optional[str] = None,
+        device_id: str | None = None,
+        device_type: str | None = None,
+        user_id: str | None = None,
         expires_minutes: int = None
     ) -> str:
         """
@@ -60,7 +61,7 @@ class WSTokenStore:
         logger.debug(f"Created WS token for device={device_id}, expires={expires_at}")
         return token
 
-    def validate_token(self, token: str) -> Optional[Dict[str, Any]]:
+    def validate_token(self, token: str) -> dict[str, Any] | None:
         """
         Validate a WebSocket token.
 
@@ -102,7 +103,7 @@ class WSTokenStore:
 
 
 # Global token store singleton
-_token_store: Optional[WSTokenStore] = None
+_token_store: WSTokenStore | None = None
 
 
 def get_token_store() -> WSTokenStore:
@@ -115,8 +116,8 @@ def get_token_store() -> WSTokenStore:
 
 async def authenticate_websocket(
     websocket: WebSocket,
-    token: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+    token: str | None = None
+) -> dict[str, Any] | None:
     """
     Authenticate a WebSocket connection.
 
@@ -147,7 +148,7 @@ async def authenticate_websocket(
 async def require_ws_auth(
     websocket: WebSocket,
     token: str = Query(None, description="WebSocket authentication token")
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """
     FastAPI dependency for WebSocket authentication via query parameter.
 

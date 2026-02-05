@@ -5,18 +5,18 @@ Multi-language support:
 - STT: Pass ?language=en to transcribe in a specific language
 - TTS: Pass {"language": "en"} to synthesize in a specific language
 """
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Query, Request
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
-from typing import Optional
-from loguru import logger
 from io import BytesIO
+
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import StreamingResponse
+from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.whisper_service import WhisperService
-from services.piper_service import PiperService
-from services.database import get_db
 from services.api_rate_limiter import limiter
+from services.database import get_db
+from services.piper_service import PiperService
+from services.whisper_service import WhisperService
 from utils.config import settings
 
 router = APIRouter()
@@ -27,15 +27,15 @@ piper_service = PiperService()
 
 class TTSRequest(BaseModel):
     text: str
-    voice: Optional[str] = None  # Deprecated: use language instead
-    language: Optional[str] = None  # Language code (e.g., 'de', 'en')
+    voice: str | None = None  # Deprecated: use language instead
+    language: str | None = None  # Language code (e.g., 'de', 'en')
 
 @router.post("/stt")
 @limiter.limit(settings.api_rate_limit_voice)
 async def speech_to_text(
     request: Request,
     audio: UploadFile = File(...),
-    language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
+    language: str | None = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -178,7 +178,7 @@ async def get_tts_cache(audio_id: str):
 async def voice_chat(
     request: Request,
     audio: UploadFile = File(...),
-    language: Optional[str] = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
+    language: str | None = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db)
 ):
     """

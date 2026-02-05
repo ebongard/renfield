@@ -4,26 +4,35 @@ Room Management API Routes
 Endpoints for room CRUD, satellite assignment, and Home Assistant area synchronization.
 Pydantic schemas are defined in rooms_schemas.py.
 """
-from fastapi import APIRouter, HTTPException, Depends
-from typing import List
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
+from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from integrations.homeassistant import HomeAssistantClient
 from services.database import get_db
 from services.room_service import RoomService
-from integrations.homeassistant import HomeAssistantClient
 
 # Import all schemas from separate file
 from .rooms_schemas import (
-    RoomCreate, RoomUpdate, RoomResponse,
-    HAAreaResponse, HAImportRequest, HAImportResponse, HAExportResponse,
-    SyncResponse,
+    AvailableOutputResponse,
+    ConnectedDeviceResponse,
+    DeviceRegisterRequest,
+    DeviceResponse,
+    HAAreaResponse,
+    HAExportResponse,
+    HAImportRequest,
+    HAImportResponse,
+    OutputDeviceCreate,
+    OutputDeviceReorderRequest,
+    OutputDeviceResponse,
+    OutputDeviceUpdate,
+    RoomCreate,
+    RoomResponse,
+    RoomUpdate,
     SatelliteAssignRequest,
-    DeviceResponse, DeviceRegisterRequest, ConnectedDeviceResponse,
-    OutputDeviceCreate, OutputDeviceUpdate, OutputDeviceResponse,
-    OutputDeviceReorderRequest, AvailableOutputResponse,
+    SyncResponse,
 )
-
 
 router = APIRouter()
 
@@ -56,7 +65,7 @@ async def create_room(
     return service.room_to_dict(new_room)
 
 
-@router.get("", response_model=List[RoomResponse])
+@router.get("", response_model=list[RoomResponse])
 async def list_rooms(db: AsyncSession = Depends(get_db)):
     """List all rooms with their satellites"""
     service = RoomService(db)
@@ -132,7 +141,7 @@ async def delete_room(
 
 # --- Home Assistant Sync Endpoints ---
 
-@router.get("/ha/areas", response_model=List[HAAreaResponse])
+@router.get("/ha/areas", response_model=list[HAAreaResponse])
 async def list_ha_areas(db: AsyncSession = Depends(get_db)):
     """
     List all Home Assistant areas with their link status.
@@ -148,7 +157,7 @@ async def list_ha_areas(db: AsyncSession = Depends(get_db)):
         logger.error(f"Failed to fetch HA areas: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {str(e)}"
+            detail=f"Failed to connect to Home Assistant: {e!s}"
         )
 
     # Get all rooms to check links
@@ -194,7 +203,7 @@ async def import_ha_areas(
         logger.error(f"Failed to fetch HA areas: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {str(e)}"
+            detail=f"Failed to connect to Home Assistant: {e!s}"
         )
 
     results = await service.import_ha_areas(
@@ -229,7 +238,7 @@ async def export_rooms_to_ha(db: AsyncSession = Depends(get_db)):
         logger.error(f"Failed to fetch HA areas: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {str(e)}"
+            detail=f"Failed to connect to Home Assistant: {e!s}"
         )
 
     area_by_name = {a.get("name", "").lower(): a for a in existing_areas}
@@ -265,7 +274,7 @@ async def export_rooms_to_ha(db: AsyncSession = Depends(get_db)):
                     results["errors"].append(f"Failed to create area for '{room.name}'")
 
         except Exception as e:
-            results["errors"].append(f"{room.name}: {str(e)}")
+            results["errors"].append(f"{room.name}: {e!s}")
 
     return HAExportResponse(**results)
 
@@ -291,7 +300,7 @@ async def sync_with_ha(
         logger.error(f"Failed to fetch HA areas: {e}")
         raise HTTPException(
             status_code=503,
-            detail=f"Failed to connect to Home Assistant: {str(e)}"
+            detail=f"Failed to connect to Home Assistant: {e!s}"
         )
 
     # Import
@@ -325,7 +334,7 @@ async def sync_with_ha(
                 else:
                     export_results["errors"].append(f"Failed to create area for '{room.name}'")
         except Exception as e:
-            export_results["errors"].append(f"{room.name}: {str(e)}")
+            export_results["errors"].append(f"{room.name}: {e!s}")
 
     return SyncResponse(
         import_results=HAImportResponse(**import_results),
@@ -451,7 +460,7 @@ async def unassign_satellite(
 
 # --- Device Endpoints ---
 
-@router.get("/devices/connected", response_model=List[ConnectedDeviceResponse])
+@router.get("/devices/connected", response_model=list[ConnectedDeviceResponse])
 async def get_connected_devices():
     """
     Get all currently connected devices (via WebSocket).
@@ -466,7 +475,7 @@ async def get_connected_devices():
     return [ConnectedDeviceResponse(**d) for d in devices]
 
 
-@router.get("/devices/connected/{room_id}", response_model=List[ConnectedDeviceResponse])
+@router.get("/devices/connected/{room_id}", response_model=list[ConnectedDeviceResponse])
 async def get_connected_devices_in_room(room_id: int):
     """Get all connected devices in a specific room"""
     from services.device_manager import get_device_manager
@@ -492,7 +501,7 @@ async def get_connected_devices_in_room(room_id: int):
     ]
 
 
-@router.get("/{room_id}/devices", response_model=List[DeviceResponse])
+@router.get("/{room_id}/devices", response_model=list[DeviceResponse])
 async def get_room_devices(
     room_id: int,
     db: AsyncSession = Depends(get_db)
@@ -673,7 +682,7 @@ def _output_device_to_response(device) -> OutputDeviceResponse:
     )
 
 
-@router.get("/{room_id}/output-devices", response_model=List[OutputDeviceResponse])
+@router.get("/{room_id}/output-devices", response_model=list[OutputDeviceResponse])
 async def get_room_output_devices(
     room_id: int,
     db: AsyncSession = Depends(get_db)
@@ -788,7 +797,7 @@ async def delete_output_device(
     return {"message": "Output device deleted", "id": device_id}
 
 
-@router.post("/{room_id}/output-devices/reorder", response_model=List[OutputDeviceResponse])
+@router.post("/{room_id}/output-devices/reorder", response_model=list[OutputDeviceResponse])
 async def reorder_output_devices(
     room_id: int,
     request: OutputDeviceReorderRequest,
@@ -800,8 +809,8 @@ async def reorder_output_devices(
 
     The device_ids list should be in the desired order (first = highest priority).
     """
-    from services.output_routing_service import OutputRoutingService
     from models.database import OUTPUT_TYPES
+    from services.output_routing_service import OutputRoutingService
 
     service = RoomService(db)
     room = await service.get_room(room_id)

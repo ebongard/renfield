@@ -35,12 +35,12 @@ jobs:
 
       - name: Install linters
         run: |
-          pip install flake8
+          pip install ruff>=0.8.0
           cd src/frontend && npm ci
 
       - name: Lint Python
         run: |
-          flake8 src/backend --max-line-length=120 --exclude=__pycache__,alembic --count --show-source --statistics
+          ruff check src/backend --output-format=github
 
       - name: Lint JavaScript
         run: |

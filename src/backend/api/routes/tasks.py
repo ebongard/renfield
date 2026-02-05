@@ -1,30 +1,30 @@
 """
 Tasks API Routes
 """
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from typing import Optional, Dict
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from datetime import datetime
 
-from services.database import get_db
+from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from models.database import Task
+from services.database import get_db
 
 router = APIRouter()
 
 class TaskCreate(BaseModel):
     title: str
-    description: Optional[str] = None
+    description: str | None = None
     task_type: str
-    parameters: Dict
+    parameters: dict
     priority: int = 0
 
 class TaskUpdate(BaseModel):
-    status: Optional[str] = None
-    result: Optional[Dict] = None
-    error: Optional[str] = None
+    status: str | None = None
+    result: dict | None = None
+    error: str | None = None
 
 @router.post("/create")
 async def create_task(
@@ -44,9 +44,9 @@ async def create_task(
         db.add(new_task)
         await db.commit()
         await db.refresh(new_task)
-        
+
         logger.info(f"✅ Task erstellt: {new_task.id} - {new_task.title}")
-        
+
         return {
             "id": new_task.id,
             "title": new_task.title,
@@ -58,25 +58,25 @@ async def create_task(
 
 @router.get("/list")
 async def list_tasks(
-    status: Optional[str] = None,
-    task_type: Optional[str] = None,
+    status: str | None = None,
+    task_type: str | None = None,
     limit: int = 50,
     db: AsyncSession = Depends(get_db)
 ):
     """Aufgaben auflisten"""
     try:
         query = select(Task)
-        
+
         if status:
             query = query.where(Task.status == status)
         if task_type:
             query = query.where(Task.task_type == task_type)
-        
+
         query = query.order_by(Task.created_at.desc()).limit(limit)
-        
+
         result = await db.execute(query)
         tasks = result.scalars().all()
-        
+
         return {
             "tasks": [
                 {
@@ -105,10 +105,10 @@ async def get_task(
             select(Task).where(Task.id == task_id)
         )
         task = result.scalar_one_or_none()
-        
+
         if not task:
             raise HTTPException(status_code=404, detail="Task nicht gefunden")
-        
+
         return {
             "id": task.id,
             "title": task.title,
@@ -139,23 +139,23 @@ async def update_task(
             select(Task).where(Task.id == task_id)
         )
         task = result.scalar_one_or_none()
-        
+
         if not task:
             raise HTTPException(status_code=404, detail="Task nicht gefunden")
-        
+
         if update.status:
             task.status = update.status
             if update.status == "completed":
                 task.completed_at = datetime.utcnow()
-        
+
         if update.result:
             task.result = update.result
-        
+
         if update.error:
             task.error = update.error
-        
+
         await db.commit()
-        
+
         return {"success": True}
     except HTTPException:
         raise
@@ -174,11 +174,11 @@ async def delete_task(
             select(Task).where(Task.id == task_id)
         )
         task = result.scalar_one_or_none()
-        
+
         if task:
             await db.delete(task)
             await db.commit()
-        
+
         return {"success": True}
     except Exception as e:
         logger.error(f"❌ Delete Task Fehler: {e}")

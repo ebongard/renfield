@@ -4,12 +4,11 @@ Conversation Service - Manages conversation persistence
 Extracted from OllamaService for better separation of concerns.
 Handles all database operations for conversations and messages.
 """
-from typing import List, Dict, Optional
 from datetime import datetime
-from loguru import logger
 
+from loguru import logger
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, literal_column
 from sqlalchemy.orm import aliased
 
 from models.database import Conversation, Message
@@ -38,7 +37,7 @@ class ConversationService:
         self,
         session_id: str,
         max_messages: int = 20
-    ) -> List[Dict[str, str]]:
+    ) -> list[dict[str, str]]:
         """
         Lade Konversationskontext aus der Datenbank.
 
@@ -87,7 +86,7 @@ class ConversationService:
         session_id: str,
         role: str,
         content: str,
-        metadata: Optional[Dict] = None
+        metadata: dict | None = None
     ) -> Message:
         """
         Speichere eine einzelne Nachricht.
@@ -139,7 +138,7 @@ class ConversationService:
     async def get_summary(
         self,
         session_id: str
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """
         Hole Zusammenfassung einer Konversation.
 
@@ -231,7 +230,7 @@ class ConversationService:
         self,
         limit: int = 50,
         offset: int = 0
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Hole Liste aller Konversationen.
 
@@ -304,7 +303,7 @@ class ConversationService:
         self,
         query: str,
         limit: int = 20
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Suche in Konversationen nach Text.
 

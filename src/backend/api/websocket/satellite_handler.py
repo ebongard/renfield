@@ -10,17 +10,16 @@ This module handles:
 - OTA update progress tracking
 """
 
-from typing import List
 from datetime import date
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
+from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 
-from services.database import AsyncSessionLocal
-from services.websocket_auth import authenticate_websocket, WSAuthError
-from services.websocket_rate_limiter import get_rate_limiter, get_connection_limiter
-from services.wakeword_config_manager import get_wakeword_config_manager
 from models.websocket_messages import WSErrorCode
+from services.database import AsyncSessionLocal
+from services.wakeword_config_manager import get_wakeword_config_manager
+from services.websocket_auth import WSAuthError, authenticate_websocket
+from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
 
 from .shared import get_whisper_service, send_ws_error
@@ -41,13 +40,13 @@ async def _route_satellite_tts_output(
     """
     # If satellite has no room_id, fallback to satellite itself
     if not satellite or not satellite.room_id:
-        logger.debug(f"Satellite has no room_id, using satellite for output")
+        logger.debug("Satellite has no room_id, using satellite for output")
         await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
         return
 
     try:
-        from services.output_routing_service import OutputRoutingService
         from services.audio_output_service import get_audio_output_service
+        from services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -71,7 +70,7 @@ async def _route_satellite_tts_output(
 
                 if not success:
                     # Fallback to satellite if output failed
-                    logger.warning(f"Output device playback failed, falling back to satellite")
+                    logger.warning("Output device playback failed, falling back to satellite")
                     await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
             else:
                 # Fallback to satellite
@@ -131,14 +130,14 @@ async def satellite_websocket(
     # Access app state through websocket.app
     app = websocket.app
 
-    from services.satellite_manager import get_satellite_manager, SatelliteState
+    from services.satellite_manager import SatelliteState, get_satellite_manager
     satellite_manager = get_satellite_manager()
     rate_limiter = get_rate_limiter()
 
     satellite_id = None
 
     # Conversation history tracking for satellite (in-memory per connection)
-    satellite_conversation_history: List[dict] = []
+    satellite_conversation_history: list[dict] = []
     satellite_history_loaded = False
     satellite_db_session_id = None  # Will be set after registration
 

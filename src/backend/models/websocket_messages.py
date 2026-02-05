@@ -5,11 +5,12 @@ Pydantic models for validating incoming WebSocket messages.
 Provides type safety and automatic validation for all message types.
 """
 
+import re
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Dict, Any, Union, Literal
+from typing import Any, Literal, Union
+
 from pydantic import BaseModel, Field, field_validator
-import re
 
 
 class WSMessageType(str, Enum):
@@ -58,7 +59,7 @@ class WSErrorCode(str, Enum):
 class WSBaseMessage(BaseModel):
     """Base class for all WebSocket messages."""
     type: str
-    request_id: Optional[str] = Field(None, max_length=64)
+    request_id: str | None = Field(None, max_length=64)
 
     class Config:
         extra = "allow"  # Allow extra fields for forward compatibility
@@ -69,8 +70,8 @@ class WSErrorResponse(BaseModel):
     type: Literal["error"] = "error"
     code: WSErrorCode
     message: str
-    details: Optional[Dict[str, Any]] = None
-    request_id: Optional[str] = None
+    details: dict[str, Any] | None = None
+    request_id: str | None = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -83,9 +84,9 @@ class WSCapabilities(BaseModel):
     has_microphone: bool = False
     has_speaker: bool = False
     has_wakeword: bool = False
-    wakeword_method: Optional[str] = None
+    wakeword_method: str | None = None
     has_display: bool = False
-    display_size: Optional[str] = None
+    display_size: str | None = None
     supports_notifications: bool = False
     has_leds: bool = False
     led_count: int = Field(default=0, ge=0)
@@ -98,11 +99,11 @@ class WSRegisterMessage(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=128)
     device_type: str = Field(default="web_browser", max_length=32)
     room: str = Field(default="Unknown Room", max_length=128)
-    device_name: Optional[str] = Field(None, max_length=128)
+    device_name: str | None = Field(None, max_length=128)
     is_stationary: bool = True
-    capabilities: Optional[WSCapabilities] = None
-    protocol_version: Optional[str] = Field(None, max_length=16)
-    request_id: Optional[str] = Field(None, max_length=64)
+    capabilities: WSCapabilities | None = None
+    protocol_version: str | None = Field(None, max_length=16)
+    request_id: str | None = Field(None, max_length=64)
 
     @field_validator("device_id")
     @classmethod
@@ -117,8 +118,8 @@ class WSTextMessage(BaseModel):
     """Text input message."""
     type: Literal["text"] = "text"
     content: str = Field(..., min_length=1, max_length=10000)
-    session_id: Optional[str] = Field(None, max_length=128)
-    request_id: Optional[str] = Field(None, max_length=64)
+    session_id: str | None = Field(None, max_length=128)
+    request_id: str | None = Field(None, max_length=64)
 
 
 class WSAudioMessage(BaseModel):
@@ -127,7 +128,7 @@ class WSAudioMessage(BaseModel):
     session_id: str = Field(..., min_length=1, max_length=128)
     chunk: str = Field(..., max_length=2_000_000)  # ~1.5MB decoded
     sequence: int = Field(..., ge=0)
-    request_id: Optional[str] = Field(None, max_length=64)
+    request_id: str | None = Field(None, max_length=64)
 
 
 class WSAudioEndMessage(BaseModel):
@@ -135,7 +136,7 @@ class WSAudioEndMessage(BaseModel):
     type: Literal["audio_end"] = "audio_end"
     session_id: str = Field(..., min_length=1, max_length=128)
     reason: str = Field(default="unknown", max_length=64)
-    request_id: Optional[str] = Field(None, max_length=64)
+    request_id: str | None = Field(None, max_length=64)
 
 
 class WSWakewordDetectedMessage(BaseModel):
@@ -143,22 +144,22 @@ class WSWakewordDetectedMessage(BaseModel):
     type: Literal["wakeword_detected"] = "wakeword_detected"
     keyword: str = Field(default="unknown", max_length=64)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    session_id: Optional[str] = Field(None, max_length=128)
-    satellite_id: Optional[str] = Field(None, max_length=128)
-    request_id: Optional[str] = Field(None, max_length=64)
+    session_id: str | None = Field(None, max_length=128)
+    satellite_id: str | None = Field(None, max_length=128)
+    request_id: str | None = Field(None, max_length=64)
 
 
 class WSStartSessionMessage(BaseModel):
     """Manual session start message."""
     type: Literal["start_session"] = "start_session"
-    request_id: Optional[str] = Field(None, max_length=64)
+    request_id: str | None = Field(None, max_length=64)
 
 
 class WSHeartbeatMessage(BaseModel):
     """Heartbeat message."""
     type: Literal["heartbeat"] = "heartbeat"
-    status: Optional[str] = Field(None, max_length=32)
-    uptime_seconds: Optional[int] = Field(None, ge=0)
+    status: str | None = Field(None, max_length=32)
+    uptime_seconds: int | None = Field(None, ge=0)
 
 
 # =============================================================================
@@ -169,11 +170,11 @@ class WSChatMessage(BaseModel):
     """Chat message for /ws endpoint."""
     type: Literal["text"] = "text"
     content: str = Field(..., min_length=1, max_length=10000)
-    session_id: Optional[str] = Field(None, max_length=128, description="Session ID for conversation persistence")
-    request_id: Optional[str] = Field(None, max_length=64)
+    session_id: str | None = Field(None, max_length=128, description="Session ID for conversation persistence")
+    request_id: str | None = Field(None, max_length=64)
     # RAG options
     use_rag: bool = Field(default=False, description="Enable RAG context for this query")
-    knowledge_base_id: Optional[int] = Field(None, description="Specific knowledge base to search")
+    knowledge_base_id: int | None = Field(None, description="Specific knowledge base to search")
 
 
 # =============================================================================
@@ -181,7 +182,7 @@ class WSChatMessage(BaseModel):
 # =============================================================================
 
 # Map of message types to their model classes
-MESSAGE_MODELS: Dict[str, type] = {
+MESSAGE_MODELS: dict[str, type] = {
     "register": WSRegisterMessage,
     "text": WSTextMessage,
     "audio": WSAudioMessage,
@@ -192,7 +193,7 @@ MESSAGE_MODELS: Dict[str, type] = {
 }
 
 
-def parse_ws_message(data: Dict[str, Any]) -> Union[WSBaseMessage, WSErrorResponse]:
+def parse_ws_message(data: dict[str, Any]) -> Union[WSBaseMessage, WSErrorResponse]:
     """
     Parse and validate a WebSocket message.
 
@@ -221,7 +222,7 @@ def parse_ws_message(data: Dict[str, Any]) -> Union[WSBaseMessage, WSErrorRespon
     except Exception as e:
         return WSErrorResponse(
             code=WSErrorCode.INVALID_MESSAGE,
-            message=f"Invalid message format: {str(e)}",
+            message=f"Invalid message format: {e!s}",
             details={"type": msg_type, "error": str(e)}
         )
 
@@ -229,9 +230,9 @@ def parse_ws_message(data: Dict[str, Any]) -> Union[WSBaseMessage, WSErrorRespon
 def create_error_response(
     code: WSErrorCode,
     message: str,
-    request_id: Optional[str] = None,
-    details: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+    request_id: str | None = None,
+    details: dict[str, Any] | None = None
+) -> dict[str, Any]:
     """Create an error response dict ready to send."""
     return WSErrorResponse(
         code=code,

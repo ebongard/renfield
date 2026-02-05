@@ -4,19 +4,22 @@ Home Assistant Integration
 Provides REST API client for controlling devices and WebSocket API client
 for Area Registry operations (listing, creating, updating areas).
 """
-import httpx
-import json
 import asyncio
+import json
 import time
-from typing import Dict, List, Optional, Any
+from typing import Any
+
+import httpx
 from loguru import logger
+
 from utils.config import settings
+
 
 class HomeAssistantClient:
     """Client für Home Assistant REST API"""
 
     # Class-level entity map cache (shared across instances, same HA backend)
-    _entity_map_cache: Optional[List[Dict]] = None
+    _entity_map_cache: list[dict] | None = None
     _entity_map_cache_time: float = 0
     _ENTITY_MAP_TTL: float = 60.0  # seconds
 
@@ -31,8 +34,8 @@ class HomeAssistantClient:
         self._keywords_cache = None
         self._keywords_last_updated = None
         self._cache_ttl = settings.ha_cache_ttl
-    
-    async def get_states(self) -> List[Dict]:
+
+    async def get_states(self) -> list[dict]:
         """Alle Entity States abrufen"""
         try:
             async with httpx.AsyncClient() as client:
@@ -46,8 +49,8 @@ class HomeAssistantClient:
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der States: {e}")
             return []
-    
-    async def get_state(self, entity_id: str) -> Optional[Dict]:
+
+    async def get_state(self, entity_id: str) -> dict | None:
         """State einer bestimmten Entity abrufen"""
         try:
             async with httpx.AsyncClient() as client:
@@ -61,14 +64,14 @@ class HomeAssistantClient:
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen des States für {entity_id}: {e}")
             return None
-    
+
     async def call_service(
         self,
         domain: str,
         service: str,
-        entity_id: Optional[str] = None,
-        service_data: Optional[Dict] = None,
-        timeout: Optional[float] = None
+        entity_id: str | None = None,
+        service_data: dict | None = None,
+        timeout: float | None = None
     ) -> bool:
         """Service aufrufen"""
         try:
@@ -89,26 +92,26 @@ class HomeAssistantClient:
         except Exception as e:
             logger.error(f"❌ Fehler beim Aufrufen von {domain}.{service}: {e}")
             return False
-    
+
     async def turn_on(self, entity_id: str) -> bool:
         """Gerät einschalten"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "turn_on", entity_id)
-    
+
     async def turn_off(self, entity_id: str) -> bool:
         """Gerät ausschalten"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "turn_off", entity_id)
-    
+
     async def toggle(self, entity_id: str) -> bool:
         """Gerät umschalten"""
         domain = entity_id.split(".")[0]
         return await self.call_service(domain, "toggle", entity_id)
-    
+
     async def set_value(self, entity_id: str, value: any, attribute: str = "value") -> bool:
         """Wert setzen (z.B. Helligkeit, Temperatur)"""
         domain = entity_id.split(".")[0]
-        
+
         # Spezielle Handler für verschiedene Domains
         if domain == "light" and attribute in ["brightness", "brightness_pct"]:
             return await self.call_service(
@@ -138,17 +141,17 @@ class HomeAssistantClient:
                 entity_id,
                 {attribute: value}
             )
-    
-    async def search_entities(self, query: str) -> List[Dict]:
+
+    async def search_entities(self, query: str) -> list[dict]:
         """Entities nach Namen suchen"""
         all_states = await self.get_states()
         query_lower = query.lower()
-        
+
         results = []
         for state in all_states:
             entity_id = state.get("entity_id", "")
             friendly_name = state.get("attributes", {}).get("friendly_name", "")
-            
+
             if query_lower in entity_id.lower() or query_lower in friendly_name.lower():
                 results.append({
                     "entity_id": entity_id,
@@ -156,10 +159,10 @@ class HomeAssistantClient:
                     "state": state.get("state"),
                     "domain": entity_id.split(".")[0]
                 })
-        
+
         return results
-    
-    async def get_entities_by_domain(self, domain: str) -> List[Dict]:
+
+    async def get_entities_by_domain(self, domain: str) -> list[dict]:
         """Alle Entities eines bestimmten Domains"""
         all_states = await self.get_states()
         return [
@@ -171,18 +174,18 @@ class HomeAssistantClient:
             for s in all_states
             if s.get("entity_id", "").startswith(f"{domain}.")
         ]
-    
+
     async def get_keywords(self, refresh: bool = False) -> set:
         """
         Extrahiere alle Keywords aus Home Assistant Entities
-        
+
         Cached für 5 Minuten, refresh=True erzwingt Neuladung
-        
+
         Returns:
             set: Keywords (Gerätenamen, Räume, Domains)
         """
         from datetime import datetime, timedelta
-        
+
         # Prüfe Cache
         if not refresh and self._keywords_cache is not None:
             if self._keywords_last_updated:
@@ -190,38 +193,38 @@ class HomeAssistantClient:
                 if cache_age < timedelta(seconds=self._cache_ttl):
                     logger.debug(f"🗂️  Using cached keywords ({len(self._keywords_cache)} items)")
                     return self._keywords_cache
-        
+
         logger.info("🔄 Lade Keywords aus Home Assistant...")
-        
+
         try:
             states = await self.get_states()
             if not states:
                 logger.warning("⚠️  Keine States von Home Assistant erhalten")
                 return self._get_fallback_keywords()
-            
+
             keywords = set()
-            
+
             for state in states:
                 entity_id = state.get("entity_id", "")
                 attributes = state.get("attributes", {})
                 friendly_name = attributes.get("friendly_name", "")
-                
+
                 # Domain extrahieren (light, switch, etc.)
                 if "." in entity_id:
                     domain, name = entity_id.split(".", 1)
                     keywords.add(domain)
-                    
+
                     # Name extrahieren (z.B. arbeitszimmer aus light.arbeitszimmer)
                     # Ersetze _ durch Leerzeichen für besseres Matching
                     name_parts = name.replace("_", " ").split()
                     keywords.update(name_parts)
-                
+
                 # Friendly Name parsen (z.B. "Licht Arbeitszimmer")
                 if friendly_name:
                     # Alle Wörter als Keywords (lowercase für besseres Matching)
                     name_words = friendly_name.lower().split()
                     keywords.update(name_words)
-            
+
             # Deutsche Übersetzungen für häufige Domains hinzufügen
             domain_translations = {
                 "light": ["licht", "lampe", "beleuchtung"],
@@ -234,12 +237,12 @@ class HomeAssistantClient:
                 "fan": ["lüfter", "ventilator"],
                 "vacuum": ["staubsauger", "saugroboter"]
             }
-            
+
             # Füge Übersetzungen für vorhandene Domains hinzu
             for domain, translations in domain_translations.items():
                 if domain in keywords:
                     keywords.update(translations)
-            
+
             # Häufige Aktions-Verben hinzufügen
             action_words = [
                 "ein", "aus", "an", "schalten", "stelle", "setze",
@@ -247,20 +250,20 @@ class HomeAssistantClient:
                 "dimme", "dimmen", "erhöhe", "verringere"
             ]
             keywords.update(action_words)
-            
+
             # Cache aktualisieren
             self._keywords_cache = keywords
             self._keywords_last_updated = datetime.now()
-            
+
             logger.info(f"✅ {len(keywords)} Keywords aus {len(states)} Entities extrahiert")
             logger.debug(f"Beispiel-Keywords: {list(keywords)[:20]}")
-            
+
             return keywords
-            
+
         except Exception as e:
             logger.error(f"❌ Fehler beim Laden der Keywords: {e}")
             return self._get_fallback_keywords()
-    
+
     def _get_fallback_keywords(self) -> set:
         """Fallback Keywords wenn HA nicht erreichbar"""
         return {
@@ -268,7 +271,7 @@ class HomeAssistantClient:
             "fenster", "tür", "rolladen", "ein", "aus", "an", "schalten"
         }
 
-    async def get_entity_map(self) -> List[Dict]:
+    async def get_entity_map(self) -> list[dict]:
         """
         Erstelle eine Map aller Entities für Intent Recognition.
 
@@ -330,7 +333,7 @@ class HomeAssistantClient:
             logger.error(f"❌ Fehler beim Erstellen der Entity Map: {e}")
             return []
 
-    def _extract_room(self, entity_id: str, friendly_name: str) -> Optional[str]:
+    def _extract_room(self, entity_id: str, friendly_name: str) -> str | None:
         """
         Versuche Raum aus Entity ID oder Friendly Name zu extrahieren
 
@@ -366,7 +369,7 @@ class HomeAssistantClient:
 
     # --- Area Registry (WebSocket API) ---
 
-    async def _ws_send_command(self, ws_type: str, **kwargs) -> Optional[Dict]:
+    async def _ws_send_command(self, ws_type: str, **kwargs) -> dict | None:
         """
         Send a command via WebSocket API.
 
@@ -433,14 +436,14 @@ class HomeAssistantClient:
         except ImportError:
             logger.error("websockets library not installed. Install with: pip install websockets")
             return None
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error("HA WebSocket timeout")
             return None
         except Exception as e:
             logger.error(f"HA WebSocket error: {e}")
             return None
 
-    async def get_areas(self) -> List[Dict[str, Any]]:
+    async def get_areas(self) -> list[dict[str, Any]]:
         """
         Fetch all areas from Home Assistant Area Registry.
 
@@ -460,7 +463,7 @@ class HomeAssistantClient:
             logger.error(f"Failed to get HA areas: {e}")
             return await self._get_areas_rest_fallback()
 
-    async def _get_areas_rest_fallback(self) -> List[Dict[str, Any]]:
+    async def _get_areas_rest_fallback(self) -> list[dict[str, Any]]:
         """
         Fallback method to get areas via REST API.
 
@@ -484,7 +487,7 @@ class HomeAssistantClient:
             logger.error(f"HA areas REST fallback error: {e}")
             return []
 
-    async def create_area(self, name: str, icon: Optional[str] = None) -> Optional[Dict]:
+    async def create_area(self, name: str, icon: str | None = None) -> dict | None:
         """
         Create a new area in Home Assistant.
 
@@ -515,9 +518,9 @@ class HomeAssistantClient:
     async def update_area(
         self,
         area_id: str,
-        name: Optional[str] = None,
-        icon: Optional[str] = None
-    ) -> Optional[Dict]:
+        name: str | None = None,
+        icon: str | None = None
+    ) -> dict | None:
         """
         Update an existing area in Home Assistant.
 

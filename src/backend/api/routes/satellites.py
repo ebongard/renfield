@@ -5,14 +5,14 @@ Provides endpoints for monitoring and debugging satellite voice assistants.
 Includes live status, metrics, session history, and error logs.
 """
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from services.satellite_manager import get_satellite_manager
 from utils.config import settings
-
 
 router = APIRouter()
 
@@ -31,13 +31,13 @@ class SatelliteCapabilitiesResponse(BaseModel):
 
 class SatelliteMetricsResponse(BaseModel):
     """Live metrics from satellite heartbeat"""
-    audio_rms: Optional[float] = Field(None, description="Audio RMS level (0-32768)")
-    audio_db: Optional[float] = Field(None, description="Audio level in dB")
-    is_speech: Optional[bool] = Field(None, description="Voice activity detected")
-    cpu_percent: Optional[float] = Field(None, description="CPU usage percentage")
-    memory_percent: Optional[float] = Field(None, description="Memory usage percentage")
-    temperature: Optional[float] = Field(None, description="CPU temperature in Celsius")
-    last_wakeword: Optional[Dict[str, Any]] = Field(None, description="Last wake word detection")
+    audio_rms: float | None = Field(None, description="Audio RMS level (0-32768)")
+    audio_db: float | None = Field(None, description="Audio level in dB")
+    is_speech: bool | None = Field(None, description="Voice activity detected")
+    cpu_percent: float | None = Field(None, description="CPU usage percentage")
+    memory_percent: float | None = Field(None, description="Memory usage percentage")
+    temperature: float | None = Field(None, description="CPU temperature in Celsius")
+    last_wakeword: dict[str, Any] | None = Field(None, description="Last wake word detection")
     session_count_1h: int = Field(0, description="Sessions in last hour")
     error_count_1h: int = Field(0, description="Errors in last hour")
 
@@ -50,36 +50,36 @@ class SatelliteSessionResponse(BaseModel):
     duration_seconds: float
     audio_chunks_count: int
     audio_buffer_bytes: int
-    transcription: Optional[str] = None
+    transcription: str | None = None
 
 
 class SatelliteResponse(BaseModel):
     """Full satellite status response"""
     satellite_id: str
     room: str
-    room_id: Optional[int] = None
+    room_id: int | None = None
     state: str
     connected_at: datetime
     last_heartbeat: datetime
     uptime_seconds: float
     heartbeat_ago_seconds: float
     has_active_session: bool
-    current_session: Optional[SatelliteSessionResponse] = None
+    current_session: SatelliteSessionResponse | None = None
     capabilities: SatelliteCapabilitiesResponse
     metrics: SatelliteMetricsResponse
     language: str = "de"
     # Version and update info
     version: str = "unknown"
     update_available: bool = False
-    update_status: Optional[str] = None  # none, in_progress, completed, failed
-    update_stage: Optional[str] = None  # downloading, verifying, backing_up, etc.
+    update_status: str | None = None  # none, in_progress, completed, failed
+    update_stage: str | None = None  # downloading, verifying, backing_up, etc.
     update_progress: int = 0
-    update_error: Optional[str] = None
+    update_error: str | None = None
 
 
 class SatelliteListResponse(BaseModel):
     """Response for listing all satellites"""
-    satellites: List[SatelliteResponse]
+    satellites: list[SatelliteResponse]
     total_count: int
     online_count: int
     active_sessions: int
@@ -90,13 +90,13 @@ class SatelliteEventResponse(BaseModel):
     """Satellite event for history"""
     timestamp: datetime
     event_type: str  # connected, disconnected, session_start, session_end, error, wakeword
-    details: Dict[str, Any] = {}
+    details: dict[str, Any] = {}
 
 
 class SatelliteHistoryResponse(BaseModel):
     """Satellite event history"""
     satellite_id: str
-    events: List[SatelliteEventResponse]
+    events: list[SatelliteEventResponse]
     total_sessions: int
     successful_sessions: int
     failed_sessions: int
@@ -129,7 +129,7 @@ def _is_update_available(current_version: str, latest_version: str) -> bool:
         return False
 
 
-def _satellite_to_response(sat_id: str, sat_data: Dict[str, Any]) -> SatelliteResponse:
+def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteResponse:
     """Convert satellite data to response model"""
     import time
 
@@ -226,14 +226,14 @@ async def list_satellites():
 class VersionInfoResponse(BaseModel):
     """Version information response"""
     latest_version: str
-    satellites: List[Dict[str, Any]]  # List of satellite version summaries
+    satellites: list[dict[str, Any]]  # List of satellite version summaries
 
 
 class UpdateInitiateResponse(BaseModel):
     """Response for update initiation"""
     success: bool
     message: str
-    target_version: Optional[str] = None
+    target_version: str | None = None
 
 
 class UpdateStatusResponse(BaseModel):
@@ -241,10 +241,10 @@ class UpdateStatusResponse(BaseModel):
     satellite_id: str
     version: str
     update_available: bool
-    update_status: Optional[str] = None
-    update_stage: Optional[str] = None
+    update_status: str | None = None
+    update_stage: str | None = None
     update_progress: int = 0
-    update_error: Optional[str] = None
+    update_error: str | None = None
 
 
 @router.get("/versions", response_model=VersionInfoResponse)
@@ -285,6 +285,7 @@ async def get_update_package():
     Returns the tarball containing the latest satellite code.
     """
     from fastapi.responses import FileResponse
+
     from services.satellite_update_service import get_satellite_update_service
 
     update_service = get_satellite_update_service()
@@ -394,7 +395,7 @@ async def get_satellite_session(satellite_id: str):
     if not session:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Session data not found"
+            detail="Session data not found"
         )
 
     now = time.time()
@@ -419,7 +420,7 @@ async def get_satellite_history(satellite_id: str, limit: int = 50):
     Note: History is kept in-memory and reset on backend restart.
     """
     manager = get_satellite_manager()
-    sat = manager.get_satellite(satellite_id)
+    manager.get_satellite(satellite_id)
 
     # Get history from manager (if it exists)
     history = getattr(manager, "_satellite_history", {}).get(satellite_id, [])
@@ -469,7 +470,7 @@ async def ping_satellite(satellite_id: str):
         logger.error(f"Failed to ping satellite {satellite_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Failed to ping satellite: {str(e)}"
+            detail=f"Failed to ping satellite: {e!s}"
         )
 
 

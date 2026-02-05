@@ -8,19 +8,19 @@ Run directly: python test_error_handling.py
 Note: Uses print() for CLI output (not logger) as this is an interactive tool.
 """
 import asyncio
-import sys
-from pathlib import Path
-import tempfile
 import os
+import sys
+import tempfile
+from pathlib import Path
 
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+import yaml
+
 from integrations.core.plugin_loader import PluginLoader
 from integrations.core.plugin_registry import PluginRegistry
-from integrations.core.generic_plugin import GenericPlugin
 from integrations.core.plugin_schema import PluginDefinition
-import yaml
 
 
 def test_invalid_yaml():
@@ -37,7 +37,7 @@ def test_invalid_yaml():
 
     try:
         loader = PluginLoader(os.path.dirname(temp_file))
-        plugins = loader.load_all_plugins()
+        loader.load_all_plugins()
         print("✅ Invalid YAML handled gracefully (plugin skipped)")
     except Exception as e:
         print(f"❌ Unhandled exception: {e}")
@@ -64,9 +64,9 @@ version: 1.0.0
         temp_file = f.name
 
     try:
-        with open(temp_file, 'r') as f:
+        with open(temp_file) as f:
             data = yaml.safe_load(f)
-            plugin_def = PluginDefinition(**data)
+            PluginDefinition(**data)
         print("❌ Should have failed validation")
     except Exception as e:
         print(f"✅ Validation error caught: {type(e).__name__}")
@@ -97,10 +97,10 @@ async def test_missing_parameters():
         result = await plugin.execute('weather.get_current', {})
 
         if not result['success']:
-            print(f"✅ Missing parameter error caught")
+            print("✅ Missing parameter error caught")
             print(f"   Message: {result['message']}")
         else:
-            print(f"❌ Should have failed with missing parameter")
+            print("❌ Should have failed with missing parameter")
     else:
         print("⏭️  Weather plugin not loaded (skipped)")
 
@@ -129,10 +129,10 @@ async def test_invalid_parameter_type():
         })
 
         if not result['success']:
-            print(f"✅ Type validation error caught")
+            print("✅ Type validation error caught")
             print(f"   Message: {result['message']}")
         else:
-            print(f"❌ Should have failed with type error")
+            print("❌ Should have failed with type error")
     else:
         print("⏭️  Weather plugin not loaded (skipped)")
 
@@ -159,7 +159,7 @@ async def test_rate_limiting():
         success_count = 0
         rate_limited = False
 
-        for i in range(65):  # Exceed rate limit
+        for _i in range(65):  # Exceed rate limit
             result = await plugin.execute('weather.get_current', {'location': 'Berlin'})
             if result['success']:
                 success_count += 1
@@ -199,10 +199,10 @@ async def test_api_errors():
         })
 
         if not result['success']:
-            print(f"✅ API error handled gracefully")
+            print("✅ API error handled gracefully")
             print(f"   Message: {result['message']}")
         else:
-            print(f"⚠️  API returned success for invalid city")
+            print("⚠️  API returned success for invalid city")
     else:
         print("⏭️  Weather plugin not loaded (skipped)")
 

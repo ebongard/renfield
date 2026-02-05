@@ -13,20 +13,20 @@ Features:
 """
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any
+
 from fastapi import WebSocket
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
-from utils.config import settings
 from models.database import (
-    SystemSetting,
+    SETTING_WAKEWORD_COOLDOWN_MS,
     SETTING_WAKEWORD_KEYWORD,
     SETTING_WAKEWORD_THRESHOLD,
-    SETTING_WAKEWORD_COOLDOWN_MS,
+    SystemSetting,
 )
-
+from utils.config import settings
 
 # Available wake word keywords with their metadata
 AVAILABLE_KEYWORDS = [
@@ -57,12 +57,12 @@ class DeviceSyncStatus:
     device_id: str
     device_type: str  # "satellite" or "web_device"
     synced: bool = False
-    active_keywords: List[str] = field(default_factory=list)
-    failed_keywords: List[str] = field(default_factory=list)
-    last_ack_time: Optional[datetime] = None
-    error: Optional[str] = None
+    active_keywords: list[str] = field(default_factory=list)
+    failed_keywords: list[str] = field(default_factory=list)
+    last_ack_time: datetime | None = None
+    error: str | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "device_id": self.device_id,
             "device_type": self.device_type,
@@ -82,7 +82,7 @@ class WakeWordConfig:
     cooldown_ms: int
     enabled: bool = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
             "keyword": self.keyword,
@@ -92,7 +92,7 @@ class WakeWordConfig:
             "wake_words": [self.keyword],  # For backward compatibility with satellites
         }
 
-    def to_satellite_config(self) -> Dict[str, Any]:
+    def to_satellite_config(self) -> dict[str, Any]:
         """Convert to satellite config format"""
         return {
             "wake_words": [self.keyword],
@@ -114,9 +114,9 @@ class WakeWordConfigManager:
     """
 
     def __init__(self):
-        self._subscribers: List[WebSocket] = []
-        self._subscriber_info: Dict[WebSocket, Dict[str, str]] = {}  # ws -> {device_id, device_type}
-        self._device_sync_status: Dict[str, DeviceSyncStatus] = {}  # device_id -> sync status
+        self._subscribers: list[WebSocket] = []
+        self._subscriber_info: dict[WebSocket, dict[str, str]] = {}  # ws -> {device_id, device_type}
+        self._device_sync_status: dict[str, DeviceSyncStatus] = {}  # device_id -> sync status
         self._pending_config_version: int = 0  # Incremented on each config update
         logger.info("WakeWordConfigManager initialized")
 
@@ -157,10 +157,10 @@ class WakeWordConfigManager:
     async def update_config(
         self,
         db: AsyncSession,
-        keyword: Optional[str] = None,
-        threshold: Optional[float] = None,
-        cooldown_ms: Optional[int] = None,
-        updated_by: Optional[int] = None,
+        keyword: str | None = None,
+        threshold: float | None = None,
+        cooldown_ms: int | None = None,
+        updated_by: int | None = None,
     ) -> WakeWordConfig:
         """
         Update wake word configuration in database and broadcast to all subscribers.
@@ -213,7 +213,7 @@ class WakeWordConfigManager:
 
         return config
 
-    async def _get_setting(self, db: AsyncSession, key: str) -> Optional[str]:
+    async def _get_setting(self, db: AsyncSession, key: str) -> str | None:
         """Get a single setting value from database"""
         result = await db.execute(
             select(SystemSetting).where(SystemSetting.key == key)
@@ -226,7 +226,7 @@ class WakeWordConfigManager:
         db: AsyncSession,
         key: str,
         value: str,
-        updated_by: Optional[int] = None
+        updated_by: int | None = None
     ):
         """Set a single setting value in database (upsert)"""
         result = await db.execute(
@@ -248,8 +248,8 @@ class WakeWordConfigManager:
     def subscribe(
         self,
         websocket: WebSocket,
-        device_id: Optional[str] = None,
-        device_type: Optional[str] = None
+        device_id: str | None = None,
+        device_type: str | None = None
     ):
         """
         Register a WebSocket connection to receive config updates.
@@ -335,9 +335,9 @@ class WakeWordConfigManager:
         self,
         device_id: str,
         success: bool,
-        active_keywords: Optional[List[str]] = None,
-        failed_keywords: Optional[List[str]] = None,
-        error: Optional[str] = None,
+        active_keywords: list[str] | None = None,
+        failed_keywords: list[str] | None = None,
+        error: str | None = None,
     ) -> DeviceSyncStatus:
         """
         Handle config acknowledgment from a device.
@@ -380,11 +380,11 @@ class WakeWordConfigManager:
         """Get number of active subscribers"""
         return len(self._subscribers)
 
-    def get_available_keywords(self) -> List[Dict[str, Any]]:
+    def get_available_keywords(self) -> list[dict[str, Any]]:
         """Get list of available wake word keywords"""
         return AVAILABLE_KEYWORDS.copy()
 
-    def get_device_sync_status(self, device_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_device_sync_status(self, device_id: str | None = None) -> dict[str, Any]:
         """
         Get sync status for devices.
 
@@ -417,14 +417,14 @@ class WakeWordConfigManager:
             "pending_count": pending_count,
         }
 
-    def get_device_by_websocket(self, websocket: WebSocket) -> Optional[str]:
+    def get_device_by_websocket(self, websocket: WebSocket) -> str | None:
         """Get device ID for a websocket connection"""
         info = self._subscriber_info.get(websocket)
         return info.get("device_id") if info else None
 
 
 # Global singleton instance
-_wakeword_config_manager: Optional[WakeWordConfigManager] = None
+_wakeword_config_manager: WakeWordConfigManager | None = None
 
 
 def get_wakeword_config_manager() -> WakeWordConfigManager:

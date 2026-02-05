@@ -63,12 +63,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r src/backend/requirements-test.txt
-          pip install flake8
 
       - name: Lint backend
         run: |
-          cd src/backend
-          flake8 --max-line-length=120 --exclude=__pycache__,alembic . || true
+          ruff check src/backend --output-format=github
 
       - name: Run backend tests
         env:
@@ -77,7 +75,7 @@ jobs:
           TESTING: "1"
           LOG_LEVEL: WARNING
         run: |
-          pytest tests/backend/ -v --tb=short --cov=src/backend --cov-report=xml
+          pytest tests/backend/ -v --tb=short --cov=src/backend --cov-report=xml --cov-fail-under=50
 
       - name: Upload coverage report
         uses: codecov/codecov-action@v4

@@ -4,18 +4,18 @@ Speaker Management API Routes
 Endpoints for speaker enrollment, identification, verification, and management.
 Uses SpeechBrain ECAPA-TDNN for speaker embeddings.
 """
-from fastapi import APIRouter, HTTPException, UploadFile, File, Depends
-from pydantic import BaseModel
-from typing import Optional, List
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
-from loguru import logger
-import numpy as np
 
-from services.database import get_db
-from services.speaker_service import get_speaker_service, SPEECHBRAIN_ERROR
+import numpy as np
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from loguru import logger
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
 from models.database import Speaker, SpeakerEmbedding
+from services.database import get_db
+from services.speaker_service import SPEECHBRAIN_ERROR, get_speaker_service
 
 router = APIRouter()
 
@@ -29,9 +29,9 @@ class SpeakerCreate(BaseModel):
 
 
 class SpeakerUpdate(BaseModel):
-    name: Optional[str] = None
-    alias: Optional[str] = None
-    is_admin: Optional[bool] = None
+    name: str | None = None
+    alias: str | None = None
+    is_admin: bool | None = None
 
 
 class SpeakerResponse(BaseModel):
@@ -46,9 +46,9 @@ class SpeakerResponse(BaseModel):
 
 
 class IdentifyResponse(BaseModel):
-    speaker_id: Optional[int]
-    speaker_name: Optional[str]
-    speaker_alias: Optional[str]
+    speaker_id: int | None
+    speaker_name: str | None
+    speaker_alias: str | None
     confidence: float
     is_identified: bool
 
@@ -63,7 +63,7 @@ class EnrollResponse(BaseModel):
 class VerifyResponse(BaseModel):
     is_verified: bool
     confidence: float
-    speaker_name: Optional[str]
+    speaker_name: str | None
 
 
 class MergeSpeakersRequest(BaseModel):
@@ -90,7 +90,7 @@ class ServiceStatusResponse(BaseModel):
 
 async def get_speaker_embeddings_averaged(
     db: AsyncSession
-) -> List[tuple]:
+) -> list[tuple]:
     """
     Load all speakers with their averaged embeddings.
 
@@ -185,7 +185,7 @@ async def create_speaker(
     )
 
 
-@router.get("", response_model=List[SpeakerResponse])
+@router.get("", response_model=list[SpeakerResponse])
 async def list_speakers(db: AsyncSession = Depends(get_db)):
     """List all registered speakers"""
     # Use selectinload to eagerly load embeddings (avoids lazy-load in async context)
@@ -360,7 +360,7 @@ async def merge_speakers(
 
     # Count embeddings before merge
     source_embedding_count = len(source_speaker.embeddings)
-    target_embedding_count_before = len(target_speaker.embeddings)
+    _ = len(target_speaker.embeddings)
 
     # Move all embeddings from source to target
     for embedding in source_speaker.embeddings:

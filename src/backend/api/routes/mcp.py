@@ -1,23 +1,22 @@
 """
 MCP Admin API Routes — Status, tools, and manual refresh.
 """
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from models.permissions import Permission
 
 router = APIRouter()
 
 
 class UpdateToolsRequest(BaseModel):
     """Request body for PATCH /servers/{name}/tools."""
-    active_tools: Optional[List[str]] = None  # None = reset to YAML defaults
+    active_tools: list[str] | None = None  # None = reset to YAML defaults
 
 
 def _get_mcp_manager():

@@ -5,7 +5,8 @@ All external integrations (Home Assistant, n8n, camera, weather, search, etc.)
 are executed via MCP servers. Only internal intents (knowledge/RAG, general
 conversation) and legacy plugins have dedicated handlers here.
 """
-from typing import Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
+
 from loguru import logger
 
 if TYPE_CHECKING:
@@ -46,7 +47,7 @@ class ActionExecutor:
 
         return True, ""
 
-    async def execute(self, intent_data: Dict, user: Optional["User"] = None) -> Dict:
+    async def execute(self, intent_data: dict, user: Optional["User"] = None) -> dict:
         """
         Führt einen Intent aus
 
@@ -117,7 +118,7 @@ class ActionExecutor:
             "action_taken": False
         }
 
-    async def _execute_knowledge(self, intent: str, parameters: Dict) -> Dict:
+    async def _execute_knowledge(self, intent: str, parameters: dict) -> dict:
         """Wissensdatenbank-Aktionen ausführen (RAG)"""
         query = parameters.get("query") or parameters.get("question") or parameters.get("text", "")
 
@@ -140,7 +141,7 @@ class ActionExecutor:
                 # Build context from search results
                 context_parts = []
                 for r in results:
-                    sim = r.get("similarity", 0)
+                    _sim = r.get("similarity", 0)
                     content = r.get("chunk", {}).get("content", "") if isinstance(r.get("chunk"), dict) else r.get("content", "")
                     source = r.get("document", {}).get("filename", "") if isinstance(r.get("document"), dict) else r.get("filename", "")
                     if content:
@@ -169,6 +170,6 @@ class ActionExecutor:
             logger.error(f"❌ Error executing knowledge action: {e}")
             return {
                 "success": False,
-                "message": f"Fehler bei der Wissensdatenbank-Suche: {str(e)}",
+                "message": f"Fehler bei der Wissensdatenbank-Suche: {e!s}",
                 "action_taken": False
             }

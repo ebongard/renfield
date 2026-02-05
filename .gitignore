@@ -70,3 +70,9 @@ coverage/
 # Wake word models (binary files)
 data/wakeword-models/*.tflite
 data/wakeword-models/*.onnx
+
+# Test screenshots (ephemeral browser test artifacts)
+test-screenshots/
+
+# Local task management
+tasks/

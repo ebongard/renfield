@@ -7,9 +7,10 @@ for clients where browser-based WASM detection is not performant.
 Audio is streamed via WebSocket in 80ms chunks (1280 samples at 16kHz).
 """
 
+
 import numpy as np
 from loguru import logger
-from typing import Optional, Dict, List
+
 from utils.config import settings
 
 # OpenWakeWord is optional - only loaded if needed
@@ -41,11 +42,11 @@ class WakeWordService:
     ]
 
     def __init__(self):
-        self.model: Optional[Model] = None
-        self.keywords: List[str] = [settings.wake_word_default]
+        self.model: Model | None = None
+        self.keywords: list[str] = [settings.wake_word_default]
         self.threshold: float = settings.wake_word_threshold
         self.cooldown_ms: int = settings.wake_word_cooldown_ms
-        self._last_detection_time: Dict[str, float] = {}
+        self._last_detection_time: dict[str, float] = {}
         self._loaded = False
 
     @property
@@ -53,7 +54,7 @@ class WakeWordService:
         """Check if OpenWakeWord is available."""
         return OPENWAKEWORD_AVAILABLE
 
-    def load_model(self, keywords: Optional[List[str]] = None) -> bool:
+    def load_model(self, keywords: list[str] | None = None) -> bool:
         """
         Load the wake word detection model.
 
@@ -95,7 +96,7 @@ class WakeWordService:
             self._loaded = False
             return False
 
-    def process_audio_chunk(self, audio_bytes: bytes) -> Dict:
+    def process_audio_chunk(self, audio_bytes: bytes) -> dict:
         """
         Process an audio chunk and check for wake word detection.
 
@@ -153,7 +154,7 @@ class WakeWordService:
             logger.error(f"Error processing audio chunk: {e}")
             return {"detected": False, "error": str(e)}
 
-    def set_keywords(self, keywords: List[str]) -> bool:
+    def set_keywords(self, keywords: list[str]) -> bool:
         """
         Change the active wake words.
 
@@ -188,7 +189,7 @@ class WakeWordService:
         """Reset detection state (clear cooldowns)."""
         self._last_detection_time.clear()
 
-    def get_status(self) -> Dict:
+    def get_status(self) -> dict:
         """Get service status information."""
         return {
             "available": self.available,
@@ -201,7 +202,7 @@ class WakeWordService:
 
 
 # Singleton instance
-_wakeword_service: Optional[WakeWordService] = None
+_wakeword_service: WakeWordService | None = None
 
 
 def get_wakeword_service() -> WakeWordService:

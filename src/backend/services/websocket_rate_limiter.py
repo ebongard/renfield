@@ -7,7 +7,7 @@ Uses a sliding window algorithm for accurate rate limiting.
 
 from collections import defaultdict
 from datetime import datetime, timedelta
-from typing import Dict, List, Tuple, Optional
+
 from loguru import logger
 
 from utils.config import settings
@@ -23,9 +23,9 @@ class WSRateLimiter:
 
     def __init__(
         self,
-        per_second: Optional[int] = None,
-        per_minute: Optional[int] = None,
-        enabled: Optional[bool] = None
+        per_second: int | None = None,
+        per_minute: int | None = None,
+        enabled: bool | None = None
     ):
         """
         Initialize rate limiter.
@@ -40,12 +40,12 @@ class WSRateLimiter:
         self.enabled = enabled if enabled is not None else settings.ws_rate_limit_enabled
 
         # Timestamps of messages per client
-        self._timestamps: Dict[str, List[datetime]] = defaultdict(list)
+        self._timestamps: dict[str, list[datetime]] = defaultdict(list)
 
         # Track violations for logging
-        self._violations: Dict[str, int] = defaultdict(int)
+        self._violations: dict[str, int] = defaultdict(int)
 
-    def check(self, client_id: str) -> Tuple[bool, str]:
+    def check(self, client_id: str) -> tuple[bool, str]:
         """
         Check if a client is allowed to send a message.
 
@@ -113,7 +113,7 @@ class WSRateLimiter:
             del self._timestamps[client_id]
             self._violations.pop(client_id, None)
 
-    def get_stats(self, client_id: str) -> Dict[str, int]:
+    def get_stats(self, client_id: str) -> dict[str, int]:
         """Get rate limit stats for a client."""
         now = datetime.utcnow()
         second_ago = now - timedelta(seconds=1)
@@ -135,7 +135,7 @@ class WSConnectionLimiter:
     Limits the number of concurrent connections per IP address.
     """
 
-    def __init__(self, max_per_ip: Optional[int] = None):
+    def __init__(self, max_per_ip: int | None = None):
         """
         Initialize connection limiter.
 
@@ -145,9 +145,9 @@ class WSConnectionLimiter:
         self.max_per_ip = max_per_ip if max_per_ip is not None else settings.ws_max_connections_per_ip
 
         # IP -> set of device_ids
-        self._connections: Dict[str, set] = defaultdict(set)
+        self._connections: dict[str, set] = defaultdict(set)
 
-    def can_connect(self, ip_address: str, device_id: str) -> Tuple[bool, str]:
+    def can_connect(self, ip_address: str, device_id: str) -> tuple[bool, str]:
         """
         Check if a new connection is allowed.
 
@@ -192,8 +192,8 @@ class WSConnectionLimiter:
 
 
 # Global singleton instances
-_rate_limiter: Optional[WSRateLimiter] = None
-_connection_limiter: Optional[WSConnectionLimiter] = None
+_rate_limiter: WSRateLimiter | None = None
+_connection_limiter: WSConnectionLimiter | None = None
 
 
 def get_rate_limiter() -> WSRateLimiter:

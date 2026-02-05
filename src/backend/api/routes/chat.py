@@ -1,33 +1,33 @@
 """
 Chat API Routes
 """
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
-from typing import List, Optional
-from loguru import logger
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+import uuid
+from datetime import datetime
 
+from fastapi import APIRouter, Depends, HTTPException, Request
+from loguru import logger
+from pydantic import BaseModel
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.database import Conversation, Message, User
+from services.api_rate_limiter import limiter
+from services.auth_service import get_current_user
 from services.database import get_db
 from services.ollama_service import OllamaService
-from services.auth_service import get_current_user
-from services.api_rate_limiter import limiter
 from utils.config import settings
-from models.database import Conversation, Message, User
-from datetime import datetime
-import uuid
 
 router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
-    session_id: Optional[str] = None
-    context: Optional[List[dict]] = None
+    session_id: str | None = None
+    context: list[dict] | None = None
 
 class ChatResponse(BaseModel):
     message: str
     session_id: str
-    intent: Optional[dict] = None
+    intent: dict | None = None
 
 @router.post("/send", response_model=ChatResponse)
 @limiter.limit(settings.api_rate_limit_chat)
@@ -35,7 +35,7 @@ async def send_message(
     request: Request,
     chat_request: ChatRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[User] = Depends(get_current_user)
+    current_user: User | None = Depends(get_current_user)
 ):
     """Nachricht senden und Antwort erhalten"""
     try:
@@ -79,7 +79,7 @@ async def send_message(
                 {"role": msg.role, "content": msg.content}
                 for msg in reversed(messages)
             ]
-        
+
         # Ollama Service nutzen
         from main import app
         ollama: OllamaService = app.state.ollama
@@ -94,9 +94,9 @@ async def send_message(
             if await ComplexityDetector.needs_agent_with_feedback(chat_request.message):
                 logger.info(f"🤖 Agent Loop (REST) aktiviert für: '{chat_request.message[:80]}...'")
 
-                from services.agent_tools import AgentToolRegistry
-                from services.agent_service import AgentService
                 from services.action_executor import ActionExecutor
+                from services.agent_service import AgentService
+                from services.agent_tools import AgentToolRegistry
 
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
                 tool_registry = AgentToolRegistry(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
@@ -187,7 +187,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 
         else:
             response_text = await ollama.chat(chat_request.message, history=context)
-        
+
         # Assistant Message speichern
         assistant_msg = Message(
             conversation_id=conversation.id,
@@ -199,14 +199,14 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
             }
         )
         db.add(assistant_msg)
-        
+
         # Update conversation timestamp
         conversation.updated_at = datetime.utcnow()
-        
+
         await db.commit()
-        
+
         logger.info(f"✅ Antwort generiert: '{response_text[:100]}'")
-        
+
         return ChatResponse(
             message=response_text,
             session_id=session_id,
@@ -230,10 +230,10 @@ async def get_history(
             select(Conversation).where(Conversation.session_id == session_id)
         )
         conversation = result.scalar_one_or_none()
-        
+
         if not conversation:
             return {"messages": []}
-        
+
         result = await db.execute(
             select(Message)
             .where(Message.conversation_id == conversation.id)
@@ -241,7 +241,7 @@ async def get_history(
             .limit(limit)
         )
         messages = result.scalars().all()
-        
+
         return {
             "messages": [
                 {

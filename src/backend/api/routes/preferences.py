@@ -4,13 +4,13 @@ User Preferences API Routes
 Manages user preferences like language settings.
 """
 from fastapi import APIRouter, Depends, HTTPException
+from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
-from services.database import get_db
-from services.auth_service import get_optional_user, get_current_user
 from models.database import User
+from services.auth_service import get_current_user, get_optional_user
+from services.database import get_db
 from utils.config import settings
 
 router = APIRouter()

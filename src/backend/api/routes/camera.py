@@ -5,14 +5,14 @@ With RPBAC permission checks:
 - cam.view: View events list and camera list
 - cam.full: Access snapshots and full event details
 """
-from fastapi import APIRouter, HTTPException, Depends
-from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
 from integrations.frigate import FrigateClient
-from services.auth_service import require_permission
 from models.database import User
 from models.permissions import Permission
+from services.auth_service import require_permission
 
 router = APIRouter()
 frigate = FrigateClient()
@@ -20,8 +20,8 @@ frigate = FrigateClient()
 
 @router.get("/events")
 async def get_camera_events(
-    camera: Optional[str] = None,
-    label: Optional[str] = None,
+    camera: str | None = None,
+    label: str | None = None,
     limit: int = 10,
     user: User = Depends(require_permission(Permission.CAM_VIEW))
 ):

@@ -5,9 +5,10 @@ Handles document parsing, chunking, and metadata extraction for RAG.
 Supports: PDF, DOCX, PPTX, XLSX, HTML, MD, TXT, and images.
 """
 import asyncio
-from pathlib import Path
-from typing import List, Dict, Any, Optional
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
 from loguru import logger
 
 from utils.config import settings
@@ -34,8 +35,8 @@ class DocumentProcessor:
             return
 
         try:
-            from docling.document_converter import DocumentConverter
             from docling.chunking import HybridChunker
+            from docling.document_converter import DocumentConverter
 
             logger.info("Initialisiere Docling DocumentConverter...")
             self._converter = DocumentConverter()
@@ -60,7 +61,7 @@ class DocumentProcessor:
             logger.error(f"Fehler beim Initialisieren von Docling: {e}")
             raise
 
-    async def process_document(self, file_path: str) -> Dict[str, Any]:
+    async def process_document(self, file_path: str) -> dict[str, Any]:
         """
         Verarbeitet ein Dokument und extrahiert strukturierte Chunks.
 
@@ -144,7 +145,7 @@ class DocumentProcessor:
             logger.error(f"Konvertierungsfehler: {e}")
             return None
 
-    def _extract_metadata(self, doc, file_path: str) -> Dict[str, Any]:
+    def _extract_metadata(self, doc, file_path: str) -> dict[str, Any]:
         """Extrahiert Dokument-Metadaten"""
         path = Path(file_path)
 
@@ -178,7 +179,7 @@ class DocumentProcessor:
 
         return metadata
 
-    def _create_chunks(self, doc) -> List[Dict[str, Any]]:
+    def _create_chunks(self, doc) -> list[dict[str, Any]]:
         """Erstellt Chunks mit Docling HybridChunker"""
         chunks = []
 
@@ -206,7 +207,7 @@ class DocumentProcessor:
 
         return chunks
 
-    def _get_headings(self, chunk) -> List[str]:
+    def _get_headings(self, chunk) -> list[str]:
         """Extrahiert Überschriften aus Chunk-Metadaten"""
         try:
             if hasattr(chunk, 'meta') and hasattr(chunk.meta, 'headings'):
@@ -227,7 +228,7 @@ class DocumentProcessor:
             pass
         return "paragraph"
 
-    def _get_page_number(self, chunk) -> Optional[int]:
+    def _get_page_number(self, chunk) -> int | None:
         """Ermittelt die Seitennummer des Chunks"""
         try:
             if hasattr(chunk, 'meta') and hasattr(chunk.meta, 'doc_items'):
@@ -239,7 +240,7 @@ class DocumentProcessor:
             pass
         return None
 
-    def _simple_chunk(self, text: str) -> List[Dict[str, Any]]:
+    def _simple_chunk(self, text: str) -> list[dict[str, Any]]:
         """Fallback: Einfaches Text-Splitting nach Zeichen"""
         chunks = []
         chunk_size = settings.rag_chunk_size * 4  # ~4 chars per token
@@ -277,7 +278,7 @@ class DocumentProcessor:
 
         return chunks
 
-    def get_supported_formats(self) -> List[str]:
+    def get_supported_formats(self) -> list[str]:
         """Gibt unterstützte Dateiformate zurück"""
         return [
             "pdf",      # PDF Dokumente
