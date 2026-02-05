@@ -146,6 +146,14 @@ class Settings(BaseSettings):
     rag_context_window: int = 1               # Adjacent chunks per direction (0=disabled)
     rag_context_window_max: int = 3           # Maximum allowed window size
 
+    # Conversation Memory (Long-term)
+    memory_enabled: bool = False                                             # Opt-in
+    memory_retrieval_limit: int = Field(default=3, ge=1, le=10)              # Max memories per query
+    memory_retrieval_threshold: float = Field(default=0.7, ge=0.0, le=1.0)  # Cosine-similarity threshold
+    memory_max_per_user: int = Field(default=500, ge=10, le=5000)           # Max active memories
+    memory_context_decay_days: int = Field(default=30, ge=1, le=365)        # Days until context category expires
+    memory_dedup_threshold: float = Field(default=0.9, ge=0.5, le=1.0)     # Deduplication threshold
+
     # Document Upload
     upload_dir: str = "/app/data/uploads"
     max_file_size_mb: int = Field(default=50, ge=1, le=500)
@@ -279,9 +287,7 @@ class Settings(BaseSettings):
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
 
-    # Phase 3: Scheduler + Reminders
-    proactive_scheduler_enabled: bool = False
-    proactive_scheduler_check_interval: int = 60       # Sekunden
+    # Phase 3: Reminders
     proactive_reminders_enabled: bool = False
     proactive_reminder_check_interval: int = 15        # Sekunden
 

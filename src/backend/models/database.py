@@ -831,28 +831,6 @@ class NotificationSuppression(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
-class ScheduledJob(Base):
-    """
-    Geplante Jobs (z.B. Morgenbriefing) mit Cron-Schedule.
-    """
-    __tablename__ = "scheduled_jobs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), unique=True, nullable=False)
-    schedule_cron = Column(String(100), nullable=False)
-    job_type = Column(String(50), nullable=False)  # "briefing" / "reminder"
-    config = Column(JSON, nullable=True)
-    is_enabled = Column(Boolean, default=True)
-    last_run_at = Column(DateTime, nullable=True)
-    next_run_at = Column(DateTime, nullable=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    room = relationship("Room", foreign_keys=[room_id])
-    user = relationship("User", foreign_keys=[user_id])
-
-
 # Reminder Status Constants
 REMINDER_PENDING = "pending"
 REMINDER_FIRED = "fired"
@@ -880,6 +858,64 @@ class Reminder(Base):
     room = relationship("Room", foreign_keys=[room_id])
     user = relationship("User", foreign_keys=[user_id])
     notification = relationship("Notification", foreign_keys=[notification_id])
+
+
+# ==========================================================================
+# Conversation Memory (Long-term)
+# ==========================================================================
+
+# Memory Category Constants
+MEMORY_CATEGORY_PREFERENCE = "preference"   # User preferences ("Ich mag Jazz")
+MEMORY_CATEGORY_FACT = "fact"               # Personal facts ("Mein Hund heißt Bello")
+MEMORY_CATEGORY_CONTEXT = "context"         # Ephemeral context (decays over time)
+MEMORY_CATEGORY_INSTRUCTION = "instruction" # Standing instructions ("Sprich mich mit Du an")
+
+MEMORY_CATEGORIES = [
+    MEMORY_CATEGORY_PREFERENCE,
+    MEMORY_CATEGORY_FACT,
+    MEMORY_CATEGORY_CONTEXT,
+    MEMORY_CATEGORY_INSTRUCTION,
+]
+
+
+class ConversationMemory(Base):
+    """
+    Long-term memory extracted from conversations.
+
+    Stores facts, preferences, instructions, and context that the assistant
+    should remember across sessions. Uses pgvector embeddings for semantic
+    retrieval of relevant memories.
+    """
+    __tablename__ = "conversation_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    content = Column(Text, nullable=False)
+    category = Column(String(20), nullable=False, default=MEMORY_CATEGORY_FACT, index=True)
+
+    # Source tracking
+    source_session_id = Column(String(255), nullable=True, index=True)
+    source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+
+    # Embedding for semantic search
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True
+    )
+
+    # Importance and lifecycle
+    importance = Column(Float, default=0.5)
+    expires_at = Column(DateTime, nullable=True)
+    access_count = Column(Integer, default=0)
+    last_accessed_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("User", foreign_keys=[user_id])
+    source_message = relationship("Message", foreign_keys=[source_message_id])
 
 
 # System Setting Keys
