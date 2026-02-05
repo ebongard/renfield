@@ -473,6 +473,63 @@ class ConversationMemoryService:
         ]
 
     # =========================================================================
+    # Update / Count
+    # =========================================================================
+
+    async def update(
+        self,
+        memory_id: int,
+        content: str | None = None,
+        category: str | None = None,
+        importance: float | None = None,
+    ) -> ConversationMemory | None:
+        """Update a memory's content, category, or importance.
+
+        Only updates fields that are not None. Returns the updated memory
+        or None if not found.
+        """
+        result = await self.db.execute(
+            select(ConversationMemory).where(
+                ConversationMemory.id == memory_id,
+                ConversationMemory.is_active == True,  # noqa: E712
+            )
+        )
+        memory = result.scalar_one_or_none()
+        if not memory:
+            return None
+
+        if content is not None:
+            memory.content = content
+        if category is not None:
+            if category not in MEMORY_CATEGORIES:
+                logger.warning(f"Invalid memory category for update: {category}")
+                return None
+            memory.category = category
+        if importance is not None:
+            memory.importance = importance
+
+        await self.db.commit()
+        await self.db.refresh(memory)
+        return memory
+
+    async def get_count(
+        self,
+        user_id: int | None = None,
+        category: str | None = None,
+    ) -> int:
+        """Count active memories with optional user and category filters."""
+        query = select(func.count(ConversationMemory.id)).where(
+            ConversationMemory.is_active == True,  # noqa: E712
+        )
+        if user_id is not None:
+            query = query.where(ConversationMemory.user_id == user_id)
+        if category:
+            query = query.where(ConversationMemory.category == category)
+
+        result = await self.db.execute(query)
+        return result.scalar() or 0
+
+    # =========================================================================
     # Internal Helpers
     # =========================================================================
 

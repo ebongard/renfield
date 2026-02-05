@@ -18,6 +18,7 @@ const HomeAssistantPage = lazy(() => import('./pages/HomeAssistantPage'));
 const SpeakersPage = lazy(() => import('./pages/SpeakersPage'));
 const RoomsPage = lazy(() => import('./pages/RoomsPage'));
 const KnowledgePage = lazy(() => import('./pages/KnowledgePage'));
+const MemoryPage = lazy(() => import('./pages/MemoryPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const RolesPage = lazy(() => import('./pages/RolesPage'));
 const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage'));
@@ -69,6 +70,7 @@ function App() {
                       <KnowledgePage />
                     </ProtectedRoute>
                   } />
+                  <Route path="/memory" element={<MemoryPage />} />
                   {/* Redirect old /plugins route to new integrations page */}
                   <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
                   {/* Admin routes */}

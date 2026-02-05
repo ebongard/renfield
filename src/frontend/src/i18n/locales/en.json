@@ -38,6 +38,7 @@
     "users": "Users",
     "roles": "Roles",
     "satellites": "Satellites",
+    "memory": "Memories",
     "intents": "Intents",
     "settings": "Settings",
     "admin": "Admin",
@@ -329,6 +330,30 @@
     "pages": "Pages",
     "size": "Size",
     "errorLabel": "Error"
+  },
+  "memory": {
+    "title": "Memories",
+    "subtitle": "Assistant's long-term memory",
+    "addMemory": "Add Memory",
+    "editMemory": "Edit Memory",
+    "deleteTitle": "Delete memory?",
+    "deleteConfirm": "Do you really want to delete this memory?",
+    "created": "Memory created",
+    "updated": "Memory updated",
+    "deleted": "Memory deleted",
+    "noMemories": "No memories yet",
+    "count": "{{count}} memories",
+    "couldNotLoad": "Could not load memories",
+    "content": "Content",
+    "importance": "Importance",
+    "accessCount": "Access count",
+    "categories": {
+      "all": "All",
+      "preference": "Preference",
+      "fact": "Fact",
+      "instruction": "Instruction",
+      "context": "Context"
+    }
   },
   "homeassistant": {
     "title": "Smart Home",

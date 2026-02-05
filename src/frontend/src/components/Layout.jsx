@@ -20,7 +20,8 @@ import {
   User,
   Satellite,
   Blocks,
-  Zap
+  Zap,
+  Brain
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -32,6 +33,7 @@ import { useAuth } from '../context/AuthContext';
 const mainNavigationConfig = [
   { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
+  { nameKey: 'nav.memory', href: '/memory', icon: Brain },
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },
 ];

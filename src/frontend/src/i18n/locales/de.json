@@ -38,6 +38,7 @@
     "users": "Benutzer",
     "roles": "Rollen",
     "satellites": "Satellites",
+    "memory": "Erinnerungen",
     "intents": "Intents",
     "settings": "Einstellungen",
     "admin": "Admin",
@@ -329,6 +330,30 @@
     "pages": "Seiten",
     "size": "Größe",
     "errorLabel": "Fehler"
+  },
+  "memory": {
+    "title": "Erinnerungen",
+    "subtitle": "Langzeitgedächtnis des Assistenten",
+    "addMemory": "Erinnerung hinzufügen",
+    "editMemory": "Erinnerung bearbeiten",
+    "deleteTitle": "Erinnerung löschen?",
+    "deleteConfirm": "Möchtest du diese Erinnerung wirklich löschen?",
+    "created": "Erinnerung erstellt",
+    "updated": "Erinnerung aktualisiert",
+    "deleted": "Erinnerung gelöscht",
+    "noMemories": "Noch keine Erinnerungen vorhanden",
+    "count": "{{count}} Erinnerungen",
+    "couldNotLoad": "Erinnerungen konnten nicht geladen werden",
+    "content": "Inhalt",
+    "importance": "Wichtigkeit",
+    "accessCount": "Zugriffe",
+    "categories": {
+      "all": "Alle",
+      "preference": "Präferenz",
+      "fact": "Fakt",
+      "instruction": "Anweisung",
+      "context": "Kontext"
+    }
   },
   "homeassistant": {
     "title": "Smart Home",
