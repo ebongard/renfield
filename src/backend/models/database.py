@@ -795,8 +795,91 @@ class Notification(Base):
     acknowledged_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
 
+    # Phase 2: Intelligence columns
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
+    enriched = Column(Boolean, default=False)
+    original_message = Column(Text, nullable=True)
+    urgency_auto = Column(Boolean, default=False)
+
     # Relationships
     room = relationship("Room", foreign_keys=[room_id])
+
+
+class NotificationSuppression(Base):
+    """
+    Feedback-Learning: Benutzer unterdrückt ähnliche Benachrichtigungen.
+    Speichert Event-Pattern + Embedding für semantischen Abgleich.
+    """
+    __tablename__ = "notification_suppressions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_pattern = Column(String(255), nullable=False, index=True)
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
+    source_notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    reason = Column(String(255), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    source_notification = relationship("Notification", foreign_keys=[source_notification_id])
+    user = relationship("User", foreign_keys=[user_id])
+
+
+class ScheduledJob(Base):
+    """
+    Geplante Jobs (z.B. Morgenbriefing) mit Cron-Schedule.
+    """
+    __tablename__ = "scheduled_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    schedule_cron = Column(String(100), nullable=False)
+    job_type = Column(String(50), nullable=False)  # "briefing" / "reminder"
+    config = Column(JSON, nullable=True)
+    is_enabled = Column(Boolean, default=True)
+    last_run_at = Column(DateTime, nullable=True)
+    next_run_at = Column(DateTime, nullable=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    room = relationship("Room", foreign_keys=[room_id])
+    user = relationship("User", foreign_keys=[user_id])
+
+
+# Reminder Status Constants
+REMINDER_PENDING = "pending"
+REMINDER_FIRED = "fired"
+REMINDER_CANCELLED = "cancelled"
+
+
+class Reminder(Base):
+    """
+    Timer-basierte Erinnerungen ("in 30 Minuten", "um 18:00").
+    """
+    __tablename__ = "reminders"
+
+    id = Column(Integer, primary_key=True, index=True)
+    message = Column(Text, nullable=False)
+    trigger_at = Column(DateTime, nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    room_name = Column(String(100), nullable=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    session_id = Column(String(255), nullable=True)
+    status = Column(String(20), default=REMINDER_PENDING)
+    notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    fired_at = Column(DateTime, nullable=True)
+
+    room = relationship("Room", foreign_keys=[room_id])
+    user = relationship("User", foreign_keys=[user_id])
+    notification = relationship("Notification", foreign_keys=[notification_id])
 
 
 # System Setting Keys

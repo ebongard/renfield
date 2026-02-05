@@ -27,7 +27,7 @@ from models.database import (
     Speaker, SpeakerEmbedding,
     Conversation, Message, Task, CameraEvent, HomeAssistantEntity,
     KnowledgeBase, Document, DocumentChunk, Role, User, IntentCorrection,
-    Notification,
+    Notification, NotificationSuppression, ScheduledJob, Reminder,
     DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER,
     DEFAULT_CAPABILITIES
 )

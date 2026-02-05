@@ -8,7 +8,7 @@
  * - Dark mode + i18n
  */
 
-import { X, Check, Bell, AlertTriangle, Info } from 'lucide-react';
+import { X, Check, Bell, AlertTriangle, Info, BellOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNotifications, type NotificationData } from '../hooks/useNotifications';
 
@@ -34,10 +34,12 @@ function SingleToast({
   notification,
   onAcknowledge,
   onDismiss,
+  onSuppress,
 }: {
   notification: NotificationData;
   onAcknowledge: (id: number) => void;
   onDismiss: (id: number) => void;
+  onSuppress: (id: number) => void;
 }) {
   const { t } = useTranslation();
   const style = urgencyStyles[notification.urgency] || urgencyStyles.info;
@@ -83,6 +85,16 @@ function SingleToast({
         {/* Actions */}
         <div className="mt-3 flex justify-end gap-2">
           <button
+            onClick={() => onSuppress(notification.notification_id)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md
+              text-gray-500 dark:text-gray-400
+              hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            aria-label={t('notifications.suppress')}
+            title={t('notifications.suppress')}
+          >
+            <BellOff className="w-3.5 h-3.5" />
+          </button>
+          <button
             onClick={() => onAcknowledge(notification.notification_id)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md
               text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-700
@@ -100,7 +112,7 @@ function SingleToast({
 
 export default function NotificationToast() {
   const { t } = useTranslation();
-  const { visibleNotifications, queuedCount, acknowledge, dismiss } = useNotifications();
+  const { visibleNotifications, queuedCount, acknowledge, dismiss, suppress } = useNotifications();
 
   if (visibleNotifications.length === 0) {
     return null;
@@ -117,6 +129,7 @@ export default function NotificationToast() {
           notification={notification}
           onAcknowledge={acknowledge}
           onDismiss={dismiss}
+          onSuppress={suppress}
         />
       ))}
       {queuedCount > 0 && (

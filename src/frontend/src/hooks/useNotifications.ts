@@ -80,12 +80,32 @@ export function useNotifications() {
     }
   }, [sendNotificationAck]);
 
+  const suppress = useCallback(async (notificationId: number) => {
+    try {
+      await fetch(`/api/notifications/${notificationId}/suppress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+    } catch (e) {
+      console.warn('Failed to suppress notification:', e);
+    }
+    // Remove from local state regardless
+    setNotifications(prev => prev.filter(n => n.notification_id !== notificationId));
+    const timer = timersRef.current.get(notificationId);
+    if (timer) {
+      clearTimeout(timer);
+      timersRef.current.delete(notificationId);
+    }
+  }, []);
+
   return {
     notifications,
     visibleNotifications: notifications.slice(0, MAX_VISIBLE),
     queuedCount: Math.max(0, notifications.length - MAX_VISIBLE),
     acknowledge,
     dismiss,
+    suppress,
   };
 }
 

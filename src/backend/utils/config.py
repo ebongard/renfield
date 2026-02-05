@@ -270,6 +270,21 @@ class Settings(BaseSettings):
     proactive_tts_default: bool = True                 # TTS standardmäßig an
     proactive_notification_ttl: int = 86400            # Ablauf in Sekunden (24h)
 
+    # Phase 2: Notification Intelligence
+    proactive_semantic_dedup_enabled: bool = False
+    proactive_semantic_dedup_threshold: float = 0.85
+    proactive_urgency_auto_enabled: bool = False
+    proactive_enrichment_enabled: bool = False
+    proactive_enrichment_model: str | None = None
+    proactive_feedback_learning_enabled: bool = False
+    proactive_feedback_similarity_threshold: float = 0.80
+
+    # Phase 3: Scheduler + Reminders
+    proactive_scheduler_enabled: bool = False
+    proactive_scheduler_check_interval: int = 60       # Sekunden
+    proactive_reminders_enabled: bool = False
+    proactive_reminder_check_interval: int = 15        # Sekunden
+
     @property
     def allowed_extensions_list(self) -> list[str]:
         """Gibt allowed_extensions als Liste zurück"""

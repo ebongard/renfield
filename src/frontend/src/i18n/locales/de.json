@@ -673,6 +673,8 @@
     "title": "Benachrichtigungen",
     "acknowledge": "Bestätigen",
     "dismiss": "Verwerfen",
+    "suppress": "Nicht mehr melden",
+    "suppressConfirm": "Ähnliche Benachrichtigungen werden unterdrückt",
     "moreQueued": "+{{count}} weitere",
     "critical": "Kritisch",
     "info": "Information",

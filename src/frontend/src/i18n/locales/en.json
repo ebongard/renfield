@@ -673,6 +673,8 @@
     "title": "Notifications",
     "acknowledge": "Acknowledge",
     "dismiss": "Dismiss",
+    "suppress": "Don't notify again",
+    "suppressConfirm": "Similar notifications will be suppressed",
     "moreQueued": "+{{count}} more",
     "critical": "Critical",
     "info": "Information",

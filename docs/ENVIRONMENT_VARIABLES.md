@@ -258,6 +258,51 @@ PROACTIVE_NOTIFICATION_TTL=86400
 
 **Dokumentation:** Siehe `docs/PROACTIVE_NOTIFICATIONS.md` für Details und HA-Automations-Template.
 
+#### Phase 2: Notification Intelligence
+
+```bash
+# Semantische Deduplizierung — erkennt Paraphrasen via pgvector Cosine Similarity
+PROACTIVE_SEMANTIC_DEDUP_ENABLED=false
+PROACTIVE_SEMANTIC_DEDUP_THRESHOLD=0.85
+
+# Urgency Auto-Klassifizierung — LLM klassifiziert urgency: "auto" → critical/info/low
+PROACTIVE_URGENCY_AUTO_ENABLED=false
+
+# LLM Content Enrichment — Natürlich-sprachliche Aufbereitung der Nachricht
+PROACTIVE_ENRICHMENT_ENABLED=false
+PROACTIVE_ENRICHMENT_MODEL=              # Optional: separates Modell (Default: OLLAMA_MODEL)
+
+# Feedback-Learning — "Nicht mehr melden"-Button erstellt Suppression-Regeln
+PROACTIVE_FEEDBACK_LEARNING_ENABLED=false
+PROACTIVE_FEEDBACK_SIMILARITY_THRESHOLD=0.80
+```
+
+**Zusätzliche Endpunkte:**
+- `POST /api/notifications/{id}/suppress` — Ähnliche Benachrichtigungen unterdrücken
+- `GET /api/notifications/suppressions` — Aktive Suppression-Regeln
+- `DELETE /api/notifications/suppressions/{id}` — Suppression aufheben
+
+#### Phase 3: Scheduler + Reminders
+
+```bash
+# Cron-basierter Scheduler (z.B. Morgenbriefing)
+PROACTIVE_SCHEDULER_ENABLED=false
+PROACTIVE_SCHEDULER_CHECK_INTERVAL=60    # Prüfintervall in Sekunden
+
+# Timer-Erinnerungen ("in 30 Minuten", "um 18:00")
+PROACTIVE_REMINDERS_ENABLED=false
+PROACTIVE_REMINDER_CHECK_INTERVAL=15     # Prüfintervall in Sekunden
+```
+
+**Zusätzliche Endpunkte:**
+- `GET /api/notifications/schedules` — Geplante Jobs auflisten
+- `POST /api/notifications/schedules` — Job erstellen (Cron-Format)
+- `PATCH /api/notifications/schedules/{id}` — Job aktualisieren
+- `DELETE /api/notifications/schedules/{id}` — Job löschen
+- `POST /api/notifications/reminders` — Erinnerung erstellen
+- `GET /api/notifications/reminders` — Offene Erinnerungen
+- `DELETE /api/notifications/reminders/{id}` — Erinnerung stornieren
+
 ---
 
 ### RAG (Wissensspeicher)

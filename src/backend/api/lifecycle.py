@@ -140,6 +140,50 @@ def _schedule_notification_cleanup():
     logger.info("✅ Notification Cleanup Scheduler gestartet (stündlich)")
 
 
+def _schedule_notification_scheduler():
+    """Start the cron-based notification scheduler (Phase 3a)."""
+    if not settings.proactive_scheduler_enabled:
+        return
+
+    async def start_scheduler():
+        try:
+            from services.notification_scheduler import NotificationScheduler
+
+            scheduler = NotificationScheduler()
+            await scheduler.start()
+        except Exception as e:
+            logger.warning(f"⚠️  Notification Scheduler fehlgeschlagen: {e}")
+
+    task = asyncio.create_task(start_scheduler())
+    _startup_tasks.append(task)
+
+
+def _schedule_reminder_checker():
+    """Start the periodic reminder checker (Phase 3b)."""
+    if not settings.proactive_reminders_enabled:
+        return
+
+    async def reminder_loop():
+        """Check for due reminders periodically."""
+        while True:
+            try:
+                await asyncio.sleep(settings.proactive_reminder_check_interval)
+                from services.reminder_service import check_due_reminders
+
+                await check_due_reminders()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Reminder check failed: {e}")
+
+    task = asyncio.create_task(reminder_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"✅ Reminder Checker gestartet "
+        f"(interval={settings.proactive_reminder_check_interval}s)"
+    )
+
+
 def _schedule_ha_keywords_preload():
     """Schedule Home Assistant keywords preloading in background."""
     try:
@@ -318,6 +362,8 @@ async def lifespan(app: "FastAPI"):
     _schedule_whisper_preload()
     _schedule_ha_keywords_preload()
     _schedule_notification_cleanup()
+    _schedule_notification_scheduler()
+    _schedule_reminder_checker()
 
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)
