@@ -206,12 +206,43 @@ async def _route_chat_tts_output(
         return False
 
 
+async def _retrieve_memory_context(content: str, user_id: int | None, lang: str) -> str:
+    """Retrieve relevant memories and format as prompt section."""
+    if not settings.memory_enabled:
+        return ""
+
+    from services.conversation_memory_service import ConversationMemoryService
+    from services.prompt_manager import prompt_manager
+
+    try:
+        async with AsyncSessionLocal() as db:
+            service = ConversationMemoryService(db)
+            memories = await service.retrieve(content, user_id=user_id)
+            if not memories:
+                return ""
+
+            lines = []
+            for m in memories:
+                cat_label = m["category"].upper()
+                lines.append(f"- [{cat_label}] {m['content']}")
+            memories_str = "\n".join(lines)
+
+            return prompt_manager.get(
+                "chat", "memory_context_section", lang=lang,
+                memories=memories_str
+            )
+    except Exception as e:
+        logger.warning(f"Memory retrieval failed: {e}")
+        return ""
+
+
 async def _stream_rag_response(
     content: str,
     knowledge_base_id,
     ollama,
     session_state: "ConversationSessionState",
     websocket: WebSocket,
+    memory_context: str = "",
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
@@ -268,7 +299,8 @@ async def _stream_rag_response(
                 async for chunk in ollama.chat_stream_with_rag(
                     content,
                     rag_context,
-                    history=session_state.conversation_history if is_followup else None
+                    history=session_state.conversation_history if is_followup else None,
+                    memory_context=memory_context,
                 ):
                     full_response += chunk
                     await websocket.send_json({"type": "stream", "content": chunk})
@@ -289,7 +321,7 @@ async def _stream_rag_response(
             logger.error(traceback.format_exc())
 
     # Fallback: plain conversation
-    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
         full_response += chunk
         await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -384,6 +416,12 @@ async def websocket_endpoint(
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to load conversation history: {e}")
 
+            # Retrieve memory context (long-term user knowledge)
+            user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+            memory_context = await _retrieve_memory_context(
+                content, user_id=user_id, lang=ollama.default_lang
+            )
+
             # === Unified Router / Legacy Dual-Path ===
             agent_used = False
             full_response = ""
@@ -417,10 +455,11 @@ async def websocket_endpoint(
                     if use_rag and settings.rag_enabled:
                         # RAG-enhanced conversation
                         full_response = await _stream_rag_response(
-                            content, knowledge_base_id, ollama, session_state, websocket
+                            content, knowledge_base_id, ollama, session_state, websocket,
+                            memory_context=memory_context,
                         )
                     else:
-                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -429,7 +468,8 @@ async def websocket_endpoint(
                     intent = {"intent": "knowledge.ask", "parameters": {}, "confidence": 1.0}
 
                     full_response = await _stream_rag_response(
-                        content, knowledge_base_id, ollama, session_state, websocket
+                        content, knowledge_base_id, ollama, session_state, websocket,
+                        memory_context=memory_context,
                     )
 
                 else:
@@ -451,6 +491,7 @@ async def websocket_endpoint(
                         executor=executor,
                         conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                         room_context=room_context,
+                        memory_context=memory_context,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -542,7 +583,7 @@ Die Aktion wurde ausgeführt:
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
 
-                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history):
+                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -553,10 +594,11 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     else:
                         if use_rag and settings.rag_enabled:
                             full_response = await _stream_rag_response(
-                                content, knowledge_base_id, ollama, session_state, websocket
+                                content, knowledge_base_id, ollama, session_state, websocket,
+                                memory_context=memory_context,
                             )
                         else:
-                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history):
+                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
                                 full_response += chunk
                                 await websocket.send_json({"type": "stream", "content": chunk})
 

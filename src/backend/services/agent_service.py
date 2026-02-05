@@ -396,6 +396,7 @@ class AgentService:
         conversation_history: list[dict] | None = None,
         room_context: dict | None = None,
         lang: str = "de",
+        memory_context: str = "",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
         tools_prompt = self.tool_registry.build_tools_prompt()
@@ -452,6 +453,7 @@ class AgentService:
             message=message,
             room_context=room_context_str,
             conv_context=conv_context,
+            memory_context=memory_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
             history_prompt=history_prompt,
@@ -466,6 +468,7 @@ class AgentService:
                 message=message,
                 room_context=room_context_str,
                 conv_context=conv_context,
+                memory_context=memory_context,
                 tools_prompt=tools_prompt,
                 tool_corrections=tool_corrections,
                 history_prompt=history_prompt,
@@ -482,6 +485,7 @@ class AgentService:
         conversation_history: list[dict] | None = None,
         room_context: dict | None = None,
         lang: str | None = None,
+        memory_context: str = "",
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -493,6 +497,7 @@ class AgentService:
             conversation_history: Optional conversation history
             room_context: Optional room context for HA entity resolution
             lang: Language for prompts and responses (de/en). None = default_lang
+            memory_context: Formatted memory section for the agent prompt
         """
         # Use ollama's default language if not specified
         lang = lang or ollama.default_lang
@@ -540,7 +545,7 @@ class AgentService:
                 return
 
             # Build prompt with all available tools (32k context fits all tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context)
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call

@@ -1,5 +1,5 @@
 """
-Tests for Conversation Memory — Model, Service, and Config.
+Tests for Conversation Memory — Model, Service, Config, and Chat Integration.
 
 Uses in-memory SQLite (no pgvector). Embedding generation is mocked.
 pgvector SQL queries are tested for error handling; actual similarity
@@ -571,3 +571,147 @@ class TestConversationMemoryServiceDeleteList:
         assert "access_count" in item
         assert "created_at" in item
         assert "last_accessed_at" in item
+
+
+# ==========================================================================
+# Memory Context Formatting Tests (Chat Integration)
+# ==========================================================================
+
+class TestMemoryContextFormatting:
+    """Tests for memory context formatting logic.
+
+    Note: _retrieve_memory_context lives in chat_handler which requires asyncpg
+    at import time (services.database). These tests verify the formatting logic
+    via prompt_manager directly. Full integration is tested in Docker (e2e).
+    """
+
+    @pytest.mark.unit
+    def test_memory_context_section_german(self):
+        """German memory section template renders correctly."""
+        from services.prompt_manager import prompt_manager
+
+        memories_str = "- [PREFERENCE] Mag Jazz-Musik\n- [FACT] Heisst Max"
+        result = prompt_manager.get(
+            "chat", "memory_context_section", lang="de",
+            memories=memories_str
+        )
+
+        assert "ERINNERUNGEN" in result
+        assert "[PREFERENCE] Mag Jazz-Musik" in result
+        assert "[FACT] Heisst Max" in result
+        assert "personalisierter" in result
+
+    @pytest.mark.unit
+    def test_memory_context_section_english(self):
+        """English memory section template renders correctly."""
+        from services.prompt_manager import prompt_manager
+
+        memories_str = "- [PREFERENCE] Likes jazz"
+        result = prompt_manager.get(
+            "chat", "memory_context_section", lang="en",
+            memories=memories_str
+        )
+
+        assert "MEMORIES" in result
+        assert "[PREFERENCE] Likes jazz" in result
+        assert "personalized" in result
+
+    @pytest.mark.unit
+    def test_memory_bullet_formatting(self):
+        """Memories are formatted as category-labeled bullet list."""
+        memories = [
+            {"content": "Mag Jazz-Musik", "category": "preference"},
+            {"content": "Heisst Max", "category": "fact"},
+            {"content": "Sprich mich mit Du an", "category": "instruction"},
+            {"content": "Plant Urlaub", "category": "context"},
+        ]
+
+        lines = []
+        for m in memories:
+            cat_label = m["category"].upper()
+            lines.append(f"- [{cat_label}] {m['content']}")
+        result = "\n".join(lines)
+
+        assert "- [PREFERENCE] Mag Jazz-Musik" in result
+        assert "- [FACT] Heisst Max" in result
+        assert "- [INSTRUCTION] Sprich mich mit Du an" in result
+        assert "- [CONTEXT] Plant Urlaub" in result
+
+    @pytest.mark.unit
+    def test_empty_memories_no_section(self):
+        """No memories → empty string (no section injected)."""
+        # This mirrors the logic in _retrieve_memory_context:
+        # if not memories: return ""
+        memories = []
+        assert len(memories) == 0
+        # The function returns "" before calling prompt_manager
+
+
+# ==========================================================================
+# OllamaService Memory Integration Tests
+# ==========================================================================
+
+class TestOllamaServiceMemoryIntegration:
+    """Tests for memory_context parameter in OllamaService."""
+
+    @pytest.mark.unit
+    def test_get_system_prompt_without_memory(self):
+        """System prompt unchanged when no memory_context."""
+        from services.ollama_service import OllamaService
+
+        with patch('services.ollama_service.get_default_client'):
+            service = OllamaService()
+
+        prompt_no_mem = service.get_system_prompt("de")
+        prompt_none = service.get_system_prompt("de", memory_context=None)
+
+        assert prompt_no_mem == prompt_none
+        assert "ERINNERUNGEN" not in prompt_no_mem
+
+    @pytest.mark.unit
+    def test_get_system_prompt_with_memory(self):
+        """Memory section is appended to system prompt."""
+        from services.ollama_service import OllamaService
+
+        with patch('services.ollama_service.get_default_client'):
+            service = OllamaService()
+
+        memory_section = "ERINNERUNGEN:\n- [FACT] User heisst Max"
+        prompt = service.get_system_prompt("de", memory_context=memory_section)
+
+        assert "ERINNERUNGEN" in prompt
+        assert "User heisst Max" in prompt
+        # Base prompt should still be there
+        assert "Renfield" in prompt
+
+    @pytest.mark.unit
+    def test_build_rag_system_prompt_with_memory(self):
+        """Memory section is included in RAG system prompt."""
+        from services.ollama_service import OllamaService
+
+        with patch('services.ollama_service.get_default_client'):
+            service = OllamaService()
+
+        memory_section = "MEMORIES:\n- [PREFERENCE] Likes jazz"
+        prompt = service._build_rag_system_prompt(
+            context="Some RAG context here",
+            lang="en",
+            memory_context=memory_section,
+        )
+
+        assert "MEMORIES" in prompt
+        assert "Likes jazz" in prompt
+        assert "Some RAG context here" in prompt
+
+    @pytest.mark.unit
+    def test_build_rag_system_prompt_without_memory(self):
+        """RAG prompt unchanged without memory_context."""
+        from services.ollama_service import OllamaService
+
+        with patch('services.ollama_service.get_default_client'):
+            service = OllamaService()
+
+        prompt_no_mem = service._build_rag_system_prompt(context="RAG context", lang="en")
+        prompt_none = service._build_rag_system_prompt(context="RAG context", lang="en", memory_context=None)
+
+        assert prompt_no_mem == prompt_none

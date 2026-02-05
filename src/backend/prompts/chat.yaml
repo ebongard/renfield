@@ -41,6 +41,13 @@ de:
     Antworte immer auf Deutsch und in natürlicher Sprache.
     Nenne bei Bedarf die Quelle der Information.
 
+  memory_context_section: |
+    ERINNERUNGEN (Langzeit-Gedaechtnis ueber diesen Benutzer):
+    {memories}
+
+    Nutze diese Erinnerungen um personalisierter zu antworten.
+    Widerspreche ihnen nicht, es sei denn der Benutzer korrigiert dich explizit.
+
   error_fallback: "Entschuldigung, es gab einen Fehler: {error}"
   error_service_unavailable: "Der Dienst ist vorübergehend nicht verfügbar. Bitte versuche es später erneut."
 
@@ -82,6 +89,13 @@ en:
     If you cannot derive the answer from the context, say so honestly.
     Always respond in English and in natural language.
     Cite the source of information when appropriate.
+
+  memory_context_section: |
+    MEMORIES (Long-term memory about this user):
+    {memories}
+
+    Use these memories to give personalized responses.
+    Don't contradict them unless the user explicitly corrects you.
 
   error_fallback: "Sorry, there was an error: {error}"
   error_service_unavailable: "The service is temporarily unavailable. Please try again later."

@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -17,6 +17,8 @@ de:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -57,6 +59,8 @@ de:
 
     {conv_context}
 
+    {memory_context}
+
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
     Tool aufrufen:
@@ -96,6 +100,8 @@ de:
 
     {conv_context}
 
+    {memory_context}
+
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
     Tool aufrufen:
@@ -129,6 +135,8 @@ de:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -167,6 +175,8 @@ de:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -208,6 +218,8 @@ de:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     ANTWORT-FORMAT: Antworte mit GENAU EINEM JSON-Objekt.
 
@@ -328,7 +340,7 @@ de:
 
 en:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -341,6 +353,8 @@ en:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
@@ -381,6 +395,8 @@ en:
 
     {conv_context}
 
+    {memory_context}
+
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
     Call a tool:
@@ -420,6 +436,8 @@ en:
 
     {conv_context}
 
+    {memory_context}
+
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
     Call a tool:
@@ -453,6 +471,8 @@ en:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
@@ -491,6 +511,8 @@ en:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
@@ -532,6 +554,8 @@ en:
     {history_prompt}
 
     {conv_context}
+
+    {memory_context}
 
     RESPONSE FORMAT: Reply with EXACTLY ONE JSON object.
 
