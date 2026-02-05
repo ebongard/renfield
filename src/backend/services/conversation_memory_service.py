@@ -416,6 +416,19 @@ class ConversationMemoryService:
         if total > 0:
             logger.info(f"Memory cleanup: {counts}")
 
+        # Update Prometheus metrics (best-effort)
+        try:
+            from utils.metrics import record_memory_cleanup, set_memory_total
+
+            record_memory_cleanup(counts)
+            active_count = await self.db.execute(
+                select(func.count(ConversationMemory.id))
+                .where(ConversationMemory.is_active == True)  # noqa: E712
+            )
+            set_memory_total(active_count.scalar() or 0)
+        except Exception:
+            pass  # Metrics should never break business logic
+
         return counts
 
     # =========================================================================

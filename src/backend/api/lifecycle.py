@@ -140,24 +140,6 @@ def _schedule_notification_cleanup():
     logger.info("✅ Notification Cleanup Scheduler gestartet (stündlich)")
 
 
-def _schedule_notification_scheduler():
-    """Start the cron-based notification scheduler (Phase 3a)."""
-    if not settings.proactive_scheduler_enabled:
-        return
-
-    async def start_scheduler():
-        try:
-            from services.notification_scheduler import NotificationScheduler
-
-            scheduler = NotificationScheduler()
-            await scheduler.start()
-        except Exception as e:
-            logger.warning(f"⚠️  Notification Scheduler fehlgeschlagen: {e}")
-
-    task = asyncio.create_task(start_scheduler())
-    _startup_tasks.append(task)
-
-
 def _schedule_reminder_checker():
     """Start the periodic reminder checker (Phase 3b)."""
     if not settings.proactive_reminders_enabled:
@@ -181,6 +163,38 @@ def _schedule_reminder_checker():
     logger.info(
         f"✅ Reminder Checker gestartet "
         f"(interval={settings.proactive_reminder_check_interval}s)"
+    )
+
+
+def _schedule_memory_cleanup():
+    """Schedule periodic cleanup of expired/decayed memories."""
+    if not settings.memory_enabled:
+        return
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(settings.memory_cleanup_interval)
+                from services.conversation_memory_service import ConversationMemoryService
+
+                async with AsyncSessionLocal() as db_session:
+                    service = ConversationMemoryService(db_session)
+                    counts = await service.cleanup()
+                    total = sum(counts.values())
+                    if total > 0:
+                        from utils.metrics import record_memory_cleanup
+
+                        record_memory_cleanup(counts)
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Memory cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Memory Cleanup Scheduler gestartet "
+        f"(interval={settings.memory_cleanup_interval}s)"
     )
 
 
@@ -362,8 +376,8 @@ async def lifespan(app: "FastAPI"):
     _schedule_whisper_preload()
     _schedule_ha_keywords_preload()
     _schedule_notification_cleanup()
-    _schedule_notification_scheduler()
     _schedule_reminder_checker()
+    _schedule_memory_cleanup()
 
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)

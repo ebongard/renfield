@@ -31,6 +31,8 @@ _llm_call_duration_seconds = None
 _agent_steps_total = None
 _circuit_breaker_state = None
 _circuit_breaker_failures_total = None
+_memory_total = None
+_memory_cleanup_total = None
 
 
 def _init_metrics():
@@ -40,6 +42,7 @@ def _init_metrics():
     global _websocket_connections
     global _llm_call_duration_seconds, _agent_steps_total
     global _circuit_breaker_state, _circuit_breaker_failures_total
+    global _memory_total, _memory_cleanup_total
 
     if _metrics_initialized:
         return
@@ -89,6 +92,17 @@ def _init_metrics():
             "renfield_circuit_breaker_failures_total",
             "Total circuit breaker recorded failures",
             ["name"],
+        )
+
+        _memory_total = Gauge(
+            "renfield_memory_active_total",
+            "Total active memories",
+        )
+
+        _memory_cleanup_total = Counter(
+            "renfield_memory_cleanup_total",
+            "Total memories cleaned up",
+            ["reason"],
         )
 
         _metrics_initialized = True
@@ -150,6 +164,22 @@ def record_circuit_breaker_failure(name: str):
     if not _metrics_initialized:
         return
     _circuit_breaker_failures_total.labels(name=name).inc()
+
+
+def record_memory_cleanup(counts: dict):
+    """Record memory cleanup results."""
+    if not _metrics_initialized:
+        return
+    for reason, count in counts.items():
+        if count > 0:
+            _memory_cleanup_total.labels(reason=reason).inc(count)
+
+
+def set_memory_total(count: int):
+    """Set current active memory count."""
+    if not _metrics_initialized:
+        return
+    _memory_total.set(count)
 
 
 # === Middleware & Endpoint Setup ===
