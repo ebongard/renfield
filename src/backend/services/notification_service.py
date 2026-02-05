@@ -291,6 +291,7 @@ class NotificationService:
                         success = await audio_output_service.play_audio(
                             audio_bytes=tts_audio,
                             output_device=decision.output_device,
+                            session_id=f"notification-{notification.id}",
                         )
                         if success:
                             logger.info(f"🔊 TTS für Notification #{notification.id} abgespielt")
