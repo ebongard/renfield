@@ -4,22 +4,27 @@ RAG Service - Retrieval Augmented Generation
 Handles document ingestion, embedding generation, similarity search,
 and context preparation for LLM queries.
 """
-from typing import List, Dict, Any, Optional
-from datetime import datetime
 import os
+from datetime import datetime
+from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete, func, text
-from sqlalchemy.orm import selectinload
 from loguru import logger
+from sqlalchemy import delete, func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models.database import (
-    Document, DocumentChunk, KnowledgeBase,
-    DOC_STATUS_PROCESSING, DOC_STATUS_COMPLETED, DOC_STATUS_FAILED,
-    EMBEDDING_DIMENSION
+    DOC_STATUS_COMPLETED,
+    DOC_STATUS_FAILED,
+    DOC_STATUS_PROCESSING,
+    EMBEDDING_DIMENSION,
+    Document,
+    DocumentChunk,
+    KnowledgeBase,
 )
 from services.document_processor import DocumentProcessor
 from utils.config import settings
+from utils.llm_client import get_default_client
 
 
 class RAGService:
@@ -47,15 +52,14 @@ class RAGService:
     async def _get_ollama_client(self):
         """Lazy initialization des Ollama Clients"""
         if self._ollama_client is None:
-            import ollama
-            self._ollama_client = ollama.AsyncClient(host=settings.ollama_url)
+            self._ollama_client = get_default_client()
         return self._ollama_client
 
     # ==========================================================================
     # Embedding Generation
     # ==========================================================================
 
-    async def get_embedding(self, text: str) -> List[float]:
+    async def get_embedding(self, text: str) -> list[float]:
         """
         Generiert Embedding für Text mit Ollama.
 
@@ -84,9 +88,9 @@ class RAGService:
     async def ingest_document(
         self,
         file_path: str,
-        knowledge_base_id: Optional[int] = None,
-        filename: Optional[str] = None,
-        file_hash: Optional[str] = None
+        knowledge_base_id: int | None = None,
+        filename: str | None = None,
+        file_hash: str | None = None
     ) -> Document:
         """
         Verarbeitet und indexiert ein Dokument.
@@ -212,10 +216,10 @@ class RAGService:
     async def search(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        knowledge_base_id: Optional[int] = None,
-        similarity_threshold: Optional[float] = None
-    ) -> List[Dict[str, Any]]:
+        top_k: int | None = None,
+        knowledge_base_id: int | None = None,
+        similarity_threshold: float | None = None
+    ) -> list[dict[str, Any]]:
         """
         Sucht relevante Chunks für eine Anfrage.
 
@@ -272,11 +276,11 @@ class RAGService:
 
     async def _search_dense(
         self,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int,
-        knowledge_base_id: Optional[int] = None,
-        threshold: Optional[float] = None
-    ) -> List[Dict[str, Any]]:
+        knowledge_base_id: int | None = None,
+        threshold: float | None = None
+    ) -> list[dict[str, Any]]:
         """
         Dense vector search using pgvector cosine distance.
 
@@ -355,8 +359,8 @@ class RAGService:
         self,
         query: str,
         top_k: int,
-        knowledge_base_id: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+        knowledge_base_id: int | None = None
+    ) -> list[dict[str, Any]]:
         """
         BM25-style search using PostgreSQL Full-Text Search.
 
@@ -431,10 +435,10 @@ class RAGService:
 
     @staticmethod
     def _reciprocal_rank_fusion(
-        dense_results: List[Dict[str, Any]],
-        bm25_results: List[Dict[str, Any]],
+        dense_results: list[dict[str, Any]],
+        bm25_results: list[dict[str, Any]],
         top_k: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Combines dense and BM25 results using Reciprocal Rank Fusion.
 
@@ -454,8 +458,8 @@ class RAGService:
         bm25_weight = settings.rag_hybrid_bm25_weight
 
         # Collect scores by chunk ID
-        scores: Dict[int, float] = {}
-        chunk_data: Dict[int, Dict[str, Any]] = {}
+        scores: dict[int, float] = {}
+        chunk_data: dict[int, dict[str, Any]] = {}
 
         for rank, result in enumerate(dense_results):
             chunk_id = result["chunk"]["id"]
@@ -485,9 +489,9 @@ class RAGService:
 
     async def _expand_context_window(
         self,
-        results: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
         window_size: int
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Expands each result with adjacent chunks from the same document.
 
@@ -569,8 +573,8 @@ class RAGService:
     async def get_context(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        knowledge_base_id: Optional[int] = None
+        top_k: int | None = None,
+        knowledge_base_id: int | None = None
     ) -> str:
         """
         Erstellt einen formatierten Kontext-String für das LLM.
@@ -611,11 +615,11 @@ class RAGService:
 
     async def list_documents(
         self,
-        knowledge_base_id: Optional[int] = None,
-        status: Optional[str] = None,
+        knowledge_base_id: int | None = None,
+        status: str | None = None,
         limit: int = 100,
         offset: int = 0
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Listet Dokumente auf"""
         stmt = select(Document).order_by(Document.created_at.desc())
 
@@ -629,7 +633,7 @@ class RAGService:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_document(self, document_id: int) -> Optional[Document]:
+    async def get_document(self, document_id: int) -> Document | None:
         """Holt ein Dokument nach ID"""
         stmt = select(Document).where(Document.id == document_id)
         result = await self.db.execute(stmt)
@@ -669,7 +673,7 @@ class RAGService:
     async def create_knowledge_base(
         self,
         name: str,
-        description: Optional[str] = None
+        description: str | None = None
     ) -> KnowledgeBase:
         """Erstellt eine neue Knowledge Base"""
         kb = KnowledgeBase(name=name, description=description)
@@ -679,7 +683,7 @@ class RAGService:
         logger.info(f"Knowledge Base erstellt: ID={kb.id}, Name={name}")
         return kb
 
-    async def list_knowledge_bases(self) -> List[KnowledgeBase]:
+    async def list_knowledge_bases(self) -> list[KnowledgeBase]:
         """Listet alle Knowledge Bases auf (without eager-loading documents)"""
         # Use a count subquery instead of selectinload to avoid loading all documents
         doc_count_subq = (
@@ -703,7 +707,7 @@ class RAGService:
             kbs.append(kb)
         return kbs
 
-    async def get_knowledge_base(self, kb_id: int) -> Optional[KnowledgeBase]:
+    async def get_knowledge_base(self, kb_id: int) -> KnowledgeBase | None:
         """Holt eine Knowledge Base nach ID"""
         stmt = (
             select(KnowledgeBase)
@@ -739,7 +743,7 @@ class RAGService:
     # Statistics
     # ==========================================================================
 
-    async def get_stats(self) -> Dict[str, Any]:
+    async def get_stats(self) -> dict[str, Any]:
         """Gibt Statistiken über die RAG-Datenbank zurück"""
         doc_count = await self.db.scalar(
             select(func.count(Document.id))
@@ -767,7 +771,7 @@ class RAGService:
     # Utility Methods
     # ==========================================================================
 
-    async def reindex_fts(self) -> Dict[str, Any]:
+    async def reindex_fts(self) -> dict[str, Any]:
         """
         Re-populates search_vector for all document chunks.
 
@@ -816,7 +820,7 @@ class RAGService:
         query: str,
         document_id: int,
         top_k: int = 5
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Sucht nur innerhalb eines bestimmten Dokuments.
         """

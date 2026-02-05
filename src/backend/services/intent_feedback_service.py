@@ -11,14 +11,14 @@ Feedback types:
   - "complexity": Wrong simple/complex classification
 """
 import time
-from typing import Dict, List, Optional
 
 from loguru import logger
-from sqlalchemy import select, func, text, delete
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import IntentCorrection
 from utils.config import settings
+from utils.llm_client import get_default_client
 
 
 class IntentFeedbackService:
@@ -30,7 +30,7 @@ class IntentFeedbackService:
     """
 
     # Cache for correction counts (avoid DB query on every intent extraction)
-    _count_cache: Dict[str, tuple] = {}  # {feedback_type: (count, timestamp)}
+    _count_cache: dict[str, tuple] = {}  # {feedback_type: (count, timestamp)}
     _CACHE_TTL = settings.intent_feedback_cache_ttl
 
     def __init__(self, db: AsyncSession):
@@ -40,11 +40,10 @@ class IntentFeedbackService:
     async def _get_ollama_client(self):
         """Lazy initialization of Ollama client for embeddings."""
         if self._ollama_client is None:
-            import ollama
-            self._ollama_client = ollama.AsyncClient(host=settings.ollama_url)
+            self._ollama_client = get_default_client()
         return self._ollama_client
 
-    async def _get_embedding(self, text: str) -> List[float]:
+    async def _get_embedding(self, text: str) -> list[float]:
         """Generate embedding using Ollama (nomic-embed-text, 768 dims)."""
         client = await self._get_ollama_client()
         response = await client.embeddings(
@@ -78,8 +77,8 @@ class IntentFeedbackService:
         feedback_type: str,
         original_value: str,
         corrected_value: str,
-        user_id: Optional[int] = None,
-        context: Optional[Dict] = None,
+        user_id: int | None = None,
+        context: dict | None = None,
     ) -> IntentCorrection:
         """
         Save a correction with embedding for future semantic matching.
@@ -131,7 +130,7 @@ class IntentFeedbackService:
         feedback_type: str,
         limit: int = 3,
         threshold: float = 0.75,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Find semantically similar past corrections using cosine similarity.
 
@@ -197,7 +196,7 @@ class IntentFeedbackService:
     # Format for Prompt Injection
     # =========================================================================
 
-    def format_as_few_shot(self, corrections: List[Dict], lang: str = "de") -> str:
+    def format_as_few_shot(self, corrections: list[dict], lang: str = "de") -> str:
         """
         Format intent corrections as few-shot examples for the intent prompt.
 
@@ -223,7 +222,7 @@ class IntentFeedbackService:
 
         return "\n".join(lines)
 
-    def format_agent_corrections(self, corrections: List[Dict], lang: str = "de") -> str:
+    def format_agent_corrections(self, corrections: list[dict], lang: str = "de") -> str:
         """
         Format agent tool corrections for the agent prompt.
 
@@ -253,7 +252,7 @@ class IntentFeedbackService:
     # Complexity Override
     # =========================================================================
 
-    async def check_complexity_override(self, message: str) -> Optional[bool]:
+    async def check_complexity_override(self, message: str) -> bool | None:
         """
         Check if a similar message was corrected for complexity classification.
 
@@ -281,10 +280,10 @@ class IntentFeedbackService:
 
     async def list_corrections(
         self,
-        feedback_type: Optional[str] = None,
+        feedback_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """List corrections with optional type filter."""
         query = select(IntentCorrection).order_by(IntentCorrection.created_at.desc())
 
@@ -326,7 +325,7 @@ class IntentFeedbackService:
         IntentFeedbackService._count_cache.pop(feedback_type, None)
         return True
 
-    async def get_correction_count(self, feedback_type: Optional[str] = None) -> int:
+    async def get_correction_count(self, feedback_type: str | None = None) -> int:
         """Get total correction count, optionally filtered by type."""
         query = select(func.count(IntentCorrection.id))
         if feedback_type:

@@ -14,31 +14,33 @@ Each role defines:
 import asyncio
 import json
 import os
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Optional
 
 import yaml
 from loguru import logger
 
 from services.prompt_manager import prompt_manager
+from utils.config import settings
+from utils.llm_client import get_agent_client
 
 if TYPE_CHECKING:
-    from services.ollama_service import OllamaService
     from services.mcp_client import MCPManager
+    from services.ollama_service import OllamaService
 
 
 @dataclass
 class AgentRole:
     """Definition of a specialized agent role."""
     name: str
-    description: Dict[str, str]  # lang -> description
-    mcp_servers: Optional[List[str]] = None  # None = all servers
-    internal_tools: Optional[List[str]] = None  # None = all internal tools
+    description: dict[str, str]  # lang -> description
+    mcp_servers: list[str] | None = None  # None = all servers
+    internal_tools: list[str] | None = None  # None = all internal tools
     max_steps: int = 8
     prompt_key: str = "agent_prompt"
     has_agent_loop: bool = True  # False for conversation and knowledge roles
-    model: Optional[str] = None  # Per-role model override
-    ollama_url: Optional[str] = None  # Per-role Ollama URL override
+    model: str | None = None  # Per-role model override
+    ollama_url: str | None = None  # Per-role Ollama URL override
 
 
 # Pre-built fallback roles
@@ -64,7 +66,7 @@ GENERAL_ROLE = AgentRole(
 )
 
 
-def _parse_roles(config: dict) -> Dict[str, AgentRole]:
+def _parse_roles(config: dict) -> dict[str, AgentRole]:
     """Parse role definitions from YAML config into AgentRole objects."""
     roles = {}
     roles_config = config.get("roles", {})
@@ -97,9 +99,9 @@ def _parse_roles(config: dict) -> Dict[str, AgentRole]:
 
 
 def _filter_available_roles(
-    roles: Dict[str, AgentRole],
-    connected_servers: Optional[List[str]] = None,
-) -> Dict[str, AgentRole]:
+    roles: dict[str, AgentRole],
+    connected_servers: list[str] | None = None,
+) -> dict[str, AgentRole]:
     """Filter out roles whose required MCP servers aren't connected.
 
     Roles with mcp_servers=None (general) or no agent loop (conversation, knowledge)
@@ -170,7 +172,7 @@ class AgentRouter:
         self,
         message: str,
         ollama: "OllamaService",
-        conversation_history: Optional[List[Dict]] = None,
+        conversation_history: list[dict] | None = None,
         lang: str = "de",
     ) -> AgentRole:
         """Classify a user message into one agent role.
@@ -187,8 +189,6 @@ class AgentRouter:
         Returns:
             The classified AgentRole
         """
-        from utils.config import settings
-
         # Build role descriptions for the prompt
         role_descriptions = self._build_role_descriptions(lang)
 
@@ -223,8 +223,7 @@ class AgentRouter:
         # If a separate agent Ollama is configured, use its model (the intent
         # model likely doesn't exist there). Otherwise use intent model on default.
         if settings.agent_ollama_url:
-            import ollama as ollama_lib
-            client = ollama_lib.AsyncClient(host=settings.agent_ollama_url)
+            client, _ = get_agent_client(fallback_url=settings.agent_ollama_url)
             router_model = settings.agent_model or settings.ollama_model
         else:
             client = ollama.client
@@ -257,14 +256,14 @@ class AgentRouter:
             )
             return self.get_role("general")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Router: LLM timeout, falling back to 'general'")
             return self.get_role("general")
         except Exception as e:
             logger.error(f"Router classification failed: {e}")
             return self.get_role("general")
 
-    def _parse_classification(self, response_text: str) -> Optional[str]:
+    def _parse_classification(self, response_text: str) -> str | None:
         """Parse the role name from the LLM classification response."""
         import re
 
@@ -305,7 +304,7 @@ def load_roles_config(config_path: str) -> dict:
         Parsed YAML config dict, or empty dict on error
     """
     try:
-        with open(config_path, "r", encoding="utf-8") as f:
+        with open(config_path, encoding="utf-8") as f:
             raw = f.read()
 
         # Substitute environment variables (same pattern as mcp_servers.yaml)

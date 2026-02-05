@@ -5,24 +5,26 @@ Provides LLM interaction with multilingual support (de/en).
 Language can be specified per-call or defaults to system setting.
 """
 import asyncio
-import ollama
-from typing import AsyncGenerator, List, Dict, Optional, TYPE_CHECKING
+from collections.abc import AsyncGenerator
+from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
     from integrations.core.plugin_registry import PluginRegistry
     from models.database import Message
 from loguru import logger
-from utils.config import settings
-from utils.circuit_breaker import llm_circuit_breaker, CircuitOpenError
-from services.prompt_manager import prompt_manager
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.prompt_manager import prompt_manager
+from utils.circuit_breaker import llm_circuit_breaker
+from utils.config import settings
+from utils.llm_client import get_default_client
 
 
 class OllamaService:
     """Service für Ollama LLM Interaktion mit Mehrsprachigkeit."""
 
     def __init__(self):
-        self.client = ollama.AsyncClient(host=settings.ollama_url)
+        self.client = get_default_client()
 
         # Multi-Modell Konfiguration
         self.model = settings.ollama_model  # Legacy
@@ -34,7 +36,7 @@ class OllamaService:
         # Default language from settings
         self.default_lang = settings.default_language
 
-    def get_system_prompt(self, lang: Optional[str] = None) -> str:
+    def get_system_prompt(self, lang: str | None = None) -> str:
         """Get system prompt for the specified language."""
         lang = lang or self.default_lang
         return prompt_manager.get("chat", "system_prompt", lang=lang, default=self._default_system_prompt(lang))
@@ -88,8 +90,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             logger.error(f"Fehler beim Laden des Modells: {e}")
             raise
-    
-    async def chat(self, message: str, history: List[Dict] = None, lang: Optional[str] = None) -> str:
+
+    async def chat(self, message: str, history: list[dict] = None, lang: str | None = None) -> str:
         """
         Einfacher Chat (nicht-streamend) mit optionaler Konversationshistorie.
 
@@ -125,9 +127,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             llm_circuit_breaker.record_failure()
             logger.error(f"Chat Fehler: {e}")
-            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {str(e)}", error=str(e))
-    
-    async def chat_stream(self, message: str, history: List[Dict] = None, lang: Optional[str] = None) -> AsyncGenerator[str, None]:
+            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
+
+    async def chat_stream(self, message: str, history: list[dict] = None, lang: str | None = None) -> AsyncGenerator[str, None]:
         """
         Streaming Chat with optional conversation history.
 
@@ -168,16 +170,16 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             llm_circuit_breaker.record_failure()
             logger.error(f"Streaming Fehler: {e}")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {str(e)}", error=str(e))
-    
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
+
     async def extract_intent(
         self,
         message: str,
         plugin_registry=None,
-        room_context: Optional[Dict] = None,
-        conversation_history: Optional[List[Dict]] = None,
-        lang: Optional[str] = None
-    ) -> Dict:
+        room_context: dict | None = None,
+        conversation_history: list[dict] | None = None,
+        lang: str | None = None
+    ) -> dict:
         """
         Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung.
 
@@ -261,7 +263,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             entity_context=entity_context,
             correction_examples=correction_examples
         )
-        
+
         try:
             # Use externalized system message and LLM options
             json_system_message = prompt_manager.get("intent", "json_system_message", lang=lang, default="Reply with JSON only.")
@@ -312,10 +314,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             import re
 
             logger.debug(f"Raw LLM response ({len(response) if response else 0} chars): {response[:300] if response else '(empty)'}")
-            
+
             # Entferne Markdown-Code-Blocks
             response = response.strip()
-            
+
             # Methode 1: Markdown Code-Block
             if "```" in response:
                 match = re.search(r'```(?:json)?\s*(\{.*\})\s*```', response, re.DOTALL)
@@ -359,7 +361,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                             break
                 if end_pos > 0:
                     response = response[first_brace:end_pos + 1]
-            
+
             # Parse JSON
             try:
                 raw_data = json.loads(response)
@@ -441,15 +443,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                         "parameters": {},
                         "confidence": 0.0
                     }
-            
+
             # Validierung: Wenn es keine HA-relevante Frage ist, erzwinge general.conversation
             if intent_data.get("intent", "").startswith("homeassistant."):
                 # Lade dynamische Keywords von Home Assistant
                 ha_keywords = await self._get_ha_keywords()
-                
+
                 message_lower = message.lower()
                 has_ha_keyword = any(keyword in message_lower for keyword in ha_keywords)
-                
+
                 if not has_ha_keyword:
                     # Keine HA-Keywords gefunden, überschreibe Intent
                     logger.info(f"⚠️  Intent überschrieben: Keine HA-Keywords in '{message[:50]}' gefunden")
@@ -458,7 +460,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                         "parameters": {},
                         "confidence": 1.0
                     }
-            
+
             logger.info(f"🎯 Intent: {intent_data.get('intent')} | Entity: {intent_data.get('parameters', {}).get('entity_id', 'none')}")
 
             return intent_data
@@ -478,10 +480,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         self,
         message: str,
         plugin_registry=None,
-        room_context: Optional[Dict] = None,
-        conversation_history: Optional[List[Dict]] = None,
-        lang: Optional[str] = None
-    ) -> List[Dict]:
+        room_context: dict | None = None,
+        conversation_history: list[dict] | None = None,
+        lang: str | None = None
+    ) -> list[dict]:
         """
         Extract ranked list of intents from message (highest confidence first).
 
@@ -523,9 +525,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         # Old format: single intent dict
         return [raw]
-    
+
     @staticmethod
-    def _parse_intent_json(raw_response: str) -> Optional[Dict]:
+    def _parse_intent_json(raw_response: str) -> dict | None:
         """Parse intent JSON from LLM response, handling markdown and truncation."""
         import json
         import re
@@ -593,7 +595,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     async def _build_entity_context(
         self,
         message: str,
-        room_context: Optional[Dict] = None
+        room_context: dict | None = None
     ) -> str:
         """
         Erstelle Entity-Kontext für Intent Recognition
@@ -779,7 +781,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         session_id: str,
         db: AsyncSession,
         max_messages: int = 20
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Lade Konversationskontext aus der Datenbank (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
@@ -791,7 +793,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         role: str,
         content: str,
         db: AsyncSession,
-        metadata: Optional[Dict] = None
+        metadata: dict | None = None
     ) -> "Message":
         """Speichere eine einzelne Nachricht (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
@@ -802,7 +804,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         self,
         session_id: str,
         db: AsyncSession
-    ) -> Optional[Dict]:
+    ) -> dict | None:
         """Hole Zusammenfassung einer Konversation (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
@@ -823,7 +825,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         db: AsyncSession,
         limit: int = 50,
         offset: int = 0
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Hole Liste aller Konversationen (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
@@ -834,7 +836,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         query: str,
         db: AsyncSession,
         limit: int = 20
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Suche in Konversationen nach Text (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
@@ -879,7 +881,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     # RAG (Retrieval-Augmented Generation) Methods
     # ==========================================================================
 
-    async def get_embedding(self, text: str) -> List[float]:
+    async def get_embedding(self, text: str) -> list[float]:
         """
         Generiert Embedding für Text mit dem konfigurierten Embed-Modell.
 
@@ -903,9 +905,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     async def chat_with_rag(
         self,
         message: str,
-        rag_context: Optional[str] = None,
-        history: Optional[List[Dict]] = None,
-        lang: Optional[str] = None
+        rag_context: str | None = None,
+        history: list[dict] | None = None,
+        lang: str | None = None
     ) -> str:
         """
         Chat mit optionalem RAG-Kontext (nicht-streamend).
@@ -946,14 +948,14 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         except Exception as e:
             logger.error(f"RAG Chat Fehler: {e}")
-            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Sorry, there was an error: {str(e)}", error=str(e))
+            return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Sorry, there was an error: {e!s}", error=str(e))
 
     async def chat_stream_with_rag(
         self,
         message: str,
-        rag_context: Optional[str] = None,
-        history: Optional[List[Dict]] = None,
-        lang: Optional[str] = None
+        rag_context: str | None = None,
+        history: list[dict] | None = None,
+        lang: str | None = None
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat mit optionalem RAG-Kontext.
@@ -998,9 +1000,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         except Exception as e:
             logger.error(f"RAG Streaming Fehler: {e}")
-            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {str(e)}", error=str(e))
+            yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
 
-    def _build_rag_system_prompt(self, context: Optional[str] = None, lang: Optional[str] = None) -> str:
+    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None) -> str:
         """
         Erstellt System-Prompt mit optionalem RAG-Kontext.
 
@@ -1018,9 +1020,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         if not context:
             return base_prompt
-
-        # Get LLM options for RAG
-        rag_options = prompt_manager.get_config("chat", "rag_llm_options") or {}
 
         # Build context section based on language
         if lang == "en":
@@ -1046,7 +1045,7 @@ WICHTIG:
 
         return f"{base_prompt}\n{context_section}"
 
-    async def ensure_rag_models_loaded(self) -> Dict[str, bool]:
+    async def ensure_rag_models_loaded(self) -> dict[str, bool]:
         """
         Stellt sicher, dass alle für RAG benötigten Modelle geladen sind.
 

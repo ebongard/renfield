@@ -12,21 +12,23 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import AsyncGenerator, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from utils.config import settings
-from utils.circuit_breaker import agent_circuit_breaker, CircuitOpenError
-from utils.token_counter import token_counter
 from services.agent_tools import AgentToolRegistry
 from services.prompt_manager import prompt_manager
+from utils.circuit_breaker import agent_circuit_breaker
+from utils.config import settings
+from utils.llm_client import get_agent_client
+from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
-    from services.ollama_service import OllamaService
     from services.action_executor import ActionExecutor
     from services.agent_router import AgentRole
+    from services.ollama_service import OllamaService
 
 
 def _compress_history_message(content: str, max_chars: int = 500) -> str:
@@ -80,19 +82,19 @@ class AgentStep:
     step_number: int
     step_type: str  # "thinking" | "tool_call" | "tool_result" | "final_answer" | "error"
     content: str = ""
-    tool: Optional[str] = None
-    parameters: Optional[Dict] = None
-    reason: Optional[str] = None
-    success: Optional[bool] = None
-    data: Optional[Dict] = None
+    tool: str | None = None
+    parameters: dict | None = None
+    reason: str | None = None
+    success: bool | None = None
+    data: dict | None = None
 
 
 @dataclass
 class AgentContext:
     """Accumulated context for the Agent Loop."""
     original_message: str
-    steps: List[AgentStep] = field(default_factory=list)
-    tool_results: List[Dict] = field(default_factory=list)
+    steps: list[AgentStep] = field(default_factory=list)
+    tool_results: list[dict] = field(default_factory=list)
 
     # Maximum number of steps to include in the prompt (sliding window)
     # With 32k context window, we can keep all steps from a typical agent run
@@ -100,11 +102,11 @@ class AgentContext:
 
     # Blob store for large binary data (base64) passed between tool steps.
     # Keys are "$blob:stepN_fieldname", values are the actual base64 strings.
-    blob_store: Dict[str, str] = field(default_factory=dict)
+    blob_store: dict[str, str] = field(default_factory=dict)
 
     # Metadata for blobs (filename, mime_type) keyed by step number.
     # E.g. {2: {"filename": "invoice.pdf", "mime_type": "application/pdf"}}
-    blob_meta: Dict[int, Dict[str, str]] = field(default_factory=dict)
+    blob_meta: dict[int, dict[str, str]] = field(default_factory=dict)
 
     # Token tracking
     total_input_tokens: int = 0
@@ -116,7 +118,7 @@ class AgentContext:
         if response:
             self.total_output_tokens += token_counter.count(response)
 
-    def get_token_usage(self) -> Dict:
+    def get_token_usage(self) -> dict:
         """Get total token usage statistics."""
         return {
             "input_tokens": self.total_input_tokens,
@@ -211,7 +213,7 @@ def _truncate(text: str, max_length: int = settings.agent_response_truncation) -
 _BLOB_FIELDS = {"content_base64"}
 
 
-def _extract_blobs(data: any, step_num, blob_store: Dict[str, str], blob_meta: Optional[Dict[int, Dict[str, str]]] = None) -> any:
+def _extract_blobs(data: any, step_num, blob_store: dict[str, str], blob_meta: dict[int, dict[str, str]] | None = None) -> any:
     """
     Extract large binary fields from tool result data, store them in the
     blob store, and replace with $blob:stepN_field references.
@@ -265,7 +267,7 @@ def _extract_blobs(data: any, step_num, blob_store: Dict[str, str], blob_meta: O
     return data
 
 
-def _resolve_blobs(params: any, blob_store: Dict[str, str]) -> any:
+def _resolve_blobs(params: any, blob_store: dict[str, str]) -> any:
     """
     Resolve $blob:stepN_field references in tool call parameters back to
     actual data from the blob store.
@@ -280,7 +282,7 @@ def _resolve_blobs(params: any, blob_store: Dict[str, str]) -> any:
     return params
 
 
-def _parse_agent_json(raw: str) -> Optional[Dict]:
+def _parse_agent_json(raw: str) -> dict | None:
     """
     Robustly parse JSON from LLM output.
 
@@ -374,9 +376,9 @@ class AgentService:
     def __init__(
         self,
         tool_registry: AgentToolRegistry,
-        max_steps: Optional[int] = None,
-        step_timeout: Optional[float] = None,
-        total_timeout: Optional[float] = None,
+        max_steps: int | None = None,
+        step_timeout: float | None = None,
+        total_timeout: float | None = None,
         role: Optional["AgentRole"] = None,
     ):
         self.tool_registry = tool_registry
@@ -391,8 +393,8 @@ class AgentService:
         self,
         message: str,
         context: AgentContext,
-        conversation_history: Optional[List[Dict]] = None,
-        room_context: Optional[Dict] = None,
+        conversation_history: list[dict] | None = None,
+        room_context: dict | None = None,
         lang: str = "de",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
@@ -477,9 +479,9 @@ class AgentService:
         message: str,
         ollama: "OllamaService",
         executor: "ActionExecutor",
-        conversation_history: Optional[List[Dict]] = None,
-        room_context: Optional[Dict] = None,
-        lang: Optional[str] = None,
+        conversation_history: list[dict] | None = None,
+        room_context: dict | None = None,
+        lang: str | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -502,16 +504,11 @@ class AgentService:
         role_model = self.role.model if self.role else None
         role_url = self.role.ollama_url if self.role else None
         agent_model = role_model or settings.agent_model or settings.ollama_model
-        agent_ollama_url = role_url or settings.agent_ollama_url
 
         # Use separate Ollama instance for agent if configured
-        if agent_ollama_url:
-            import ollama as ollama_lib
-            agent_client = ollama_lib.AsyncClient(host=agent_ollama_url)
-            logger.info(f"🤖 Agent [{self.role.name if self.role else 'default'}] using Ollama: {agent_ollama_url} / {agent_model}")
-        else:
-            agent_client = ollama.client
-            logger.info(f"🤖 Agent [{self.role.name if self.role else 'default'}] using default Ollama / {agent_model}")
+        agent_client, resolved_url = get_agent_client(role_url, settings.agent_ollama_url)
+        role_label = self.role.name if self.role else "default"
+        logger.info(f"🤖 Agent [{role_label}] using Ollama: {resolved_url} / {agent_model}")
 
         # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
         # The LLM selects the right tool itself — eliminates keyword-filtering errors.
@@ -577,7 +574,7 @@ class AgentService:
                 # Track token usage
                 context.track_tokens(prompt, response_text)
                 logger.info(f"🤖 Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
                 yield AgentStep(
@@ -745,7 +742,7 @@ class AgentService:
                 result = await executor.execute(intent_data)
             except Exception as e:
                 logger.error(f"❌ Agent tool execution failed: {action} — {e}")
-                error_msg = f"Tool error: {str(e)}" if lang == "en" else f"Tool-Fehler: {str(e)}"
+                error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"
                 result = {
                     "success": False,
                     "message": error_msg,
@@ -929,7 +926,7 @@ class AgentService:
         )
 
 
-def _auto_attach_blobs(parameters: Dict, context: AgentContext) -> Dict:
+def _auto_attach_blobs(parameters: dict, context: AgentContext) -> dict:
     """
     Auto-attach downloaded documents to email parameters.
 
@@ -963,7 +960,7 @@ def _auto_attach_blobs(parameters: Dict, context: AgentContext) -> Dict:
     return parameters
 
 
-def _recover_send_email(response_text: str, context: AgentContext) -> Optional[Dict]:
+def _recover_send_email(response_text: str, context: AgentContext) -> dict | None:
     """
     Recover a truncated send_email JSON from LLM output.
 
@@ -1017,7 +1014,7 @@ def _recover_send_email(response_text: str, context: AgentContext) -> Optional[D
         return None
 
 
-def step_to_ws_message(step: AgentStep) -> Dict:
+def step_to_ws_message(step: AgentStep) -> dict:
     """Convert an AgentStep to a WebSocket message dict."""
     if step.step_type == "thinking":
         return {

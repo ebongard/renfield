@@ -143,6 +143,20 @@ services/
 
 ---
 
+#### ~~8. Duplizierte Ollama Client-Instantiierungen (5 Stellen)~~ ✅ Behoben
+
+**Status:** Behoben am 2026-02-05
+
+**Ursprüngliches Problem:** `ollama.AsyncClient(host=...)` wurde an 5 Stellen separat instanziiert mit duplizierter URL-Resolution-Logik (ollama_service, agent_service, agent_router, rag_service, intent_feedback_service).
+
+**Lösung:**
+- `utils/llm_client.py` erstellt: `LLMClient` Protocol (structural typing) + Factory mit URL-basiertem Caching
+- `get_default_client()` für `settings.ollama_url`
+- `get_agent_client(role_url, fallback_url)` für Agent-URL-Priorisierung
+- 13 neue Tests in `tests/backend/test_llm_client.py`
+
+---
+
 ### 🟢 Niedrig
 
 #### ~~8. Alembic Migrations ohne Downgrade~~ ✅ OK
@@ -540,7 +554,7 @@ Bereits gepinnte Images:
 ### Mittelfristig (1-3 Monate)
 
 9. 🔄 TypeScript Migration (Frontend) - Grundgerüst fertig (2026-01-26)
-10. ⬜ Test-Coverage erhöhen auf 60%+
+10. ✅ ~~Test-Coverage Enforcement~~ (2026-02-04: `--cov-fail-under=50` in CI)
 11. ⬜ Dependency Updates (Minor)
 
 ### Langfristig (3-6 Monate)
@@ -555,6 +569,10 @@ Bereits gepinnte Images:
 
 | Datum | Änderung |
 |-------|----------|
+| 2026-02-05 | LLM Client Factory: 5 duplizierte `ollama.AsyncClient`-Instantiierungen durch zentrale Factory + Protocol ersetzt (`utils/llm_client.py`), URL-basiertes Caching, 13 neue Tests (#60) |
+| 2026-02-04 | Prometheus `/metrics` Endpoint implementiert: HTTP, WebSocket, LLM, Circuit Breaker Metriken (opt-in via METRICS_ENABLED) |
+| 2026-02-04 | Coverage-Threshold Enforcement: `--cov-fail-under=50` in CI und Makefile |
+| 2026-02-04 | flake8 durch ruff ersetzt: `pyproject.toml` mit ruff + pytest Config, `pytest.ini` gelöscht, CI auf ruff umgestellt, 1457 Violations auto-fixed + 30 manuell behoben |
 | 2026-01-26 | TypeScript Migration: Hooks, Context, Utils, Types migriert; permissive Config (#38) |
 | 2026-01-26 | Frontend Multi-Stage Build: 624MB → 155MB (75% Reduktion), nginx.conf für SPA (#37) |
 | 2026-01-26 | Secrets Management dokumentiert: Docker Secrets, Vault, Kubernetes (#37) |

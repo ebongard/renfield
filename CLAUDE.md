@@ -99,12 +99,28 @@ docker exec -it renfield-backend alembic upgrade head
 docker exec -it renfield-backend alembic downgrade -1
 ```
 
+### Linting & Formatting
+```bash
+make lint                    # Lint all code (ruff + eslint)
+make lint-backend            # Lint backend with ruff
+make format-backend          # Format + auto-fix with ruff
+```
+
+**Configuration:** `pyproject.toml` — contains ruff, pytest, and coverage config. No separate `pytest.ini`, `.flake8`, etc.
+
 ### Testing
 ```bash
 make test                    # Run all tests
 make test-backend            # Backend tests only
 make test-frontend-react     # React component tests (Vitest)
-make test-coverage           # Tests with coverage report
+make test-coverage           # Tests with coverage report (fail-under=50%)
+```
+
+### Monitoring
+```bash
+# Enable Prometheus metrics endpoint (opt-in)
+METRICS_ENABLED=true
+curl http://localhost:8000/metrics  # Prometheus exposition format
 ```
 
 ## Architecture
@@ -178,6 +194,22 @@ AGENT_MODEL=                 # Optional: separate model for agent
 - `agent_tool_result` — Tool result (success/failure, data)
 - `stream` — Final answer (same as single-intent path)
 - `done` with `agent_steps` count
+
+### LLM Client Factory
+
+All services obtain their `ollama.AsyncClient` through a central factory in `utils/llm_client.py` instead of instantiating clients directly. The factory provides URL-based caching (same URL → same client instance) and a `LLMClient` Protocol that `ollama.AsyncClient` satisfies via structural typing.
+
+```python
+from utils.llm_client import get_default_client, get_agent_client, create_llm_client
+
+client = get_default_client()                          # settings.ollama_url
+client, url = get_agent_client(role_url, fallback_url) # role → fallback → default
+client = create_llm_client("http://custom:11434")      # arbitrary URL
+```
+
+**Key files:** `utils/llm_client.py` (Protocol + Factory), `tests/backend/test_llm_client.py`
+
+**Consumers:** `OllamaService`, `AgentService`, `AgentRouter`, `RAGService`, `IntentFeedbackService`
 
 ### Intent Recognition System
 
@@ -285,6 +317,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `RAG_CONTEXT_WINDOW` — Adjacent chunks per direction for context expansion (default: `1`)
 - `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
 - Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`
+- `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 
 ## Common Development Patterns
 
@@ -387,8 +420,8 @@ make test-coverage       # With coverage report
 
 | Workflow | Trigger | Description |
 |----------|---------|-------------|
-| `ci.yml` | Push to main/develop, PRs | Full CI: lint, test, build |
-| `pr-check.yml` | Pull requests | Quick PR checks |
+| `ci.yml` | Push to main/develop, PRs | Full CI: ruff lint, test (with coverage threshold), build |
+| `pr-check.yml` | Pull requests | Quick PR checks (ruff lint, eslint) |
 | `release.yml` | Tag push (v*.*.*) | Build + push Docker images to GHCR |
 
 ```bash
