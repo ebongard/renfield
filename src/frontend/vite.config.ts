@@ -80,6 +80,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 3000,
+    // Allow access from local network hostnames (Vite 5.4+ security feature)
+    allowedHosts: ['renfield.local', 'localhost', '127.0.0.1', '.local'],
     watch: {
       usePolling: true
     },
