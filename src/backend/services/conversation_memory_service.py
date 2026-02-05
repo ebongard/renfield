@@ -8,6 +8,8 @@ assistant can recall relevant memories across sessions.
 Pattern follows IntentFeedbackService for embedding generation and
 cosine similarity search via raw SQL (pgvector).
 """
+import json
+import re
 from datetime import datetime, timedelta
 
 from loguru import logger
@@ -114,6 +116,153 @@ class ConversationMemoryService:
             f"user_id={user_id}, id={memory.id}"
         )
         return memory
+
+    # =========================================================================
+    # Extract
+    # =========================================================================
+
+    async def extract_and_save(
+        self,
+        user_message: str,
+        assistant_response: str,
+        user_id: int | None = None,
+        session_id: str | None = None,
+        lang: str = "de",
+    ) -> list[ConversationMemory]:
+        """Extract memorable facts from a conversation exchange and save them.
+
+        Uses the LLM to analyze the dialog, then saves extracted memories
+        with embeddings and deduplication.
+
+        Returns list of saved/deduplicated memories.
+        """
+        from services.prompt_manager import prompt_manager
+
+        # Build extraction prompt
+        prompt = prompt_manager.get(
+            "memory", "extraction_prompt", lang=lang,
+            user_message=user_message,
+            assistant_response=assistant_response,
+        )
+        system_msg = prompt_manager.get(
+            "memory", "extraction_system", lang=lang,
+        )
+        llm_options = prompt_manager.get_config("memory", "llm_options") or {}
+
+        # LLM call
+        try:
+            client = await self._get_ollama_client()
+            response = await client.chat(
+                model=settings.ollama_model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                options=llm_options,
+            )
+            raw_text = response.message.content
+        except Exception as e:
+            logger.warning(f"Memory extraction LLM call failed: {e}")
+            return []
+
+        # Parse JSON array from response
+        extracted = self._parse_extraction_response(raw_text)
+        if not extracted:
+            return []
+
+        # Save each extracted fact
+        saved: list[ConversationMemory] = []
+        for item in extracted:
+            content = item.get("content", "").strip()
+            category = item.get("category", "").strip().lower()
+            importance = item.get("importance", 0.5)
+
+            if not content:
+                continue
+            if category not in MEMORY_CATEGORIES:
+                logger.debug(f"Skipping extracted memory with invalid category: {category}")
+                continue
+
+            # Clamp importance to valid range
+            try:
+                importance = max(0.1, min(1.0, float(importance)))
+            except (TypeError, ValueError):
+                importance = 0.5
+
+            memory = await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+            if memory:
+                saved.append(memory)
+
+        return saved
+
+    @staticmethod
+    def _parse_extraction_response(raw_text: str) -> list[dict]:
+        """Parse JSON array from LLM extraction response.
+
+        Handles markdown code blocks, extra text around the JSON,
+        and other common LLM output artifacts.
+        """
+        if not raw_text:
+            return []
+
+        text = raw_text.strip()
+
+        # Remove markdown code blocks
+        if "```" in text:
+            match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', text, re.DOTALL)
+            if match:
+                text = match.group(1)
+            else:
+                parts = text.split("```")
+                if len(parts) >= 2:
+                    text = parts[1].strip()
+                    if text.startswith("json"):
+                        text = text[4:].strip()
+
+        # Find balanced brackets for JSON array
+        first_bracket = text.find('[')
+        if first_bracket >= 0:
+            depth = 0
+            in_string = False
+            escape_next = False
+            end_pos = -1
+            for i in range(first_bracket, len(text)):
+                c = text[i]
+                if escape_next:
+                    escape_next = False
+                    continue
+                if c == '\\' and in_string:
+                    escape_next = True
+                    continue
+                if c == '"' and not escape_next:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if c == '[':
+                    depth += 1
+                elif c == ']':
+                    depth -= 1
+                    if depth == 0:
+                        end_pos = i
+                        break
+            if end_pos > 0:
+                text = text[first_bracket:end_pos + 1]
+
+        try:
+            data = json.loads(text)
+            if isinstance(data, list):
+                return [item for item in data if isinstance(item, dict)]
+            return []
+        except (json.JSONDecodeError, TypeError):
+            logger.debug(f"Memory extraction: could not parse JSON from: {raw_text[:200]}")
+            return []
 
     # =========================================================================
     # Retrieve

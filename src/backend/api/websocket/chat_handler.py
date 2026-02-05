@@ -9,6 +9,8 @@ This module handles:
 - Room context auto-detection
 """
 
+import asyncio
+
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
 from pydantic import ValidationError
@@ -26,6 +28,9 @@ from .shared import (
 )
 
 router = APIRouter()
+
+# Prevent background tasks from being garbage-collected
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _parse_mcp_raw_data(data: list) -> any:
@@ -204,6 +209,31 @@ async def _route_chat_tts_output(
         import traceback
         logger.error(traceback.format_exc())
         return False
+
+
+async def _extract_memories_background(
+    user_message: str,
+    assistant_response: str,
+    user_id: int | None,
+    session_id: str | None,
+    lang: str,
+) -> None:
+    """Background task: extract and save memories from a conversation exchange."""
+    try:
+        async with AsyncSessionLocal() as db:
+            from services.conversation_memory_service import ConversationMemoryService
+            service = ConversationMemoryService(db)
+            memories = await service.extract_and_save(
+                user_message=user_message,
+                assistant_response=assistant_response,
+                user_id=user_id,
+                session_id=session_id,
+                lang=lang,
+            )
+            if memories:
+                logger.info(f"Extracted {len(memories)} memories from conversation")
+    except Exception as e:
+        logger.warning(f"Memory extraction failed: {e}")
 
 
 async def _retrieve_memory_context(content: str, user_id: int | None, lang: str) -> str:
@@ -679,6 +709,20 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                     "feedback_type": "intent",
                 })
                 logger.info(f"📝 Proactive feedback requested for intent: {intent.get('intent')}")
+
+            # Background: Extract memories from this exchange
+            if settings.memory_enabled and settings.memory_extraction_enabled and full_response:
+                task = asyncio.create_task(
+                    _extract_memories_background(
+                        user_message=content,
+                        assistant_response=full_response,
+                        user_id=user_id,
+                        session_id=msg_session_id,
+                        lang=ollama.default_lang,
+                    )
+                )
+                _background_tasks.add(task)
+                task.add_done_callback(_background_tasks.discard)
 
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 

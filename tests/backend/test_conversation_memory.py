@@ -6,7 +6,7 @@ pgvector SQL queries are tested for error handling; actual similarity
 search requires PostgreSQL and is covered by e2e tests.
 """
 from datetime import datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import func, select
@@ -715,3 +715,345 @@ class TestOllamaServiceMemoryIntegration:
         prompt_none = service._build_rag_system_prompt(context="RAG context", lang="en", memory_context=None)
 
         assert prompt_no_mem == prompt_none
+
+
+# ==========================================================================
+# Memory Extraction Tests
+# ==========================================================================
+
+def _make_llm_response(content: str):
+    """Create a mock LLM response object."""
+    response = MagicMock()
+    response.message.content = content
+    return response
+
+
+class TestMemoryExtraction:
+    """Tests for ConversationMemoryService.extract_and_save()."""
+
+    @pytest.mark.unit
+    async def test_extract_and_save_basic(self, memory_service):
+        """LLM returns 2 facts → 2 memories saved."""
+        llm_response = _make_llm_response(
+            '[{"content": "Mag Jazz", "category": "preference", "importance": 0.8},'
+            ' {"content": "Heisst Max", "category": "fact", "importance": 0.9}]'
+        )
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=None):
+            result = await memory_service.extract_and_save(
+                user_message="Ich bin Max und mag Jazz",
+                assistant_response="Schoen, Max! Jazz ist toll.",
+                user_id=None,
+                session_id="sess-123",
+                lang="de",
+            )
+
+        assert len(result) == 2
+        contents = {m.content for m in result}
+        assert "Mag Jazz" in contents
+        assert "Heisst Max" in contents
+
+    @pytest.mark.unit
+    async def test_extract_and_save_empty_response(self, memory_service):
+        """LLM returns [] → no memories."""
+        llm_response = _make_llm_response('[]')
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+            result = await memory_service.extract_and_save(
+                user_message="Schalte das Licht ein",
+                assistant_response="Licht ist an.",
+            )
+
+        assert result == []
+
+    @pytest.mark.unit
+    async def test_extract_and_save_invalid_json(self, memory_service):
+        """LLM returns garbage → graceful, 0 memories."""
+        llm_response = _make_llm_response('This is not JSON at all!')
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+            result = await memory_service.extract_and_save(
+                user_message="Hallo",
+                assistant_response="Hallo!",
+            )
+
+        assert result == []
+
+    @pytest.mark.unit
+    async def test_extract_and_save_invalid_category(self, memory_service):
+        """Extracted fact with invalid category is skipped."""
+        llm_response = _make_llm_response(
+            '[{"content": "Likes cats", "category": "invalid_cat", "importance": 0.7},'
+            ' {"content": "Name is Max", "category": "fact", "importance": 0.8}]'
+        )
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=None):
+            result = await memory_service.extract_and_save(
+                user_message="Ich heisse Max und mag Katzen",
+                assistant_response="Hallo Max!",
+            )
+
+        assert len(result) == 1
+        assert result[0].content == "Name is Max"
+
+    @pytest.mark.unit
+    async def test_extract_and_save_llm_failure(self, memory_service):
+        """LLM call fails → empty list, no crash."""
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(side_effect=Exception("Connection refused"))
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+            result = await memory_service.extract_and_save(
+                user_message="Hallo",
+                assistant_response="Hallo!",
+            )
+
+        assert result == []
+
+    @pytest.mark.unit
+    async def test_extract_and_save_deduplication(self, memory_service, db_session):
+        """Already existing fact → access_count incremented via dedup."""
+        # Create existing memory
+        existing = ConversationMemory(
+            content="Mag Jazz",
+            category="preference",
+            access_count=1,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+
+        llm_response = _make_llm_response(
+            '[{"content": "Mag Jazz", "category": "preference", "importance": 0.8}]'
+        )
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=[0.1] * 768), \
+             patch.object(memory_service, '_find_duplicate', return_value=existing):
+            result = await memory_service.extract_and_save(
+                user_message="Ich mag Jazz",
+                assistant_response="Jazz ist toll!",
+            )
+
+        assert len(result) == 1
+        assert result[0].id == existing.id
+        assert result[0].access_count == 2
+
+    @pytest.mark.unit
+    async def test_extract_and_save_markdown_code_block(self, memory_service):
+        """LLM wraps response in markdown code block."""
+        llm_response = _make_llm_response(
+            '```json\n[{"content": "Trinkt gerne Tee", "category": "preference", "importance": 0.6}]\n```'
+        )
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=None):
+            result = await memory_service.extract_and_save(
+                user_message="Ich trinke gerne Tee",
+                assistant_response="Tee ist lecker!",
+            )
+
+        assert len(result) == 1
+        assert result[0].content == "Trinkt gerne Tee"
+
+    @pytest.mark.unit
+    async def test_extract_and_save_importance_clamped(self, memory_service):
+        """Importance values are clamped to 0.1-1.0."""
+        llm_response = _make_llm_response(
+            '[{"content": "Test", "category": "fact", "importance": 5.0}]'
+        )
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=None):
+            result = await memory_service.extract_and_save(
+                user_message="Test",
+                assistant_response="Ok",
+            )
+
+        assert len(result) == 1
+        assert result[0].importance == 1.0
+
+    @pytest.mark.unit
+    async def test_extract_and_save_empty_content_skipped(self, memory_service):
+        """Items with empty content are skipped."""
+        llm_response = _make_llm_response(
+            '[{"content": "", "category": "fact", "importance": 0.5},'
+            ' {"content": "Valid fact", "category": "fact", "importance": 0.7}]'
+        )
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+
+        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+             patch.object(memory_service, '_get_embedding', return_value=None):
+            result = await memory_service.extract_and_save(
+                user_message="Test",
+                assistant_response="Ok",
+            )
+
+        assert len(result) == 1
+        assert result[0].content == "Valid fact"
+
+
+class TestMemoryExtractionParsing:
+    """Tests for _parse_extraction_response static method."""
+
+    @pytest.mark.unit
+    def test_parse_valid_json_array(self):
+        """Standard JSON array is parsed correctly."""
+        result = ConversationMemoryService._parse_extraction_response(
+            '[{"content": "Test", "category": "fact"}]'
+        )
+        assert len(result) == 1
+        assert result[0]["content"] == "Test"
+
+    @pytest.mark.unit
+    def test_parse_empty_array(self):
+        """Empty JSON array returns empty list."""
+        result = ConversationMemoryService._parse_extraction_response('[]')
+        assert result == []
+
+    @pytest.mark.unit
+    def test_parse_empty_string(self):
+        """Empty string returns empty list."""
+        result = ConversationMemoryService._parse_extraction_response('')
+        assert result == []
+
+    @pytest.mark.unit
+    def test_parse_none(self):
+        """None returns empty list."""
+        result = ConversationMemoryService._parse_extraction_response(None)
+        assert result == []
+
+    @pytest.mark.unit
+    def test_parse_markdown_code_block(self):
+        """JSON wrapped in markdown code block."""
+        text = '```json\n[{"content": "Test", "category": "fact"}]\n```'
+        result = ConversationMemoryService._parse_extraction_response(text)
+        assert len(result) == 1
+
+    @pytest.mark.unit
+    def test_parse_extra_text_around_json(self):
+        """JSON array with extra text before/after."""
+        text = 'Here are the results:\n[{"content": "Test", "category": "fact"}]\nDone!'
+        result = ConversationMemoryService._parse_extraction_response(text)
+        assert len(result) == 1
+
+    @pytest.mark.unit
+    def test_parse_non_dict_items_filtered(self):
+        """Non-dict items in the array are filtered out."""
+        text = '[{"content": "Valid"}, "invalid_string", 42]'
+        result = ConversationMemoryService._parse_extraction_response(text)
+        assert len(result) == 1
+        assert result[0]["content"] == "Valid"
+
+    @pytest.mark.unit
+    def test_parse_garbage_returns_empty(self):
+        """Completely invalid text returns empty list."""
+        result = ConversationMemoryService._parse_extraction_response(
+            'I could not find any facts in this conversation.'
+        )
+        assert result == []
+
+
+class TestMemoryExtractionPrompt:
+    """Tests for extraction prompt templates."""
+
+    @pytest.mark.unit
+    def test_extraction_prompt_german(self):
+        """German extraction prompt renders correctly with variables."""
+        from services.prompt_manager import prompt_manager
+
+        # Reload to pick up new memory.yaml
+        prompt_manager.reload()
+
+        result = prompt_manager.get(
+            "memory", "extraction_prompt", lang="de",
+            user_message="Ich heisse Max",
+            assistant_response="Hallo Max!",
+        )
+
+        assert "Ich heisse Max" in result
+        assert "Hallo Max!" in result
+        assert "EXTRAHIERE" in result
+        assert "IGNORIERE" in result
+
+    @pytest.mark.unit
+    def test_extraction_prompt_english(self):
+        """English extraction prompt renders correctly with variables."""
+        from services.prompt_manager import prompt_manager
+
+        prompt_manager.reload()
+
+        result = prompt_manager.get(
+            "memory", "extraction_prompt", lang="en",
+            user_message="My name is Max",
+            assistant_response="Hello Max!",
+        )
+
+        assert "My name is Max" in result
+        assert "Hello Max!" in result
+        assert "EXTRACT" in result
+        assert "IGNORE" in result
+
+    @pytest.mark.unit
+    def test_extraction_system_prompt(self):
+        """System prompt exists for both languages."""
+        from services.prompt_manager import prompt_manager
+
+        prompt_manager.reload()
+
+        de = prompt_manager.get("memory", "extraction_system", lang="de")
+        en = prompt_manager.get("memory", "extraction_system", lang="en")
+
+        assert "JSON" in de
+        assert "JSON" in en
+
+    @pytest.mark.unit
+    def test_extraction_llm_options(self):
+        """LLM options are configured for low temperature."""
+        from services.prompt_manager import prompt_manager
+
+        prompt_manager.reload()
+
+        options = prompt_manager.get_config("memory", "llm_options")
+        assert options is not None
+        assert options["temperature"] == 0.1
+        assert options["num_predict"] == 500
+
+
+class TestMemoryExtractionConfig:
+    """Tests for memory extraction config setting."""
+
+    @pytest.mark.unit
+    def test_extraction_enabled_default(self):
+        """Default is False."""
+        from utils.config import Settings
+        s = Settings(database_url="sqlite:///:memory:")
+        assert s.memory_extraction_enabled is False
+
+    @pytest.mark.unit
+    def test_extraction_enabled_custom(self):
+        """Can be set to True."""
+        from utils.config import Settings
+        s = Settings(
+            database_url="sqlite:///:memory:",
+            memory_extraction_enabled=True,
+        )
+        assert s.memory_extraction_enabled is True

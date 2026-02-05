@@ -282,26 +282,24 @@ PROACTIVE_FEEDBACK_SIMILARITY_THRESHOLD=0.80
 - `GET /api/notifications/suppressions` — Aktive Suppression-Regeln
 - `DELETE /api/notifications/suppressions/{id}` — Suppression aufheben
 
-#### Phase 3: Scheduler + Reminders
+#### Reminders
 
 ```bash
-# Cron-basierter Scheduler (z.B. Morgenbriefing)
-PROACTIVE_SCHEDULER_ENABLED=false
-PROACTIVE_SCHEDULER_CHECK_INTERVAL=60    # Prüfintervall in Sekunden
-
 # Timer-Erinnerungen ("in 30 Minuten", "um 18:00")
 PROACTIVE_REMINDERS_ENABLED=false
 PROACTIVE_REMINDER_CHECK_INTERVAL=15     # Prüfintervall in Sekunden
 ```
 
-**Zusätzliche Endpunkte:**
-- `GET /api/notifications/schedules` — Geplante Jobs auflisten
-- `POST /api/notifications/schedules` — Job erstellen (Cron-Format)
-- `PATCH /api/notifications/schedules/{id}` — Job aktualisieren
-- `DELETE /api/notifications/schedules/{id}` — Job löschen
+**Reminder-Endpunkte:**
 - `POST /api/notifications/reminders` — Erinnerung erstellen
 - `GET /api/notifications/reminders` — Offene Erinnerungen
 - `DELETE /api/notifications/reminders/{id}` — Erinnerung stornieren
+
+#### Externe Scheduling-Templates
+
+Cron-basiertes Scheduling (z.B. Morgenbriefing) wird extern via **n8n-Workflows** oder **Home Assistant-Automationen** gelöst. Diese senden per Webhook an `POST /api/notifications/webhook`.
+
+Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 
 ---
 
@@ -355,6 +353,37 @@ Nach Änderung der FTS-Config: `POST /api/knowledge/reindex-fts` ausführen.
 
 **Context Window:**
 Erweitert jeden Treffer-Chunk um benachbarte Chunks aus demselben Dokument für mehr Kontext. Bei `RAG_CONTEXT_WINDOW=1` wird ein Chunk links und rechts hinzugefügt. Deduplizierung verhindert doppelte Chunks wenn benachbarte Chunks beide Treffer sind.
+
+---
+
+### Conversation Memory (Langzeitgedaechtnis)
+
+```bash
+# Langzeitgedaechtnis aktivieren
+MEMORY_ENABLED=false
+
+# Retrieval-Einstellungen
+MEMORY_RETRIEVAL_LIMIT=3             # Max Memories pro Query
+MEMORY_RETRIEVAL_THRESHOLD=0.7      # Cosine-Similarity Schwellwert (0-1)
+MEMORY_MAX_PER_USER=500             # Max aktive Memories pro User
+MEMORY_CONTEXT_DECAY_DAYS=30        # Tage bis Context-Memories verfallen
+MEMORY_DEDUP_THRESHOLD=0.9          # Deduplizierungs-Schwellwert (0.5-1.0)
+
+# Automatische Extraktion
+MEMORY_EXTRACTION_ENABLED=false     # Fakten automatisch aus Dialogen extrahieren
+```
+
+**Defaults:**
+- `MEMORY_ENABLED`: `false`
+- `MEMORY_RETRIEVAL_LIMIT`: `3`
+- `MEMORY_RETRIEVAL_THRESHOLD`: `0.7`
+- `MEMORY_MAX_PER_USER`: `500`
+- `MEMORY_CONTEXT_DECAY_DAYS`: `30`
+- `MEMORY_DEDUP_THRESHOLD`: `0.9`
+- `MEMORY_EXTRACTION_ENABLED`: `false`
+
+**Automatische Extraktion:**
+Wenn `MEMORY_EXTRACTION_ENABLED=true` (und `MEMORY_ENABLED=true`), analysiert das LLM nach jeder Konversationsrunde den Dialog und extrahiert erinnerungswuerdige Fakten (Praeferenzen, persoenliche Fakten, Anweisungen, Kontext). Die Extraktion laeuft als Background-Task und blockiert nicht die Antwort an den Benutzer.
 
 ---
 

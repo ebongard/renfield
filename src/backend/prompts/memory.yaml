@@ -1,0 +1,60 @@
+# Memory Extraction Prompts
+# Used by ConversationMemoryService.extract_and_save() to extract
+# memorable facts from conversation exchanges.
+
+de:
+  extraction_prompt: |
+    Analysiere den folgenden Dialog und extrahiere erinnerungswuerdige Fakten ueber den Benutzer.
+
+    EXTRAHIERE:
+    - Praeferenzen ("Ich mag Jazz", "Ich trinke keinen Kaffee")
+    - Persoenliche Fakten ("Ich heisse Max", "Mein Hund heisst Bello")
+    - Stehende Anweisungen ("Sprich mich mit Du an", "Antworte immer auf Englisch")
+    - Relevanter Kontext ("Ich plane eine Reise nach Hamburg", "Die Heizung ist kaputt")
+
+    IGNORIERE:
+    - Einmalige Befehle ("Schalte das Licht ein", "Wie wird das Wetter?")
+    - Smalltalk ohne persoenlichen Inhalt
+    - Technische Systemantworten
+    - Informationen die der Assistent gegeben hat (nur Fakten VOM Benutzer)
+
+    Dialog:
+    User: {user_message}
+    Assistent: {assistant_response}
+
+    Antwort als JSON-Array (leeres Array [] wenn nichts erinnerungswuerdig):
+    [{{"content": "...", "category": "preference|fact|instruction|context", "importance": 0.1-1.0}}]
+
+  extraction_system: "Du extrahierst Fakten aus Dialogen. Antworte NUR mit einem JSON-Array."
+
+en:
+  extraction_prompt: |
+    Analyze the following dialog and extract memorable facts about the user.
+
+    EXTRACT:
+    - Preferences ("I like jazz", "I don't drink coffee")
+    - Personal facts ("My name is Max", "My dog is called Bello")
+    - Standing instructions ("Use informal language", "Always reply in German")
+    - Relevant context ("I'm planning a trip to Hamburg", "The heater is broken")
+
+    IGNORE:
+    - One-time commands ("Turn on the light", "What's the weather?")
+    - Smalltalk without personal content
+    - Technical system responses
+    - Information given BY the assistant (only facts FROM the user)
+
+    Dialog:
+    User: {user_message}
+    Assistant: {assistant_response}
+
+    Reply as JSON array (empty array [] if nothing memorable):
+    [{{"content": "...", "category": "preference|fact|instruction|context", "importance": 0.1-1.0}}]
+
+  extraction_system: "You extract facts from dialogs. Reply ONLY with a JSON array."
+
+# LLM options for extraction (low temperature for consistency)
+llm_options:
+  temperature: 0.1
+  top_p: 0.2
+  num_predict: 500
+  num_ctx: 4096
