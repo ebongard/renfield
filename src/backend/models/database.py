@@ -744,13 +744,70 @@ class IntentCorrection(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+# ==========================================================================
+# Proactive Notifications
+# ==========================================================================
+
+# Notification Status Constants
+NOTIFICATION_PENDING = "pending"
+NOTIFICATION_DELIVERED = "delivered"
+NOTIFICATION_ACKNOWLEDGED = "acknowledged"
+NOTIFICATION_DISMISSED = "dismissed"
+
+NOTIFICATION_STATUSES = [
+    NOTIFICATION_PENDING,
+    NOTIFICATION_DELIVERED,
+    NOTIFICATION_ACKNOWLEDGED,
+    NOTIFICATION_DISMISSED,
+]
+
+# Notification Urgency Constants
+URGENCY_CRITICAL = "critical"
+URGENCY_INFO = "info"
+URGENCY_LOW = "low"
+
+URGENCY_LEVELS = [URGENCY_CRITICAL, URGENCY_INFO, URGENCY_LOW]
+
+
+class Notification(Base):
+    """
+    Proaktive Benachrichtigungen — empfangen via Webhook (z.B. von HA-Automationen),
+    gespeichert in der DB und an verbundene Geräte ausgeliefert (WS + TTS).
+    """
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String(100), nullable=False, index=True)
+    title = Column(String(255), nullable=False)
+    message = Column(Text, nullable=False)
+    urgency = Column(String(20), default=URGENCY_INFO)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True, index=True)
+    room_name = Column(String(100), nullable=True)
+    source = Column(String(50), default="ha_automation")
+    source_data = Column(JSON, nullable=True)
+    status = Column(String(20), default=NOTIFICATION_PENDING, index=True)
+    delivered_to = Column(JSON, nullable=True)
+    acknowledged_by = Column(String(100), nullable=True)
+    tts_delivered = Column(Boolean, default=False)
+    dedup_key = Column(String(255), nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    delivered_at = Column(DateTime, nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+
+    # Relationships
+    room = relationship("Room", foreign_keys=[room_id])
+
+
 # System Setting Keys
 SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"
 SETTING_WAKEWORD_COOLDOWN_MS = "wakeword.cooldown_ms"
+SETTING_NOTIFICATION_WEBHOOK_TOKEN = "notification.webhook_token"
 
 SYSTEM_SETTING_KEYS = [
     SETTING_WAKEWORD_KEYWORD,
     SETTING_WAKEWORD_THRESHOLD,
     SETTING_WAKEWORD_COOLDOWN_MS,
+    SETTING_NOTIFICATION_WEBHOOK_TOKEN,
 ]

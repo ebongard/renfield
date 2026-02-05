@@ -669,6 +669,15 @@
     "intentWeather": "Wetter",
     "intentNews": "Nachrichten"
   },
+  "notifications": {
+    "title": "Benachrichtigungen",
+    "acknowledge": "Bestätigen",
+    "dismiss": "Verwerfen",
+    "moreQueued": "+{{count}} weitere",
+    "critical": "Kritisch",
+    "info": "Information",
+    "low": "Niedrig"
+  },
   "errors": {
     "generic": "Ein Fehler ist aufgetreten",
     "networkError": "Netzwerkfehler",

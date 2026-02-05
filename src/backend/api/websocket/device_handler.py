@@ -548,6 +548,23 @@ async def device_websocket(
                 # Process text directly (no STT needed)
                 await _process_text_input(app, device_manager, session_id, content)
 
+            # === NOTIFICATION ACK ===
+            elif msg_type == "notification_ack":
+                notification_id = data.get("notification_id")
+                action = data.get("action", "acknowledged")
+                if notification_id:
+                    try:
+                        async with AsyncSessionLocal() as db_session:
+                            from services.notification_service import NotificationService
+                            service = NotificationService(db_session)
+                            if action == "dismissed":
+                                await service.dismiss(notification_id)
+                            else:
+                                await service.acknowledge(notification_id, acknowledged_by=device_id)
+                        logger.info(f"✅ Notification #{notification_id} {action} by {device_id}")
+                    except Exception as e:
+                        logger.warning(f"⚠️ Notification ack failed: {e}")
+
             # === HEARTBEAT ===
             elif msg_type == "heartbeat":
                 if device_id:

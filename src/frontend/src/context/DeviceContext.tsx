@@ -69,6 +69,7 @@ interface DeviceContextValue {
   sendWakeWordDetected: (keyword: string, confidence: number) => void;
   sendAudioChunk: (chunkBase64: string, sequence: number) => void;
   sendAudioEnd: (reason?: string) => void;
+  sendNotificationAck: (notificationId: number, action?: 'acknowledged' | 'dismissed') => void;
 
   // Utilities
   getStoredConfig: () => DeviceConfig | null;

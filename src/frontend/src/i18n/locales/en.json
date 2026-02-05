@@ -669,6 +669,15 @@
     "intentWeather": "Weather",
     "intentNews": "News"
   },
+  "notifications": {
+    "title": "Notifications",
+    "acknowledge": "Acknowledge",
+    "dismiss": "Dismiss",
+    "moreQueued": "+{{count}} more",
+    "critical": "Critical",
+    "info": "Information",
+    "low": "Low"
+  },
   "errors": {
     "generic": "An error occurred",
     "networkError": "Network error",

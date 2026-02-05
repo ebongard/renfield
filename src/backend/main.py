@@ -25,6 +25,7 @@ from api.routes import (
     feedback,
     intents,
     knowledge,
+    notifications,
     plugins,
     preferences,
     roles,
@@ -143,6 +144,7 @@ app.include_router(preferences.router, prefix="/api/preferences", tags=["Prefere
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

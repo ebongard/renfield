@@ -264,6 +264,12 @@ class Settings(BaseSettings):
     satellite_package_cache_ttl: int = Field(default=300, ge=10, le=86400)
     intent_feedback_cache_ttl: int = Field(default=300, ge=10, le=86400)
 
+    # === Proactive Notifications ===
+    proactive_enabled: bool = False                    # Master-Switch (opt-in)
+    proactive_suppression_window: int = 60             # Dedup-Fenster in Sekunden
+    proactive_tts_default: bool = True                 # TTS standardmäßig an
+    proactive_notification_ttl: int = 86400            # Ablauf in Sekunden (24h)
+
     @property
     def allowed_extensions_list(self) -> list[str]:
         """Gibt allowed_extensions als Liste zurück"""

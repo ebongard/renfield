@@ -116,6 +116,30 @@ def _schedule_whisper_preload():
         logger.warning(f"⚠️  Whisper-Preloading fehlgeschlagen: {e}")
 
 
+def _schedule_notification_cleanup():
+    """Schedule periodic cleanup of expired notifications."""
+    if not settings.proactive_enabled:
+        return
+
+    async def cleanup_loop():
+        """Cleanup expired notifications every hour."""
+        while True:
+            try:
+                await asyncio.sleep(3600)  # 1 hour
+                from services.notification_service import NotificationService
+                async with AsyncSessionLocal() as db_session:
+                    service = NotificationService(db_session)
+                    await service.cleanup_expired()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Notification cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info("✅ Notification Cleanup Scheduler gestartet (stündlich)")
+
+
 def _schedule_ha_keywords_preload():
     """Schedule Home Assistant keywords preloading in background."""
     try:
@@ -293,6 +317,7 @@ async def lifespan(app: "FastAPI"):
     # Background preloading
     _schedule_whisper_preload()
     _schedule_ha_keywords_preload()
+    _schedule_notification_cleanup()
 
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)

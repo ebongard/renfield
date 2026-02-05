@@ -368,6 +368,14 @@ export function useDeviceConnection({
             // Heartbeat acknowledged
             break;
 
+          case 'notification':
+            // Server pushed proactive notification
+            debug.log('📨 Notification received:', data.title);
+            window.dispatchEvent(new CustomEvent('renfield-notification', {
+              detail: data
+            }));
+            break;
+
           case 'config_update':
             // Server pushed new wake word configuration
             debug.log('🔄 Config update received:', data.config);
@@ -529,6 +537,17 @@ export function useDeviceConnection({
     }
   }, [currentSessionId]);
 
+  // Send notification acknowledgement
+  const sendNotificationAck = useCallback((notificationId: number, action: 'acknowledged' | 'dismissed' = 'acknowledged') => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'notification_ack',
+        notification_id: notificationId,
+        action,
+      }));
+    }
+  }, []);
+
   // Auto-connect on mount if configured
   useEffect(() => {
     if (autoConnect) {
@@ -604,6 +623,7 @@ export function useDeviceConnection({
     sendWakeWordDetected,
     sendAudioChunk,
     sendAudioEnd,
+    sendNotificationAck,
 
     // Utilities
     getStoredConfig,

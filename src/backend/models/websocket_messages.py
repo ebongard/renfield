@@ -24,6 +24,9 @@ class WSMessageType(str, Enum):
     START_SESSION = "start_session"
     HEARTBEAT = "heartbeat"
 
+    # Client -> Server (Notifications)
+    NOTIFICATION_ACK = "notification_ack"
+
     # Server -> Client
     REGISTER_ACK = "register_ack"
     STATE = "state"
@@ -37,6 +40,7 @@ class WSMessageType(str, Enum):
     ERROR = "error"
     HEARTBEAT_ACK = "heartbeat_ack"
     SERVER_SHUTDOWN = "server_shutdown"
+    NOTIFICATION = "notification"
 
 
 class WSErrorCode(str, Enum):
@@ -162,6 +166,14 @@ class WSHeartbeatMessage(BaseModel):
     uptime_seconds: int | None = Field(None, ge=0)
 
 
+class WSNotificationAckMessage(BaseModel):
+    """Client acknowledges/dismisses a notification."""
+    type: Literal["notification_ack"] = "notification_ack"
+    notification_id: int = Field(..., ge=1)
+    action: str = Field(default="acknowledged", max_length=20)  # acknowledged | dismissed
+    request_id: str | None = Field(None, max_length=64)
+
+
 # =============================================================================
 # Chat WebSocket Messages (simpler protocol)
 # =============================================================================
@@ -190,6 +202,7 @@ MESSAGE_MODELS: dict[str, type] = {
     "wakeword_detected": WSWakewordDetectedMessage,
     "start_session": WSStartSessionMessage,
     "heartbeat": WSHeartbeatMessage,
+    "notification_ack": WSNotificationAckMessage,
 }
 
 

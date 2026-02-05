@@ -25,6 +25,7 @@ import {
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
 import LanguageSwitcher from './LanguageSwitcher';
+import NotificationToast from './NotificationToast';
 import { useAuth } from '../context/AuthContext';
 
 // Navigation items with translation keys
@@ -380,6 +381,9 @@ export default function Layout({ children }) {
           <DeviceStatus />
         </div>
       </aside>
+
+      {/* Notification Toasts */}
+      <NotificationToast />
 
       {/* Main Content */}
       <main

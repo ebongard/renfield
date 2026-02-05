@@ -225,6 +225,41 @@ Einfache Anfragen ("Schalte das Licht ein") nutzen weiterhin den schnellen Singl
 
 ---
 
+### Proaktive Benachrichtigungen
+
+```bash
+# Master-Switch (opt-in)
+PROACTIVE_ENABLED=false
+
+# Dedup-Fenster in Sekunden (gleiche Nachricht wird innerhalb dieses Zeitfensters unterdrückt)
+PROACTIVE_SUPPRESSION_WINDOW=60
+
+# TTS standardmäßig an bei Webhook-Benachrichtigungen
+PROACTIVE_TTS_DEFAULT=true
+
+# Notification-Ablauf in Sekunden (abgelaufene werden automatisch gelöscht)
+PROACTIVE_NOTIFICATION_TTL=86400
+```
+
+**Defaults:**
+- `PROACTIVE_ENABLED`: `false` (Opt-in)
+- `PROACTIVE_SUPPRESSION_WINDOW`: `60` (1 Minute)
+- `PROACTIVE_TTS_DEFAULT`: `true`
+- `PROACTIVE_NOTIFICATION_TTL`: `86400` (24 Stunden)
+
+**Webhook-Token:** Wird NICHT in `.env` gespeichert, sondern in der Datenbank (`SystemSetting`). Token wird über die Admin-API generiert/rotiert: `POST /api/notifications/token`.
+
+**Endpunkte:**
+- `POST /api/notifications/webhook` — Webhook-Empfang (Bearer Token Auth)
+- `GET /api/notifications` — Liste mit Filtern (room_id, urgency, status, since)
+- `PATCH /api/notifications/{id}/acknowledge` — Bestätigen
+- `DELETE /api/notifications/{id}` — Verwerfen (Soft Delete)
+- `POST /api/notifications/token` — Token generieren/rotieren (Admin)
+
+**Dokumentation:** Siehe `docs/PROACTIVE_NOTIFICATIONS.md` für Details und HA-Automations-Template.
+
+---
+
 ### RAG (Wissensspeicher)
 
 ```bash
