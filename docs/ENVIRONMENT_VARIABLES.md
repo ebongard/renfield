@@ -146,6 +146,33 @@ PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 
 ---
 
+### Monitoring
+
+```bash
+# Prometheus Metrics Endpoint aktivieren
+METRICS_ENABLED=false
+```
+
+**Default:** `false`
+
+**Wenn aktiviert:**
+- `/metrics` Endpoint im Prometheus-Format verfügbar
+- HTTP Request Counter + Latency Histogram
+- WebSocket Connection Gauge
+- LLM Call Duration Histogram
+- Agent Steps Histogram
+- Circuit Breaker State + Failures
+
+**Prometheus Scrape Config:**
+```yaml
+scrape_configs:
+  - job_name: 'renfield'
+    static_configs:
+      - targets: ['renfield-backend:8000']
+```
+
+---
+
 ### Logging
 
 ```bash

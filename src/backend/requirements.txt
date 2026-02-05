@@ -78,3 +78,4 @@ renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archiv
 
 # Monitoring & Logging
 loguru==0.7.2
+prometheus-client>=0.21.0     # Optional: Prometheus metrics (METRICS_ENABLED=true)

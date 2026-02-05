@@ -2,32 +2,52 @@
 Renfield - Persönlicher KI-Assistent
 Hauptanwendung mit FastAPI
 """
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Depends, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from loguru import logger
-from datetime import datetime
 import os
 import sys
+from datetime import datetime
+
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from loguru import logger
+from starlette.middleware.base import BaseHTTPMiddleware
 
 # Logging konfigurieren
 logger.remove()
 logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 
 # Lokale Imports
-from api.routes import chat, tasks, voice, camera, homeassistant as ha_routes, settings as settings_routes, speakers, rooms, knowledge, satellites
-from api.routes import auth, roles, users, plugins, preferences, mcp as mcp_routes, intents, feedback
 from api.lifecycle import lifespan
-from api.websocket import chat_router, satellite_router, device_router
-from services.auth_service import require_permission
+from api.routes import (
+    auth,
+    camera,
+    chat,
+    feedback,
+    intents,
+    knowledge,
+    plugins,
+    preferences,
+    roles,
+    rooms,
+    satellites,
+    speakers,
+    tasks,
+    users,
+    voice,
+)
+from api.routes import homeassistant as ha_routes
+from api.routes import mcp as mcp_routes
+from api.routes import settings as settings_routes
+from api.websocket import chat_router, device_router, satellite_router
 from models.permissions import Permission
-from services.database import AsyncSessionLocal
-from services.ollama_service import OllamaService
-from services.device_manager import get_device_manager
-from services.websocket_auth import get_token_store
 from services.api_rate_limiter import setup_rate_limiter
+from services.auth_service import require_permission
+from services.database import AsyncSessionLocal
+from services.device_manager import get_device_manager
+from services.ollama_service import OllamaService
+from services.websocket_auth import get_token_store
 from utils.config import settings
+from utils.metrics import setup_metrics
 
 # FastAPI App erstellen
 app = FastAPI(
@@ -97,6 +117,9 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
 )
+
+# Prometheus Metrics (opt-in via METRICS_ENABLED=true)
+setup_metrics(app)
 
 # REST API Rate Limiting
 setup_rate_limiter(app)

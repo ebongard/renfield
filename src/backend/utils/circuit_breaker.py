@@ -24,7 +24,6 @@ Usage:
 import asyncio
 import time
 from enum import Enum
-from typing import Optional
 
 from loguru import logger
 
@@ -67,7 +66,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._failure_count = 0
         self._success_count = 0
-        self._last_failure_time: Optional[float] = None
+        self._last_failure_time: float | None = None
         self._half_open_calls = 0
         self._lock = asyncio.Lock()
 
@@ -126,6 +125,13 @@ class CircuitBreaker:
         self._failure_count += 1
         self._last_failure_time = time.monotonic()
 
+        # Prometheus instrumentation (optional import)
+        try:
+            from utils.metrics import record_circuit_breaker_failure
+            record_circuit_breaker_failure(self.name)
+        except Exception:
+            pass
+
         if self._state == CircuitState.HALF_OPEN:
             # Any failure in half-open goes back to open
             self._transition_to_open()
@@ -147,6 +153,7 @@ class CircuitBreaker:
         self._state = CircuitState.OPEN
         self._half_open_calls = 0
         self._success_count = 0
+        self._record_state_metric("open")
         logger.warning(
             f"🔴 Circuit breaker '{self.name}' OPENED after {self._failure_count} failures"
         )
@@ -156,6 +163,7 @@ class CircuitBreaker:
         self._state = CircuitState.HALF_OPEN
         self._half_open_calls = 0
         self._success_count = 0
+        self._record_state_metric("half_open")
         logger.info(
             f"🟡 Circuit breaker '{self.name}' HALF_OPEN — testing recovery"
         )
@@ -166,9 +174,18 @@ class CircuitBreaker:
         self._failure_count = 0
         self._success_count = 0
         self._half_open_calls = 0
+        self._record_state_metric("closed")
         logger.info(
             f"🟢 Circuit breaker '{self.name}' CLOSED — service recovered"
         )
+
+    def _record_state_metric(self, state: str) -> None:
+        """Record state change to Prometheus (if available)."""
+        try:
+            from utils.metrics import record_circuit_breaker_state
+            record_circuit_breaker_state(self.name, state)
+        except Exception:
+            pass
 
     def get_status(self) -> dict:
         """Get current circuit breaker status."""
