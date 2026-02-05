@@ -370,6 +370,103 @@ async def refresh_keywords(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# Admin Endpoint: Re-Embed All Tables
+@app.post("/admin/reembed")
+async def reembed_all(
+    user=Depends(require_permission(Permission.ADMIN)),
+):
+    """
+    Re-generate embeddings for all tables using the current embed model.
+
+    Useful after switching to a new embedding model. Iterates over all tables
+    with embedding columns in batches of 50, skipping individual errors.
+
+    Requires: admin permission (when auth is enabled)
+    """
+    from sqlalchemy import func, select
+
+    from models.database import (
+        ConversationMemory,
+        DocumentChunk,
+        IntentCorrection,
+        Notification,
+        NotificationSuppression,
+    )
+    from utils.llm_client import get_default_client
+
+    BATCH_SIZE = 50
+
+    # Table configs: (model, text_extractor_fn, label)
+    table_configs = [
+        (DocumentChunk, lambda r: r.content, "document_chunks"),
+        (ConversationMemory, lambda r: r.content, "conversation_memories"),
+        (IntentCorrection, lambda r: r.message_text, "intent_corrections"),
+        (Notification, lambda r: f"{r.title} {r.message}", "notifications"),
+        (NotificationSuppression, lambda r: r.event_pattern, "notification_suppressions"),
+    ]
+
+    client = get_default_client()
+    embed_model = settings.ollama_embed_model
+    counts: dict[str, int] = {}
+    errors: dict[str, int] = {}
+
+    async with AsyncSessionLocal() as db:
+        for model_cls, text_fn, label in table_configs:
+            # Count total records
+            total_result = await db.execute(select(func.count(model_cls.id)))
+            total = total_result.scalar() or 0
+
+            if total == 0:
+                logger.info(f"⏭️ {label}: no records, skipping")
+                counts[label] = 0
+                continue
+
+            updated = 0
+            error_count = 0
+            offset = 0
+
+            while offset < total:
+                result = await db.execute(
+                    select(model_cls)
+                    .order_by(model_cls.id)
+                    .offset(offset)
+                    .limit(BATCH_SIZE)
+                )
+                batch = list(result.scalars().all())
+                if not batch:
+                    break
+
+                for record in batch:
+                    try:
+                        text = text_fn(record)
+                        if not text or not text.strip():
+                            continue
+                        response = await client.embeddings(
+                            model=embed_model,
+                            prompt=text,
+                        )
+                        record.embedding = response.embedding
+                        updated += 1
+                    except Exception as e:
+                        error_count += 1
+                        logger.warning(
+                            f"⚠️ {label} id={record.id}: embedding failed: {e}"
+                        )
+
+                await db.commit()
+                offset += BATCH_SIZE
+
+            counts[label] = updated
+            if error_count:
+                errors[label] = error_count
+            logger.info(f"✅ {label}: {updated}/{total} re-embedded")
+
+    result = {"counts": counts, "model": embed_model}
+    if errors:
+        result["errors"] = errors
+    return result
+
+
 # Debug Endpoint: Test Intent Extraction
 @app.post("/debug/intent")
 async def debug_intent(
