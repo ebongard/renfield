@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     home_assistant_url: str | None = None
     home_assistant_token: SecretStr | None = None
 
-    # n8n
-    n8n_api_url: str | None = None     # Used by n8n-mcp package (czlonkowski)
+    # n8n — field exists so .env can set N8N_API_URL for the n8n-mcp stdio subprocess
+    n8n_api_url: str | None = None
 
     # Frigate
     frigate_url: str | None = None

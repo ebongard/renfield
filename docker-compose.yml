@@ -88,6 +88,7 @@ services:
       - jellyfin_base_url
       - n8n_api_key
       - paperless_api_token
+      - mail_regfish_password
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite  # For OTA update package building
@@ -144,6 +145,7 @@ services:
       - jellyfin_base_url
       - n8n_api_key
       - paperless_api_token
+      - mail_regfish_password
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite  # For OTA update package building
@@ -273,3 +275,5 @@ secrets:
     file: ./secrets/n8n_api_key
   paperless_api_token:
     file: ./secrets/paperless_api_token
+  mail_regfish_password:
+    file: ./secrets/mail_regfish_password
