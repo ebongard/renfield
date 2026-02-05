@@ -2,9 +2,11 @@
 Tests for MCPManager — MCP client core, config loading, tool execution, and integration.
 """
 
-import os
-import pytest
 import asyncio
+import json
+import os
+
+import pytest
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 from dataclasses import dataclass
 
@@ -334,6 +336,83 @@ class TestExecuteTool:
         result = await manager.execute_tool("mcp.srv.bad", {})
         assert result["success"] is False
         assert "Something went wrong" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_inner_json_error(self):
+        """MCP servers wrapping errors in JSON should be detected as failures.
+
+        Some servers (e.g. n8n-mcp) return MCP-level isError=False but signal
+        errors via an inner JSON envelope: {"success": false, "error": "..."}.
+        """
+        manager = MCPManager()
+        tool = MCPToolInfo("n8n", "get_wf", "mcp.n8n.get_wf", "Get workflow")
+        manager._tool_index["mcp.n8n.get_wf"] = tool
+
+        # Simulate n8n-mcp error response: MCP isError=False, inner success=False
+        inner_json = json.dumps({
+            "success": False,
+            "error": "Workflow not found",
+            "data": None,
+        })
+        mock_content = MagicMock()
+        mock_content.text = inner_json
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False  # MCP-level says OK
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="n8n"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["n8n"] = state
+
+        result = await manager.execute_tool("mcp.n8n.get_wf", {"id": "bad"})
+
+        assert result["success"] is False
+        assert "Workflow not found" in result["message"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_execute_tool_inner_json_success(self):
+        """Inner JSON with success=True should not flip the result to failure."""
+        manager = MCPManager()
+        tool = MCPToolInfo("n8n", "create_wf", "mcp.n8n.create_wf", "Create workflow")
+        manager._tool_index["mcp.n8n.create_wf"] = tool
+
+        inner_json = json.dumps({
+            "success": True,
+            "data": {"id": "abc123", "name": "My Workflow"},
+            "message": "Workflow created",
+        })
+        mock_content = MagicMock()
+        mock_content.text = inner_json
+        mock_content.type = "text"
+
+        mock_result = MagicMock()
+        mock_result.isError = False
+        mock_result.content = [mock_content]
+
+        mock_session = AsyncMock()
+        mock_session.call_tool = AsyncMock(return_value=mock_result)
+
+        state = MCPServerState(
+            config=MCPServerConfig(name="n8n"),
+            connected=True,
+            session=mock_session,
+        )
+        manager._servers["n8n"] = state
+
+        result = await manager.execute_tool("mcp.n8n.create_wf", {"name": "test"})
+
+        assert result["success"] is True
+        assert "abc123" in result["message"]
 
     @pytest.mark.unit
     @pytest.mark.asyncio

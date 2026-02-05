@@ -496,6 +496,26 @@ def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
     return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
 
 
+def _detect_inner_error(message: str) -> bool:
+    """
+    Detect application-level errors inside MCP response text.
+
+    Some MCP servers (e.g. n8n-mcp) wrap all responses in a JSON envelope
+    like ``{"success": false, "error": "..."}`` while the MCP protocol-level
+    ``isError`` flag stays False.  This function parses the message to detect
+    such inner failures.
+
+    Returns True if the inner response indicates an error, False otherwise.
+    """
+    try:
+        data = json.loads(message)
+        if isinstance(data, dict) and "success" in data:
+            return data["success"] is False
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return False
+
+
 class MCPTransportType(str, Enum):
     STREAMABLE_HTTP = "streamable_http"
     SSE = "sse"
@@ -940,6 +960,13 @@ class MCPManager:
 
             # Truncate final message if still too large
             message = _truncate_response(message)
+
+            # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
+            # JSON envelope: {"success": false, "error": "..."}. The MCP-level
+            # isError flag stays False even on application errors, so we check
+            # the inner JSON to detect real failures.
+            if not is_error:
+                is_error = _detect_inner_error(message)
 
             return {
                 "success": not is_error,
