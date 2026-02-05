@@ -26,11 +26,11 @@ class Settings(BaseSettings):
 
     # Ollama - Multi-Modell Konfiguration
     ollama_url: str = "http://ollama:11434"
-    ollama_model: str = "llama3.2:3b"  # Legacy: wird als chat_model verwendet
-    ollama_chat_model: str = "llama3.2:3b"      # Für normale Konversation
-    ollama_rag_model: str = "llama3.2:latest"   # Für RAG-Antworten (via .env überschreibbar)
-    ollama_embed_model: str = "nomic-embed-text" # Für Embeddings (768 Dimensionen)
-    ollama_intent_model: str = "llama3.2:3b"    # Für Intent-Erkennung
+    ollama_model: str = "llama3.2:3b"  # Legacy fallback; recommended: qwen3:14b (see docs/LLM_MODEL_GUIDE.md)
+    ollama_chat_model: str = "llama3.2:3b"      # Default for dev; recommended: qwen3:14b
+    ollama_rag_model: str = "llama3.2:latest"   # Default for dev; recommended: qwen3:14b
+    ollama_embed_model: str = "nomic-embed-text" # Default for dev; recommended: qwen3-embedding:4b (768 dim)
+    ollama_intent_model: str = "llama3.2:3b"    # Default for dev; recommended: qwen3:8b
     ollama_num_ctx: int = 32768                   # Context window für alle Ollama-Calls
 
     # Home Assistant

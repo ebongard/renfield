@@ -87,19 +87,19 @@ OLLAMA_URL=http://ollama:11434
 OLLAMA_URL=http://cuda.local:11434  # Externe GPU-Instanz
 
 # Ollama Modell
-OLLAMA_MODEL=llama3.2:3b
-OLLAMA_MODEL=gpt-oss:latest
+OLLAMA_MODEL=qwen3:8b
 ```
 
 **Defaults:**
 - `OLLAMA_URL`: `http://ollama:11434`
-- `OLLAMA_MODEL`: `llama3.2:3b`
+- `OLLAMA_MODEL`: `llama3.2:3b` (dev fallback)
 
-**Verfügbare Modelle:**
-- `llama3.2:3b` - Schnell, wenig RAM (Empfohlen)
-- `llama3.2:7b` - Bessere Qualität, mehr RAM
-- `mixtral:8x7b` - Hohe Qualität, viel RAM
-- `gpt-oss:latest` - Custom/Fine-tuned Modell
+**Empfohlene Modelle:**
+- `qwen3:8b` - Bestes Preis-Leistungs-Verhältnis, starkes Deutsch
+- `qwen3:14b` - Sehr gute Qualität für Chat/RAG (empfohlen mit GPU)
+- `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch
+
+Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Rolle.
 
 ---
 
@@ -206,7 +206,7 @@ AGENT_STEP_TIMEOUT=30.0
 AGENT_TOTAL_TIMEOUT=120.0
 
 # Optionales separates Modell für Agent (Standard: OLLAMA_MODEL)
-# AGENT_MODEL=gpt-oss:latest
+# AGENT_MODEL=qwen3:14b
 ```
 
 **Defaults:**
@@ -1092,7 +1092,7 @@ WS_MAX_CONNECTIONS_PER_IP=10
 # Ollama LLM
 # -----------------------------------------------------------------------------
 OLLAMA_URL=http://cuda.local:11434
-OLLAMA_MODEL=gpt-oss:latest
+OLLAMA_MODEL=qwen3:14b
 
 # -----------------------------------------------------------------------------
 # Sprache & Voice

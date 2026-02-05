@@ -6,14 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Renfield is a fully offline-capable, self-hosted **digital assistant** — a personal AI hub that consolidates knowledge, information retrieval, and multi-channel queries into one interface. It serves multiple users in parallel, primarily within the household. Core capabilities include a queryable knowledge base (RAG), bundled tool access (web search, weather, news, etc.), and smart home control as a complementary feature. It informs, assists, and entertains.
 
-**LLM:** `gpt-oss:latest` (OpenAI open-weight, 20B parameters, MoE architecture) via Ollama. The model natively supports structured JSON output, function calling, and chain-of-thought reasoning — enabling multi-step agent workflows.
+**LLM:** Local LLMs via Ollama (configurable per role). See `docs/LLM_MODEL_GUIDE.md` for model recommendations. The system supports structured JSON output, function calling, and chain-of-thought reasoning — enabling multi-step agent workflows.
 
 **Tech Stack:**
 - Backend: Python 3.11 + FastAPI + SQLAlchemy
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS + PWA
 - Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
-- LLM: gpt-oss:latest (20B, MoE, Apache 2.0) via Ollama
-- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search)
+- LLM: Local models via Ollama (multi-model: chat, intent, RAG, agent, embeddings)
+- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search), Paperless, Email (IMAP/SMTP)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
@@ -225,7 +225,7 @@ The core of Renfield is the intent recognition system in `src/backend/services/o
 
 **Ranked Intents & Fallback Chain:** The LLM returns up to 3 weighted intents. The chat handler tries them in order — if one fails (e.g., RAG returns 0 results), it falls through to the next. If all fail and Agent Loop is enabled, it kicks in as final fallback.
 
-**MCP Tool Prompt Filtering**: With 90+ MCP tools across 7 servers, the intent prompt uses `prompt_tools` (from `mcp_servers.yaml`) to show only the most relevant tools per server. This reduces the prompt to ~20 tools while keeping all tools available for execution. See `IntentRegistry.build_intent_prompt()`.
+**MCP Tool Prompt Filtering**: With 100+ MCP tools across 8 servers, the intent prompt uses `prompt_tools` (from `mcp_servers.yaml`) to show only the most relevant tools per server. This reduces the prompt to ~20 tools while keeping all tools available for execution. See `IntentRegistry.build_intent_prompt()`.
 
 ### Intent Feedback Learning (Semantic Correction)
 
@@ -316,7 +316,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `RAG_HYBRID_ENABLED` — Enable Hybrid Search: Dense + BM25 via RRF (default: `true`)
 - `RAG_CONTEXT_WINDOW` — Adjacent chunks per direction for context expansion (default: `1`)
 - `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
-- Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`
+- Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 
 ## Common Development Patterns
@@ -401,9 +401,19 @@ curl -X POST "http://localhost:8000/debug/intent?message=Schalte das Licht ein"
 curl -X POST "http://localhost:8000/admin/refresh-keywords"
 ```
 
+### Re-Embedding All Vectors
+
+After changing the embedding model (`OLLAMA_EMBED_MODEL`), all existing vectors must be recalculated:
+
+```bash
+curl -X POST "http://localhost:8000/admin/reembed"
+```
+
+This re-embeds RAG chunks, conversation memories, intent corrections, and notification suppressions in the background.
+
 ## Testing
 
-Tests are in `tests/` at project root. Backend: 650+ tests across all API routes and services.
+Tests are in `tests/` at project root. Backend: 1,300+ tests across all API routes and services.
 
 ```bash
 make test                # All tests

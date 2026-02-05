@@ -31,7 +31,7 @@ Keine Cloud-LLMs — alles laeuft lokal auf eigener Hardware.
 | `agent_model` | `None` (Fallback auf chat_model) | Agent Loop, Router |
 | `proactive_enrichment_model` | `None` (Fallback auf chat_model) | Notification-Enrichment |
 
-**Primaeres Modell:** `gpt-oss:latest` (20B MoE) — soll durch Qwen3-Familie ersetzt werden.
+**Empfohlen:** Qwen3-Familie (siehe Abschnitte unten). Code-Defaults sind noch `llama3.2` fuer Kompatibilitaet mit kleiner Hardware.
 
 ---
 

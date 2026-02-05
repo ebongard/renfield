@@ -13,7 +13,7 @@ Diese Anleitung zeigt, wie du eine externe Ollama-Instanz (z.B. auf einem separa
 
 1. **Ollama auf externem Host installiert** (z.B. `cuda.local`)
 2. **Ollama läuft und ist erreichbar** über Port 11434
-3. **Gewünschtes Modell ist installiert** (z.B. `llama3.2:3b`)
+3. **Gewünschtes Modell ist installiert** (z.B. `qwen3:8b`)
 
 ## Schnellstart
 
@@ -24,7 +24,7 @@ Bearbeite die `.env` Datei:
 ```bash
 # Ollama LLM
 OLLAMA_URL=http://cuda.local:11434
-OLLAMA_MODEL=llama3.2:3b
+OLLAMA_MODEL=qwen3:8b
 ```
 
 **Wichtig:** Ersetze `cuda.local` mit dem Hostnamen oder IP-Adresse deines Ollama-Servers.
@@ -59,7 +59,7 @@ Erwartete Antwort:
 {
   "models": [
     {
-      "name": "llama3.2:3b",
+      "name": "qwen3:8b",
       "modified_at": "2024-01-15T10:30:00Z",
       ...
     }
@@ -86,7 +86,7 @@ Falls du noch keine Ollama-Instanz hast:
 curl -fsSL https://ollama.com/install.sh | sh
 
 # Modell herunterladen
-ollama pull llama3.2:3b
+ollama pull qwen3:8b
 
 # Als Service starten
 systemctl enable ollama
@@ -120,7 +120,7 @@ docker run -d \
   ollama/ollama:latest
 
 # Modell laden
-docker exec -it ollama ollama pull llama3.2:3b
+docker exec -it ollama ollama pull qwen3:8b
 ```
 
 ### Firewall-Konfiguration
@@ -258,7 +258,7 @@ systemctl restart ollama
 
 ```env
 # .env
-OLLAMA_MODEL=llama3.2:3b  # Kleineres Modell für schnellere Antworten
+OLLAMA_MODEL=qwen3:8b  # Kleineres Modell für schnellere Antworten
 # oder
 OLLAMA_MODEL=llama3.2:1b  # Noch kleiner, aber weniger akkurat
 ```
@@ -291,7 +291,7 @@ curl http://cuda.local:11434/api/tags
 
 # Chat-Anfrage senden
 curl http://cuda.local:11434/api/chat -d '{
-  "model": "llama3.2:3b",
+  "model": "qwen3:8b",
   "messages": [
     {"role": "user", "content": "Hallo"}
   ]
@@ -299,7 +299,7 @@ curl http://cuda.local:11434/api/chat -d '{
 
 # Modell-Info abrufen
 curl http://cuda.local:11434/api/show -d '{
-  "name": "llama3.2:3b"
+  "name": "qwen3:8b"
 }'
 ```
 
@@ -319,7 +319,7 @@ sudo netstat -tlnp | grep 11434
 #### Fehler: "Model not found"
 ```bash
 # Modell herunterladen
-ollama pull llama3.2:3b
+ollama pull qwen3:8b
 
 # Verfügbare Modelle prüfen
 ollama list
@@ -355,7 +355,7 @@ docker compose --profile ollama up -d
 ### 3. Modell herunterladen
 
 ```bash
-docker exec -it renfield-ollama ollama pull llama3.2:3b
+docker exec -it renfield-ollama ollama pull qwen3:8b
 ```
 
 ---
@@ -372,7 +372,7 @@ docker exec -it renfield-ollama ollama pull llama3.2:3b
 ### Performance
 
 1. **GPU verwenden**: Ollama ist mit GPU deutlich schneller
-2. **Ausreichend RAM**: Mindestens 8GB für llama3.2:3b
+2. **Ausreichend RAM**: Mindestens 8GB für qwen3:8b
 3. **SSD**: Schnellere Modell-Ladezeiten
 4. **Proximity**: Ollama-Server sollte im gleichen Netzwerk sein (geringe Latenz)
 

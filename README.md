@@ -14,7 +14,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 - **Agent Loop (ReAct)** - Mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung
 
 ### Integrationen
-- **MCP-Server** - Externe Tools via Model Context Protocol (Weather, Search, News, Jellyfin, n8n, Home Assistant)
+- **MCP-Server** - Externe Tools via Model Context Protocol (Weather, Search, News, Jellyfin, n8n, Home Assistant, Paperless, Email)
 - **Smart Home Steuerung** - Home Assistant Integration mit Raum-Kontext
 - **Kamera-Überwachung** - Frigate Integration mit Objekterkennung
 - **Workflow-Automation** - n8n Integration
@@ -23,7 +23,7 @@ Ein vollständig offline-fähiger, selbst-gehosteter KI-Assistent.
 ### Wissensspeicher (RAG)
 - **Dokument-Upload** - PDF, DOCX, PPTX, XLSX, HTML, Markdown
 - **Intelligente Chunking** - Automatische Textaufteilung mit Docling
-- **Vektor-Suche** - Semantische Suche mit pgvector und nomic-embed-text
+- **Vektor-Suche** - Semantische Suche mit pgvector
 - **Duplikat-Erkennung** - SHA256-Hash verhindert doppelte Dokumente
 - **Knowledge Bases** - Organisiere Wissen in thematischen Sammlungen
 
@@ -150,7 +150,7 @@ docker compose up -d
 
 4. **Ollama Modell laden**
 ```bash
-docker exec -it renfield-ollama ollama pull llama3.2:3b
+docker exec -it renfield-ollama ollama pull qwen3:8b
 ```
 
 > **Tipp:** Du kannst auch eine externe Ollama-Instanz (z.B. auf einem GPU-Server) nutzen!
@@ -333,6 +333,8 @@ Externe Dienste werden als MCP-Server angebunden und stellen Tools für den Agen
 | Jellyfin | Media Server | `JELLYFIN_ENABLED=true` |
 | n8n | Workflow Automation | `N8N_MCP_ENABLED=true` |
 | Home Assistant | Smart Home | `HA_MCP_ENABLED=true` |
+| Paperless | Dokumenten-Management | `PAPERLESS_ENABLED=true` |
+| Email | IMAP/SMTP E-Mail | `EMAIL_MCP_ENABLED=true` |
 
 **Aktivierung:**
 ```bash
@@ -433,7 +435,7 @@ Renfield kann Dokumente verarbeiten und als Wissensbasis für kontextbasierte An
 
 1. **Dokument hochladen** → Automatische Verarbeitung mit IBM Docling
 2. **Chunking** → Text wird in semantische Abschnitte aufgeteilt
-3. **Embedding** → Jeder Chunk wird mit nomic-embed-text vektorisiert
+3. **Embedding** → Jeder Chunk wird mit dem konfigurierten Embedding-Modell vektorisiert
 4. **Hybrid Search** → Dense Embeddings (pgvector) + BM25 Full-Text Search (PostgreSQL tsvector), kombiniert via Reciprocal Rank Fusion (RRF)
 5. **Context Window** → Benachbarte Chunks werden automatisch zum Treffer hinzugefügt
 
@@ -503,7 +505,7 @@ docker exec -it renfield-backend alembic upgrade head
 
 ### Tests ausführen
 
-Das Projekt verfügt über eine umfassende Test-Suite mit über 650 Backend-Tests:
+Das Projekt verfügt über eine umfassende Test-Suite mit über 1.300 Backend-Tests:
 
 ```bash
 # Alle Tests ausführen
@@ -545,7 +547,7 @@ Das Frontend ist eine Progressive Web App (PWA):
 ### Ollama lädt nicht
 
 ```bash
-docker exec -it renfield-ollama ollama pull llama3.2:3b
+docker exec -it renfield-ollama ollama pull qwen3:8b
 docker compose restart backend
 ```
 

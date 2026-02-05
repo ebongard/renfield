@@ -135,9 +135,9 @@ WS_RATE_LIMIT_ENABLED=true
 # Ollama LLM (lokal mit GPU)
 # -----------------------------------------------------------------------------
 OLLAMA_URL=http://ollama:11434
-OLLAMA_CHAT_MODEL=llama3.2:3b
-OLLAMA_RAG_MODEL=llama3.1:8b
-OLLAMA_EMBED_MODEL=nomic-embed-text
+OLLAMA_CHAT_MODEL=qwen3:14b
+OLLAMA_RAG_MODEL=qwen3:14b
+OLLAMA_EMBED_MODEL=qwen3-embedding:4b
 
 # -----------------------------------------------------------------------------
 # Sprache & Voice
@@ -321,9 +321,9 @@ docker compose -f docker-compose.prod.yml logs -f
 
 ```bash
 # In den Ollama-Container
-docker exec -it renfield-ollama ollama pull llama3.2:3b
-docker exec -it renfield-ollama ollama pull llama3.1:8b
-docker exec -it renfield-ollama ollama pull nomic-embed-text
+docker exec -it renfield-ollama ollama pull qwen3:14b
+docker exec -it renfield-ollama ollama pull qwen3:8b
+docker exec -it renfield-ollama ollama pull qwen3-embedding:4b
 
 # Modelle prüfen
 docker exec -it renfield-ollama ollama list
