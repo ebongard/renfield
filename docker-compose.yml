@@ -76,6 +76,18 @@ services:
       DATABASE_URL: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/renfield
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    secrets:
+      - postgres_password
+      - home_assistant_token
+      - secret_key
+      - default_admin_password
+      - openweather_api_key
+      - newsapi_key
+      - jellyfin_api_key
+      - jellyfin_token
+      - jellyfin_base_url
+      - n8n_api_key
+      - paperless_api_token
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite  # For OTA update package building
@@ -120,6 +132,18 @@ services:
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       NVIDIA_VISIBLE_DEVICES: all
+    secrets:
+      - postgres_password
+      - home_assistant_token
+      - secret_key
+      - default_admin_password
+      - openweather_api_key
+      - newsapi_key
+      - jellyfin_api_key
+      - jellyfin_token
+      - jellyfin_base_url
+      - n8n_api_key
+      - paperless_api_token
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite  # For OTA update package building
@@ -225,3 +249,27 @@ volumes:
   piper_models:
   huggingface_cache:
   rag_uploads:        # RAG document uploads
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  home_assistant_token:
+    file: ./secrets/home_assistant_token
+  secret_key:
+    file: ./secrets/secret_key
+  default_admin_password:
+    file: ./secrets/default_admin_password
+  openweather_api_key:
+    file: ./secrets/openweather_api_key
+  newsapi_key:
+    file: ./secrets/newsapi_key
+  jellyfin_api_key:
+    file: ./secrets/jellyfin_api_key
+  jellyfin_token:
+    file: ./secrets/jellyfin_token
+  jellyfin_base_url:
+    file: ./secrets/jellyfin_base_url
+  n8n_api_key:
+    file: ./secrets/n8n_api_key
+  paperless_api_token:
+    file: ./secrets/paperless_api_token
