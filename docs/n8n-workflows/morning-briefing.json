@@ -1,0 +1,163 @@
+{
+  "name": "Renfield Morning Briefing",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [1, 2, 3, 4, 5],
+              "triggerAtHour": 7,
+              "triggerAtMinute": 0
+            },
+            {
+              "field": "weeks",
+              "triggerAtDay": [0, 6],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000001",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.HOME_ASSISTANT_URL }}/api/states",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.HOME_ASSISTANT_TOKEN }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000002",
+      "name": "Fetch HA States",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 200]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.openweathermap.org/data/2.5/weather?q={{ $env.WEATHER_CITY }}&appid={{ $env.OPENWEATHERMAP_API_KEY }}&units=metric&lang=de",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000003",
+      "name": "Fetch Weather",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [480, 420]
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineAll",
+        "options": {}
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000004",
+      "name": "Merge Data",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [720, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// Morning Briefing Builder\n// Extracts HA entity states + weather data → German briefing\n//\n// Customize entity IDs below to match your Home Assistant setup.\n// ============================================================\n\n// --- Entity ID configuration (edit to match your HA) ---\nconst ENTITY_IDS = {\n  indoor_temp:   'sensor.indoor_temperature',\n  outdoor_temp:  'sensor.outdoor_temperature',\n  energy_today:  'sensor.daily_energy',\n  windows:       /binary_sensor\\..*window/i,\n};\n\n// --- Extract HA states ---\nconst haStates = $input.first().json;\nconst weatherData = $input.last().json;\n\nfunction findState(states, entityId) {\n  if (!Array.isArray(states)) return null;\n  const entity = states.find(s => s.entity_id === entityId);\n  return entity ? entity.state : null;\n}\n\nfunction findOpenWindows(states, pattern) {\n  if (!Array.isArray(states)) return [];\n  return states\n    .filter(s => pattern.test(s.entity_id) && s.state === 'on')\n    .map(s => s.attributes?.friendly_name || s.entity_id);\n}\n\nconst indoorTemp  = findState(haStates, ENTITY_IDS.indoor_temp);\nconst outdoorTemp = findState(haStates, ENTITY_IDS.outdoor_temp);\nconst energyToday = findState(haStates, ENTITY_IDS.energy_today);\nconst openWindows = findOpenWindows(haStates, ENTITY_IDS.windows);\n\n// --- Extract weather ---\nconst weather = weatherData?.weather?.[0]?.description || 'unbekannt';\nconst tempNow  = weatherData?.main?.temp != null\n  ? Math.round(weatherData.main.temp)\n  : null;\nconst humidity = weatherData?.main?.humidity;\nconst windSpeed = weatherData?.wind?.speed != null\n  ? Math.round(weatherData.wind.speed * 3.6)  // m/s → km/h\n  : null;\n\n// --- Compose message ---\nconst lines = [];\n\nlines.push('Guten Morgen! Hier ist dein Morgenbriefing:');\nlines.push('');\n\n// Weather block\nif (tempNow !== null) {\n  lines.push(`Wetter: ${weather}, ${tempNow}°C.`);\n  if (humidity) lines.push(`Luftfeuchtigkeit: ${humidity}%.`);\n  if (windSpeed) lines.push(`Wind: ${windSpeed} km/h.`);\n} else {\n  lines.push('Wetterdaten nicht verfügbar.');\n}\nlines.push('');\n\n// Temperatures\nif (indoorTemp)  lines.push(`Innentemperatur: ${indoorTemp}°C.`);\nif (outdoorTemp) lines.push(`Außentemperatur: ${outdoorTemp}°C.`);\n\n// Energy\nif (energyToday) lines.push(`Energieverbrauch heute: ${energyToday} kWh.`);\n\n// Open windows\nif (openWindows.length > 0) {\n  lines.push(`Offene Fenster: ${openWindows.join(', ')}.`);\n}\n\nconst briefingMessage = lines.join('\\n');\n\nreturn [{\n  json: {\n    event_type: 'scheduled.morning_briefing',\n    title: 'Morgenbriefing',\n    message: briefingMessage,\n    urgency: 'info',\n    room: $env.BRIEFING_ROOM || 'Schlafzimmer',\n    tts: true,\n    enrich: true,\n    data: {\n      indoor_temp: indoorTemp,\n      outdoor_temp: outdoorTemp,\n      energy_today: energyToday,\n      open_windows: openWindows,\n      weather: weather,\n      weather_temp: tempNow,\n    }\n  }\n}];\n"
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000005",
+      "name": "Build Briefing",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.RENFIELD_URL }}/api/notifications/webhook",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.RENFIELD_WEBHOOK_TOKEN }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "a1c2e4f6-1001-4a00-b001-000000000006",
+      "name": "POST to Renfield",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 300]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          { "node": "Fetch HA States", "type": "main", "index": 0 },
+          { "node": "Fetch Weather", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch HA States": {
+      "main": [
+        [
+          { "node": "Merge Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Weather": {
+      "main": [
+        [
+          { "node": "Merge Data", "type": "main", "index": 1 }
+        ]
+      ]
+    },
+    "Merge Data": {
+      "main": [
+        [
+          { "node": "Build Briefing", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Briefing": {
+      "main": [
+        [
+          { "node": "POST to Renfield", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+}

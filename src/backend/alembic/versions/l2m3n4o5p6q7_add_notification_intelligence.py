@@ -47,22 +47,6 @@ def upgrade() -> None:
     except Exception:
         op.add_column('notification_suppressions', sa.Column('embedding', sa.Text(), nullable=True))
 
-    # -- scheduled_jobs --
-    op.create_table(
-        'scheduled_jobs',
-        sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column('name', sa.String(100), unique=True, nullable=False),
-        sa.Column('schedule_cron', sa.String(100), nullable=False),
-        sa.Column('job_type', sa.String(50), nullable=False),
-        sa.Column('config', sa.JSON(), nullable=True),
-        sa.Column('is_enabled', sa.Boolean(), server_default='true'),
-        sa.Column('last_run_at', sa.DateTime(), nullable=True),
-        sa.Column('next_run_at', sa.DateTime(), nullable=True),
-        sa.Column('room_id', sa.Integer(), sa.ForeignKey('rooms.id'), nullable=True),
-        sa.Column('user_id', sa.Integer(), sa.ForeignKey('users.id'), nullable=True),
-        sa.Column('created_at', sa.DateTime(), server_default=sa.func.now()),
-    )
-
     # -- reminders --
     op.create_table(
         'reminders',
@@ -82,7 +66,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table('reminders')
-    op.drop_table('scheduled_jobs')
     op.drop_table('notification_suppressions')
 
     op.drop_column('notifications', 'embedding')

@@ -13,14 +13,13 @@ Phase 2:
 - GET  /suppressions         — Aktive Suppressions auflisten
 - DELETE /suppressions/{id}  — Suppression aufheben
 
-Phase 3:
-- GET  /schedules            — Geplante Jobs auflisten
-- POST /schedules            — Job erstellen
-- PATCH /schedules/{id}      — Job aktualisieren
-- DELETE /schedules/{id}     — Job löschen
+Reminders:
 - POST /reminders            — Erinnerung erstellen
 - GET  /reminders            — Erinnerungen auflisten
 - DELETE /reminders/{id}     — Erinnerung stornieren
+
+Scheduling (Cron-basiert) is handled externally via n8n/HA automations → webhook.
+See docs/PROACTIVE_SCHEDULING_TEMPLATES.md for templates.
 """
 
 from datetime import datetime
@@ -35,10 +34,6 @@ from api.routes.notifications_schemas import (
     ReminderListResponse,
     ReminderRequest,
     ReminderResponse,
-    ScheduledJobListResponse,
-    ScheduledJobRequest,
-    ScheduledJobResponse,
-    ScheduledJobUpdate,
     SuppressionListResponse,
     SuppressionResponse,
     SuppressRequest,
@@ -287,172 +282,7 @@ async def delete_suppression(
 
 
 # ==========================================================================
-# Scheduler Endpoints (Phase 3a)
-# ==========================================================================
-
-@router.get("/schedules", response_model=ScheduledJobListResponse)
-@limiter.limit(settings.api_rate_limit_chat)
-async def list_schedules(
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
-):
-    """List scheduled notification jobs."""
-    from sqlalchemy import select
-
-    from models.database import ScheduledJob
-
-    result = await db.execute(
-        select(ScheduledJob).order_by(ScheduledJob.created_at.desc())
-    )
-    jobs = list(result.scalars().all())
-
-    return ScheduledJobListResponse(
-        jobs=[
-            ScheduledJobResponse(
-                id=j.id,
-                name=j.name,
-                schedule_cron=j.schedule_cron,
-                job_type=j.job_type,
-                config=j.config,
-                is_enabled=j.is_enabled,
-                last_run_at=j.last_run_at.isoformat() if j.last_run_at else None,
-                next_run_at=j.next_run_at.isoformat() if j.next_run_at else None,
-                room_id=j.room_id,
-                created_at=j.created_at.isoformat() if j.created_at else "",
-            )
-            for j in jobs
-        ]
-    )
-
-
-@router.post("/schedules", response_model=ScheduledJobResponse, status_code=201)
-@limiter.limit(settings.api_rate_limit_chat)
-async def create_schedule(
-    request: Request,
-    body: ScheduledJobRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
-):
-    """Create a scheduled notification job."""
-    from models.database import ScheduledJob
-    from services.notification_scheduler import NotificationScheduler
-
-    # Validate cron and compute next run
-    try:
-        next_run = NotificationScheduler.next_run_after(body.schedule_cron, datetime.utcnow())
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-
-    job = ScheduledJob(
-        name=body.name,
-        schedule_cron=body.schedule_cron,
-        job_type=body.job_type,
-        config=body.config,
-        is_enabled=body.is_enabled,
-        next_run_at=next_run,
-        room_id=body.room_id,
-        user_id=current_user.id if current_user else None,
-    )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    return ScheduledJobResponse(
-        id=job.id,
-        name=job.name,
-        schedule_cron=job.schedule_cron,
-        job_type=job.job_type,
-        config=job.config,
-        is_enabled=job.is_enabled,
-        last_run_at=None,
-        next_run_at=job.next_run_at.isoformat() if job.next_run_at else None,
-        room_id=job.room_id,
-        created_at=job.created_at.isoformat() if job.created_at else "",
-    )
-
-
-@router.patch("/schedules/{schedule_id}", response_model=ScheduledJobResponse)
-@limiter.limit(settings.api_rate_limit_chat)
-async def update_schedule(
-    schedule_id: int,
-    request: Request,
-    body: ScheduledJobUpdate,
-    db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
-):
-    """Update a scheduled notification job."""
-    from sqlalchemy import select
-
-    from models.database import ScheduledJob
-
-    result = await db.execute(
-        select(ScheduledJob).where(ScheduledJob.id == schedule_id)
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-
-    if body.schedule_cron is not None:
-        from services.notification_scheduler import NotificationScheduler
-        try:
-            next_run = NotificationScheduler.next_run_after(body.schedule_cron, datetime.utcnow())
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        job.schedule_cron = body.schedule_cron
-        job.next_run_at = next_run
-
-    if body.is_enabled is not None:
-        job.is_enabled = body.is_enabled
-
-    if body.config is not None:
-        job.config = body.config
-
-    await db.commit()
-    await db.refresh(job)
-
-    return ScheduledJobResponse(
-        id=job.id,
-        name=job.name,
-        schedule_cron=job.schedule_cron,
-        job_type=job.job_type,
-        config=job.config,
-        is_enabled=job.is_enabled,
-        last_run_at=job.last_run_at.isoformat() if job.last_run_at else None,
-        next_run_at=job.next_run_at.isoformat() if job.next_run_at else None,
-        room_id=job.room_id,
-        created_at=job.created_at.isoformat() if job.created_at else "",
-    )
-
-
-@router.delete("/schedules/{schedule_id}")
-@limiter.limit(settings.api_rate_limit_chat)
-async def delete_schedule(
-    schedule_id: int,
-    request: Request,
-    db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
-):
-    """Delete a scheduled notification job."""
-    from sqlalchemy import select
-
-    from models.database import ScheduledJob
-
-    result = await db.execute(
-        select(ScheduledJob).where(ScheduledJob.id == schedule_id)
-    )
-    job = result.scalar_one_or_none()
-    if not job:
-        raise HTTPException(status_code=404, detail="Schedule not found")
-
-    await db.delete(job)
-    await db.commit()
-
-    return {"success": True, "schedule_id": schedule_id}
-
-
-# ==========================================================================
-# Reminder Endpoints (Phase 3b)
+# Reminder Endpoints
 # ==========================================================================
 
 @router.post("/reminders", response_model=ReminderResponse, status_code=201)

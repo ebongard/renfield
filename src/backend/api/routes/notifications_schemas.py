@@ -85,52 +85,7 @@ class SuppressionListResponse(BaseModel):
     suppressions: list[SuppressionResponse]
 
 
-# -- Scheduler Schemas (Phase 3a) --
-
-class ScheduledJobRequest(BaseModel):
-    """Request to create/update a scheduled job."""
-    name: str = Field(..., min_length=1, max_length=100)
-    schedule_cron: str = Field(..., min_length=5, max_length=100)
-    job_type: str = Field(default="briefing", max_length=50)
-    config: dict | None = None
-    is_enabled: bool = True
-    room_id: int | None = None
-
-    @field_validator("job_type")
-    @classmethod
-    def validate_job_type(cls, v: str) -> str:
-        if v not in {"briefing", "reminder"}:
-            raise ValueError("job_type must be 'briefing' or 'reminder'")
-        return v
-
-
-class ScheduledJobUpdate(BaseModel):
-    """Partial update for a scheduled job."""
-    schedule_cron: str | None = Field(None, max_length=100)
-    is_enabled: bool | None = None
-    config: dict | None = None
-
-
-class ScheduledJobResponse(BaseModel):
-    """Single scheduled job."""
-    id: int
-    name: str
-    schedule_cron: str
-    job_type: str
-    config: dict | None
-    is_enabled: bool
-    last_run_at: str | None
-    next_run_at: str | None
-    room_id: int | None
-    created_at: str
-
-
-class ScheduledJobListResponse(BaseModel):
-    """List of scheduled jobs."""
-    jobs: list[ScheduledJobResponse]
-
-
-# -- Reminder Schemas (Phase 3b) --
+# -- Reminder Schemas --
 
 class ReminderRequest(BaseModel):
     """Request to create a reminder."""

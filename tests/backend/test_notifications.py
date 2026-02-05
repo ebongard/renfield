@@ -4,7 +4,7 @@ Tests für Proaktive Benachrichtigungen
 Testet:
 - NotificationService: Webhook, Dedup, CRUD, Token
 - Phase 2: Semantic Dedup, Urgency Classification, Enrichment, Suppressions
-- Phase 3: Scheduler (Cron Parser), Reminders (Duration Parsing)
+- Reminders (Duration Parsing)
 - Notification API: Webhook-Endpoint, Liste, Acknowledge, Dismiss, Token
 - WebSocket: notification_ack Handling
 """
@@ -28,7 +28,6 @@ from models.database import (
     NotificationSuppression,
     Reminder,
     Room,
-    ScheduledJob,
     SystemSetting,
 )
 from models.websocket_messages import WSNotificationAckMessage
@@ -707,114 +706,7 @@ class TestSuppressionLearning:
 
 
 # ============================================================================
-# Phase 3a: Scheduler / Cron Parser Tests
-# ============================================================================
-
-class TestCronParser:
-    """Minimal cron parser tests."""
-
-    @pytest.mark.unit
-    def test_cron_basic_time(self):
-        """Test: Parse simple cron (30 7 * * *) = 7:30 daily."""
-        from services.notification_scheduler import NotificationScheduler
-
-        after = datetime(2026, 2, 5, 6, 0, 0)  # 06:00
-        result = NotificationScheduler.next_run_after("30 7 * * *", after)
-        assert result.hour == 7
-        assert result.minute == 30
-        assert result.day == 5
-
-    @pytest.mark.unit
-    def test_cron_next_day(self):
-        """Test: If time already passed, picks next day."""
-        from services.notification_scheduler import NotificationScheduler
-
-        after = datetime(2026, 2, 5, 8, 0, 0)  # 08:00, past 07:30
-        result = NotificationScheduler.next_run_after("30 7 * * *", after)
-        assert result.hour == 7
-        assert result.minute == 30
-        assert result.day == 6
-
-    @pytest.mark.unit
-    def test_cron_wildcards_all(self):
-        """Test: All wildcards = next minute."""
-        from services.notification_scheduler import NotificationScheduler
-
-        after = datetime(2026, 2, 5, 10, 15, 0)
-        result = NotificationScheduler.next_run_after("* * * * *", after)
-        assert result == datetime(2026, 2, 5, 10, 16, 0)
-
-    @pytest.mark.unit
-    def test_cron_specific_dow(self):
-        """Test: Day of week matching (1=Monday)."""
-        from services.notification_scheduler import NotificationScheduler
-
-        # 2026-02-05 is Thursday (python weekday=3, cron dow=4)
-        after = datetime(2026, 2, 5, 0, 0, 0)
-        result = NotificationScheduler.next_run_after("0 8 * * 1", after)  # Monday
-        # Next Monday is Feb 9
-        assert result.weekday() == 0  # Monday
-        assert result.hour == 8
-        assert result.minute == 0
-
-    @pytest.mark.unit
-    def test_cron_invalid_expression(self):
-        """Test: Invalid cron raises ValueError."""
-        from services.notification_scheduler import NotificationScheduler
-
-        with pytest.raises(ValueError, match="expected 5 fields"):
-            NotificationScheduler.next_run_after("30 7 *", datetime.utcnow())
-
-    @pytest.mark.unit
-    def test_cron_invalid_value(self):
-        """Test: Out-of-range value raises ValueError."""
-        from services.notification_scheduler import NotificationScheduler
-
-        with pytest.raises(ValueError):
-            NotificationScheduler.next_run_after("99 7 * * *", datetime.utcnow())
-
-
-class TestSchedulerCRUD:
-    """Scheduler CRUD tests."""
-
-    @pytest.mark.database
-    async def test_create_scheduled_job(self, db_session):
-        """Test: Create a scheduled job."""
-        job = ScheduledJob(
-            name="Morning Briefing",
-            schedule_cron="30 7 * * *",
-            job_type="briefing",
-            is_enabled=True,
-            next_run_at=datetime(2026, 2, 6, 7, 30),
-        )
-        db_session.add(job)
-        await db_session.commit()
-        await db_session.refresh(job)
-
-        assert job.id is not None
-        assert job.name == "Morning Briefing"
-        assert job.is_enabled is True
-
-    @pytest.mark.database
-    async def test_disable_scheduled_job(self, db_session):
-        """Test: Disable a scheduled job."""
-        job = ScheduledJob(
-            name="Test Job",
-            schedule_cron="0 8 * * *",
-            job_type="briefing",
-            is_enabled=True,
-        )
-        db_session.add(job)
-        await db_session.commit()
-
-        job.is_enabled = False
-        await db_session.commit()
-        await db_session.refresh(job)
-        assert job.is_enabled is False
-
-
-# ============================================================================
-# Phase 3b: Reminder Tests
+# Reminder Tests
 # ============================================================================
 
 class TestReminderParsing:
