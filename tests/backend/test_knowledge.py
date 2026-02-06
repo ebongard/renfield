@@ -9,12 +9,11 @@ Testet:
 """
 
 import pytest
-from sqlalchemy import select, inspect
-from sqlalchemy.ext.asyncio import AsyncSession
 from httpx import AsyncClient
+from sqlalchemy import inspect, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KnowledgeBase, Document, DocumentChunk, User, Role
-
+from models.database import Document, KnowledgeBase, Role, User
 
 # ============================================================================
 # Model / Schema Tests

@@ -12,7 +12,7 @@ Features:
 - Provides model availability info for satellites
 """
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import WebSocket
@@ -366,7 +366,7 @@ class WakeWordConfigManager:
         status.synced = success
         status.active_keywords = active_keywords or []
         status.failed_keywords = failed_keywords or []
-        status.last_ack_time = datetime.utcnow()
+        status.last_ack_time = datetime.now(UTC).replace(tzinfo=None)
         status.error = error
 
         if success:

@@ -7,7 +7,7 @@ and context preparation for LLM queries.
 import asyncio
 import os
 from collections import defaultdict
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -180,7 +180,7 @@ class RAGService:
 
             doc.chunk_count = chunk_count
             doc.status = DOC_STATUS_COMPLETED
-            doc.processed_at = datetime.utcnow()
+            doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
 
             await self.db.commit()
 

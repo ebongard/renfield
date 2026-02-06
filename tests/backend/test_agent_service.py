@@ -2,24 +2,25 @@
 Tests for AgentService — ReAct Agent Loop for multi-step tool chaining.
 """
 
-import pytest
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
 from services.agent_service import (
+    AgentContext,
     AgentService,
     AgentStep,
-    AgentContext,
-    _parse_agent_json,
-    _truncate,
-    _extract_blobs,
-    _resolve_blobs,
     _auto_attach_blobs,
+    _extract_blobs,
+    _parse_agent_json,
     _recover_send_email,
+    _resolve_blobs,
+    _truncate,
     step_to_ws_message,
 )
 from services.agent_tools import AgentToolRegistry
-
 
 # ============================================================================
 # Helper: collect all steps from the async generator

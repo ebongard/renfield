@@ -8,11 +8,11 @@ Tests:
 - Satellite language support
 """
 
-import pytest
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
 
+import pytest
+from httpx import AsyncClient
 
 # ============================================================================
 # Fixtures
@@ -365,8 +365,9 @@ class TestSatelliteLanguage:
     @pytest.mark.unit
     def test_satellite_info_has_language(self):
         """Test SatelliteInfo dataclass has language field"""
-        from services.satellite_manager import SatelliteInfo, SatelliteCapabilities
         from unittest.mock import MagicMock
+
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo
 
         mock_websocket = MagicMock()
         caps = SatelliteCapabilities()
@@ -384,8 +385,9 @@ class TestSatelliteLanguage:
     @pytest.mark.unit
     def test_satellite_info_default_language(self):
         """Test SatelliteInfo defaults to German"""
-        from services.satellite_manager import SatelliteInfo, SatelliteCapabilities
         from unittest.mock import MagicMock
+
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo
 
         mock_websocket = MagicMock()
         caps = SatelliteCapabilities()
@@ -402,8 +404,9 @@ class TestSatelliteLanguage:
     @pytest.mark.unit
     async def test_satellite_registration_with_language(self):
         """Test satellite registration stores language"""
+        from unittest.mock import AsyncMock, MagicMock
+
         from services.satellite_manager import SatelliteManager
-        from unittest.mock import MagicMock, AsyncMock
 
         manager = SatelliteManager()
         mock_websocket = MagicMock()

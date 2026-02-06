@@ -24,6 +24,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from loguru import logger
 
@@ -135,6 +136,25 @@ class ExponentialBackoff:
         """Return seconds until next retry is allowed (0 if ready)."""
         remaining = self._next_retry_time - time.monotonic()
         return max(0.0, remaining)
+
+
+# === Geocode HTTP client singleton ===
+_geocode_client: Any = None
+
+
+def _get_geocode_client() -> Any:
+    global _geocode_client
+    if _geocode_client is None:
+        _geocode_client = httpx.AsyncClient(timeout=8.0)
+    return _geocode_client
+
+
+async def close_geocode_client() -> None:
+    """Close the geocode HTTP client singleton. Call on shutdown."""
+    global _geocode_client
+    if _geocode_client is not None:
+        await _geocode_client.aclose()
+        _geocode_client = None
 
 
 class MCPValidationError(Exception):
@@ -334,46 +354,45 @@ async def _geocode_location_arguments(arguments: dict, input_schema: dict) -> di
         return arguments
 
     # Geocode using Open-Meteo API (free, no key) with retry
-    import httpx
+    client = _get_geocode_client()
 
     for attempt in range(2):
         try:
-            async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.get(
-                    "https://geocoding-api.open-meteo.com/v1/search",
-                    params={"name": location_value, "count": 5, "language": "de"},
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                results = data.get("results", [])
-                if results:
-                    # Pick the result with the highest population to avoid
-                    # matching small towns (e.g. York, NE instead of New York City)
-                    geo = max(results, key=lambda r: r.get("population", 0))
+            resp = await client.get(
+                "https://geocoding-api.open-meteo.com/v1/search",
+                params={"name": location_value, "count": 5, "language": "de"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("results", [])
+            if results:
+                # Pick the result with the highest population to avoid
+                # matching small towns (e.g. York, NE instead of New York City)
+                geo = max(results, key=lambda r: r.get("population", 0))
 
-                    # Sanity check: if the best result's name doesn't match the
-                    # query well (e.g. "York" for "New York"), retry with " City".
-                    # A partial substring match ("york" in "new york") is not
-                    # sufficient — the result name should START with or EQUAL
-                    # the query, or vice versa.
-                    query_lower = location_value.lower().strip()
-                    geo_name_lower = geo.get("name", "").lower()
-                    is_good_match = (
-                        query_lower == geo_name_lower
-                        or geo_name_lower.startswith(query_lower)
-                        or query_lower.startswith(geo_name_lower + " ")  # e.g. "new york" starts with "new york"
+                # Sanity check: if the best result's name doesn't match the
+                # query well (e.g. "York" for "New York"), retry with " City".
+                # A partial substring match ("york" in "new york") is not
+                # sufficient — the result name should START with or EQUAL
+                # the query, or vice versa.
+                query_lower = location_value.lower().strip()
+                geo_name_lower = geo.get("name", "").lower()
+                is_good_match = (
+                    query_lower == geo_name_lower
+                    or geo_name_lower.startswith(query_lower)
+                    or query_lower.startswith(geo_name_lower + " ")  # e.g. "new york" starts with "new york"
+                )
+                if not is_good_match:
+                    retry_resp = await client.get(
+                        "https://geocoding-api.open-meteo.com/v1/search",
+                        params={"name": f"{location_value} City", "count": 3, "language": "de"},
                     )
-                    if not is_good_match:
-                        retry_resp = await client.get(
-                            "https://geocoding-api.open-meteo.com/v1/search",
-                            params={"name": f"{location_value} City", "count": 3, "language": "de"},
-                        )
-                        retry_resp.raise_for_status()
-                        retry_results = retry_resp.json().get("results", [])
-                        if retry_results:
-                            retry_best = max(retry_results, key=lambda r: r.get("population", 0))
-                            if retry_best.get("population", 0) > geo.get("population", 0):
-                                geo = retry_best
+                    retry_resp.raise_for_status()
+                    retry_results = retry_resp.json().get("results", [])
+                    if retry_results:
+                        retry_best = max(retry_results, key=lambda r: r.get("population", 0))
+                        if retry_best.get("population", 0) > geo.get("population", 0):
+                            geo = retry_best
                     coerced = {k: v for k, v in arguments.items() if k != "location"}
                     coerced["latitude"] = geo["latitude"]
                     coerced["longitude"] = geo["longitude"]
@@ -464,12 +483,12 @@ def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
     Truncate response text to max_size bytes.
     For JSON with arrays: slims large text fields, then keeps complete items.
     """
-    if len(text.encode('utf-8')) <= max_size:
+    text_bytes = text.encode('utf-8')
+    if len(text_bytes) <= max_size:
         return text
 
     # Try smart JSON truncation: keep complete items in arrays
     try:
-        import json
         data = json.loads(text)
         if isinstance(data, dict):
             # Find the largest array field (e.g. "results", "documents", etc.)
@@ -512,8 +531,8 @@ def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
 
-    # Fallback: byte-level truncation
-    truncated = text.encode('utf-8')[:max_size - 50].decode('utf-8', errors='ignore')
+    # Fallback: byte-level truncation (reuse pre-encoded bytes)
+    truncated = text_bytes[:max_size - 50].decode('utf-8', errors='ignore')
     return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
 
 
@@ -1239,7 +1258,8 @@ class MCPManager:
         """Start background task for periodic health checks and tool refreshes."""
         async def _loop():
             while True:
-                await asyncio.sleep(settings.mcp_refresh_interval)
+                jitter = random.uniform(0.8, 1.2)
+                await asyncio.sleep(settings.mcp_refresh_interval * jitter)
                 try:
                     await self.refresh_tools()
                 except Exception as e:

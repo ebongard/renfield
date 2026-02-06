@@ -7,16 +7,15 @@ Testet:
 - ComplexityDetector with feedback integration
 """
 
-import pytest
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import IntentCorrection
-
 
 # ============================================================================
 # Fixtures

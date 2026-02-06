@@ -4,11 +4,10 @@ Integration Tests for Satellite OTA Update System
 Tests the complete update flow including WebSocket communication.
 """
 
-import pytest
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
 
+import pytest
+from httpx import AsyncClient
 
 # =============================================================================
 # WebSocket Update Flow Integration Tests
@@ -21,9 +20,7 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_progress_updates_satellite_status(self, async_client: AsyncClient):
         """update_progress message should update satellite's update status"""
-        from services.satellite_manager import (
-            SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -55,9 +52,7 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_complete_updates_version(self, async_client: AsyncClient):
         """update_complete message should update satellite version"""
-        from services.satellite_manager import (
-            SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -87,9 +82,7 @@ class TestSatelliteUpdateWebSocketFlow:
     @pytest.mark.asyncio
     async def test_update_failed_sets_error(self, async_client: AsyncClient):
         """update_failed message should set error status"""
-        from services.satellite_manager import (
-            SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -133,9 +126,7 @@ class TestSatelliteUpdateAPIFlow:
     @pytest.mark.asyncio
     async def test_full_update_flow_via_api(self, async_client: AsyncClient):
         """Test complete update flow: check version -> initiate -> progress -> complete"""
-        from services.satellite_manager import (
-            get_satellite_manager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -218,9 +209,7 @@ class TestSatelliteUpdateAPIFlow:
     @pytest.mark.asyncio
     async def test_initiate_update_sends_websocket_message(self, async_client: AsyncClient):
         """POST /api/satellites/{id}/update should send update_request via WebSocket"""
-        from services.satellite_manager import (
-            get_satellite_manager, SatelliteInfo, SatelliteCapabilities
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, get_satellite_manager
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -285,9 +274,7 @@ class TestVersionComparisonIntegration:
     @pytest.mark.asyncio
     async def test_satellites_endpoint_shows_update_available(self, async_client: AsyncClient):
         """GET /api/satellites should correctly show update_available for each satellite"""
-        from services.satellite_manager import (
-            get_satellite_manager, SatelliteInfo, SatelliteCapabilities
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, get_satellite_manager
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -357,8 +344,8 @@ class TestUpdatePackageIntegration:
     @pytest.mark.asyncio
     async def test_update_package_endpoint_returns_tarball(self, async_client: AsyncClient):
         """GET /api/satellites/update-package should return a valid tarball"""
-        import tempfile
         import tarfile
+        import tempfile
         from pathlib import Path
 
         with patch('services.satellite_update_service.settings') as mock_settings:
@@ -418,9 +405,7 @@ class TestRollbackScenarios:
     @pytest.mark.asyncio
     async def test_failed_update_preserves_original_version(self, async_client: AsyncClient):
         """When update fails, satellite should keep original version"""
-        from services.satellite_manager import (
-            get_satellite_manager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()
@@ -481,9 +466,7 @@ class TestRollbackScenarios:
     @pytest.mark.asyncio
     async def test_clear_update_status_after_failure(self, async_client: AsyncClient):
         """After acknowledging failure, update status should be clearable"""
-        from services.satellite_manager import (
-            get_satellite_manager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
-        )
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus, get_satellite_manager
 
         manager = get_satellite_manager()
         mock_ws = MagicMock()

@@ -9,17 +9,11 @@ Testet:
 - IP-basierte Room Detection
 """
 
+
 import pytest
-from datetime import datetime
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.room_service import RoomService, normalize_room_name, generate_device_id
-from models.database import (
-    Room, RoomDevice,
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER
-)
-
+from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL, Room, RoomDevice
+from services.room_service import RoomService, generate_device_id, normalize_room_name
 
 # ============================================================================
 # normalize_room_name Tests

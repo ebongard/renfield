@@ -10,7 +10,7 @@ Handles:
 
 import re
 import unicodedata
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -221,7 +221,7 @@ class RoomService:
         if ha_area_id is not None:
             room.ha_area_id = ha_area_id if ha_area_id else None
 
-        room.updated_at = datetime.utcnow()
+        room.updated_at = datetime.now(UTC).replace(tzinfo=None)
         await self.db.commit()
 
         logger.info(f"Updated room {room_id}: {room.name}")
@@ -258,7 +258,7 @@ class RoomService:
             return None
 
         room.ha_area_id = ha_area_id
-        room.last_synced_at = datetime.utcnow()
+        room.last_synced_at = datetime.now(UTC).replace(tzinfo=None)
         await self.db.commit()
 
         logger.info(f"Linked room {room.name} to HA area {ha_area_id}")
@@ -321,7 +321,7 @@ class RoomService:
                     if existing_linked.name != area_name:
                         existing_linked.name = area_name
                         existing_linked.alias = normalize_room_name(area_name)
-                        existing_linked.last_synced_at = datetime.utcnow()
+                        existing_linked.last_synced_at = datetime.now(UTC).replace(tzinfo=None)
                         await self.db.commit()
                     results["skipped"] += 1
                     continue
@@ -335,7 +335,7 @@ class RoomService:
                         continue
                     elif conflict_resolution in ["link", "overwrite"]:
                         existing_by_name.ha_area_id = area_id
-                        existing_by_name.last_synced_at = datetime.utcnow()
+                        existing_by_name.last_synced_at = datetime.now(UTC).replace(tzinfo=None)
                         if area_icon:
                             existing_by_name.icon = area_icon
                         await self.db.commit()
@@ -434,10 +434,10 @@ class RoomService:
             existing.capabilities = default_caps
             existing.is_stationary = is_stationary
             existing.is_online = True
-            existing.last_connected_at = datetime.utcnow()
+            existing.last_connected_at = datetime.now(UTC).replace(tzinfo=None)
             existing.user_agent = user_agent
             existing.ip_address = ip_address
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
             await self.db.commit()
             await self.db.refresh(existing)
@@ -454,7 +454,7 @@ class RoomService:
             capabilities=default_caps,
             is_stationary=is_stationary,
             is_online=True,
-            last_connected_at=datetime.utcnow(),
+            last_connected_at=datetime.now(UTC).replace(tzinfo=None),
             user_agent=user_agent,
             ip_address=ip_address
         )
@@ -514,10 +514,10 @@ class RoomService:
         """Update device online status and optionally IP address"""
         values = {
             "is_online": is_online,
-            "updated_at": datetime.utcnow()
+            "updated_at": datetime.now(UTC).replace(tzinfo=None)
         }
         if is_online:
-            values["last_connected_at"] = datetime.utcnow()
+            values["last_connected_at"] = datetime.now(UTC).replace(tzinfo=None)
             # Update IP address if provided (Option 1: update on every connection)
             if ip_address:
                 values["ip_address"] = ip_address
@@ -547,7 +547,7 @@ class RoomService:
             )
 
         device.ip_address = ip_address
-        device.updated_at = datetime.utcnow()
+        device.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         await self.db.commit()
         await self.db.refresh(device)
@@ -615,7 +615,7 @@ class RoomService:
         current_caps = device.capabilities or {}
         current_caps.update(capabilities)
         device.capabilities = current_caps
-        device.updated_at = datetime.utcnow()
+        device.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         await self.db.commit()
         await self.db.refresh(device)
@@ -660,7 +660,7 @@ class RoomService:
             return None
 
         device.room_id = room_id
-        device.updated_at = datetime.utcnow()
+        device.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         await self.db.commit()
         await self.db.refresh(device)

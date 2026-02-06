@@ -11,22 +11,18 @@ Tests cover:
 - Roles API with allowed_plugins
 """
 
-import pytest
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
+from models.database import Role, User
 from models.permissions import (
+    DEFAULT_ROLES,
+    PERMISSION_HIERARCHY,
     Permission,
     has_permission,
-    has_any_permission,
-    PERMISSION_HIERARCHY,
-    DEFAULT_ROLES,
 )
-from models.database import Role, User
-
 
 # ============================================================================
 # Plugin Permission Enum Tests
@@ -519,7 +515,7 @@ class TestRolesAPIAllowedPlugins:
     @pytest.fixture
     async def admin_token(self, db_session: AsyncSession):
         """Create admin user and get token"""
-        from services.auth_service import get_password_hash, create_access_token
+        from services.auth_service import create_access_token, get_password_hash
 
         # Create admin role
         admin_role = Role(

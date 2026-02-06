@@ -10,7 +10,7 @@ cosine similarity search via raw SQL (pgvector).
 """
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import func, select, text, update
@@ -84,7 +84,7 @@ class ConversationMemoryService:
             duplicate = await self._find_duplicate(embedding, user_id)
             if duplicate:
                 duplicate.access_count = (duplicate.access_count or 0) + 1
-                duplicate.last_accessed_at = datetime.utcnow()
+                duplicate.last_accessed_at = datetime.now(UTC).replace(tzinfo=None)
                 await self.db.commit()
                 await self.db.refresh(duplicate)
                 logger.debug(f"Memory deduplicated (id={duplicate.id}), access_count={duplicate.access_count}")
@@ -351,7 +351,7 @@ class ConversationMemoryService:
                 .where(ConversationMemory.id.in_(memory_ids))
                 .values(
                     access_count=ConversationMemory.access_count + 1,
-                    last_accessed_at=datetime.utcnow(),
+                    last_accessed_at=datetime.now(UTC).replace(tzinfo=None),
                 )
             )
             await self.db.commit()
@@ -368,7 +368,7 @@ class ConversationMemoryService:
 
         Returns counts of deactivated memories by reason.
         """
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         counts = {"expired": 0, "decayed": 0, "over_limit": 0}
 
         # 1. Expired memories (expires_at < now)

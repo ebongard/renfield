@@ -4,8 +4,10 @@ Tests for AgentToolRegistry — Tool descriptions for the Agent Loop.
 Tools are registered dynamically from MCP servers and plugins.
 """
 
-import pytest
 from unittest.mock import MagicMock
+
+import pytest
+
 from services.agent_tools import AgentToolRegistry, ToolDefinition
 
 

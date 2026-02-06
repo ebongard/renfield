@@ -250,7 +250,8 @@ async def upload_document(
 
     # Eindeutigen Dateinamen generieren
     import uuid
-    unique_filename = f"{uuid.uuid4().hex}_{file.filename}"
+    safe_name = os.path.basename((file.filename or "unknown").replace("\x00", ""))
+    unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename
 
     # Datei speichern
