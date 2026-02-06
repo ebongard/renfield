@@ -2,16 +2,16 @@
 Agent Tool Registry — Wraps existing infrastructure as tool descriptions for the LLM.
 
 Generates compact tool descriptions from:
-- Core tools (Home Assistant actions)
-- Plugin tools (YAML-based plugins)
+- MCP servers (Home Assistant, n8n, weather, search, etc.)
+- Internal tools (room resolution, media playback)
+- Legacy plugins (YAML-based)
 
 These descriptions are included in the Agent Loop prompt so the LLM knows
 which tools it can call.
 
-Includes keyword-based tool relevance filtering to reduce prompt size
-for small LLMs by selecting only tools relevant to the user's query.
+Tool filtering is handled by AgentRouter which classifies messages into
+roles (smart_home, research, documents, etc.) with pre-defined MCP server lists.
 """
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -174,121 +174,3 @@ class AgentToolRegistry:
                 lines.append(f"- {tool.name}: {tool.description}")
 
         return "\n".join(lines)
-
-    # Keyword mapping: query keywords -> MCP server prefixes / tool name fragments
-    # Each entry: set of query keywords -> set of server prefixes to include
-    _SERVER_KEYWORD_MAP: dict[str, list[str]] = {
-        # Document management
-        "paperless": ["mcp.paperless"],
-        "dokument": ["mcp.paperless"],
-        "document": ["mcp.paperless"],
-        "rechnung": ["mcp.paperless"],
-        "invoice": ["mcp.paperless"],
-        "suche": ["mcp.paperless"],
-        "search": ["mcp.paperless"],
-        # Email
-        "email": ["mcp.email"],
-        "mail": ["mcp.email"],
-        "schick": ["mcp.email"],
-        "send": ["mcp.email"],
-        "postfach": ["mcp.email"],
-        "inbox": ["mcp.email"],
-        # Weather
-        "wetter": ["mcp.weather"],
-        "weather": ["mcp.weather"],
-        "temperatur": ["mcp.weather"],
-        "regen": ["mcp.weather"],
-        "wind": ["mcp.weather"],
-        # Smart home
-        "licht": ["mcp.homeassistant"],
-        "light": ["mcp.homeassistant"],
-        "schalte": ["mcp.homeassistant"],
-        "turn": ["mcp.homeassistant"],
-        "heizung": ["mcp.homeassistant"],
-        "thermostat": ["mcp.homeassistant"],
-        "sensor": ["mcp.homeassistant"],
-        # Media
-        "jellyfin": ["mcp.jellyfin"],
-        "film": ["mcp.jellyfin"],
-        "movie": ["mcp.jellyfin"],
-        "serie": ["mcp.jellyfin"],
-        "musik": ["mcp.jellyfin"],
-        "music": ["mcp.jellyfin"],
-        # News
-        "news": ["mcp.news"],
-        "nachrichten": ["mcp.news"],
-        "artikel": ["mcp.news"],
-        # Workflow
-        "n8n": ["mcp.n8n"],
-        "workflow": ["mcp.n8n"],
-        # Web search
-        "web": ["mcp.search"],
-        "google": ["mcp.search"],
-        "internet": ["mcp.search"],
-    }
-
-    def select_relevant_tools(self, query: str, max_tools: int = 20) -> dict[str, "ToolDefinition"]:
-        """
-        Select tools relevant to the user's query using keyword matching.
-
-        Matches query words against known keyword-to-server mappings to select
-        only the MCP server tool groups that are likely needed. Falls back to
-        all tools if no keywords match.
-
-        Args:
-            query: The user's original message
-            max_tools: Maximum number of tools to include
-
-        Returns:
-            Dict of relevant ToolDefinitions
-        """
-        if not self._tools:
-            return {}
-
-        query_lower = query.lower()
-        # Extract words from query
-        query_words = set(re.findall(r'[a-zäöüß]+', query_lower))
-
-        # Find matching server prefixes
-        matched_prefixes: set[str] = set()
-        for keyword, prefixes in self._SERVER_KEYWORD_MAP.items():
-            # Match if keyword appears as a word or substring in query
-            if keyword in query_words or keyword in query_lower:
-                matched_prefixes.update(prefixes)
-
-        if not matched_prefixes:
-            # No keyword matches — return all tools (fallback)
-            logger.debug(f"🔧 No keyword matches for '{query[:50]}', using all {len(self._tools)} tools")
-            return self._tools
-
-        # Select tools whose names start with any matched prefix
-        selected: dict[str, ToolDefinition] = {}
-        for name, tool in self._tools.items():
-            if any(name.startswith(prefix) for prefix in matched_prefixes):
-                selected[name] = tool
-
-        # Always include internal tools (minimal token cost, LLM decides usage)
-        for name, tool in self._tools.items():
-            if name.startswith("internal."):
-                selected[name] = tool
-
-        if not selected:
-            # Safety: if matching produced empty set, return all tools
-            logger.debug(f"🔧 Prefix matching produced no tools, using all {len(self._tools)}")
-            return self._tools
-
-        # Cap at max_tools
-        if len(selected) > max_tools:
-            # Prioritize tools with names containing query words
-            scored = []
-            for name, tool in selected.items():
-                score = sum(1 for w in query_words if w in name.lower() or w in tool.description.lower())
-                scored.append((score, name, tool))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            selected = {name: tool for _, name, tool in scored[:max_tools]}
-
-        logger.info(
-            f"🔧 Agent tool filter: {len(selected)}/{len(self._tools)} tools selected "
-            f"(prefixes: {sorted(matched_prefixes)})"
-        )
-        return selected

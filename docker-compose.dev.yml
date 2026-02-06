@@ -82,6 +82,8 @@ services:
       DATABASE_URL: postgresql://renfield:${POSTGRES_PASSWORD:-changeme}@postgres:5432/renfield
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      # Disable telemetry for MCP stdio servers (prevents banner on stdout)
+      DO_NOT_TRACK: "1"
     volumes:
       - ./src/backend:/app
       - ./tests:/tests

@@ -22,8 +22,11 @@ from utils.llm_client import (
     LLMClient,
     clear_client_cache,
     create_llm_client,
+    extract_response_content,
     get_agent_client,
+    get_classification_chat_kwargs,
     get_default_client,
+    is_thinking_model,
 )
 
 
@@ -229,3 +232,143 @@ class TestGetAgentClient:
 
         assert resolved == "http://default:11434"
         assert client is sentinel
+
+
+# ============================================================================
+# Thinking Model Detection Tests (Option C)
+# ============================================================================
+
+class TestIsThinkingModel:
+    """Tests for is_thinking_model() detection."""
+
+    @pytest.mark.unit
+    def test_qwen3_base_is_thinking(self):
+        """qwen3 without version tag is a thinking model."""
+        assert is_thinking_model("qwen3") is True
+
+    @pytest.mark.unit
+    def test_qwen3_with_version_is_thinking(self):
+        """qwen3:14b with version tag is a thinking model."""
+        assert is_thinking_model("qwen3:14b") is True
+
+    @pytest.mark.unit
+    def test_qwen3_case_insensitive(self):
+        """Detection is case-insensitive."""
+        assert is_thinking_model("Qwen3:8b") is True
+        assert is_thinking_model("QWEN3:latest") is True
+
+    @pytest.mark.unit
+    def test_qwq_is_thinking(self):
+        """qwq model is a thinking model."""
+        assert is_thinking_model("qwq:32b") is True
+
+    @pytest.mark.unit
+    def test_deepseek_r1_is_thinking(self):
+        """deepseek-r1 is a thinking model."""
+        assert is_thinking_model("deepseek-r1:latest") is True
+
+    @pytest.mark.unit
+    def test_deepseek_r1_distill_is_thinking(self):
+        """deepseek-r1-distill variants are thinking models."""
+        assert is_thinking_model("deepseek-r1-distill-qwen:14b") is True
+        assert is_thinking_model("deepseek-r1-distill-llama:8b") is True
+
+    @pytest.mark.unit
+    def test_marco_o1_is_thinking(self):
+        """marco-o1 is a thinking model."""
+        assert is_thinking_model("marco-o1:7b") is True
+
+    @pytest.mark.unit
+    def test_llama_is_not_thinking(self):
+        """llama models are not thinking models."""
+        assert is_thinking_model("llama3.2:3b") is False
+        assert is_thinking_model("llama3.1:8b") is False
+
+    @pytest.mark.unit
+    def test_mistral_is_not_thinking(self):
+        """mistral is not a thinking model."""
+        assert is_thinking_model("mistral:7b") is False
+
+    @pytest.mark.unit
+    def test_nomic_embed_is_not_thinking(self):
+        """Embedding models are not thinking models."""
+        assert is_thinking_model("nomic-embed-text") is False
+
+
+# ============================================================================
+# Classification Chat Kwargs Tests (Option A)
+# ============================================================================
+
+class TestGetClassificationChatKwargs:
+    """Tests for get_classification_chat_kwargs() helper."""
+
+    @pytest.mark.unit
+    def test_thinking_model_gets_think_false(self):
+        """Thinking models get think=False."""
+        kwargs = get_classification_chat_kwargs("qwen3:14b")
+        assert kwargs == {"think": False}
+
+    @pytest.mark.unit
+    def test_non_thinking_model_gets_empty_kwargs(self):
+        """Non-thinking models get empty kwargs."""
+        kwargs = get_classification_chat_kwargs("llama3.2:3b")
+        assert kwargs == {}
+
+    @pytest.mark.unit
+    def test_deepseek_r1_gets_think_false(self):
+        """DeepSeek R1 gets think=False."""
+        kwargs = get_classification_chat_kwargs("deepseek-r1:70b")
+        assert kwargs == {"think": False}
+
+
+# ============================================================================
+# Response Content Extraction Tests (Option B)
+# ============================================================================
+
+class TestExtractResponseContent:
+    """Tests for extract_response_content() failsafe."""
+
+    @pytest.mark.unit
+    def test_extracts_normal_content(self):
+        """Normal response content is extracted."""
+        response = MagicMock()
+        response.message.content = "Hello, world!"
+        assert extract_response_content(response) == "Hello, world!"
+
+    @pytest.mark.unit
+    def test_handles_empty_content(self):
+        """Empty content returns empty string."""
+        response = MagicMock()
+        response.message.content = ""
+        response.message.thinking = None
+        assert extract_response_content(response) == ""
+
+    @pytest.mark.unit
+    def test_handles_none_content(self):
+        """None content returns empty string."""
+        response = MagicMock()
+        response.message.content = None
+        response.message.thinking = None
+        assert extract_response_content(response) == ""
+
+    @pytest.mark.unit
+    def test_logs_warning_for_empty_content_with_thinking(self):
+        """Warning is logged when content is empty but thinking is present."""
+        response = MagicMock()
+        response.message.content = ""
+        response.message.thinking = "I am reasoning about this..."
+
+        # Should return empty string (not use thinking as content)
+        result = extract_response_content(response)
+        assert result == ""
+
+    @pytest.mark.unit
+    def test_does_not_use_thinking_as_content(self):
+        """Thinking content is NOT used as the response."""
+        response = MagicMock()
+        response.message.content = ""
+        response.message.thinking = "Secret reasoning"
+
+        result = extract_response_content(response)
+        assert result == ""
+        assert "Secret reasoning" not in result

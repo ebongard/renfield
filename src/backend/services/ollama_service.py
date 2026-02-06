@@ -17,7 +17,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import llm_circuit_breaker
 from utils.config import settings
-from utils.llm_client import get_default_client
+from utils.llm_client import (
+    extract_response_content,
+    get_classification_chat_kwargs,
+    get_default_client,
+)
 
 
 class OllamaService:
@@ -295,13 +299,16 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             prompt_length = len(json_system_message) + len(prompt)
             logger.debug(f"Intent prompt length: ~{prompt_length} chars (~{prompt_length // 4} tokens est.)")
 
+            # Option A: Disable thinking mode for intent classification
+            classification_kwargs = get_classification_chat_kwargs(self.model)
             response_data = await self.client.chat(
                 model=self.model,
                 messages=messages,
-                options=llm_call_options
+                options=llm_call_options,
+                **classification_kwargs,
             )
-            # ollama>=0.4.0 uses Pydantic models
-            response = response_data.message.content
+            # Option B: Failsafe for empty content with thinking
+            response = extract_response_content(response_data)
 
             # Retry once on empty response (model may have failed silently)
             if not response or not response.strip():
@@ -310,9 +317,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 response_data = await self.client.chat(
                     model=self.model,
                     messages=messages,
-                    options=retry_options
+                    options=retry_options,
+                    **classification_kwargs,
                 )
-                response = response_data.message.content
+                response = extract_response_content(response_data)
 
             # Robuste JSON-Extraktion
             import json

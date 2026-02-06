@@ -81,6 +81,8 @@ services:
       # DATABASE_URL wird dynamisch aus Einzelteilen zusammengebaut (config.py)
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      # Disable telemetry for MCP stdio servers (prevents banner on stdout)
+      DO_NOT_TRACK: "1"
     secrets:
       - postgres_password
       - home_assistant_token

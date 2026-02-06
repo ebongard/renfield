@@ -1,10 +1,17 @@
 """
 Tests for AgentRouter — Unified message classification into specialized agent roles.
 """
-
+import sys
 import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Ensure 'ollama' module is available even when the package isn't installed.
+# get_agent_client() does `import ollama` internally, so we provide a stub.
+if "ollama" not in sys.modules:
+    _ollama_stub = MagicMock()
+    _ollama_stub.AsyncClient = MagicMock()
+    sys.modules["ollama"] = _ollama_stub
 
 from services.agent_router import (
     AgentRouter,
@@ -319,7 +326,7 @@ class TestClassify:
         ollama = make_mock_ollama('{"role": "smart_home", "reason": "Lichtsteuerung"}')
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -334,7 +341,7 @@ class TestClassify:
         ollama = make_mock_ollama('{"role": "conversation", "reason": "Smalltalk"}')
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -350,7 +357,7 @@ class TestClassify:
         ollama = make_mock_ollama('{"role": "documents", "reason": "Dokumentensuche"}')
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -366,7 +373,7 @@ class TestClassify:
         ollama = make_mock_ollama('{"role": "invalid_role", "reason": "test"}')
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -381,7 +388,7 @@ class TestClassify:
         ollama = make_mock_ollama("")
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -403,7 +410,7 @@ class TestClassify:
 
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -423,7 +430,7 @@ class TestClassify:
 
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -443,7 +450,7 @@ class TestClassify:
             {"role": "assistant", "content": "Licht eingeschaltet"},
         ]
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None
@@ -458,7 +465,7 @@ class TestClassify:
         ollama = make_mock_ollama('```json\n{"role": "research", "reason": "web"}\n```')
         router = AgentRouter(SAMPLE_CONFIG)
 
-        with patch("utils.config.settings") as mock_settings:
+        with patch("services.agent_router.settings") as mock_settings:
             mock_settings.ollama_intent_model = "test-model"
             mock_settings.ollama_model = "test-model"
             mock_settings.agent_ollama_url = None

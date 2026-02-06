@@ -4,12 +4,40 @@ LLM Client Factory — Centralized creation and caching of LLM clients.
 Provides a Protocol that ollama.AsyncClient satisfies via structural typing,
 plus factory functions with URL-based caching to eliminate duplicate client
 instantiations across services.
+
+Also handles thinking-mode models (e.g., Qwen3) which require special handling
+for classification tasks where we need deterministic output without reasoning.
 """
 from __future__ import annotations
 
 from typing import Any, Protocol, runtime_checkable
 
+from loguru import logger
+
 from utils.config import settings
+
+# ---------------------------------------------------------------------------
+# Thinking-capable models (Option C: Model-specific configuration)
+# ---------------------------------------------------------------------------
+# Models that support thinking mode and may return {"content": "...", "thinking": "..."}
+# ollama-python 0.6.1 has a bug where content is empty when thinking is present
+THINKING_MODELS: frozenset[str] = frozenset({
+    "qwen3",
+    "qwq",
+    "deepseek-r1",
+    "deepseek-r1-distill",  # Distilled versions (qwen/llama based)
+    "marco-o1",  # Alibaba's reasoning model
+    "skywork-o1",  # Kunlun's reasoning model
+})
+
+
+def is_thinking_model(model: str) -> bool:
+    """Check if a model supports thinking mode.
+
+    Matches model family prefixes (e.g., "qwen3:14b" matches "qwen3").
+    """
+    model_lower = model.lower()
+    return any(model_lower.startswith(prefix) for prefix in THINKING_MODELS)
 
 
 @runtime_checkable
@@ -85,3 +113,56 @@ def get_agent_client(
 def clear_client_cache() -> None:
     """Clear the client cache (useful in tests)."""
     _client_cache.clear()
+
+
+# ---------------------------------------------------------------------------
+# Thinking Mode Handling (Options A + B)
+# ---------------------------------------------------------------------------
+
+
+def get_classification_chat_kwargs(model: str) -> dict[str, Any]:
+    """Get kwargs for classification tasks (router, intent extraction).
+
+    Option A: Disables thinking mode for thinking-capable models to ensure
+    deterministic, fast responses without reasoning overhead.
+
+    Args:
+        model: The model name (e.g., "qwen3:14b")
+
+    Returns:
+        dict with `think=False` if model supports thinking, else empty dict
+    """
+    if is_thinking_model(model):
+        logger.debug(f"Disabling thinking mode for classification model: {model}")
+        return {"think": False}
+    return {}
+
+
+def extract_response_content(response: Any) -> str:
+    """Extract content from an LLM response with failsafe for thinking mode.
+
+    Option B: Handles the ollama-python 0.6.1 bug where content is empty
+    when thinking mode is active. Falls back to thinking content if present.
+
+    Args:
+        response: The response object from client.chat()
+
+    Returns:
+        The response content string (or empty string if none found)
+    """
+    content = response.message.content or ""
+
+    # Failsafe: If content is empty but thinking is present, log a warning
+    # and return empty string (caller should handle this gracefully)
+    if not content:
+        thinking = getattr(response.message, "thinking", None)
+        if thinking:
+            logger.warning(
+                f"LLM response has empty content but thinking present "
+                f"(length: {len(thinking)}). This may indicate think=False "
+                f"was not passed for a thinking model."
+            )
+            # Don't use thinking as content - it's not the answer
+            # Instead, return empty so caller falls back to default behavior
+
+    return content
