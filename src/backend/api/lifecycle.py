@@ -371,13 +371,19 @@ async def lifespan(app: "FastAPI"):
         )
         raise SystemExit(1)
 
-    # Startup sequence
+    # Stage 1: Sequential (auth depends on database)
     await _init_database()
     await _init_auth()
-    await _init_ollama(app)
-    await _init_task_queue(app)
-    await _init_plugins(app)
-    await _init_mcp(app)
+
+    # Stage 2: Independent services (parallel)
+    await asyncio.gather(
+        _init_ollama(app),
+        _init_task_queue(app),
+        _init_plugins(app),
+        _init_mcp(app),
+    )
+
+    # Stage 3: Depends on MCP
     await _init_agent_router(app)
 
     # Background preloading

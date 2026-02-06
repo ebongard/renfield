@@ -778,7 +778,12 @@ class MCPManager:
                 # Also inject Docker secrets (/run/secrets/) as env vars
                 # (uppercase filename → value) so stdio MCP servers can
                 # read API keys without exposing them in .env.
-                subprocess_env = dict(os.environ)
+                _MCP_ENV_WHITELIST = {
+                    "PATH", "HOME", "USER", "LANG", "LC_ALL", "LC_CTYPE",
+                    "NODE_PATH", "NODE_ENV", "NPM_CONFIG_PREFIX",
+                    "TERM", "SHELL", "TMPDIR", "TMP", "TEMP",
+                }
+                subprocess_env = {k: v for k, v in os.environ.items() if k in _MCP_ENV_WHITELIST}
                 secrets_dir = Path("/run/secrets")
                 if secrets_dir.is_dir():
                     for secret_file in secrets_dir.iterdir():

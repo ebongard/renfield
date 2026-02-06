@@ -10,14 +10,14 @@ Usage:
     breaker = CircuitBreaker(failure_threshold=3, recovery_timeout=30.0)
 
     async def call_llm():
-        if not breaker.allow_request():
+        if not await breaker.allow_request():
             raise CircuitOpenError("LLM service temporarily unavailable")
         try:
             result = await ollama.chat(...)
-            breaker.record_success()
+            await breaker.record_success()
             return result
         except Exception as e:
-            breaker.record_failure()
+            await breaker.record_failure()
             raise
 """
 
@@ -80,64 +80,67 @@ class CircuitBreaker:
         """Number of consecutive failures."""
         return self._failure_count
 
-    def allow_request(self) -> bool:
+    async def allow_request(self) -> bool:
         """
         Check if a request should be allowed.
 
         Returns:
             True if request is allowed, False if circuit is open
         """
-        if self._state == CircuitState.CLOSED:
-            return True
-
-        if self._state == CircuitState.OPEN:
-            # Check if recovery timeout has passed
-            if self._last_failure_time is not None:
-                elapsed = time.monotonic() - self._last_failure_time
-                if elapsed >= self.recovery_timeout:
-                    self._transition_to_half_open()
-                    # Count this transition request against half_open limit
-                    self._half_open_calls = 1
-                    return True
-            return False
-
-        if self._state == CircuitState.HALF_OPEN:
-            # Allow limited requests in half-open state
-            if self._half_open_calls < self.half_open_max_calls:
-                self._half_open_calls += 1
+        async with self._lock:
+            if self._state == CircuitState.CLOSED:
                 return True
+
+            if self._state == CircuitState.OPEN:
+                # Check if recovery timeout has passed
+                if self._last_failure_time is not None:
+                    elapsed = time.monotonic() - self._last_failure_time
+                    if elapsed >= self.recovery_timeout:
+                        self._transition_to_half_open()
+                        # Count this transition request against half_open limit
+                        self._half_open_calls = 1
+                        return True
+                return False
+
+            if self._state == CircuitState.HALF_OPEN:
+                # Allow limited requests in half-open state
+                if self._half_open_calls < self.half_open_max_calls:
+                    self._half_open_calls += 1
+                    return True
+                return False
+
             return False
 
-        return False
-
-    def record_success(self) -> None:
+    async def record_success(self) -> None:
         """Record a successful request."""
-        if self._state == CircuitState.HALF_OPEN:
-            self._success_count += 1
-            if self._success_count >= self.half_open_max_calls:
-                self._transition_to_closed()
-        elif self._state == CircuitState.CLOSED:
-            # Reset failure count on success
-            self._failure_count = 0
+        async with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._success_count += 1
+                if self._success_count >= self.half_open_max_calls:
+                    self._transition_to_closed()
+            elif self._state == CircuitState.CLOSED:
+                # Reset failure count on success
+                self._failure_count = 0
 
-    def record_failure(self) -> None:
+    async def record_failure(self) -> None:
         """Record a failed request."""
-        self._failure_count += 1
-        self._last_failure_time = time.monotonic()
+        async with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.monotonic()
 
-        # Prometheus instrumentation (optional import)
-        try:
-            from utils.metrics import record_circuit_breaker_failure
-            record_circuit_breaker_failure(self.name)
-        except Exception:
-            pass
+            # Prometheus instrumentation (optional import)
+            try:
+                from utils.metrics import record_circuit_breaker_failure
+                record_circuit_breaker_failure(self.name)
+            except Exception:
+                pass
 
-        if self._state == CircuitState.HALF_OPEN:
-            # Any failure in half-open goes back to open
-            self._transition_to_open()
-        elif self._state == CircuitState.CLOSED:
-            if self._failure_count >= self.failure_threshold:
+            if self._state == CircuitState.HALF_OPEN:
+                # Any failure in half-open goes back to open
                 self._transition_to_open()
+            elif self._state == CircuitState.CLOSED:
+                if self._failure_count >= self.failure_threshold:
+                    self._transition_to_open()
 
     def reset(self) -> None:
         """Manually reset the circuit to closed state."""

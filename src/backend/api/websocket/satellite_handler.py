@@ -481,8 +481,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                             logger.warning(f"⚠️ Failed to save satellite messages to DB: {e}")
 
                     # Generate TTS with satellite's language
-                    from services.piper_service import PiperService
-                    piper = PiperService()
+                    from services.piper_service import get_piper_service
+                    piper = get_piper_service()
                     tts_audio = await piper.synthesize_to_bytes(response_text, language=satellite_language)
 
                     if tts_audio:

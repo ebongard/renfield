@@ -5,6 +5,7 @@ Provides LLM interaction with multilingual support (de/en).
 Language can be specified per-call or defaults to system setting.
 """
 import asyncio
+import re
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Optional
 
@@ -22,6 +23,17 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_default_client,
 )
+
+_MAX_USER_INPUT_LENGTH = 4000
+
+
+def _sanitize_user_input(text: str) -> str:
+    """Sanitize user input before embedding in LLM prompts."""
+    if len(text) > _MAX_USER_INPUT_LENGTH:
+        text = text[:_MAX_USER_INPUT_LENGTH] + "..."
+    text = re.sub(r'(?i)\b(system|assistant)\s*:', '', text)
+    text = text.replace('```', '')
+    return text.strip()
 
 
 class OllamaService:
@@ -111,11 +123,12 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         lang = lang or self.default_lang
 
         # Check circuit breaker before LLM call
-        if not llm_circuit_breaker.allow_request():
+        if not await llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting chat request")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
 
         try:
+            message = _sanitize_user_input(message)
             system_prompt = self.get_system_prompt(lang, memory_context=memory_context)
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -130,10 +143,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 options={"num_ctx": settings.ollama_num_ctx}
             )
             # ollama>=0.4.0 uses Pydantic models
-            llm_circuit_breaker.record_success()
+            await llm_circuit_breaker.record_success()
             return response.message.content
         except Exception as e:
-            llm_circuit_breaker.record_failure()
+            await llm_circuit_breaker.record_failure()
             logger.error(f"Chat Fehler: {e}")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
 
@@ -150,12 +163,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         lang = lang or self.default_lang
 
         # Check circuit breaker before LLM call
-        if not llm_circuit_breaker.allow_request():
+        if not await llm_circuit_breaker.allow_request():
             logger.warning("🔴 LLM circuit breaker OPEN — rejecting stream request")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default="LLM-Service vorübergehend nicht verfügbar.", error="Circuit Breaker aktiv")
             return
 
         try:
+            message = _sanitize_user_input(message)
             system_prompt = self.get_system_prompt(lang, memory_context=memory_context)
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -175,9 +189,9 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     yield chunk.message.content
 
             # Record success after successful streaming
-            llm_circuit_breaker.record_success()
+            await llm_circuit_breaker.record_success()
         except Exception as e:
-            llm_circuit_breaker.record_failure()
+            await llm_circuit_breaker.record_failure()
             logger.error(f"Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Fehler: {e!s}", error=str(e))
 
@@ -208,6 +222,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             Dict mit intent, parameters und confidence
         """
         lang = lang or self.default_lang
+        message = _sanitize_user_input(message)
 
         # Build dynamic intent types from IntentRegistry
         from services.intent_registry import intent_registry

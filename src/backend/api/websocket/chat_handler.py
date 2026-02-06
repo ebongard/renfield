@@ -184,8 +184,8 @@ async def _route_chat_tts_output(
             # (Renfield devices would be the input device itself in this case)
             if decision.output_device and not decision.fallback_to_input and decision.target_type == "homeassistant":
                 # Generate TTS
-                from services.piper_service import PiperService
-                piper = PiperService()
+                from services.piper_service import get_piper_service
+                piper = get_piper_service()
                 tts_audio = await piper.synthesize_to_bytes(response_text)
 
                 if tts_audio:
