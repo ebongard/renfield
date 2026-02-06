@@ -8,11 +8,11 @@ Testet:
 - Voice-Chat Flow
 """
 
-import pytest
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
 
+import pytest
+from httpx import AsyncClient
 
 # ============================================================================
 # Fixtures

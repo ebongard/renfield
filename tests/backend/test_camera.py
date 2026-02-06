@@ -8,11 +8,11 @@ Testet:
 - Events nach Label filtern
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from httpx import AsyncClient
 
 # ============================================================================
 # Fixtures

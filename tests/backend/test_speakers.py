@@ -9,16 +9,16 @@ Testet:
 - Speaker Merge
 """
 
-import pytest
 from io import BytesIO
-from unittest.mock import AsyncMock, MagicMock, patch
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
+from unittest.mock import MagicMock, patch
+
+import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from models.database import Speaker, SpeakerEmbedding
-
 
 # ============================================================================
 # Fixtures
@@ -50,7 +50,7 @@ async def speaker_with_embeddings(db_session: AsyncSession) -> Speaker:
     await db_session.refresh(speaker)
 
     # Add embeddings
-    for i in range(3):
+    for _i in range(3):
         embedding = SpeakerEmbedding(
             speaker_id=speaker.id,
             embedding="base64encodedembedding==",
@@ -264,6 +264,65 @@ class TestSpeakerCRUDAPI:
         response = await async_client.get(f"/api/speakers/{test_speaker.id}")
         assert response.status_code == 404
 
+    @pytest.mark.integration
+    async def test_create_speaker_empty_alias(self, async_client: AsyncClient):
+        """Testet POST /api/speakers mit leerem Alias"""
+        response = await async_client.post(
+            "/api/speakers",
+            json={
+                "name": "Empty Alias Speaker",
+                "alias": "",
+                "is_admin": False
+            }
+        )
+        # Empty alias should succeed (no uniqueness conflict) or be rejected by validation
+        # The API currently accepts it since there's no explicit empty-string check
+        assert response.status_code in (200, 400, 422)
+
+    @pytest.mark.integration
+    async def test_update_speaker_duplicate_alias(
+        self,
+        async_client: AsyncClient,
+        db_session: AsyncSession
+    ):
+        """Testet PATCH mit Alias der bereits existiert"""
+        # Create two speakers
+        speaker1 = Speaker(name="Speaker One", alias="speakerone")
+        speaker2 = Speaker(name="Speaker Two", alias="speakertwo")
+        db_session.add(speaker1)
+        db_session.add(speaker2)
+        await db_session.commit()
+        await db_session.refresh(speaker1)
+        await db_session.refresh(speaker2)
+
+        # Try to update speaker2's alias to speaker1's alias
+        response = await async_client.patch(
+            f"/api/speakers/{speaker2.id}",
+            json={"alias": "speakerone"}
+        )
+
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    async def test_delete_nonexistent_speaker(self, async_client: AsyncClient):
+        """Testet DELETE für nicht-existenten Speaker"""
+        response = await async_client.delete("/api/speakers/99999")
+
+        assert response.status_code == 404
+
+    @pytest.mark.integration
+    async def test_list_speakers_empty(
+        self,
+        async_client: AsyncClient
+    ):
+        """Testet GET /api/speakers wenn keine Speaker existieren"""
+        response = await async_client.get("/api/speakers")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) == 0
+
 
 # ============================================================================
 # Enrollment API Tests
@@ -330,6 +389,45 @@ class TestSpeakerEnrollmentAPI:
 
         assert response.status_code == 503
 
+    @pytest.mark.integration
+    async def test_enroll_empty_audio(
+        self,
+        async_client: AsyncClient,
+        test_speaker: Speaker,
+        mock_speaker_service
+    ):
+        """Testet Enrollment mit leerer Audio-Datei"""
+        mock_speaker_service.extract_embedding_from_bytes.return_value = None
+
+        files = {"audio": ("empty.wav", BytesIO(b""), "audio/wav")}
+        response = await async_client.post(
+            f"/api/speakers/{test_speaker.id}/enroll",
+            files=files
+        )
+
+        # Should fail because extract_embedding returns None for empty audio
+        assert response.status_code == 400
+
+    @pytest.mark.integration
+    async def test_enroll_short_audio(
+        self,
+        async_client: AsyncClient,
+        test_speaker: Speaker,
+        mock_speaker_service
+    ):
+        """Testet Enrollment mit sehr kurzer Audio-Datei (<100 bytes)"""
+        mock_speaker_service.extract_embedding_from_bytes.return_value = None
+
+        short_audio = b'\x00' * 50
+        files = {"audio": ("short.wav", BytesIO(short_audio), "audio/wav")}
+        response = await async_client.post(
+            f"/api/speakers/{test_speaker.id}/enroll",
+            files=files
+        )
+
+        # Should fail - audio too short to extract embedding
+        assert response.status_code == 400
+
 
 # ============================================================================
 # Identification API Tests
@@ -379,6 +477,65 @@ class TestSpeakerIdentificationAPI:
         data = response.json()
         assert data["is_identified"] is False
 
+    @pytest.mark.integration
+    async def test_identify_no_enrolled_speakers(
+        self,
+        async_client: AsyncClient,
+        mock_audio_file,
+        db_session: AsyncSession
+    ):
+        """Testet Identification wenn Speaker existieren aber keine Embeddings haben"""
+        # Create a speaker without embeddings
+        speaker = Speaker(name="No Embeddings", alias="noembed")
+        db_session.add(speaker)
+        await db_session.commit()
+
+        with patch('api.routes.speakers.get_speaker_service') as mock:
+            service = MagicMock()
+            service.is_available.return_value = True
+            service.extract_embedding_from_bytes.return_value = [0.1] * 192
+            mock.return_value = service
+
+            with patch('api.routes.speakers.get_speaker_embeddings_averaged') as mock_avg:
+                mock_avg.return_value = []
+
+                files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
+                response = await async_client.post("/api/speakers/identify", files=files)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_identified"] is False
+        assert data["speaker_id"] is None
+
+    @pytest.mark.integration
+    async def test_identify_low_confidence(
+        self,
+        async_client: AsyncClient,
+        speaker_with_embeddings: Speaker,
+        mock_audio_file
+    ):
+        """Testet Identification mit niedriger Konfidenz (unter Schwellenwert)"""
+        with patch('api.routes.speakers.get_speaker_service') as mock:
+            service = MagicMock()
+            service.is_available.return_value = True
+            service.extract_embedding_from_bytes.return_value = [0.1] * 192
+            # identify_speaker returns None when confidence is below threshold
+            service.identify_speaker.return_value = None
+            mock.return_value = service
+
+            with patch('api.routes.speakers.get_speaker_embeddings_averaged') as mock_avg:
+                mock_avg.return_value = [
+                    (speaker_with_embeddings.id, "Test Speaker", [0.5] * 192)
+                ]
+
+                files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
+                response = await async_client.post("/api/speakers/identify", files=files)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_identified"] is False
+        assert data["confidence"] == 0.0
+
 
 # ============================================================================
 # Verification API Tests
@@ -422,6 +579,56 @@ class TestSpeakerVerificationAPI:
         )
 
         assert response.status_code == 404
+
+    @pytest.mark.integration
+    async def test_verify_wrong_speaker(
+        self,
+        async_client: AsyncClient,
+        speaker_with_embeddings: Speaker,
+        mock_audio_file
+    ):
+        """Testet Verification gegen falschen Speaker (nicht verifiziert)"""
+        with patch('api.routes.speakers.get_speaker_service') as mock:
+            service = MagicMock()
+            service.is_available.return_value = True
+            service.extract_embedding_from_bytes.return_value = [0.9] * 192
+            service.embedding_from_base64.return_value = [0.1] * 192
+            service.verify_speaker.return_value = (False, 0.15)
+            mock.return_value = service
+
+            files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
+            response = await async_client.post(
+                f"/api/speakers/{speaker_with_embeddings.id}/verify",
+                files=files
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["is_verified"] is False
+        assert data["confidence"] == 0.15
+
+    @pytest.mark.integration
+    async def test_verify_speaker_no_embeddings(
+        self,
+        async_client: AsyncClient,
+        test_speaker: Speaker,
+        mock_audio_file
+    ):
+        """Testet Verification wenn Speaker keine Embeddings hat"""
+        with patch('api.routes.speakers.get_speaker_service') as mock:
+            service = MagicMock()
+            service.is_available.return_value = True
+            service.extract_embedding_from_bytes.return_value = [0.1] * 192
+            mock.return_value = service
+
+            files = {"audio": ("test.wav", BytesIO(mock_audio_file), "audio/wav")}
+            response = await async_client.post(
+                f"/api/speakers/{test_speaker.id}/verify",
+                files=files
+            )
+
+        assert response.status_code == 400
+        assert "no enrolled" in response.json()["detail"].lower()
 
 
 # ============================================================================

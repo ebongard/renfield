@@ -4,7 +4,7 @@ Authentication Service for Renfield
 Provides JWT-based authentication, password hashing, and permission checks.
 """
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Union
 
 from fastapi import Depends, HTTPException, status
@@ -79,9 +79,9 @@ def create_access_token(
     to_encode = data.copy()
 
     if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+        expire = datetime.now(UTC).replace(tzinfo=None) + expires_delta
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+        expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=settings.access_token_expire_minutes)
 
     to_encode.update({
         "exp": expire,
@@ -98,7 +98,7 @@ def create_refresh_token(user_id: int) -> str:
 
     Refresh tokens have longer expiration and can only be used to get new access tokens.
     """
-    expire = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
+    expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=settings.refresh_token_expire_days)
 
     to_encode = {
         "sub": str(user_id),

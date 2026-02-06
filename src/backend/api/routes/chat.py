@@ -2,7 +2,7 @@
 Chat API Routes
 """
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
@@ -125,7 +125,7 @@ async def send_message(
                     message_metadata={"agent": True}
                 )
                 db.add(assistant_msg)
-                conversation.updated_at = datetime.utcnow()
+                conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
                 await db.commit()
 
                 return ChatResponse(
@@ -204,7 +204,7 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
         db.add(assistant_msg)
 
         # Update conversation timestamp
-        conversation.updated_at = datetime.utcnow()
+        conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
         await db.commit()
 
@@ -424,7 +424,7 @@ async def get_conversation_stats(
 
         # Nachrichten der letzten 24h
         from datetime import timedelta
-        yesterday = datetime.utcnow() - timedelta(days=1)
+        yesterday = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=1)
         result = await db.execute(
             select(func.count(Message.id))
             .where(Message.timestamp >= yesterday)
@@ -451,7 +451,7 @@ async def cleanup_old_conversations(
     """Lösche alte Konversationen (älter als X Tage)"""
     try:
         from datetime import timedelta
-        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_date = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=days)
 
         # Finde alte Konversationen
         result = await db.execute(

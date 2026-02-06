@@ -7,10 +7,10 @@ Testet:
 - Weitere Hilfsfunktionen
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
 import os
+from unittest.mock import patch
 
+import pytest
 
 # ============================================================================
 # Config Settings Tests
@@ -172,9 +172,8 @@ class TestSecretsAndDatabaseUrl:
     @pytest.mark.unit
     def test_secrets_from_file(self, tmp_path):
         """Test: Secrets werden aus Dateien gelesen wenn secrets_dir existiert"""
+
         from pydantic_settings import BaseSettings
-        from pydantic import model_validator
-        from typing import Optional
 
         # Erstelle temporäre Secret-Datei
         secret_file = tmp_path / "test_secret"
@@ -319,8 +318,9 @@ class TestAudioPreprocessor:
     def test_normalize_audio(self):
         """Test: Audio Normalisierung"""
         try:
-            from services.audio_preprocessor import AudioPreprocessor
             import numpy as np
+
+            from services.audio_preprocessor import AudioPreprocessor
 
             preprocessor = AudioPreprocessor()
 
@@ -417,7 +417,7 @@ class TestOutputRoutingHelpers:
     @pytest.mark.unit
     def test_device_type_validation(self):
         """Test: Device Type Validierung"""
-        from models.database import DEVICE_TYPES, DEVICE_TYPE_SATELLITE
+        from models.database import DEVICE_TYPE_SATELLITE, DEVICE_TYPES
 
         assert DEVICE_TYPE_SATELLITE in DEVICE_TYPES
         assert "invalid_type" not in DEVICE_TYPES

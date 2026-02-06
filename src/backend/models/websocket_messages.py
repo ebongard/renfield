@@ -6,7 +6,7 @@ Provides type safety and automatic validation for all message types.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, Literal, Union
 
@@ -76,7 +76,7 @@ class WSErrorResponse(BaseModel):
     message: str
     details: dict[str, Any] | None = None
     request_id: str | None = None
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 
 
 # =============================================================================

@@ -4,7 +4,7 @@ Conversation Service - Manages conversation persistence
 Extracted from OllamaService for better separation of concerns.
 Handles all database operations for conversations and messages.
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from loguru import logger
 from sqlalchemy import func, select
@@ -122,7 +122,7 @@ class ConversationService:
             self.db.add(message)
 
             # Update conversation timestamp
-            conversation.updated_at = datetime.utcnow()
+            conversation.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
             await self.db.commit()
             await self.db.refresh(message)

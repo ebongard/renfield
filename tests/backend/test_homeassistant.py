@@ -8,10 +8,10 @@ Testet:
 - Entity Suche
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
 
+import pytest
+from httpx import AsyncClient
 
 # ============================================================================
 # Fixtures

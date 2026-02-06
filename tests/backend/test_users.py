@@ -8,16 +8,15 @@ Testet:
 - Permission-basierte Zugriffskontrolle
 """
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from models.database import User, Role, Speaker
-
+from models.database import Role, Speaker, User
 
 # ============================================================================
 # Fixtures

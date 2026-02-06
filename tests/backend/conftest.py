@@ -8,30 +8,31 @@ Bietet:
 - Async Support
 """
 
-import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-from typing import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
-from sqlalchemy import create_engine
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import sessionmaker
+import pytest
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
-from httpx import AsyncClient, ASGITransport
-from fastapi.testclient import TestClient
 
 # Renfield Imports
 from models.database import (
-    Base, Room, RoomDevice, RoomOutputDevice,
-    Speaker, SpeakerEmbedding,
-    Conversation, Message, Task, CameraEvent, HomeAssistantEntity,
-    KnowledgeBase, Document, DocumentChunk, Role, User, IntentCorrection,
-    Notification, NotificationSuppression, Reminder, ConversationMemory,
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER,
-    DEFAULT_CAPABILITIES
+    DEFAULT_CAPABILITIES,
+    DEVICE_TYPE_SATELLITE,
+    DEVICE_TYPE_WEB_BROWSER,
+    Base,
+    Conversation,
+    Document,
+    KnowledgeBase,
+    Message,
+    Role,
+    Room,
+    RoomDevice,
+    Speaker,
+    User,
 )
-
 
 # ============================================================================
 # Database Fixtures

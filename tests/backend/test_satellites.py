@@ -4,22 +4,20 @@ Tests for Satellite Monitoring API
 Tests the satellite API endpoints for monitoring and debugging
 satellite voice assistants.
 """
-import pytest
 import time
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 from httpx import AsyncClient
-from datetime import datetime
 
 from services.satellite_manager import (
-    SatelliteManager,
-    SatelliteInfo,
     SatelliteCapabilities,
-    SatelliteState,
-    SatelliteSession,
+    SatelliteInfo,
+    SatelliteManager,
     SatelliteMetrics,
+    SatelliteState,
     get_satellite_manager,
 )
-
 
 # =============================================================================
 # SatelliteManager Tests

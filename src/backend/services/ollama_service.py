@@ -5,6 +5,7 @@ Provides LLM interaction with multilingual support (de/en).
 Language can be specified per-call or defaults to system setting.
 """
 import asyncio
+import json
 import re
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Optional
@@ -338,9 +339,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 response = extract_response_content(response_data)
 
             # Robuste JSON-Extraktion
-            import json
-            import re
-
             logger.debug(f"Raw LLM response ({len(response) if response else 0} chars): {response[:300] if response else '(empty)'}")
 
             # Entferne Markdown-Code-Blocks
@@ -557,9 +555,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     @staticmethod
     def _parse_intent_json(raw_response: str) -> dict | None:
         """Parse intent JSON from LLM response, handling markdown and truncation."""
-        import json
-        import re
-
         if not raw_response or not raw_response.strip():
             return None
 

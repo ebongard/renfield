@@ -10,21 +10,19 @@ Tests cover:
 - API endpoints (when auth is enabled/disabled)
 """
 
+from datetime import timedelta
+
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
 
-from models.permissions import (
-    Permission,
-    has_permission,
-    has_any_permission,
-    has_all_permissions,
-    get_all_permissions,
-    DEFAULT_ROLES,
-    PERMISSION_HIERARCHY,
-)
 from models.database import Role, User
-
+from models.permissions import (
+    DEFAULT_ROLES,
+    Permission,
+    get_all_permissions,
+    has_all_permissions,
+    has_any_permission,
+    has_permission,
+)
 
 # ============================================================================
 # Permission Model Tests
@@ -526,8 +524,9 @@ class TestPermissionDependencies:
     @pytest.mark.asyncio
     async def test_require_permission_with_auth_enabled_no_user(self, db_session):
         """Test that require_permission raises 401 when auth enabled but no user"""
-        from services.auth_service import require_permission
         from fastapi import HTTPException
+
+        from services.auth_service import require_permission
         from utils.config import settings
 
         original = settings.auth_enabled
@@ -544,7 +543,7 @@ class TestPermissionDependencies:
     @pytest.mark.asyncio
     async def test_require_permission_with_valid_permission(self, db_session):
         """Test that require_permission allows access with valid permission"""
-        from services.auth_service import require_permission, get_password_hash
+        from services.auth_service import get_password_hash, require_permission
         from utils.config import settings
 
         # Create user with admin permission
@@ -578,8 +577,9 @@ class TestPermissionDependencies:
     @pytest.mark.asyncio
     async def test_require_permission_with_missing_permission(self, db_session):
         """Test that require_permission raises 403 when permission missing"""
-        from services.auth_service import require_permission, get_password_hash
         from fastapi import HTTPException
+
+        from services.auth_service import get_password_hash, require_permission
         from utils.config import settings
 
         # Create user without admin permission

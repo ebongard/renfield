@@ -4,7 +4,7 @@ Hauptanwendung mit FastAPI
 """
 import os
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -242,6 +242,18 @@ async def health_check():
     return {"status": "ok"}
 
 
+_health_redis_client = None
+
+
+def _get_health_redis_client():
+    """Lazy shared Redis client for health checks."""
+    global _health_redis_client
+    if _health_redis_client is None:
+        import redis.asyncio as aioredis
+        _health_redis_client = aioredis.from_url(settings.redis_url)
+    return _health_redis_client
+
+
 @app.get("/health/ready")
 async def readiness_check():
     """Kubernetes readiness probe - checks all dependencies."""
@@ -256,7 +268,8 @@ async def readiness_check():
             await db.execute(text("SELECT 1"))
         checks["database"] = {"status": "healthy"}
     except Exception as e:
-        checks["database"] = {"status": "unhealthy", "error": str(e)}
+        logger.warning(f"Health check: database unhealthy: {e}")
+        checks["database"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
 
     # Ollama check
@@ -265,20 +278,20 @@ async def readiness_check():
         if ollama:
             checks["ollama"] = {"status": "healthy", "model": settings.ollama_model}
         else:
-            checks["ollama"] = {"status": "degraded", "error": "Not initialized"}
+            checks["ollama"] = {"status": "degraded", "error": "not initialized"}
     except Exception as e:
-        checks["ollama"] = {"status": "unhealthy", "error": str(e)}
+        logger.warning(f"Health check: ollama unhealthy: {e}")
+        checks["ollama"] = {"status": "unhealthy", "error": "connection failed"}
         overall_healthy = False
 
     # Redis check (optional)
     try:
-        import redis.asyncio as redis
-        r = redis.from_url(settings.redis_url)
+        r = _get_health_redis_client()
         await r.ping()
-        await r.close()
         checks["redis"] = {"status": "healthy"}
     except Exception as e:
-        checks["redis"] = {"status": "degraded", "error": str(e)}
+        logger.warning(f"Health check: redis degraded: {e}")
+        checks["redis"] = {"status": "degraded", "error": "connection failed"}
         # Redis is optional, don't fail health check
 
     # Connected devices count
@@ -300,7 +313,7 @@ async def readiness_check():
             "status": status,
             "version": "1.0.0",
             "checks": checks,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
         },
         status_code=status_code
     )
@@ -309,7 +322,7 @@ async def readiness_check():
 @app.get("/health/live")
 async def liveness_check():
     """Kubernetes liveness probe - just checks if app is running."""
-    return {"status": "alive", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "alive", "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()}
 
 
 # WebSocket Token Generation Endpoint
@@ -489,7 +502,7 @@ async def debug_intent(
         return {
             "message": message,
             "intent": intent,
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.now(UTC).replace(tzinfo=None).isoformat()
         }
     except Exception as e:
         logger.error(f"❌ Intent Debug Fehler: {e}")

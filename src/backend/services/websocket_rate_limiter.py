@@ -6,7 +6,7 @@ Uses a sliding window algorithm for accurate rate limiting.
 """
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 
@@ -58,7 +58,7 @@ class WSRateLimiter:
         if not self.enabled:
             return True, ""
 
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
 
         # Clean up old timestamps
         second_ago = now - timedelta(seconds=1)
@@ -97,7 +97,7 @@ class WSRateLimiter:
 
     def cleanup(self):
         """Remove stale entries from all clients."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         minute_ago = now - timedelta(minutes=1)
 
         stale_clients = []
@@ -115,7 +115,7 @@ class WSRateLimiter:
 
     def get_stats(self, client_id: str) -> dict[str, int]:
         """Get rate limit stats for a client."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         second_ago = now - timedelta(seconds=1)
 
         timestamps = self._timestamps.get(client_id, [])

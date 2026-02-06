@@ -5,32 +5,26 @@ Tests for MCPManager — MCP client core, config loading, tool execution, and in
 import asyncio
 import json
 import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
-from dataclasses import dataclass
 
 from services.mcp_client import (
+    MAX_RESPONSE_SIZE,
+    ExponentialBackoff,
     MCPManager,
     MCPServerConfig,
     MCPServerState,
     MCPToolInfo,
     MCPTransportType,
-    TokenBucketRateLimiter,
     MCPValidationError,
-    MCPRateLimitError,
-    ExponentialBackoff,
-    _substitute_env_vars,
-    _resolve_value,
+    TokenBucketRateLimiter,
     _coerce_arguments,
-    _validate_tool_input,
+    _resolve_value,
+    _substitute_env_vars,
     _truncate_response,
-    MAX_RESPONSE_SIZE,
-    BACKOFF_INITIAL_DELAY,
-    BACKOFF_MAX_DELAY,
-    BACKOFF_MULTIPLIER,
+    _validate_tool_input,
 )
-
 
 # ============================================================================
 # Env-Var Substitution

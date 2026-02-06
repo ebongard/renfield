@@ -2,9 +2,9 @@
 Tests for AgentRouter — Unified message classification into specialized agent roles.
 """
 import sys
-import pytest
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 # Ensure 'ollama' module is available even when the package isn't installed.
 # get_agent_client() does `import ollama` internally, so we provide a stub.
@@ -14,16 +14,14 @@ if "ollama" not in sys.modules:
     sys.modules["ollama"] = _ollama_stub
 
 from services.agent_router import (
-    AgentRouter,
-    AgentRole,
-    _parse_roles,
-    _filter_available_roles,
-    load_roles_config,
     CONVERSATION_ROLE,
-    KNOWLEDGE_ROLE,
     GENERAL_ROLE,
+    KNOWLEDGE_ROLE,
+    AgentRouter,
+    _filter_available_roles,
+    _parse_roles,
+    load_roles_config,
 )
-
 
 # ============================================================================
 # Test fixtures

@@ -13,10 +13,11 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    Room, RoomDevice, RoomOutputDevice,
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPE_WEB_PANEL
+    DEVICE_TYPE_WEB_BROWSER,
+    Room,
+    RoomDevice,
+    RoomOutputDevice,
 )
-
 
 # ============================================================================
 # Room CRUD Endpoint Tests

@@ -1,7 +1,7 @@
 """
 Datenbank Models
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
@@ -19,14 +19,20 @@ except ImportError:
 
 Base = declarative_base()
 
+
+def _utcnow():
+    """Return current UTC time as naive datetime (DB compat, replaces deprecated utcnow)."""
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
 class Conversation(Base):
     """Konversationen / Chat-Historie"""
     __tablename__ = "conversations"
 
     id = Column(Integer, primary_key=True, index=True)
     session_id = Column(String, unique=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Ownership (nullable for anonymous/legacy conversations)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
@@ -43,7 +49,7 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id"), index=True)
     role = Column(String)  # 'user' oder 'assistant'
     content = Column(Text)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=_utcnow)
     message_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
 
     # Beziehungen
@@ -62,7 +68,7 @@ class Task(Base):
     parameters = Column(JSON)
     result = Column(JSON, nullable=True)
     error = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     completed_at = Column(DateTime, nullable=True)
     created_by = Column(String, nullable=True)
 
@@ -74,7 +80,7 @@ class CameraEvent(Base):
     camera_name = Column(String)
     event_type = Column(String)  # 'person', 'car', 'animal'
     confidence = Column(Integer)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime, default=_utcnow)
     snapshot_path = Column(String, nullable=True)
     event_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
     notified = Column(Boolean, default=False)
@@ -89,7 +95,7 @@ class HomeAssistantEntity(Base):
     domain = Column(String)
     state = Column(String, nullable=True)
     attributes = Column(JSON, nullable=True)
-    last_updated = Column(DateTime, default=datetime.utcnow)
+    last_updated = Column(DateTime, default=_utcnow)
 
 
 # --- Speaker Recognition Models ---
@@ -102,8 +108,8 @@ class Speaker(Base):
     name = Column(String(100), nullable=False)       # "Max Mustermann"
     alias = Column(String(50), unique=True, index=True)  # "max" (für Ansprache)
     is_admin = Column(Boolean, default=False)        # Admin-Berechtigung (legacy, use User.role)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Beziehungen
     embeddings = relationship("SpeakerEmbedding", back_populates="speaker", cascade="all, delete-orphan")
@@ -120,7 +126,7 @@ class SpeakerEmbedding(Base):
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=False, index=True)
     embedding = Column(Text, nullable=False)         # Base64-encoded numpy array
     sample_duration = Column(Integer, nullable=True)  # Dauer des Samples in Millisekunden
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Beziehungen
     speaker = relationship("Speaker", back_populates="embeddings")
@@ -144,8 +150,8 @@ class Room(Base):
     icon = Column(String(50), nullable=True)  # "mdi:sofa"
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     last_synced_at = Column(DateTime, nullable=True)
 
     # Beziehungen
@@ -215,8 +221,8 @@ class RoomDevice(Base):
     ip_address = Column(String(45), nullable=True)   # IPv4 or IPv6
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Beziehungen
     room = relationship("Room", back_populates="devices")
@@ -343,8 +349,8 @@ class RoomOutputDevice(Base):
     is_enabled = Column(Boolean, default=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     room = relationship("Room", back_populates="output_devices")
@@ -390,8 +396,8 @@ class KnowledgeBase(Base):
     is_public = Column(Boolean, default=False, nullable=False)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Beziehungen
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
@@ -424,7 +430,7 @@ class Document(Base):
     chunk_count = Column(Integer, default=0)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
 
     # Beziehungen
@@ -471,7 +477,7 @@ class DocumentChunk(Base):
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Beziehungen
     document = relationship("Document", back_populates="chunks")
@@ -540,8 +546,8 @@ class Role(Base):
     is_system = Column(Boolean, default=False, nullable=False)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     # Relationships
     users = relationship("User", back_populates="role")
@@ -605,8 +611,8 @@ class User(Base):
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     last_login = Column(DateTime, nullable=True)
 
     # Relationships
@@ -666,7 +672,7 @@ class KBPermission(Base):
     granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Unique constraint: one permission entry per user per KB
     __table_args__ = (
@@ -705,7 +711,7 @@ class SystemSetting(Base):
 
     key = Column(String(100), primary_key=True)
     value = Column(Text, nullable=False)  # JSON-encoded value
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
 
     # Relationship to user who last updated
@@ -740,7 +746,7 @@ class IntentCorrection(Base):
     )
     context = Column(JSON, nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     user = relationship("User", foreign_keys=[user_id])
 
@@ -791,7 +797,7 @@ class Notification(Base):
     acknowledged_by = Column(String(100), nullable=True)
     tts_delivered = Column(Boolean, default=False)
     dedup_key = Column(String(255), nullable=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
     delivered_at = Column(DateTime, nullable=True)
     acknowledged_at = Column(DateTime, nullable=True)
     expires_at = Column(DateTime, nullable=True)
@@ -826,7 +832,7 @@ class NotificationSuppression(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     reason = Column(String(255), nullable=True)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     source_notification = relationship("Notification", foreign_keys=[source_notification_id])
     user = relationship("User", foreign_keys=[user_id])
@@ -853,7 +859,7 @@ class Reminder(Base):
     session_id = Column(String(255), nullable=True)
     status = Column(String(20), default=REMINDER_PENDING)
     notification_id = Column(Integer, ForeignKey("notifications.id"), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
     fired_at = Column(DateTime, nullable=True)
 
     room = relationship("Room", foreign_keys=[room_id])
@@ -912,7 +918,7 @@ class ConversationMemory(Base):
     is_active = Column(Boolean, default=True, index=True)
 
     # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     # Relationships
     user = relationship("User", foreign_keys=[user_id])

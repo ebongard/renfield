@@ -7,7 +7,7 @@ Provides endpoints for user authentication:
 - Refresh (get new access token using refresh token)
 - Me (get current user info)
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -119,7 +119,7 @@ async def login(
         )
 
     # Update last login time
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(UTC).replace(tzinfo=None)
     await db.commit()
 
     # Create tokens
@@ -498,7 +498,7 @@ async def voice_authenticate(
             )
 
         # Success! Generate tokens
-        user.last_login = datetime.utcnow()
+        user.last_login = datetime.now(UTC).replace(tzinfo=None)
         await db.commit()
 
         access_token = create_access_token(

@@ -7,7 +7,7 @@ fällige Reminders und liefert sie als Notifications aus.
 """
 
 import re
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import select
@@ -84,7 +84,7 @@ class ReminderService:
         )
         if m:
             hour, minute = int(m.group(1)), int(m.group(2))
-            now = datetime.utcnow()
+            now = datetime.now(UTC).replace(tzinfo=None)
             target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
             # If time already passed today, schedule for tomorrow
             if target <= now:
@@ -111,11 +111,11 @@ class ReminderService:
             raise ValueError(f"Could not parse trigger time: '{trigger_at_str}'")
 
         if isinstance(parsed, timedelta):
-            trigger_at = datetime.utcnow() + parsed
+            trigger_at = datetime.now(UTC).replace(tzinfo=None) + parsed
         else:
             trigger_at = parsed
 
-        if trigger_at <= datetime.utcnow():
+        if trigger_at <= datetime.now(UTC).replace(tzinfo=None):
             raise ValueError("Trigger time must be in the future")
 
         # Resolve room name
@@ -174,7 +174,7 @@ class ReminderService:
 
     async def get_due_reminders(self) -> list[Reminder]:
         """Get all reminders that are past their trigger time and still pending."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         result = await self.db.execute(
             select(Reminder).where(
                 Reminder.status == REMINDER_PENDING,
@@ -191,7 +191,7 @@ class ReminderService:
         reminder = result.scalar_one_or_none()
         if reminder:
             reminder.status = REMINDER_FIRED
-            reminder.fired_at = datetime.utcnow()
+            reminder.fired_at = datetime.now(UTC).replace(tzinfo=None)
             if notification_id:
                 reminder.notification_id = notification_id
             await self.db.commit()

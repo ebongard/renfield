@@ -6,7 +6,7 @@ Supports both query parameter and first-message authentication.
 """
 
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import Query, WebSocket
@@ -48,13 +48,13 @@ class WSTokenStore:
             expires_minutes = settings.ws_token_expire_minutes
 
         token = secrets.token_urlsafe(32)
-        expires_at = datetime.utcnow() + timedelta(minutes=expires_minutes)
+        expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=expires_minutes)
 
         self._tokens[token] = {
             "device_id": device_id,
             "device_type": device_type,
             "user_id": user_id,
-            "created_at": datetime.utcnow(),
+            "created_at": datetime.now(UTC).replace(tzinfo=None),
             "expires_at": expires_at,
         }
 
@@ -79,7 +79,7 @@ class WSTokenStore:
             return None
 
         # Check expiration
-        if datetime.utcnow() > token_data["expires_at"]:
+        if datetime.now(UTC).replace(tzinfo=None) > token_data["expires_at"]:
             del self._tokens[token]
             return None
 
@@ -94,7 +94,7 @@ class WSTokenStore:
 
     def cleanup_expired(self):
         """Remove expired tokens."""
-        now = datetime.utcnow()
+        now = datetime.now(UTC).replace(tzinfo=None)
         expired = [t for t, data in self._tokens.items() if now > data["expires_at"]]
         for token in expired:
             del self._tokens[token]

@@ -5,14 +5,13 @@ Tests for TokenCounter — Token estimation and budget tracking.
 import pytest
 
 from utils.token_counter import (
-    TokenCounter,
     TokenBudget,
-    token_counter,
-    count_tokens,
+    TokenCounter,
     count_message_tokens,
+    count_tokens,
     fits_context,
+    token_counter,
 )
-
 
 # ============================================================================
 # TokenBudget

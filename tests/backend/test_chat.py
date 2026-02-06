@@ -8,15 +8,15 @@ Testet:
 - Suche und Statistiken
 """
 
-import pytest
 from datetime import datetime, timedelta
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from httpx import AsyncClient
-from unittest.mock import AsyncMock, MagicMock, patch
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Conversation, Message
-
 
 # ============================================================================
 # Fixtures

@@ -7,14 +7,14 @@ Testet:
 - Task Filtering
 """
 
-import pytest
 from datetime import datetime
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+
+import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Task
-
 
 # ============================================================================
 # Fixtures

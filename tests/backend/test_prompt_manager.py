@@ -2,12 +2,11 @@
 Tests for PromptManager — YAML-based prompt externalization.
 """
 
+import asyncio
+
 import pytest
-from pathlib import Path
-from unittest.mock import patch
 
 from services.prompt_manager import PromptManager, SafeDict
-
 
 # ============================================================================
 # SafeDict
@@ -101,6 +100,30 @@ farewell: "Goodbye!"
         # Invalid file shouldn't crash, just skip
         assert "invalid" not in manager.list_files()
 
+    @pytest.mark.unit
+    def test_load_yaml_only_comments(self, tmp_path):
+        """Should handle YAML file containing only comments."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "comments.yaml").write_text("""
+# This is a comment
+# Another comment
+# No actual data here
+""")
+        manager = PromptManager(str(prompts_dir))
+        # File with only comments parses as None, should not be in cache
+        assert "comments" not in manager.list_files()
+
+    @pytest.mark.unit
+    def test_load_empty_yaml_file(self, tmp_path):
+        """Should handle completely empty YAML file."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "blank.yaml").write_text("")
+
+        manager = PromptManager(str(prompts_dir))
+        assert "blank" not in manager.list_files()
+
 
 # ============================================================================
 # PromptManager.get()
@@ -179,6 +202,147 @@ class TestPromptManagerGet:
         assert result == "not found"
 
     @pytest.mark.unit
+    def test_get_nonexistent_key_returns_default(self, tmp_path):
+        """Should return default for a key that doesn't exist in a loaded file."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("key1: 'value1'")
+
+        manager = PromptManager(str(prompts_dir))
+        result = manager.get("test", "totally_missing_key", default="my_default")
+        assert result == "my_default"
+
+    @pytest.mark.unit
+    def test_get_with_special_chars_in_variables(self, tmp_path):
+        """Should handle variables with braces, unicode, and special chars."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("tmpl: 'Input: {user_input}'")
+
+        manager = PromptManager(str(prompts_dir))
+        # Unicode characters
+        result = manager.get("test", "tmpl", user_input="Hallo Welt!")
+        assert result == "Input: Hallo Welt!"
+
+        # Special chars
+        result = manager.get("test", "tmpl", user_input="<script>alert(1)</script>")
+        assert result == "Input: <script>alert(1)</script>"
+
+    @pytest.mark.unit
+    def test_get_with_very_long_value(self, tmp_path):
+        """Should handle substitution with 10K+ character strings."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("tmpl: 'Data: {data}'")
+
+        manager = PromptManager(str(prompts_dir))
+        long_value = "x" * 10_000
+        result = manager.get("test", "tmpl", data=long_value)
+        assert result == f"Data: {long_value}"
+        assert len(result) > 10_000
+
+    @pytest.mark.unit
+    def test_get_with_empty_string_variable(self, tmp_path):
+        """Should substitute with empty string when variable is empty."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("tmpl: 'Hello {name}!'")
+
+        manager = PromptManager(str(prompts_dir))
+        result = manager.get("test", "tmpl", name="")
+        assert result == "Hello !"
+
+    @pytest.mark.unit
+    def test_get_unsupported_language_falls_back(self, tmp_path):
+        """Should fall back to default language for unsupported language code."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+de:
+  greeting: "Hallo!"
+en:
+  greeting: "Hello!"
+""")
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+        # Request with unsupported language "fr" should fall back to default "de"
+        result = manager.get("test", "greeting", lang="fr")
+        assert result == "Hallo!"
+
+    @pytest.mark.unit
+    def test_get_empty_language_string(self, tmp_path):
+        """Should use default language when lang is empty string."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+de:
+  msg: "Deutsche Nachricht"
+""")
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+        # Empty string is falsy, so `lang or self._default_lang` uses default
+        result = manager.get("test", "msg", lang="")
+        assert result == "Deutsche Nachricht"
+
+    @pytest.mark.unit
+    def test_get_with_newlines_in_variable(self, tmp_path):
+        """Should handle newline characters in variable values."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("tmpl: 'Content: {data}'")
+
+        manager = PromptManager(str(prompts_dir))
+        result = manager.get("test", "tmpl", data="line1\nline2\nline3")
+        assert result == "Content: line1\nline2\nline3"
+        assert result.count("\n") == 2
+
+    @pytest.mark.unit
+    def test_get_with_null_bytes_in_variable(self, tmp_path):
+        """Should handle null bytes in variable values without crashing."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("tmpl: 'Data: {data}'")
+
+        manager = PromptManager(str(prompts_dir))
+        result = manager.get("test", "tmpl", data="before\x00after")
+        assert "before" in result
+        assert "after" in result
+
+    @pytest.mark.unit
+    def test_get_with_many_variables(self, tmp_path):
+        """Should substitute many variables simultaneously."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        # Build a template with 20 variables
+        var_names = [f"var{i}" for i in range(20)]
+        template_parts = [f"{{{v}}}" for v in var_names]
+        template = " ".join(template_parts)
+        (prompts_dir / "test.yaml").write_text(f"tmpl: '{template}'")
+
+        manager = PromptManager(str(prompts_dir))
+        kwargs = {v: f"val{i}" for i, v in enumerate(var_names)}
+        result = manager.get("test", "tmpl", **kwargs)
+
+        for i in range(20):
+            assert f"val{i}" in result
+        # No leftover {varN} placeholders
+        assert "{var" not in result
+
+    @pytest.mark.unit
+    def test_get_nested_key_nonexistent(self, tmp_path):
+        """Should return default when key exists only at wrong language level."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+de:
+  only_german: "Nur Deutsch"
+en:
+  only_english: "Only English"
+""")
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+        # Request a key that exists in en but not de, using lang=de
+        result = manager.get("test", "only_english", lang="de", default="nope")
+        assert result == "nope"
+
+    @pytest.mark.unit
     def test_multiline_prompt(self, tmp_path):
         """Should handle multiline YAML strings."""
         prompts_dir = tmp_path / "prompts"
@@ -245,6 +409,47 @@ keywords:
 
         assert config == {"fallback": True}
 
+    @pytest.mark.unit
+    def test_get_config_nonexistent_returns_none(self, tmp_path):
+        """Should return None for non-existent config key."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("existing_key: 'value'")
+
+        manager = PromptManager(str(prompts_dir))
+        config = manager.get_config("test", "nonexistent_key")
+
+        assert config is None
+
+    @pytest.mark.unit
+    def test_get_config_nested_dict(self, tmp_path):
+        """Should return deeply nested config structures."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+deep_config:
+  level1:
+    level2:
+      level3:
+        value: 42
+        list_val:
+          - a
+          - b
+""")
+        manager = PromptManager(str(prompts_dir))
+        config = manager.get_config("test", "deep_config")
+
+        assert config == {
+            "level1": {
+                "level2": {
+                    "level3": {
+                        "value": 42,
+                        "list_val": ["a", "b"]
+                    }
+                }
+            }
+        }
+
 
 # ============================================================================
 # PromptManager.get_all() and list_keys()
@@ -301,6 +506,25 @@ gamma: c
         manager = PromptManager(str(prompts_dir))
         assert manager.list_keys("nonexistent") == []
 
+    @pytest.mark.unit
+    def test_list_keys_after_reload(self, tmp_path):
+        """Should update keys list after file change and reload."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("key1: value1\nkey2: value2")
+
+        manager = PromptManager(str(prompts_dir))
+        assert set(manager.list_keys("test")) == {"key1", "key2"}
+
+        # Modify file to add a new key and remove one
+        yaml_file.write_text("key2: value2\nkey3: value3\nkey4: value4")
+        manager.reload()
+
+        keys = set(manager.list_keys("test"))
+        assert keys == {"key2", "key3", "key4"}
+        assert "key1" not in keys
+
 
 # ============================================================================
 # PromptManager.reload()
@@ -341,3 +565,262 @@ class TestPromptManagerReload:
 
         assert "new" in manager.list_files()
         assert manager.get("new", "key") == "value"
+
+
+# ============================================================================
+# File System Edge Cases
+# ============================================================================
+
+class TestPromptManagerFileSystem:
+    """Test file system edge cases."""
+
+    @pytest.mark.unit
+    def test_file_deleted_before_reload(self, tmp_path):
+        """Should handle file deletion gracefully on reload."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("msg: 'Hello'")
+
+        manager = PromptManager(str(prompts_dir))
+        assert manager.get("test", "msg") == "Hello"
+
+        # Delete the file and reload
+        yaml_file.unlink()
+        manager.reload()
+
+        # File gone: key should no longer be available
+        assert "test" not in manager.list_files()
+        assert manager.get("test", "msg", default="gone") == "gone"
+
+    @pytest.mark.unit
+    def test_file_becomes_unreadable(self, tmp_path):
+        """Should handle file that becomes unreadable mid-operation."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("msg: 'Hello'")
+
+        manager = PromptManager(str(prompts_dir))
+        assert manager.get("test", "msg") == "Hello"
+
+        # Make the file unreadable, then reload
+        yaml_file.chmod(0o000)
+        try:
+            manager.reload()
+            # After failed reload, cached data should be cleared
+            # (reload clears cache first, then re-loads)
+            assert manager.get("test", "msg", default="fallback") == "fallback"
+        finally:
+            # Restore permissions for cleanup
+            yaml_file.chmod(0o644)
+
+    @pytest.mark.unit
+    def test_file_replaced_with_invalid_yaml(self, tmp_path):
+        """Should handle valid file replaced with invalid content on reload."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("msg: 'Valid'")
+
+        manager = PromptManager(str(prompts_dir))
+        assert manager.get("test", "msg") == "Valid"
+
+        # Replace with invalid YAML
+        yaml_file.write_text("{{invalid yaml content[[")
+        manager.reload()
+
+        # Invalid file should be skipped, cache cleared for this file
+        assert manager.get("test", "msg", default="nope") == "nope"
+
+    @pytest.mark.unit
+    def test_yaml_with_binary_encoding(self, tmp_path):
+        """Should handle file with invalid encoding gracefully."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "binary.yaml"
+        # Write raw bytes that are not valid UTF-8
+        yaml_file.write_bytes(b"key: \xff\xfe invalid bytes")
+
+        manager = PromptManager(str(prompts_dir))
+        # Should not crash, file is skipped
+        assert "binary" not in manager.list_files()
+
+
+# ============================================================================
+# Concurrent Access
+# ============================================================================
+
+class TestPromptManagerConcurrency:
+    """Test concurrent access to PromptManager."""
+
+    @pytest.mark.unit
+    async def test_concurrent_reads(self, tmp_path):
+        """Multiple tasks reading prompts simultaneously should all succeed."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+greeting: "Hello {name}!"
+farewell: "Goodbye {name}!"
+info: "You have {count} items."
+""")
+        manager = PromptManager(str(prompts_dir))
+
+        async def read_prompt(key, **kwargs):
+            # Simulate async context (yield to event loop)
+            await asyncio.sleep(0)
+            return manager.get("test", key, **kwargs)
+
+        results = await asyncio.gather(
+            read_prompt("greeting", name="Alice"),
+            read_prompt("farewell", name="Bob"),
+            read_prompt("info", count="42"),
+            read_prompt("greeting", name="Charlie"),
+            read_prompt("farewell", name="Diana"),
+            read_prompt("greeting", name="Eve"),
+            read_prompt("info", count="99"),
+            read_prompt("farewell", name="Frank"),
+            read_prompt("greeting", name="Grace"),
+            read_prompt("info", count="0"),
+        )
+
+        assert results[0] == "Hello Alice!"
+        assert results[1] == "Goodbye Bob!"
+        assert results[2] == "You have 42 items."
+        assert results[3] == "Hello Charlie!"
+        assert results[4] == "Goodbye Diana!"
+        assert len(results) == 10
+
+    @pytest.mark.unit
+    async def test_concurrent_reads_with_reload(self, tmp_path):
+        """Reads interleaved with a reload should not crash."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("msg: 'Original'")
+
+        manager = PromptManager(str(prompts_dir))
+
+        async def reader():
+            await asyncio.sleep(0)
+            return manager.get("test", "msg", default="missing")
+
+        async def reloader():
+            await asyncio.sleep(0)
+            yaml_file.write_text("msg: 'Updated'")
+            manager.reload()
+
+        # Run reads and a reload concurrently
+        results = await asyncio.gather(
+            reader(),
+            reader(),
+            reloader(),
+            reader(),
+            reader(),
+            return_exceptions=True,
+        )
+
+        # No exceptions should have been raised
+        for r in results:
+            assert not isinstance(r, Exception), f"Got unexpected exception: {r}"
+
+        # The reloader returns None; readers return strings
+        string_results = [r for r in results if isinstance(r, str)]
+        for r in string_results:
+            assert r in ("Original", "Updated", "missing")
+
+
+# ============================================================================
+# Language Handling
+# ============================================================================
+
+class TestPromptManagerLanguage:
+    """Test multilingual prompt handling edge cases."""
+
+    @pytest.mark.unit
+    def test_set_unsupported_language_keeps_default(self, tmp_path):
+        """Should keep current default when setting unsupported language."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+        manager.set_default_language("fr")
+        assert manager.default_language == "de"
+
+    @pytest.mark.unit
+    def test_set_valid_language(self, tmp_path):
+        """Should update default language when setting supported language."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+        manager.set_default_language("en")
+        assert manager.default_language == "en"
+
+    @pytest.mark.unit
+    def test_language_fallback_chain(self, tmp_path):
+        """Should follow full fallback: requested lang -> default lang -> root."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+de:
+  only_de: "Deutsch"
+en:
+  only_en: "English"
+root_only: "Root level"
+""")
+        manager = PromptManager(str(prompts_dir), default_lang="de")
+
+        # lang=en, key exists in en -> use en
+        assert manager.get("test", "only_en", lang="en") == "English"
+
+        # lang=en, key not in en, not in de -> fall to root
+        assert manager.get("test", "root_only", lang="en") == "Root level"
+
+        # lang=fr (unsupported), key only in de -> fall back to default lang de
+        assert manager.get("test", "only_de", lang="fr") == "Deutsch"
+
+        # lang=fr, key not in fr, not in de, not root -> default
+        assert manager.get("test", "only_en", lang="fr", default="nope") == "nope"
+
+    @pytest.mark.unit
+    def test_get_config_with_lang(self, tmp_path):
+        """Should retrieve language-specific config when lang is provided."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("""
+de:
+  options:
+    temp: 0.5
+en:
+  options:
+    temp: 0.9
+options:
+  temp: 0.7
+""")
+        manager = PromptManager(str(prompts_dir))
+
+        # With lang specified, should get language-specific
+        config_de = manager.get_config("test", "options", lang="de")
+        assert config_de == {"temp": 0.5}
+
+        config_en = manager.get_config("test", "options", lang="en")
+        assert config_en == {"temp": 0.9}
+
+        # Without lang, should get root-level
+        config_root = manager.get_config("test", "options")
+        assert config_root == {"temp": 0.7}
+
+    @pytest.mark.unit
+    def test_supported_languages_property(self, tmp_path):
+        """Should return a copy of supported languages list."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        manager = PromptManager(str(prompts_dir))
+
+        langs = manager.supported_languages
+        assert "de" in langs
+        assert "en" in langs
+        # Modifying the returned list should not affect internal state
+        langs.append("fr")
+        assert "fr" not in manager.supported_languages

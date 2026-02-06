@@ -5,7 +5,7 @@ Handles document parsing, chunking, and metadata extraction for RAG.
 Supports: PDF, DOCX, PPTX, XLSX, HTML, MD, TXT, and images.
 """
 import asyncio
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -154,7 +154,7 @@ class DocumentProcessor:
             "filename": path.name,
             "file_type": path.suffix.lower().lstrip('.'),
             "file_size": path.stat().st_size if path.exists() else 0,
-            "processed_at": datetime.utcnow().isoformat()
+            "processed_at": datetime.now(UTC).replace(tzinfo=None).isoformat()
         }
 
         # Docling-Metadaten

@@ -3,6 +3,7 @@ Tests for ComplexityDetector — Regex-based detection of multi-step queries.
 """
 
 import pytest
+
 from services.complexity_detector import ComplexityDetector
 
 

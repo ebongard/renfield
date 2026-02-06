@@ -9,18 +9,24 @@ Testet:
 - Fehlerbehandlung
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import json
 import base64
-from datetime import datetime
+import json
+
+import pytest
 
 from models.websocket_messages import (
-    parse_ws_message, create_error_response, WSErrorCode, WSErrorResponse,
-    WSRegisterMessage, WSTextMessage, WSAudioMessage, WSAudioEndMessage,
-    WSWakewordDetectedMessage, WSHeartbeatMessage, WSBaseMessage
+    WSAudioEndMessage,
+    WSAudioMessage,
+    WSBaseMessage,
+    WSErrorCode,
+    WSErrorResponse,
+    WSHeartbeatMessage,
+    WSRegisterMessage,
+    WSTextMessage,
+    WSWakewordDetectedMessage,
+    create_error_response,
+    parse_ws_message,
 )
-
 
 # ============================================================================
 # WebSocket Message Parsing Tests
@@ -617,7 +623,6 @@ class TestBuildActionSummary:
     @pytest.mark.unit
     def test_mcp_raw_data_format_parsed(self):
         """Test: MCP raw_data [{"type":"text","text":"{JSON}"}] is parsed correctly."""
-        import json
         from api.websocket.chat_handler import _build_action_summary
 
         intent = {"intent": "mcp.paperless.search_documents"}
@@ -645,7 +650,6 @@ class TestBuildActionSummary:
     @pytest.mark.unit
     def test_mcp_raw_data_list_results(self):
         """Test: MCP raw_data with a plain list inside text is parsed."""
-        import json
         from api.websocket.chat_handler import _build_action_summary
 
         intent = {"intent": "mcp.mail.list_emails"}

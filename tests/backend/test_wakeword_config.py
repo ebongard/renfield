@@ -10,22 +10,22 @@ Tests the centralized wake word settings system including:
 - Model download endpoints
 - config_ack handling
 """
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
-from datetime import datetime
 
-from services.wakeword_config_manager import (
-    WakeWordConfigManager,
-    WakeWordConfig,
-    DeviceSyncStatus,
-    get_wakeword_config_manager,
-    AVAILABLE_KEYWORDS,
-    VALID_KEYWORDS,
-)
-from models.database import SystemSetting, SETTING_WAKEWORD_KEYWORD, User, Role
+from models.database import SETTING_WAKEWORD_KEYWORD, Role, SystemSetting, User
 from models.permissions import Permission
+from services.wakeword_config_manager import (
+    VALID_KEYWORDS,
+    DeviceSyncStatus,
+    WakeWordConfig,
+    WakeWordConfigManager,
+    get_wakeword_config_manager,
+)
 from utils.config import settings
 
 
