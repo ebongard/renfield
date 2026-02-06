@@ -363,6 +363,14 @@ async def lifespan(app: "FastAPI"):
     """
     logger.info("🚀 Renfield startet...")
 
+    # Block startup if auth is enabled but secret_key is still the default
+    if settings.auth_enabled and settings.secret_key.get_secret_value() == "changeme-in-production-use-strong-random-key":
+        logger.critical(
+            "SECRET_KEY is still the default value! "
+            "Set a strong random SECRET_KEY before enabling AUTH_ENABLED=true."
+        )
+        raise SystemExit(1)
+
     # Startup sequence
     await _init_database()
     await _init_auth()
@@ -396,5 +404,11 @@ async def lifespan(app: "FastAPI"):
 
     if zeroconf_service:
         await zeroconf_service.stop()
+
+    # Close HTTP client singletons
+    from integrations.frigate import close_frigate_client
+    from integrations.homeassistant import close_ha_client
+    await close_ha_client()
+    await close_frigate_client()
 
     logger.info("✅ Shutdown complete")

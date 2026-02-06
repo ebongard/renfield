@@ -41,9 +41,10 @@ from api.routes import homeassistant as ha_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
 from api.websocket import chat_router, device_router, satellite_router
+from models.database import User
 from models.permissions import Permission
 from services.api_rate_limiter import setup_rate_limiter
-from services.auth_service import require_permission
+from services.auth_service import get_current_user, require_permission
 from services.database import AsyncSessionLocal
 from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
@@ -315,7 +316,8 @@ async def liveness_check():
 @app.post("/api/ws/token")
 async def create_ws_token(
     device_id: str = None,
-    device_type: str = None
+    device_type: str = None,
+    current_user: User | None = Depends(get_current_user),
 ):
     """
     Generate a WebSocket authentication token.
