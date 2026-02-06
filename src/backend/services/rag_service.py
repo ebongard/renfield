@@ -4,7 +4,9 @@ RAG Service - Retrieval Augmented Generation
 Handles document ingestion, embedding generation, similarity search,
 and context preparation for LLM queries.
 """
+import asyncio
 import os
+from collections import defaultdict
 from datetime import datetime
 from typing import Any
 
@@ -144,34 +146,33 @@ class RAGService:
             doc.file_size = metadata.get("file_size")
             doc.page_count = metadata.get("page_count")
 
-            # 3. Chunks mit Embeddings erstellen (batch insert)
+            # 3. Chunks mit Embeddings erstellen (parallel, batch insert)
             chunks = result["chunks"]
-            chunk_objects = []
+            sem = asyncio.Semaphore(5)
 
-            for chunk_data in chunks:
-                text = chunk_data["text"]
-
-                # Skip leere Chunks
-                if not text or not text.strip():
-                    continue
-
-                # Embedding generieren
-                try:
-                    embedding = await self.get_embedding(text)
-                except Exception as e:
-                    logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
-                    continue
-
-                chunk_objects.append(DocumentChunk(
+            async def _embed_chunk(chunk_data):
+                text_content = chunk_data["text"]
+                if not text_content or not text_content.strip():
+                    return None
+                async with sem:
+                    try:
+                        embedding = await self.get_embedding(text_content)
+                    except Exception as e:
+                        logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
+                        return None
+                return DocumentChunk(
                     document_id=doc.id,
-                    content=text,
+                    content=text_content,
                     embedding=embedding,
                     chunk_index=chunk_data["chunk_index"],
                     page_number=chunk_data["metadata"].get("page_number"),
                     section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
                     chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
                     chunk_metadata=chunk_data["metadata"]
-                ))
+                )
+
+            embed_results = await asyncio.gather(*[_embed_chunk(cd) for cd in chunks])
+            chunk_objects = [r for r in embed_results if r is not None]
 
             chunk_count = len(chunk_objects)
             if chunk_objects:
@@ -498,6 +499,8 @@ class RAGService:
         For each hit chunk with chunk_index=N, fetches chunks N-window..N+window
         and merges their content. Deduplicates when adjacent chunks are both hits.
 
+        Uses a single batched SQL query instead of one query per result.
+
         Args:
             results: Search results to expand
             window_size: Number of adjacent chunks per direction
@@ -508,13 +511,44 @@ class RAGService:
         if not results:
             return results
 
-        # Collect (document_id, chunk_index) pairs for all results
-        hit_keys = set()
-        for r in results:
-            hit_keys.add((r["document"]["id"], r["chunk"]["chunk_index"]))
+        # Collect ranges for batch query
+        ranges = []
+        for result in results:
+            doc_id = result["document"]["id"]
+            center_index = result["chunk"]["chunk_index"]
+            min_index = max(0, center_index - window_size)
+            max_index = center_index + window_size
+            ranges.append((doc_id, min_index, max_index))
 
+        # Build single batch query with OR conditions
+        conditions = []
+        params = {}
+        for i, (doc_id, min_idx, max_idx) in enumerate(ranges):
+            conditions.append(
+                f"(document_id = :doc_{i} AND chunk_index >= :min_{i} AND chunk_index <= :max_{i})"
+            )
+            params[f"doc_{i}"] = doc_id
+            params[f"min_{i}"] = min_idx
+            params[f"max_{i}"] = max_idx
+
+        sql = text(f"""
+            SELECT id, content, chunk_index, page_number, section_title, chunk_type, document_id
+            FROM document_chunks
+            WHERE {" OR ".join(conditions)}
+            ORDER BY document_id, chunk_index ASC
+        """)
+
+        batch_result = await self.db.execute(sql, params)
+        all_rows = batch_result.fetchall()
+
+        # Group by document_id
+        rows_by_doc = defaultdict(list)
+        for row in all_rows:
+            rows_by_doc[row.document_id].append(row)
+
+        # Process results using grouped data
         expanded = []
-        seen_chunks = set()  # Track already-included chunk IDs to avoid duplicates
+        seen_chunks = set()
 
         for result in results:
             chunk_id = result["chunk"]["id"]
@@ -525,35 +559,17 @@ class RAGService:
             center_index = result["chunk"]["chunk_index"]
             min_index = max(0, center_index - window_size)
             max_index = center_index + window_size
+            adjacent_rows = rows_by_doc.get(doc_id, [])
 
-            # Fetch adjacent chunks
-            sql = text("""
-                SELECT id, content, chunk_index, page_number, section_title, chunk_type
-                FROM document_chunks
-                WHERE document_id = :doc_id
-                AND chunk_index >= :min_idx
-                AND chunk_index <= :max_idx
-                ORDER BY chunk_index ASC
-            """)
-
-            adj_result = await self.db.execute(sql, {
-                "doc_id": doc_id,
-                "min_idx": min_index,
-                "max_idx": max_index
-            })
-            adjacent_rows = adj_result.fetchall()
-
-            # Merge content from adjacent chunks
             merged_content_parts = []
             for row in adjacent_rows:
-                if row.content:
-                    merged_content_parts.append(row.content)
-                # Mark all included chunks as seen
-                seen_chunks.add(row.id)
+                if min_index <= row.chunk_index <= max_index:
+                    if row.content:
+                        merged_content_parts.append(row.content)
+                    seen_chunks.add(row.id)
 
             merged_content = "\n\n".join(merged_content_parts) if merged_content_parts else result["chunk"]["content"]
 
-            # Build expanded result (preserve original metadata)
             expanded_result = {
                 "chunk": {
                     "id": result["chunk"]["id"],

@@ -32,6 +32,11 @@ from services.database import get_db
 router = APIRouter()
 
 
+def _escape_like(value: str) -> str:
+    """Escape LIKE special characters to prevent wildcard injection."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 # =============================================================================
 # Request/Response Models
 # =============================================================================
@@ -114,9 +119,10 @@ async def list_users(
 
     # Apply filters
     if search:
+        safe_search = _escape_like(search)
         query = query.where(
-            User.username.ilike(f"%{search}%") |
-            User.email.ilike(f"%{search}%")
+            User.username.ilike(f"%{safe_search}%") |
+            User.email.ilike(f"%{safe_search}%")
         )
     if role_id:
         query = query.where(User.role_id == role_id)
