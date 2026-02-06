@@ -5,6 +5,7 @@ Provides global rate limiting for REST API endpoints using slowapi.
 Configurable per-endpoint limits via settings.
 """
 
+import ipaddress
 import logging
 
 from fastapi import FastAPI, Request
@@ -18,16 +19,47 @@ from utils.config import settings
 
 logger = logging.getLogger(__name__)
 
+_trusted_networks: list | None = None
+
+
+def _get_trusted_networks():
+    global _trusted_networks
+    if _trusted_networks is None:
+        _trusted_networks = []
+        for entry in settings.trusted_proxies.split(","):
+            entry = entry.strip()
+            if entry:
+                try:
+                    _trusted_networks.append(ipaddress.ip_network(entry, strict=False))
+                except ValueError:
+                    pass
+    return _trusted_networks
+
+
+def _is_trusted_proxy(ip: str) -> bool:
+    networks = _get_trusted_networks()
+    if not networks:
+        return True  # No trusted_proxies configured = trust all (backwards compatible)
+    try:
+        addr = ipaddress.ip_address(ip)
+        return any(addr in net for net in networks)
+    except ValueError:
+        return False
+
 
 def get_client_ip(request: Request) -> str:
     """
     Get client IP address from request.
-    Handles X-Forwarded-For header for reverse proxy setups.
+    Only reads forwarded headers when the direct client IP is in trusted_proxies.
     """
+    direct_ip = get_remote_address(request)
+
+    if not _is_trusted_proxy(direct_ip):
+        return direct_ip
+
     # Check for X-Forwarded-For header (nginx, load balancer)
     forwarded_for = request.headers.get("X-Forwarded-For")
     if forwarded_for:
-        # Take the first IP (original client)
         return forwarded_for.split(",")[0].strip()
 
     # Check for X-Real-IP header
@@ -35,8 +67,7 @@ def get_client_ip(request: Request) -> str:
     if real_ip:
         return real_ip
 
-    # Fall back to direct client IP
-    return get_remote_address(request)
+    return direct_ip
 
 
 # Create limiter instance with custom key function

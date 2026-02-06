@@ -526,5 +526,5 @@ async def voice_authenticate(
         logger.error(traceback.format_exc())
         return VoiceAuthResponse(
             success=False,
-            message=f"Voice authentication error: {e!s}"
+            message="Voice authentication failed"
         )

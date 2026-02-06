@@ -1,7 +1,6 @@
 """Tests for Prometheus metrics module."""
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 
 class TestMetricsDisabled:
@@ -10,13 +9,13 @@ class TestMetricsDisabled:
     def test_record_functions_are_noop_when_not_initialized(self):
         """Metric recording functions should silently do nothing when not initialized."""
         from utils.metrics import (
+            record_agent_steps,
+            record_circuit_breaker_failure,
+            record_circuit_breaker_state,
             record_http_request,
+            record_llm_call,
             record_websocket_connect,
             record_websocket_disconnect,
-            record_llm_call,
-            record_agent_steps,
-            record_circuit_breaker_state,
-            record_circuit_breaker_failure,
         )
 
         # None of these should raise
@@ -171,35 +170,35 @@ class TestMetricsEnabled:
 class TestCircuitBreakerMetricsIntegration:
     """Test that circuit breaker records metrics on state transitions."""
 
-    def test_circuit_breaker_records_failure_metric(self):
+    async def test_circuit_breaker_records_failure_metric(self):
         """CircuitBreaker.record_failure should call metrics."""
         from utils.circuit_breaker import CircuitBreaker
 
         breaker = CircuitBreaker(name="test", failure_threshold=3)
 
         with patch("utils.metrics.record_circuit_breaker_failure") as mock_record:
-            breaker.record_failure()
+            await breaker.record_failure()
             mock_record.assert_called_once_with("test")
 
-    def test_circuit_breaker_records_state_on_open(self):
+    async def test_circuit_breaker_records_state_on_open(self):
         """CircuitBreaker should record state metric when transitioning to OPEN."""
         from utils.circuit_breaker import CircuitBreaker
 
         breaker = CircuitBreaker(name="test", failure_threshold=2)
 
         with patch("utils.metrics.record_circuit_breaker_state") as mock_state:
-            breaker.record_failure()
-            breaker.record_failure()  # Should trigger OPEN
+            await breaker.record_failure()
+            await breaker.record_failure()  # Should trigger OPEN
             mock_state.assert_called_with("test", "open")
 
-    def test_circuit_breaker_records_state_on_closed(self):
+    async def test_circuit_breaker_records_state_on_closed(self):
         """CircuitBreaker should record state metric when recovering to CLOSED."""
         from utils.circuit_breaker import CircuitBreaker
 
         breaker = CircuitBreaker(name="test", failure_threshold=1, recovery_timeout=0.0)
 
         with patch("utils.metrics.record_circuit_breaker_state") as mock_state:
-            breaker.record_failure()  # -> OPEN
-            breaker.allow_request()   # -> HALF_OPEN (recovery_timeout=0)
-            breaker.record_success()  # -> CLOSED
+            await breaker.record_failure()  # -> OPEN
+            await breaker.allow_request()   # -> HALF_OPEN (recovery_timeout=0)
+            await breaker.record_success()  # -> CLOSED
             mock_state.assert_called_with("test", "closed")
