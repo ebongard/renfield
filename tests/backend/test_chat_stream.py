@@ -51,7 +51,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_basic_streaming(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = True
         mock_settings.ollama_model = "test-model"
@@ -77,7 +77,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_streaming_skips_empty_chunks(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = True
         mock_settings.ollama_model = "test-model"
@@ -102,7 +102,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_streaming_with_history(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = True
         mock_settings.ollama_model = "test-model"
@@ -136,7 +136,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_circuit_breaker_open(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = False
         mock_settings.ollama_model = "test-model"
@@ -159,7 +159,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_streaming_error_handling(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = True
         mock_settings.ollama_model = "test-model"
@@ -184,7 +184,7 @@ class TestChatStream:
 
     @patch("services.ollama_service.get_default_client")
     @patch("services.ollama_service.settings")
-    @patch("services.ollama_service.llm_circuit_breaker")
+    @patch("services.ollama_service.llm_circuit_breaker", new_callable=AsyncMock)
     async def test_streaming_with_memory_context(self, mock_cb, mock_settings, mock_get_client):
         mock_cb.allow_request.return_value = True
         mock_settings.ollama_model = "test-model"

@@ -175,6 +175,8 @@ async def acknowledge_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Mark a notification as acknowledged."""
+    if settings.auth_enabled and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
     service = NotificationService(db)
     acknowledged_by = current_user.username if current_user else None
 
@@ -194,6 +196,8 @@ async def dismiss_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Dismiss (soft delete) a notification."""
+    if settings.auth_enabled and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
     service = NotificationService(db)
 
     success = await service.dismiss(notification_id)
@@ -217,6 +221,8 @@ async def suppress_notification(
     current_user: User | None = Depends(get_current_user),
 ):
     """Create a suppression rule from a notification."""
+    if settings.auth_enabled and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
     service = NotificationService(db)
     user_id = current_user.id if current_user else None
     reason = body.reason if body else None
@@ -272,6 +278,8 @@ async def delete_suppression(
     current_user: User | None = Depends(get_current_user),
 ):
     """Deactivate a suppression rule."""
+    if settings.auth_enabled and not current_user:
+        raise HTTPException(status_code=401, detail="Authentication required")
     service = NotificationService(db)
 
     success = await service.delete_suppression(suppression_id)

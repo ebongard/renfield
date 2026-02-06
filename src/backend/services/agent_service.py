@@ -549,7 +549,7 @@ class AgentService:
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call
-            if not agent_circuit_breaker.allow_request():
+            if not await agent_circuit_breaker.allow_request():
                 logger.warning(f"🔴 Agent circuit breaker OPEN — skipping LLM call at step {step_num}")
                 yield AgentStep(
                     step_number=step_num,
@@ -574,13 +574,13 @@ class AgentService:
                     timeout=self.step_timeout,
                 )
                 response_text = raw_response.message.content or ""
-                agent_circuit_breaker.record_success()
+                await agent_circuit_breaker.record_success()
 
                 # Track token usage
                 context.track_tokens(prompt, response_text)
                 logger.info(f"🤖 Agent step {step_num} LLM response ({len(response_text)} chars): {response_text[:500]}")
             except TimeoutError:
-                agent_circuit_breaker.record_failure()
+                await agent_circuit_breaker.record_failure()
                 logger.warning(f"⏰ Agent step {step_num} timed out after {self.step_timeout}s")
                 yield AgentStep(
                     step_number=step_num,
@@ -591,7 +591,7 @@ class AgentService:
                 yield summary_step
                 return
             except Exception as e:
-                agent_circuit_breaker.record_failure()
+                await agent_circuit_breaker.record_failure()
                 logger.error(f"❌ Agent LLM call failed at step {step_num}: {e}")
                 yield AgentStep(
                     step_number=step_num,

@@ -139,3 +139,14 @@ class PiperService:
             return b""
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+
+_piper_instance: PiperService | None = None
+
+
+def get_piper_service() -> PiperService:
+    """Get the PiperService singleton."""
+    global _piper_instance
+    if _piper_instance is None:
+        _piper_instance = PiperService()
+    return _piper_instance

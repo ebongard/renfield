@@ -169,6 +169,7 @@ class Settings(BaseSettings):
 
     # Security
     secret_key: SecretStr = "changeme-in-production-use-strong-random-key"
+    trusted_proxies: str = ""  # Comma-separated CIDRs, e.g. "172.18.0.0/16,127.0.0.1"
 
     # Jellyfin
     jellyfin_enabled: bool = False
