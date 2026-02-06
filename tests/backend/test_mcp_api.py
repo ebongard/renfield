@@ -2,10 +2,11 @@
 Tests for MCP Admin API endpoints (/api/mcp/*).
 """
 
-import pytest
-from unittest.mock import MagicMock, AsyncMock, patch
-from services.mcp_client import MCPToolInfo
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from services.mcp_client import MCPToolInfo
 
 # ============================================================================
 # Helper: Simulate app.state.mcp_manager
@@ -13,7 +14,7 @@ from services.mcp_client import MCPToolInfo
 
 def _mock_mcp_manager(connected=True, tools=None):
     """Create a mock MCPManager for API tests."""
-    from services.mcp_client import MCPServerState, MCPServerConfig
+    from services.mcp_client import MCPServerState
     manager = MagicMock()
 
     if tools is None:

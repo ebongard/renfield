@@ -9,11 +9,10 @@ Testet:
 - AudioPreprocessor (Audio Processing)
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
-import numpy as np
 
+import numpy as np
+import pytest
 
 # ============================================================================
 # OllamaService Tests
@@ -408,7 +407,7 @@ class TestSpeakerService:
     def test_speaker_service_not_available(self):
         """Testet wenn SpeechBrain nicht verfügbar"""
         # Import and test directly
-        from services.speaker_service import SpeakerService, SPEECHBRAIN_AVAILABLE
+        from services.speaker_service import SPEECHBRAIN_AVAILABLE, SpeakerService
 
         with patch('services.speaker_service.settings') as mock_settings:
             mock_settings.speaker_recognition_device = 'cpu'

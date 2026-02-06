@@ -10,7 +10,7 @@ Phase 2: Semantic dedup, urgency classification, LLM enrichment, feedback learni
 import asyncio
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import delete, select, text
@@ -100,7 +100,7 @@ class NotificationService:
 
     async def _is_duplicate(self, dedup_key: str) -> bool:
         """Check if a notification with the same dedup_key was sent recently."""
-        window = datetime.utcnow() - timedelta(seconds=settings.proactive_suppression_window)
+        window = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=settings.proactive_suppression_window)
         result = await self.db.execute(
             select(Notification.id).where(
                 Notification.dedup_key == dedup_key,
@@ -137,7 +137,7 @@ class NotificationService:
 
         window = window_seconds or settings.proactive_suppression_window
         threshold = settings.proactive_semantic_dedup_threshold
-        since = datetime.utcnow() - timedelta(seconds=window)
+        since = datetime.now(UTC).replace(tzinfo=None) - timedelta(seconds=window)
 
         try:
             result = await self.db.execute(
@@ -469,7 +469,7 @@ class NotificationService:
         room_id, room_name = await self._resolve_room(room)
 
         # Compute expiry
-        expires_at = datetime.utcnow() + timedelta(seconds=settings.proactive_notification_ttl)
+        expires_at = datetime.now(UTC).replace(tzinfo=None) + timedelta(seconds=settings.proactive_notification_ttl)
 
         # Create notification
         notification = Notification(
@@ -504,7 +504,7 @@ class NotificationService:
 
         # Update status
         notification.status = NOTIFICATION_DELIVERED
-        notification.delivered_at = datetime.utcnow()
+        notification.delivered_at = datetime.now(UTC).replace(tzinfo=None)
         notification.delivered_to = delivered_to
         await self.db.commit()
 
@@ -668,7 +668,7 @@ class NotificationService:
 
         # Filter out expired
         query = query.where(
-            (Notification.expires_at.is_(None)) | (Notification.expires_at > datetime.utcnow())
+            (Notification.expires_at.is_(None)) | (Notification.expires_at > datetime.now(UTC).replace(tzinfo=None))
         )
 
         query = query.offset(offset).limit(limit)
@@ -689,7 +689,7 @@ class NotificationService:
             return False
 
         notification.status = NOTIFICATION_ACKNOWLEDGED
-        notification.acknowledged_at = datetime.utcnow()
+        notification.acknowledged_at = datetime.now(UTC).replace(tzinfo=None)
         notification.acknowledged_by = acknowledged_by
         await self.db.commit()
         return True
@@ -709,7 +709,7 @@ class NotificationService:
         result = await self.db.execute(
             delete(Notification).where(
                 Notification.expires_at.isnot(None),
-                Notification.expires_at < datetime.utcnow(),
+                Notification.expires_at < datetime.now(UTC).replace(tzinfo=None),
             )
         )
         await self.db.commit()

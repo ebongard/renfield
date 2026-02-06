@@ -6,9 +6,11 @@ Covers:
 - play_in_room: media URL + room → HA media_player.play_media
 """
 
-import pytest
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from services.internal_tools import InternalToolService
 
 

@@ -6,10 +6,10 @@ Testet:
 - Wake Word Service Status
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
-from httpx import AsyncClient
 
+import pytest
+from httpx import AsyncClient
 
 # ============================================================================
 # Wake Word Settings Tests

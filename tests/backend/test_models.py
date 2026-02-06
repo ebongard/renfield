@@ -8,20 +8,32 @@ Testet:
 - Validierung
 """
 
-import pytest
 from datetime import datetime
+
+import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    Room, RoomDevice, RoomOutputDevice,
-    Speaker, SpeakerEmbedding,
-    Conversation, Message, Task, CameraEvent, HomeAssistantEntity,
-    DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_PANEL, DEVICE_TYPE_WEB_BROWSER,
-    DEVICE_TYPE_WEB_TABLET, DEVICE_TYPE_WEB_KIOSK, DEVICE_TYPES,
-    DEFAULT_CAPABILITIES, OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL
+    DEFAULT_CAPABILITIES,
+    DEVICE_TYPE_SATELLITE,
+    DEVICE_TYPE_WEB_BROWSER,
+    DEVICE_TYPE_WEB_KIOSK,
+    DEVICE_TYPE_WEB_PANEL,
+    DEVICE_TYPE_WEB_TABLET,
+    DEVICE_TYPES,
+    OUTPUT_TYPE_AUDIO,
+    CameraEvent,
+    Conversation,
+    HomeAssistantEntity,
+    Message,
+    Room,
+    RoomDevice,
+    RoomOutputDevice,
+    Speaker,
+    SpeakerEmbedding,
+    Task,
 )
-
 
 # ============================================================================
 # Room Model Tests

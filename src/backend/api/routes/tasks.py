@@ -1,7 +1,7 @@
 """
 Tasks API Routes
 """
-from datetime import datetime
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
@@ -146,7 +146,7 @@ async def update_task(
         if update.status:
             task.status = update.status
             if update.status == "completed":
-                task.completed_at = datetime.utcnow()
+                task.completed_at = datetime.now(UTC).replace(tzinfo=None)
 
         if update.result:
             task.result = update.result

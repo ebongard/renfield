@@ -10,10 +10,9 @@ Tests:
 """
 
 import time
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-import httpx
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # =============================================================================
 # Entity Map Cache Tests (HomeAssistantClient)

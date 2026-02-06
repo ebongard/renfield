@@ -8,11 +8,10 @@ Tests cover:
 - WebSocket message handling for updates
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from httpx import AsyncClient
-from datetime import datetime
 
+import pytest
+from httpx import AsyncClient
 
 # =============================================================================
 # SatelliteManager Version Tracking Tests
@@ -24,7 +23,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_satellite_info_has_version_field(self):
         """SatelliteInfo should have version and update fields"""
-        from services.satellite_manager import SatelliteInfo, SatelliteCapabilities, UpdateStatus
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus
 
         caps = SatelliteCapabilities()
         mock_ws = MagicMock()
@@ -69,7 +68,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_update_heartbeat_with_version(self):
         """Heartbeat should update version"""
-        from services.satellite_manager import SatelliteManager, SatelliteInfo, SatelliteCapabilities
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -92,7 +91,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_set_update_status(self):
         """set_update_status should update all update fields"""
-        from services.satellite_manager import SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -121,7 +120,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_clear_update_status(self):
         """clear_update_status should reset all update fields"""
-        from services.satellite_manager import SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -146,7 +145,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_get_all_satellites_includes_version(self):
         """get_all_satellites should include version and update info"""
-        from services.satellite_manager import SatelliteManager, SatelliteInfo, SatelliteCapabilities, UpdateStatus
+        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()

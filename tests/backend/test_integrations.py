@@ -6,10 +6,10 @@ Testet:
 - FrigateClient
 """
 
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-import httpx
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import pytest
 
 # ============================================================================
 # HomeAssistantClient Tests
