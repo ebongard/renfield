@@ -596,6 +596,7 @@ class User(Base):
 
     # Account status
     is_active = Column(Boolean, default=True, nullable=False)
+    must_change_password = Column(Boolean, default=False, nullable=False, server_default="false")
 
     # User preferences
     preferred_language = Column(String(10), default="de", nullable=False)

@@ -306,10 +306,7 @@ async def _stream_rag_response(
                     )
 
                     if search_results:
-                        rag_context = await rag_service.get_context(
-                            query=content,
-                            knowledge_base_id=knowledge_base_id
-                        )
+                        rag_context = rag_service.format_context_from_results(search_results)
                         session_state.update_rag_context(
                             context=rag_context,
                             results=search_results,
