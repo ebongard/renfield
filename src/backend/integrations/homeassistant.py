@@ -14,6 +14,31 @@ from loguru import logger
 
 from utils.config import settings
 
+_shared_http_client: httpx.AsyncClient | None = None
+
+
+async def get_ha_http_client() -> httpx.AsyncClient:
+    global _shared_http_client
+    if _shared_http_client is None or _shared_http_client.is_closed:
+        token = settings.home_assistant_token.get_secret_value() if settings.home_assistant_token else ""
+        _shared_http_client = httpx.AsyncClient(
+            base_url=settings.home_assistant_url or "",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json",
+            },
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+            timeout=httpx.Timeout(settings.ha_timeout),
+        )
+    return _shared_http_client
+
+
+async def close_ha_client():
+    global _shared_http_client
+    if _shared_http_client is not None and not _shared_http_client.is_closed:
+        await _shared_http_client.aclose()
+        _shared_http_client = None
+
 
 class HomeAssistantClient:
     """Client für Home Assistant REST API"""
@@ -26,10 +51,6 @@ class HomeAssistantClient:
     def __init__(self):
         self.base_url = settings.home_assistant_url
         self.token = settings.home_assistant_token.get_secret_value() if settings.home_assistant_token else None
-        self.headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
         # Keyword Cache
         self._keywords_cache = None
         self._keywords_last_updated = None
@@ -38,14 +59,10 @@ class HomeAssistantClient:
     async def get_states(self) -> list[dict]:
         """Alle Entity States abrufen"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/states",
-                    headers=self.headers,
-                    timeout=settings.ha_timeout
-                )
-                response.raise_for_status()
-                return response.json()
+            client = await get_ha_http_client()
+            response = await client.get("/api/states", timeout=settings.ha_timeout)
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der States: {e}")
             return []
@@ -53,14 +70,10 @@ class HomeAssistantClient:
     async def get_state(self, entity_id: str) -> dict | None:
         """State einer bestimmten Entity abrufen"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/states/{entity_id}",
-                    headers=self.headers,
-                    timeout=settings.ha_timeout
-                )
-                response.raise_for_status()
-                return response.json()
+            client = await get_ha_http_client()
+            response = await client.get(f"/api/states/{entity_id}", timeout=settings.ha_timeout)
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen des States für {entity_id}: {e}")
             return None
@@ -79,16 +92,15 @@ class HomeAssistantClient:
             if entity_id:
                 data["entity_id"] = entity_id
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.base_url}/api/services/{domain}/{service}",
-                    headers=self.headers,
-                    json=data,
-                    timeout=timeout or settings.ha_timeout
-                )
-                response.raise_for_status()
-                logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")
-                return True
+            client = await get_ha_http_client()
+            response = await client.post(
+                f"/api/services/{domain}/{service}",
+                json=data,
+                timeout=timeout or settings.ha_timeout
+            )
+            response.raise_for_status()
+            logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")
+            return True
         except Exception as e:
             logger.error(f"❌ Fehler beim Aufrufen von {domain}.{service}: {e}")
             return False
@@ -470,18 +482,17 @@ class HomeAssistantClient:
         Uses /api/config/area_registry (may not be available on all HA versions).
         """
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/config/area_registry",
-                    headers=self.headers,
-                    timeout=settings.ha_timeout
-                )
+            client = await get_ha_http_client()
+            response = await client.get(
+                "/api/config/area_registry",
+                timeout=settings.ha_timeout
+            )
 
-                if response.status_code == 200:
-                    return response.json()
+            if response.status_code == 200:
+                return response.json()
 
-                logger.warning(f"HA areas REST fallback failed: {response.status_code}")
-                return []
+            logger.warning(f"HA areas REST fallback failed: {response.status_code}")
+            return []
 
         except Exception as e:
             logger.error(f"HA areas REST fallback error: {e}")

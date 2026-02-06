@@ -11,8 +11,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Conversation, Message, User
+from models.permissions import Permission
 from services.api_rate_limiter import limiter
-from services.auth_service import get_current_user
+from services.auth_service import get_current_user, require_permission
 from services.database import get_db
 from services.ollama_service import OllamaService
 from utils.config import settings
@@ -52,6 +53,8 @@ async def send_message(
 
         if not conversation:
             conversation = Conversation(session_id=session_id)
+            if current_user is not None:
+                conversation.user_id = current_user.id
             db.add(conversation)
             await db.commit()
             await db.refresh(conversation)
@@ -222,13 +225,15 @@ WICHTIG: Gib NUR die Antwort, KEIN JSON, KEINE technischen Details!"""
 async def get_history(
     session_id: str,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Chat-Historie abrufen"""
     try:
-        result = await db.execute(
-            select(Conversation).where(Conversation.session_id == session_id)
-        )
+        query = select(Conversation).where(Conversation.session_id == session_id)
+        if current_user is not None:
+            query = query.where(Conversation.user_id == current_user.id)
+        result = await db.execute(query)
         conversation = result.scalar_one_or_none()
 
         if not conversation:
@@ -260,13 +265,15 @@ async def get_history(
 @router.delete("/session/{session_id}")
 async def delete_session(
     session_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Chat-Session löschen"""
     try:
-        result = await db.execute(
-            select(Conversation).where(Conversation.session_id == session_id)
-        )
+        query = select(Conversation).where(Conversation.session_id == session_id)
+        if current_user is not None:
+            query = query.where(Conversation.user_id == current_user.id)
+        result = await db.execute(query)
         conversation = result.scalar_one_or_none()
 
         if conversation:
@@ -282,14 +289,33 @@ async def delete_session(
 async def list_conversations(
     limit: int = 50,
     offset: int = 0,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Liste aller Konversationen"""
     try:
-        from main import app
-        ollama: OllamaService = app.state.ollama
-
-        conversations = await ollama.get_all_conversations(db, limit, offset)
+        if current_user is not None:
+            query = (
+                select(Conversation)
+                .where(Conversation.user_id == current_user.id)
+                .order_by(Conversation.updated_at.desc())
+                .offset(offset)
+                .limit(limit)
+            )
+            result = await db.execute(query)
+            convs = result.scalars().all()
+            conversations = [
+                {
+                    "session_id": c.session_id,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+                }
+                for c in convs
+            ]
+        else:
+            from main import app
+            ollama: OllamaService = app.state.ollama
+            conversations = await ollama.get_all_conversations(db, limit, offset)
 
         return {
             "conversations": conversations,
@@ -304,10 +330,21 @@ async def list_conversations(
 @router.get("/conversation/{session_id}/summary")
 async def get_conversation_summary(
     session_id: str,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Zusammenfassung einer Konversation"""
     try:
+        if current_user is not None:
+            result = await db.execute(
+                select(Conversation).where(
+                    Conversation.session_id == session_id,
+                    Conversation.user_id == current_user.id,
+                )
+            )
+            if not result.scalar_one_or_none():
+                raise HTTPException(status_code=404, detail="Konversation nicht gefunden")
+
         from main import app
         ollama: OllamaService = app.state.ollama
 
@@ -327,7 +364,8 @@ async def get_conversation_summary(
 async def search_conversations(
     q: str,
     limit: int = 20,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
 ):
     """Suche in Konversationen"""
     try:
@@ -338,6 +376,14 @@ async def search_conversations(
         ollama: OllamaService = app.state.ollama
 
         results = await ollama.search_conversations(q, db, limit)
+
+        if current_user is not None:
+            user_session_ids = set()
+            res = await db.execute(
+                select(Conversation.session_id).where(Conversation.user_id == current_user.id)
+            )
+            user_session_ids = {row[0] for row in res.all()}
+            results = [r for r in results if r.get("session_id") in user_session_ids]
 
         return {
             "query": q,
@@ -352,7 +398,8 @@ async def search_conversations(
 
 @router.get("/stats")
 async def get_conversation_stats(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Statistiken über Konversationen"""
     try:
@@ -398,7 +445,8 @@ async def get_conversation_stats(
 @router.delete("/conversations/cleanup")
 async def cleanup_old_conversations(
     days: int = 30,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Lösche alte Konversationen (älter als X Tage)"""
     try:

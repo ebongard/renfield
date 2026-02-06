@@ -10,6 +10,26 @@ from loguru import logger
 
 from utils.config import settings
 
+_shared_frigate_client: httpx.AsyncClient | None = None
+
+
+async def get_frigate_http_client() -> httpx.AsyncClient:
+    global _shared_frigate_client
+    if _shared_frigate_client is None or _shared_frigate_client.is_closed:
+        _shared_frigate_client = httpx.AsyncClient(
+            base_url=settings.frigate_url or "",
+            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
+            timeout=httpx.Timeout(settings.frigate_timeout),
+        )
+    return _shared_frigate_client
+
+
+async def close_frigate_client():
+    global _shared_frigate_client
+    if _shared_frigate_client is not None and not _shared_frigate_client.is_closed:
+        await _shared_frigate_client.aclose()
+        _shared_frigate_client = None
+
 
 class FrigateClient:
     """Client für Frigate NVR"""
@@ -33,14 +53,14 @@ class FrigateClient:
             if label:
                 params["label"] = label
 
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/events",
-                    params=params,
-                    timeout=settings.frigate_timeout
-                )
-                response.raise_for_status()
-                return response.json()
+            client = await get_frigate_http_client()
+            response = await client.get(
+                "/api/events",
+                params=params,
+                timeout=settings.frigate_timeout
+            )
+            response.raise_for_status()
+            return response.json()
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der Frigate Events: {e}")
             return []
@@ -48,13 +68,13 @@ class FrigateClient:
     async def get_snapshot(self, event_id: str) -> bytes | None:
         """Snapshot eines Events herunterladen"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/events/{event_id}/snapshot.jpg",
-                    timeout=settings.frigate_timeout
-                )
-                response.raise_for_status()
-                return response.content
+            client = await get_frigate_http_client()
+            response = await client.get(
+                f"/api/events/{event_id}/snapshot.jpg",
+                timeout=settings.frigate_timeout
+            )
+            response.raise_for_status()
+            return response.content
         except Exception as e:
             logger.error(f"❌ Fehler beim Laden des Snapshots: {e}")
             return None
@@ -62,14 +82,14 @@ class FrigateClient:
     async def get_cameras(self) -> list[str]:
         """Liste aller Kameras"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    f"{self.base_url}/api/config",
-                    timeout=settings.frigate_timeout
-                )
-                response.raise_for_status()
-                config = response.json()
-                return list(config.get("cameras", {}).keys())
+            client = await get_frigate_http_client()
+            response = await client.get(
+                "/api/config",
+                timeout=settings.frigate_timeout
+            )
+            response.raise_for_status()
+            config = response.json()
+            return list(config.get("cameras", {}).keys())
         except Exception as e:
             logger.error(f"❌ Fehler beim Abrufen der Kamera-Liste: {e}")
             return []

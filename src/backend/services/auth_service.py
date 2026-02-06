@@ -3,6 +3,7 @@ Authentication Service for Renfield
 
 Provides JWT-based authentication, password hashing, and permission checks.
 """
+import secrets
 from datetime import datetime, timedelta
 from typing import Union
 
@@ -425,12 +426,26 @@ async def ensure_admin_user(db: AsyncSession) -> User | None:
         logger.error("Could not find or create Admin role")
         return None
 
+    # Generate random password if default is still "changeme"
+    configured_password = settings.default_admin_password.get_secret_value()
+    if configured_password == "changeme":
+        password = secrets.token_urlsafe(16)
+        must_change = True
+        logger.warning(
+            f"Generated random admin password: {password} — "
+            f"CHANGE IT IMMEDIATELY via the admin UI!"
+        )
+    else:
+        password = configured_password
+        must_change = False
+
     # Create default admin user
     admin_user = User(
         username=settings.default_admin_username,
-        password_hash=get_password_hash(settings.default_admin_password.get_secret_value()),
+        password_hash=get_password_hash(password),
         role_id=admin_role.id,
-        is_active=True
+        is_active=True,
+        must_change_password=must_change,
     )
 
     db.add(admin_user)
