@@ -72,6 +72,7 @@ mcp>=1.26.0
 jsonschema>=4.21.0            # JSON Schema validation for MCP tool inputs
 
 # MCP Servers (standalone packages)
+renfield-mcp-weather @ https://github.com/ebongard/renfield_mcp_weather/archive/refs/heads/main.tar.gz
 renfield-mcp-paperless @ https://github.com/ebongard/renfield-mcp-paperless/archive/refs/heads/main.tar.gz
 renfield-mcp-mail @ https://github.com/ebongard/renfield-mcp-mail/archive/refs/heads/main.tar.gz
 renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archive/refs/heads/main.tar.gz

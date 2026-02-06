@@ -537,6 +537,7 @@ class MCPServerConfig:
     examples: dict[str, list[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
     example_intent: str | None = None  # Override intent name used in prompt examples
     prompt_tools: list[str] | None = None  # Tool names to register from server (None = all)
+    tool_hints: dict[str, str] = field(default_factory=dict)  # {tool_name: "hint to append to description"}
 
 
 @dataclass
@@ -672,6 +673,7 @@ class MCPManager:
                     },
                     example_intent=entry.get("example_intent"),
                     prompt_tools=entry.get("prompt_tools"),
+                    tool_hints=entry.get("tool_hints", {}),
                 )
 
                 if not config.enabled:
@@ -798,11 +800,16 @@ class MCPManager:
             all_tools = []
             for tool in tools_result.tools:
                 namespaced = f"mcp.{config.name}.{tool.name}"
+                # Apply tool hints from config (append to description)
+                description = tool.description or ""
+                if config.tool_hints and tool.name in config.tool_hints:
+                    hint = config.tool_hints[tool.name]
+                    description = f"{description} {hint}".strip()
                 info = MCPToolInfo(
                     server_name=config.name,
                     original_name=tool.name,
                     namespaced_name=namespaced,
-                    description=tool.description or "",
+                    description=description,
                     input_schema=tool.inputSchema if hasattr(tool, "inputSchema") else {},
                 )
                 all_tools.append(info)

@@ -1,0 +1,206 @@
+# Production Docker Compose WITHOUT GPU (CPU-only)
+# Usage: docker compose -f docker-compose.prod-cpu.yml up -d
+#
+# Use this when:
+#   - No NVIDIA GPU available
+#   - GPU drivers not working
+#   - Testing production setup locally
+#
+# For GPU acceleration (Whisper), use docker-compose.prod.yml instead.
+#
+# For external Ollama (recommended), set in .env:
+#   OLLAMA_URL=http://cuda.local:11434
+
+services:
+  # PostgreSQL Datenbank mit pgvector für RAG
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: renfield-postgres
+    environment:
+      POSTGRES_DB: renfield
+      POSTGRES_USER: renfield
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets:
+      - postgres_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - renfield-network
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U renfield -d renfield"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # Redis für Message Queue und Caching
+  redis:
+    image: redis:7-alpine
+    container_name: renfield-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - renfield-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # Ollama CPU-only (optional - use external instance for better performance)
+  ollama:
+    image: ollama/ollama:0.15.1
+    container_name: renfield-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - renfield-network
+    restart: always
+    profiles:
+      - ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # Backend API (CPU version)
+  backend:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile
+    container_name: renfield-backend
+    env_file:
+      - .env
+    environment:
+      # DATABASE_URL wird dynamisch aus Einzelteilen zusammengebaut (config.py)
+      REDIS_URL: redis://redis:6379
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+    secrets:
+      - postgres_password
+      - home_assistant_token
+      - secret_key
+      - default_admin_password
+      - openweather_api_key
+      - newsapi_key
+      - jellyfin_api_key
+      - jellyfin_token
+      - jellyfin_base_url
+      - n8n_api_key
+      - paperless_api_token
+      - mail_regfish_password
+    volumes:
+      - ./src/backend:/app
+      - ./src/satellite:/app/satellite
+      - ./tests:/tests
+      - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro
+      - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro
+      - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro
+      - ./data/wakeword-models:/app/wakeword-models:ro
+      - whisper_models:/root/.cache/whisper
+      - piper_models:/root/.local/share/piper
+      - huggingface_cache:/root/.cache/huggingface
+      - rag_uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - renfield-network
+    restart: always
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    # Backend exposed via nginx only
+
+  # Frontend Web-App (Production build with nginx)
+  frontend:
+    build:
+      context: ./src/frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_API_URL: ${EXTERNAL_URL:-}
+        VITE_WS_URL: ${EXTERNAL_WS_URL:-}/ws
+    container_name: renfield-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - renfield-network
+    restart: always
+    # Frontend exposed via nginx reverse proxy only
+
+  # Nginx Reverse Proxy (Production)
+  nginx:
+    image: nginx:1.28-alpine
+    container_name: renfield-nginx
+    volumes:
+      - ./config/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+      frontend:
+        condition: service_started
+    networks:
+      - renfield-network
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /var/run/nginx.pid && kill -0 $(cat /var/run/nginx.pid)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  renfield-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  whisper_models:
+  piper_models:
+  huggingface_cache:
+  rag_uploads:
+
+secrets:
+  postgres_password:
+    file: ./secrets/postgres_password
+  home_assistant_token:
+    file: ./secrets/home_assistant_token
+  secret_key:
+    file: ./secrets/secret_key
+  default_admin_password:
+    file: ./secrets/default_admin_password
+  openweather_api_key:
+    file: ./secrets/openweather_api_key
+  newsapi_key:
+    file: ./secrets/newsapi_key
+  jellyfin_api_key:
+    file: ./secrets/jellyfin_api_key
+  jellyfin_token:
+    file: ./secrets/jellyfin_token
+  jellyfin_base_url:
+    file: ./secrets/jellyfin_base_url
+  n8n_api_key:
+    file: ./secrets/n8n_api_key
+  paperless_api_token:
+    file: ./secrets/paperless_api_token
+  mail_regfish_password:
+    file: ./secrets/mail_regfish_password

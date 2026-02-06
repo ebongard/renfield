@@ -121,6 +121,7 @@ class AgentToolRegistry:
             params = {}
             schema_props = mcp_tool.input_schema.get("properties", {})
             required_params = mcp_tool.input_schema.get("required", [])
+
             for param_name, param_schema in schema_props.items():
                 desc = param_schema.get("description", param_schema.get("type", ""))
                 if param_name in required_params:

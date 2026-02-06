@@ -2,6 +2,7 @@
 Datenbank Service
 """
 from loguru import logger
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.database import Base
@@ -29,6 +30,8 @@ async def init_db():
     """Datenbank initialisieren und Tabellen erstellen"""
     try:
         async with engine.begin() as conn:
+            # Ensure pgvector extension exists before creating tables with vector columns
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
         logger.info("✅ Datenbank-Tabellen erstellt")
     except Exception as e:

@@ -113,7 +113,7 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
-    - Fuer Wetter: Nutze weather_forecast mit Ortsname
+    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
     - Fasse Ergebnisse praezise zusammen mit konkreten Zahlen und Fakten
@@ -449,7 +449,7 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For weather: Use weather_forecast with location name
+    - For weather: Use get_weather with {{"location": "CityName"}}
     - For web search: Use web_search/searxng_web_search
     - For news: Use search_articles or get_top_headlines
     - Summarize results precisely with concrete numbers and facts

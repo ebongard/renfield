@@ -26,21 +26,20 @@
 #   prompt_tools: [tool_name_1, tool_name_2]
 
 servers:
-  # --- Open-Meteo MCP Server ---
-  # Replaces: plugins/weather.yaml
-  # npm: open-meteo-mcp-server
+  # --- Open-Meteo Weather MCP Server ---
+  # Custom Python MCP server with location-based API (no lat/lon needed).
+  # GitHub: https://github.com/ebongard/renfield_mcp_weather
   # No API key required — uses the free Open-Meteo API
   - name: weather
     transport: stdio
-    command: npx
-    args: ["-y", "open-meteo-mcp-server"]
+    command: python
+    args: ["-m", "renfield_mcp_weather"]
     enabled: "${WEATHER_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.weather.weather_forecast
-    # Only show weather_forecast in prompt — geocoding is handled
-    # automatically by _geocode_location_arguments() in mcp_client.py
+    example_intent: mcp.weather.get_weather
+    # Only show main weather tool in prompt (17 tools total available)
     prompt_tools:
-      - weather_forecast
+      - get_weather
     examples:
       de:
         - "Wie wird das Wetter morgen?"
