@@ -10,6 +10,7 @@ This module handles:
 - OTA update progress tracking
 """
 
+import asyncio
 from datetime import date
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
@@ -301,7 +302,7 @@ async def satellite_websocket(
                 # Transcribe with Whisper (with speaker recognition)
                 try:
                     whisper = get_whisper_service()
-                    whisper.load_model()  # No-op if already loaded
+                    await asyncio.to_thread(whisper.load_model)  # No-op if already loaded
 
                     # Create WAV file with proper header
                     import io

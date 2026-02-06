@@ -306,9 +306,26 @@ async def list_documents(
     status: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Listet alle indexierten Dokumente auf"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_ALL):
+            if knowledge_base_id:
+                result = await db.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+                )
+                kb = result.scalar_one_or_none()
+                if kb and not await check_kb_access(kb, user, "read", db):
+                    raise HTTPException(status_code=403, detail="No access to this knowledge base")
+            # If no KB filter, only users with kb.own+ can list
+            elif not has_permission(user_perms, Permission.KB_OWN):
+                raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
     documents = await rag.list_documents(
         knowledge_base_id=knowledge_base_id,
         status=status,
@@ -338,13 +355,26 @@ async def list_documents(
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
 async def get_document(
     document_id: int,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Holt Details zu einem Dokument"""
     document = await rag.get_document(document_id)
 
     if not document:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
+
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if document.knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == document.knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "read", db):
+                raise HTTPException(status_code=403, detail="No access to this document")
 
     return DocumentResponse(
         id=document.id,
@@ -365,9 +395,22 @@ async def get_document(
 @router.delete("/documents/{document_id}")
 async def delete_document(
     document_id: int,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Löscht ein Dokument und alle zugehörigen Chunks"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        doc = await rag.get_document(document_id)
+        if doc and doc.knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "delete", db):
+                raise HTTPException(status_code=403, detail="No delete access to this document")
     success = await rag.delete_document(document_id)
 
     if not success:
@@ -379,9 +422,22 @@ async def delete_document(
 @router.post("/documents/{document_id}/reindex", response_model=DocumentResponse)
 async def reindex_document(
     document_id: int,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Re-indexiert ein Dokument (löscht alte Chunks und erstellt neue)"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        doc = await rag.get_document(document_id)
+        if doc and doc.knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "write", db):
+                raise HTTPException(status_code=403, detail="No write access to this document")
     try:
         document = await rag.reindex_document(document_id)
 
@@ -544,13 +600,21 @@ async def list_knowledge_bases(
 @router.get("/bases/{kb_id}", response_model=KnowledgeBaseResponse)
 async def get_knowledge_base(
     kb_id: int,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Holt eine Knowledge Base nach ID"""
     kb = await rag.get_knowledge_base(kb_id)
 
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge Base nicht gefunden")
+
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if not await check_kb_access(kb, user, "read", db):
+            raise HTTPException(status_code=403, detail="No access to this knowledge base")
 
     return KnowledgeBaseResponse(
         id=kb.id,
@@ -566,9 +630,17 @@ async def get_knowledge_base(
 @router.delete("/bases/{kb_id}")
 async def delete_knowledge_base(
     kb_id: int,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Löscht eine Knowledge Base mit allen Dokumenten"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        kb = await rag.get_knowledge_base(kb_id)
+        if kb and not await check_kb_access(kb, user, "delete", db):
+            raise HTTPException(status_code=403, detail="No delete access to this knowledge base")
     success = await rag.delete_knowledge_base(kb_id)
 
     if not success:
@@ -584,13 +656,28 @@ async def delete_knowledge_base(
 @router.post("/search", response_model=SearchResponse)
 async def search_knowledge(
     request: SearchRequest,
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Sucht in der Wissensdatenbank.
 
     Gibt die relevantesten Chunks für eine Anfrage zurück.
     """
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if has_permission(user_perms, Permission.KB_NONE) and not has_permission(user_perms, Permission.KB_OWN):
+            raise HTTPException(status_code=403, detail="No knowledge base access")
+        if request.knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == request.knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "read", db):
+                raise HTTPException(status_code=403, detail="No access to this knowledge base")
     results = await rag.search(
         query=request.query,
         top_k=request.top_k,
@@ -629,11 +716,26 @@ async def search_knowledge_get(
     top_k: int = Query(5, ge=1, le=20),
     knowledge_base_id: int | None = Query(None),
     threshold: float | None = Query(None, ge=0, le=1, description="Similarity threshold (0-1)"),
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Sucht in der Wissensdatenbank (GET-Variante).
     """
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if has_permission(user_perms, Permission.KB_NONE) and not has_permission(user_perms, Permission.KB_OWN):
+            raise HTTPException(status_code=403, detail="No knowledge base access")
+        if knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "read", db):
+                raise HTTPException(status_code=403, detail="No access to this knowledge base")
     results = await rag.search(
         query=q,
         top_k=top_k,
@@ -653,13 +755,26 @@ async def search_in_document(
     document_id: int,
     query: str = Body(..., embed=True),
     top_k: int = Body(5, ge=1, le=20),
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Sucht nur innerhalb eines bestimmten Dokuments"""
     # Prüfe ob Dokument existiert
     doc = await rag.get_document(document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Dokument nicht gefunden")
+
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        if doc.knowledge_base_id:
+            result = await db.execute(
+                select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+            )
+            kb = result.scalar_one_or_none()
+            if kb and not await check_kb_access(kb, user, "read", db):
+                raise HTTPException(status_code=403, detail="No access to this document")
 
     results = await rag.search_by_document(
         query=query,
@@ -681,9 +796,16 @@ async def search_in_document(
 
 @router.get("/stats", response_model=StatsResponse)
 async def get_knowledge_stats(
-    rag: RAGService = Depends(get_rag_service)
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user)
 ):
     """Gibt Statistiken über die Wissensdatenbank zurück"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_OWN):
+            raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
     stats = await rag.get_stats()
     return StatsResponse(**stats)
 

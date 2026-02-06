@@ -5,13 +5,13 @@ RRF and Context Window logic is tested as unit tests.
 BM25 and Hybrid integration require PostgreSQL (tsvector), so they use mocks.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from services.rag_service import RAGService
 from utils.config import Settings
-
 
 # =============================================================================
 # Helper: Create mock search results
@@ -182,14 +182,15 @@ class TestContextWindow:
         db = AsyncMock()
         return RAGService(db)
 
-    def _make_adj_row(self, chunk_id, content, chunk_index, page_number=1):
+    def _make_adj_row(self, chunk_id, content, chunk_index, page_number=1, document_id=1):
         return SimpleNamespace(
             id=chunk_id,
             content=content,
             chunk_index=chunk_index,
             page_number=page_number,
             section_title=None,
-            chunk_type="paragraph"
+            chunk_type="paragraph",
+            document_id=document_id,
         )
 
     @pytest.mark.unit
@@ -237,23 +238,16 @@ class TestContextWindow:
             make_result(11, doc_id=1, chunk_index=6, content="chunk6"),
         ]
 
-        # First call: expanding chunk 5 (window=1 → chunks 4,5,6)
-        mock_result_1 = MagicMock()
-        mock_result_1.fetchall.return_value = [
+        # Single batch query returns all adjacent chunks for both results
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
             self._make_adj_row(9, "chunk4", 4),
-            self._make_adj_row(10, "chunk5", 5),
-            self._make_adj_row(11, "chunk6", 6),
-        ]
-
-        # Second call would expand chunk 6, but it's already in seen_chunks
-        mock_result_2 = MagicMock()
-        mock_result_2.fetchall.return_value = [
             self._make_adj_row(10, "chunk5", 5),
             self._make_adj_row(11, "chunk6", 6),
             self._make_adj_row(12, "chunk7", 7),
         ]
 
-        rag_service.db.execute = AsyncMock(side_effect=[mock_result_1, mock_result_2])
+        rag_service.db.execute = AsyncMock(return_value=mock_result)
 
         expanded = await rag_service._expand_context_window(results, window_size=1)
 
@@ -275,9 +269,9 @@ class TestContextWindow:
         expanded = await rag_service._expand_context_window(results, window_size=1)
 
         assert len(expanded) == 1
-        # min_index should be max(0, 0-1) = 0
+        # min_index should be max(0, 0-1) = 0 — batch query uses min_0 param
         call_args = rag_service.db.execute.call_args
-        assert call_args[0][1]["min_idx"] == 0
+        assert call_args[0][1]["min_0"] == 0
 
     @pytest.mark.unit
     async def test_context_window_empty_results(self, rag_service):
@@ -293,21 +287,18 @@ class TestContextWindow:
             make_result(20, doc_id=2, chunk_index=5, content="doc2_chunk5"),
         ]
 
-        mock_result_1 = MagicMock()
-        mock_result_1.fetchall.return_value = [
-            self._make_adj_row(9, "doc1_chunk2", 2),
-            self._make_adj_row(10, "doc1_chunk3", 3),
-            self._make_adj_row(11, "doc1_chunk4", 4),
+        # Single batch query returns all rows grouped by document_id
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = [
+            self._make_adj_row(9, "doc1_chunk2", 2, document_id=1),
+            self._make_adj_row(10, "doc1_chunk3", 3, document_id=1),
+            self._make_adj_row(11, "doc1_chunk4", 4, document_id=1),
+            self._make_adj_row(19, "doc2_chunk4", 4, document_id=2),
+            self._make_adj_row(20, "doc2_chunk5", 5, document_id=2),
+            self._make_adj_row(21, "doc2_chunk6", 6, document_id=2),
         ]
 
-        mock_result_2 = MagicMock()
-        mock_result_2.fetchall.return_value = [
-            self._make_adj_row(19, "doc2_chunk4", 4),
-            self._make_adj_row(20, "doc2_chunk5", 5),
-            self._make_adj_row(21, "doc2_chunk6", 6),
-        ]
-
-        rag_service.db.execute = AsyncMock(side_effect=[mock_result_1, mock_result_2])
+        rag_service.db.execute = AsyncMock(return_value=mock_result)
 
         expanded = await rag_service._expand_context_window(results, window_size=1)
 
@@ -369,7 +360,7 @@ class TestHybridSearchIntegration:
             mock_settings.rag_context_window = 0
             mock_settings.rag_context_window_max = 3
 
-            results = await rag_service.search("test query")
+            await rag_service.search("test query")
 
         mock_dense.assert_called_once()
         mock_bm25.assert_not_called()
