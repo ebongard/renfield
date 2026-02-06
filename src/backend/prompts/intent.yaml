@@ -26,17 +26,21 @@ de:
     ENTSCHEIDUNGSHILFE:
     - knowledge.ask / knowledge.search → NUR verwenden wenn der Nutzer EXPLIZIT auf die Renfield-Wissensdatenbank
       verweist ("in meiner Wissensdatenbank", "in meinen Notizen", "was habe ich gespeichert über")
-    - general.conversation → Für Allgemeinwissen, Smalltalk, Meinungen, Erklärungen, historische Fakten
-      ("Was passierte 1989?", "Erkläre mir Quantenphysik", "Wie geht es dir?", "Wer war Einstein?")
-    - mcp.* Tools → Wenn aktuelle/live Daten benötigt werden oder externe Dienste angesprochen werden:
+    - general.conversation → Für Allgemeinwissen, Smalltalk, Meinungen, Erklärungen, historische Fakten,
+      Wissenschaft, Geschichte, Philosophie, Mathematik und alles was aus Trainingsdaten beantwortet werden kann.
+      ("Was passierte 1989 in China?", "Erkläre mir Quantenphysik", "Wie geht es dir?", "Wer war Einstein?",
+       "Was ist die Relativitätstheorie?", "Wann wurde Deutschland vereint?")
+    - mcp.search.web_search → NUR verwenden wenn der Nutzer EXPLIZIT nach einer Websuche fragt ("suche im Web",
+      "google mal", "recherchiere") ODER wenn aktuelle/tagesaktuelle Informationen benötigt werden die sich
+      häufig ändern ("aktueller Preis von...", "heutige Börsenkurse", "aktuelle Ergebnisse")
+      NICHT verwenden für: Geschichte, Wissenschaft, Allgemeinwissen, Erklärungen — das kann aus Trainingsdaten beantwortet werden!
+    - mcp.* Tools (außer search) → Wenn externe Dienste angesprochen werden:
       * "Nachrichten", "News", "Schlagzeilen" → mcp.news.search_articles / mcp.news.get_top_headlines
       * "Dokumente", "Rechnungen", "Belege", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
       * "Workflow", "n8n", "Automatisierung" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
       * "Wetter", "Temperatur", "Regen" → mcp.weather.weather_forecast
-      * "Suche", "Google", "Web" → mcp.search.web_search
       * "Filme", "Serien", "Jellyfin", "Medien" → mcp.jellyfin.list_items / mcp.jellyfin.search_items
       * "Licht", "Schalter", "Heizung", Smart Home → mcp.homeassistant.HassTurnOn / HassTurnOff / etc.
-    - WICHTIG: Im Zweifel mcp.* bevorzugen statt general.conversation wenn ein passender Dienst existiert!
 
     WICHTIG:
     - Verwende NUR Intents aus der Liste oben!
@@ -90,17 +94,21 @@ en:
     DECISION GUIDE:
     - knowledge.ask / knowledge.search → ONLY use when the user EXPLICITLY references the Renfield knowledge base
       ("in my knowledge base", "in my notes", "what did I save about")
-    - general.conversation → For general knowledge, smalltalk, opinions, explanations, historical facts
-      ("What happened in 1989?", "Explain quantum physics", "How are you?", "Who was Einstein?")
-    - mcp.* tools → When current/live data is needed or external services are queried:
+    - general.conversation → For general knowledge, smalltalk, opinions, explanations, historical facts,
+      science, history, philosophy, math, and anything answerable from training data.
+      ("What happened in 1989 in China?", "Explain quantum physics", "How are you?", "Who was Einstein?",
+       "What is the theory of relativity?", "When was Germany reunified?")
+    - mcp.search.web_search → ONLY use when the user EXPLICITLY asks for a web search ("search the web",
+      "google it", "look it up online") OR when current/real-time information is needed that changes frequently
+      ("current price of...", "today's stock market", "latest results")
+      Do NOT use for: history, science, general knowledge, explanations — these can be answered from training data!
+    - mcp.* tools (except search) → When external services are queried:
       * "news", "headlines", "articles" → mcp.news.search_articles / mcp.news.get_top_headlines
       * "documents", "invoices", "receipts", "Paperless" → mcp.paperless.search_documents / mcp.paperless.list_documents
       * "workflow", "n8n", "automation" → mcp.n8n.n8n_list_workflows_summary / mcp.n8n.n8n_activate_workflow
       * "weather", "temperature", "rain" → mcp.weather.weather_forecast
-      * "search", "Google", "web" → mcp.search.web_search
       * "movies", "series", "Jellyfin", "media" → mcp.jellyfin.list_items / mcp.jellyfin.search_items
       * "light", "switch", "heating", smart home → mcp.homeassistant.HassTurnOn / HassTurnOff / etc.
-    - IMPORTANT: When in doubt, prefer mcp.* over general.conversation if a matching service exists!
 
     IMPORTANT:
     - Use ONLY intents from the list above!

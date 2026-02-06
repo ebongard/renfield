@@ -38,6 +38,27 @@ except ImportError:
     logger.warning("jsonschema not installed — MCP input validation disabled")
 
 
+# Suppress noisy JSONRPC parse errors from MCP stdio client.
+# MCP servers (especially npm packages) often write non-JSONRPC content
+# to stdout (telemetry banners, debug logs, tool schemas). The MCP SDK
+# logs each line as ERROR with full traceback. Downgrade to DEBUG.
+import logging as _logging
+
+
+class _MCPStdioNoiseFilter(_logging.Filter):
+    """Demote 'Failed to parse JSONRPC message' from ERROR to DEBUG."""
+
+    def filter(self, record: _logging.LogRecord) -> bool:
+        if "Failed to parse JSONRPC message" in record.getMessage():
+            record.levelno = _logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
+_mcp_stdio_logger = _logging.getLogger("mcp.client.stdio")
+_mcp_stdio_logger.addFilter(_MCPStdioNoiseFilter())
+
+
 # === Constants ===
 MAX_RESPONSE_SIZE = settings.mcp_max_response_size
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
@@ -532,6 +553,7 @@ class MCPServerConfig:
     headers: dict[str, str] = field(default_factory=dict)
     command: str | None = None
     args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)  # Extra env vars for stdio subprocess
     enabled: bool = True
     refresh_interval: int = 300
     examples: dict[str, list[str]] = field(default_factory=dict)  # {"de": [...], "en": [...]}
@@ -662,6 +684,10 @@ class MCPManager:
                     },
                     command=_resolve_value(entry.get("command")),
                     args=[_resolve_value(a) for a in entry.get("args", [])],
+                    env={
+                        k: str(_resolve_value(v))
+                        for k, v in entry.get("env", {}).items()
+                    },
                     enabled=_resolve_value(entry.get("enabled", True)),
                     refresh_interval=int(
                         _resolve_value(entry.get("refresh_interval", 300))
@@ -763,6 +789,9 @@ class MCPManager:
                                     subprocess_env[env_name] = secret_file.read_text().strip()
                                 except Exception:
                                     pass
+                # Merge per-server env vars from mcp_servers.yaml
+                if config.env:
+                    subprocess_env.update(config.env)
                 params = StdioServerParameters(
                     command=config.command,
                     args=config.args,

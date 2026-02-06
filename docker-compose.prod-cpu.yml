@@ -83,6 +83,7 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       # Disable telemetry for MCP stdio servers (prevents banner on stdout)
       DO_NOT_TRACK: "1"
+      N8N_MCP_TELEMETRY_DISABLED: "true"
     secrets:
       - postgres_password
       - home_assistant_token

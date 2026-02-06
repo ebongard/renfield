@@ -63,10 +63,10 @@ servers:
     examples:
       de:
         - "Suche im Web nach Python Tutorials"
-        - "Was kostet ein Tesla Model 3?"
+        - "Was kostet ein Tesla Model 3 aktuell?"
       en:
         - "Search the web for Python tutorials"
-        - "What does a Tesla Model 3 cost?"
+        - "What does a Tesla Model 3 cost right now?"
 
   # --- NewsAPI MCP Server ---
   # Replaces: plugins/news.yaml
@@ -131,6 +131,10 @@ servers:
     command: npx
     args: ["-y", "n8n-mcp"]
     enabled: "${N8N_MCP_ENABLED:-false}"
+    env:
+      N8N_MCP_TELEMETRY_DISABLED: "true"
+      MCP_MODE: "stdio"
+      LOG_LEVEL: "error"
     refresh_interval: 300
     example_intent: mcp.n8n.n8n_list_workflows
     prompt_tools:
