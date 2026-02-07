@@ -86,18 +86,30 @@ REDIS_URL=redis://redis:6379
 OLLAMA_URL=http://ollama:11434
 OLLAMA_URL=http://cuda.local:11434  # Externe GPU-Instanz
 
-# Ollama Modell
+# Legacy Modell (Fallback für alle Rollen)
 OLLAMA_MODEL=qwen3:8b
+
+# Multi-Modell Konfiguration (überschreibt OLLAMA_MODEL pro Rolle)
+OLLAMA_CHAT_MODEL=qwen3:14b          # Chat-Antworten
+OLLAMA_RAG_MODEL=qwen3:14b           # RAG-Antworten
+OLLAMA_EMBED_MODEL=nomic-embed-text  # Embedding-Erzeugung
+OLLAMA_INTENT_MODEL=qwen3:8b         # Intent-Erkennung
+OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 ```
 
 **Defaults:**
 - `OLLAMA_URL`: `http://ollama:11434`
 - `OLLAMA_MODEL`: `llama3.2:3b` (dev fallback)
+- `OLLAMA_CHAT_MODEL`: `llama3.2:3b`
+- `OLLAMA_RAG_MODEL`: `llama3.2:latest`
+- `OLLAMA_EMBED_MODEL`: `nomic-embed-text`
+- `OLLAMA_INTENT_MODEL`: `llama3.2:3b`
+- `OLLAMA_NUM_CTX`: `32768`
 
 **Empfohlene Modelle:**
-- `qwen3:8b` - Bestes Preis-Leistungs-Verhältnis, starkes Deutsch
-- `qwen3:14b` - Sehr gute Qualität für Chat/RAG (empfohlen mit GPU)
-- `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch
+- `qwen3:14b` - Chat, RAG, Intent (empfohlen mit GPU)
+- `qwen3:8b` - Gute Alternative für weniger RAM
+- `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch (768 dim)
 
 Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Rolle.
 
@@ -197,7 +209,7 @@ LOG_LEVEL=INFO
 AGENT_ENABLED=false
 
 # Maximale Reasoning-Schritte pro Anfrage
-AGENT_MAX_STEPS=5
+AGENT_MAX_STEPS=12
 
 # Timeout pro LLM-Call (Sekunden)
 AGENT_STEP_TIMEOUT=30.0
@@ -207,14 +219,26 @@ AGENT_TOTAL_TIMEOUT=120.0
 
 # Optionales separates Modell für Agent (Standard: OLLAMA_MODEL)
 # AGENT_MODEL=qwen3:14b
+
+# Optionale separate Ollama-Instanz für Agent
+# AGENT_OLLAMA_URL=http://cuda.local:11434
+
+# Konversations-Kontext im Agent Loop
+AGENT_CONV_CONTEXT_MESSAGES=6
+
+# Agent Router Timeout (Sekunden)
+AGENT_ROUTER_TIMEOUT=30.0
 ```
 
 **Defaults:**
 - `AGENT_ENABLED`: `false` (Opt-in)
-- `AGENT_MAX_STEPS`: `5`
+- `AGENT_MAX_STEPS`: `12`
 - `AGENT_STEP_TIMEOUT`: `30.0`
 - `AGENT_TOTAL_TIMEOUT`: `120.0`
 - `AGENT_MODEL`: None (nutzt `OLLAMA_MODEL`)
+- `AGENT_OLLAMA_URL`: None (nutzt `OLLAMA_URL`)
+- `AGENT_CONV_CONTEXT_MESSAGES`: `6`
+- `AGENT_ROUTER_TIMEOUT`: `30.0`
 
 **Wann aktivieren:**
 Der Agent Loop ermöglicht komplexe, mehrstufige Anfragen mit bedingter Logik und Tool-Verkettung:
@@ -482,6 +506,53 @@ CORS_ORIGINS=https://renfield.local,https://admin.local
 python3 -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
 
+### Trusted Proxies
+
+```bash
+# Vertrauenswürdige Reverse-Proxy CIDRs (kommasepariert)
+TRUSTED_PROXIES=172.18.0.0/16,127.0.0.1
+```
+
+**Default:** `""` (leer = alle Proxies vertraut, rückwärtskompatibel)
+
+**Wann setzen:** Hinter einem Reverse Proxy (nginx, Traefik), damit Rate Limiting die echte Client-IP nutzt statt der Proxy-IP. Nur wenn `TRUSTED_PROXIES` konfiguriert ist, werden `X-Forwarded-For` / `X-Real-IP` Header gelesen.
+
+### REST API Rate Limiting
+
+```bash
+# Rate Limiting aktivieren
+API_RATE_LIMIT_ENABLED=true
+
+# Limits pro Endpoint-Gruppe
+API_RATE_LIMIT_DEFAULT=100/minute
+API_RATE_LIMIT_AUTH=10/minute
+API_RATE_LIMIT_VOICE=30/minute
+API_RATE_LIMIT_CHAT=60/minute
+API_RATE_LIMIT_ADMIN=200/minute
+```
+
+### Circuit Breaker
+
+```bash
+# Aufeinanderfolgende Fehler bis Circuit öffnet
+CB_FAILURE_THRESHOLD=3
+
+# Recovery-Timeouts (Sekunden)
+CB_LLM_RECOVERY_TIMEOUT=30.0
+CB_AGENT_RECOVERY_TIMEOUT=60.0
+```
+
+**States:** `CLOSED` (normal) → `OPEN` (reject fast) → `HALF_OPEN` (testing recovery)
+
+### Embeddings
+
+```bash
+# Embedding-Vektor-Dimension (muss zum Modell passen)
+EMBEDDING_DIMENSION=768
+```
+
+**Default:** `768` (passend für `nomic-embed-text` und `qwen3-embedding:4b`)
+
 ---
 
 ### Authentication (RPBAC)
@@ -624,12 +695,18 @@ HOME_ASSISTANT_TOKEN=eyJhbGci...
 ### n8n
 
 ```bash
-# n8n Webhook URL
-N8N_WEBHOOK_URL=http://192.168.1.78:5678/webhook
+# n8n Base URL (für MCP-Server)
+N8N_BASE_URL=http://192.168.1.78:5678
+
+# n8n API Key (für MCP stdio-Server)
+N8N_API_KEY=your_n8n_api_key
+
+# n8n MCP aktivieren
+N8N_MCP_ENABLED=true
 ```
 
 **Erforderlich:** Optional
-**Format:** `http://<n8n-host>:<port>/webhook`
+**Hinweis:** n8n wird über einen MCP stdio-Server angebunden (`npx @anthropic/n8n-mcp`). `N8N_BASE_URL` und `N8N_API_KEY` werden als Umgebungsvariablen an den Subprocess übergeben.
 
 ---
 
@@ -680,6 +757,12 @@ N8N_MCP_ENABLED=true
 
 # Home Assistant (Smart Home)
 HA_MCP_ENABLED=true
+
+# Paperless-NGX (Dokumentenverwaltung)
+PAPERLESS_ENABLED=true
+
+# Email (IMAP/SMTP)
+EMAIL_MCP_ENABLED=true
 ```
 
 **Defaults:** Alle `false`
@@ -694,6 +777,8 @@ HA_MCP_ENABLED=true
 | `JELLYFIN_BASE_URL` | Jellyfin Server URL | `secrets/jellyfin_base_url` |
 | `N8N_API_KEY` | n8n API Key | `secrets/n8n_api_key` |
 | `HOME_ASSISTANT_TOKEN` | HA Long-Lived Access Token | `secrets/home_assistant_token` |
+| `PAPERLESS_API_TOKEN` | Paperless-NGX API Token | `secrets/paperless_api_token` |
+| `MAIL_REGFISH_PASSWORD` | Email IMAP/SMTP Passwort | `secrets/mail_regfish_password` |
 
 ### MCP-Server URLs (nicht-sensitiv, in .env)
 
@@ -705,7 +790,10 @@ HOME_ASSISTANT_URL=http://homeassistant.local:8123
 N8N_BASE_URL=http://192.168.1.78:5678
 
 # SearXNG URL
-SEARXNG_URL=http://cuda.local:3002
+SEARXNG_API_URL=http://cuda.local:3002
+
+# Paperless-NGX URL
+PAPERLESS_API_URL=http://paperless.local:8000
 ```
 
 **Hinweis:** In Produktion werden Secrets über Docker Compose File-Based Secrets bereitgestellt und von `mcp_client.py` automatisch in `os.environ` injiziert. Siehe `docs/SECRETS_MANAGEMENT.md`.
@@ -814,46 +902,6 @@ SearXNG ist eine Privacy-respektierende Metasearch-Engine.
 **Intents:**
 - `search.web` - Web-Suche
 - `search.instant_answer` - Schnelle Antworten
-
----
-
-### Music Plugin (Spotify)
-
-```bash
-# Plugin aktivieren
-MUSIC_PLUGIN_ENABLED=true
-
-# API-Konfiguration
-SPOTIFY_API_URL=https://api.spotify.com
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
-SPOTIFY_ACCESS_TOKEN=your_access_token
-```
-
-**Erforderlich:**
-- `MUSIC_PLUGIN_ENABLED` - Boolean
-- `SPOTIFY_API_URL` - API-Basis-URL
-- `SPOTIFY_ACCESS_TOKEN` - User Access Token
-
-**Optional:**
-- `SPOTIFY_CLIENT_ID` - OAuth Client ID
-- `SPOTIFY_CLIENT_SECRET` - OAuth Client Secret
-
-**Access Token erhalten:**
-1. https://developer.spotify.com/console/ öffnen
-2. Gewünschte Scopes auswählen
-3. "Get Token" klicken
-4. Token kopieren
-
-**Intents:**
-- `music.search` - Musik suchen
-- `music.play` - Abspielen
-- `music.pause` - Pausieren
-- `music.resume` - Fortsetzen
-- `music.next` - Nächster Track
-- `music.previous` - Vorheriger Track
-- `music.volume` - Lautstärke setzen
-- `music.current` - Aktuellen Track anzeigen
 
 ---
 
@@ -1100,10 +1148,15 @@ WS_RATE_LIMIT_ENABLED=true
 WS_MAX_CONNECTIONS_PER_IP=10
 
 # -----------------------------------------------------------------------------
-# Ollama LLM
+# Ollama LLM (Multi-Modell)
 # -----------------------------------------------------------------------------
 OLLAMA_URL=http://cuda.local:11434
 OLLAMA_MODEL=qwen3:14b
+# OLLAMA_CHAT_MODEL=qwen3:14b
+# OLLAMA_RAG_MODEL=qwen3:14b
+# OLLAMA_EMBED_MODEL=nomic-embed-text
+# OLLAMA_INTENT_MODEL=qwen3:8b
+# OLLAMA_NUM_CTX=32768
 
 # -----------------------------------------------------------------------------
 # Sprache & Voice
@@ -1119,8 +1172,6 @@ PIPER_VOICE=de_DE-thorsten-high
 # -----------------------------------------------------------------------------
 HOME_ASSISTANT_URL=http://homeassistant.local:8123
 HOME_ASSISTANT_TOKEN=eyJhbGci...
-
-N8N_WEBHOOK_URL=http://192.168.1.78:5678/webhook
 
 FRIGATE_URL=http://frigate.local:5000
 
@@ -1142,10 +1193,11 @@ RAG_CONTEXT_WINDOW=1                 # Benachbarte Chunks pro Richtung
 # Agent Loop (ReAct — Multi-Step Tool Chaining)
 # -----------------------------------------------------------------------------
 AGENT_ENABLED=false
-# AGENT_MAX_STEPS=5
+# AGENT_MAX_STEPS=12
 # AGENT_STEP_TIMEOUT=30.0
 # AGENT_TOTAL_TIMEOUT=120.0
 # AGENT_MODEL=                       # Optional: eigenes Modell für Agent
+# AGENT_OLLAMA_URL=                  # Optional: separate Ollama-Instanz
 
 # -----------------------------------------------------------------------------
 # Satellite System
@@ -1175,17 +1227,22 @@ NEWS_ENABLED=true
 JELLYFIN_ENABLED=true
 N8N_MCP_ENABLED=true
 HA_MCP_ENABLED=true
+PAPERLESS_ENABLED=true
+EMAIL_MCP_ENABLED=true
 
 # MCP-Server URLs (nicht-sensitiv)
 N8N_BASE_URL=http://192.168.1.78:5678
-SEARXNG_URL=http://cuda.local:3002
+SEARXNG_API_URL=http://cuda.local:3002
+PAPERLESS_API_URL=http://paperless.local:8000
 
 # MCP-Server Secrets: In Produktion als Docker Secrets!
-# OPENWEATHER_API_KEY=...  → secrets/openweather_api_key
-# NEWSAPI_KEY=...          → secrets/newsapi_key
-# JELLYFIN_TOKEN=...       → secrets/jellyfin_token
-# JELLYFIN_BASE_URL=...    → secrets/jellyfin_base_url
-# N8N_API_KEY=...          → secrets/n8n_api_key
+# OPENWEATHER_API_KEY=...     → secrets/openweather_api_key
+# NEWSAPI_KEY=...             → secrets/newsapi_key
+# JELLYFIN_TOKEN=...          → secrets/jellyfin_token
+# JELLYFIN_BASE_URL=...       → secrets/jellyfin_base_url
+# N8N_API_KEY=...             → secrets/n8n_api_key
+# PAPERLESS_API_TOKEN=...     → secrets/paperless_api_token
+# MAIL_REGFISH_PASSWORD=...   → secrets/mail_regfish_password
 
 # -----------------------------------------------------------------------------
 # YAML-Plugins (Legacy — deaktiviert wenn MCP aktiv)
@@ -1193,7 +1250,6 @@ SEARXNG_URL=http://cuda.local:3002
 # WEATHER_PLUGIN_ENABLED=false
 # NEWS_PLUGIN_ENABLED=false
 # SEARCH_PLUGIN_ENABLED=false
-# MUSIC_PLUGIN_ENABLED=false
 ```
 
 ---

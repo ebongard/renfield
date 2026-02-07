@@ -138,6 +138,8 @@ OLLAMA_URL=http://ollama:11434
 OLLAMA_CHAT_MODEL=qwen3:14b
 OLLAMA_RAG_MODEL=qwen3:14b
 OLLAMA_EMBED_MODEL=qwen3-embedding:4b
+OLLAMA_INTENT_MODEL=qwen3:8b
+OLLAMA_NUM_CTX=32768
 
 # -----------------------------------------------------------------------------
 # Sprache & Voice
@@ -165,9 +167,11 @@ ADVERTISE_PORT=8000
 # FRIGATE_URL=http://frigate.local:5000
 
 # -----------------------------------------------------------------------------
-# n8n (optional)
+# n8n (optional, via MCP)
 # -----------------------------------------------------------------------------
-# N8N_WEBHOOK_URL=http://n8n.local:5678/webhook
+# N8N_MCP_ENABLED=true
+# N8N_BASE_URL=http://n8n.local:5678
+# N8N_API_KEY=dein_n8n_api_key
 
 # -----------------------------------------------------------------------------
 # RAG (Knowledge Base)
@@ -175,6 +179,14 @@ ADVERTISE_PORT=8000
 RAG_ENABLED=true
 UPLOAD_DIR=/app/data/uploads
 MAX_FILE_SIZE_MB=50
+
+# -----------------------------------------------------------------------------
+# MCP Server (optional)
+# -----------------------------------------------------------------------------
+MCP_ENABLED=true
+# WEATHER_ENABLED=true
+# SEARCH_ENABLED=true
+# HA_MCP_ENABLED=true
 
 # -----------------------------------------------------------------------------
 # Logging
@@ -298,7 +310,13 @@ http {
 docker compose -f docker-compose.prod.yml --profile ollama-gpu up -d
 ```
 
-### 7.2 Ohne Ollama (externe Instanz)
+### 7.2 Ohne GPU (CPU only)
+
+```bash
+docker compose -f docker-compose.prod-cpu.yml up -d
+```
+
+### 7.3 Ohne Ollama (externe Instanz)
 
 Falls Ollama auf einem anderen Server läuft:
 
@@ -309,7 +327,7 @@ Falls Ollama auf einem anderen Server läuft:
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### 7.3 Build-Prozess verfolgen
+### 7.4 Build-Prozess verfolgen
 
 ```bash
 docker compose -f docker-compose.prod.yml logs -f

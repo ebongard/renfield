@@ -210,7 +210,7 @@ Der Service hat einen 30-Sekunden-Timeout. Bei sehr langsamen Netzwerken oder gr
 | `backend/main.py` | WebSocket Integration |
 | `frontend/src/components/RoomOutputSettings.jsx` | UI Komponente |
 | `frontend/src/pages/RoomsPage.jsx` | Integration |
-| `frontend/src/pages/ChatPage.jsx` | `tts_handled` Flag Handling |
+| `frontend/src/pages/ChatPage/index.jsx` | `tts_handled` Flag Handling |
 
 ### WebSocket Protocol Erweiterung
 

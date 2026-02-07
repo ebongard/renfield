@@ -115,6 +115,7 @@ Empfängt Benachrichtigungen von HA-Automationen.
 | `urgency` | string | Nein | `critical`, `info` (default), `low` |
 | `room` | string | Nein | Ziel-Raum (null = alle Räume) |
 | `tts` | boolean | Nein | TTS-Ausgabe (default: `PROACTIVE_TTS_DEFAULT`) |
+| `enrich` | boolean | Nein | LLM-Aufbereitung der Nachricht (default: `false`, erfordert `PROACTIVE_ENRICHMENT_ENABLED`) |
 | `data` | object | Nein | Zusätzliche Metadaten |
 
 **Response:** `201 Created`
