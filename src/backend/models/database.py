@@ -925,6 +925,36 @@ class ConversationMemory(Base):
     source_message = relationship("Message", foreign_keys=[source_message_id])
 
 
+# Memory History — Audit trail for memory modifications
+MEMORY_ACTION_CREATED = "created"
+MEMORY_ACTION_UPDATED = "updated"
+MEMORY_ACTION_DELETED = "deleted"
+MEMORY_ACTIONS = [MEMORY_ACTION_CREATED, MEMORY_ACTION_UPDATED, MEMORY_ACTION_DELETED]
+
+MEMORY_CHANGED_BY_SYSTEM = "system"
+MEMORY_CHANGED_BY_USER = "user"
+MEMORY_CHANGED_BY_RESOLUTION = "contradiction_resolution"
+
+
+class MemoryHistory(Base):
+    """Audit trail for memory modifications (create/update/delete)."""
+    __tablename__ = "memory_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    memory_id = Column(Integer, ForeignKey("conversation_memories.id"), nullable=False, index=True)
+    action = Column(String(20), nullable=False, index=True)
+    old_content = Column(Text, nullable=True)
+    old_category = Column(String(20), nullable=True)
+    old_importance = Column(Float, nullable=True)
+    new_content = Column(Text, nullable=True)
+    new_category = Column(String(20), nullable=True)
+    new_importance = Column(Float, nullable=True)
+    changed_by = Column(String(30), nullable=False, default=MEMORY_CHANGED_BY_SYSTEM)
+    created_at = Column(DateTime, default=_utcnow)
+
+    memory = relationship("ConversationMemory", foreign_keys=[memory_id])
+
+
 # System Setting Keys
 SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"

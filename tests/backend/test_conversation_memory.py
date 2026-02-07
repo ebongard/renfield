@@ -13,12 +13,20 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    MEMORY_ACTION_CREATED,
+    MEMORY_ACTION_DELETED,
+    MEMORY_ACTION_UPDATED,
+    MEMORY_ACTIONS,
     MEMORY_CATEGORIES,
     MEMORY_CATEGORY_CONTEXT,
     MEMORY_CATEGORY_FACT,
     MEMORY_CATEGORY_INSTRUCTION,
     MEMORY_CATEGORY_PREFERENCE,
+    MEMORY_CHANGED_BY_RESOLUTION,
+    MEMORY_CHANGED_BY_SYSTEM,
+    MEMORY_CHANGED_BY_USER,
     ConversationMemory,
+    MemoryHistory,
 )
 from services.conversation_memory_service import ConversationMemoryService
 
@@ -1057,3 +1065,518 @@ class TestMemoryExtractionConfig:
             memory_extraction_enabled=True,
         )
         assert s.memory_extraction_enabled is True
+
+
+# ==========================================================================
+# Memory History Model Tests
+# ==========================================================================
+
+class TestMemoryHistoryModel:
+    """Tests for the MemoryHistory SQLAlchemy model."""
+
+    @pytest.mark.unit
+    async def test_create_history_entry(self, db_session: AsyncSession):
+        """Test creating a basic history entry."""
+        memory = ConversationMemory(
+            content="Test memory",
+            category=MEMORY_CATEGORY_FACT,
+        )
+        db_session.add(memory)
+        await db_session.commit()
+        await db_session.refresh(memory)
+
+        entry = MemoryHistory(
+            memory_id=memory.id,
+            action=MEMORY_ACTION_CREATED,
+            new_content="Test memory",
+            new_category=MEMORY_CATEGORY_FACT,
+            new_importance=0.5,
+            changed_by=MEMORY_CHANGED_BY_SYSTEM,
+        )
+        db_session.add(entry)
+        await db_session.commit()
+        await db_session.refresh(entry)
+
+        assert entry.id is not None
+        assert entry.memory_id == memory.id
+        assert entry.action == MEMORY_ACTION_CREATED
+        assert entry.new_content == "Test memory"
+        assert entry.old_content is None
+        assert entry.changed_by == MEMORY_CHANGED_BY_SYSTEM
+        assert entry.created_at is not None
+
+    @pytest.mark.unit
+    def test_memory_action_constants(self):
+        """Test that action and changed_by constants are correct."""
+        assert MEMORY_ACTION_CREATED == "created"
+        assert MEMORY_ACTION_UPDATED == "updated"
+        assert MEMORY_ACTION_DELETED == "deleted"
+        assert len(MEMORY_ACTIONS) == 3
+        assert MEMORY_CHANGED_BY_SYSTEM == "system"
+        assert MEMORY_CHANGED_BY_USER == "user"
+        assert MEMORY_CHANGED_BY_RESOLUTION == "contradiction_resolution"
+
+
+# ==========================================================================
+# Memory History Recording Tests
+# ==========================================================================
+
+class TestMemoryHistoryRecording:
+    """Tests for automatic history recording in save/update/delete."""
+
+    @pytest.mark.unit
+    async def test_save_records_created_history(self, memory_service, db_session):
+        """save() records a 'created' history entry."""
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="Likes coffee",
+                category="preference",
+                importance=0.7,
+            )
+
+        assert memory is not None
+
+        # Check history was recorded
+        result = await db_session.execute(
+            select(MemoryHistory).where(MemoryHistory.memory_id == memory.id)
+        )
+        entries = result.scalars().all()
+        assert len(entries) == 1
+        assert entries[0].action == MEMORY_ACTION_CREATED
+        assert entries[0].new_content == "Likes coffee"
+        assert entries[0].new_category == "preference"
+        assert entries[0].new_importance == 0.7
+        assert entries[0].old_content is None
+        assert entries[0].changed_by == MEMORY_CHANGED_BY_SYSTEM
+
+    @pytest.mark.unit
+    async def test_update_records_updated_history(self, memory_service, db_session):
+        """update() records an 'updated' history entry with old and new values."""
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="Lives in Berlin",
+                category="fact",
+                importance=0.8,
+            )
+
+        updated = await memory_service.update(
+            memory_id=memory.id,
+            content="Lives in Hamburg",
+        )
+        assert updated is not None
+        assert updated.content == "Lives in Hamburg"
+
+        result = await db_session.execute(
+            select(MemoryHistory)
+            .where(MemoryHistory.memory_id == memory.id)
+            .order_by(MemoryHistory.created_at.asc())
+        )
+        entries = result.scalars().all()
+        assert len(entries) == 2
+        # First entry = created
+        assert entries[0].action == MEMORY_ACTION_CREATED
+        # Second entry = updated
+        assert entries[1].action == MEMORY_ACTION_UPDATED
+        assert entries[1].old_content == "Lives in Berlin"
+        assert entries[1].new_content == "Lives in Hamburg"
+        assert entries[1].changed_by == "user"
+
+    @pytest.mark.unit
+    async def test_delete_records_deleted_history(self, memory_service, db_session):
+        """delete() records a 'deleted' history entry."""
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="Old fact",
+                category="fact",
+            )
+
+        success = await memory_service.delete(memory.id)
+        assert success is True
+
+        result = await db_session.execute(
+            select(MemoryHistory)
+            .where(MemoryHistory.memory_id == memory.id)
+            .order_by(MemoryHistory.created_at.asc())
+        )
+        entries = result.scalars().all()
+        assert len(entries) == 2
+        assert entries[1].action == MEMORY_ACTION_DELETED
+        assert entries[1].old_content == "Old fact"
+        assert entries[1].changed_by == MEMORY_CHANGED_BY_SYSTEM
+
+
+# ==========================================================================
+# Contradiction Resolution Parsing Tests
+# ==========================================================================
+
+class TestContradictionResolutionParsing:
+    """Tests for _parse_resolution_response static method."""
+
+    _SIMILAR = [
+        {"id": 1, "content": "Lives in Berlin", "category": "fact",
+         "importance": 0.8, "similarity": 0.75},
+        {"id": 2, "content": "Likes jazz", "category": "preference",
+         "importance": 0.6, "similarity": 0.65},
+    ]
+
+    @pytest.mark.unit
+    def test_parse_add_action(self):
+        """ADD action is parsed correctly."""
+        raw = '{"action": "ADD", "target_memory_id": null, "updated_content": null, "reason": "New info"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is not None
+        assert result["action"] == "ADD"
+        assert result["target_memory_id"] is None
+
+    @pytest.mark.unit
+    def test_parse_update_action(self):
+        """UPDATE action with valid target ID is parsed correctly."""
+        raw = '{"action": "UPDATE", "target_memory_id": 1, "updated_content": "Lives in Hamburg", "reason": "Moved"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is not None
+        assert result["action"] == "UPDATE"
+        assert result["target_memory_id"] == 1
+        assert result["updated_content"] == "Lives in Hamburg"
+
+    @pytest.mark.unit
+    def test_parse_delete_action(self):
+        """DELETE action with valid target ID is parsed correctly."""
+        raw = '{"action": "DELETE", "target_memory_id": 1, "updated_content": null, "reason": "Contradicted"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is not None
+        assert result["action"] == "DELETE"
+        assert result["target_memory_id"] == 1
+
+    @pytest.mark.unit
+    def test_parse_noop_action(self):
+        """NOOP action is parsed correctly."""
+        raw = '{"action": "NOOP", "target_memory_id": null, "updated_content": null, "reason": "Already known"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is not None
+        assert result["action"] == "NOOP"
+
+    @pytest.mark.unit
+    def test_parse_invalid_target_id(self):
+        """UPDATE with non-existent target_memory_id returns None."""
+        raw = '{"action": "UPDATE", "target_memory_id": 999, "updated_content": "X", "reason": "?"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_parse_garbage_input(self):
+        """Garbage text returns None."""
+        result = ConversationMemoryService._parse_resolution_response(
+            "I don't know what to do", self._SIMILAR
+        )
+        assert result is None
+
+    @pytest.mark.unit
+    def test_parse_invalid_action(self):
+        """Invalid action string returns None."""
+        raw = '{"action": "MERGE", "target_memory_id": null, "reason": "?"}'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is None
+
+    @pytest.mark.unit
+    def test_parse_markdown_wrapped(self):
+        """JSON wrapped in markdown code block is parsed correctly."""
+        raw = '```json\n{"action": "ADD", "target_memory_id": null, "updated_content": null, "reason": "New"}\n```'
+        result = ConversationMemoryService._parse_resolution_response(raw, self._SIMILAR)
+        assert result is not None
+        assert result["action"] == "ADD"
+
+
+# ==========================================================================
+# Contradiction Resolution Integration Tests
+# ==========================================================================
+
+class TestContradictionResolution:
+    """Tests for _apply_contradiction_resolution flow."""
+
+    @staticmethod
+    def _embedding_then_none():
+        """Return embedding on first call, None on subsequent (avoids SQLite type error)."""
+        calls = [0]
+        mock_embedding = [0.1] * 768
+
+        async def _side_effect(text_input):
+            calls[0] += 1
+            if calls[0] == 1:
+                return mock_embedding
+            return None
+
+        return _side_effect
+
+    @pytest.mark.unit
+    async def test_noop_skips_save(self, memory_service):
+        """NOOP resolution returns None (no memory saved)."""
+        with patch.object(
+            memory_service, '_get_embedding', return_value=[0.1] * 768
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories',
+            return_value=[{"id": 1, "content": "Likes jazz", "category": "preference",
+                           "importance": 0.6, "similarity": 0.75}]
+        ), patch.object(
+            memory_service, '_resolve_contradiction',
+            return_value={"action": "NOOP", "target_memory_id": None,
+                          "updated_content": None, "reason": "Already known"}
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="Likes jazz", category="preference",
+                importance=0.6, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is None
+
+    @pytest.mark.unit
+    async def test_add_creates_new_memory(self, memory_service):
+        """ADD resolution creates a new memory."""
+        with patch.object(
+            memory_service, '_get_embedding', side_effect=self._embedding_then_none()
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories',
+            return_value=[{"id": 1, "content": "Likes jazz", "category": "preference",
+                           "importance": 0.6, "similarity": 0.65}]
+        ), patch.object(
+            memory_service, '_resolve_contradiction',
+            return_value={"action": "ADD", "target_memory_id": None,
+                          "updated_content": None, "reason": "Different topic"}
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="Has a dog named Rex", category="fact",
+                importance=0.7, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is not None
+        assert result.content == "Has a dog named Rex"
+
+    @pytest.mark.unit
+    async def test_update_modifies_existing(self, memory_service, db_session):
+        """UPDATE resolution modifies the target memory."""
+        # Create existing memory
+        existing = ConversationMemory(
+            content="Lives in Berlin",
+            category="fact",
+            importance=0.8,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+
+        with patch.object(
+            memory_service, '_get_embedding', side_effect=self._embedding_then_none()
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories',
+            return_value=[{"id": existing.id, "content": "Lives in Berlin",
+                           "category": "fact", "importance": 0.8, "similarity": 0.75}]
+        ), patch.object(
+            memory_service, '_resolve_contradiction',
+            return_value={"action": "UPDATE", "target_memory_id": existing.id,
+                          "updated_content": "Lives in Hamburg", "reason": "Moved"}
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="Moved to Hamburg", category="fact",
+                importance=0.8, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is not None
+        assert result.id == existing.id
+        assert result.content == "Lives in Hamburg"
+
+    @pytest.mark.unit
+    async def test_delete_replaces_memory(self, memory_service, db_session):
+        """DELETE resolution deactivates old and creates new."""
+        existing = ConversationMemory(
+            content="Old fact",
+            category="fact",
+            importance=0.5,
+            is_active=True,
+        )
+        db_session.add(existing)
+        await db_session.commit()
+        await db_session.refresh(existing)
+
+        with patch.object(
+            memory_service, '_get_embedding', side_effect=self._embedding_then_none()
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories',
+            return_value=[{"id": existing.id, "content": "Old fact",
+                           "category": "fact", "importance": 0.5, "similarity": 0.7}]
+        ), patch.object(
+            memory_service, '_resolve_contradiction',
+            return_value={"action": "DELETE", "target_memory_id": existing.id,
+                          "updated_content": None, "reason": "Contradicted"}
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="New replacement fact", category="fact",
+                importance=0.7, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is not None
+        assert result.content == "New replacement fact"
+
+        await db_session.refresh(existing)
+        assert existing.is_active is False
+
+    @pytest.mark.unit
+    async def test_no_similar_memories_falls_through_to_add(self, memory_service):
+        """No similar memories -> falls through to save() (ADD)."""
+        with patch.object(
+            memory_service, '_get_embedding', side_effect=self._embedding_then_none()
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories', return_value=[]
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="Completely new fact", category="fact",
+                importance=0.5, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is not None
+        assert result.content == "Completely new fact"
+
+    @pytest.mark.unit
+    async def test_llm_failure_falls_back_to_add(self, memory_service):
+        """LLM resolution failure -> falls back to ADD."""
+        with patch.object(
+            memory_service, '_get_embedding', side_effect=self._embedding_then_none()
+        ), patch.object(
+            memory_service, '_find_duplicate', return_value=None
+        ), patch.object(
+            memory_service, '_find_similar_memories',
+            return_value=[{"id": 1, "content": "Some fact", "category": "fact",
+                           "importance": 0.5, "similarity": 0.65}]
+        ), patch.object(
+            memory_service, '_resolve_contradiction', return_value=None
+        ):
+            result = await memory_service._apply_contradiction_resolution(
+                content="New fact despite failure", category="fact",
+                importance=0.5, user_id=None, session_id=None, lang="de",
+            )
+
+        assert result is not None
+        assert result.content == "New fact despite failure"
+
+
+# ==========================================================================
+# Contradiction Resolution Config Tests
+# ==========================================================================
+
+class TestContradictionResolutionConfig:
+    """Tests for contradiction resolution config settings."""
+
+    @pytest.mark.unit
+    def test_default_disabled(self):
+        """Default is False."""
+        from utils.config import Settings
+        s = Settings(database_url="sqlite:///:memory:")
+        assert s.memory_contradiction_resolution is False
+        assert s.memory_contradiction_threshold == 0.6
+        assert s.memory_contradiction_top_k == 5
+
+    @pytest.mark.unit
+    def test_custom_settings(self):
+        """Custom values are applied."""
+        from utils.config import Settings
+        s = Settings(
+            database_url="sqlite:///:memory:",
+            memory_contradiction_resolution=True,
+            memory_contradiction_threshold=0.7,
+            memory_contradiction_top_k=3,
+        )
+        assert s.memory_contradiction_resolution is True
+        assert s.memory_contradiction_threshold == 0.7
+        assert s.memory_contradiction_top_k == 3
+
+
+# ==========================================================================
+# Contradiction Resolution Prompt Tests
+# ==========================================================================
+
+class TestContradictionResolutionPrompts:
+    """Tests for contradiction resolution prompt templates."""
+
+    @pytest.mark.unit
+    def test_contradiction_prompt_german(self):
+        """German contradiction prompt renders correctly with variables."""
+        from services.prompt_manager import prompt_manager
+        prompt_manager.reload()
+
+        result = prompt_manager.get(
+            "memory", "contradiction_resolution_prompt", lang="de",
+            new_fact="Wohnt in Hamburg",
+            existing_memories="- ID=1: \"Wohnt in Berlin\" (category=fact, similarity=0.75)",
+        )
+        assert "Wohnt in Hamburg" in result
+        assert "Wohnt in Berlin" in result
+        assert "ADD" in result
+        assert "UPDATE" in result
+        assert "DELETE" in result
+        assert "NOOP" in result
+
+    @pytest.mark.unit
+    def test_contradiction_prompt_english(self):
+        """English contradiction prompt renders correctly."""
+        from services.prompt_manager import prompt_manager
+        prompt_manager.reload()
+
+        result = prompt_manager.get(
+            "memory", "contradiction_resolution_prompt", lang="en",
+            new_fact="Lives in Hamburg",
+            existing_memories="- ID=1: \"Lives in Berlin\" (category=fact, similarity=0.75)",
+        )
+        assert "Lives in Hamburg" in result
+        assert "Lives in Berlin" in result
+        assert "ADD" in result
+
+    @pytest.mark.unit
+    def test_contradiction_llm_options(self):
+        """Contradiction LLM options have zero temperature."""
+        from services.prompt_manager import prompt_manager
+        prompt_manager.reload()
+
+        options = prompt_manager.get_config("memory", "contradiction_llm_options")
+        assert options is not None
+        assert options["temperature"] == 0.0
+        assert options["num_predict"] == 200
+
+
+# ==========================================================================
+# Get History Method Tests
+# ==========================================================================
+
+class TestGetHistory:
+    """Tests for ConversationMemoryService.get_history()."""
+
+    @pytest.mark.unit
+    async def test_get_history_returns_entries(self, memory_service, db_session):
+        """get_history() returns all history entries for a memory."""
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="Original content",
+                category="fact",
+            )
+
+        await memory_service.update(memory.id, content="Updated content")
+
+        entries = await memory_service.get_history(memory.id)
+        assert len(entries) == 2
+        assert entries[0]["action"] == MEMORY_ACTION_CREATED
+        assert entries[1]["action"] == MEMORY_ACTION_UPDATED
+        assert entries[1]["old_content"] == "Original content"
+        assert entries[1]["new_content"] == "Updated content"
+
+    @pytest.mark.unit
+    async def test_get_history_empty_for_unknown_id(self, memory_service):
+        """get_history() returns empty list for unknown memory_id."""
+        entries = await memory_service.get_history(99999)
+        assert entries == []

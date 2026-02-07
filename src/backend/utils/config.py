@@ -155,6 +155,9 @@ class Settings(BaseSettings):
     memory_dedup_threshold: float = Field(default=0.9, ge=0.5, le=1.0)     # Deduplication threshold
     memory_extraction_enabled: bool = False                                  # Auto-extract memories from conversations
     memory_cleanup_interval: int = Field(default=3600, ge=60, le=86400)     # Cleanup interval in seconds
+    memory_contradiction_resolution: bool = False                            # LLM-based contradiction resolution
+    memory_contradiction_threshold: float = Field(default=0.6, ge=0.3, le=0.89)  # Similarity range lower bound
+    memory_contradiction_top_k: int = Field(default=5, ge=1, le=10)         # Max similar memories to compare
 
     # Document Upload
     upload_dir: str = "/app/data/uploads"

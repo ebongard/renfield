@@ -27,6 +27,26 @@ de:
 
   extraction_system: "Du extrahierst Fakten aus Dialogen. Antworte NUR mit einem JSON-Array."
 
+  contradiction_resolution_prompt: |
+    Ein neuer Fakt wurde aus einem Gespraech extrahiert. Vergleiche ihn mit bestehenden Erinnerungen und entscheide, was zu tun ist.
+
+    NEUER FAKT:
+    "{new_fact}"
+
+    BESTEHENDE ERINNERUNGEN:
+    {existing_memories}
+
+    ENTSCHEIDE eine Aktion:
+    - ADD: Der Fakt ist wirklich neu und widerspricht keiner Erinnerung.
+    - UPDATE: Der Fakt korrigiert oder aktualisiert eine bestehende Erinnerung (z.B. neuer Wohnort, neuer Name). Gib die Ziel-ID und den aktualisierten Inhalt an.
+    - DELETE: Der Fakt macht eine bestehende Erinnerung komplett ungueltig. Gib die Ziel-ID an.
+    - NOOP: Der Fakt ist bereits bekannt (inhaltlich identisch mit einer Erinnerung).
+
+    Antworte NUR mit einem JSON-Objekt:
+    {{"action": "ADD|UPDATE|DELETE|NOOP", "target_memory_id": null, "updated_content": null, "reason": "..."}}
+
+  contradiction_resolution_system: "Du vergleichst Fakten mit bestehenden Erinnerungen. Antworte NUR mit einem JSON-Objekt."
+
 en:
   extraction_prompt: |
     Analyze the following dialog and extract memorable facts about the user.
@@ -52,9 +72,35 @@ en:
 
   extraction_system: "You extract facts from dialogs. Reply ONLY with a JSON array."
 
+  contradiction_resolution_prompt: |
+    A new fact was extracted from a conversation. Compare it with existing memories and decide what to do.
+
+    NEW FACT:
+    "{new_fact}"
+
+    EXISTING MEMORIES:
+    {existing_memories}
+
+    DECIDE one action:
+    - ADD: The fact is genuinely new and does not contradict any memory.
+    - UPDATE: The fact corrects or updates an existing memory (e.g. new city, new name). Provide the target ID and updated content.
+    - DELETE: The fact completely invalidates an existing memory. Provide the target ID.
+    - NOOP: The fact is already known (semantically identical to an existing memory).
+
+    Reply ONLY with a JSON object:
+    {{"action": "ADD|UPDATE|DELETE|NOOP", "target_memory_id": null, "updated_content": null, "reason": "..."}}
+
+  contradiction_resolution_system: "You compare facts with existing memories. Reply ONLY with a JSON object."
+
 # LLM options for extraction (low temperature for consistency)
 llm_options:
   temperature: 0.1
   top_p: 0.2
   num_predict: 500
+  num_ctx: 4096
+
+# LLM options for contradiction resolution (deterministic, short output)
+contradiction_llm_options:
+  temperature: 0.0
+  num_predict: 200
   num_ctx: 4096

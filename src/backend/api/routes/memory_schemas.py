@@ -48,3 +48,22 @@ class MemoryListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class MemoryHistoryEntry(BaseModel):
+    id: int
+    memory_id: int
+    action: str
+    old_content: str | None
+    old_category: str | None
+    old_importance: float | None
+    new_content: str | None
+    new_category: str | None
+    new_importance: float | None
+    changed_by: str
+    created_at: str
+
+
+class MemoryHistoryResponse(BaseModel):
+    entries: list[MemoryHistoryEntry]
+    total: int
