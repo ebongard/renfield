@@ -371,6 +371,11 @@ MEMORY_DEDUP_THRESHOLD=0.9          # Deduplizierungs-Schwellwert (0.5-1.0)
 
 # Automatische Extraktion
 MEMORY_EXTRACTION_ENABLED=false     # Fakten automatisch aus Dialogen extrahieren
+
+# Widerspruchserkennung (zweiter LLM-Pass)
+MEMORY_CONTRADICTION_RESOLUTION=false   # LLM-basierte Widerspruchserkennung aktivieren
+MEMORY_CONTRADICTION_THRESHOLD=0.6      # Similarity-Untergrenze fuer Vergleich (0.3-0.89)
+MEMORY_CONTRADICTION_TOP_K=5            # Max bestehende Erinnerungen zum Vergleich (1-10)
 ```
 
 **Defaults:**
@@ -381,9 +386,15 @@ MEMORY_EXTRACTION_ENABLED=false     # Fakten automatisch aus Dialogen extrahiere
 - `MEMORY_CONTEXT_DECAY_DAYS`: `30`
 - `MEMORY_DEDUP_THRESHOLD`: `0.9`
 - `MEMORY_EXTRACTION_ENABLED`: `false`
+- `MEMORY_CONTRADICTION_RESOLUTION`: `false`
+- `MEMORY_CONTRADICTION_THRESHOLD`: `0.6`
+- `MEMORY_CONTRADICTION_TOP_K`: `5`
 
 **Automatische Extraktion:**
 Wenn `MEMORY_EXTRACTION_ENABLED=true` (und `MEMORY_ENABLED=true`), analysiert das LLM nach jeder Konversationsrunde den Dialog und extrahiert erinnerungswuerdige Fakten (Praeferenzen, persoenliche Fakten, Anweisungen, Kontext). Die Extraktion laeuft als Background-Task und blockiert nicht die Antwort an den Benutzer.
+
+**Widerspruchserkennung:**
+Wenn `MEMORY_CONTRADICTION_RESOLUTION=true` (und `MEMORY_EXTRACTION_ENABLED=true`), wird nach der Faktenextraktion ein zweiter LLM-Pass ausgefuehrt. Dieser vergleicht neue Fakten mit bestehenden Erinnerungen (Similarity-Bereich 0.6-0.89) und entscheidet: ADD (neuer Fakt), UPDATE (bestehende Erinnerung aktualisieren), DELETE (bestehende Erinnerung ersetzen) oder NOOP (bereits bekannt). Alle Aenderungen werden in der `memory_history`-Tabelle protokolliert. Audittrail via `GET /api/memory/{id}/history`.
 
 ---
 
