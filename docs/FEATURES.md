@@ -2,171 +2,416 @@
 
 ## Übersicht
 
-Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Tool-Zugriff in einer Oberfläche bündelt. Er dient mehreren Nutzern parallel, primär im Haushalt. Kernfähigkeiten: abfragbare Wissensbasis (RAG), gebündelte Tool-Nutzung (Web-Suche, Wetter, News, etc.) und Smart-Home-Steuerung als ergänzendes Feature.
+Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Multi-Channel-Steuerung in einer Oberfläche bündelt. Er dient mehreren Nutzern parallel im Haushalt. Kernfähigkeiten: abfragbare Wissensbasis (RAG), gebündelte Tool-Nutzung über 8 MCP-Server, Konversations-Gedächtnis, proaktive Benachrichtigungen und Smart-Home-Steuerung.
 
 ## Chat & Konversation
 
 ### Natural Language Understanding
-- **Intent Recognition**: Automatische Erkennung von Benutzerabsichten
-- **Kontext-Bewusstsein**: Versteht Kontext aus vorherigen Nachrichten
-- **Multi-Turn Dialoge**: Führt komplexe Gespräche über mehrere Nachrichten
+- **Intent Recognition**: LLM-basierte Erkennung von Benutzerabsichten mit Ranked Intents (1-3 gewichtete Intents mit Fallback-Chain)
+- **Dynamische Keywords**: Geräte- und Entity-Namen aus Home Assistant werden automatisch in den Intent-Prompt injiziert
+- **MCP Tool Prompt Filtering**: `prompt_tools` in `mcp_servers.yaml` beschränkt den Intent-Prompt auf ~20 relevante Tools (alle bleiben ausführbar)
 
 ### Streaming Responses
-- **WebSocket-basiert**: Echtzeit-Antworten
-- **Token-für-Token**: Sieht Antworten während sie generiert werden
-- **Fallback auf HTTP**: Funktioniert auch ohne WebSocket
+- **WebSocket-basiert**: Echtzeit-Antworten mit Token-für-Token Streaming
+- **Session-Persistenz**: `session_id` im WebSocket für Konversations-Kontext
+- **Fallback auf HTTP**: REST API (`POST /api/chat/send`) als Alternative
 
 ### Chat-Historie
-- **Session Management**: Getrennte Gespräche für verschiedene Themen
-- **Persistente Speicherung**: Alle Nachrichten werden in PostgreSQL gespeichert
-- **Historie-Suche**: Durchsuche frühere Konversationen
-- **WebSocket-Persistenz**: Echtzeit-Speicherung bei jeder Nachricht
+- **Session Management**: Getrennte Gespräche mit Datumsgruppierung (Heute, Gestern, Letzte 7 Tage, Älter)
+- **Persistente Speicherung**: Alle Nachrichten in PostgreSQL
+- **Follow-up Kontext**: LLM erhält Konversationshistorie; versteht "Mach es aus" oder "Und dort?" ohne explizite Referenzen
+- **Volltext-Suche**: Durchsuche frühere Konversationen
 - **Satellite-Sessions**: Tägliche Sessions für Voice-Commands
-- **Follow-up Kontext**: LLM erhält Konversationshistorie für intelligente Antworten
 
 ## Sprach-Interface
 
 ### Speech-to-Text (STT)
-- **Whisper Integration**: OpenAI's Whisper für hochwertige Transkription
-- **Offline-Verarbeitung**: Keine Cloud-Dienste nötig
-- **Deutsche Sprache**: Optimiert für deutsche Spracheingabe
-- **Modell-Auswahl**: Wählbar zwischen tiny, base, small, medium, large
-- **GPU-Beschleunigung**: Optional mit NVIDIA GPU für schnellere Transkription
-- **Rauschunterdrückung**: Gute Qualität auch bei Background-Geräuschen
+- **Whisper Integration**: OpenAI's Whisper für Offline-Transkription
+- **Modell-Auswahl**: tiny, base, small, medium, large
+- **Audio-Preprocessing**: Rauschunterdrückung und Normalisierung (opt-in)
+- **GPU-Beschleunigung**: Optional mit NVIDIA GPU
 
 ### Text-to-Speech (TTS)
-- **Piper Integration**: Natürlich klingende deutsche Stimme
-- **Offline-Synthese**: Lokal generiert
-- **Mehrere Stimmen**: Verschiedene deutsche Stimmen verfügbar
-- **Qualitätsstufen**: Von schnell bis hochwertig
+- **Piper Integration**: Natürlich klingende Stimmen, lokal generiert
+- **Mehrsprachig**: Separate Stimmen pro Sprache (z.B. `de:de_DE-thorsten-high,en:en_US-amy-medium`)
 
 ### Voice Chat
-- **End-to-End Voice**: Sprechen → Verstehen → Antworten → Vorlesen
-- **Streaming Audio**: Antworten werden sofort vorgelesen
-- **Hands-Free Mode**: Freihändige Bedienung möglich
+- **End-to-End Voice**: Sprechen → Transkription → Verarbeitung → Antwort → Vorlesen
+- **Sprechererkennung**: Automatische Identifikation mit SpeechBrain ECAPA-TDNN (192-dim Embeddings, Cosine Similarity)
+- **Auto-Discovery**: Unbekannte Sprecher werden automatisch als Profile angelegt
+- **Continuous Learning**: Verbesserte Erkennung durch jede Interaktion
+
+Siehe [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md) für Details.
+
+## Konversations-Gedächtnis (Langzeit)
+
+Renfield kann sich Dinge über Nutzer langfristig merken — Präferenzen, Fakten und Anweisungen werden als semantische Embeddings gespeichert und bei relevanten zukünftigen Gesprächen automatisch eingeblendet.
+
+### Memory-Kategorien
+
+| Kategorie | Beschreibung | Beispiel |
+|-----------|-------------|---------|
+| `preference` | Vorlieben und Stil | "Ich bevorzuge kurze Antworten" |
+| `fact` | Gelernte Fakten | "Meine Katze heißt Luna" |
+| `instruction` | Benutzerdefinierte Regeln | "Antworte immer auf Deutsch" |
+| `correction` | Korrigierte Aussagen | Via Widerspruchserkennung |
+
+### Funktionsweise
+1. **Extraktion** — Memories werden automatisch aus Konversationen extrahiert (opt-in: `MEMORY_EXTRACTION_ENABLED`)
+2. **Speicherung** — 768-dim Embeddings via pgvector mit semantischer Deduplizierung (Threshold: 0.9)
+3. **Retrieval** — Bei neuen Nachrichten werden semantisch ähnliche Memories abgerufen (Cosine Similarity ≥ 0.7, max 3)
+4. **Context Injection** — Relevante Memories werden in den LLM-Prompt eingefügt
+5. **Decay** — Context-Kategorie Memories verfallen nach konfigurierbarer Zeit (default: 30 Tage)
+
+### Widerspruchserkennung
+
+Opt-in Feature (`MEMORY_CONTRADICTION_RESOLUTION=true`): Beim Speichern neuer Memories werden bestehende auf semantische Ähnlichkeit geprüft. Memories im Threshold-Bereich (0.6–0.89) werden dem LLM zur Widerspruchsprüfung vorgelegt. Bei Widerspruch wird die alte Memory aktualisiert oder archiviert.
+
+### Audit Trail
+
+Jede Änderung an Memories wird in der History dokumentiert:
+- **Aktionen**: `created`, `updated`, `deleted`
+- **Quellen**: `system`, `user`, `contradiction_resolution`
+- **API**: `GET /api/memory/history/{id}` liefert die vollständige Änderungshistorie
+
+### Konfiguration
+
+```env
+MEMORY_ENABLED=false                    # Master-Switch (opt-in)
+MEMORY_EXTRACTION_ENABLED=false         # Auto-Extraktion aus Konversationen
+MEMORY_RETRIEVAL_LIMIT=3                # Max Memories pro Query
+MEMORY_RETRIEVAL_THRESHOLD=0.7          # Cosine-Similarity Schwellwert
+MEMORY_MAX_PER_USER=500                 # Max aktive Memories pro Nutzer
+MEMORY_CONTEXT_DECAY_DAYS=30            # Verfall für Context-Kategorie
+MEMORY_DEDUP_THRESHOLD=0.9              # Deduplizierungs-Schwellwert
+MEMORY_CONTRADICTION_RESOLUTION=false   # LLM-basierte Widerspruchserkennung
+MEMORY_CONTRADICTION_THRESHOLD=0.6      # Untere Grenze für Widerspruchs-Check
+```
+
+## Agent System (ReAct)
+
+### Übersicht
+
+Komplexe Anfragen werden automatisch erkannt und über einen ReAct-Loop (Reason + Act) bearbeitet. Der Agent Router klassifiziert jede Nachricht in eine spezialisierte Rolle, die bestimmt welche Tools und Modelle verwendet werden.
+
+### Agent Router
+
+Jede Nachricht wird vom Router in genau eine Rolle klassifiziert:
+
+| Rolle | MCP-Server | Max Steps | Beschreibung |
+|-------|-----------|-----------|--------------|
+| `smart_home` | homeassistant | 4 | Licht, Schalter, Sensoren, Klima |
+| `research` | search, news, weather | 6 | Web-Suche, Nachrichten, Wetter |
+| `documents` | paperless, email | 8 | Dokument-Suche, E-Mail |
+| `media` | jellyfin | 6 | Musik, Filme, Serien |
+| `workflow` | n8n | 10 | Workflow-Automation |
+| `knowledge` | *(RAG-Pfad)* | — | Wissensbasis-Suche (kein Agent Loop) |
+| `general` | alle Server | 12 | Komplexe domänenübergreifende Anfragen |
+| `conversation` | *(kein Agent)* | — | Smalltalk, allgemeines Wissen |
+
+Rollen werden in `config/agent_roles.yaml` definiert. Pro Rolle sind separate Modelle und Ollama-URLs konfigurierbar.
+
+### Complexity Detection
+
+Der `ComplexityDetector` erkennt per Regex, ob eine Nachricht den Agent Loop benötigt (Zero-Cost, kein LLM-Call):
+
+| Muster | Erkennt | Beispiel |
+|--------|---------|---------|
+| Bedingung | Wenn-Dann-Konstrukte | "Wenn es regnet, schließe die Fenster" |
+| Sequenz | Aufeinanderfolgende Aktionen | "Hole Wetter und dann suche ein Restaurant" |
+| Vergleich | Schwellwert-Vergleiche | "Wärmer als 20 Grad" |
+| Multi-Aktion | Zwei Aktionsverben mit "und" | "Schalte das Licht ein und stelle die Heizung ein" |
+| Kombiniert | Zwei Fragewörter mit "und" | "Wie ist das Wetter und was gibt es Neues?" |
+
+Nachrichten unter 10 Zeichen werden immer als einfach eingestuft. Alle Muster unterstützen Deutsch und Englisch.
+
+### ReAct Loop
+
+```
+User → ComplexityDetector → einfach? → Single-Intent (schneller Pfad)
+                          → komplex? → Agent Router → Rolle auswählen
+                                        → ReAct Loop:
+                                          ├─ LLM: Plan → Tool Call 1
+                                          ├─ Tool Result → zurück zum LLM
+                                          ├─ LLM: Reasoning → Tool Call 2
+                                          └─ LLM: Final Answer → Stream
+```
+
+### WebSocket Messages (Agent Loop)
+
+| Type | Beschreibung |
+|------|-------------|
+| `agent_thinking` | Agent analysiert die Anfrage |
+| `agent_tool_call` | Tool-Name, Parameter, Begründung |
+| `agent_tool_result` | Ergebnis (Erfolg/Fehler, Daten) |
+| `stream` | Finale Antwort (Token-für-Token) |
+| `done` | Abschluss mit `agent_steps` Count |
+
+### Konfiguration
+
+```env
+AGENT_ENABLED=false               # Master-Switch (opt-in)
+AGENT_MAX_STEPS=12                # Max Reasoning-Schritte
+AGENT_STEP_TIMEOUT=30.0           # Per-Step LLM Timeout (Sekunden)
+AGENT_TOTAL_TIMEOUT=120.0         # Gesamt-Timeout
+AGENT_MODEL=                      # Optional: separates Modell
+AGENT_OLLAMA_URL=                 # Optional: separate Ollama-Instanz
+AGENT_CONV_CONTEXT_MESSAGES=6     # Konversations-Kontext im Agent Loop
+AGENT_ROUTER_TIMEOUT=30.0         # Router-Klassifikation Timeout
+```
+
+## Intent Feedback Learning
+
+Renfield lernt aus Nutzer-Korrekturen und verbessert die Intent-Erkennung über semantisches Matching.
+
+### Korrektur-Typen
+
+| Typ | Beschreibung | Beispiel |
+|-----|-------------|---------|
+| `intent` | Falsche Intent-Klassifikation | "Das war kein Wetter-Intent, sondern Smart Home" |
+| `agent_tool` | Falsches Tool im Agent Loop | "Falsches Tool gewählt" |
+| `complexity` | Falsche Einfach/Komplex-Einstufung | "Das hätte der Agent machen sollen" |
+
+### Funktionsweise
+
+1. **Korrektur speichern** — Nutzer gibt Feedback über `POST /api/feedback/correction` oder den UI-Button
+2. **Embedding erstellen** — Die ursprüngliche Nachricht wird als 768-dim Vektor gespeichert
+3. **Ähnlichkeitssuche** — Bei zukünftigen Nachrichten werden semantisch ähnliche Korrekturen abgerufen (Cosine Similarity ≥ 0.75)
+4. **Few-Shot Injection** — Gefundene Korrekturen werden als Beispiele in den Intent-Prompt injiziert
+
+### Konfiguration
+
+```env
+INTENT_FEEDBACK_CACHE_TTL=300     # Cache-TTL für Korrektur-Counts (Sekunden)
+```
+
+## MCP Integration (Model Context Protocol)
+
+### Übersicht
+
+Alle externen Integrationen laufen als MCP-Server. Tools werden automatisch als `mcp.<server>.<tool>` Intents registriert — keine Code-Änderung nötig.
+
+### Verfügbare Server
+
+| Server | Transport | Beschreibung | Tools |
+|--------|-----------|-------------|-------|
+| **weather** | stdio (Python) | OpenWeatherMap | 17 (Vorhersage, Standort) |
+| **search** | stdio (npx) | SearXNG Metasearch | 1 |
+| **news** | stdio (npx) | NewsAPI | 2 (Suche, Top Headlines) |
+| **jellyfin** | stdio (Python) | Media Server | 13 (Musik, Filme, Serien) |
+| **n8n** | stdio (npx) | Workflow Automation | 12 (Workflow CRUD, Templates) |
+| **paperless** | stdio (Python) | Dokumenten-Management | 1+ |
+| **email** | stdio (Python) | Multi-Account IMAP/SMTP | 4 (List, Search, Read, Send) |
+| **homeassistant** | streamable_http | Smart Home | 5+ (Steuerung, Status) |
+
+### Konfiguration
+
+Server werden in `config/mcp_servers.yaml` definiert:
+
+```yaml
+servers:
+  - name: weather
+    command: ["python3", "-m", "renfield_mcp_weather"]
+    transport: stdio
+    enabled: "${WEATHER_ENABLED:-false}"
+    refresh_interval: 300
+    prompt_tools:
+      - get_weather
+    examples:
+      de: ["Wie wird das Wetter morgen?"]
+      en: ["What's the weather forecast?"]
+```
+
+**YAML-Felder:**
+
+| Feld | Pflicht | Beschreibung |
+|------|---------|-------------|
+| `name` | Ja | Server-ID, genutzt als `mcp.<name>.<tool>` |
+| `transport` | Ja | `streamable_http`, `sse` oder `stdio` |
+| `enabled` | Ja | Env-Var Toggle (z.B. `"${WEATHER_ENABLED:-false}"`) |
+| `prompt_tools` | Nein | Tool-Namen für den LLM-Intent-Prompt (alle bleiben ausführbar) |
+| `examples` | Nein | Bilinguale Beispiel-Queries für den LLM-Prompt |
+
+### Features
+
+- **Eager Connection**: Verbindung beim Startup, nicht pro Request
+- **Background Refresh**: Automatischer Health-Check und Tool-Refresh (konfigurierbar)
+- **Partial Failure**: Ein fehlender Server blockiert nicht die anderen
+- **Env-Var Substitution**: `${VAR}` und `${VAR:-default}` in der YAML-Konfiguration
+- **Input-Validierung**: MCP-Antworten werden auf Größe begrenzt (`MCP_MAX_RESPONSE_SIZE`, default: 10KB)
+- **Rate Limiting**: MCP-Tool-Calls unterliegen dem REST API Rate Limiting
+
+### Admin-Endpoints
+
+- `GET /api/mcp/status` — Server-Verbindungen, Tool-Counts, Fehler
+- `GET /api/mcp/tools` — Alle entdeckten MCP-Tools mit Schemas
+- `POST /api/mcp/refresh` — Tool-Listen manuell refreshen
+
+### Konfiguration
+
+```env
+MCP_ENABLED=false                 # Master-Switch
+MCP_CONFIG_PATH=config/mcp_servers.yaml
+MCP_REFRESH_INTERVAL=60           # Background-Refresh (Sekunden)
+MCP_CONNECT_TIMEOUT=10.0          # Verbindungs-Timeout
+MCP_CALL_TIMEOUT=30.0             # Tool-Call-Timeout
+MCP_MAX_RESPONSE_SIZE=10240       # Max Response-Größe (Bytes)
+```
+
+## Proaktive Benachrichtigungen & Erinnerungen
+
+### Übersicht
+
+Externe Systeme (Home Assistant, n8n) senden Events per Webhook an Renfield. Nutzer sehen Benachrichtigungen im Frontend und können sie per Sprache oder UI verarbeiten.
+
+### Webhook-Integration
+
+```
+Home Assistant Automation → POST /api/notifications/webhook
+                            (Bearer Token Auth)
+                            → Renfield verarbeitet, dedupliziert, enriched
+                            → Frontend zeigt Benachrichtigung
+```
+
+### Features
+
+- **Webhook-Empfang**: `POST /api/notifications/webhook` mit Bearer Token Authentifizierung
+- **Semantische Deduplizierung**: Ähnliche Benachrichtigungen innerhalb eines Zeitfensters werden zusammengefasst (pgvector, opt-in)
+- **Urgency-Klassifikation**: Automatische Dringlichkeitseinstufung (opt-in)
+- **LLM-Enrichment**: Benachrichtigungen werden durch LLM-Kontext angereichert (opt-in)
+- **Suppressions**: Nutzer können bestimmte Benachrichtigungs-Typen unterdrücken (semantisch)
+- **Feedback Learning**: System lernt aus Nutzer-Interaktionen mit Benachrichtigungen (opt-in)
+
+### Erinnerungen
+
+- **Zeitgesteuert**: Reminder mit Fälligkeitsdatum
+- **API**: `POST /api/notifications/reminders` zum Erstellen, `GET /api/notifications/reminders` zum Auflisten
+- **Hintergrund-Prüfung**: Fällige Erinnerungen werden automatisch als Benachrichtigungen ausgelöst
+
+### Konfiguration
+
+```env
+PROACTIVE_ENABLED=false                     # Master-Switch (opt-in)
+PROACTIVE_SUPPRESSION_WINDOW=60             # Dedup-Fenster (Sekunden)
+PROACTIVE_TTS_DEFAULT=true                  # TTS standardmäßig aktiv
+PROACTIVE_NOTIFICATION_TTL=86400            # Ablauf (24h)
+PROACTIVE_SEMANTIC_DEDUP_ENABLED=false      # Semantische Deduplizierung
+PROACTIVE_URGENCY_AUTO_ENABLED=false        # Auto-Urgency
+PROACTIVE_ENRICHMENT_ENABLED=false          # LLM-Enrichment
+PROACTIVE_REMINDERS_ENABLED=false           # Erinnerungen
+PROACTIVE_REMINDER_CHECK_INTERVAL=15        # Prüf-Intervall (Sekunden)
+```
+
+## Wissensspeicher (RAG)
+
+### Übersicht
+
+Renfield verarbeitet Dokumente und nutzt sie als Wissensbasis für kontextbasierte Antworten. Hybrid Search kombiniert semantische Vektor-Suche mit BM25 Full-Text-Search.
+
+### Unterstützte Formate
+PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT — verarbeitet mit IBM Docling.
+
+### Pipeline
+
+1. **Upload** → Automatische Verarbeitung und Duplikat-Erkennung (SHA256)
+2. **Chunking** → Semantische Textaufteilung (konfigurierbare Chunk-Größe und Overlap)
+3. **Embedding** → Jeder Chunk wird mit dem konfigurierten Modell vektorisiert (768-dim default)
+4. **Hybrid Search** → Dense Embeddings (pgvector) + BM25 (PostgreSQL tsvector), kombiniert via Reciprocal Rank Fusion (RRF)
+5. **Context Window** → Benachbarte Chunks werden automatisch zum Treffer hinzugefügt (±1 default)
+
+### Features
+
+- **Knowledge Bases** — Organisiere Dokumente in thematischen Sammlungen
+- **KB-Sharing** — Teile Wissensdatenbanken mit anderen Nutzern (RPBAC)
+- **Follow-up-Fragen** — RAG-Kontext bleibt für Nachfragen erhalten
+- **Quellen-Zitation** — Antworten verweisen auf Quelldokumente
+- **Re-Embedding** — `POST /admin/reembed` nach Modellwechsel
+
+### Konfiguration
+
+```env
+RAG_ENABLED=true
+RAG_CHUNK_SIZE=512                # Chunk-Größe (64-4096)
+RAG_CHUNK_OVERLAP=50              # Overlap zwischen Chunks
+RAG_TOP_K=5                       # Max Ergebnisse
+RAG_SIMILARITY_THRESHOLD=0.4      # Mindest-Ähnlichkeit
+
+# Hybrid Search
+RAG_HYBRID_ENABLED=true           # Dense + BM25
+RAG_HYBRID_BM25_WEIGHT=0.3
+RAG_HYBRID_DENSE_WEIGHT=0.7
+RAG_HYBRID_FTS_CONFIG=simple      # simple/german/english
+
+# Context Window
+RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
+```
 
 ## Multi-Room Device System
 
 ### Unterstützte Gerätetypen
-- **Satellites**: Raspberry Pi Hardware-Geräte mit Wake-Word
-- **Web Panels**: Stationäre Web-Panels (z.B. Wand-Tablets)
-- **Web Tablets**: Mobile Tablets
-- **Web Browser**: Desktop/Mobile Browser
-- **Web Kiosk**: Kiosk-Terminals
+
+| Typ | Beschreibung | Verbindung |
+|-----|-------------|------------|
+| Satellite | Raspberry Pi Hardware | `/ws/satellite` |
+| Web Panel | Stationäre Wand-Tablets | `/ws/device` |
+| Web Tablet | Mobile Tablets | `/ws/device` |
+| Web Browser | Desktop/Mobile Browser | `/ws/device` |
+| Web Kiosk | Kiosk-Terminals | `/ws/device` |
+
+### Raspberry Pi Satellites
+- **Pi Zero 2 W** — Kostengünstige (~63€) Satellite-Einheiten
+- **ReSpeaker 2-Mics HAT** — Mikrofonerfassung mit 3m Reichweite
+- **Lokale Wake-Word-Erkennung** — OpenWakeWord mit ONNX Runtime (~20% CPU)
+- **LED-Feedback** — Visuelles Feedback: Idle (Blau), Listening (Grün), Processing (Gelb), Speaking (Cyan), Error (Rot)
+- **Hardware-Button** — Manuelle Aktivierung
+- **Auto-Discovery** — Backend-Erkennung via Zeroconf/mDNS
+- **OTA-Updates** — Version-Tracking und Update-Pakete
+
+### Zentrale Wake-Word-Verwaltung
+- Admin-UI für zentrale Konfiguration
+- Automatische Synchronisation per WebSocket an alle Geräte
+- Konfigurierbare Keywords (Alexa, Hey Mycroft, Hey Jarvis, etc.)
+
+Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
+
+### Audio-Output-Routing
+Intelligentes TTS-Routing zum optimalen Ausgabegerät pro Raum (prioritätsbasiert, mit Verfügbarkeitsprüfung). Unterstützt Renfield-Geräte und HA Media Players.
+
+Siehe [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) für Details.
 
 ### Automatische Raum-Erkennung
 - **IP-basiert**: Stationäre Geräte werden anhand der IP-Adresse erkannt
 - **Kontext-Weitergabe**: Raum-Kontext wird an LLM übergeben
 - **Implizite Befehle**: "Schalte das Licht ein" funktioniert ohne Raum-Angabe
-- **IP-Update**: IP wird bei jeder Verbindung aktualisiert
 
-### Geräte-Registrierung
-- **Frontend Setup**: Geräte-Konfiguration über Web-Interface
-- **Persistente Speicherung**: Geräte überleben Neustarts
-- **Capability-basiert**: UI passt sich an Gerätefähigkeiten an
-- **Raum-Zuweisung**: Geräte werden Räumen zugeordnet
+### Frontend-Verbindungsarchitektur
 
-### Raspberry Pi Satellites
-- **Pi Zero 2 W Support**: Kostengünstige (~63€) Satellite-Einheiten
-- **ReSpeaker 2-Mics HAT**: Hochwertige Mikrofonerfassung mit 3m Reichweite
-- **Lokale Wake-Word-Erkennung**: OpenWakeWord mit ONNX Runtime
-- **LED-Feedback**: Visuelles Feedback für alle Zustände
-- **Hardware-Button**: Manuelle Aktivierung möglich
+Das Frontend nutzt **zwei unabhängige WebSocket-Verbindungen**:
 
-### Wake-Word Detection
-- **Lokale Verarbeitung**: Wake-Word wird auf dem Satellite erkannt
-- **Konfigurierbare Keywords**: Alexa, Hey Mycroft, Hey Jarvis, etc.
-- **Niedriger CPU-Verbrauch**: ~20% auf Pi Zero 2 W
-- **Refractory Period**: Verhindert Doppel-Auslösungen
-- **Stop-Word Support**: Laufende Interaktionen abbrechen
+| Verbindung | Endpoint | Zweck |
+|------------|----------|-------|
+| Chat WS | `/ws` | Chat-Nachrichten, Session-Persistenz |
+| Device WS | `/ws/device` | Geräte-Registrierung, Raum-Zuweisung, Capabilities |
 
-### Zentrale Wake-Word-Verwaltung
-- **Admin-UI**: Wake-Word-Einstellungen zentral verwalten
-- **Automatische Synchronisation**: Änderungen werden per WebSocket an alle Geräte gepusht
-- **Geräte-Sync-Status**: Echtzeit-Übersicht welche Geräte aktualisiert wurden
-- **Automatischer Model-Download**: Satellites laden fehlende TFLite-Modelle automatisch
-- **Datenbankpersistenz**: Einstellungen überleben Neustarts
-
-Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
-
-### Multi-Room Features
-- **Auto-Discovery**: Satellites finden Backend automatisch via Zeroconf/mDNS
-- **Parallele Verarbeitung**: Mehrere Räume gleichzeitig bedienen
-- **Session-Routing**: Antworten werden zum richtigen Satellite geroutet
-- **Room-Independence**: Räume blockieren sich nicht gegenseitig
-
-### LED-Feedback
-| Zustand | Muster | Farbe |
-|---------|--------|-------|
-| Idle | Dimmes Pulsieren | Blau |
-| Listening | Durchgehend | Grün |
-| Processing | Laufen | Gelb |
-| Speaking | Atmen | Cyan |
-| Error | Blinken | Rot |
-
-### WebSocket Protokoll
-- **Audio-Streaming**: 16-bit PCM, 16kHz, Mono
-- **Base64-Encoding**: Für WebSocket-Übertragung
-- **Heartbeat**: Verbindung wird überwacht
-- **Auto-Reconnect**: Automatische Wiederverbindung bei Ausfall
-
-### Verbindungs-Architektur (Frontend)
-
-Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschiedliche Zwecke:
-
-| Verbindung | Endpoint | Zweck | Status-Anzeige |
-|------------|----------|-------|----------------|
-| **Chat WebSocket** | `/ws` | Senden/Empfangen von Chat-Nachrichten | "Verbunden" im Chat-Fenster |
-| **Device WebSocket** | `/ws/device` | Geräte-Registrierung, Raum-Zuweisung, Capabilities | Status im Header |
-
-**Wichtig:** Diese Verbindungen sind unabhängig voneinander:
-- Der Chat kann verbunden sein, während das Gerät nicht registriert ist
-- Der Header zeigt "Offline" oder "Setup" wenn keine Geräte-Registrierung erfolgt ist
-- Das Chat-Fenster zeigt "Verbunden" sobald der Chat-WebSocket aktiv ist
-
-**Unterschied der Funktionen:**
-
-| Feature | Nur Chat WS | Mit Device-Registrierung |
-|---------|-------------|--------------------------|
-| Nachrichten senden/empfangen | ✓ | ✓ |
-| Raum-Kontext für Befehle | ✗ | ✓ |
-| Geräte-Capabilities (Mikrofon, Lautsprecher) | ✗ | ✓ |
-| Persistente Geräte-Identität | ✗ | ✓ |
-| Auto-Raum-Erkennung für "Licht einschalten" | ✗ | ✓ |
-
-**Geräte-Registrierung aktivieren:**
-1. Klicke auf "Setup" oder "Offline" im Header
-2. Wähle einen Raum und Gerätetyp
-3. Optional: Aktiviere Mikrofon/Lautsprecher-Capabilities
-4. Nach erfolgreicher Registrierung zeigt der Header den Raumnamen an
+Chat funktioniert ohne Geräte-Registrierung, aber Raum-Kontext erfordert diese.
 
 ## Raum-Management
 
-### Raum-Verwaltung
 - **CRUD-Operationen**: Räume erstellen, bearbeiten, löschen
 - **Alias-System**: Normalisierte Namen für Sprachbefehle
+- **Home Assistant Area Sync**: Import und Export von Areas mit Konfliktlösung
 - **Source-Tracking**: Ursprung des Raums (Renfield, Home Assistant, Satellite)
-- **Icon-Support**: Material Design Icons für Räume
-
-### Home Assistant Area Sync
-- **Bidirektionaler Sync**: Import und Export von Areas
-- **Konfliktlösung**: Skip, Link oder Overwrite bei Namenskollisionen
-- **Automatische Verknüpfung**: Räume mit gleichen Namen werden verknüpft
-- **Area Registry API**: Nutzt HA WebSocket API
-
-### Geräte pro Raum
-- **Übersicht**: Alle Geräte eines Raums auf einen Blick
-- **Online-Status**: Echtzeit-Anzeige welche Geräte verbunden sind
-- **Geräte-Icons**: Visuelle Unterscheidung nach Gerätetyp
-- **Geräte verschieben**: Geräte zwischen Räumen verschieben
+- **Geräte pro Raum**: Übersicht, Online-Status, Geräte verschieben
 
 ## Home Assistant Integration
+
+Steuerung erfolgt über den Home Assistant MCP-Server (`HA_MCP_ENABLED=true`) oder die direkte REST API (`/api/homeassistant`).
 
 ### Gerätesteuerung
 - **Lichter**: Ein/Aus/Dimmen/Farbsteuerung
 - **Schalter**: Beliebige Schalter steuern
-- **Klimaanlagen**: Temperatur und Modi setzen
-- **Rollläden**: Öffnen/Schließen/Position setzen
+- **Klimaanlagen**: Temperatur und Modi
+- **Rollläden**: Öffnen/Schließen/Position
 - **Sensoren**: Status abfragen
 
 ### Natural Language Control
@@ -174,411 +419,61 @@ Das Frontend verwendet **zwei separate WebSocket-Verbindungen** für unterschied
 "Schalte das Licht im Wohnzimmer ein"
 "Mach die Heizung im Schlafzimmer auf 21 Grad"
 "Sind alle Fenster geschlossen?"
-"Schließe alle Rollläden"
+"Aktiviere Filmabend"
 ```
 
 ### Entity Discovery
-- **Automatische Erkennung**: Findet alle Home Assistant Entities
-- **Fuzzy Search**: Versteht auch ungenaue Namen
-- **Domain-Filterung**: Zeige nur bestimmte Gerätetypen
-- **Echtzeitstatus**: Live-Updates der Gerätezustände
-
-### Szenen und Automationen
-- **Szenen aktivieren**: "Aktiviere Filmabend"
-- **Automationen triggern**: "Starte Gute-Nacht-Routine"
-- **Gruppensteuerung**: Mehrere Geräte gleichzeitig
+- Automatische Erkennung aller Home Assistant Entities
+- Keyword-Refresh: `POST /admin/refresh-keywords`
+- Domain-Filterung, Echtzeitstatus
 
 ## Kamera-Überwachung
 
 ### Frigate Integration
 - **Event-Erkennung**: Person, Auto, Tier, etc.
-- **Objekt-Tracking**: Verfolgt bewegte Objekte
 - **Snapshot-Zugriff**: Bilder von Events abrufen
-- **Zone-Überwachung**: Verschiedene Bereiche definieren
-
-### Intelligente Benachrichtigungen
-- **Relevanz-Filter**: Nur wichtige Events
-- **Person-Erkennung**: Unterscheidet zwischen Personen und anderen Objekten
-- **Tageszeit-Anpassung**: Unterschiedliche Regeln für Tag/Nacht
-- **Bekannte Gesichter**: Optional mit Gesichtserkennung
-
-### Event-Historie
-- **Zeitliche Suche**: Events nach Zeitraum filtern
-- **Objekt-Filterung**: Nur bestimmte Objekttypen
-- **Konfidenz-Werte**: Wie sicher die Erkennung war
-- **Multi-Kamera**: Alle Kameras im Überblick
-
-### Real-Time Monitoring
-- **MQTT Events**: Sofortige Benachrichtigung bei neuen Events
-- **Live-Status**: Aktuelle Kamera-Stati
-- **Streaming**: Optional Live-Streams anzeigen
-
-## n8n Workflow Integration
-
-### Workflow-Trigger
-- **Webhook-basiert**: Triggert n8n Workflows per Webhook
-- **Parameter-Übergabe**: Sendet Daten an Workflows
-- **Status-Feedback**: Erhält Rückmeldung vom Workflow
-- **Error-Handling**: Behandelt Fehler graceful
-
-### Anwendungsfälle
-```
-"Erstelle ein Backup"
-"Sende mir den Wochenbericht"
-"Starte die Abendroutine"
-"Prüfe die Sensoren"
-```
-
-### Workflow-Verwaltung
-- **Name-Mapping**: Workflows über Namen ansprechen
-- **Dokumentation**: Workflows in Datenbank dokumentieren
-- **Scheduling**: Zeitgesteuerte Workflows
-
-## Plugin System
-
-### YAML-basierte Plugins
-- **Keine Code-Änderungen**: Plugins werden über YAML definiert
-- **Hot-Reload**: Plugins werden beim Start geladen
-- **Umgebungsvariablen**: Konfiguration über .env
-
-### Verfügbare Plugins
-- **Weather** (OpenWeatherMap): Wetterdaten und Vorhersagen
-- **News** (NewsAPI): Aktuelle Nachrichten
-- **Search** (SearXNG): Web-Suche ohne API-Key
-- **Music** (Spotify): Musik-Steuerung
-
-### Plugin-Entwicklung
-- **Einfache Syntax**: YAML-basierte Definition
-- **API-Mapping**: HTTP-Anfragen konfigurieren
-- **Response-Mapping**: Antworten transformieren
-- **Intent-Integration**: Automatische Intent-Erkennung
-
-## MCP Integration (Model Context Protocol)
-
-### Universelle Tool-Schnittstelle
-- **Dynamische Tool-Erkennung**: Externe MCP-Server werden automatisch als LLM-Tools eingebunden
-- **Keine Code-Änderung nötig**: Neue Tools per YAML-Konfiguration hinzufügen
-- **Drei Transport-Typen**: Streamable HTTP, SSE und Stdio
-- **Namensraum-System**: Tools als `mcp.<server>.<tool>` — kollisionsfrei mit bestehenden Intents
+- **Zone-Überwachung**: Verschiedene Bereiche
+- **Event-Historie**: Zeitliche Suche, Objekt-Filterung, Konfidenz-Werte
 
 ### Konfiguration
-```yaml
-# config/mcp_servers.yaml
-servers:
-  - name: n8n
-    url: "${N8N_MCP_URL:-http://n8n.local:5678/mcp}"
-    transport: streamable_http
-    auth_token_env: N8N_API_TOKEN
-    enabled: "${N8N_MCP_ENABLED:-false}"
+```env
+FRIGATE_URL=http://frigate.local:5000
+FRIGATE_TIMEOUT=10.0
 ```
+
+## Zugriffskontrolle (RPBAC)
+
+Optional aktivierbares JWT-basiertes Role-Permission System.
+
+### Berechtigungs-Hierarchie
+```
+Knowledge Bases: kb.all > kb.shared > kb.own > kb.none
+Smart Home:      ha.full > ha.control > ha.read > ha.none
+Kameras:         cam.full > cam.view > cam.none
+```
+
+### Standard-Rollen
+
+| Rolle | KB | Smart Home | Kameras |
+|-------|----|-----------|---------|
+| Admin | Vollzugriff | Vollzugriff | Vollzugriff |
+| Familie | Eigene + geteilte | Vollzugriff | Ansehen |
+| Gast | Keine | Nur lesen | Keine |
 
 ### Features
-- **Eager Connection**: Verbindung beim Startup, nicht pro Request
-- **Background Refresh**: Automatischer Health-Check und Tool-Refresh
-- **Partial Failure**: Ein fehlender Server blockiert nicht die anderen
-- **Env-Var Substitution**: `${VAR}` und `${VAR:-default}` in der YAML-Konfiguration
-- **Agent-Integration**: MCP-Tools stehen im Agent Loop zur Verfügung
-- **Admin-API**: Status, Tool-Liste und manueller Refresh über `/api/mcp/*`
+- JWT Access + Refresh Tokens
+- Voice Authentication (optional)
+- Resource Ownership (KBs, Konversationen)
+- KB-Sharing zwischen Nutzern
 
-### Umgebungsvariablen
-```bash
-MCP_ENABLED=true                          # MCP aktivieren
-MCP_CONFIG_PATH=config/mcp_servers.yaml   # Pfad zur Konfiguration
-MCP_REFRESH_INTERVAL=60                   # Background-Refresh (Sekunden)
-MCP_CONNECT_TIMEOUT=10.0                  # Verbindungs-Timeout
-MCP_CALL_TIMEOUT=30.0                     # Tool-Call-Timeout
+### Konfiguration
+```env
+AUTH_ENABLED=false                 # Master-Switch (opt-in)
+SECRET_KEY=changeme               # JWT Secret
+VOICE_AUTH_ENABLED=false          # Stimm-Authentifizierung
 ```
 
-### Admin-Endpoints
-- `GET /api/mcp/status` — Server-Verbindungen, Tool-Counts, Fehler
-- `GET /api/mcp/tools` — Alle entdeckten MCP-Tools mit Schemas
-- `POST /api/mcp/refresh` — Tool-Listen manuell refreshen
-
-### Admin-UI: Integrationen (`/admin/integrations`)
-Die Integrationsseite vereint MCP-Server und YAML-Plugins in einer übersichtlichen Oberfläche:
-
-**MCP-Server Sektion:**
-- **Übersicht**: Status aller konfigurierten MCP-Server (Online/Offline)
-- **Expandierbare Server**: Klick auf einen Server zeigt verfügbare Tools
-- **Tool-Details**: Modal mit Tool-Namen, Schema und Beschreibung
-- **Transport-Badges**: Anzeige des Verbindungstyps (stdio, streamable_http, sse)
-- **Fehlerdetails**: Bei Offline-Servern wird der letzte Fehler angezeigt
-- **Refresh-Button**: Manuelles Aktualisieren der Verbindungen
-
-**YAML-Plugins Sektion:**
-- **Plugin-Liste**: Alle geladenen Plugins mit Status (Aktiviert/Deaktiviert)
-- **Toggle-Button**: Plugins ein-/ausschalten (erfordert `plugins.manage` Berechtigung)
-- **Details-Modal**: Version, Autor, Konfigurationsvariablen und Intents
-- **Intent-Übersicht**: Expandierbare Intent-Details mit Parametern
-
-**Statistiken:**
-- Anzahl MCP-Server / Verbundene Server / MCP-Tools
-- Anzahl YAML-Plugins / Aktive Plugins / Gesamt-Intents
-
-## Task Management
-
-### Task-Queue
-- **Asynchrone Verarbeitung**: Tasks laufen im Hintergrund
-- **Prioritäts-System**: Wichtige Tasks zuerst
-- **Status-Tracking**: Pending, Running, Completed, Failed
-- **Result-Storage**: Ergebnisse werden gespeichert
-
-### Task-Typen
-- **Home Assistant**: Gerätesteuerung
-- **n8n**: Workflow-Trigger
-- **Research**: Web-Recherchen
-- **Camera**: Kamera-Analysen
-- **Custom**: Eigene Task-Typen
-
-### Task-History
-- **Vollständiges Log**: Alle Tasks mit Zeitstempel
-- **Filterung**: Nach Status, Typ, Datum
-- **Error-Logs**: Detaillierte Fehlermeldungen
-- **Performance-Metriken**: Laufzeit-Statistiken
-
-## KI-Features
-
-### Ollama LLM
-- **Lokale Verarbeitung**: Kein Internet nötig
-- **Modell-Auswahl**: Verschiedene Größen verfügbar
-- **GPU-Beschleunigung**: Optional für bessere Performance
-- **Kontext-Fenster**: Großer Kontext für komplexe Anfragen
-- **Externe Instanz**: Kann auf separatem GPU-Server laufen
-
-### Intent Recognition
-- **Automatisch**: Erkennt Benutzerabsicht aus Text
-- **Confidence-Scores**: Wie sicher die Erkennung ist
-- **Fallback**: Bei Unsicherheit nachfragen
-
-### Agent Loop (ReAct — Multi-Step Tool Chaining)
-- **Mehrstufige Anfragen**: Komplexe Queries mit bedingter Logik und Tool-Verkettung
-- **Automatische Erkennung**: Regex-basierte Complexity Detection (Zero-Cost, kein LLM-Call)
-- **Echtzeit-Feedback**: Nutzer sieht jeden Schritt über WebSocket (Thinking → Tool Call → Result → Answer)
-- **Tool-Registry**: Alle HA-Tools und YAML-Plugins stehen als Agent-Tools zur Verfügung
-- **Sicherheitsmechanismen**: Max Steps, Per-Step Timeout, Total Timeout, JSON-Fallback
-- **Opt-in**: Deaktiviert by default (`AGENT_ENABLED=false`), einfache Anfragen nutzen weiter den schnellen Single-Intent-Pfad
-
-**Beispiel:**
-```
-"Wie ist das Wetter in Berlin und wenn es kälter als 10 Grad ist, suche ein Hotel"
-→ Agent Step 1: weather.get_current(Berlin) → 8°C
-→ Agent Step 2: search.web("4* Hotel Berlin") → 5 Ergebnisse
-→ Finale Antwort: "Es sind 8°C in Berlin. Da es kälter als 10° ist, hier Hotel-Empfehlungen: ..."
-```
-
-#### Complexity Detection — Erkannte Muster
-
-Der `ComplexityDetector` prüft jede Nachricht per Regex auf 5 Mustergruppen. Sobald **ein** Muster matcht, wird der Agent Loop aktiviert. Nachrichten unter 10 Zeichen werden immer als einfach eingestuft.
-
-| Gruppe | Erkennt | Beispiele |
-|--------|---------|-----------|
-| **Bedingungs-Muster** | Wenn-Dann-Konstrukte | "**Wenn** es regnet, **dann** schließe die Fenster" / "**Falls** die Temperatur über 25° ist, **dann** schalte die Klima ein" / "**If** ... **then** ..." |
-| **Sequenz-Muster** | Aufeinanderfolgende Aktionen | "Hole Wetter **und dann** suche ein Restaurant" / "Schalte das Licht ein, **danach** stelle die Heizung ein" / "**Anschließend** ..." / "**Als nächstes** ..." |
-| **Vergleichs-Muster** | Schwellwert-Vergleiche | "**wärmer als** 20 Grad" / "**höher als** 100 Euro" / "**über** 4 Sterne" / "**unter** 50€" / "**above**/**below** + Zahl" |
-| **Multi-Aktions-Muster** | Zwei Aktionsverben mit "und" | "**Schalte** das Licht ein **und stelle** die Heizung auf 22°" / "**Turn** on the lights **and set** the thermostat" |
-| **Kombinierte-Fragen-Muster** | Zwei Fragewörter mit "und" | "**Wie** ist das Wetter **und was** gibt es Neues?" / "**What** is the weather **and how** are the stock prices?" |
-
-**Wichtige Details:**
-
-- **Word Boundaries (`\b`)**: Verhindert False Positives — "Dennoch" matcht nicht als "dann", "Wenn**gleich**" matcht nicht als "Wenn...dann".
-- **Aktionsverben-Liste** (Multi-Aktion): `schalte`, `mach`, `stelle`, `öffne`, `schließe`, `starte`, `stoppe`, `suche`, `finde`, `hole`, `zeige`, `sende`, `schicke` (DE) / `turn`, `switch`, `set`, `open`, `close`, `start`, `stop`, `search`, `find`, `get`, `show`, `send` (EN). Nur wenn **zwei** dieser Verben mit "und"/"and" verbunden sind, wird der Agent aktiviert.
-- **Vergleiche direkt**: `wärmer als` matcht, aber `höher ist als` nicht — das Adjektiv muss direkt vor "als" stehen (kein Wort dazwischen).
-- **Einfaches "und" reicht nicht**: "Schalte das Licht ein und erzähl mir einen Witz" aktiviert den Agent **nicht**, weil "erzähl" kein Aktionsverb in der Liste ist.
-- **Sprachen**: Alle 5 Gruppen unterstützen Deutsch und Englisch mit `re.IGNORECASE`.
-
-### Kontextverständnis
-- **Session-Memory**: Merkt sich Gespräch
-- **Entity-Resolution**: Versteht "es" und "dort"
-- **Time-Awareness**: Versteht zeitliche Bezüge
-- **Location-Awareness**: Versteht Räume und Orte
-- **Follow-up Fragen**: Versteht "Mach es aus" oder "Und morgen?" ohne explizite Referenzen
-
-### Konversations-Persistenz
-- **WebSocket-Integration**: Kontext bleibt über die gesamte Session erhalten
-- **Satellite-Support**: Tägliche Sessions für Voice-Commands
-- **Datenbank-Speicherung**: Alle Nachrichten werden in PostgreSQL gespeichert
-- **History-Loading**: Kontext wird aus DB geladen bei Reconnect
-
-**Beispiel für Follow-up:**
-```
-Nutzer: "Schalte das Licht im Wohnzimmer an"
-Renfield: "Ich habe das Licht eingeschaltet."
-
-Nutzer: "Mach es wieder aus"
-→ Versteht "es" = Wohnzimmer-Licht
-Renfield: "Ich habe das Licht ausgeschaltet."
-```
-
-**Unterstützte Kanäle:**
-| Kanal | Session-ID | Historie |
-|-------|------------|----------|
-| WebSocket (`/ws`) | Client-provided | 10 Nachrichten |
-| Satellite | Tägliche Sessions | 5 Nachrichten |
-| REST API | Client-provided | 20 Nachrichten |
-
-## Progressive Web App
-
-### Multi-Platform
-- **Desktop**: Vollwertiger Browser
-- **Tablet**: Optimierte Touch-Bedienung
-- **Smartphone**: Mobile-First Design
-- **Offline**: Funktioniert ohne Internet
-
-### iOS Support
-- **Home-Screen**: Installierbar wie native App
-- **Full-Screen**: Ohne Browser-UI
-- **Push-Benachrichtigungen**: Optional aktivierbar
-- **Haptic-Feedback**: Native iOS-Feeling
-
-### Responsive Design
-- **Adaptive Layout**: Passt sich Bildschirmgröße an
-- **Touch-Optimiert**: Große Buttons, Swipe-Gesten
-- **Dark Mode**: Angenehm für die Augen
-- **Accessibility**: Screen-Reader kompatibel
-
-## Sicherheit & Datenschutz
-
-### Offline-First
-- **Keine Cloud**: Alle Daten bleiben lokal
-- **Keine Telemetrie**: Kein Tracking
-- **Keine externen APIs**: Außer für optional aktivierte Features
-
-### Datenspeicherung
-- **Verschlüsselte Verbindungen**: HTTPS optional
-- **Token-Sicherheit**: Home Assistant Tokens sicher gespeichert
-- **Session-Management**: Sichere Session-Verwaltung
-- **Datenbank-Backups**: Regelmäßige Backups möglich
-
-### Privacy
-- **DSGVO-konform**: Keine Daten verlassen dein Netzwerk
-- **Kamera-Daten**: Bleiben lokal
-- **Chat-Historie**: Nur auf deinem Server
-- **Keine Profilbildung**: Keine Datensammlung
-
-## Performance
-
-### GPU-Beschleunigung
-- **NVIDIA CUDA**: Support für NVIDIA GPUs
-- **Whisper-Beschleunigung**: Schnellere Transkription
-- **Ollama-GPU**: Schnellere LLM-Inferenz
-- **Docker GPU**: Native Container-Unterstützung
-
-### Optimierungen
-- **Redis-Caching**: Schnelle Datenzugriffe
-- **Connection-Pooling**: Effiziente Datenbankverbindungen
-- **Lazy-Loading**: Lädt nur benötigte Daten
-- **Image-Optimization**: Komprimierte Bilder
-
-### Skalierung
-- **Horizontal**: Mehrere Backend-Instanzen möglich
-- **Vertical**: Unterstützt große Server
-- **Load-Balancing**: Optional mit Nginx
-- **Microservices**: Modular erweiterbar
-
-## Erweiterbarkeit
-
-### Plugin-System
-- **Custom Integrations**: Eigene Integrationen hinzufügen
-- **Custom Task-Types**: Neue Task-Typen definieren
-- **Custom Commands**: Eigene Befehle registrieren
-- **Webhooks**: Events nach außen senden
-
-### API
-- **REST API**: Vollständige REST-Schnittstelle
-- **WebSocket**: Für Echtzeit-Features
-- **OpenAPI**: Automatische Dokumentation
-- **Client-Libraries**: Einfache Integration
-
-### Customization
-- **Themes**: UI anpassbar
-- **Languages**: Vollständige Mehrsprachigkeit (DE/EN)
-- **Voices**: Verschiedene TTS-Stimmen
-- **Models**: Austauschbare KI-Modelle
-
-## Monitoring
-
-### System-Health
-- **Service-Status**: Alle Services überwachen
-- **Resource-Usage**: CPU, RAM, Disk
-- **Error-Rates**: Fehlerquoten tracken
-- **Response-Times**: Performance messen
-
-### Logging
-- **Strukturierte Logs**: JSON-formatiert
-- **Log-Levels**: Debug, Info, Warning, Error
-- **Log-Rotation**: Automatische Bereinigung
-- **Centralized**: Alle Logs an einem Ort
-
-### Metrics
-- **Prometheus**: Optional integrierbar
-- **Grafana**: Dashboard-Visualisierung
-- **Alerting**: Benachrichtigungen bei Problemen
-- **Historical Data**: Langzeit-Statistiken
-
-## Wartung
-
-### Updates
-- **Rolling Updates**: Keine Downtime
-- **Automatic Migrations**: Datenbank-Updates automatisch
-- **Backup vor Update**: Automatische Backups
-- **Rollback**: Einfaches Zurücksetzen
-
-### Backup & Restore
-- **Datenbank**: PostgreSQL Dumps
-- **Konfiguration**: .env Dateien
-- **Models**: KI-Modelle sichern
-- **Automatisch**: Geplante Backups
-
-### Troubleshooting
-- **Health-Checks**: System-Diagnose
-- **Log-Analysis**: Fehlersuche
-- **Debug-Mode**: Detaillierte Ausgaben
-- **Support**: Community-Support
-
-## UI/UX Features
-
-### Benutzerfreundlichkeit
-- **Intuitive Navigation**: Klare Menüstruktur
-- **Keyboard-Shortcuts**: Schnelle Bedienung
-- **Search**: Globale Suche
-- **Notifications**: Toast-Benachrichtigungen
-
-### Accessibility
-- **Screen-Reader**: Volle Unterstützung
-- **Keyboard-Navigation**: Ohne Maus bedienbar
-- **High-Contrast**: Bessere Lesbarkeit
-- **Font-Scaling**: Anpassbare Textgröße
-
-### Responsive
-- **Mobile-First**: Für Smartphones optimiert
-- **Tablet-Optimized**: Nutzt größere Bildschirme
-- **Desktop-Features**: Volle Features auf Desktop
-- **Adaptive UI**: Passt sich an Gerät an
-
-## Dark Mode
-
-### Theme-Unterstützung
-- **Drei Modi**: Hell, Dunkel und System (folgt OS-Präferenz)
-- **Persistente Einstellung**: Theme wird in localStorage gespeichert
-- **FOUC-Prevention**: Kein Flackern beim Laden durch Pre-Render-Script
-- **Smooth Transitions**: Sanfte Übergänge zwischen den Modi
-
-### Implementierung
-- **Tailwind CSS**: Class-basiertes Dark Mode mit `dark:` Prefix
-- **ThemeContext**: React Context für globale Theme-Verwaltung
-- **ThemeToggle**: Dropdown-Menü im Header für Theme-Auswahl
-- **System-Integration**: Reagiert auf OS Dark Mode Änderungen
-
-### Gestaltung
-- **Light Mode**: Heller Hintergrund (gray-50), dunkler Text (gray-900)
-- **Dark Mode**: Dunkler Hintergrund (gray-900), heller Text (gray-100)
-- **Konsistente Farben**: Alle Komponenten unterstützen beide Modi
-- **Accessible**: Ausreichende Kontrastverhältnisse in beiden Modi
-
-### Verwendung
-1. Klicke auf das Sonne/Mond-Symbol im Header
-2. Wähle zwischen "Hell", "Dunkel" oder "System"
-3. Die Einstellung wird automatisch gespeichert
+Siehe [ACCESS_CONTROL.md](ACCESS_CONTROL.md) für vollständige Dokumentation.
 
 ## Mehrsprachigkeit (i18n)
 
@@ -586,60 +481,161 @@ Renfield: "Ich habe das Licht ausgeschaltet."
 - **Deutsch (de)**: Vollständig übersetzt (Standard)
 - **Englisch (en)**: Vollständig übersetzt
 
-### Frontend-Internationalisierung
-- **react-i18next**: Bewährte i18n-Library für React
-- **Automatische Erkennung**: Browsersprache wird erkannt
-- **Persistente Speicherung**: Spracheinstellung in localStorage
-- **Fallback**: Deutsch als Fallback-Sprache
-
-### Sprachwechsel
-- **Header-Dropdown**: Globus-Icon im Header
-- **Sofortige Umschaltung**: Alle Texte wechseln sofort
-- **Benutzer-Präferenz**: Einstellung wird pro Benutzer gespeichert
-- **Datum/Zeit-Formatierung**: Lokalisierte Formatierung
+### Implementierung
+- **react-i18next** für Frontend-Internationalisierung
+- **Automatische Erkennung** der Browsersprache
+- **Persistente Speicherung** in localStorage
+- **Header-Dropdown** mit Globus-Icon für Sprachwechsel
 
 ### Übersetzte Bereiche
-| Bereich | Übersetzungen |
-|---------|---------------|
-| Navigation | Menü, Sidebar, Breadcrumbs |
-| Chat | Nachrichten, Placeholder, Aktionen |
-| Dashboard | Widgets, Statistiken, Status |
-| Einstellungen | Alle Formulare und Labels |
-| Geräteverwaltung | Räume, Geräte, Capabilities |
-| Benutzer & Rollen | CRUD-Dialoge, Berechtigungen |
-| Fehler & Validierung | Alle Fehlermeldungen |
+Navigation, Chat, Dashboard, Einstellungen, Geräteverwaltung, Benutzer & Rollen, Fehlermeldungen
 
-### Technische Details
-```javascript
-// Verwendung in Komponenten
-import { useTranslation } from 'react-i18next';
+Siehe [MULTILANGUAGE.md](MULTILANGUAGE.md) für die vollständige Anleitung.
 
-function MyComponent() {
-  const { t } = useTranslation();
-  return <h1>{t('common.welcome')}</h1>;
-}
+## Dark Mode
 
-// Mit Variablen
-{t('users.deleteConfirm', { username: 'Max' })}
-// → "Möchtest du 'Max' wirklich löschen?"
+- **Drei Modi**: Hell, Dunkel, System (folgt OS-Präferenz)
+- **Tailwind CSS**: Class-basiertes Dark Mode mit `dark:` Prefix
+- **ThemeContext**: React Context für globale Theme-Verwaltung
+- **Persistenz**: Einstellung wird in localStorage gespeichert
+- **FOUC-Prevention**: Kein Flackern durch Pre-Render-Script
+
+## Progressive Web App
+
+- **Multi-Platform**: Desktop, Tablet, Smartphone
+- **Installierbar**: Home-Screen auf iOS/Android
+- **Full-Screen**: Ohne Browser-UI
+- **Responsive**: Mobile-First Design mit adaptivem Layout
+- **Offline**: Funktioniert ohne Internet (Service Worker)
+
+## Sicherheit
+
+### Offline-First
+- Alle Daten bleiben lokal, keine Cloud-Verbindungen für Kernfunktionen
+- Keine Telemetrie, kein Tracking
+
+### Rate Limiting
+```env
+# REST API
+API_RATE_LIMIT_DEFAULT=100/minute
+API_RATE_LIMIT_AUTH=10/minute       # Login/Register (strenger)
+API_RATE_LIMIT_VOICE=30/minute
+API_RATE_LIMIT_CHAT=60/minute
+API_RATE_LIMIT_ADMIN=200/minute
+
+# WebSocket
+WS_RATE_LIMIT_PER_SECOND=50        # Ermöglicht Audio-Streaming
+WS_RATE_LIMIT_PER_MINUTE=1000
+WS_MAX_CONNECTIONS_PER_IP=10
+WS_MAX_MESSAGE_SIZE=1000000         # 1MB
 ```
 
-### Sprach-Dateien
-```
-src/frontend/src/i18n/
-├── index.js           # i18next Konfiguration
-└── locales/
-    ├── de.json        # Deutsche Übersetzungen (~400 Keys)
-    └── en.json        # Englische Übersetzungen (~400 Keys)
+### Circuit Breaker
+
+Automatische Ausfallsicherung für LLM- und Agent-Aufrufe:
+
+| Zustand | Beschreibung |
+|---------|-------------|
+| CLOSED | Normal — Requests werden durchgeleitet |
+| OPEN | Service ausgefallen — Requests sofort abgelehnt |
+| HALF_OPEN | Recovery-Test — Einzelne Requests durchgelassen |
+
+```env
+CB_FAILURE_THRESHOLD=3              # Fehler bis OPEN
+CB_LLM_RECOVERY_TIMEOUT=30.0       # LLM Recovery (Sekunden)
+CB_AGENT_RECOVERY_TIMEOUT=60.0     # Agent Recovery (Sekunden)
 ```
 
-### Neue Übersetzungen hinzufügen
-1. Key in beide JSON-Dateien einfügen
-2. `t('namespace.key')` in der Komponente verwenden
-3. Für Variablen: `t('key', { var: value })`
+### Secrets Management
 
-**Dokumentation:** Siehe `docs/MULTILANGUAGE.md` für vollständige Anleitung.
+Produktion nutzt Docker Compose file-based Secrets (`/run/secrets/`) statt `.env` für sensitive Werte. Pydantic Settings lädt aus `secrets_dir="/run/secrets"`, und MCP-Client injiziert Secrets in `os.environ` für YAML-Substitution und stdio-Subprozesse.
+
+Siehe [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) für Details.
+
+### Weitere Sicherheitsfeatures
+- **CORS**: Konfigurierbare Origins (`CORS_ORIGINS`)
+- **Trusted Proxies**: CIDR-basiert (`TRUSTED_PROXIES`)
+- **WebSocket Auth**: Optional aktivierbar (`WS_AUTH_ENABLED`)
+- **Passwort-Hashing**: bcrypt
+- **MCP Response Limits**: Max Response-Größe begrenzt (`MCP_MAX_RESPONSE_SIZE`)
+
+## Monitoring
+
+### Prometheus Metrics
+
+Opt-in Endpoint für Prometheus-kompatible Metriken:
+
+```env
+METRICS_ENABLED=false               # Aktivieren: true
+```
+
+Endpoint: `GET /metrics` (Prometheus Exposition Format)
+
+### Health Checks
+- `GET /health` — Backend Health Check
+- `GET /api/mcp/status` — MCP-Server Status
+- Docker Compose Health Checks für alle Container
+
+### Logging
+- **Strukturierte Logs**: Konfigurierbar via `LOG_LEVEL` (DEBUG, INFO, WARNING, ERROR)
+- **Container-Logs**: `docker compose logs -f backend`
+
+## LLM-Konfiguration
+
+### Multi-Modell Support
+
+Renfield unterstützt separate Modelle pro Aufgabe. Jedes kann auf einer anderen Ollama-Instanz laufen.
+
+```env
+# Basis
+OLLAMA_URL=http://ollama:11434
+OLLAMA_NUM_CTX=32768                # Context Window
+
+# Pro Aufgabe
+OLLAMA_CHAT_MODEL=qwen3:14b        # Chat-Antworten
+OLLAMA_INTENT_MODEL=qwen3:8b       # Intent-Erkennung
+OLLAMA_RAG_MODEL=qwen3:14b         # RAG-Antworten
+OLLAMA_EMBED_MODEL=nomic-embed-text # Embeddings (768 Dim.)
+OLLAMA_MODEL=llama3.2:3b           # Legacy Fallback
+
+# Agent (optional)
+AGENT_MODEL=                        # Separates Agent-Modell
+AGENT_OLLAMA_URL=                   # Separate Ollama-Instanz
+```
+
+### Externe Ollama-Instanz
+
+Ollama kann auf einem separaten GPU-Server laufen:
+
+```env
+OLLAMA_URL=http://cuda.local:11434
+```
+
+Siehe [LLM_MODEL_GUIDE.md](LLM_MODEL_GUIDE.md) für Modell-Empfehlungen und Benchmarks.
+
+### LLM Client Factory
+
+Alle Services nutzen eine zentrale Factory (`utils/llm_client.py`) mit URL-basiertem Caching (gleiche URL → gleiche Client-Instanz) und einem `LLMClient` Protocol.
+
+## Plugin System (Legacy)
+
+YAML-basierte REST-API-Integrationen für einfache Dienste ohne eigenen MCP-Server.
+
+```yaml
+name: mein_plugin
+version: 1.0.0
+enabled_var: MEIN_PLUGIN_ENABLED
+config:
+  url: MEIN_PLUGIN_API_URL
+intents:
+  - name: mein_plugin.aktion
+    api:
+      method: GET
+      url: "{config.url}/endpoint"
+```
+
+> **Hinweis:** MCP-Server sind der bevorzugte Integrationsweg. YAML-Plugins nutzen `*_PLUGIN_ENABLED` Variablen, um Konflikte mit MCP-Server `*_ENABLED` zu vermeiden.
 
 ---
 
-Diese Features machen Renfield zu einem leistungsstarken, sicheren und benutzerfreundlichen KI-Assistenten für dein Smart Home!
+Ausführliche Entwickler-Dokumentation (Architektur, Patterns, Commands) in [CLAUDE.md](../CLAUDE.md).
