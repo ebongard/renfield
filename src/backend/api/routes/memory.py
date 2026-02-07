@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.memory_schemas import (
     MemoryCreateRequest,
+    MemoryHistoryEntry,
+    MemoryHistoryResponse,
     MemoryListResponse,
     MemoryResponse,
     MemoryUpdateRequest,
@@ -136,6 +138,43 @@ async def update_memory(
         raise
     except Exception as e:
         logger.error(f"Update memory error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/{memory_id}/history", response_model=MemoryHistoryResponse)
+@limiter.limit(settings.api_rate_limit_chat)
+async def get_memory_history(
+    request: Request,
+    memory_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = Depends(get_current_user),
+):
+    """Get modification history for a memory."""
+    try:
+        service = ConversationMemoryService(db)
+        entries = await service.get_history(memory_id)
+
+        return MemoryHistoryResponse(
+            entries=[
+                MemoryHistoryEntry(
+                    id=e["id"],
+                    memory_id=e["memory_id"],
+                    action=e["action"],
+                    old_content=e.get("old_content"),
+                    old_category=e.get("old_category"),
+                    old_importance=e.get("old_importance"),
+                    new_content=e.get("new_content"),
+                    new_category=e.get("new_category"),
+                    new_importance=e.get("new_importance"),
+                    changed_by=e["changed_by"],
+                    created_at=e["created_at"] or "",
+                )
+                for e in entries
+            ],
+            total=len(entries),
+        )
+    except Exception as e:
+        logger.error(f"Get memory history error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

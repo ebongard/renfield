@@ -16,7 +16,16 @@ from loguru import logger
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import MEMORY_CATEGORIES, ConversationMemory
+from models.database import (
+    MEMORY_ACTION_CREATED,
+    MEMORY_ACTION_DELETED,
+    MEMORY_ACTION_UPDATED,
+    MEMORY_CATEGORIES,
+    MEMORY_CHANGED_BY_RESOLUTION,
+    MEMORY_CHANGED_BY_SYSTEM,
+    ConversationMemory,
+    MemoryHistory,
+)
 from utils.config import settings
 from utils.llm_client import get_default_client
 
@@ -108,6 +117,17 @@ class ConversationMemoryService:
             expires_at=expires_at,
         )
         self.db.add(memory)
+        await self.db.flush()
+
+        await self._record_history(
+            memory_id=memory.id,
+            action=MEMORY_ACTION_CREATED,
+            new_content=content,
+            new_category=category,
+            new_importance=importance,
+            changed_by=MEMORY_CHANGED_BY_SYSTEM,
+        )
+
         await self.db.commit()
         await self.db.refresh(memory)
 
@@ -189,13 +209,23 @@ class ConversationMemoryService:
             except (TypeError, ValueError):
                 importance = 0.5
 
-            memory = await self.save(
-                content=content,
-                category=category,
-                user_id=user_id,
-                importance=importance,
-                source_session_id=session_id,
-            )
+            if settings.memory_contradiction_resolution:
+                memory = await self._apply_contradiction_resolution(
+                    content=content,
+                    category=category,
+                    importance=importance,
+                    user_id=user_id,
+                    session_id=session_id,
+                    lang=lang,
+                )
+            else:
+                memory = await self.save(
+                    content=content,
+                    category=category,
+                    user_id=user_id,
+                    importance=importance,
+                    source_session_id=session_id,
+                )
             if memory:
                 saved.append(memory)
 
@@ -435,7 +465,11 @@ class ConversationMemoryService:
     # Delete / List
     # =========================================================================
 
-    async def delete(self, memory_id: int) -> bool:
+    async def delete(
+        self,
+        memory_id: int,
+        changed_by: str = MEMORY_CHANGED_BY_SYSTEM,
+    ) -> bool:
         """Soft-delete a memory by setting is_active=False."""
         result = await self.db.execute(
             select(ConversationMemory).where(ConversationMemory.id == memory_id)
@@ -443,6 +477,15 @@ class ConversationMemoryService:
         memory = result.scalar_one_or_none()
         if not memory:
             return False
+
+        await self._record_history(
+            memory_id=memory.id,
+            action=MEMORY_ACTION_DELETED,
+            old_content=memory.content,
+            old_category=memory.category,
+            old_importance=memory.importance,
+            changed_by=changed_by,
+        )
 
         memory.is_active = False
         await self.db.commit()
@@ -495,6 +538,7 @@ class ConversationMemoryService:
         content: str | None = None,
         category: str | None = None,
         importance: float | None = None,
+        changed_by: str = "user",
     ) -> ConversationMemory | None:
         """Update a memory's content, category, or importance.
 
@@ -511,6 +555,11 @@ class ConversationMemoryService:
         if not memory:
             return None
 
+        # Capture old values before modification
+        old_content = memory.content
+        old_category = memory.category
+        old_importance = memory.importance
+
         if content is not None:
             memory.content = content
         if category is not None:
@@ -520,6 +569,18 @@ class ConversationMemoryService:
             memory.category = category
         if importance is not None:
             memory.importance = importance
+
+        await self._record_history(
+            memory_id=memory.id,
+            action=MEMORY_ACTION_UPDATED,
+            old_content=old_content,
+            old_category=old_category,
+            old_importance=old_importance,
+            new_content=memory.content,
+            new_category=memory.category,
+            new_importance=memory.importance,
+            changed_by=changed_by,
+        )
 
         await self.db.commit()
         await self.db.refresh(memory)
@@ -541,6 +602,380 @@ class ConversationMemoryService:
 
         result = await self.db.execute(query)
         return result.scalar() or 0
+
+    # =========================================================================
+    # History
+    # =========================================================================
+
+    async def _record_history(
+        self,
+        memory_id: int,
+        action: str,
+        old_content: str | None = None,
+        old_category: str | None = None,
+        old_importance: float | None = None,
+        new_content: str | None = None,
+        new_category: str | None = None,
+        new_importance: float | None = None,
+        changed_by: str = MEMORY_CHANGED_BY_SYSTEM,
+    ) -> None:
+        """Record a history entry for a memory modification."""
+        entry = MemoryHistory(
+            memory_id=memory_id,
+            action=action,
+            old_content=old_content,
+            old_category=old_category,
+            old_importance=old_importance,
+            new_content=new_content,
+            new_category=new_category,
+            new_importance=new_importance,
+            changed_by=changed_by,
+        )
+        self.db.add(entry)
+
+    async def get_history(self, memory_id: int) -> list[dict]:
+        """Get modification history for a memory."""
+        result = await self.db.execute(
+            select(MemoryHistory)
+            .where(MemoryHistory.memory_id == memory_id)
+            .order_by(MemoryHistory.created_at.asc())
+        )
+        entries = result.scalars().all()
+        return [
+            {
+                "id": e.id,
+                "memory_id": e.memory_id,
+                "action": e.action,
+                "old_content": e.old_content,
+                "old_category": e.old_category,
+                "old_importance": e.old_importance,
+                "new_content": e.new_content,
+                "new_category": e.new_category,
+                "new_importance": e.new_importance,
+                "changed_by": e.changed_by,
+                "created_at": e.created_at.isoformat() if e.created_at else None,
+            }
+            for e in entries
+        ]
+
+    # =========================================================================
+    # Contradiction Resolution
+    # =========================================================================
+
+    async def _find_similar_memories(
+        self,
+        embedding: list[float],
+        user_id: int | None,
+    ) -> list[dict]:
+        """Find memories in the contradiction similarity range (below dedup, above threshold).
+
+        Returns memories with similarity in [contradiction_threshold, dedup_threshold).
+        """
+        lower = settings.memory_contradiction_threshold
+        upper = settings.memory_dedup_threshold
+        top_k = settings.memory_contradiction_top_k
+        embedding_str = f"[{','.join(map(str, embedding))}]"
+
+        user_filter = "AND user_id = :user_id" if user_id is not None else ""
+
+        sql = text(f"""
+            SELECT id, content, category, importance,
+                   1 - (embedding <=> CAST(:embedding AS vector)) as similarity
+            FROM conversation_memories
+            WHERE is_active = true
+              AND embedding IS NOT NULL
+              {user_filter}
+            ORDER BY embedding <=> CAST(:embedding AS vector)
+            LIMIT :top_k
+        """)
+
+        params: dict = {"embedding": embedding_str, "top_k": top_k}
+        if user_id is not None:
+            params["user_id"] = user_id
+
+        result = await self.db.execute(sql, params)
+        rows = result.fetchall()
+
+        similar = []
+        for row in rows:
+            sim = float(row.similarity) if row.similarity else 0
+            if lower <= sim < upper:
+                similar.append({
+                    "id": row.id,
+                    "content": row.content,
+                    "category": row.category,
+                    "importance": row.importance,
+                    "similarity": round(sim, 3),
+                })
+        return similar
+
+    async def _resolve_contradiction(
+        self,
+        new_fact: str,
+        similar_memories: list[dict],
+        lang: str,
+    ) -> dict | None:
+        """Call LLM to decide how a new fact relates to existing memories.
+
+        Returns parsed resolution dict or None on failure.
+        """
+        from services.prompt_manager import prompt_manager
+
+        # Format existing memories for the prompt
+        mem_lines = []
+        for m in similar_memories:
+            mem_lines.append(
+                f"- ID={m['id']}: \"{m['content']}\" "
+                f"(category={m['category']}, similarity={m['similarity']})"
+            )
+        existing_str = "\n".join(mem_lines)
+
+        prompt = prompt_manager.get(
+            "memory", "contradiction_resolution_prompt", lang=lang,
+            new_fact=new_fact,
+            existing_memories=existing_str,
+        )
+        system_msg = prompt_manager.get(
+            "memory", "contradiction_resolution_system", lang=lang,
+        )
+        llm_options = prompt_manager.get_config("memory", "contradiction_llm_options") or {}
+
+        try:
+            client = await self._get_ollama_client()
+            response = await client.chat(
+                model=settings.ollama_model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                options=llm_options,
+            )
+            raw_text = response.message.content
+        except Exception as e:
+            logger.warning(f"Contradiction resolution LLM call failed: {e}")
+            return None
+
+        return self._parse_resolution_response(raw_text, similar_memories)
+
+    @staticmethod
+    def _parse_resolution_response(
+        raw_text: str,
+        similar_memories: list[dict],
+    ) -> dict | None:
+        """Parse the LLM's contradiction resolution response.
+
+        Validates action and target_memory_id against known memories.
+        Returns dict with {action, target_memory_id, updated_content, reason} or None.
+        """
+        if not raw_text:
+            return None
+
+        text_content = raw_text.strip()
+
+        # Remove markdown code blocks
+        if "```" in text_content:
+            match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text_content, re.DOTALL)
+            if match:
+                text_content = match.group(1)
+
+        # Find JSON object
+        first_brace = text_content.find('{')
+        last_brace = text_content.rfind('}')
+        if first_brace >= 0 and last_brace > first_brace:
+            text_content = text_content[first_brace:last_brace + 1]
+
+        try:
+            data = json.loads(text_content)
+        except (json.JSONDecodeError, TypeError):
+            logger.debug(f"Contradiction resolution: could not parse JSON from: {raw_text[:200]}")
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        action = data.get("action", "").upper()
+        valid_actions = {"ADD", "UPDATE", "DELETE", "NOOP"}
+        if action not in valid_actions:
+            logger.debug(f"Contradiction resolution: invalid action '{action}'")
+            return None
+
+        target_id = data.get("target_memory_id")
+        valid_ids = {m["id"] for m in similar_memories}
+
+        # Validate target_memory_id for UPDATE/DELETE
+        if action in ("UPDATE", "DELETE"):
+            if target_id is None or target_id not in valid_ids:
+                logger.debug(
+                    f"Contradiction resolution: invalid target_memory_id "
+                    f"{target_id} (valid: {valid_ids})"
+                )
+                return None
+
+        return {
+            "action": action,
+            "target_memory_id": target_id,
+            "updated_content": data.get("updated_content"),
+            "reason": data.get("reason", ""),
+        }
+
+    async def _apply_contradiction_resolution(
+        self,
+        content: str,
+        category: str,
+        importance: float,
+        user_id: int | None,
+        session_id: str | None,
+        lang: str,
+    ) -> ConversationMemory | None:
+        """Orchestrate full contradiction resolution for a single extracted fact.
+
+        1. Generate embedding
+        2. Check for exact duplicate (fast path, >= dedup threshold)
+        3. Search for similar memories (contradiction range)
+        4. If found -> call LLM for resolution
+        5. Execute decision (ADD/UPDATE/DELETE/NOOP)
+        6. All failures fall back to ADD
+        """
+        # Generate embedding
+        embedding = None
+        try:
+            embedding = await self._get_embedding(content)
+        except Exception as e:
+            logger.warning(f"Contradiction resolution: embedding failed: {e}")
+
+        # Fast path: exact duplicate check
+        if embedding:
+            duplicate = await self._find_duplicate(embedding, user_id)
+            if duplicate:
+                duplicate.access_count = (duplicate.access_count or 0) + 1
+                duplicate.last_accessed_at = datetime.now(UTC).replace(tzinfo=None)
+                await self.db.commit()
+                await self.db.refresh(duplicate)
+                logger.debug(f"Contradiction resolution: deduplicated (id={duplicate.id})")
+                return duplicate
+
+        # Search for similar memories in contradiction range
+        similar = []
+        if embedding:
+            try:
+                similar = await self._find_similar_memories(embedding, user_id)
+            except Exception as e:
+                logger.warning(f"Contradiction resolution: similar search failed: {e}")
+
+        # No similar memories -> just save (ADD)
+        if not similar:
+            return await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+
+        # Call LLM for resolution
+        resolution = await self._resolve_contradiction(content, similar, lang)
+
+        if not resolution:
+            # LLM failed -> fall back to ADD
+            logger.debug("Contradiction resolution: LLM failed, falling back to ADD")
+            return await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+
+        action = resolution["action"]
+        target_id = resolution.get("target_memory_id")
+        updated_content = resolution.get("updated_content")
+        reason = resolution.get("reason", "")
+
+        if action == "NOOP":
+            logger.info(f"Contradiction resolution: NOOP — {reason}")
+            return None
+
+        if action == "ADD":
+            logger.info(f"Contradiction resolution: ADD — {reason}")
+            return await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+
+        if action == "UPDATE" and target_id is not None:
+            new_content = updated_content or content
+            logger.info(f"Contradiction resolution: UPDATE id={target_id} — {reason}")
+
+            # Re-embed the updated content
+            new_embedding = None
+            try:
+                new_embedding = await self._get_embedding(new_content)
+            except Exception:
+                pass
+
+            # Update the target memory
+            result = await self.db.execute(
+                select(ConversationMemory).where(
+                    ConversationMemory.id == target_id,
+                    ConversationMemory.is_active == True,  # noqa: E712
+                )
+            )
+            target = result.scalar_one_or_none()
+            if target:
+                old_content = target.content
+                old_category = target.category
+                old_importance = target.importance
+                target.content = new_content
+                if new_embedding:
+                    target.embedding = new_embedding
+
+                await self._record_history(
+                    memory_id=target.id,
+                    action=MEMORY_ACTION_UPDATED,
+                    old_content=old_content,
+                    old_category=old_category,
+                    old_importance=old_importance,
+                    new_content=target.content,
+                    new_category=target.category,
+                    new_importance=target.importance,
+                    changed_by=MEMORY_CHANGED_BY_RESOLUTION,
+                )
+                await self.db.commit()
+                await self.db.refresh(target)
+                return target
+
+            # Target not found -> fall back to ADD
+            return await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+
+        if action == "DELETE" and target_id is not None:
+            logger.info(f"Contradiction resolution: DELETE id={target_id} — {reason}")
+            await self.delete(target_id, changed_by=MEMORY_CHANGED_BY_RESOLUTION)
+            # Save the new fact
+            return await self.save(
+                content=content,
+                category=category,
+                user_id=user_id,
+                importance=importance,
+                source_session_id=session_id,
+            )
+
+        # Shouldn't get here, but fall back to ADD
+        return await self.save(
+            content=content,
+            category=category,
+            user_id=user_id,
+            importance=importance,
+            source_session_id=session_id,
+        )
 
     # =========================================================================
     # Internal Helpers
