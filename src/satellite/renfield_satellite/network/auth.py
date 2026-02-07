@@ -26,9 +26,17 @@ except ImportError:
     URLLIB_AVAILABLE = False
 
 
-def _create_ssl_context_for_url(url: str) -> Optional[ssl.SSLContext]:
-    """Create an unverified SSL context for https:// URLs (self-signed certs)."""
+def _create_ssl_context_for_url(url: str, verify: bool = True) -> Optional[ssl.SSLContext]:
+    """Create SSL context for https:// URLs.
+
+    Args:
+        url: Target URL
+        verify: If True, verify certificates (default). If False, skip verification
+                (for self-signed certs in home networks).
+    """
     if url.startswith("https://"):
+        if verify:
+            return ssl.create_default_context()
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
@@ -39,7 +47,8 @@ def _create_ssl_context_for_url(url: str) -> Optional[ssl.SSLContext]:
 async def fetch_ws_token(
     server_base_url: str,
     satellite_id: str,
-    device_type: str = "satellite"
+    device_type: str = "satellite",
+    verify_tls: bool = True,
 ) -> Tuple[Optional[str], Optional[str]]:
     """
     Fetch WebSocket authentication token from server.
@@ -48,16 +57,17 @@ async def fetch_ws_token(
         server_base_url: HTTP base URL (e.g., http://192.168.1.100:8000)
         satellite_id: Satellite ID for identification
         device_type: Device type string (default: "satellite")
+        verify_tls: Whether to verify TLS certificates (default: True)
 
     Returns:
         Tuple of (token, protocol_version) or (None, None) if auth disabled/failed
     """
     if AIOHTTP_AVAILABLE:
-        return await _fetch_with_aiohttp(server_base_url, satellite_id, device_type)
+        return await _fetch_with_aiohttp(server_base_url, satellite_id, device_type, verify_tls)
     elif URLLIB_AVAILABLE:
         # Run sync urllib in thread pool
         return await asyncio.get_event_loop().run_in_executor(
-            None, _fetch_with_urllib, server_base_url, satellite_id, device_type
+            None, _fetch_with_urllib, server_base_url, satellite_id, device_type, verify_tls
         )
     else:
         print("⚠️ Neither aiohttp nor urllib available for token fetch")
@@ -67,7 +77,8 @@ async def fetch_ws_token(
 async def _fetch_with_aiohttp(
     server_base_url: str,
     satellite_id: str,
-    device_type: str
+    device_type: str,
+    verify_tls: bool = True,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Fetch token using aiohttp (preferred async method)."""
     try:
@@ -81,7 +92,7 @@ async def _fetch_with_aiohttp(
         }
 
         timeout = aiohttp.ClientTimeout(total=10)
-        ssl_ctx = _create_ssl_context_for_url(url)
+        ssl_ctx = _create_ssl_context_for_url(url, verify=verify_tls)
 
         async with aiohttp.ClientSession(timeout=timeout) as session:
             async with session.post(url, params=params, ssl=ssl_ctx) as response:
@@ -115,7 +126,8 @@ async def _fetch_with_aiohttp(
 def _fetch_with_urllib(
     server_base_url: str,
     satellite_id: str,
-    device_type: str
+    device_type: str,
+    verify_tls: bool = True,
 ) -> Tuple[Optional[str], Optional[str]]:
     """Fetch token using urllib (sync fallback)."""
     try:
@@ -129,7 +141,7 @@ def _fetch_with_urllib(
         req = urllib.request.Request(url, method="POST")
         req.add_header("Content-Type", "application/json")
 
-        ssl_ctx = _create_ssl_context_for_url(url)
+        ssl_ctx = _create_ssl_context_for_url(url, verify=verify_tls)
         with urllib.request.urlopen(req, timeout=10, context=ssl_ctx) as response:
             if response.status == 200:
                 data = json.loads(response.read().decode("utf-8"))

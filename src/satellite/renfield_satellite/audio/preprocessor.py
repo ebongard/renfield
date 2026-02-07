@@ -114,6 +114,8 @@ class AudioPreprocessor:
         if target_db is None:
             target_db = self.target_db
 
+        # Note: .astype(float32) creates a necessary copy — frombuffer returns a
+        # read-only view, and normalization mutates the array via gain multiplication.
         audio = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
         normalized = self._normalize(audio, target_db)
         return normalized.clip(-32768, 32767).astype(np.int16).tobytes()

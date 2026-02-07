@@ -316,6 +316,10 @@ class SileroVADLite:
         self._state = None
         self._use_new_format = True  # Detect based on model inputs
 
+        # Pre-allocate sample rate input arrays (avoids per-frame allocation)
+        self._sr_input_scalar = np.array(sample_rate, dtype=np.int64)
+        self._sr_input_array = np.array([sample_rate], dtype=np.int64)
+
         # Try to load ONNX model
         self._load_model()
 
@@ -411,8 +415,7 @@ class SileroVADLite:
             # Silero VAD requires small chunks (max ~640 samples at 16kHz).
             # Process in 512-sample frames (32ms) and return mean probability.
             frame_size = 512
-            sr_input = np.array(self.sample_rate, dtype=np.int64) if self._use_new_format \
-                else np.array([self.sample_rate], dtype=np.int64)
+            sr_input = self._sr_input_scalar if self._use_new_format else self._sr_input_array
 
             frame_probs = []
             for i in range(0, len(audio), frame_size):

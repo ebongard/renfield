@@ -6,6 +6,8 @@ Provides visual feedback for satellite states.
 """
 
 import asyncio
+import colorsys
+import math
 import threading
 import time
 from dataclasses import dataclass
@@ -100,6 +102,8 @@ class LEDController:
         self._colors: List[Color] = [
             Color(0, 0, 0, 0) for _ in range(num_leds)
         ]
+        # Cache of last written colors to skip redundant SPI writes
+        self._last_written: Optional[List[Tuple[int, int, int, int]]] = None
 
     def open(self) -> bool:
         """
@@ -137,9 +141,15 @@ class LEDController:
             self._spi = None
 
     def _write(self):
-        """Write current colors to LEDs"""
+        """Write current colors to LEDs, skipping if unchanged"""
         if not self._spi:
             return
+
+        # Skip redundant SPI writes when colors haven't changed
+        current = [(c.r, c.g, c.b, c.brightness) for c in self._colors]
+        if current == self._last_written:
+            return
+        self._last_written = current
 
         try:
             # APA102 protocol: start frame + LED data + end frame
@@ -265,7 +275,6 @@ class LEDController:
 
     def _animate_pulse(self, frame: int, color: Color, min_brightness: float):
         """Pulsing brightness animation"""
-        import math
         # Sine wave for smooth pulse
         phase = (frame % 60) / 60.0 * 2 * math.pi
         brightness_factor = (math.sin(phase) + 1) / 2  # 0 to 1
@@ -294,7 +303,6 @@ class LEDController:
 
     def _animate_breathe(self, frame: int, color: Color):
         """Slow breathing animation"""
-        import math
         phase = (frame % 80) / 80.0 * 2 * math.pi
         brightness_factor = (math.sin(phase) + 1) / 2
         brightness_factor = 0.2 + brightness_factor * 0.8
@@ -334,7 +342,6 @@ class LEDController:
     @staticmethod
     def _hsv_to_rgb(h: float, s: float, v: float) -> Tuple[int, int, int]:
         """Convert HSV to RGB"""
-        import colorsys
         r, g, b = colorsys.hsv_to_rgb(h / 360.0, s, v)
         return int(r * 255), int(g * 255), int(b * 255)
 

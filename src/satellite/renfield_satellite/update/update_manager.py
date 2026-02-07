@@ -373,20 +373,39 @@ class UpdateManager:
             raise UpdateError(UpdateStage.BACKING_UP, str(e))
 
     def _extract_package(self, package_path: Path) -> Path:
-        """Extract the update package"""
+        """Extract the update package with path traversal protection"""
         self._report_progress(UpdateStage.EXTRACTING, 55, "Extracting package...")
 
         try:
             extract_path = Path(tempfile.mkdtemp())
 
             with tarfile.open(package_path, "r:gz") as tar:
-                tar.extractall(extract_path)
+                self._safe_extract(tar, extract_path)
 
             self._report_progress(UpdateStage.EXTRACTING, 70, "Package extracted")
             return extract_path
 
+        except UpdateError:
+            raise
         except Exception as e:
             raise UpdateError(UpdateStage.EXTRACTING, str(e))
+
+    def _safe_extract(self, tar: tarfile.TarFile, extract_path: Path):
+        """Extract tar archive with path traversal protection (Zip Slip prevention)"""
+        resolved_base = extract_path.resolve()
+        for member in tar.getmembers():
+            member_path = (extract_path / member.name).resolve()
+            if not str(member_path).startswith(str(resolved_base) + os.sep) and member_path != resolved_base:
+                raise UpdateError(
+                    UpdateStage.EXTRACTING,
+                    f"Path traversal detected in archive: {member.name}"
+                )
+        # Use data filter on Python 3.12+ for additional safety
+        try:
+            tar.extractall(extract_path, filter='data')
+        except TypeError:
+            # Python <3.12 doesn't support filter parameter
+            tar.extractall(extract_path)
 
     def _install_package(self, extract_path: Path):
         """Install the extracted package"""
@@ -415,16 +434,12 @@ class UpdateManager:
             if requirements.exists():
                 shutil.copy(requirements, self.install_path / "requirements.txt")
 
-            # Install dependencies if pip is available
+            # Install dependencies if pip is available (with package whitelist)
             self._report_progress(UpdateStage.INSTALLING, 85, "Installing dependencies...")
             req_file = self.install_path / "requirements.txt"
             if req_file.exists():
                 try:
-                    subprocess.run(
-                        ["pip", "install", "-r", str(req_file), "--quiet"],
-                        check=True,
-                        timeout=120
-                    )
+                    self._install_requirements(req_file)
                 except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
                     # Continue even if pip fails - dependencies might already be installed
                     print("[Update] Warning: pip install failed, continuing anyway")
@@ -435,6 +450,44 @@ class UpdateManager:
             raise
         except Exception as e:
             raise UpdateError(UpdateStage.INSTALLING, str(e))
+
+    # Known-safe packages that may appear in satellite requirements
+    SAFE_PACKAGES = frozenset({
+        "websockets", "aiohttp", "numpy", "onnxruntime",
+        "openwakeword", "webrtcvad", "noisereduce", "spidev",
+        "lgpio", "python-mpv", "psutil", "pyyaml", "zeroconf",
+        "sounddevice", "pyaudio", "scipy", "librosa", "rpigpio",
+    })
+
+    def _install_requirements(self, req_file: Path):
+        """Install requirements with package whitelist validation"""
+        # Parse and validate packages
+        packages = []
+        with open(req_file, "r") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#") or line.startswith("-"):
+                    continue
+                # Extract package name (before any version specifier)
+                pkg_name = line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].split("!=")[0].split("[")[0].strip().lower().replace("-", "").replace("_", "")
+                packages.append((pkg_name, line))
+
+        rejected = [(name, spec) for name, spec in packages
+                     if name.replace("-", "").replace("_", "") not in
+                     {p.replace("-", "").replace("_", "") for p in self.SAFE_PACKAGES}]
+        if rejected:
+            rejected_names = [spec for _, spec in rejected]
+            print(f"[Update] Rejected unknown packages: {rejected_names}")
+            raise UpdateError(
+                UpdateStage.INSTALLING,
+                f"Unknown packages in requirements: {rejected_names}"
+            )
+
+        subprocess.run(
+            ["pip", "install", "-r", str(req_file), "--no-deps", "--quiet"],
+            check=True,
+            timeout=120
+        )
 
     async def _restart_service(self):
         """Restart the satellite service"""

@@ -10,13 +10,15 @@ Orchestrates all satellite components:
 """
 
 import asyncio
+import math
+import struct
 import time
 from enum import Enum
 from typing import Optional, Dict, Any
 
 from .config import Config
 from .audio.capture import AudioCapture
-from .audio.playback import AudioPlayback
+from .audio.playback import AudioPlayback, AudioPlaybackAsync
 from .audio.preprocessor import AudioPreprocessor
 from .audio.vad import VoiceActivityDetector, VADBackend
 from .wakeword.detector import WakeWordDetector, Detection
@@ -28,6 +30,10 @@ from .network.auth import fetch_ws_token, http_url_from_ws
 from .network.model_downloader import get_model_downloader, ModelDownloader
 from .wakeword.detector import MICRO_BUILTIN_MODELS
 from .update import UpdateManager, UpdateStage
+
+
+# Maximum audio buffer chunks to prevent unbounded memory growth (~40s at 12.5 chunks/sec)
+MAX_AUDIO_BUFFER_CHUNKS = 500
 
 
 class SatelliteState(str, Enum):
@@ -98,10 +104,11 @@ class Satellite:
             steering_angle=self.config.audio.beamforming.steering_angle,
         )
 
-        # Audio playback
+        # Audio playback (sync + async wrapper for non-blocking TTS)
         self.audio_playback = AudioPlayback(
             device=self.config.audio.playback_device,
         )
+        self.audio_playback_async = AudioPlaybackAsync(self.audio_playback)
 
         # Audio preprocessor (noise reduction + normalization)
         self.preprocessor = AudioPreprocessor(
@@ -227,6 +234,7 @@ class Satellite:
 
         if server_url:
             self.ws_client.set_server_url(server_url)
+            self.ws_client.set_verify_tls(self.config.server.verify_tls)
             print(f"Server: {server_url}")
 
             # Fetch auth token if authentication is enabled
@@ -363,7 +371,8 @@ class Satellite:
         token, protocol_version = await fetch_ws_token(
             http_url,
             self.config.satellite.id,
-            device_type="satellite"
+            device_type="satellite",
+            verify_tls=self.config.server.verify_tls,
         )
 
         if token:
@@ -426,8 +435,6 @@ class Satellite:
         """Handle incoming audio chunk from microphone (called from audio thread)"""
         # Calculate audio levels for monitoring (runs on every chunk)
         try:
-            import struct
-            import math
             if len(audio_bytes) >= 2:
                 samples = struct.unpack(f"<{len(audio_bytes)//2}h", audio_bytes)
                 if samples:
@@ -461,6 +468,8 @@ class Satellite:
             # Normalize audio for consistent volume (real-time, low latency)
             normalized_audio = self.preprocessor.normalize(audio_bytes)
             self._audio_buffer.append(normalized_audio)
+            if len(self._audio_buffer) > MAX_AUDIO_BUFFER_CHUNKS:
+                self._audio_buffer = self._audio_buffer[-MAX_AUDIO_BUFFER_CHUNKS:]
 
             # Stream normalized audio to server
             if self._session_id:
@@ -490,7 +499,6 @@ class Satellite:
         print(f"Wake word detected: {keyword} ({confidence:.2f})")
 
         # Track last wake word detection for metrics
-        import time
         self._last_wakeword = {
             "keyword": keyword,
             "confidence": confidence,
@@ -633,12 +641,14 @@ class Satellite:
         self._set_state(SatelliteState.SPEAKING)
         self._processing_start = None  # Clear processing timeout
 
-        # Play audio
-        self.audio_playback.play_wav(audio_bytes)
+        # Play audio asynchronously to avoid blocking the event loop
+        self._schedule_async(self._play_tts_and_reset(audio_bytes, is_final))
 
+    async def _play_tts_and_reset(self, audio_bytes: bytes, is_final: bool):
+        """Play TTS audio asynchronously and reset session when done"""
+        await self.audio_playback_async.play_wav(audio_bytes)
         if is_final:
-            # Return to idle after playback - use async reset
-            self._schedule_async(self._reset_session("tts_complete"))
+            await self._reset_session("tts_complete")
 
     def _on_connected(self, config: ServerConfig):
         """Handle successful connection"""
@@ -650,6 +660,7 @@ class Satellite:
             model_downloader.set_server_url(self.ws_client.server_url)
         if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
             model_downloader.set_auth_token(self.ws_client._auth_token)
+        model_downloader.set_verify_tls(self.config.server.verify_tls)
 
         # Apply config and send acknowledgment asynchronously
         self._schedule_async(self._apply_config_and_ack(config))
@@ -755,6 +766,7 @@ class Satellite:
             model_downloader.set_server_url(self.ws_client.server_url)
         if hasattr(self.ws_client, '_auth_token') and self.ws_client._auth_token:
             model_downloader.set_auth_token(self.ws_client._auth_token)
+        model_downloader.set_verify_tls(self.config.server.verify_tls)
 
         keywords = config.wake_words or []
         active_keywords = []

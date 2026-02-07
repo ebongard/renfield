@@ -43,6 +43,7 @@ class ModelDownloader:
         self.models_path = Path(models_path)
         self.server_base_url = server_base_url
         self._auth_token: Optional[str] = None
+        self._verify_tls: bool = True
 
         # Ensure models directory exists
         self.models_path.mkdir(parents=True, exist_ok=True)
@@ -62,6 +63,10 @@ class ModelDownloader:
     def set_auth_token(self, token: str):
         """Set authentication token for API requests"""
         self._auth_token = token
+
+    def set_verify_tls(self, verify: bool):
+        """Set whether to verify TLS certificates."""
+        self._verify_tls = verify
 
     def is_model_available(self, model_id: str) -> bool:
         """
@@ -145,12 +150,15 @@ class ModelDownloader:
             if self._auth_token:
                 headers["Authorization"] = f"Bearer {self._auth_token}"
 
-            # Allow self-signed certificates for https:// URLs
+            # Configure SSL context for https:// URLs
             ssl_ctx = None
             if download_url.startswith("https://"):
-                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ssl_ctx.check_hostname = False
-                ssl_ctx.verify_mode = ssl.CERT_NONE
+                if self._verify_tls:
+                    ssl_ctx = ssl.create_default_context()
+                else:
+                    ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ssl_ctx.check_hostname = False
+                    ssl_ctx.verify_mode = ssl.CERT_NONE
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(download_url, headers=headers, ssl=ssl_ctx) as response:
