@@ -27,8 +27,8 @@ except ImportError:
     print("Warning: websockets not installed. Network disabled.")
 
 
-# Maximum TTS audio payload size (2MB) to prevent OOM on constrained devices
-MAX_AUDIO_PAYLOAD_BYTES = 2 * 1024 * 1024
+# Maximum TTS audio payload size (10MB ≈ 40s speech) to prevent OOM on constrained devices
+MAX_AUDIO_PAYLOAD_BYTES = 10 * 1024 * 1024
 
 
 class ConnectionState(str, Enum):
@@ -445,7 +445,10 @@ class WebSocketClient:
             if audio_b64:
                 # Check payload size before decoding to prevent OOM on Pi
                 if len(audio_b64) > MAX_AUDIO_PAYLOAD_BYTES:
-                    print(f"⚠️ TTS audio payload too large ({len(audio_b64)} bytes), skipping")
+                    print(f"⚠️ TTS audio payload too large ({len(audio_b64)} bytes), skipping playback")
+                    # Still signal session completion so state machine doesn't hang
+                    if is_final and self._on_tts_audio:
+                        self._on_tts_audio(session_id, b"", is_final)
                 else:
                     audio_bytes = base64.b64decode(audio_b64)
                     if self._on_tts_audio:
