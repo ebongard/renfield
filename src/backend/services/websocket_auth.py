@@ -132,6 +132,12 @@ async def authenticate_websocket(
     if not settings.ws_auth_enabled:
         return {"authenticated": True, "auth_skipped": True}
 
+    # Fallback: read token from Authorization header if not provided via query
+    if not token:
+        auth_header = websocket.headers.get("authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+
     if not token:
         return None
 
