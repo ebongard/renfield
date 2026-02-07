@@ -317,6 +317,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `RAG_CONTEXT_WINDOW` — Adjacent chunks per direction for context expansion (default: `1`)
 - `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
 - Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`
+- `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 
 ## Common Development Patterns
