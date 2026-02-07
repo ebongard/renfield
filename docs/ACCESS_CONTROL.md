@@ -107,6 +107,8 @@ Beim ersten Start mit `AUTH_ENABLED=true`:
 | **Benutzer** | `users.view`, `users.manage` | Benutzerverwaltung |
 | **Rollen** | `roles.view`, `roles.manage` | Rollenverwaltung |
 | **Einstellungen** | `settings.view`, `settings.manage` | System-Einstellungen |
+| **Benachrichtigungen** | `notifications.view`, `notifications.manage` | Proaktive Benachrichtigungen |
+| **Plugins** | `plugins.none`, `plugins.use`, `plugins.manage` | Plugin-Zugriff |
 | **Admin** | `admin` | Admin-Endpoints |
 
 ### Permission-Hierarchie
@@ -177,8 +179,8 @@ Einstellungen:
 | Rolle | Beschreibung | Berechtigungen |
 |-------|--------------|----------------|
 | **Admin** | Vollzugriff | Alle Berechtigungen |
-| **Familie** | Familienmitglieder | `kb.shared`, `ha.full`, `cam.view`, `chat.own`, `rooms.read`, `speakers.own`, `tasks.view`, `rag.use` |
-| **Gast** | Eingeschränkter Zugriff | `kb.none`, `ha.read`, `cam.none`, `chat.own`, `rooms.read` |
+| **Familie** | Familienmitglieder | `kb.shared`, `ha.full`, `cam.view`, `chat.own`, `rooms.read`, `speakers.own`, `tasks.view`, `rag.use`, `plugins.use`, `notifications.view` |
+| **Gast** | Eingeschränkter Zugriff | `kb.none`, `ha.read`, `cam.none`, `chat.own`, `rooms.read`, `plugins.none` |
 
 ### System-Rollen
 

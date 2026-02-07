@@ -80,8 +80,8 @@ api/
 
 | Datei | Vorher | Nachher | Status |
 |-------|--------|---------|--------|
-| `routes/rooms.py` | 1024 | 866 | ✅ Schemas extrahiert |
-| `routes/knowledge.py` | 1019 | 924 | ✅ Schemas extrahiert |
+| `routes/rooms.py` | 1024 | 875 | ✅ Schemas extrahiert |
+| `routes/knowledge.py` | 1019 | 1076 | ✅ Schemas extrahiert, gewachsen durch neue Features |
 | `routes/speakers.py` | 650 | 650 | OK, beobachten |
 
 **Änderungen (2026-01-25):**
@@ -521,8 +521,8 @@ Bereits gepinnte Images:
 
 | Bereich | Test Files | Tests | Source Files | Ratio |
 |---------|------------|-------|--------------|-------|
-| Backend | 29 | 558 | 72 | 40% |
-| Frontend | 17 | 277 | ~40 | 43% |
+| Backend | 62 | 1642 | ~80 | 78% |
+| Frontend | 18 | 289 | ~40 | 45% |
 | Satellite | 1 | - | 15 | 7% |
 
 ### Fehlende Tests
