@@ -27,6 +27,10 @@ except ImportError:
     print("Warning: websockets not installed. Network disabled.")
 
 
+# Maximum TTS audio payload size (2MB) to prevent OOM on constrained devices
+MAX_AUDIO_PAYLOAD_BYTES = 2 * 1024 * 1024
+
+
 class ConnectionState(str, Enum):
     """WebSocket connection states"""
     DISCONNECTED = "disconnected"
@@ -91,6 +95,9 @@ class WebSocketClient:
         # Authentication
         self._auth_token: Optional[str] = None
 
+        # TLS verification
+        self._verify_tls: bool = True
+
         # Protocol version
         self._protocol_version: str = "1.0"
 
@@ -147,6 +154,10 @@ class WebSocketClient:
             token: Auth token from /api/ws/token endpoint
         """
         self._auth_token = token
+
+    def set_verify_tls(self, verify: bool):
+        """Set whether to verify TLS certificates."""
+        self._verify_tls = verify
 
     def on_state_change(self, callback: Callable[[str], None]):
         """Register callback for state changes from server"""
@@ -209,11 +220,7 @@ class WebSocketClient:
         self._running = True
         self._state = ConnectionState.CONNECTING
 
-        # Build connection URL with optional auth token
         ws_url = self.server_url
-        if self._auth_token:
-            separator = "&" if "?" in ws_url else "?"
-            ws_url = f"{ws_url}{separator}token={self._auth_token}"
 
         print(f"Connecting to {self.server_url}...")
 
@@ -224,11 +231,20 @@ class WebSocketClient:
                 "ping_timeout": 10,
             }
 
-            # Enable SSL for wss:// URLs (allow self-signed certificates)
+            # Pass auth token via header instead of URL query parameter
+            if self._auth_token:
+                connect_kwargs["extra_headers"] = {
+                    "Authorization": f"Bearer {self._auth_token}"
+                }
+
+            # Enable SSL for wss:// URLs
             if ws_url.startswith("wss://"):
-                ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ssl_context.check_hostname = False
-                ssl_context.verify_mode = ssl.CERT_NONE
+                if self._verify_tls:
+                    ssl_context = ssl.create_default_context()
+                else:
+                    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                    ssl_context.check_hostname = False
+                    ssl_context.verify_mode = ssl.CERT_NONE
                 connect_kwargs["ssl"] = ssl_context
 
             self._ws = await websockets.connect(
@@ -427,9 +443,13 @@ class WebSocketClient:
             is_final = data.get("is_final", True)
 
             if audio_b64:
-                audio_bytes = base64.b64decode(audio_b64)
-                if self._on_tts_audio:
-                    self._on_tts_audio(session_id, audio_bytes, is_final)
+                # Check payload size before decoding to prevent OOM on Pi
+                if len(audio_b64) > MAX_AUDIO_PAYLOAD_BYTES:
+                    print(f"⚠️ TTS audio payload too large ({len(audio_b64)} bytes), skipping")
+                else:
+                    audio_bytes = base64.b64decode(audio_b64)
+                    if self._on_tts_audio:
+                        self._on_tts_audio(session_id, audio_bytes, is_final)
 
         elif msg_type == "heartbeat_ack":
             pass  # Heartbeat acknowledged

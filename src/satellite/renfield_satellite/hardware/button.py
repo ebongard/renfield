@@ -80,6 +80,7 @@ class ButtonHandler:
         self._is_pressed: bool = False
         self._running: bool = False
         self._thread: Optional[threading.Thread] = None
+        self._press_timer: Optional[threading.Timer] = None
         self._setup_complete: bool = False
 
         # lgpio specific
@@ -232,16 +233,22 @@ class ButtonHandler:
                 pass
             elif self._press_count >= 2:
                 # Double press
+                if self._press_timer:
+                    self._press_timer.cancel()
+                    self._press_timer = None
                 if self._on_double_press:
                     self._on_double_press()
                 self._press_count = 0
             else:
-                # Single press - delay to check for double
-                threading.Thread(
-                    target=self._delayed_single_press,
-                    args=(current_time,),
-                    daemon=True
-                ).start()
+                # Single press - use Timer instead of spawning a new thread
+                if self._press_timer:
+                    self._press_timer.cancel()
+                self._press_timer = threading.Timer(
+                    self.double_press_ms / 1000 + 0.05,
+                    self._handle_single_press,
+                )
+                self._press_timer.daemon = True
+                self._press_timer.start()
 
             self._last_press_time = current_time
             self._running = False
@@ -374,16 +381,22 @@ class ButtonHandler:
                 pass
             elif self._press_count >= 2:
                 # Double press
+                if self._press_timer:
+                    self._press_timer.cancel()
+                    self._press_timer = None
                 if self._on_double_press:
                     self._on_double_press()
                 self._press_count = 0
             else:
-                # Single press - delay to check for double
-                threading.Thread(
-                    target=self._delayed_single_press,
-                    args=(current_time,),
-                    daemon=True
-                ).start()
+                # Single press - use Timer instead of spawning a new thread
+                if self._press_timer:
+                    self._press_timer.cancel()
+                self._press_timer = threading.Timer(
+                    self.double_press_ms / 1000 + 0.05,
+                    self._handle_single_press,
+                )
+                self._press_timer.daemon = True
+                self._press_timer.start()
 
             self._last_press_time = current_time
             self._running = False
@@ -404,7 +417,7 @@ class ButtonHandler:
             time.sleep(0.05)
 
     def _delayed_single_press(self, press_time: float):
-        """Delay single press to allow for double press detection"""
+        """Delay single press to allow for double press detection (legacy)"""
         time.sleep(self.double_press_ms / 1000 + 0.05)
 
         # Only trigger if no additional presses occurred
@@ -412,6 +425,14 @@ class ButtonHandler:
             if self._on_press:
                 self._on_press()
             self._press_count = 0
+
+    def _handle_single_press(self):
+        """Handle single press after double-press detection window expires (Timer callback)"""
+        if self._press_count == 1:
+            if self._on_press:
+                self._on_press()
+        self._press_count = 0
+        self._press_timer = None
 
     def on_press(self, callback: Callable[[], None]):
         """Register single press callback"""

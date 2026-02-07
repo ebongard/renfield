@@ -8,6 +8,12 @@ Provides fixtures for testing satellite functionality:
 - Wake word detection mocks
 """
 
+import os
+import sys
+
+# Add satellite source to path so tests can import renfield_satellite
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src", "satellite"))
+
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 import asyncio

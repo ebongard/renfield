@@ -165,6 +165,7 @@ class ServiceDiscovery:
             if found_server:
                 server = found_server[0]
                 print(f"Found Renfield server: {server}")
+                print(f"⚠️  Accepting first discovered server: {server.host}:{server.port} — verify this is expected")
                 self._servers.append(server)
                 return server
             else:

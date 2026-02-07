@@ -180,13 +180,9 @@ class BeamformerDAS:
         Returns:
             Mono bytes (16-bit signed integers)
         """
-        # Convert to numpy array
+        # Convert to numpy array and reshape to [2, samples] without extra copy
         audio = np.frombuffer(stereo_bytes, dtype=np.int16)
-
-        # Deinterleave: [L0, R0, L1, R1, ...] -> [[L0, L1, ...], [R0, R1, ...]]
-        left = audio[0::2]
-        right = audio[1::2]
-        stereo = np.array([left, right], dtype=np.int16)
+        stereo = audio.reshape((-1, 2)).T  # [2, samples] view, no copy
 
         # Process
         mono = self.process_int16(stereo)
