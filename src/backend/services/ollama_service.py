@@ -151,7 +151,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"Chat Fehler: {e}")
             return prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Entschuldigung, es gab einen Fehler: {e!s}", error=str(e))
 
-    async def chat_stream(self, message: str, history: list[dict] = None, lang: str | None = None, memory_context: str | None = None) -> AsyncGenerator[str, None]:
+    async def chat_stream(self, message: str, history: list[dict] = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None) -> AsyncGenerator[str, None]:
         """
         Streaming Chat with optional conversation history.
 
@@ -160,6 +160,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             history: Optionale Konversationshistorie
             lang: Sprache für die Antwort (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
+            document_context: Optional formatted document section for the system prompt
         """
         lang = lang or self.default_lang
 
@@ -172,6 +173,8 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         try:
             message = _sanitize_user_input(message)
             system_prompt = self.get_system_prompt(lang, memory_context=memory_context)
+            if document_context:
+                system_prompt += f"\n\n{document_context}"
             messages = [{"role": "system", "content": system_prompt}]
 
             if history:
@@ -980,6 +983,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         history: list[dict] | None = None,
         lang: str | None = None,
         memory_context: str | None = None,
+        document_context: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         Streaming Chat mit optionalem RAG-Kontext.
@@ -992,6 +996,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             history: Optional Chat-Historie
             lang: Sprache für die Antwort (de/en). None = default_lang
             memory_context: Optional formatted memory section for the system prompt
+            document_context: Optional formatted document section for the system prompt
 
         Yields:
             Text-Chunks der Antwort
@@ -1002,7 +1007,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             model = self.rag_model if rag_context else self.chat_model
 
             # Baue System-Prompt mit RAG-Kontext
-            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context)
+            system_prompt = self._build_rag_system_prompt(rag_context, lang=lang, memory_context=memory_context, document_context=document_context)
 
             messages = [{"role": "system", "content": system_prompt}]
 
@@ -1027,7 +1032,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             logger.error(f"RAG Streaming Fehler: {e}")
             yield prompt_manager.get("chat", "error_fallback", lang=lang, default=f"Error: {e!s}", error=str(e))
 
-    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None) -> str:
+    def _build_rag_system_prompt(self, context: str | None = None, lang: str | None = None, memory_context: str | None = None, document_context: str | None = None) -> str:
         """
         Erstellt System-Prompt mit optionalem RAG-Kontext.
 
@@ -1035,6 +1040,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             context: Formatierter Kontext aus der Wissensdatenbank
             lang: Sprache für den Prompt (de/en). None = default_lang
             memory_context: Optional formatted memory section
+            document_context: Optional formatted document section
 
         Returns:
             System-Prompt für das LLM
@@ -1047,6 +1053,10 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         # Append memory context if available
         if memory_context:
             base_prompt += f"\n\n{memory_context}"
+
+        # Append document context if available
+        if document_context:
+            base_prompt += f"\n\n{document_context}"
 
         if not context:
             return base_prompt

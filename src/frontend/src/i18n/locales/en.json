@@ -122,7 +122,8 @@
     "unsupportedFormat": "Unsupported file format",
     "fileTooLarge": "File too large (max. {{size}}MB)",
     "removeAttachment": "Remove attachment",
-    "documentUploaded": "Document uploaded: {{filename}}"
+    "documentUploaded": "Document uploaded: {{filename}}",
+    "documentAttached": "{{count}} document(s) attached"
   },
   "voice": {
     "startRecording": "Start voice recording",

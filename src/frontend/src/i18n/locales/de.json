@@ -122,7 +122,8 @@
     "unsupportedFormat": "Dateiformat nicht unterstützt",
     "fileTooLarge": "Datei zu groß (max. {{size}}MB)",
     "removeAttachment": "Anhang entfernen",
-    "documentUploaded": "Dokument hochgeladen: {{filename}}"
+    "documentUploaded": "Dokument hochgeladen: {{filename}}",
+    "documentAttached": "{{count}} Dokument(e) angehängt"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",
