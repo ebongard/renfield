@@ -187,6 +187,8 @@ class WSChatMessage(BaseModel):
     # RAG options
     use_rag: bool = Field(default=False, description="Enable RAG context for this query")
     knowledge_base_id: int | None = Field(None, description="Specific knowledge base to search")
+    # Document upload context
+    attachment_ids: list[int] | None = Field(None, description="IDs of uploaded documents to include as context")
 
 
 # =============================================================================

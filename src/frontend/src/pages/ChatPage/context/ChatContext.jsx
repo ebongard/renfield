@@ -432,13 +432,8 @@ export function ChatProvider({ children }) {
     const result = await doUpload(file, sessionId);
     if (result) {
       setAttachments(prev => [...prev, result]);
-      setMessages(prev => [...prev, {
-        role: 'user',
-        content: t('chat.documentUploaded', { filename: result.filename }),
-        attachments: [result],
-      }]);
     }
-  }, [sessionId, doUpload, t]);
+  }, [sessionId, doUpload]);
 
   const removeAttachment = useCallback((id) => {
     setAttachments(prev => prev.filter(a => a.id !== id));
@@ -460,9 +455,20 @@ export function ChatProvider({ children }) {
     lastUserQueryRef.current = text;
     lastIntentInfoRef.current = null;
 
-    const userMessage = { role: 'user', content: text };
+    // Capture current attachments before clearing
+    const currentAttachments = [...attachments];
+    const completedIds = currentAttachments
+      .filter(a => a.status === 'completed')
+      .map(a => a.id);
+
+    const userMessage = {
+      role: 'user',
+      content: text,
+      ...(currentAttachments.length > 0 && { attachments: currentAttachments }),
+    };
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    setAttachments([]);
     setLoading(true);
 
     const previewText = text.length > 50 ? text.substring(0, 50) + '...' : text;
@@ -480,7 +486,8 @@ export function ChatProvider({ children }) {
         content: text,
         session_id: sessionId,
         use_rag: useRag,
-        knowledge_base_id: selectedKnowledgeBase
+        knowledge_base_id: selectedKnowledgeBase,
+        ...(completedIds.length > 0 && { attachment_ids: completedIds }),
       };
       wsSendMessage(message);
       setRagSources([]);
@@ -505,7 +512,7 @@ export function ChatProvider({ children }) {
         setLoading(false);
       }
     }
-  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, wsSendMessage, addConversation, t]);
+  }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, wsSendMessage, addConversation, attachments, t]);
 
   // Session initialization
   useEffect(() => {
