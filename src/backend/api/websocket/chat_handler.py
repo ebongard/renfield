@@ -744,9 +744,14 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 try:
                     async with AsyncSessionLocal() as db_session:
                         # Save user message
+                        user_metadata = {}
+                        if room_context:
+                            user_metadata["room_context"] = room_context
+                        if attachment_ids:
+                            user_metadata["attachment_ids"] = attachment_ids
                         await ollama.save_message(
                             msg_session_id, "user", content, db_session,
-                            metadata={"room_context": room_context} if room_context else None
+                            metadata=user_metadata if user_metadata else None
                         )
                         # Save assistant response (with action context for follow-ups)
                         await ollama.save_message(

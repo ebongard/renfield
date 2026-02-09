@@ -2,11 +2,15 @@ import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader, FileText, AlertCircle, CheckCircle } from 'lucide-react';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
+import AttachmentQuickActions from './AttachmentQuickActions';
 import { useChatContext } from './context/ChatContext';
 
 export default function ChatMessages() {
   const { t } = useTranslation();
-  const { messages, loading, historyLoading, speakText, handleFeedbackSubmit } = useChatContext();
+  const {
+    messages, loading, historyLoading, speakText, handleFeedbackSubmit,
+    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
+  } = useChatContext();
   const messagesEndRef = useRef(null);
 
   // Auto-scroll to bottom when messages change
@@ -83,6 +87,13 @@ export default function ChatMessages() {
                       ? <CheckCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                       : <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                     }
+                    <AttachmentQuickActions
+                      attachment={att}
+                      onIndexToKb={indexToKb}
+                      onSendToPaperless={sendToPaperless}
+                      onSummarize={handleSummarize}
+                      actionLoading={actionLoading}
+                    />
                   </div>
                 ))}
               </div>
@@ -122,6 +133,23 @@ export default function ChatMessages() {
             <Loader className="w-5 h-5 animate-spin text-gray-500 dark:text-gray-400" aria-hidden="true" />
             <span className="sr-only">{t('chat.thinkingStatus')}</span>
           </div>
+        </div>
+      )}
+
+      {/* Quick action result toast */}
+      {actionResult && (
+        <div
+          className={`mx-auto px-3 py-1.5 rounded text-xs font-medium ${
+            actionResult.success
+              ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+              : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+          }`}
+          role="status"
+        >
+          {actionResult.success
+            ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess') : t('chat.paperlessSuccess'))
+            : (actionResult.type === 'indexing' ? t('chat.indexingFailed') : t('chat.paperlessFailed'))
+          }
         </div>
       )}
 

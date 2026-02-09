@@ -123,7 +123,18 @@
     "fileTooLarge": "File too large (max. {{size}}MB)",
     "removeAttachment": "Remove attachment",
     "documentUploaded": "Document uploaded: {{filename}}",
-    "documentAttached": "{{count}} document(s) attached"
+    "documentAttached": "{{count}} document(s) attached",
+    "dropFileHere": "Drop file to attach",
+    "quickActions": "Quick actions",
+    "addToKb": "Add to Knowledge Base",
+    "sendToPaperless": "Send to Paperless",
+    "summarizeDocument": "Summarize",
+    "summarizePrompt": "Summarize the document \"{{filename}}\"",
+    "indexingSuccess": "Added to Knowledge Base",
+    "indexingFailed": "Failed to add to Knowledge Base",
+    "paperlessSuccess": "Sent to Paperless",
+    "paperlessFailed": "Failed to send to Paperless",
+    "alreadyIndexed": "Already indexed"
   },
   "voice": {
     "startRecording": "Start voice recording",

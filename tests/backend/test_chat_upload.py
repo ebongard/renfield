@@ -9,16 +9,21 @@ Tests:
 - DB entry creation
 - Duplicate uploads allowed (no 409)
 - Document context injection (Phase 2)
+- KB index endpoint (Phase 3)
+- Paperless forward endpoint (Phase 3)
+- Auto-index background task (Phase 3)
 """
 import io
-from unittest.mock import AsyncMock, patch
+import tempfile
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ChatUpload
+from models.database import ChatUpload, Conversation, KnowledgeBase, Message
 from models.websocket_messages import WSChatMessage
 
 # ============================================================================
@@ -344,6 +349,99 @@ class TestDocumentContextInjection:
         result = await _fetch_document_context([99999, 99998], lang="en")
         assert result == ""
 
+    @pytest.mark.backend
+    async def test_history_includes_attachments(self, async_client: AsyncClient, db_session: AsyncSession):
+        """History endpoint returns attachment details for user messages"""
+        # Create a ChatUpload
+        upload = ChatUpload(
+            session_id="hist-attach-test",
+            filename="report.pdf",
+            file_type="pdf",
+            file_size=5000,
+            extracted_text="Some text",
+            status="completed",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+
+        # Create conversation + message with attachment_ids in metadata
+        conv = Conversation(session_id="hist-attach-test")
+        db_session.add(conv)
+        await db_session.commit()
+        await db_session.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            content="What does this say?",
+            message_metadata={"attachment_ids": [upload.id]},
+        )
+        db_session.add(msg)
+        await db_session.commit()
+
+        response = await async_client.get("/api/chat/history/hist-attach-test")
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert len(messages) == 1
+        assert "attachments" in messages[0]
+        assert len(messages[0]["attachments"]) == 1
+        att = messages[0]["attachments"][0]
+        assert att["id"] == upload.id
+        assert att["filename"] == "report.pdf"
+        assert att["file_type"] == "pdf"
+
+    @pytest.mark.backend
+    async def test_history_without_attachments_backward_compatible(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Messages without attachment_ids have no attachments key — no error"""
+        conv = Conversation(session_id="hist-no-attach-test")
+        db_session.add(conv)
+        await db_session.commit()
+        await db_session.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            content="Hello",
+            message_metadata=None,
+        )
+        db_session.add(msg)
+        await db_session.commit()
+
+        response = await async_client.get("/api/chat/history/hist-no-attach-test")
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert len(messages) == 1
+        assert "attachments" not in messages[0]
+
+    @pytest.mark.backend
+    async def test_history_skips_missing_attachments(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Non-existent attachment IDs are silently skipped"""
+        conv = Conversation(session_id="hist-missing-attach-test")
+        db_session.add(conv)
+        await db_session.commit()
+        await db_session.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            role="user",
+            content="Check this doc",
+            message_metadata={"attachment_ids": [99999]},
+        )
+        db_session.add(msg)
+        await db_session.commit()
+
+        response = await async_client.get("/api/chat/history/hist-missing-attach-test")
+        assert response.status_code == 200
+        messages = response.json()["messages"]
+        assert len(messages) == 1
+        # attachment_ids existed but none resolved, so attachments is empty list
+        assert messages[0].get("attachments", []) == []
+
     @pytest.mark.unit
     def test_ws_message_attachment_ids_accepted(self):
         """WSChatMessage accepts attachment_ids field"""
@@ -358,3 +456,227 @@ class TestDocumentContextInjection:
         """WSChatMessage defaults attachment_ids to None"""
         msg = WSChatMessage(content="Hello")
         assert msg.attachment_ids is None
+
+
+# ============================================================================
+# Phase 3: KB Index Endpoint Tests
+# ============================================================================
+
+class TestChatUploadIndex:
+    """Tests for POST /api/chat/upload/{id}/index"""
+
+    @pytest.mark.backend
+    async def test_index_success(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Successful index returns 200 with document_id"""
+        # Create a temp file
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"test content for indexing")
+            tmp_path = f.name
+
+        try:
+            # Create KB
+            kb = KnowledgeBase(name="Test KB", description="For testing")
+            db_session.add(kb)
+            await db_session.commit()
+            await db_session.refresh(kb)
+
+            # Create ChatUpload with file_path
+            upload = ChatUpload(
+                session_id="index-test",
+                filename="test.txt",
+                file_type="txt",
+                file_size=100,
+                file_hash="abc123",
+                extracted_text="test content",
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            mock_doc = MagicMock()
+            mock_doc.id = 42
+            mock_doc.chunk_count = 5
+
+            with patch("api.routes.chat_upload.RAGService") as MockRAG:
+                rag_instance = AsyncMock()
+                rag_instance.ingest_document = AsyncMock(return_value=mock_doc)
+                MockRAG.return_value = rag_instance
+
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/index",
+                    json={"knowledge_base_id": kb.id},
+                )
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is True
+            assert body["document_id"] == 42
+            assert body["knowledge_base_id"] == kb.id
+            assert body["chunk_count"] == 5
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_index_not_found(self, async_client: AsyncClient):
+        """Non-existent upload returns 404"""
+        response = await async_client.post(
+            "/api/chat/upload/99999/index",
+            json={"knowledge_base_id": 1},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.backend
+    async def test_index_already_indexed(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Upload with document_id already set returns 409"""
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"already indexed")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="already-indexed-test",
+                filename="indexed.txt",
+                file_type="txt",
+                file_size=100,
+                status="completed",
+                file_path=tmp_path,
+                document_id=99,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            response = await async_client.post(
+                f"/api/chat/upload/{upload.id}/index",
+                json={"knowledge_base_id": 1},
+            )
+            assert response.status_code == 409
+            assert "Already indexed" in response.json()["detail"]
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+# ============================================================================
+# Phase 3: Paperless Forward Endpoint Tests
+# ============================================================================
+
+class TestChatUploadPaperless:
+    """Tests for POST /api/chat/upload/{id}/paperless"""
+
+    @pytest.mark.backend
+    async def test_paperless_success(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Successful Paperless forward returns 200"""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test content")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="paperless-test",
+                filename="invoice.pdf",
+                file_type="pdf",
+                file_size=500,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            import json
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({
+                    "success": True,
+                    "data": {"task_id": "abc-123", "title": "invoice.pdf", "filename": "invoice.pdf"},
+                }),
+            }
+
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+
+            # Patch app.state.mcp_manager via the Request object
+            from main import app
+            app.state.mcp_manager = mock_manager
+
+            try:
+                response = await async_client.post(f"/api/chat/upload/{upload.id}/paperless")
+            finally:
+                app.state.mcp_manager = None
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is True
+            assert body["paperless_task_id"] == "abc-123"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_paperless_not_found(self, async_client: AsyncClient):
+        """Non-existent upload returns 404"""
+        response = await async_client.post("/api/chat/upload/99999/paperless")
+        assert response.status_code == 404
+
+    @pytest.mark.backend
+    async def test_paperless_mcp_not_available(self, async_client: AsyncClient, db_session: AsyncSession):
+        """No MCP manager returns 503"""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="no-mcp-test",
+                filename="doc.pdf",
+                file_type="pdf",
+                file_size=200,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            # Ensure no MCP manager on app.state
+            from main import app
+            original = getattr(app.state, "mcp_manager", None)
+            app.state.mcp_manager = None
+            try:
+                response = await async_client.post(f"/api/chat/upload/{upload.id}/paperless")
+            finally:
+                app.state.mcp_manager = original
+
+            assert response.status_code == 503
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
+# ============================================================================
+# Phase 3: Auto-Index Background Task Tests
+# ============================================================================
+
+class TestAutoIndex:
+    """Tests for auto-index background task helpers"""
+
+    @pytest.mark.backend
+    async def test_get_or_create_default_kb_creates(self, async_client, db_session: AsyncSession):
+        """_get_or_create_default_kb creates KB if not exists"""
+        from api.routes.chat_upload import _get_or_create_default_kb
+
+        with patch("api.routes.chat_upload.settings") as mock_settings:
+            mock_settings.chat_upload_default_kb_name = "Auto-Test KB"
+
+            kb = await _get_or_create_default_kb(db_session)
+
+        assert kb is not None
+        assert kb.name == "Auto-Test KB"
+        assert kb.id is not None
+
+        # Calling again returns the same KB
+        with patch("api.routes.chat_upload.settings") as mock_settings:
+            mock_settings.chat_upload_default_kb_name = "Auto-Test KB"
+            kb2 = await _get_or_create_default_kb(db_session)
+
+        assert kb2.id == kb.id
