@@ -5,7 +5,7 @@ import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
-import { useChatWebSocket, useAudioRecording } from '../hooks';
+import { useChatWebSocket, useAudioRecording, useDocumentUpload } from '../hooks';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
@@ -40,6 +40,9 @@ export function ChatProvider({ children }) {
   const [useRag, setUseRag] = useState(false);
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
   const [ragSources, setRagSources] = useState([]);
+
+  // Document upload state
+  const [attachments, setAttachments] = useState([]);
 
   // Wake word state
   const [wakeWordStatus, setWakeWordStatus] = useState('idle');
@@ -421,6 +424,26 @@ export function ChatProvider({ children }) {
     onRecordingStop: handleRecordingStop,
   });
 
+  // Document upload hook
+  const { uploading, uploadError, uploadDocument: doUpload } = useDocumentUpload();
+
+  const handleUploadDocument = useCallback(async (file) => {
+    if (!sessionId) return;
+    const result = await doUpload(file, sessionId);
+    if (result) {
+      setAttachments(prev => [...prev, result]);
+      setMessages(prev => [...prev, {
+        role: 'user',
+        content: t('chat.documentUploaded', { filename: result.filename }),
+        attachments: [result],
+      }]);
+    }
+  }, [sessionId, doUpload, t]);
+
+  const removeAttachment = useCallback((id) => {
+    setAttachments(prev => prev.filter(a => a.id !== id));
+  }, []);
+
   // Assign startRecording to ref for wake word callback
   startRecordingRef.current = startRecording;
 
@@ -604,6 +627,13 @@ export function ChatProvider({ children }) {
     selectedKnowledgeBase,
     setSelectedKnowledgeBase,
 
+    // Document upload
+    attachments,
+    uploading,
+    uploadError,
+    uploadDocument: handleUploadDocument,
+    removeAttachment,
+
     // Wake word
     wakeWord: {
       ...wakeWord,
@@ -621,6 +651,7 @@ export function ChatProvider({ children }) {
     wsConnected,
     recording, audioLevel, silenceTimeRemaining, toggleRecording,
     useRag, toggleRag, selectedKnowledgeBase,
+    attachments, uploading, uploadError, handleUploadDocument, removeAttachment,
     wakeWord, wakeWordStatus,
     speakText, handleFeedbackSubmit,
   ]);

@@ -114,7 +114,15 @@
     "thisWeek": "Diese Woche",
     "older": "Älter",
     "processingMessage": "Bitte warten, Nachricht wird verarbeitet",
-    "thinkingStatus": "Renfield denkt nach..."
+    "thinkingStatus": "Renfield denkt nach...",
+    "attachFile": "Datei anhängen",
+    "uploading": "Wird hochgeladen...",
+    "uploadSuccess": "Hochgeladen",
+    "uploadFailed": "Upload fehlgeschlagen",
+    "unsupportedFormat": "Dateiformat nicht unterstützt",
+    "fileTooLarge": "Datei zu groß (max. {{size}}MB)",
+    "removeAttachment": "Anhang entfernen",
+    "documentUploaded": "Dokument hochgeladen: {{filename}}"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",
