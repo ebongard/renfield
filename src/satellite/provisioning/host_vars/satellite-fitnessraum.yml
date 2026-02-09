@@ -1,0 +1,22 @@
+---
+# ReSpeaker 4-Mic Array configuration
+
+hat_type: "4mic"
+satellite_id: "sat-fitnessraum"
+satellite_room: "Fitnessraum"
+
+# Audio: ALSA plughw handles S32_LE/4ch → S16_LE/1ch conversion in kernel space.
+# "capture" matches the ALSA plugin device in /etc/asound.conf.
+# Native S32_LE/4ch capture is blocked by AC108 driver kernel panic — see TECHNICAL_DEBT.md
+audio_device: "capture"
+audio_playback_device: "plughw:vc4hdmi"
+audio_channels: 1
+beamforming_enabled: false
+
+# LEDs (4-Mic Array: 12 LEDs on SPI 0:1, GPIO5 power)
+led_num: 12
+led_spi_device: 1
+led_power_pin: 5
+
+# Driver
+seeed_voicecard_branch: "v6.12"

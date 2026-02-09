@@ -43,13 +43,16 @@ wakeword:
   #   - "nevermind"
 
 # Voice Activity Detection (for end-of-speech)
+# Note: On Pi Zero 2 W with 4-mic HAT, use "rms" backend — Silero VAD's ONNX
+# inference competes with openwakeword for CPU and produces unreliable results.
+# RMS is essentially free and directly measures audio volume.
 vad:
   backend: "silero"           # "rms" (simple), "webrtc" (fast), or "silero" (ML-based, best)
-  silence_duration_ms: 1200   # How long silence to end recording
+  silence_threshold: 500      # RMS threshold (for "rms" backend)
+  silence_duration_ms: 2000   # How long silence to end recording (ms)
+  min_listening_seconds: 5.0  # Grace period before silence detection starts
   max_recording_seconds: 20   # Maximum recording length
   silero_threshold: 0.5       # Silero VAD threshold 0-1 (higher = stricter)
-  # Settings for other backends (uncomment if switching backend):
-  # silence_threshold: 350    # RMS threshold (for "rms" backend only)
   # webrtc_aggressiveness: 2  # WebRTC aggressiveness 0-3 (for "webrtc" backend only)
 
 # LED settings (ReSpeaker HAT)

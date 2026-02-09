@@ -1,0 +1,21 @@
+# Renfield Satellite — ALSA Configuration for ReSpeaker 4-Mic Array
+# NOTE: Do NOT use dsnoop or dmix on the AC108 — they crash the kernel driver.
+# Use plughw: for format/rate conversion instead.
+
+defaults.pcm.rate_converter "samplerate"
+
+pcm.!default {
+    type asym
+    playback.pcm "playback"
+    capture.pcm "capture"
+}
+
+pcm.playback {
+    type plug
+    slave.pcm "plughw:vc4hdmi"
+}
+
+pcm.capture {
+    type plug
+    slave.pcm "plughw:seeed4micvoicec"
+}

@@ -1,0 +1,54 @@
+# Renfield Satellite — ALSA Configuration for ReSpeaker 2-Mics Pi HAT
+# Managed by Ansible — do not edit manually
+
+defaults.pcm.rate_converter "samplerate"
+
+pcm.!default {
+    type asym
+    playback.pcm "playback"
+    capture.pcm "capture"
+}
+
+pcm.playback {
+    type plug
+    slave.pcm "dmixed"
+}
+
+pcm.capture {
+    type plug
+    slave.pcm "array"
+}
+
+pcm.dmixed {
+    type dmix
+    slave.pcm "hw:seeed2micvoicec"
+    ipc_key 555555
+}
+
+# Stereo microphone array (for beamforming)
+pcm.array {
+    type dsnoop
+    slave {
+        pcm "hw:seeed2micvoicec"
+        channels 2
+    }
+    ipc_key 666666
+}
+
+# Mono capture (single channel, downmixed)
+pcm.mono {
+    type plug
+    slave {
+        pcm "array"
+        channels 1
+    }
+}
+
+# 16kHz stereo capture (for beamforming with openwakeword)
+pcm.array16k {
+    type rate
+    slave {
+        pcm "array"
+        rate 16000
+    }
+}

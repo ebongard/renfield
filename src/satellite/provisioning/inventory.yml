@@ -1,0 +1,11 @@
+---
+all:
+  children:
+    satellites:
+      hosts:
+        satellite-wohnzimmer:
+          ansible_host: satellite-wohnzimmer.local
+          ansible_user: evdb
+        satellite-fitnessraum:
+          ansible_host: satellite-fitnessraum.local
+          ansible_user: evdb

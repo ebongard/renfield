@@ -43,6 +43,22 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
 
 ### High Priority
 
+- [x] **ReSpeaker 4-Mic Array (AC108) Audio Capture** ✅ (RESOLVED 2026-02-09)
+  - AC108 codec supports only 4ch/S32_LE natively
+  - **Root cause:** PyAudio + onnxruntime (openwakeword) in the **same process** causes
+    kernel crash. The crash happens at `pa.open()` — not during audio processing. Each
+    library works independently; together they trigger a kernel panic on Pi Zero 2 W.
+  - **Solution:** `use_arecord: true` — `arecord` subprocess isolates the I2S driver
+    from onnxruntime. arecord captures 4ch/S32_LE, Python converts to mono S16_LE
+    (**channel 1**, right-shift 16 bits). Channel 0 is silent (reference/unused),
+    microphones are on channels 1, 2, 3.
+  - Config: `device: "hw:0,0"`, `channels: 4`, `use_arecord: true`
+  - `OMP_NUM_THREADS=1` in systemd service limits onnxruntime CPU usage
+  - `os._exit(0)` in shutdown handler prevents `pa.terminate()` kernel crash
+  - **VAD:** RMS backend recommended — Silero VAD unreliable under CPU load (two ONNX
+    models per chunk saturates Pi Zero 2 W). Silence detection uses audio-chunk counting
+    instead of wall-clock time to be immune to CPU processing lag.
+
 - [ ] **Audio Preprocessing auf Backend verschieben**: Für ressourcenschwache Satellites
   - Noise Reduction im Backend statt auf Satellite
   - Satellite sendet Raw Audio, Backend preprocessed vor Whisper
@@ -70,6 +86,13 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
   - 3-6 dB SNR Verbesserung für seitlichen Lärm
   - Stereo-Aufnahme mit automatischer Mono-Konvertierung
   - ~5-7% CPU Overhead auf Pi Zero 2 W
+
+- [ ] **Beamforming mit 4 Mikrofonen** (Audio capture now works — see resolved item above)
+  - Extend BeamformerDAS for 4-mic circular array geometry
+  - arecord captures all 4 channels — extract multiple channels for beamforming
+  - ReSpeaker 4-Mic Array mic positions need calibration
+  - Expected: 6-10 dB SNR gain, multi-axis noise rejection
+  - ~10-15% CPU on Pi Zero 2 W (estimated)
 
 - [ ] **Wake Word Training**
   - Custom Wake Words trainieren
