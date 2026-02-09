@@ -139,7 +139,7 @@ describe('Chat Upload', () => {
     });
   });
 
-  it('shows upload confirmation message after successful upload', async () => {
+  it('shows attachment chip after successful upload', async () => {
     server.use(
       http.post(`${BASE_URL}/api/chat/upload`, () => {
         return HttpResponse.json({
@@ -169,9 +169,9 @@ describe('Chat Upload', () => {
 
     await user.upload(fileInput, file);
 
-    // The upload confirmation message should appear (i18n key: chat.documentUploaded)
+    // The attachment chip should appear (shows filename)
     await waitFor(() => {
-      expect(screen.getByText(/Dokument hochgeladen.*report\.pdf/)).toBeInTheDocument();
+      expect(screen.getByText(/report\.pdf/)).toBeInTheDocument();
     }, { timeout: 5000 });
   });
 });

@@ -8,6 +8,7 @@ Tests:
 - Missing session_id validation
 - DB entry creation
 - Duplicate uploads allowed (no 409)
+- Document context injection (Phase 2)
 """
 import io
 from unittest.mock import AsyncMock, patch
@@ -18,6 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ChatUpload
+from models.websocket_messages import WSChatMessage
 
 # ============================================================================
 # API Tests
@@ -206,3 +208,153 @@ class TestChatUploadModel:
         await db_session.refresh(upload)
 
         assert upload.status == "processing"
+
+
+# ============================================================================
+# Document Context Injection Tests (Phase 2)
+# ============================================================================
+
+class TestDocumentContextInjection:
+    """Tests for document context injection into LLM prompts.
+
+    The _fetch_document_context function lives in chat_handler.py which has
+    module-level imports requiring asyncpg. We test it via the conftest's
+    app_with_test_db fixture (async_client) which patches those imports.
+    For unit tests that don't need DB, we test WSChatMessage directly.
+    """
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_single(self, async_client, db_session: AsyncSession):
+        """Single completed document produces document_context_section"""
+        upload = ChatUpload(
+            session_id="ctx-test",
+            filename="report.pdf",
+            file_type="pdf",
+            file_size=5000,
+            extracted_text="This is the report content about quarterly earnings.",
+            status="completed",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+
+        from api.websocket.chat_handler import _fetch_document_context
+        result = await _fetch_document_context([upload.id], lang="en")
+
+        assert "report.pdf" in result
+        assert "quarterly earnings" in result
+        assert "UPLOADED DOCUMENT" in result
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_multiple(self, async_client, db_session: AsyncSession):
+        """Multiple documents produce document_context_multi_section"""
+        uploads = []
+        for i, name in enumerate(["doc1.txt", "doc2.txt"]):
+            u = ChatUpload(
+                session_id="ctx-multi-test",
+                filename=name,
+                file_type="txt",
+                file_size=1000 + i,
+                extracted_text=f"Content of document {i+1}.",
+                status="completed",
+            )
+            db_session.add(u)
+            uploads.append(u)
+        await db_session.commit()
+        for u in uploads:
+            await db_session.refresh(u)
+
+        from api.websocket.chat_handler import _fetch_document_context
+        result = await _fetch_document_context([u.id for u in uploads], lang="en")
+
+        assert "UPLOADED DOCUMENTS" in result
+        assert "2 files" in result
+        assert "doc1.txt" in result
+        assert "doc2.txt" in result
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_skips_failed(self, async_client, db_session: AsyncSession):
+        """Failed uploads are excluded from context"""
+        good = ChatUpload(
+            session_id="ctx-skip-test",
+            filename="good.txt",
+            file_type="txt",
+            file_size=500,
+            extracted_text="Good content.",
+            status="completed",
+        )
+        bad = ChatUpload(
+            session_id="ctx-skip-test",
+            filename="bad.txt",
+            file_type="txt",
+            file_size=500,
+            extracted_text=None,
+            status="failed",
+            error_message="Extraction failed",
+        )
+        db_session.add_all([good, bad])
+        await db_session.commit()
+        await db_session.refresh(good)
+        await db_session.refresh(bad)
+
+        from api.websocket.chat_handler import _fetch_document_context
+        result = await _fetch_document_context([good.id, bad.id], lang="en")
+
+        assert "good.txt" in result
+        assert "bad.txt" not in result
+        # Single doc format since only one survived
+        assert "UPLOADED DOCUMENT" in result
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_truncates(self, async_client, db_session: AsyncSession):
+        """Text is truncated to max_context_chars"""
+        long_text = "x" * 100000
+        upload = ChatUpload(
+            session_id="ctx-trunc-test",
+            filename="huge.txt",
+            file_type="txt",
+            file_size=100000,
+            extracted_text=long_text,
+            status="completed",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+
+        with patch("api.websocket.chat_handler.settings") as mock_settings:
+            mock_settings.chat_upload_max_context_chars = 1000
+
+            from api.websocket.chat_handler import _fetch_document_context
+            result = await _fetch_document_context([upload.id], lang="en")
+
+        # The result should be significantly smaller than the 100k original
+        assert len(result) < 5000
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_empty_ids(self, async_client):
+        """Empty ID list returns empty string"""
+        from api.websocket.chat_handler import _fetch_document_context
+        result = await _fetch_document_context([], lang="de")
+        assert result == ""
+
+    @pytest.mark.backend
+    async def test_fetch_document_context_invalid_ids(self, async_client, db_session: AsyncSession):
+        """Non-existent IDs return empty string"""
+        from api.websocket.chat_handler import _fetch_document_context
+        result = await _fetch_document_context([99999, 99998], lang="en")
+        assert result == ""
+
+    @pytest.mark.unit
+    def test_ws_message_attachment_ids_accepted(self):
+        """WSChatMessage accepts attachment_ids field"""
+        msg = WSChatMessage(
+            content="What does the document say?",
+            attachment_ids=[1, 2, 3],
+        )
+        assert msg.attachment_ids == [1, 2, 3]
+
+    @pytest.mark.unit
+    def test_ws_message_attachment_ids_default_none(self):
+        """WSChatMessage defaults attachment_ids to None"""
+        msg = WSChatMessage(content="Hello")
+        assert msg.attachment_ids is None

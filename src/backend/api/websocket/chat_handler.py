@@ -236,6 +236,85 @@ async def _extract_memories_background(
         logger.warning(f"Memory extraction failed: {e}")
 
 
+def _format_file_size(size_bytes: int | None) -> str:
+    """Format file size in human-readable form."""
+    if not size_bytes:
+        return "unknown size"
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    if size_bytes < 1024 * 1024:
+        return f"{size_bytes / 1024:.1f} KB"
+    return f"{size_bytes / (1024 * 1024):.1f} MB"
+
+
+async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
+    """Fetch extracted text from uploaded documents and format as prompt context.
+
+    Args:
+        attachment_ids: List of ChatUpload IDs to include
+        lang: Language for prompt templates (de/en)
+
+    Returns:
+        Formatted document context string, or empty string on error/no results.
+    """
+    if not attachment_ids:
+        return ""
+
+    try:
+        from sqlalchemy import select
+
+        from models.database import ChatUpload
+        from services.prompt_manager import prompt_manager
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(ChatUpload).where(
+                    ChatUpload.id.in_(attachment_ids),
+                    ChatUpload.status == "completed",
+                    ChatUpload.extracted_text.isnot(None),
+                )
+            )
+            uploads = result.scalars().all()
+
+        if not uploads:
+            return ""
+
+        max_chars = settings.chat_upload_max_context_chars
+
+        if len(uploads) == 1:
+            doc = uploads[0]
+            text = doc.extracted_text[:max_chars] if doc.extracted_text else ""
+            return prompt_manager.get(
+                "chat", "document_context_section", lang=lang,
+                filename=doc.filename or "document",
+                file_size=_format_file_size(doc.file_size),
+                document_text=text,
+            )
+
+        # Multiple documents — distribute max_chars evenly
+        per_doc_chars = max_chars // len(uploads)
+        doc_sections = []
+        for doc in uploads:
+            text = doc.extracted_text[:per_doc_chars] if doc.extracted_text else ""
+            section = prompt_manager.get(
+                "chat", "document_separator", lang=lang,
+                filename=doc.filename or "document",
+                file_size=_format_file_size(doc.file_size),
+                document_text=text,
+            )
+            doc_sections.append(section)
+
+        return prompt_manager.get(
+            "chat", "document_context_multi_section", lang=lang,
+            count=str(len(uploads)),
+            documents="\n\n".join(doc_sections),
+        )
+
+    except Exception as e:
+        logger.warning(f"Document context fetch failed: {e}")
+        return ""
+
+
 async def _retrieve_memory_context(content: str, user_id: int | None, lang: str) -> str:
     """Retrieve relevant memories and format as prompt section."""
     if not settings.memory_enabled:
@@ -273,6 +352,7 @@ async def _stream_rag_response(
     session_state: "ConversationSessionState",
     websocket: WebSocket,
     memory_context: str = "",
+    document_context: str = "",
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
@@ -328,6 +408,7 @@ async def _stream_rag_response(
                     rag_context,
                     history=session_state.conversation_history if is_followup else None,
                     memory_context=memory_context,
+                    document_context=document_context,
                 ):
                     full_response += chunk
                     await websocket.send_json({"type": "stream", "content": chunk})
@@ -348,7 +429,7 @@ async def _stream_rag_response(
             logger.error(traceback.format_exc())
 
     # Fallback: plain conversation
-    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
+    async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
         full_response += chunk
         await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -420,6 +501,7 @@ async def websocket_endpoint(
                 msg_session_id = msg.session_id
                 use_rag = msg.use_rag
                 knowledge_base_id = msg.knowledge_base_id
+                attachment_ids = msg.attachment_ids or []
             except ValidationError as e:
                 await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
@@ -448,6 +530,13 @@ async def websocket_endpoint(
             memory_context = await _retrieve_memory_context(
                 content, user_id=user_id, lang=ollama.default_lang
             )
+
+            # Retrieve document context from uploaded attachments
+            document_context = ""
+            if attachment_ids:
+                document_context = await _fetch_document_context(
+                    attachment_ids, lang=ollama.default_lang
+                )
 
             # === Unified Router / Legacy Dual-Path ===
             agent_used = False
@@ -484,9 +573,10 @@ async def websocket_endpoint(
                         full_response = await _stream_rag_response(
                             content, knowledge_base_id, ollama, session_state, websocket,
                             memory_context=memory_context,
+                            document_context=document_context,
                         )
                     else:
-                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
+                        async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -497,6 +587,7 @@ async def websocket_endpoint(
                     full_response = await _stream_rag_response(
                         content, knowledge_base_id, ollama, session_state, websocket,
                         memory_context=memory_context,
+                        document_context=document_context,
                     )
 
                 else:
@@ -519,6 +610,7 @@ async def websocket_endpoint(
                         conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                         room_context=room_context,
                         memory_context=memory_context,
+                        document_context=document_context,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -610,7 +702,7 @@ Die Aktion wurde ausgeführt:
 Gib eine kurze, natürliche Antwort basierend auf den Daten.
 WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON!"""
 
-                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context):
+                        async for chunk in ollama.chat_stream(enhanced_prompt, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
                             full_response += chunk
                             await websocket.send_json({"type": "stream", "content": chunk})
 
@@ -623,9 +715,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             full_response = await _stream_rag_response(
                                 content, knowledge_base_id, ollama, session_state, websocket,
                                 memory_context=memory_context,
+                                document_context=document_context,
                             )
                         else:
-                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context):
+                            async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context):
                                 full_response += chunk
                                 await websocket.send_json({"type": "stream", "content": chunk})
 
