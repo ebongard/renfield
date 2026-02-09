@@ -487,6 +487,36 @@ class DocumentChunk(Base):
     # USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 
+# =============================================================================
+# Chat Upload Model
+# =============================================================================
+
+# Upload Status Constants
+UPLOAD_STATUS_PROCESSING = "processing"
+UPLOAD_STATUS_COMPLETED = "completed"
+UPLOAD_STATUS_FAILED = "failed"
+
+UPLOAD_STATUSES = [UPLOAD_STATUS_PROCESSING, UPLOAD_STATUS_COMPLETED, UPLOAD_STATUS_FAILED]
+
+
+class ChatUpload(Base):
+    """Dokument-Upload direkt im Chat (ohne RAG-Indexierung)"""
+    __tablename__ = "chat_uploads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    session_id = Column(String(128), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    filename = Column(String(255), nullable=False)
+    file_type = Column(String(50))
+    file_size = Column(Integer)
+    file_hash = Column(String(64), nullable=True, index=True)
+    extracted_text = Column(Text, nullable=True)
+    status = Column(String(50), default=UPLOAD_STATUS_PROCESSING, index=True)
+    error_message = Column(Text, nullable=True)
+    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+
 # Document Processing Status Constants
 DOC_STATUS_PENDING = "pending"
 DOC_STATUS_PROCESSING = "processing"

@@ -114,7 +114,15 @@
     "thisWeek": "This Week",
     "older": "Older",
     "processingMessage": "Please wait, processing message",
-    "thinkingStatus": "Renfield is thinking..."
+    "thinkingStatus": "Renfield is thinking...",
+    "attachFile": "Attach file",
+    "uploading": "Uploading...",
+    "uploadSuccess": "Uploaded",
+    "uploadFailed": "Upload failed",
+    "unsupportedFormat": "Unsupported file format",
+    "fileTooLarge": "File too large (max. {{size}}MB)",
+    "removeAttachment": "Remove attachment",
+    "documentUploaded": "Document uploaded: {{filename}}"
   },
   "voice": {
     "startRecording": "Start voice recording",
