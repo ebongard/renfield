@@ -1,0 +1,33 @@
+# Renfield Satellite Voice Assistant
+# Managed by Ansible — do not edit manually
+
+[Unit]
+Description=Renfield Satellite Voice Assistant
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ ansible_user }}
+Group=audio
+WorkingDirectory={{ satellite_base_dir }}
+ExecStart={{ satellite_venv }}/bin/python -m renfield_satellite config/satellite.yaml
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/home/{{ ansible_user }}
+
+# Allow access to hardware
+SupplementaryGroups=spi gpio i2c
+
+# Resource limits (Pi Zero 2 W has 512MB RAM)
+# AC108 4-mic driver needs headroom — memory pressure triggers vmalloc kernel crash
+MemoryMax=450M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=renfield-satellite
+
+[Install]
+WantedBy=multi-user.target

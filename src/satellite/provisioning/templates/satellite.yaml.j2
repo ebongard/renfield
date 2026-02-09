@@ -1,0 +1,54 @@
+# Renfield Satellite Configuration
+# Managed by Ansible — do not edit manually
+
+satellite:
+  id: "{{ satellite_id }}"
+  room: "{{ satellite_room }}"
+  language: "{{ satellite_language }}"
+
+server:
+  url: "{{ server_url }}"
+  auto_discover: {{ server_auto_discover | lower }}
+  discovery_timeout: 10
+  reconnect_interval: 5
+  heartbeat_interval: 30
+  auth_enabled: {{ server_auth_enabled | lower }}
+  verify_tls: {{ server_verify_tls | lower }}
+
+audio:
+  sample_rate: 16000
+  chunk_size: 1280
+  channels: {{ audio_channels }}
+  device: "{{ audio_device }}"
+  playback_device: "{{ audio_playback_device }}"
+  beamforming:
+    enabled: {{ beamforming_enabled | lower }}
+{%- if beamforming_enabled %}
+    mic_spacing: {{ beamforming_mic_spacing }}
+    steering_angle: 0.0
+{%- endif %}
+
+wakeword:
+  model: "{{ wakeword_model }}"
+  threshold: {{ wakeword_threshold }}
+  models_path: "{{ satellite_models_dir }}"
+  refractory_seconds: 2.0
+
+vad:
+  backend: "{{ vad_backend }}"
+  silence_duration_ms: {{ vad_silence_duration_ms }}
+  max_recording_seconds: {{ vad_max_recording_seconds }}
+  silero_threshold: {{ vad_silero_threshold }}
+
+led:
+  brightness: {{ led_brightness }}
+  num_leds: {{ led_num }}
+  spi_bus: 0
+  spi_device: {{ led_spi_device }}
+{%- if led_power_pin is not none %}
+  led_power_pin: {{ led_power_pin }}
+{%- endif %}
+
+button:
+  gpio_pin: {{ button_gpio_pin }}
+  debounce_ms: 50

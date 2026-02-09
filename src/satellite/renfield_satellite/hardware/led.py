@@ -1,8 +1,9 @@
 """
-LED Controller for ReSpeaker 2-Mics Pi HAT
+LED Controller for ReSpeaker Pi HATs
 
-Controls the 3x APA102 RGB LEDs via SPI.
-Provides visual feedback for satellite states.
+Controls APA102 RGB LEDs via SPI.
+Supports both 2-Mics Pi HAT (3 LEDs, SPI 0:0) and
+4-Mic Array (12 LEDs, SPI 0:1, GPIO5 power enable).
 """
 
 import asyncio
@@ -21,6 +22,13 @@ except ImportError:
     spidev = None
     SPI_AVAILABLE = False
     print("Warning: spidev not installed. LED control disabled.")
+
+try:
+    from gpiozero import LED as GpioLED
+    GPIO_AVAILABLE = True
+except ImportError:
+    GpioLED = None
+    GPIO_AVAILABLE = False
 
 
 class LEDPattern(str, Enum):
@@ -65,10 +73,11 @@ COLORS = {
 
 class LEDController:
     """
-    Controls APA102 LEDs on ReSpeaker 2-Mics Pi HAT.
+    Controls APA102 LEDs on ReSpeaker Pi HATs.
 
-    The HAT has 3 LEDs arranged in a row.
-    Uses SPI for communication (bus 0, device 0).
+    Supports:
+    - 2-Mics Pi HAT: 3 LEDs, SPI 0:0, no power pin
+    - 4-Mic Array: 12 LEDs, SPI 0:1, GPIO5 power enable
     """
 
     def __init__(
@@ -77,20 +86,24 @@ class LEDController:
         spi_bus: int = 0,
         spi_device: int = 0,
         brightness: int = 20,
+        led_power_pin: Optional[int] = None,
     ):
         """
         Initialize LED controller.
 
         Args:
-            num_leds: Number of LEDs (default 3 for ReSpeaker)
+            num_leds: Number of LEDs (default 3 for ReSpeaker 2-Mics)
             spi_bus: SPI bus number
             spi_device: SPI device number
             brightness: Default brightness 0-31
+            led_power_pin: GPIO pin to enable LED power (4-mic HAT uses GPIO5)
         """
         self.num_leds = num_leds
         self.spi_bus = spi_bus
         self.spi_device = spi_device
         self.brightness = min(31, max(0, brightness))
+        self.led_power_pin = led_power_pin
+        self._power = None
 
         self._spi: Optional["spidev.SpiDev"] = None
         self._pattern: LEDPattern = LEDPattern.OFF
@@ -117,6 +130,15 @@ class LEDController:
             return False
 
         try:
+            # Enable LED power via GPIO if configured (required for 4-mic HAT)
+            if self.led_power_pin is not None:
+                if not GPIO_AVAILABLE:
+                    print(f"Warning: gpiozero not installed, cannot enable LED power on GPIO{self.led_power_pin}")
+                else:
+                    self._power = GpioLED(self.led_power_pin)
+                    self._power.on()
+                    print(f"LED power enabled on GPIO{self.led_power_pin}")
+
             self._spi = spidev.SpiDev()
             self._spi.open(self.spi_bus, self.spi_device)
             self._spi.max_speed_hz = 8000000  # 8 MHz
@@ -140,6 +162,14 @@ class LEDController:
                 pass
             self._spi = None
 
+        if self._power:
+            try:
+                self._power.off()
+                self._power.close()
+            except Exception:
+                pass
+            self._power = None
+
     def _write(self):
         """Write current colors to LEDs, skipping if unchanged"""
         if not self._spi:
@@ -160,9 +190,9 @@ class LEDController:
             for color in self._colors:
                 data.extend(color.to_apa102())
 
-            # End frame: ceil(n/2) bytes of 0xFF
+            # End frame: ceil(n/2) bytes of 0x00
             end_bytes = (self.num_leds + 15) // 16
-            data.extend([0xFF] * max(4, end_bytes))
+            data.extend([0x00] * max(4, end_bytes))
 
             self._spi.writebytes(data)
 

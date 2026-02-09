@@ -52,7 +52,7 @@ class AudioConfig:
     sample_rate: int = 16000
     chunk_size: int = 1280  # 80ms at 16kHz
     channels: int = 1
-    format_bits: int = 16
+    use_arecord: bool = False  # Use arecord subprocess (required for AC108 4-mic + onnxruntime)
     device: str = "plughw:1,0"  # ReSpeaker default
     playback_device: str = "plughw:1,0"
     beamforming: BeamformingConfig = field(default_factory=BeamformingConfig)
@@ -88,6 +88,7 @@ class LEDConfig:
     spi_bus: int = 0
     spi_device: int = 0
     num_leds: int = 3
+    led_power_pin: Optional[int] = None  # GPIO pin to enable LED power (4-mic HAT: 5)
 
 
 @dataclass
@@ -170,6 +171,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.audio.sample_rate = aud.get("sample_rate", config.audio.sample_rate)
         config.audio.chunk_size = aud.get("chunk_size", config.audio.chunk_size)
         config.audio.channels = aud.get("channels", config.audio.channels)
+        config.audio.use_arecord = aud.get("use_arecord", config.audio.use_arecord)
         config.audio.device = aud.get("device", config.audio.device)
         config.audio.playback_device = aud.get("playback_device", config.audio.playback_device)
 
@@ -206,6 +208,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.led.num_leds = led.get("num_leds", config.led.num_leds)
         config.led.spi_bus = led.get("spi_bus", config.led.spi_bus)
         config.led.spi_device = led.get("spi_device", config.led.spi_device)
+        config.led.led_power_pin = led.get("led_power_pin", config.led.led_power_pin)
 
     if "button" in config_data:
         btn = config_data["button"]

@@ -5,10 +5,24 @@ Raspberry Pi-based satellite voice assistant for the Renfield ecosystem. Enables
 ## Hardware Requirements
 
 - **Raspberry Pi Zero 2 W** (or any Pi with WiFi)
-- **ReSpeaker 2-Mics Pi HAT V2.0**
+- **ReSpeaker 2-Mics Pi HAT V2.0** or **ReSpeaker 4-Mic Array**
 - MicroSD Card (16GB+)
 - 5V/2A Power Supply
-- 3.5mm Speaker (optional, for TTS playback)
+- 3.5mm Speaker or HDMI audio output
+
+### Supported HAT Comparison
+
+| Feature | ReSpeaker 2-Mic HAT | ReSpeaker 4-Mic Array |
+|---------|---------------------|-----------------------|
+| Audio codec | WM8960 | AC108 |
+| Microphones | 2 | 4 (channels 1-3 active, channel 0 silent) |
+| ALSA card | `seeed2micvoicec` | `seeed4micvoicec` |
+| Audio backend | PyAudio (direct) | `arecord` subprocess (required) |
+| Native format | S16_LE / 1-2ch | S32_LE / 4ch only |
+| LEDs | 3 (SPI 0:0, no power pin) | 12 (SPI 0:1, GPIO5 power) |
+| Driver | Custom GPCLK overlay | seeed-voicecard v6.12 |
+| Beamforming | DAS (2-mic, 58mm) | Not yet (4-mic planned) |
+| Recommended VAD | Silero or RMS | RMS (Silero unreliable under CPU load) |
 
 ## Features
 
@@ -59,7 +73,9 @@ sudo reboot
 
 ### 3. Install ReSpeaker Drivers
 
-The Renfield repo includes a custom DTS overlay and install script for the ReSpeaker 2-Mics HAT on 64-bit OS.
+#### Option A: ReSpeaker 2-Mics Pi HAT
+
+The Renfield repo includes a custom DTS overlay and install script for the 2-Mics HAT on 64-bit OS.
 
 ```bash
 # Copy hardware files from the Renfield repo to the satellite
@@ -68,25 +84,42 @@ rsync -avz src/satellite/hardware/ user@satellite.local:/tmp/renfield-hardware/
 # Compile and install the overlay
 ssh user@satellite.local "sudo /tmp/renfield-hardware/install-overlay.sh simple"
 
-# Disable onboard audio (optional, prevents confusion with HDMI audio)
-ssh user@satellite.local "sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' /boot/firmware/config.txt"
+sudo reboot
+```
+
+After reboot, verify:
+```bash
+# Should show: seeed2micvoicec
+cat /proc/asound/cards
+```
+
+> **Important: GPIO4 Conflict!** The GPCLK0 overlay uses GPIO4 for the MCLK signal. If you have `dtoverlay=w1-gpio` (1-Wire) enabled in `/boot/firmware/config.txt`, you **must** disable it — it uses GPIO4 by default and will prevent the ReSpeaker from initializing.
+
+#### Option B: ReSpeaker 4-Mic Array (AC108)
+
+The 4-Mic Array uses the seeed-voicecard driver (HinTak fork for kernel 6.12+).
+
+```bash
+# Clone and install the driver
+ssh user@satellite.local
+git clone -b v6.12 https://github.com/HinTak/seeed-voicecard.git
+cd seeed-voicecard
+sudo ./install.sh
 
 sudo reboot
 ```
 
-> **Important: GPIO4 Conflict!** The GPCLK0 overlay uses GPIO4 for the MCLK signal. If you have `dtoverlay=w1-gpio` (1-Wire) enabled in `/boot/firmware/config.txt`, you **must** disable it — it uses GPIO4 by default and will prevent the ReSpeaker from initializing. Comment it out:
-> ```bash
-> sudo sed -i 's/^dtoverlay=w1-gpio/#dtoverlay=w1-gpio  # conflicts with GPCLK0 on GPIO4/' /boot/firmware/config.txt
-> ```
-
-After reboot, verify the sound card and MCLK:
+After reboot, verify:
 ```bash
-# Should show: seeed2micvoicec
+# Should show: seeed4micvoicec
 cat /proc/asound/cards
 
-# Should show: gp0 ... 12288000
-cat /sys/kernel/debug/clk/clk_summary | grep gp0
+# Check hardware capabilities
+arecord --dump-hw-params -D hw:0,0 /dev/null
+# FORMAT: S32_LE, CHANNELS: 4, RATE: 8000-48000
 ```
+
+> **Critical: AC108 + onnxruntime kernel crash.** PyAudio and onnxruntime (used by openwakeword) in the same process cause a kernel panic when `pa.open()` is called on the AC108 I2S driver. The satellite uses `arecord` subprocess isolation to prevent this — set `use_arecord: true` in your config (see step 10).
 
 ### 4. Verify Audio Hardware
 
@@ -227,6 +260,29 @@ ssh user@satellite.local "sed -i 's/sat-livingroom/sat-kitchen/; s/Living Room/K
 ```
 
 See `src/satellite/config/satellite.yaml` in the repo for all configuration options including audio, wake word, VAD, LED, and button settings.
+
+**4-Mic Array Configuration:** For the ReSpeaker 4-Mic Array, use these audio/LED/VAD settings:
+
+```yaml
+audio:
+  channels: 4
+  use_arecord: true       # Required — prevents AC108 + onnxruntime kernel crash
+  device: "hw:0,0"        # Direct hardware device
+  playback_device: "plughw:vc4hdmi"
+  beamforming:
+    enabled: false         # 4-mic beamforming not yet implemented
+
+led:
+  num_leds: 12
+  spi_device: 1           # 4-mic HAT uses SPI 0:1
+  led_power_pin: 5        # GPIO5 enables LED power on 4-mic HAT
+
+vad:
+  backend: "rms"           # RMS recommended for 4-mic (Silero unreliable under CPU load)
+  silence_threshold: 600   # Tune to your ambient noise level
+  silence_duration_ms: 2000
+  min_listening_seconds: 5.0
+```
 
 **Note:** With auto-discovery enabled (default), the satellite will automatically find and connect to the Renfield backend on your local network. No manual URL configuration is needed. The backend advertises itself using zeroconf/mDNS (`_renfield._tcp.local.`).
 
@@ -604,6 +660,8 @@ WAKE_WORD_THRESHOLD=0.5
 
 On Raspberry Pi Zero 2 W (64-bit):
 
+### 2-Mic HAT (PyAudio)
+
 | Component | CPU | Memory |
 |-----------|-----|--------|
 | Wake Word (openwakeword/ONNX) | 10-15% | ~80MB |
@@ -614,6 +672,19 @@ On Raspberry Pi Zero 2 W (64-bit):
 | LEDs | <1% | <5MB |
 | **Total (without beamforming)** | **~25%** | **~145MB** |
 | **Total (with beamforming)** | **~30%** | **~150MB** |
+
+### 4-Mic Array (arecord)
+
+| Component | CPU | Memory |
+|-----------|-----|--------|
+| Wake Word (openwakeword/ONNX) | 10-15% | ~80MB |
+| RMS VAD | <1% | ~0MB |
+| Audio capture (arecord + conversion) | 5-8% | ~15MB |
+| WebSocket | 2% | ~20MB |
+| LEDs (12 LEDs) | <1% | <5MB |
+| **Total** | **~25%** | **~120MB** |
+
+> **Note:** The 4-Mic Array uses RMS VAD instead of Silero to avoid running two ONNX models simultaneously, which causes unreliable end-of-speech detection due to CPU contention on the Pi Zero 2 W.
 
 ## Beamforming (Optional)
 
@@ -682,6 +753,18 @@ The ReSpeaker 2-Mics HAT works on 64-bit OS with a custom MCLK overlay (see step
 - `soundcard` library uses PipeWire/PulseAudio which may not detect the ReSpeaker HAT
 - `PyAudio` uses ALSA directly and respects the `.asoundrc` configuration
 - This ensures the ReSpeaker microphone is used instead of HDMI audio
+
+### Why arecord for the 4-Mic Array?
+
+The ReSpeaker 4-Mic Array (AC108 codec) requires a separate `arecord` subprocess for audio capture because PyAudio and onnxruntime (used by openwakeword) in the same process cause a kernel panic on the Pi Zero 2 W. The crash occurs at `pa.open()` when the ALSA stream is opened — each library works independently, but together they trigger a kernel panic in the AC108 I2S driver.
+
+The `arecord` subprocess captures 4ch/S32_LE raw audio. The Python capture loop converts this to mono S16_LE by extracting channel 1 (channels 1-3 are microphones, channel 0 is silent/reference) and right-shifting by 16 bits. A decoupled queue prevents buffer overruns between the capture thread and the consumer thread.
+
+### Why RMS VAD for the 4-Mic Array?
+
+On the Pi Zero 2 W, running two ONNX models per audio chunk (openwakeword for wake word detection + Silero VAD for end-of-speech) saturates the CPU. The processing lag causes the consumer thread to fall behind real-time, which inflates silence duration measurements. RMS-based VAD is essentially free (a single numpy calculation) and directly measures audio volume, making it reliable regardless of CPU load.
+
+Silence detection uses audio-chunk counting (not wall-clock `time.time()`) to measure silence duration, making it immune to CPU processing lag.
 
 ### Thread Safety
 
