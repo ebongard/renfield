@@ -123,7 +123,18 @@
     "fileTooLarge": "Datei zu groß (max. {{size}}MB)",
     "removeAttachment": "Anhang entfernen",
     "documentUploaded": "Dokument hochgeladen: {{filename}}",
-    "documentAttached": "{{count}} Dokument(e) angehängt"
+    "documentAttached": "{{count}} Dokument(e) angehängt",
+    "dropFileHere": "Datei ablegen zum Anhängen",
+    "quickActions": "Schnellaktionen",
+    "addToKb": "Zur Wissensdatenbank",
+    "sendToPaperless": "An Paperless senden",
+    "summarizeDocument": "Zusammenfassen",
+    "summarizePrompt": "Fasse das Dokument \"{{filename}}\" zusammen",
+    "indexingSuccess": "Zur Wissensdatenbank hinzugefügt",
+    "indexingFailed": "Fehler beim Hinzufügen",
+    "paperlessSuccess": "An Paperless gesendet",
+    "paperlessFailed": "Senden an Paperless fehlgeschlagen",
+    "alreadyIndexed": "Bereits indexiert"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",

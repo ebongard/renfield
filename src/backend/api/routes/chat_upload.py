@@ -2,24 +2,32 @@
 Chat Upload API Routes
 
 Upload documents directly in chat for quick text extraction.
-No RAG indexing — just extract text and store metadata.
+Optionally index into RAG knowledge base or forward to Paperless-NGX.
 """
+import base64
 import hashlib
+import json
 import os
 import uuid
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import UPLOAD_STATUS_COMPLETED, UPLOAD_STATUS_FAILED, ChatUpload
-from services.database import get_db
+from models.database import (
+    UPLOAD_STATUS_COMPLETED,
+    UPLOAD_STATUS_FAILED,
+    ChatUpload,
+    KnowledgeBase,
+)
+from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 
-from .chat_upload_schemas import ChatUploadResponse
+from .chat_upload_schemas import ChatUploadResponse, IndexRequest, IndexResponse, PaperlessResponse
 
 router = APIRouter()
 
@@ -39,12 +47,12 @@ async def upload_chat_document(
     session_id: str = Form(...),
     knowledge_base_id: int | None = Form(None),
     db: AsyncSession = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Upload a document in chat for quick text extraction.
 
     Returns extracted text preview and metadata.
-    No RAG indexing or chunking — just raw text extraction.
     """
     # Validate file extension
     filename = file.filename or "unknown"
@@ -108,10 +116,17 @@ async def upload_chat_document(
         status=status,
         error_message=error_message,
         knowledge_base_id=knowledge_base_id,
+        file_path=str(file_path),
     )
     db.add(upload)
     await db.commit()
     await db.refresh(upload)
+
+    # Auto-index to KB if enabled
+    if settings.chat_upload_auto_index and status == UPLOAD_STATUS_COMPLETED:
+        background_tasks.add_task(
+            _auto_index_to_kb, upload.id, str(file_path), safe_name, file_hash
+        )
 
     return ChatUploadResponse(
         id=upload.id,
@@ -123,3 +138,189 @@ async def upload_chat_document(
         error_message=upload.error_message,
         created_at=upload.created_at.isoformat() if upload.created_at else "",
     )
+
+
+# ============================================================================
+# Manual KB Index Endpoint
+# ============================================================================
+
+
+@router.post("/upload/{upload_id}/index", response_model=IndexResponse)
+async def index_chat_upload(
+    upload_id: int,
+    request: IndexRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Index a chat upload into a RAG knowledge base."""
+    # Fetch upload
+    result = await db.execute(
+        select(ChatUpload).where(ChatUpload.id == upload_id)
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Check file exists on disk
+    if not upload.file_path or not Path(upload.file_path).is_file():
+        raise HTTPException(status_code=400, detail="File no longer available on disk")
+
+    # Already indexed?
+    if upload.document_id is not None:
+        raise HTTPException(status_code=409, detail="Already indexed")
+
+    # Verify KB exists
+    kb_result = await db.execute(
+        select(KnowledgeBase).where(KnowledgeBase.id == request.knowledge_base_id)
+    )
+    kb = kb_result.scalar_one_or_none()
+    if not kb:
+        raise HTTPException(status_code=404, detail="Knowledge base not found")
+
+    # Ingest via RAGService
+    from services.rag_service import RAGService
+    rag = RAGService(db)
+    doc = await rag.ingest_document(
+        file_path=upload.file_path,
+        knowledge_base_id=request.knowledge_base_id,
+        filename=upload.filename,
+        file_hash=upload.file_hash,
+    )
+
+    # Update ChatUpload
+    upload.document_id = doc.id
+    upload.knowledge_base_id = request.knowledge_base_id
+    await db.commit()
+
+    return IndexResponse(
+        success=True,
+        document_id=doc.id,
+        knowledge_base_id=request.knowledge_base_id,
+        chunk_count=doc.chunk_count,
+        message="Indexed successfully",
+    )
+
+
+# ============================================================================
+# Paperless Forward Endpoint
+# ============================================================================
+
+
+@router.post("/upload/{upload_id}/paperless", response_model=PaperlessResponse)
+async def forward_to_paperless(
+    upload_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Forward a chat upload to Paperless-NGX via MCP."""
+    # Fetch upload
+    result = await db.execute(
+        select(ChatUpload).where(ChatUpload.id == upload_id)
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Check file exists on disk
+    if not upload.file_path or not Path(upload.file_path).is_file():
+        raise HTTPException(status_code=400, detail="File no longer available on disk")
+
+    # Get MCP manager
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        raise HTTPException(status_code=503, detail="MCP not available")
+
+    # Read and base64-encode file
+    async with aiofiles.open(upload.file_path, 'rb') as f:
+        file_bytes = await f.read()
+    file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
+
+    # Execute MCP tool
+    try:
+        mcp_result = await manager.execute_tool(
+            "mcp.paperless.upload_document",
+            {
+                "title": upload.filename,
+                "filename": upload.filename,
+                "file_content_base64": file_content_base64,
+            },
+        )
+    except Exception as e:
+        logger.error(f"Paperless forward failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Paperless forwarding failed: {e}")
+
+    # Parse MCP response for task_id
+    task_id = None
+    if mcp_result and mcp_result.get("message"):
+        try:
+            inner = json.loads(mcp_result["message"])
+            if inner.get("success") and inner.get("data"):
+                task_id = inner["data"].get("task_id")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    if not mcp_result or not mcp_result.get("success"):
+        raise HTTPException(status_code=502, detail="Paperless forwarding failed")
+
+    return PaperlessResponse(
+        success=True,
+        paperless_task_id=str(task_id) if task_id else None,
+        message="Sent to Paperless",
+    )
+
+
+# ============================================================================
+# Background Task: Auto-Index to KB
+# ============================================================================
+
+
+async def _get_or_create_default_kb(db: AsyncSession) -> KnowledgeBase:
+    """Get or create the default KB for auto-indexed chat uploads."""
+    result = await db.execute(
+        select(KnowledgeBase).where(KnowledgeBase.name == settings.chat_upload_default_kb_name)
+    )
+    kb = result.scalar_one_or_none()
+    if kb:
+        return kb
+
+    kb = KnowledgeBase(
+        name=settings.chat_upload_default_kb_name,
+        description="Automatically indexed documents from chat uploads",
+    )
+    db.add(kb)
+    await db.commit()
+    await db.refresh(kb)
+    return kb
+
+
+async def _auto_index_to_kb(
+    upload_id: int,
+    file_path: str,
+    filename: str,
+    file_hash: str | None,
+) -> None:
+    """Background task: auto-index a chat upload into the default KB."""
+    try:
+        async with AsyncSessionLocal() as db:
+            kb = await _get_or_create_default_kb(db)
+
+            from services.rag_service import RAGService
+            rag = RAGService(db)
+            doc = await rag.ingest_document(
+                file_path=file_path,
+                knowledge_base_id=kb.id,
+                filename=filename,
+                file_hash=file_hash,
+            )
+
+            result = await db.execute(
+                select(ChatUpload).where(ChatUpload.id == upload_id)
+            )
+            upload = result.scalar_one_or_none()
+            if upload:
+                upload.document_id = doc.id
+                upload.knowledge_base_id = kb.id
+                await db.commit()
+
+            logger.info(f"Auto-indexed chat upload {upload_id} → KB '{kb.name}' (doc {doc.id})")
+    except Exception as e:
+        logger.error(f"Auto-index failed for upload {upload_id}: {e}")

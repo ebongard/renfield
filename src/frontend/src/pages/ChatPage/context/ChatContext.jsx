@@ -5,7 +5,7 @@ import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
-import { useChatWebSocket, useAudioRecording, useDocumentUpload } from '../hooks';
+import { useChatWebSocket, useAudioRecording, useDocumentUpload, useQuickActions } from '../hooks';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
@@ -439,6 +439,9 @@ export function ChatProvider({ children }) {
     setAttachments(prev => prev.filter(a => a.id !== id));
   }, []);
 
+  // Quick actions hook
+  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless } = useQuickActions();
+
   // Assign startRecording to ref for wake word callback
   startRecordingRef.current = startRecording;
 
@@ -514,6 +517,28 @@ export function ChatProvider({ children }) {
     }
   }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, wsSendMessage, addConversation, attachments, t]);
 
+  // Summarize handler (must be after sendMessageInternal)
+  const handleSummarize = useCallback((uploadId) => {
+    let filename = null;
+    for (const msg of messages) {
+      const att = msg.attachments?.find(a => a.id === uploadId);
+      if (att) {
+        filename = att.filename;
+        break;
+      }
+    }
+    if (!filename) return;
+    const prompt = t('chat.summarizePrompt', { filename });
+    sendMessageInternal(prompt, false);
+  }, [messages, t, sendMessageInternal]);
+
+  // Auto-clear action result after 3s
+  useEffect(() => {
+    if (!actionResult) return;
+    const timer = setTimeout(clearResult, 3000);
+    return () => clearTimeout(timer);
+  }, [actionResult, clearResult]);
+
   // Session initialization
   useEffect(() => {
     if (!sessionId) {
@@ -534,7 +559,11 @@ export function ChatProvider({ children }) {
         try {
           const history = await loadConversationHistory(sessionId);
           if (history.length > 0) {
-            setMessages(history.map(m => ({ role: m.role, content: m.content })));
+            setMessages(history.map(m => ({
+              role: m.role,
+              content: m.content,
+              ...(m.attachments?.length > 0 && { attachments: m.attachments }),
+            })));
           }
         } catch (err) {
           console.error('Failed to load conversation history:', err);
@@ -557,7 +586,11 @@ export function ChatProvider({ children }) {
     setHistoryLoading(true);
     try {
       const history = await loadConversationHistory(newSessionId);
-      setMessages(history.map(m => ({ role: m.role, content: m.content })));
+      setMessages(history.map(m => ({
+        role: m.role,
+        content: m.content,
+        ...(m.attachments?.length > 0 && { attachments: m.attachments }),
+      })));
       setSessionId(newSessionId);
       localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
       setSidebarOpen(false);
@@ -648,6 +681,13 @@ export function ChatProvider({ children }) {
     },
     wakeWordStatus,
 
+    // Quick actions
+    actionLoading,
+    actionResult,
+    indexToKb,
+    sendToPaperless,
+    handleSummarize,
+
     // Actions
     speakText,
     handleFeedbackSubmit,
@@ -660,6 +700,7 @@ export function ChatProvider({ children }) {
     useRag, toggleRag, selectedKnowledgeBase,
     attachments, uploading, uploadError, handleUploadDocument, removeAttachment,
     wakeWord, wakeWordStatus,
+    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
     speakText, handleFeedbackSubmit,
   ]);
 
