@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader } from 'lucide-react';
 import apiClient from '../../utils/axios';
@@ -18,6 +18,24 @@ export default function ChatInput() {
 
   const [knowledgeBases, setKnowledgeBases] = useState([]);
   const [showRagSettings, setShowRagSettings] = useState(false);
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadDocument(file);
+  }, [uploadDocument]);
 
   // Load knowledge bases when RAG is enabled
   useEffect(() => {
@@ -57,7 +75,12 @@ export default function ChatInput() {
   };
 
   return (
-    <div className="card mx-4 mb-4 md:mx-0 md:mb-0">
+    <div
+      className={`card mx-4 mb-4 md:mx-0 md:mb-0 ${isDragOver ? 'ring-2 ring-primary-500' : ''}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* RAG Toggle */}
       <div className="flex items-center justify-between mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
         <div className="flex items-center space-x-3">
@@ -127,6 +150,14 @@ export default function ChatInput() {
           </span>
         )}
       </div>
+
+      {/* Drop Zone Indicator */}
+      {isDragOver && (
+        <div className="flex items-center justify-center py-3 mb-3 border-2 border-dashed border-primary-400 rounded-lg bg-primary-50/50 dark:bg-primary-900/30">
+          <Paperclip className="w-4 h-4 text-primary-500 mr-2" />
+          <span className="text-sm text-primary-600 dark:text-primary-400">{t('chat.dropFileHere')}</span>
+        </div>
+      )}
 
       {/* Pending Attachments */}
       {attachments.length > 0 && (
