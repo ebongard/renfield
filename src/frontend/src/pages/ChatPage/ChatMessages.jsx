@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Volume2, Loader } from 'lucide-react';
+import { Volume2, Loader, FileText, AlertCircle, CheckCircle } from 'lucide-react';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import { useChatContext } from './context/ChatContext';
 
@@ -56,6 +56,37 @@ export default function ChatMessages() {
             }`}
           >
             <p className="whitespace-pre-wrap">{message.content}</p>
+
+            {/* Attachment chips */}
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {message.attachments.map(att => (
+                  <div
+                    key={att.id}
+                    className={`flex items-center space-x-1 px-2 py-1 rounded text-xs ${
+                      att.status === 'completed'
+                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                    }`}
+                  >
+                    <FileText className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                    <span className="truncate max-w-[140px]">{att.filename}</span>
+                    {att.file_size && (
+                      <span className="text-[10px] opacity-70">
+                        ({att.file_size < 1024 * 1024
+                          ? `${Math.round(att.file_size / 1024)} KB`
+                          : `${(att.file_size / (1024 * 1024)).toFixed(1)} MB`
+                        })
+                      </span>
+                    )}
+                    {att.status === 'completed'
+                      ? <CheckCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                      : <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                    }
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* TTS Button for assistant messages */}
             {message.role === 'assistant' && !message.streaming && speakText && (
