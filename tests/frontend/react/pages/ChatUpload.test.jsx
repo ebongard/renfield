@@ -139,6 +139,114 @@ describe('Chat Upload', () => {
     });
   });
 
+  it('renders attachment chips from loaded history', async () => {
+    // Mock a conversation with attachments in history
+    const sessionId = 'session-with-attachments';
+    server.use(
+      http.get(`${BASE_URL}/api/chat/conversations`, () => {
+        return HttpResponse.json({
+          conversations: [{
+            session_id: sessionId,
+            preview: 'Check this doc',
+            message_count: 2,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+          total: 1,
+        });
+      }),
+      http.get(`${BASE_URL}/api/chat/history/${sessionId}`, () => {
+        return HttpResponse.json({
+          messages: [
+            {
+              role: 'user',
+              content: 'What does this say?',
+              timestamp: new Date().toISOString(),
+              metadata: { attachment_ids: [42] },
+              attachments: [
+                { id: 42, filename: 'quarterly.pdf', file_type: 'pdf', file_size: 8000, status: 'completed' },
+              ],
+            },
+            {
+              role: 'assistant',
+              content: 'The document talks about earnings.',
+              timestamp: new Date().toISOString(),
+              metadata: null,
+            },
+          ],
+        });
+      })
+    );
+
+    // Set localStorage to this session so it loads history on mount
+    localStorage.setItem('renfield_current_session', sessionId);
+
+    renderWithProviders(<ChatPage />);
+
+    // The attachment chip from history should appear
+    await waitFor(() => {
+      expect(screen.getByText(/quarterly\.pdf/)).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    // Clean up
+    localStorage.removeItem('renfield_current_session');
+  });
+
+  it('renders quick actions menu on attachment chip', async () => {
+    const sessionId = 'session-quick-actions';
+    server.use(
+      http.get(`${BASE_URL}/api/chat/conversations`, () => {
+        return HttpResponse.json({
+          conversations: [{
+            session_id: sessionId,
+            preview: 'Check doc',
+            message_count: 1,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+          total: 1,
+        });
+      }),
+      http.get(`${BASE_URL}/api/chat/history/${sessionId}`, () => {
+        return HttpResponse.json({
+          messages: [
+            {
+              role: 'user',
+              content: 'Check this doc',
+              timestamp: new Date().toISOString(),
+              metadata: { attachment_ids: [10] },
+              attachments: [
+                { id: 10, filename: 'report.pdf', file_type: 'pdf', file_size: 5000, status: 'completed' },
+              ],
+            },
+          ],
+        });
+      })
+    );
+
+    localStorage.setItem('renfield_current_session', sessionId);
+    const user = userEvent.setup();
+    renderWithProviders(<ChatPage />);
+
+    // Wait for attachment chip to appear
+    await waitFor(() => {
+      expect(screen.getByText(/report\.pdf/)).toBeInTheDocument();
+    }, { timeout: 5000 });
+
+    // Click the 3-dot menu button (quick actions)
+    const quickActionBtn = screen.getByLabelText('Schnellaktionen');
+    await user.click(quickActionBtn);
+
+    // Menu items should be visible
+    await waitFor(() => {
+      expect(screen.getByText('Zur Wissensdatenbank')).toBeInTheDocument();
+      expect(screen.getByText('An Paperless senden')).toBeInTheDocument();
+      expect(screen.getByText('Zusammenfassen')).toBeInTheDocument();
+    });
+
+    localStorage.removeItem('renfield_current_session');
+  });
+
   it('shows attachment chip after successful upload', async () => {
     server.use(
       http.post(`${BASE_URL}/api/chat/upload`, () => {

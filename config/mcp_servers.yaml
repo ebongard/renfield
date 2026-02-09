@@ -179,13 +179,16 @@ servers:
     example_intent: mcp.paperless.search_documents
     prompt_tools:
       - search_documents
+      - upload_document
     examples:
       de:
         - "Suche nach Rechnungen in Paperless"
         - "Finde Dokumente von Telekom"
+        - "Sende dieses Dokument an Paperless"
       en:
         - "Search for invoices in Paperless"
         - "Find documents from Telekom"
+        - "Send this document to Paperless"
 
   # --- Email MCP Server ---
   # Custom Python MCP server for multi-account email (IMAP/SMTP).

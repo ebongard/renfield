@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Conversation, Message, User
+from models.database import ChatUpload, Conversation, Message, User
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user, require_permission
@@ -247,13 +247,39 @@ async def get_history(
         )
         messages = result.scalars().all()
 
+        # Collect attachment IDs from user messages for bulk fetch
+        all_attachment_ids = []
+        for msg in messages:
+            if msg.message_metadata and msg.role == "user":
+                all_attachment_ids.extend(msg.message_metadata.get("attachment_ids", []))
+
+        attachments_map = {}
+        if all_attachment_ids:
+            att_result = await db.execute(
+                select(ChatUpload).where(ChatUpload.id.in_(all_attachment_ids))
+            )
+            for upload in att_result.scalars().all():
+                attachments_map[upload.id] = {
+                    "id": upload.id,
+                    "filename": upload.filename,
+                    "file_type": upload.file_type,
+                    "file_size": upload.file_size,
+                    "status": upload.status,
+                }
+
         return {
             "messages": [
                 {
                     "role": msg.role,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
-                    "metadata": msg.message_metadata  # Spalte heißt message_metadata
+                    "metadata": msg.message_metadata,  # Spalte heißt message_metadata
+                    **({"attachments": [
+                        attachments_map[aid]
+                        for aid in msg.message_metadata.get("attachment_ids", [])
+                        if aid in attachments_map
+                    ]} if msg.role == "user" and msg.message_metadata
+                        and msg.message_metadata.get("attachment_ids") else {}),
                 }
                 for msg in messages
             ]

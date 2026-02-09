@@ -514,6 +514,7 @@ class ChatUpload(Base):
     status = Column(String(50), default=UPLOAD_STATUS_PROCESSING, index=True)
     error_message = Column(Text, nullable=True)
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True)
+    file_path = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
 
 
