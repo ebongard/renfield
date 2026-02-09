@@ -48,6 +48,20 @@ de:
     Nutze diese Erinnerungen um personalisierter zu antworten.
     Widerspreche ihnen nicht, es sei denn der Benutzer korrigiert dich explizit.
 
+  document_context_section: |
+    HOCHGELADENES DOKUMENT ({filename}, {file_size}):
+    {document_text}
+
+    WICHTIG: Der Benutzer hat dieses Dokument hochgeladen. Beantworte Fragen basierend auf dem Dokumentinhalt. Zitiere relevante Stellen wenn moeglich.
+
+  document_context_multi_section: |
+    HOCHGELADENE DOKUMENTE ({count} Dateien):
+    {documents}
+
+    WICHTIG: Der Benutzer hat diese Dokumente hochgeladen. Beantworte Fragen basierend auf den Dokumentinhalten. Zitiere relevante Stellen und nenne das jeweilige Dokument.
+
+  document_separator: "--- DOKUMENT: {filename} ({file_size}) ---\n{document_text}"
+
   error_fallback: "Entschuldigung, es gab einen Fehler: {error}"
   error_service_unavailable: "Der Dienst ist vorübergehend nicht verfügbar. Bitte versuche es später erneut."
 
@@ -96,6 +110,20 @@ en:
 
     Use these memories to give personalized responses.
     Don't contradict them unless the user explicitly corrects you.
+
+  document_context_section: |
+    UPLOADED DOCUMENT ({filename}, {file_size}):
+    {document_text}
+
+    IMPORTANT: The user has uploaded this document. Answer questions based on the document content. Cite relevant passages when possible.
+
+  document_context_multi_section: |
+    UPLOADED DOCUMENTS ({count} files):
+    {documents}
+
+    IMPORTANT: The user has uploaded these documents. Answer questions based on the document contents. Cite relevant passages and name the respective document.
+
+  document_separator: "--- DOCUMENT: {filename} ({file_size}) ---\n{document_text}"
 
   error_fallback: "Sorry, there was an error: {error}"
   error_service_unavailable: "The service is temporarily unavailable. Please try again later."
