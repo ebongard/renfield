@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Send, Mic, MicOff, BookOpen, ChevronDown } from 'lucide-react';
+import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
@@ -11,7 +11,10 @@ export default function ChatInput() {
     input, setInput, sendMessage, loading, recording, toggleRecording,
     audioLevel, silenceTimeRemaining,
     useRag, toggleRag, selectedKnowledgeBase, setSelectedKnowledgeBase,
+    attachments, uploading, uploadDocument, removeAttachment,
   } = useChatContext();
+
+  const fileInputRef = useRef(null);
 
   const [knowledgeBases, setKnowledgeBases] = useState([]);
   const [showRagSettings, setShowRagSettings] = useState(false);
@@ -37,6 +40,15 @@ export default function ChatInput() {
       e.preventDefault();
       sendMessage?.(input, false);
     }
+  };
+
+  const handleFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      uploadDocument(file);
+    }
+    // Reset input so same file can be re-selected
+    e.target.value = '';
   };
 
   const handleSelectKb = (kbId) => {
@@ -116,6 +128,28 @@ export default function ChatInput() {
         )}
       </div>
 
+      {/* Pending Attachments */}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+          {attachments.map(att => (
+            <div
+              key={att.id}
+              className="flex items-center space-x-1 px-2 py-1 bg-gray-100 dark:bg-gray-700 rounded text-sm text-gray-700 dark:text-gray-300"
+            >
+              <FileText className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              <span className="truncate max-w-[120px]">{att.filename}</span>
+              <button
+                onClick={() => removeAttachment(att.id)}
+                className="ml-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                aria-label={t('chat.removeAttachment')}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Audio Waveform Visualizer during recording */}
       {recording && (
         <AudioVisualizer
@@ -139,6 +173,27 @@ export default function ChatInput() {
           aria-describedby={loading ? 'chat-loading-hint' : undefined}
         />
         {loading && <span id="chat-loading-hint" className="sr-only">{t('chat.processingMessage')}</span>}
+
+        {/* Hidden file input */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          className="hidden"
+          accept=".pdf,.docx,.doc,.txt,.md,.html,.pptx,.xlsx"
+          onChange={handleFileChange}
+        />
+
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={loading || recording || uploading}
+          className="p-3 rounded-lg transition-colors bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 disabled:opacity-50"
+          aria-label={t('chat.attachFile')}
+        >
+          {uploading
+            ? <Loader className="w-5 h-5 animate-spin" aria-hidden="true" />
+            : <Paperclip className="w-5 h-5" aria-hidden="true" />
+          }
+        </button>
 
         <button
           onClick={toggleRecording}

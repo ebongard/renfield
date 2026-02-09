@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import aiofiles
 from loguru import logger
 
 from utils.config import settings
@@ -277,6 +278,49 @@ class DocumentProcessor:
             start = end - overlap
 
         return chunks
+
+    async def extract_text_only(self, file_path: str, max_chars: int = 50000) -> str | None:
+        """
+        Quick text extraction without chunking or embedding.
+
+        For TXT/MD files, reads directly via aiofiles.
+        For other formats, uses Docling conversion + export_to_text().
+
+        Returns None on error.
+        """
+        try:
+            path = Path(file_path)
+            if not path.exists():
+                logger.warning(f"extract_text_only: Datei nicht gefunden: {file_path}")
+                return None
+
+            ext = path.suffix.lower().lstrip('.')
+
+            # Plain text files: read directly
+            if ext in ("txt", "md"):
+                async with aiofiles.open(file_path, encoding='utf-8', errors='replace') as f:
+                    text = await f.read(max_chars)
+                return text
+
+            # Other formats: use Docling converter
+            self._ensure_initialized()
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, self._convert_document, file_path)
+
+            if result is None:
+                return None
+
+            doc = result.document
+            if hasattr(doc, 'export_to_text'):
+                text = doc.export_to_text()
+                return text[:max_chars] if text else None
+
+            return None
+
+        except Exception as e:
+            logger.error(f"extract_text_only Fehler für {file_path}: {e}")
+            return None
 
     def get_supported_formats(self) -> list[str]:
         """Gibt unterstützte Dateiformate zurück"""
