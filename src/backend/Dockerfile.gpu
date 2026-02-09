@@ -39,6 +39,9 @@ RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1 \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# Upgrade pip + install setuptools<76 (openai-whisper uses pkg_resources, removed in setuptools 76+)
+RUN pip install --no-cache-dir --upgrade "pip>=25.3" "setuptools<76"
+
 # Install PyTorch cu128 FIRST (single install, correct CUDA version from the start)
 RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 
@@ -51,7 +54,7 @@ RUN grep -v -E "^(torch(audio|vision)?|openai-whisper)([>=<]|$)" requirements.tx
     && grep "github.com" requirements.txt > requirements-github.txt || true \
     && pip freeze | grep -E "^(torch|torchaudio|torchvision|nvidia-|triton)" > /tmp/constraints.txt \
     && pip install --no-cache-dir -c /tmp/constraints.txt -r requirements-filtered.txt \
-    && pip install --no-cache-dir --no-deps openai-whisper==20231117 \
+    && pip install --no-cache-dir --no-deps --no-build-isolation openai-whisper==20231117 \
     && pip install --no-cache-dir tiktoken more-itertools numba \
     && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi \
     && rm requirements-filtered.txt requirements-github.txt /tmp/constraints.txt
