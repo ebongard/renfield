@@ -67,13 +67,12 @@ class TestConfigDefaults:
 
     @pytest.mark.satellite
     def test_default_audio_values(self):
-        """Default audio config has 16kHz, 1280 chunk, mono, 16-bit."""
+        """Default audio config has 16kHz, 1280 chunk, mono."""
         config = load_config("/tmp/nonexistent_renfield_config_12345.yaml")
 
         assert config.audio.sample_rate == 16000
         assert config.audio.chunk_size == 1280
         assert config.audio.channels == 1
-        assert config.audio.format_bits == 16
 
     @pytest.mark.satellite
     def test_default_vad_values(self):
@@ -211,9 +210,35 @@ button:
         assert config.led.spi_bus == 1
         assert config.led.spi_device == 1
         assert config.led.num_leds == 6
+        assert config.led.led_power_pin is None  # Not set in YAML
 
         # Button section
         assert config.button.gpio_pin == 27
+
+    @pytest.mark.satellite
+    def test_led_power_pin_parsed_from_yaml(self, tmp_path):
+        """led_power_pin is parsed from YAML config (4-mic HAT uses GPIO5)."""
+        yaml_content = """\
+led:
+  num_leds: 12
+  spi_bus: 0
+  spi_device: 1
+  led_power_pin: 5
+"""
+        config_file = tmp_path / "4mic.yaml"
+        config_file.write_text(yaml_content)
+
+        config = load_config(str(config_file))
+
+        assert config.led.num_leds == 12
+        assert config.led.spi_device == 1
+        assert config.led.led_power_pin == 5
+
+    @pytest.mark.satellite
+    def test_led_power_pin_defaults_to_none(self):
+        """led_power_pin defaults to None when not specified."""
+        config = load_config("/tmp/nonexistent_renfield_config_12345.yaml")
+        assert config.led.led_power_pin is None
 
     @pytest.mark.satellite
     def test_partial_yaml_only_satellite_section(self, tmp_path):

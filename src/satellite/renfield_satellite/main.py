@@ -5,8 +5,10 @@ Starts the satellite voice assistant service.
 """
 
 import asyncio
+import os
 import signal
 import sys
+import threading
 from typing import Optional
 
 from .config import load_config, Config
@@ -19,10 +21,27 @@ _loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def signal_handler(signum, frame):
-    """Handle shutdown signals"""
-    print(f"\nReceived signal {signum}")
+    """Handle shutdown signals.
+
+    Uses os._exit() as a safety net after 5 seconds. On the ReSpeaker 4-Mic
+    Array (AC108 codec), any PyAudio cleanup that touches the driver can crash
+    the kernel. os._exit() bypasses Python's atexit handlers and object
+    finalizers, letting the OS release resources safely.
+    """
+    print(f"\nReceived signal {signum}, shutting down...")
+
+    # Safety net: force-exit after 5 seconds so the process never hangs.
+    # This prevents systemd from sending SIGKILL after TimeoutStopSec,
+    # which could leave the AC108 driver in a dirty state.
+    def _force_exit():
+        print("Graceful shutdown timed out, forcing exit")
+        os._exit(0)
+
+    timer = threading.Timer(5.0, _force_exit)
+    timer.daemon = True
+    timer.start()
+
     if _satellite and _loop and _loop.is_running():
-        # Schedule stop in the event loop (thread-safe)
         _loop.call_soon_threadsafe(lambda: asyncio.create_task(_satellite.stop()))
 
 
@@ -69,6 +88,11 @@ async def main(config_path: Optional[str] = None):
         traceback.print_exc()
     finally:
         await _satellite.stop()
+        # Exit immediately after graceful stop. Python's normal shutdown
+        # sequence runs atexit handlers and object finalizers which can
+        # trigger pa.terminate() and crash the AC108 kernel driver.
+        print("Shutdown complete")
+        os._exit(0)
 
 
 def run():

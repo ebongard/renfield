@@ -321,6 +321,14 @@ Nur eine zentrale ErrorBoundary, keine Feature-spezifischen.
 
 ## Satellite
 
+### ✅ Behoben
+
+#### ~~Native S32_LE/4ch Audio Capture für 4-Mic Array~~ ✅ (RESOLVED 2026-02-09)
+
+`arecord` subprocess captures 4ch/S32_LE natively. Python converts to mono S16_LE (channel 1, right-shift 16). PyAudio cannot be used due to kernel crash with onnxruntime. RMS VAD replaces Silero for reliable end-of-speech detection under CPU load. See `src/satellite/TECHNICAL_DEBT.md` for details.
+
+---
+
 ### ~~🟡 Mittel~~ → ✅ Behoben/Dokumentiert
 
 #### ~~1. Bare Except Clauses (22)~~ ✅ Behoben

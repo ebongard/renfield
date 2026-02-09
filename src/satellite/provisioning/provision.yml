@@ -1,0 +1,382 @@
+---
+# Renfield Satellite Provisioning Playbook
+#
+# Provisions a Raspberry Pi Zero 2 W as a Renfield voice satellite.
+# Supports both ReSpeaker 2-Mic HAT and 4-Mic Array via hat_type variable.
+#
+# Usage:
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum -v
+#
+# Tags:
+#   system, boot, driver, python, app, config, models, service
+#
+# Run a single phase:
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --tags config
+#
+# Dry run:
+#   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --check
+
+- name: Provision Renfield Satellite
+  hosts: satellites
+  become: true
+
+  handlers:
+    - name: reboot after driver install
+      ansible.builtin.reboot:
+        reboot_timeout: 120
+        msg: "Rebooting after audio driver installation"
+
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+  tasks:
+    # =========================================================================
+    # SYSTEM — System preparation
+    # =========================================================================
+
+    - name: Install system packages
+      tags: [system]
+      ansible.builtin.apt:
+        name: "{{ satellite_system_packages }}"
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Add user to hardware groups
+      tags: [system]
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: audio,spi,gpio,i2c
+        append: true
+
+    - name: Create satellite directories
+      tags: [system]
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0755"
+      loop:
+        - "{{ satellite_base_dir }}"
+        - "{{ satellite_config_dir }}"
+        - "{{ satellite_models_dir }}"
+        - "{{ satellite_code_dir }}"
+
+    # =========================================================================
+    # BOOT — Boot configuration (config.txt)
+    # =========================================================================
+
+    - name: Enable I2S
+      tags: [boot]
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^#?\s*dtparam=i2s'
+        line: "dtparam=i2s=on"
+        state: present
+
+    - name: Enable SPI
+      tags: [boot]
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^#?\s*dtparam=spi'
+        line: "dtparam=spi=on"
+        state: present
+
+    - name: Enable I2C
+      tags: [boot]
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^#?\s*dtparam=i2c_arm'
+        line: "dtparam=i2c_arm=on"
+        state: present
+
+    - name: Remove w1-gpio overlay (GPIO4 conflict with audio HATs)
+      tags: [boot]
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        regexp: '^dtoverlay=w1-gpio'
+        state: absent
+
+    # =========================================================================
+    # DRIVER — Audio driver installation
+    # =========================================================================
+
+    # --- 4-Mic Array: seeed-voicecard driver ---
+
+    - name: Clone seeed-voicecard for 4-mic HAT
+      tags: [driver]
+      when: hat_type == "4mic"
+      ansible.builtin.git:
+        repo: https://github.com/HinTak/seeed-voicecard.git
+        dest: /tmp/seeed-voicecard
+        version: "{{ seeed_voicecard_branch }}"
+        force: true
+
+    - name: Install seeed-voicecard driver (4-mic)
+      tags: [driver]
+      when: hat_type == "4mic"
+      ansible.builtin.shell: |
+        cd /tmp/seeed-voicecard && bash install.sh
+      args:
+        creates: /boot/firmware/overlays/seeed-4mic-voicecard.dtbo
+      notify: reboot after driver install
+
+    - name: Ensure 4-mic overlay in config.txt
+      tags: [driver]
+      when: hat_type == "4mic"
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtoverlay=seeed-4mic-voicecard"
+        state: present
+      notify: reboot after driver install
+
+    # --- 2-Mic HAT: custom GPCLK overlay ---
+
+    - name: Copy 2-mic overlay sources to Pi
+      tags: [driver]
+      when: hat_type == "2mic"
+      ansible.builtin.synchronize:
+        src: "{{ playbook_dir }}/../hardware/"
+        dest: /tmp/renfield-overlay/
+        recursive: true
+
+    - name: Install 2-mic overlay
+      tags: [driver]
+      when: hat_type == "2mic"
+      ansible.builtin.shell: |
+        cd /tmp/renfield-overlay && bash install-overlay.sh {{ overlay_variant | default('simple') }}
+      args:
+        creates: "/boot/firmware/overlays/seeed-2mic-gpclk-{{ overlay_variant | default('simple') }}.dtbo"
+      notify: reboot after driver install
+
+    # --- Flush handlers (reboot if driver was installed) ---
+
+    - name: Reboot now if driver was installed
+      tags: [driver]
+      ansible.builtin.meta: flush_handlers
+
+    - name: Wait for sound card after reboot
+      tags: [driver]
+      ansible.builtin.wait_for:
+        path: /proc/asound/cards
+        search_regex: "seeed"
+        timeout: 30
+      register: soundcard_check
+      ignore_errors: true
+
+    - name: Show detected sound cards
+      tags: [driver]
+      ansible.builtin.command: cat /proc/asound/cards
+      register: asound_cards
+      changed_when: false
+
+    - name: Display sound cards
+      tags: [driver]
+      ansible.builtin.debug:
+        var: asound_cards.stdout_lines
+
+    # =========================================================================
+    # PYTHON — Python virtual environment
+    # =========================================================================
+
+    - name: Create Python venv
+      tags: [python]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.command:
+        cmd: python3 -m venv {{ satellite_venv }}
+        creates: "{{ satellite_venv }}/bin/python"
+
+    - name: Upgrade pip
+      tags: [python]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.pip:
+        name: pip
+        state: latest
+        virtualenv: "{{ satellite_venv }}"
+
+    - name: Install Python packages
+      tags: [python]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.pip:
+        name: "{{ satellite_python_packages }}"
+        virtualenv: "{{ satellite_venv }}"
+
+    - name: Install openwakeword (--no-deps for Python 3.13+ compat)
+      tags: [python]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.pip:
+        name: "{{ openwakeword_package }}"
+        virtualenv: "{{ satellite_venv }}"
+        extra_args: "--no-deps"
+
+    # =========================================================================
+    # APP — Deploy application code
+    # =========================================================================
+
+    - name: Deploy satellite code via rsync
+      tags: [app]
+      ansible.builtin.synchronize:
+        src: "{{ playbook_dir }}/../renfield_satellite/"
+        dest: "{{ satellite_code_dir }}/"
+        recursive: true
+        delete: true
+        rsync_opts:
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=.pytest_cache"
+
+    - name: Set code ownership
+      tags: [app]
+      ansible.builtin.file:
+        path: "{{ satellite_code_dir }}"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        recurse: true
+
+    # =========================================================================
+    # CONFIG — Configuration files
+    # =========================================================================
+
+    - name: Deploy satellite.yaml
+      tags: [config]
+      ansible.builtin.template:
+        src: satellite.yaml.j2
+        dest: "{{ satellite_config_dir }}/satellite.yaml"
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: "0644"
+
+    - name: Deploy ALSA config (system-wide)
+      tags: [config]
+      ansible.builtin.template:
+        src: "asoundrc-{{ hat_type }}.j2"
+        dest: /etc/asound.conf
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Disable WiFi power save (Pi Zero 2 W firmware bug)
+      tags: [config]
+      ansible.builtin.copy:
+        content: "options brcmfmac roamoff=1\noptions 8192cu rtw_power_mgnt=0 rtw_enusbss=0\n"
+        dest: /etc/modprobe.d/wifi-powersave.conf
+        mode: "0644"
+
+    - name: Add WiFi power save disable to rc.local
+      tags: [config]
+      ansible.builtin.lineinfile:
+        path: /etc/rc.local
+        line: "iw dev wlan0 set power_save off || true"
+        insertbefore: "^exit 0"
+        create: true
+        mode: "0755"
+
+    # =========================================================================
+    # MODELS — Wake word and VAD models
+    # =========================================================================
+
+    - name: Download openWakeWord base models
+      tags: [models]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.get_url:
+        url: "{{ oww_base_url }}/{{ item }}"
+        dest: "{{ satellite_models_dir }}/{{ item }}"
+        mode: "0644"
+      loop: "{{ oww_models }}"
+
+    - name: Download Alexa wake word model
+      tags: [models]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.get_url:
+        url: "{{ alexa_model_url }}"
+        dest: "{{ satellite_models_dir }}/alexa_v0.1.onnx"
+        mode: "0644"
+
+    - name: Download Silero VAD model
+      tags: [models]
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.get_url:
+        url: "{{ silero_vad_url }}"
+        dest: "{{ satellite_models_dir }}/silero_vad.onnx"
+        mode: "0644"
+
+    - name: Find openwakeword models directory in venv
+      tags: [models]
+      ansible.builtin.find:
+        paths: "{{ satellite_venv }}/lib"
+        patterns: "openwakeword"
+        file_type: directory
+        recurse: true
+      register: oww_dirs
+
+    - name: Copy models to openwakeword package directory
+      tags: [models]
+      when: oww_dirs.files | length > 0
+      ansible.builtin.copy:
+        src: "{{ satellite_models_dir }}/{{ item }}"
+        dest: "{{ oww_dirs.files[0].path }}/resources/models/{{ item }}"
+        remote_src: true
+        owner: "{{ ansible_user }}"
+        mode: "0644"
+      loop:
+        - melspectrogram.onnx
+        - embedding_model.onnx
+        - alexa_v0.1.onnx
+
+    # =========================================================================
+    # SERVICE — Systemd service
+    # =========================================================================
+
+    - name: Deploy systemd service file
+      tags: [service]
+      ansible.builtin.template:
+        src: renfield-satellite.service.j2
+        dest: /etc/systemd/system/renfield-satellite.service
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Flush handlers (reload systemd)
+      tags: [service]
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable renfield-satellite service
+      tags: [service]
+      ansible.builtin.systemd:
+        name: renfield-satellite
+        enabled: true
+
+    - name: Start renfield-satellite service
+      tags: [service]
+      ansible.builtin.systemd:
+        name: renfield-satellite
+        state: started
+
+    # =========================================================================
+    # VERIFY — Post-provisioning checks
+    # =========================================================================
+
+    - name: Check service status
+      tags: [service]
+      ansible.builtin.command: systemctl status renfield-satellite --no-pager
+      register: service_status
+      changed_when: false
+      ignore_errors: true
+
+    - name: Display service status
+      tags: [service]
+      ansible.builtin.debug:
+        var: service_status.stdout_lines
+
+    - name: Show provisioning summary
+      tags: [always]
+      ansible.builtin.debug:
+        msg: |
+          Satellite provisioned successfully!
+          - Host: {{ inventory_hostname }}
+          - HAT: {{ hat_type }}
+          - ID: {{ satellite_id }}
+          - Room: {{ satellite_room }}
+          - LEDs: {{ led_num }} on SPI 0:{{ led_spi_device }}
+          - Server: {{ server_url }}

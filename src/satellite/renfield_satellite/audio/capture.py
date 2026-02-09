@@ -1,16 +1,25 @@
 """
 Audio Capture Module for Renfield Satellite
 
-Handles microphone input using PyAudio (ALSA) or soundcard library.
-PyAudio is preferred on Raspberry Pi as it respects ALSA configuration.
+Handles microphone input using PyAudio (ALSA), arecord subprocess,
+or soundcard library. PyAudio is preferred on Raspberry Pi for
+general ALSA hardware support.
 
 Supports optional beamforming with ReSpeaker 2-Mics Pi HAT for
 improved noise rejection and speech enhancement.
 
-Inspired by OHF-Voice/linux-voice-assistant approach.
+ReSpeaker 4-Mic Array (AC108): MUST use arecord subprocess backend
+(use_arecord=True). PyAudio and onnxruntime (used by openwakeword)
+in the same process triggers a kernel crash when pa.open() is called.
+The AC108 hardware only supports 4ch/S32_LE natively — arecord handles
+the I2S driver in a separate process, and the capture loop converts
+4ch/S32_LE → mono S16_LE in Python.
 """
 
 import asyncio
+import queue
+import shutil
+import subprocess
 import threading
 from typing import Callable, List, Optional, TYPE_CHECKING
 import numpy as np
@@ -66,6 +75,7 @@ class AudioCapture:
         chunk_size: int = 1024,
         channels: int = 1,
         device: Optional[str] = None,
+        use_arecord: bool = False,
         beamforming: bool = False,
         mic_spacing: float = 0.058,  # ReSpeaker 2-Mics: 58mm
         steering_angle: float = 0.0,  # 0 = front-facing
@@ -76,8 +86,11 @@ class AudioCapture:
         Args:
             sample_rate: Sample rate in Hz (default 16000)
             chunk_size: Samples per chunk (default 1024)
-            channels: Number of channels (1=mono, 2=stereo)
-            device: Device name/id or None for default (ALSA device for PyAudio)
+            channels: Number of channels (hardware native channel count)
+            device: Device name/id or None for default (ALSA device name)
+            use_arecord: Use arecord subprocess for capture. Required for
+                AC108 4-mic HAT — PyAudio + onnxruntime in the same process
+                crashes the kernel on Pi Zero 2 W.
             beamforming: Enable beamforming (requires channels=2)
             mic_spacing: Microphone spacing in meters (default 58mm for ReSpeaker)
             steering_angle: Target direction in degrees (0=front)
@@ -85,6 +98,7 @@ class AudioCapture:
         self.sample_rate = sample_rate
         self.chunk_size = chunk_size
         self.device_name = device
+        self.use_arecord = use_arecord
         self.beamforming_enabled = beamforming
 
         # If beamforming enabled, force stereo capture
@@ -96,11 +110,18 @@ class AudioCapture:
 
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._consumer_thread: Optional[threading.Thread] = None
         self._callback: Optional[Callable[[bytes], None]] = None
+        # Queue decouples reads from callback processing to prevent
+        # buffer overruns that crash the AC108 driver on Pi Zero 2 W.
+        self._audio_queue: queue.Queue = queue.Queue(maxsize=200)
 
         # PyAudio specific
         self._pyaudio = None
         self._stream = None
+
+        # arecord subprocess
+        self._arecord_proc: Optional[subprocess.Popen] = None
 
         # Soundcard specific
         self._mic = None
@@ -115,9 +136,13 @@ class AudioCapture:
             self._init_beamformer()
 
         # Determine which backend to use
-        self._use_pyaudio = PYAUDIO_AVAILABLE
-        if self._use_pyaudio:
-            print("Audio backend: PyAudio (ALSA)")
+        if use_arecord:
+            if shutil.which("arecord"):
+                print(f"Audio backend: arecord subprocess — {self.channels}ch S32_LE (AC108)")
+            else:
+                print("Audio backend: arecord requested but not found!")
+        elif PYAUDIO_AVAILABLE:
+            print(f"Audio backend: PyAudio (ALSA) — {self.channels}ch S16_LE")
         elif SOUNDCARD_AVAILABLE:
             print("Audio backend: soundcard (PipeWire/PulseAudio)")
         else:
@@ -230,13 +255,89 @@ class AudioCapture:
         self._callback = callback
         self._running = True
 
-        if self._use_pyaudio:
+        if self.use_arecord:
+            self._start_arecord()
+        elif PYAUDIO_AVAILABLE:
             self._start_pyaudio()
         elif SOUNDCARD_AVAILABLE:
             self._start_soundcard()
         else:
             print("No audio backend available")
             self._running = False
+
+    def _start_arecord(self):
+        """Start arecord subprocess capture.
+
+        Required for AC108 4-mic HAT: PyAudio and onnxruntime (openwakeword)
+        in the same process causes a kernel crash when pa.open() accesses the
+        I2S driver. arecord runs in a separate process, isolating the driver.
+
+        The AC108 hardware only supports 4ch/S32_LE natively. This method
+        spawns arecord with those parameters and converts to mono S16_LE
+        in the capture loop.
+        """
+        if not shutil.which("arecord"):
+            print("arecord not found — install alsa-utils")
+            self._running = False
+            return
+
+        device = self.device_name or "hw:0,0"
+        cmd = [
+            "arecord",
+            "-D", device,
+            "-f", "S32_LE",
+            "-c", str(self.channels),
+            "-r", str(self.sample_rate),
+            "-t", "raw",
+        ]
+
+        try:
+            self._arecord_proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+            )
+            print(f"Audio capture started: arecord {device} (S32_LE/{self.channels}ch)")
+
+            # Start capture thread (reads from arecord pipe)
+            self._thread = threading.Thread(target=self._arecord_capture_loop, daemon=True)
+            self._thread.start()
+
+            # Start consumer thread (processes audio and calls callback)
+            self._consumer_thread = threading.Thread(target=self._audio_consumer_loop, daemon=True)
+            self._consumer_thread.start()
+
+        except Exception as e:
+            print(f"Failed to start arecord: {e}")
+            self._running = False
+
+    def _arecord_capture_loop(self):
+        """Read from arecord pipe, convert 4ch/S32_LE → mono S16_LE.
+
+        Each frame is channels * 4 bytes (S32_LE). We extract channel 0
+        and shift right by 16 to convert 32-bit to 16-bit samples.
+        """
+        frame_bytes = self.channels * 4  # S32_LE = 4 bytes per sample
+        chunk_bytes = self.chunk_size * frame_bytes
+        proc = self._arecord_proc
+
+        try:
+            while self._running and proc and proc.poll() is None:
+                data = proc.stdout.read(chunk_bytes)
+                if not data or len(data) < chunk_bytes:
+                    break
+
+                # Convert multi-channel S32_LE to mono S16_LE
+                # AC108 4-mic: channel 0 is silent (reference), mics are on ch1-3
+                s32 = np.frombuffer(data, dtype=np.int32)
+                ch = s32[1::self.channels] if self.channels >= 4 else s32[::self.channels]
+                s16 = (ch >> 16).astype(np.int16)
+
+                try:
+                    self._audio_queue.put_nowait(s16.tobytes())
+                except queue.Full:
+                    pass  # Drop chunk if consumer can't keep up
+        except Exception as e:
+            if self._running:
+                print(f"arecord capture error: {e}")
 
     def _start_pyaudio(self):
         """Start PyAudio capture"""
@@ -265,11 +366,15 @@ class AudioCapture:
 
             # Get device name for logging
             device_info = self._pyaudio.get_device_info_by_index(device_index)
-            print(f"Audio capture started: {device_info['name']}")
+            print(f"Audio capture started: {device_info['name']} (S16_LE/{self.channels}ch)")
 
-            # Start capture thread
+            # Start capture thread (reads audio as fast as possible)
             self._thread = threading.Thread(target=self._pyaudio_capture_loop, daemon=True)
             self._thread.start()
+
+            # Start consumer thread (processes audio and calls callback)
+            self._consumer_thread = threading.Thread(target=self._audio_consumer_loop, daemon=True)
+            self._consumer_thread.start()
 
         except Exception as e:
             print(f"Failed to open audio stream: {e}")
@@ -279,20 +384,32 @@ class AudioCapture:
             self._running = False
 
     def _pyaudio_capture_loop(self):
-        """PyAudio capture thread"""
+        """PyAudio capture thread — reads audio as fast as possible.
+
+        CRITICAL: This loop must never block on anything except stream.read().
+        Any delay between reads causes the AC108 I2S kernel buffer to overflow,
+        triggering an I2S SYNC error that crashes the kernel on Pi Zero 2 W.
+        All heavy processing (wake word, VAD) happens in the consumer thread.
+        """
         try:
             while self._running and self._stream:
                 try:
-                    # Read audio data (already 16-bit PCM)
                     audio_bytes = self._stream.read(self.chunk_size, exception_on_overflow=False)
 
-                    # Apply beamforming if enabled (stereo -> mono)
-                    if self._beamformer and self.channels == 2:
-                        audio_bytes = self._beamformer.process_bytes(audio_bytes)
+                    if self.channels > 1:
+                        if self._beamformer:
+                            # Beamforming: stereo -> enhanced mono
+                            audio_bytes = self._beamformer.process_bytes(audio_bytes)
+                        else:
+                            # No beamforming: extract channel 0 from interleaved S16_LE
+                            # Per official ReSpeaker 4-mic HAT examples
+                            audio_bytes = np.frombuffer(audio_bytes, dtype=np.int16)[::self.channels].tobytes()
 
-                    # Deliver to callback
-                    if self._callback and audio_bytes:
-                        self._callback(audio_bytes)
+                    # Queue for consumer thread (never block the read loop)
+                    try:
+                        self._audio_queue.put_nowait(audio_bytes)
+                    except queue.Full:
+                        pass  # Drop chunk if consumer can't keep up
 
                 except Exception as e:
                     if self._running:
@@ -300,6 +417,23 @@ class AudioCapture:
                     break
         finally:
             pass
+
+    def _audio_consumer_loop(self):
+        """Consumer thread — processes queued audio and calls callback.
+
+        Runs separately from the capture thread so that slow callback
+        processing (wake word inference, VAD) doesn't delay reads.
+        """
+        while self._running:
+            try:
+                audio_bytes = self._audio_queue.get(timeout=0.5)
+                if self._callback and audio_bytes:
+                    self._callback(audio_bytes)
+            except queue.Empty:
+                continue
+            except Exception as e:
+                if self._running:
+                    print(f"Audio consumer error: {e}")
 
     def _start_soundcard(self):
         """Start soundcard capture"""
@@ -316,6 +450,9 @@ class AudioCapture:
         # Start capture thread
         self._thread = threading.Thread(target=self._soundcard_capture_loop, daemon=True)
         self._thread.start()
+        # Start consumer thread
+        self._consumer_thread = threading.Thread(target=self._audio_consumer_loop, daemon=True)
+        self._consumer_thread.start()
         print(f"Audio capture started: {self._mic.name}")
 
     def _soundcard_capture_loop(self):
@@ -348,9 +485,11 @@ class AudioCapture:
                         audio_int16 = (audio_float * 32767).astype(np.int16)
                         audio_bytes = audio_int16.tobytes()
 
-                        # Deliver to callback
-                        if self._callback and audio_bytes:
-                            self._callback(audio_bytes)
+                        # Queue for consumer thread
+                        try:
+                            self._audio_queue.put_nowait(audio_bytes)
+                        except queue.Full:
+                            pass
 
                     except Exception as e:
                         if self._running:
@@ -366,27 +505,32 @@ class AudioCapture:
         """Stop audio capture"""
         self._running = False
 
-        # Stop PyAudio
-        if self._stream:
+        # Terminate arecord subprocess if running
+        if self._arecord_proc:
             try:
-                self._stream.stop_stream()
-                self._stream.close()
+                self._arecord_proc.terminate()
+                self._arecord_proc.wait(timeout=3)
             except Exception:
                 pass
-            self._stream = None
+            self._arecord_proc = None
 
-        if self._pyaudio:
-            try:
-                self._pyaudio.terminate()
-            except Exception:
-                pass
-            self._pyaudio = None
-
-        # Wait for thread
+        # Wait for capture thread to exit its read loop first
         if self._thread:
             self._thread.join(timeout=2.0)
             self._thread = None
 
+        # Wait for consumer thread
+        if self._consumer_thread:
+            self._consumer_thread.join(timeout=2.0)
+            self._consumer_thread = None
+
+        # Do NOT call self._pyaudio.terminate() — on the ReSpeaker 4-Mic
+        # Array (AC108 codec), pa.terminate() triggers an I2S SYNC error
+        # that crashes the kernel. The OS releases all PortAudio resources
+        # when the process exits, so explicit cleanup is unnecessary.
+        self._pyaudio = None
+
+        self._stream = None
         self._mic = None
         print("Audio capture stopped")
 

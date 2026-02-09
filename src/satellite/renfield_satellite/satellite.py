@@ -69,7 +69,7 @@ class Satellite:
         # Current session
         self._session_id: Optional[str] = None
         self._audio_buffer: list = []
-        self._silence_start: Optional[float] = None
+        self._silence_chunks: int = 0  # Consecutive non-speech chunks (for audio-time silence detection)
         self._listening_start: Optional[float] = None  # When listening state began
         self._processing_start: Optional[float] = None  # Track when processing started
         self._processing_timeout: float = 30.0  # Max time to wait for server response
@@ -99,6 +99,7 @@ class Satellite:
             chunk_size=self.config.audio.chunk_size,
             channels=self.config.audio.channels,
             device=self.config.audio.device,
+            use_arecord=self.config.audio.use_arecord,
             beamforming=self.config.audio.beamforming.enabled,
             mic_spacing=self.config.audio.beamforming.mic_spacing,
             steering_angle=self.config.audio.beamforming.steering_angle,
@@ -148,6 +149,7 @@ class Satellite:
             spi_bus=self.config.led.spi_bus,
             spi_device=self.config.led.spi_device,
             brightness=self.config.led.brightness,
+            led_power_pin=self.config.led.led_power_pin,
         )
 
         # Button handler
@@ -455,8 +457,8 @@ class Satellite:
                 self._schedule_async(self._on_wakeword_detected(detection.keyword, detection.confidence))
             return
 
-        # Check for stop words during LISTENING or PROCESSING
-        if self._state in (SatelliteState.LISTENING, SatelliteState.PROCESSING):
+        # Check for stop words during LISTENING or PROCESSING (only if stop words configured)
+        if self._state in (SatelliteState.LISTENING, SatelliteState.PROCESSING) and self.wakeword.active_stop_words:
             detection = self.wakeword.process_audio(audio_bytes)
             if detection and detection.is_stop_word:
                 print(f"Stop word detected: {detection.keyword}")
@@ -477,18 +479,19 @@ class Satellite:
                     self.ws_client.send_audio_chunk(self._session_id, normalized_audio)
                 )
 
-            # Check for silence using VAD
-            # Skip silence detection during initial grace period (user needs time to start speaking)
-            listening_elapsed = time.time() - self._listening_start if self._listening_start else 0
-            is_speech = self.vad.is_speech(normalized_audio)
-            if not is_speech and listening_elapsed >= self.config.vad.min_listening_seconds:
-                if self._silence_start is None:
-                    self._silence_start = time.time()
-                elif time.time() - self._silence_start > self.config.vad.silence_duration_ms / 1000:
-                    # Silence detected - end recording
+            # Check for silence using VAD (chunk-counting, immune to CPU lag)
+            # Grace period and silence duration measured in audio chunks, not wall-clock
+            chunk_duration_ms = self.config.audio.chunk_size / self.config.audio.sample_rate * 1000
+            grace_chunks = int(self.config.vad.min_listening_seconds * 1000 / chunk_duration_ms)
+            silence_chunks_needed = int(self.config.vad.silence_duration_ms / chunk_duration_ms)
+
+            is_speech = self.vad.is_speech(audio_bytes)  # Use raw audio for VAD (normalizer would equalize levels)
+            if not is_speech and len(self._audio_buffer) >= grace_chunks:
+                self._silence_chunks += 1
+                if self._silence_chunks >= silence_chunks_needed:
                     self._schedule_async(self._end_listening("silence"))
             else:
-                self._silence_start = None
+                self._silence_chunks = 0
 
             # Check max recording length
             if len(self._audio_buffer) * self.config.audio.chunk_size / self.config.audio.sample_rate > self.config.vad.max_recording_seconds:
@@ -524,7 +527,7 @@ class Satellite:
         # Start listening - flag will be cleared in _reset_session when done
         self._set_state(SatelliteState.LISTENING)
         self._audio_buffer.clear()
-        self._silence_start = None
+        self._silence_chunks = 0
         self._listening_start = time.time()
 
         # Notify server
@@ -558,7 +561,7 @@ class Satellite:
         # Clear session data
         self._session_id = None
         self._audio_buffer.clear()
-        self._silence_start = None
+        self._silence_chunks = 0
         self._processing_start = None
         self._wakeword_pending = False  # Allow new wake word detection
 
@@ -675,7 +678,7 @@ class Satellite:
         # Clear session state
         self._session_id = None
         self._processing_start = None
-        self._silence_start = None
+        self._silence_chunks = 0
 
         # Start reconnection (only if not already reconnecting)
         if not self._reconnecting:

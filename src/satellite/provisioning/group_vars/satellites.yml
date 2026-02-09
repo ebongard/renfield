@@ -1,0 +1,88 @@
+---
+# Common defaults for all Renfield satellites
+
+# Connection
+ansible_python_interpreter: /usr/bin/python3
+
+# Application paths
+satellite_base_dir: /opt/renfield-satellite
+satellite_venv: "{{ satellite_base_dir }}/venv"
+satellite_config_dir: "{{ satellite_base_dir }}/config"
+satellite_models_dir: "{{ satellite_base_dir }}/models"
+satellite_code_dir: "{{ satellite_base_dir }}/renfield_satellite"
+
+# Source paths (relative to playbook)
+source_code_dir: "../renfield_satellite"
+source_hardware_dir: "../hardware"
+
+# Server connection
+server_url: "wss://renfield.local/ws/satellite"
+server_auto_discover: true
+server_auth_enabled: false
+server_verify_tls: false
+
+# Wake word
+wakeword_model: "alexa"
+wakeword_threshold: 0.5
+
+# VAD
+vad_backend: "silero"
+vad_silence_duration_ms: 1200
+vad_max_recording_seconds: 20
+vad_silero_threshold: 0.5
+
+# LED
+led_brightness: 20
+
+# Button
+button_gpio_pin: 17
+
+# Language
+satellite_language: "de"
+
+# System packages needed on all satellites
+satellite_system_packages:
+  - python3-pip
+  - python3-venv
+  - python3-dev
+  - portaudio19-dev
+  - libasound2-dev
+  - libasound2-plugins
+  - libopenblas0
+  - libmpv-dev
+  - mpv
+  - libsamplerate0
+  - swig
+  - liblgpio-dev
+  - git
+  - device-tree-compiler
+
+# Python packages (installed in venv)
+satellite_python_packages:
+  - onnxruntime
+  - pyaudio
+  - numpy
+  - websockets
+  - python-mpv
+  - spidev
+  - lgpio
+  - gpiozero
+  - pyyaml
+  - zeroconf
+  - webrtcvad
+  - psutil
+  - scikit-learn
+  - noisereduce
+  - aiohttp
+  - requests
+
+# openwakeword installed separately with --no-deps for Python 3.13+ compat
+openwakeword_package: "openwakeword"
+
+# Model URLs
+oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0"
+oww_models:
+  - melspectrogram.onnx
+  - embedding_model.onnx
+silero_vad_url: "https://github.com/snakers4/silero-vad/raw/master/src/silero_vad/data/silero_vad.onnx"
+alexa_model_url: "{{ oww_base_url }}/alexa_v0.1.onnx"
