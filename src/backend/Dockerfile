@@ -32,7 +32,8 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Upgrade pip to fix CVE-2025-8869 (tar extraction vulnerability)
-RUN pip install --no-cache-dir --upgrade pip>=25.3
+# setuptools required for openai-whisper (uses pkg_resources)
+RUN pip install --no-cache-dir --upgrade pip>=25.3 setuptools
 
 # Install PyTorch CPU-only first (saves ~500MB vs CUDA version)
 # ARM64 doesn't use +cpu suffix, x86_64 does
@@ -46,11 +47,13 @@ RUN ARCH=$(uname -m) && \
 
 # Install remaining Python dependencies
 COPY requirements.txt ./
-# Remove torch/torchaudio from requirements (already installed CPU-only)
+# Remove torch/torchaudio (already installed CPU-only) and openai-whisper (needs special handling)
 # Separate GitHub-hosted MCP packages (need --no-cache-dir to always fetch latest)
-RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" | grep -v "github.com" > requirements-filtered.txt \
+RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" | grep -v "github.com" | grep -v "^openai-whisper" > requirements-filtered.txt \
     && grep "github.com" requirements.txt > requirements-github.txt || true \
     && pip install --no-cache-dir -r requirements-filtered.txt \
+    && pip install --no-cache-dir --no-deps openai-whisper \
+    && pip install --no-cache-dir tiktoken more-itertools \
     && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
 
 
