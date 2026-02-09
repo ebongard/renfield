@@ -76,3 +76,4 @@ test-screenshots/
 
 # Local task management
 tasks/
+.mcp.json
