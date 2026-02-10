@@ -57,9 +57,38 @@ export function useQuickActions() {
     }
   }, []);
 
+  const sendViaEmail = useCallback(async (uploadId, to, subject, body) => {
+    setActionLoading(prev => ({ ...prev, [uploadId]: 'email' }));
+    try {
+      const response = await apiClient.post(`/api/chat/upload/${uploadId}/email`, {
+        to,
+        subject,
+        body,
+      });
+      setActionResult({
+        type: 'email',
+        success: true,
+        message: response.data.message,
+      });
+    } catch (error) {
+      const detail = error.response?.data?.detail || 'Unknown error';
+      setActionResult({
+        type: 'email',
+        success: false,
+        message: detail,
+      });
+    } finally {
+      setActionLoading(prev => {
+        const next = { ...prev };
+        delete next[uploadId];
+        return next;
+      });
+    }
+  }, []);
+
   const clearResult = useCallback(() => {
     setActionResult(null);
   }, []);
 
-  return { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless };
+  return { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendViaEmail };
 }

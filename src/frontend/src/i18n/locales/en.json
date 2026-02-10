@@ -134,7 +134,15 @@
     "indexingFailed": "Failed to add to Knowledge Base",
     "paperlessSuccess": "Sent to Paperless",
     "paperlessFailed": "Failed to send to Paperless",
-    "alreadyIndexed": "Already indexed"
+    "alreadyIndexed": "Already indexed",
+    "sendViaEmail": "Send via Email",
+    "emailDialogTitle": "Send Document via Email",
+    "emailTo": "Recipient",
+    "emailSubject": "Subject",
+    "emailBody": "Message (optional)",
+    "emailSend": "Send",
+    "emailSuccess": "Sent via Email",
+    "emailFailed": "Failed to send email"
   },
   "voice": {
     "startRecording": "Start voice recording",
