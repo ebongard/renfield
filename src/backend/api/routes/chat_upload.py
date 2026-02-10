@@ -339,6 +339,7 @@ async def forward_via_email(
         mcp_result = await manager.execute_tool(
             "mcp.email.send_email",
             {
+                "account": settings.chat_upload_email_account,
                 "to": email_request.to,
                 "subject": subject,
                 "body": body,
