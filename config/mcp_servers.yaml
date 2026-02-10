@@ -60,6 +60,8 @@ servers:
     refresh_interval: 300
     example_intent: mcp.search.web_search
     # No prompt_tools filter — search has only 1 tool
+    env:
+      SEARXNG_INSTANCES: "${SEARXNG_INSTANCES:-http://localhost:8080}"
     examples:
       de:
         - "Suche im Web nach Python Tutorials"
