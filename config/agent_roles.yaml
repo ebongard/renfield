@@ -47,7 +47,7 @@ roles:
     internal_tools: [internal.resolve_room_player, internal.play_in_room]
     max_steps: 6
     prompt_key: agent_prompt_media
-    model: "qwen2.5:14b"
+    model: "qwen3:14b"
 
   workflow:
     description:
