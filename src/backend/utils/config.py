@@ -162,7 +162,7 @@ class Settings(BaseSettings):
     # Document Upload
     upload_dir: str = "/app/data/uploads"
     max_file_size_mb: int = Field(default=50, ge=1, le=500)
-    allowed_extensions: str = "pdf,docx,doc,txt,md,html,pptx,xlsx"  # Comma-separated
+    allowed_extensions: str = "pdf,docx,doc,txt,md,html,pptx,xlsx,png,jpg,jpeg"  # Comma-separated
     chat_upload_max_context_chars: int = Field(default=50000, ge=1000, le=200000)
     chat_upload_auto_index: bool = False
     chat_upload_default_kb_name: str = "Chat Uploads"

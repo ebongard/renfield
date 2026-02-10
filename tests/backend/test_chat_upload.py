@@ -12,6 +12,8 @@ Tests:
 - KB index endpoint (Phase 3)
 - Paperless forward endpoint (Phase 3)
 - Auto-index background task (Phase 3)
+- WebSocket notification registry (Phase 5)
+- OCR image upload support (Phase 5)
 """
 import io
 import tempfile
@@ -933,3 +935,154 @@ class TestChatUploadCleanup:
             assert not Path(tmp_path).is_file()
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+
+# ============================================================================
+# Phase 5: WebSocket Notification Registry Tests
+# ============================================================================
+
+class TestWSNotificationRegistry:
+    """Tests for the WS connection registry in api.websocket.shared.
+
+    The shared module imports WhisperService which chains to services.database
+    (requires asyncpg). We pre-mock services.whisper_service in sys.modules
+    so the import succeeds in local test environments without asyncpg.
+    """
+
+    @staticmethod
+    def _ensure_shared():
+        """Import shared module, pre-mocking heavy deps to avoid asyncpg requirement.
+
+        Importing `api.websocket.shared` triggers `api/websocket/__init__.py`
+        which imports chat_handler → services.database → asyncpg.  We mock
+        the package __init__ out of the way so we can import shared directly.
+        """
+        import importlib
+        import sys
+
+        # Ensure the parent package exists without its __init__ side-effects
+        if "api.websocket" not in sys.modules:
+            pkg = type(sys)("api.websocket")
+            pkg.__path__ = []  # make it a package
+            sys.modules.setdefault("api", type(sys)("api"))
+            sys.modules["api.websocket"] = pkg
+
+        # Mock whisper_service to avoid openai-whisper dependency
+        sys.modules.setdefault("services.whisper_service", MagicMock())
+
+        # Import the shared module file directly
+        if "api.websocket.shared" in sys.modules:
+            return sys.modules["api.websocket.shared"]
+
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "api.websocket.shared",
+            "src/backend/api/websocket/shared.py",
+        )
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["api.websocket.shared"] = mod
+        spec.loader.exec_module(mod)
+        return mod
+
+    @pytest.mark.unit
+    def test_register_and_unregister(self):
+        """register + unregister round-trip works"""
+        shared = self._ensure_shared()
+
+        mock_ws = MagicMock()
+        shared.register_ws_connection("sess-1", mock_ws)
+        assert "sess-1" in shared._ws_connections
+
+        shared.unregister_ws_connection("sess-1")
+        assert "sess-1" not in shared._ws_connections
+
+    @pytest.mark.unit
+    def test_unregister_nonexistent_is_noop(self):
+        """Unregistering a missing session_id does not raise"""
+        shared = self._ensure_shared()
+        # Should not raise
+        shared.unregister_ws_connection("nonexistent-session")
+
+    @pytest.mark.unit
+    async def test_notify_session_sends_json(self):
+        """notify_session calls send_json on the registered WS"""
+        shared = self._ensure_shared()
+
+        mock_ws = AsyncMock()
+        shared.register_ws_connection("sess-notify", mock_ws)
+
+        try:
+            result = await shared.notify_session("sess-notify", {"type": "test", "data": 123})
+            assert result is True
+            mock_ws.send_json.assert_called_once_with({"type": "test", "data": 123})
+        finally:
+            shared.unregister_ws_connection("sess-notify")
+
+    @pytest.mark.unit
+    async def test_notify_session_unknown_returns_false(self):
+        """notify_session returns False for unknown session"""
+        shared = self._ensure_shared()
+
+        result = await shared.notify_session("unknown-session", {"type": "test"})
+        assert result is False
+
+    @pytest.mark.unit
+    async def test_notify_session_handles_closed_ws(self):
+        """notify_session handles dead connection and auto-cleans"""
+        shared = self._ensure_shared()
+
+        mock_ws = AsyncMock()
+        mock_ws.send_json.side_effect = RuntimeError("Connection closed")
+        shared.register_ws_connection("sess-dead", mock_ws)
+
+        result = await shared.notify_session("sess-dead", {"type": "test"})
+        assert result is False
+        assert "sess-dead" not in shared._ws_connections
+
+
+# ============================================================================
+# Phase 5: OCR Image Upload Support Tests
+# ============================================================================
+
+class TestOCRSupport:
+    """Tests for PNG/JPG image upload support"""
+
+    @pytest.mark.backend
+    async def test_upload_png_accepted(self, async_client: AsyncClient):
+        """PNG upload is accepted"""
+        content = b"\x89PNG\r\n\x1a\n fake png"
+        files = {"file": ("photo.png", io.BytesIO(content), "image/png")}
+        data = {"session_id": "ocr-png-session"}
+
+        with patch("api.routes.chat_upload._get_processor") as mock_proc:
+            processor = AsyncMock()
+            processor.extract_text_only = AsyncMock(return_value="OCR text from image")
+            mock_proc.return_value = processor
+
+            response = await async_client.post("/api/chat/upload", files=files, data=data)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["filename"] == "photo.png"
+        assert body["file_type"] == "png"
+        assert body["status"] == "completed"
+
+    @pytest.mark.backend
+    async def test_upload_jpg_accepted(self, async_client: AsyncClient):
+        """JPG upload is accepted"""
+        content = b"\xff\xd8\xff\xe0 fake jpeg"
+        files = {"file": ("scan.jpg", io.BytesIO(content), "image/jpeg")}
+        data = {"session_id": "ocr-jpg-session"}
+
+        with patch("api.routes.chat_upload._get_processor") as mock_proc:
+            processor = AsyncMock()
+            processor.extract_text_only = AsyncMock(return_value="OCR text from scan")
+            mock_proc.return_value = processor
+
+            response = await async_client.post("/api/chat/upload", files=files, data=data)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["filename"] == "scan.jpg"
+        assert body["file_type"] == "jpg"
+        assert body["status"] == "completed"

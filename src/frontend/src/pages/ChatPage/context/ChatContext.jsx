@@ -362,6 +362,41 @@ export function ChatProvider({ children }) {
     }
   }, []);
 
+  // Handle document processing notifications from backend
+  const handleDocumentProcessing = useCallback((data) => {
+    setMessages(prev => prev.map(msg => {
+      if (!msg.attachments) return msg;
+      const updated = msg.attachments.map(att =>
+        att.id === data.upload_id ? { ...att, indexing: true } : att
+      );
+      return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
+    }));
+  }, []);
+
+  const handleDocumentReady = useCallback((data) => {
+    setMessages(prev => prev.map(msg => {
+      if (!msg.attachments) return msg;
+      const updated = msg.attachments.map(att =>
+        att.id === data.upload_id
+          ? { ...att, indexing: false, indexed: true, document_id: data.document_id }
+          : att
+      );
+      return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
+    }));
+  }, []);
+
+  const handleDocumentError = useCallback((data) => {
+    setMessages(prev => prev.map(msg => {
+      if (!msg.attachments) return msg;
+      const updated = msg.attachments.map(att =>
+        att.id === data.upload_id
+          ? { ...att, indexing: false, indexError: data.error }
+          : att
+      );
+      return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
+    }));
+  }, []);
+
   // WebSocket hook
   const { wsConnected, sendMessage: wsSendMessage, isReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
@@ -369,6 +404,9 @@ export function ChatProvider({ children }) {
     onAction: handleAction,
     onRagContext: handleRagContext,
     onIntentFeedbackRequest: handleIntentFeedbackRequest,
+    onDocumentProcessing: handleDocumentProcessing,
+    onDocumentReady: handleDocumentReady,
+    onDocumentError: handleDocumentError,
   });
 
   // Handle transcription from audio recording
