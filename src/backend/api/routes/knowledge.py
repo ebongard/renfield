@@ -589,7 +589,7 @@ async def list_knowledge_bases(
             is_public=kb.is_public if hasattr(kb, 'is_public') else False,
             owner_id=kb.owner_id if hasattr(kb, 'owner_id') else None,
             owner_username=owner_username,
-            document_count=getattr(kb, '_document_count', len(kb.documents) if kb.documents else 0),
+            document_count=getattr(kb, '_document_count', 0),
             created_at=kb.created_at.isoformat() if kb.created_at else "",
             updated_at=kb.updated_at.isoformat() if kb.updated_at else "",
             permission=perm
