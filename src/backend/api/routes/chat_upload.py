@@ -355,7 +355,11 @@ async def forward_via_email(
         raise HTTPException(status_code=502, detail=f"Email forwarding failed: {e}")
 
     if not mcp_result or not mcp_result.get("success"):
-        raise HTTPException(status_code=502, detail="Email forwarding failed")
+        logger.error(f"Email forward MCP result: {mcp_result}")
+        detail = "Email forwarding failed"
+        if mcp_result and mcp_result.get("message"):
+            detail = f"Email forwarding failed: {mcp_result['message']}"
+        raise HTTPException(status_code=502, detail=detail)
 
     return EmailForwardResponse(
         success=True,

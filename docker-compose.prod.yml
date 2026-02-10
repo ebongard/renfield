@@ -106,10 +106,16 @@ services:
       - mail_regfish_password
     volumes:
       - ./src/backend:/app
+      - ./src/satellite:/app/satellite  # For OTA update package building
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro
+      - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro
+      - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro
+      - ./data/wakeword-models:/app/wakeword-models:ro
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
+      - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
     depends_on:
       postgres:
@@ -157,10 +163,16 @@ services:
       - mail_regfish_password
     volumes:
       - ./src/backend:/app
+      - ./src/satellite:/app/satellite
       - ./tests:/tests
       - ./pytest.ini:/pytest.ini
+      - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro
+      - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro
+      - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro
+      - ./data/wakeword-models:/app/wakeword-models:ro
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
+      - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
     depends_on:
       postgres:
@@ -240,6 +252,7 @@ volumes:
   ollama_data:
   whisper_models:
   piper_models:
+  huggingface_cache:
   rag_uploads:
 
 secrets:
