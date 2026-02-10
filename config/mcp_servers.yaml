@@ -81,6 +81,8 @@ servers:
     enabled: "${NEWS_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.news.search_articles
+    env:
+      NEWSAPI_KEY: "${NEWSAPI_KEY:-}"
     prompt_tools:
       - search_articles
       - get_top_headlines
@@ -103,6 +105,10 @@ servers:
     enabled: "${JELLYFIN_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.jellyfin.search_media
+    env:
+      JELLYFIN_URL: "${JELLYFIN_URL:-}"
+      JELLYFIN_API_KEY: "${JELLYFIN_API_KEY:-}"
+      JELLYFIN_USER_ID: "${JELLYFIN_USER_ID:-}"
     prompt_tools:
       - search_media
       - list_albums
@@ -134,6 +140,8 @@ servers:
     args: ["-y", "n8n-mcp"]
     enabled: "${N8N_MCP_ENABLED:-false}"
     env:
+      N8N_API_URL: "${N8N_API_URL:-}"
+      N8N_API_KEY: "${N8N_API_KEY:-}"
       N8N_MCP_TELEMETRY_DISABLED: "true"
       MCP_MODE: "stdio"
       LOG_LEVEL: "error"
@@ -179,6 +187,9 @@ servers:
     enabled: "${PAPERLESS_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.paperless.search_documents
+    env:
+      PAPERLESS_API_URL: "${PAPERLESS_API_URL:-}"
+      PAPERLESS_API_TOKEN: "${PAPERLESS_API_TOKEN:-}"
     prompt_tools:
       - search_documents
       - upload_document
@@ -203,6 +214,9 @@ servers:
     enabled: "${EMAIL_MCP_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.email.search_emails
+    env:
+      MAIL_ACCOUNTS_CONFIG: "${MAIL_ACCOUNTS_CONFIG:-/config/mail_accounts.yaml}"
+      MAIL_REGFISH_PASSWORD: "${MAIL_REGFISH_PASSWORD:-}"
     prompt_tools:
       - list_accounts
       - search_emails
