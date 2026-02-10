@@ -687,6 +687,12 @@ class RAGService:
         except Exception as e:
             logger.warning(f"Konnte Datei nicht löschen: {e}")
 
+        # Lösche FK-Referenzen aus chat_uploads
+        await self.db.execute(
+            text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
+            {"doc_id": document_id}
+        )
+
         # Lösche zuerst die Chunks (explizit, falls CASCADE nicht greift)
         chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         await self.db.execute(chunk_stmt)
