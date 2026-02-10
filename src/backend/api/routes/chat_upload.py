@@ -27,7 +27,15 @@ from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 
-from .chat_upload_schemas import ChatUploadResponse, IndexRequest, IndexResponse, PaperlessResponse
+from .chat_upload_schemas import (
+    ChatUploadResponse,
+    CleanupResponse,
+    EmailForwardRequest,
+    EmailForwardResponse,
+    IndexRequest,
+    IndexResponse,
+    PaperlessResponse,
+)
 
 router = APIRouter()
 
@@ -265,6 +273,141 @@ async def forward_to_paperless(
         success=True,
         paperless_task_id=str(task_id) if task_id else None,
         message="Sent to Paperless",
+    )
+
+
+# ============================================================================
+# Email Forward Endpoint
+# ============================================================================
+
+
+@router.post("/upload/{upload_id}/email", response_model=EmailForwardResponse)
+async def forward_via_email(
+    upload_id: int,
+    email_request: EmailForwardRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """Forward a chat upload via Email MCP."""
+    # Fetch upload
+    result = await db.execute(
+        select(ChatUpload).where(ChatUpload.id == upload_id)
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(status_code=404, detail="Upload not found")
+
+    # Check file exists on disk
+    if not upload.file_path or not Path(upload.file_path).is_file():
+        raise HTTPException(status_code=400, detail="File no longer available on disk")
+
+    # Get MCP manager
+    manager = getattr(request.app.state, "mcp_manager", None)
+    if not manager:
+        raise HTTPException(status_code=503, detail="MCP not available")
+
+    # Read and base64-encode file
+    async with aiofiles.open(upload.file_path, 'rb') as f:
+        file_bytes = await f.read()
+    file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
+
+    subject = email_request.subject or f"Document: {upload.filename}"
+    body = email_request.body or f"Attached: {upload.filename}"
+
+    # Determine MIME type
+    mime_type = "application/octet-stream"
+    ext = upload.file_type
+    if ext:
+        mime_map = {
+            "pdf": "application/pdf",
+            "txt": "text/plain",
+            "md": "text/markdown",
+            "html": "text/html",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc": "application/msword",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        }
+        mime_type = mime_map.get(ext, mime_type)
+
+    # Execute MCP tool
+    try:
+        mcp_result = await manager.execute_tool(
+            "mcp.email.send_email",
+            {
+                "to": email_request.to,
+                "subject": subject,
+                "body": body,
+                "attachments": [{
+                    "filename": upload.filename,
+                    "mime_type": mime_type,
+                    "content_base64": file_content_base64,
+                }],
+            },
+        )
+    except Exception as e:
+        logger.error(f"Email forward failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Email forwarding failed: {e}")
+
+    if not mcp_result or not mcp_result.get("success"):
+        raise HTTPException(status_code=502, detail="Email forwarding failed")
+
+    return EmailForwardResponse(
+        success=True,
+        message=f"Sent to {email_request.to}",
+    )
+
+
+# ============================================================================
+# Cleanup Endpoint
+# ============================================================================
+
+
+async def _cleanup_uploads(db: AsyncSession, days: int) -> tuple[int, int]:
+    """Delete old non-indexed uploads. Returns (deleted_count, deleted_files)."""
+    from datetime import datetime, timedelta
+
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    result = await db.execute(
+        select(ChatUpload).where(
+            ChatUpload.created_at < cutoff,
+            ChatUpload.document_id.is_(None),
+        )
+    )
+    uploads = result.scalars().all()
+
+    deleted_files = 0
+    for upload in uploads:
+        if upload.file_path:
+            try:
+                p = Path(upload.file_path)
+                if p.is_file():
+                    p.unlink()
+                    deleted_files += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete file {upload.file_path}: {e}")
+        await db.delete(upload)
+
+    deleted_count = len(uploads)
+    if deleted_count > 0:
+        await db.commit()
+
+    return deleted_count, deleted_files
+
+
+@router.delete("/upload/cleanup", response_model=CleanupResponse)
+async def cleanup_old_uploads(
+    days: int = 30,
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete old non-indexed chat uploads."""
+    deleted_count, deleted_files = await _cleanup_uploads(db, days)
+    return CleanupResponse(
+        success=True,
+        deleted_count=deleted_count,
+        deleted_files=deleted_files,
+        message=f"Deleted {deleted_count} uploads ({deleted_files} files)",
     )
 
 

@@ -31,3 +31,21 @@ class PaperlessResponse(BaseModel):
     success: bool
     paperless_task_id: str | None = None
     message: str
+
+
+class EmailForwardRequest(BaseModel):
+    to: str
+    subject: str | None = None
+    body: str | None = None
+
+
+class EmailForwardResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class CleanupResponse(BaseModel):
+    success: bool
+    deleted_count: int
+    deleted_files: int
+    message: str
