@@ -740,6 +740,7 @@ class TestChatUploadEmail:
             mock_manager.execute_tool.assert_called_once()
             call_args = mock_manager.execute_tool.call_args
             assert call_args[0][0] == "mcp.email.send_email"
+            assert call_args[0][1]["account"] == "regfish"
             assert call_args[0][1]["to"] == "user@example.com"
             assert call_args[0][1]["subject"] == "Document: report.pdf"
             assert len(call_args[0][1]["attachments"]) == 1
