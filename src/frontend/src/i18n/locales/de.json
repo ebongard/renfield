@@ -142,7 +142,9 @@
     "emailBody": "Nachricht (optional)",
     "emailSend": "Senden",
     "emailSuccess": "Per E-Mail gesendet",
-    "emailFailed": "E-Mail-Versand fehlgeschlagen"
+    "emailFailed": "E-Mail-Versand fehlgeschlagen",
+    "documentIndexing": "Wird indexiert...",
+    "documentIndexed": "In Wissensdatenbank indexiert"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",

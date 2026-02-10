@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from time import time
 
 from fastapi import WebSocket
+from loguru import logger
 
 from models.websocket_messages import WSErrorCode, create_error_response
 from services.whisper_service import WhisperService
@@ -179,3 +180,39 @@ async def send_ws_error(websocket: WebSocket, code: WSErrorCode, message: str, r
         await websocket.send_json(create_error_response(code, message, request_id))
     except Exception:
         pass  # WebSocket may already be closed
+
+
+# =============================================================================
+# WebSocket Connection Registry
+# =============================================================================
+
+_ws_connections: dict[str, WebSocket] = {}
+
+
+def register_ws_connection(session_id: str, websocket: WebSocket) -> None:
+    """Register a WebSocket connection for a chat session."""
+    _ws_connections[session_id] = websocket
+
+
+def unregister_ws_connection(session_id: str) -> None:
+    """Unregister a WebSocket connection. No-op if not registered."""
+    _ws_connections.pop(session_id, None)
+
+
+async def notify_session(session_id: str, message: dict) -> bool:
+    """Send a notification to a connected chat session.
+
+    Returns True if the message was sent, False if the session is not
+    connected or the connection is broken (auto-cleans broken entries).
+    """
+    ws = _ws_connections.get(session_id)
+    if ws is None:
+        return False
+    try:
+        await ws.send_json(message)
+        return True
+    except Exception:
+        # Connection is dead — clean up
+        _ws_connections.pop(session_id, None)
+        logger.debug(f"Removed dead WS connection for session {session_id}")
+        return False
