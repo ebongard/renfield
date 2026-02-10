@@ -83,7 +83,7 @@ de:
     - "Deckenlicht Kueche aus" → HassTurnOff mit {{"name": "Deckenlicht Kueche"}}
     - Wenn kein Raum im Befehl UND kein Raum-Kontext → nutze nur "domain" ohne "area"
     - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
-    - Fuer Sensorwerte: Nutze HassGetState mit "name" und optional "area"
+    - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
     - Uebergib NIEMALS "device_class"
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
@@ -431,7 +431,7 @@ en:
     - "Kitchen ceiling light off" → HassTurnOff with {{"name": "Kitchen Ceiling Light"}}
     - If no room in command AND no room context → use only "domain" without "area"
     - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
-    - For sensor values: Use HassGetState with "name" and optionally "area"
+    - For sensor values: Use GetLiveContext with "name" and optionally "area"
     - NEVER pass "device_class"
     - The final answer must be natural and in English
     - Reply ONLY with JSON
