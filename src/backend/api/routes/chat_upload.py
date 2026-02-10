@@ -133,7 +133,8 @@ async def upload_chat_document(
     # Auto-index to KB if enabled
     if settings.chat_upload_auto_index and status == UPLOAD_STATUS_COMPLETED:
         background_tasks.add_task(
-            _auto_index_to_kb, upload.id, str(file_path), safe_name, file_hash
+            _auto_index_to_kb, upload.id, str(file_path), safe_name, file_hash,
+            session_id=session_id,
         )
 
     return ChatUploadResponse(
@@ -327,6 +328,9 @@ async def forward_via_email(
             "doc": "application/msword",
             "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "png": "image/png",
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
         }
         mime_type = mime_map.get(ext, mime_type)
 
@@ -440,8 +444,19 @@ async def _auto_index_to_kb(
     file_path: str,
     filename: str,
     file_hash: str | None,
+    session_id: str | None = None,
 ) -> None:
     """Background task: auto-index a chat upload into the default KB."""
+    from api.websocket.shared import notify_session
+
+    # Notify: processing started
+    if session_id:
+        await notify_session(session_id, {
+            "type": "document_processing",
+            "upload_id": upload_id,
+            "filename": filename,
+        })
+
     try:
         async with AsyncSessionLocal() as db:
             kb = await _get_or_create_default_kb(db)
@@ -465,5 +480,25 @@ async def _auto_index_to_kb(
                 await db.commit()
 
             logger.info(f"Auto-indexed chat upload {upload_id} → KB '{kb.name}' (doc {doc.id})")
+
+            # Notify: ready
+            if session_id:
+                await notify_session(session_id, {
+                    "type": "document_ready",
+                    "upload_id": upload_id,
+                    "filename": filename,
+                    "document_id": doc.id,
+                    "knowledge_base_id": kb.id,
+                    "chunk_count": doc.chunk_count,
+                })
     except Exception as e:
         logger.error(f"Auto-index failed for upload {upload_id}: {e}")
+
+        # Notify: error
+        if session_id:
+            await notify_session(session_id, {
+                "type": "document_error",
+                "upload_id": upload_id,
+                "filename": filename,
+                "error": str(e),
+            })

@@ -139,6 +139,19 @@ describe('Chat Upload', () => {
     });
   });
 
+  it('accepts image file types', async () => {
+    renderWithProviders(<ChatPage />);
+
+    await waitFor(() => {
+      const fileInput = document.querySelector('input[type="file"]');
+      expect(fileInput).toBeTruthy();
+      const accept = fileInput.getAttribute('accept');
+      expect(accept).toContain('.png');
+      expect(accept).toContain('.jpg');
+      expect(accept).toContain('.jpeg');
+    });
+  });
+
   it('renders attachment chips from loaded history', async () => {
     // Mock a conversation with attachments in history
     const sessionId = 'session-with-attachments';

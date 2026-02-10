@@ -24,7 +24,9 @@ from utils.config import settings
 from .shared import (
     ConversationSessionState,
     is_followup_question,
+    register_ws_connection,
     send_ws_error,
+    unregister_ws_connection,
 )
 
 router = APIRouter()
@@ -513,6 +515,7 @@ async def websocket_endpoint(
                 # Load history from DB if this is the first message with this session_id
                 if not session_state.history_loaded or session_state.db_session_id != msg_session_id:
                     session_state.db_session_id = msg_session_id
+                    register_ws_connection(msg_session_id, websocket)
                     try:
                         async with AsyncSessionLocal() as db_session:
                             db_history = await ollama.load_conversation_context(
@@ -822,8 +825,12 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 
     except WebSocketDisconnect:
+        if session_state.db_session_id:
+            unregister_ws_connection(session_state.db_session_id)
         logger.info("👋 WebSocket Verbindung getrennt")
     except Exception as e:
+        if session_state.db_session_id:
+            unregister_ws_connection(session_state.db_session_id)
         logger.error(f"❌ WebSocket Fehler: {e}")
         import traceback
         logger.error(traceback.format_exc())

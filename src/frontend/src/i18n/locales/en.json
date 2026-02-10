@@ -142,7 +142,9 @@
     "emailBody": "Message (optional)",
     "emailSend": "Send",
     "emailSuccess": "Sent via Email",
-    "emailFailed": "Failed to send email"
+    "emailFailed": "Failed to send email",
+    "documentIndexing": "Indexing to KB...",
+    "documentIndexed": "Indexed to KB"
   },
   "voice": {
     "startRecording": "Start voice recording",

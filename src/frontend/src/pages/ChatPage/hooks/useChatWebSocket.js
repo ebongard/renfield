@@ -19,6 +19,9 @@ export function useChatWebSocket({
   onAction,
   onRagContext,
   onIntentFeedbackRequest,
+  onDocumentProcessing,
+  onDocumentReady,
+  onDocumentError,
 } = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
@@ -60,6 +63,15 @@ export function useChatWebSocket({
         // Proaktives Feedback vom Backend
         debug.log('Intent feedback request:', data.detected_intent);
         onIntentFeedbackRequest?.(data);
+      } else if (data.type === 'document_processing') {
+        debug.log('Document processing:', data.filename);
+        onDocumentProcessing?.(data);
+      } else if (data.type === 'document_ready') {
+        debug.log('Document ready:', data.filename, 'doc_id:', data.document_id);
+        onDocumentReady?.(data);
+      } else if (data.type === 'document_error') {
+        debug.log('Document error:', data.filename, data.error);
+        onDocumentError?.(data);
       }
     };
 
@@ -75,7 +87,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError]);
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {
