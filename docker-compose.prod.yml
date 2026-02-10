@@ -1,22 +1,13 @@
-# Production Docker Compose with NVIDIA GPU Support
+# Production Docker Compose
 # Usage: docker compose -f docker-compose.prod.yml up -d
-#
-# Prerequisites:
-#   1. NVIDIA GPU with drivers installed (nvidia-smi should work)
-#   2. NVIDIA Container Toolkit installed:
-#      curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-#      curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | \
-#        sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | \
-#        sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-#      sudo apt update && sudo apt install -y nvidia-container-toolkit
-#      sudo nvidia-ctk runtime configure --runtime=docker
-#      sudo systemctl restart docker
 #
 # For external Ollama (recommended for production), set in .env:
 #   OLLAMA_URL=http://cuda.local:11434
 #
 # For local Ollama with GPU:
 #   docker compose -f docker-compose.prod.yml --profile ollama-gpu up -d
+#
+# GPU support: Use --profile gpu to start backend-gpu instead of backend
 
 services:
   # PostgreSQL Datenbank mit pgvector für RAG
@@ -85,11 +76,11 @@ services:
               count: all
               capabilities: [gpu]
 
-  # Backend API with GPU Support (Whisper acceleration)
+  # Backend API (CPU)
   backend:
     build:
       context: ./src/backend
-      dockerfile: Dockerfile.gpu
+      dockerfile: Dockerfile
     container_name: renfield-backend
     env_file:
       - .env
@@ -97,7 +88,6 @@ services:
       # DATABASE_URL wird dynamisch aus Einzelteilen zusammengebaut (config.py)
       REDIS_URL: redis://redis:6379
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
-      NVIDIA_VISIBLE_DEVICES: all
       # Disable telemetry for MCP stdio servers (prevents banner on stdout)
       DO_NOT_TRACK: "1"
       N8N_MCP_TELEMETRY_DISABLED: "true"
@@ -135,6 +125,59 @@ services:
       timeout: 10s
       retries: 3
       start_period: 60s
+    # Backend exposed via nginx only
+
+  # Backend API with GPU Support (Whisper acceleration)
+  # Use with: docker compose -f docker-compose.prod.yml --profile gpu up -d
+  backend-gpu:
+    build:
+      context: ./src/backend
+      dockerfile: Dockerfile.gpu
+    container_name: renfield-backend
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379
+      OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      NVIDIA_VISIBLE_DEVICES: all
+      DO_NOT_TRACK: "1"
+      N8N_MCP_TELEMETRY_DISABLED: "true"
+    secrets:
+      - postgres_password
+      - home_assistant_token
+      - secret_key
+      - default_admin_password
+      - openweather_api_key
+      - newsapi_key
+      - jellyfin_api_key
+      - jellyfin_token
+      - jellyfin_base_url
+      - n8n_api_key
+      - paperless_api_token
+      - mail_regfish_password
+    volumes:
+      - ./src/backend:/app
+      - ./tests:/tests
+      - ./pytest.ini:/pytest.ini
+      - whisper_models:/root/.cache/whisper
+      - piper_models:/root/.local/share/piper
+      - rag_uploads:/app/data/uploads
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - renfield-network
+    restart: always
+    profiles:
+      - gpu
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
     deploy:
       resources:
         reservations:
@@ -142,7 +185,6 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # Backend exposed via nginx only
 
   # Frontend Web-App (Production build with nginx)
   frontend:
