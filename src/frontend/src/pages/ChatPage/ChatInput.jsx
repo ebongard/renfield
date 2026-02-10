@@ -11,7 +11,7 @@ export default function ChatInput() {
     input, setInput, sendMessage, loading, recording, toggleRecording,
     audioLevel, silenceTimeRemaining,
     useRag, toggleRag, selectedKnowledgeBase, setSelectedKnowledgeBase,
-    attachments, uploading, uploadDocument, removeAttachment,
+    attachments, uploading, uploadDocument, removeAttachment, uploadStates,
   } = useChatContext();
 
   const fileInputRef = useRef(null);
@@ -33,8 +33,10 @@ export default function ChatInput() {
   const handleDrop = useCallback((e) => {
     e.preventDefault();
     setIsDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadDocument(file);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      uploadDocument(Array.from(files));
+    }
   }, [uploadDocument]);
 
   // Load knowledge bases when RAG is enabled
@@ -61,9 +63,9 @@ export default function ChatInput() {
   };
 
   const handleFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      uploadDocument(file);
+    const files = e.target.files;
+    if (files && files.length > 0) {
+      uploadDocument(Array.from(files));
     }
     // Reset input so same file can be re-selected
     e.target.value = '';
@@ -159,6 +161,29 @@ export default function ChatInput() {
         </div>
       )}
 
+      {/* Upload Progress Indicators */}
+      {Object.entries(uploadStates || {}).filter(([, s]) => s.uploading).length > 0 && (
+        <div className="flex flex-col gap-1.5 mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
+          {Object.entries(uploadStates).filter(([, s]) => s.uploading).map(([key, state]) => (
+            <div key={key} className="flex items-center gap-2 text-gray-600 dark:text-gray-300">
+              <Loader className="w-3.5 h-3.5 animate-spin flex-shrink-0" aria-hidden="true" />
+              <span className="text-xs truncate max-w-[120px]">{state.name}</span>
+              <div className="flex-1 h-1.5 bg-gray-300 dark:bg-gray-600 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary-500 rounded-full transition-all duration-200"
+                  style={{ width: `${state.progress}%` }}
+                  role="progressbar"
+                  aria-valuenow={state.progress}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                />
+              </div>
+              <span className="text-xs tabular-nums w-8 text-right">{state.progress}%</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Pending Attachments */}
       {attachments.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
@@ -212,6 +237,7 @@ export default function ChatInput() {
           className="hidden"
           accept=".pdf,.docx,.doc,.txt,.md,.html,.pptx,.xlsx"
           onChange={handleFileChange}
+          multiple
         />
 
         <button

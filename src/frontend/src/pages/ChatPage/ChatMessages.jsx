@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Volume2, Loader, FileText, AlertCircle, CheckCircle } from 'lucide-react';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
+import EmailForwardDialog from './EmailForwardDialog';
 import { useChatContext } from './context/ChatContext';
 
 export default function ChatMessages() {
@@ -10,6 +11,7 @@ export default function ChatMessages() {
   const {
     messages, loading, historyLoading, speakText, handleFeedbackSubmit,
     actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
+    handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
   } = useChatContext();
   const messagesEndRef = useRef(null);
 
@@ -91,6 +93,7 @@ export default function ChatMessages() {
                       attachment={att}
                       onIndexToKb={indexToKb}
                       onSendToPaperless={sendToPaperless}
+                      onSendViaEmail={handleSendViaEmail}
                       onSummarize={handleSummarize}
                       actionLoading={actionLoading}
                     />
@@ -147,10 +150,24 @@ export default function ChatMessages() {
           role="status"
         >
           {actionResult.success
-            ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess') : t('chat.paperlessSuccess'))
-            : (actionResult.type === 'indexing' ? t('chat.indexingFailed') : t('chat.paperlessFailed'))
+            ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
+              : actionResult.type === 'email' ? t('chat.emailSuccess')
+              : t('chat.paperlessSuccess'))
+            : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
+              : actionResult.type === 'email' ? t('chat.emailFailed')
+              : t('chat.paperlessFailed'))
           }
         </div>
+      )}
+
+      {/* Email Forward Dialog */}
+      {emailDialog && (
+        <EmailForwardDialog
+          open={!!emailDialog}
+          filename={emailDialog.filename}
+          onConfirm={confirmSendViaEmail}
+          onCancel={cancelEmailDialog}
+        />
       )}
 
       {/* Scroll anchor */}

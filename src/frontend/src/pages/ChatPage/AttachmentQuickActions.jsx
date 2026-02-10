@@ -1,12 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MoreVertical, BookOpen, Send, FileSearch, Loader } from 'lucide-react';
+import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader } from 'lucide-react';
 import apiClient from '../../utils/axios';
 
 export default function AttachmentQuickActions({
   attachment,
   onIndexToKb,
   onSendToPaperless,
+  onSendViaEmail,
   onSummarize,
   actionLoading,
 }) {
@@ -69,6 +70,12 @@ export default function AttachmentQuickActions({
     e.stopPropagation();
     setOpen(false);
     onSendToPaperless(attachment.id);
+  };
+
+  const handleEmail = (e) => {
+    e.stopPropagation();
+    setOpen(false);
+    onSendViaEmail?.(attachment.id);
   };
 
   const handleSummarize = (e) => {
@@ -137,6 +144,15 @@ export default function AttachmentQuickActions({
           >
             <Send className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
             {t('chat.sendToPaperless')}
+          </button>
+
+          {/* Send via Email */}
+          <button
+            onClick={handleEmail}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            <Mail className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+            {t('chat.sendViaEmail')}
           </button>
 
           {/* Summarize */}

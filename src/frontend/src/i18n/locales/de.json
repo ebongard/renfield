@@ -134,7 +134,15 @@
     "indexingFailed": "Fehler beim Hinzufügen",
     "paperlessSuccess": "An Paperless gesendet",
     "paperlessFailed": "Senden an Paperless fehlgeschlagen",
-    "alreadyIndexed": "Bereits indexiert"
+    "alreadyIndexed": "Bereits indexiert",
+    "sendViaEmail": "Per E-Mail senden",
+    "emailDialogTitle": "Dokument per E-Mail senden",
+    "emailTo": "Empfänger",
+    "emailSubject": "Betreff",
+    "emailBody": "Nachricht (optional)",
+    "emailSend": "Senden",
+    "emailSuccess": "Per E-Mail gesendet",
+    "emailFailed": "E-Mail-Versand fehlgeschlagen"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",

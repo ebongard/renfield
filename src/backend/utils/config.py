@@ -166,6 +166,8 @@ class Settings(BaseSettings):
     chat_upload_max_context_chars: int = Field(default=50000, ge=1000, le=200000)
     chat_upload_auto_index: bool = False
     chat_upload_default_kb_name: str = "Chat Uploads"
+    chat_upload_retention_days: int = Field(default=30, ge=1, le=365)
+    chat_upload_cleanup_enabled: bool = False
 
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
