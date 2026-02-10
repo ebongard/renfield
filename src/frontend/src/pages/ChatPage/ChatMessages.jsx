@@ -85,9 +85,13 @@ export default function ChatMessages() {
                         })
                       </span>
                     )}
-                    {att.status === 'completed'
-                      ? <CheckCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
-                      : <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                    {att.indexing
+                      ? <Loader className="w-3 h-3 flex-shrink-0 animate-spin" aria-hidden="true" title={t('chat.documentIndexing')} />
+                      : att.indexed
+                        ? <span className="inline-flex items-center px-1 rounded text-[9px] font-semibold bg-green-200 text-green-900 dark:bg-green-800 dark:text-green-100" title={t('chat.documentIndexed')}>KB</span>
+                        : att.status === 'completed'
+                          ? <CheckCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
+                          : <AlertCircle className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                     }
                     <AttachmentQuickActions
                       attachment={att}
