@@ -15,8 +15,8 @@
 roles:
   smart_home:
     description:
-      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern (NICHT Musik/Medien abspielen)"
-      en: "Smart home: control lights, switches, sensors, heating, scenes (NOT playing music/media)"
+      de: "Smart Home: Licht, Schalter, Sensoren, Heizung, Szenen steuern, Temperatur/Luftfeuchte in Raeumen abfragen (NICHT Musik/Medien, NICHT Aussenwetter)"
+      en: "Smart home: control lights, switches, sensors, heating, scenes, query temperature/humidity in rooms (NOT music/media, NOT outdoor weather)"
     mcp_servers: [homeassistant]
     internal_tools: [internal.resolve_room_player, internal.play_in_room]
     max_steps: 4
@@ -25,8 +25,8 @@ roles:
 
   research:
     description:
-      de: "Recherche: Websuche, Nachrichten, Wetterdaten"
-      en: "Research: web search, news, weather data"
+      de: "Recherche: Websuche, Nachrichten, Aussenwetter/Wettervorhersage (NICHT Raumtemperatur)"
+      en: "Research: web search, news, outdoor weather/forecast (NOT room temperature)"
     mcp_servers: [search, news, weather]
     max_steps: 6
     prompt_key: agent_prompt_research
