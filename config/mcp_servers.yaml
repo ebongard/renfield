@@ -241,13 +241,15 @@ servers:
     auth_token_env: HOME_ASSISTANT_TOKEN
     enabled: "${HA_MCP_ENABLED:-false}"
     refresh_interval: 600
-    example_intent: mcp.homeassistant.HassTurnOn
+    example_intent: mcp.homeassistant.GetLiveContext
     prompt_tools:
       - HassTurnOn
       - HassTurnOff
-      - HassGetState
-      - HassSetValue
       - HassLightSet
+      - GetLiveContext
+      - HassSetPosition
+      - HassMediaSearchAndPlay
+      - HassSetVolume
     examples:
       de:
         - "Schalte das Licht im Wohnzimmer ein"
