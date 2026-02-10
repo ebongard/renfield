@@ -198,6 +198,39 @@ def _schedule_memory_cleanup():
     )
 
 
+def _schedule_upload_cleanup():
+    """Schedule periodic cleanup of old non-indexed chat uploads."""
+    if not settings.chat_upload_cleanup_enabled:
+        return
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(3600)  # 1 hour
+                from api.routes.chat_upload import _cleanup_uploads
+
+                async with AsyncSessionLocal() as db_session:
+                    deleted_count, deleted_files = await _cleanup_uploads(
+                        db_session, settings.chat_upload_retention_days
+                    )
+                    if deleted_count > 0:
+                        logger.info(
+                            f"Upload cleanup: {deleted_count} uploads deleted "
+                            f"({deleted_files} files, retention={settings.chat_upload_retention_days}d)"
+                        )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Upload cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Upload Cleanup Scheduler gestartet "
+        f"(retention={settings.chat_upload_retention_days}d, stündlich)"
+    )
+
+
 def _schedule_ha_keywords_preload():
     """Schedule Home Assistant keywords preloading in background."""
     try:
@@ -392,6 +425,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_memory_cleanup()
+    _schedule_upload_cleanup()
 
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)

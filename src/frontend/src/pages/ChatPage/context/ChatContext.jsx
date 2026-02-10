@@ -425,22 +425,55 @@ export function ChatProvider({ children }) {
   });
 
   // Document upload hook
-  const { uploading, uploadError, uploadDocument: doUpload } = useDocumentUpload();
+  const { uploading, uploadError, uploadDocument: doUpload, uploadDocuments: doUploadMultiple, uploadStates } = useDocumentUpload();
 
-  const handleUploadDocument = useCallback(async (file) => {
+  const handleUploadDocument = useCallback(async (fileOrFiles) => {
     if (!sessionId) return;
-    const result = await doUpload(file, sessionId);
-    if (result) {
-      setAttachments(prev => [...prev, result]);
+    const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
+    const results = await doUploadMultiple(files, sessionId);
+    const successful = results.filter(Boolean);
+    if (successful.length > 0) {
+      setAttachments(prev => [...prev, ...successful]);
     }
-  }, [sessionId, doUpload]);
+  }, [sessionId, doUploadMultiple]);
 
   const removeAttachment = useCallback((id) => {
     setAttachments(prev => prev.filter(a => a.id !== id));
   }, []);
 
   // Quick actions hook
-  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless } = useQuickActions();
+  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendViaEmail } = useQuickActions();
+
+  // Email dialog state
+  const [emailDialog, setEmailDialog] = useState(null);
+
+  const handleSendViaEmail = useCallback((uploadId) => {
+    let filename = null;
+    for (const msg of messages) {
+      const att = msg.attachments?.find(a => a.id === uploadId);
+      if (att) {
+        filename = att.filename;
+        break;
+      }
+    }
+    // Also check pending attachments
+    if (!filename) {
+      const att = attachments.find(a => a.id === uploadId);
+      if (att) filename = att.filename;
+    }
+    if (!filename) return;
+    setEmailDialog({ uploadId, filename });
+  }, [messages, attachments]);
+
+  const confirmSendViaEmail = useCallback(async (to, subject, body) => {
+    if (!emailDialog) return;
+    await sendViaEmail(emailDialog.uploadId, to, subject, body);
+    setEmailDialog(null);
+  }, [emailDialog, sendViaEmail]);
+
+  const cancelEmailDialog = useCallback(() => {
+    setEmailDialog(null);
+  }, []);
 
   // Assign startRecording to ref for wake word callback
   startRecordingRef.current = startRecording;
@@ -673,6 +706,7 @@ export function ChatProvider({ children }) {
     uploadError,
     uploadDocument: handleUploadDocument,
     removeAttachment,
+    uploadStates,
 
     // Wake word
     wakeWord: {
@@ -687,6 +721,12 @@ export function ChatProvider({ children }) {
     indexToKb,
     sendToPaperless,
     handleSummarize,
+    handleSendViaEmail,
+
+    // Email dialog
+    emailDialog,
+    confirmSendViaEmail,
+    cancelEmailDialog,
 
     // Actions
     speakText,
@@ -698,9 +738,10 @@ export function ChatProvider({ children }) {
     wsConnected,
     recording, audioLevel, silenceTimeRemaining, toggleRecording,
     useRag, toggleRag, selectedKnowledgeBase,
-    attachments, uploading, uploadError, handleUploadDocument, removeAttachment,
+    attachments, uploading, uploadError, handleUploadDocument, removeAttachment, uploadStates,
     wakeWord, wakeWordStatus,
-    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
+    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize, handleSendViaEmail,
+    emailDialog, confirmSendViaEmail, cancelEmailDialog,
     speakText, handleFeedbackSubmit,
   ]);
 

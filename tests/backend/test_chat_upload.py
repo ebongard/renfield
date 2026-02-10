@@ -680,3 +680,256 @@ class TestAutoIndex:
             kb2 = await _get_or_create_default_kb(db_session)
 
         assert kb2.id == kb.id
+
+
+# ============================================================================
+# Phase 4: Email Forward Endpoint Tests
+# ============================================================================
+
+class TestChatUploadEmail:
+    """Tests for POST /api/chat/upload/{id}/email"""
+
+    @pytest.mark.backend
+    async def test_email_success(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Successful email forward returns 200"""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test content")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="email-test",
+                filename="report.pdf",
+                file_type="pdf",
+                file_size=500,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            import json
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({"success": True, "data": {}}),
+            }
+
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+
+            from main import app
+            app.state.mcp_manager = mock_manager
+
+            try:
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/email",
+                    json={"to": "user@example.com"},
+                )
+            finally:
+                app.state.mcp_manager = None
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is True
+            assert "user@example.com" in body["message"]
+
+            # Verify MCP tool was called with correct params
+            mock_manager.execute_tool.assert_called_once()
+            call_args = mock_manager.execute_tool.call_args
+            assert call_args[0][0] == "mcp.email.send_email"
+            assert call_args[0][1]["to"] == "user@example.com"
+            assert call_args[0][1]["subject"] == "Document: report.pdf"
+            assert len(call_args[0][1]["attachments"]) == 1
+            assert call_args[0][1]["attachments"][0]["filename"] == "report.pdf"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_email_not_found(self, async_client: AsyncClient):
+        """Non-existent upload returns 404"""
+        response = await async_client.post(
+            "/api/chat/upload/99999/email",
+            json={"to": "user@example.com"},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.backend
+    async def test_email_mcp_not_available(self, async_client: AsyncClient, db_session: AsyncSession):
+        """No MCP manager returns 503"""
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="no-mcp-email-test",
+                filename="doc.pdf",
+                file_type="pdf",
+                file_size=200,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            from main import app
+            original = getattr(app.state, "mcp_manager", None)
+            app.state.mcp_manager = None
+            try:
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/email",
+                    json={"to": "user@example.com"},
+                )
+            finally:
+                app.state.mcp_manager = original
+
+            assert response.status_code == 503
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_email_file_missing(self, async_client: AsyncClient, db_session: AsyncSession):
+        """Missing file on disk returns 400"""
+        upload = ChatUpload(
+            session_id="missing-file-email-test",
+            filename="gone.pdf",
+            file_type="pdf",
+            file_size=200,
+            status="completed",
+            file_path="/tmp/nonexistent-file-12345.pdf",
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+
+        response = await async_client.post(
+            f"/api/chat/upload/{upload.id}/email",
+            json={"to": "user@example.com"},
+        )
+        assert response.status_code == 400
+        assert "no longer available" in response.json()["detail"]
+
+
+# ============================================================================
+# Phase 4: Cleanup Endpoint Tests
+# ============================================================================
+
+class TestChatUploadCleanup:
+    """Tests for DELETE /api/chat/upload/cleanup and _cleanup_uploads"""
+
+    @pytest.mark.backend
+    async def test_cleanup_deletes_old_unindexed(self, async_client, db_session: AsyncSession):
+        """Old uploads without document_id are deleted"""
+        from datetime import datetime, timedelta
+
+        old_upload = ChatUpload(
+            session_id="cleanup-test",
+            filename="old.txt",
+            file_type="txt",
+            file_size=100,
+            status="completed",
+            file_path="/tmp/nonexistent.txt",
+        )
+        db_session.add(old_upload)
+        await db_session.commit()
+        await db_session.refresh(old_upload)
+
+        # Manually set created_at to 60 days ago
+        old_upload.created_at = datetime.utcnow() - timedelta(days=60)
+        await db_session.commit()
+
+        from api.routes.chat_upload import _cleanup_uploads
+        deleted_count, _deleted_files = await _cleanup_uploads(db_session, days=30)
+
+        assert deleted_count == 1
+
+    @pytest.mark.backend
+    async def test_cleanup_preserves_indexed(self, async_client, db_session: AsyncSession):
+        """Old uploads with document_id are preserved"""
+        from datetime import datetime, timedelta
+
+        indexed_upload = ChatUpload(
+            session_id="cleanup-indexed-test",
+            filename="indexed.txt",
+            file_type="txt",
+            file_size=100,
+            status="completed",
+            document_id=42,
+        )
+        db_session.add(indexed_upload)
+        await db_session.commit()
+        await db_session.refresh(indexed_upload)
+
+        indexed_upload.created_at = datetime.utcnow() - timedelta(days=60)
+        await db_session.commit()
+
+        from api.routes.chat_upload import _cleanup_uploads
+        deleted_count, _deleted_files = await _cleanup_uploads(db_session, days=30)
+
+        assert deleted_count == 0
+
+    @pytest.mark.backend
+    async def test_cleanup_preserves_recent(self, async_client, db_session: AsyncSession):
+        """Recent uploads are preserved regardless of index status"""
+        recent_upload = ChatUpload(
+            session_id="cleanup-recent-test",
+            filename="recent.txt",
+            file_type="txt",
+            file_size=100,
+            status="completed",
+        )
+        db_session.add(recent_upload)
+        await db_session.commit()
+
+        from api.routes.chat_upload import _cleanup_uploads
+        deleted_count, _deleted_files = await _cleanup_uploads(db_session, days=30)
+
+        assert deleted_count == 0
+
+    @pytest.mark.backend
+    async def test_cleanup_endpoint(self, async_client: AsyncClient, db_session: AsyncSession):
+        """DELETE endpoint returns counts"""
+        response = await async_client.delete("/api/chat/upload/cleanup?days=30")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert "deleted_count" in body
+        assert "deleted_files" in body
+
+    @pytest.mark.backend
+    async def test_cleanup_removes_files(self, async_client, db_session: AsyncSession):
+        """Cleanup actually deletes files from disk"""
+        from datetime import datetime, timedelta
+
+        with tempfile.NamedTemporaryFile(suffix=".txt", delete=False) as f:
+            f.write(b"cleanup test content")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="cleanup-files-test",
+                filename="deleteme.txt",
+                file_type="txt",
+                file_size=100,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            upload.created_at = datetime.utcnow() - timedelta(days=60)
+            await db_session.commit()
+
+            assert Path(tmp_path).is_file()
+
+            from api.routes.chat_upload import _cleanup_uploads
+            deleted_count, deleted_files = await _cleanup_uploads(db_session, days=30)
+
+            assert deleted_count == 1
+            assert deleted_files == 1
+            assert not Path(tmp_path).is_file()
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
