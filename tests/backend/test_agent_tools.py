@@ -106,6 +106,73 @@ class TestAgentToolRegistryMCPTools:
         assert registry.is_valid_tool("mcp.test.tool") is True
         assert registry.is_valid_tool("nonexistent.tool") is False
 
+    @pytest.mark.unit
+    def test_resolve_tool_name_exact(self):
+        """Exact match returns the full namespaced name."""
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.homeassistant.GetLiveContext"
+        mock_tool.description = "Get live context"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.resolve_tool_name("mcp.homeassistant.GetLiveContext") == "mcp.homeassistant.GetLiveContext"
+
+    @pytest.mark.unit
+    def test_resolve_tool_name_short(self):
+        """Short name without namespace resolves to full name."""
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.homeassistant.GetLiveContext"
+        mock_tool.description = "Get live context"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.resolve_tool_name("GetLiveContext") == "mcp.homeassistant.GetLiveContext"
+
+    @pytest.mark.unit
+    def test_resolve_tool_name_ambiguous(self):
+        """Ambiguous short name (matches multiple tools) returns None."""
+        mock_mcp = MagicMock()
+        tool1 = MagicMock()
+        tool1.namespaced_name = "mcp.server1.search"
+        tool1.description = "Search 1"
+        tool1.input_schema = {"properties": {}, "required": []}
+        tool2 = MagicMock()
+        tool2.namespaced_name = "mcp.server2.search"
+        tool2.description = "Search 2"
+        tool2.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [tool1, tool2]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.resolve_tool_name("search") is None
+
+    @pytest.mark.unit
+    def test_resolve_tool_name_unknown(self):
+        """Unknown tool name returns None."""
+        mock_mcp = MagicMock()
+        mock_mcp.get_all_tools.return_value = []
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.resolve_tool_name("nonexistent") is None
+
+    @pytest.mark.unit
+    def test_is_valid_tool_accepts_short_name(self):
+        """is_valid_tool should accept short names via resolve_tool_name."""
+        mock_mcp = MagicMock()
+        mock_tool = MagicMock()
+        mock_tool.namespaced_name = "mcp.homeassistant.HassTurnOn"
+        mock_tool.description = "Turn on"
+        mock_tool.input_schema = {"properties": {}, "required": []}
+        mock_mcp.get_all_tools.return_value = [mock_tool]
+
+        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        assert registry.is_valid_tool("HassTurnOn") is True
+        assert registry.is_valid_tool("mcp.homeassistant.HassTurnOn") is True
+        assert registry.is_valid_tool("NonExistent") is False
+
 
 class TestAgentToolRegistryPluginTools:
     """Test plugin tool registration."""

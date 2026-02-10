@@ -144,9 +144,25 @@ class AgentToolRegistry:
         """Get list of all registered tool names."""
         return list(self._tools.keys())
 
+    def resolve_tool_name(self, name: str) -> str | None:
+        """Resolve a tool name, supporting short names without namespace prefix.
+
+        Small LLMs sometimes emit 'GetLiveContext' instead of
+        'mcp.homeassistant.GetLiveContext'. This tries exact match first,
+        then falls back to suffix match (must be unambiguous).
+        """
+        if name in self._tools:
+            return name
+        # Suffix match: find tools ending with '.<name>'
+        suffix = f".{name}"
+        matches = [k for k in self._tools if k.endswith(suffix)]
+        if len(matches) == 1:
+            return matches[0]
+        return None
+
     def is_valid_tool(self, name: str) -> bool:
         """Check if a tool name is valid."""
-        return name in self._tools
+        return self.resolve_tool_name(name) is not None
 
     def build_tools_prompt(self, tools: dict[str, "ToolDefinition"] | None = None) -> str:
         """

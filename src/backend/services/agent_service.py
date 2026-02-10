@@ -694,8 +694,9 @@ class AgentService:
                 )
                 return
 
-            # Validate tool name
-            if not self.tool_registry.is_valid_tool(action):
+            # Validate and resolve tool name (supports short names from small LLMs)
+            resolved = self.tool_registry.resolve_tool_name(action)
+            if not resolved:
                 logger.warning(f"⚠️ Agent step {step_num}: Invalid tool '{action}'")
                 error_content = f"Unknown tool: {action}" if lang == "en" else f"Unbekanntes Tool: {action}"
                 error_step = AgentStep(
@@ -708,6 +709,9 @@ class AgentService:
                 yield error_step
                 # Continue loop — LLM will see the error in history
                 continue
+            if resolved != action:
+                logger.info(f"🔧 Agent step {step_num}: Resolved '{action}' → '{resolved}'")
+                action = resolved
 
             parameters = parsed.get("parameters", {})
             reason = parsed.get("reason", "")

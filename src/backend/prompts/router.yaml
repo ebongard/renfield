@@ -14,6 +14,10 @@ de:
     KATEGORIEN:
     {role_descriptions}
 
+    WICHTIG: Wenn nach Temperatur, Luftfeuchte oder Sensorwerten in einem RAUM gefragt wird
+    (z.B. Kueche, Wohnzimmer, Buero, Schlafzimmer), ist das IMMER smart_home (nicht research).
+    research ist NUR fuer Aussenwetter und Wettervorhersagen.
+
     Antworte NUR mit JSON: {{"role": "<kategorie>", "reason": "..."}}
 
   # Conversation history context template
@@ -33,6 +37,10 @@ en:
 
     CATEGORIES:
     {role_descriptions}
+
+    IMPORTANT: When asking about temperature, humidity or sensor values in a ROOM
+    (e.g. kitchen, living room, office, bedroom), this is ALWAYS smart_home (not research).
+    research is ONLY for outdoor weather and weather forecasts.
 
     Reply ONLY with JSON: {{"role": "<category>", "reason": "..."}}
 
