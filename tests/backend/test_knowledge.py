@@ -506,3 +506,47 @@ class TestDocumentAPI:
         response = await async_client.get("/api/knowledge/documents/99999")
 
         assert response.status_code == 404
+
+
+# ============================================================================
+# RAG Service: delete_document FK cleanup
+# ============================================================================
+
+
+class TestDeleteDocumentFKCleanup:
+    """Tests that delete_document NULLs out chat_uploads.document_id before delete."""
+
+    @pytest.mark.unit
+    async def test_delete_document_nulls_chat_upload_fk(self, db_session, test_document):
+        """Deleting a document referenced by a ChatUpload should succeed."""
+        from models.database import ChatUpload
+        from services.rag_service import RAGService
+
+        # Create a ChatUpload that references the document
+        upload = ChatUpload(
+            session_id="test-session",
+            filename="test.pdf",
+            file_type="pdf",
+            file_size=1024,
+            file_hash="abc123",
+            status="completed",
+            document_id=test_document.id,
+            knowledge_base_id=test_document.knowledge_base_id,
+        )
+        db_session.add(upload)
+        await db_session.commit()
+        await db_session.refresh(upload)
+        upload_id = upload.id
+
+        # Delete should succeed (previously raised ForeignKeyViolationError)
+        rag = RAGService(db_session)
+        result = await rag.delete_document(test_document.id)
+        assert result is True
+
+        # ChatUpload should still exist but with document_id = NULL
+        db_session.expire_all()
+        from sqlalchemy import select as sa_select
+        stmt = sa_select(ChatUpload).where(ChatUpload.id == upload_id)
+        row = (await db_session.execute(stmt)).scalar_one_or_none()
+        assert row is not None
+        assert row.document_id is None
