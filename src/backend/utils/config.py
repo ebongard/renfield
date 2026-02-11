@@ -209,6 +209,9 @@ class Settings(BaseSettings):
     # Home Assistant MCP
     ha_mcp_enabled: bool = False
 
+    # === Plugin / Extension System ===
+    plugin_module: str = ""  # e.g. "renfield_twin.hooks:register"
+
     # === Authentication ===
     # Set to True to enable authentication (default: False for development)
     auth_enabled: bool = False
