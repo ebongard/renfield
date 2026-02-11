@@ -1,0 +1,208 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 720" width="1100" height="720">
+  <defs>
+    <style>
+      text { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+      .title { font-size: 22px; font-weight: 700; fill: #F0E6D3; }
+      .subtitle { font-size: 11px; fill: #888; letter-spacing: 2px; }
+      .box-label { font-size: 13px; font-weight: 600; fill: #F0E6D3; }
+      .box-sub { font-size: 10px; fill: #999; }
+      .section-label { font-size: 11px; font-weight: 600; fill: #00FFD0; letter-spacing: 1.5px; }
+      .arrow { stroke: #444; stroke-width: 1.5; fill: none; marker-end: url(#arrowhead); }
+      .arrow-data { stroke: #00FFD0; stroke-width: 1.2; fill: none; opacity: 0.5; stroke-dasharray: 4 3; }
+    </style>
+    <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#666"/>
+    </marker>
+    <marker id="arrowhead-cyan" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#00FFD0" opacity="0.5"/>
+    </marker>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0F0F13"/>
+      <stop offset="100%" style="stop-color:#1A1A24"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1100" height="720" fill="url(#bgGrad)" rx="12"/>
+
+  <!-- Title -->
+  <text x="550" y="42" text-anchor="middle" class="title">RENFIELD ARCHITECTURE</text>
+  <text x="550" y="60" text-anchor="middle" class="subtitle">SELF-HOSTED AI ASSISTANT</text>
+
+  <!-- ═══════════ CLIENTS (top) ═══════════ -->
+  <text x="80" y="100" class="section-label">CLIENTS</text>
+
+  <!-- Satellite 1 -->
+  <rect x="80" y="112" width="140" height="52" rx="8" fill="#1E1E2A" stroke="#333" stroke-width="1"/>
+  <text x="150" y="135" text-anchor="middle" class="box-label">Satellite</text>
+  <text x="150" y="150" text-anchor="middle" class="box-sub">Pi Zero 2 W + ReSpeaker</text>
+
+  <!-- Satellite 2 -->
+  <rect x="240" y="112" width="140" height="52" rx="8" fill="#1E1E2A" stroke="#333" stroke-width="1"/>
+  <text x="310" y="135" text-anchor="middle" class="box-label">Satellite</text>
+  <text x="310" y="150" text-anchor="middle" class="box-sub">Wake Word + STT + TTS</text>
+
+  <!-- Web App -->
+  <rect x="420" y="112" width="140" height="52" rx="8" fill="#1E1E2A" stroke="#61DAFB" stroke-width="1.2"/>
+  <text x="490" y="135" text-anchor="middle" class="box-label">Frontend (PWA)</text>
+  <text x="490" y="150" text-anchor="middle" class="box-sub">React 18 + TypeScript</text>
+
+  <!-- Tablet -->
+  <rect x="580" y="112" width="140" height="52" rx="8" fill="#1E1E2A" stroke="#333" stroke-width="1"/>
+  <text x="650" y="135" text-anchor="middle" class="box-label">Web Panel</text>
+  <text x="650" y="150" text-anchor="middle" class="box-sub">Tablet / Kiosk</text>
+
+  <!-- Arrows from clients to backend -->
+  <line x1="150" y1="164" x2="150" y2="210" class="arrow"/>
+  <line x1="310" y1="164" x2="310" y2="210" class="arrow"/>
+  <line x1="490" y1="164" x2="490" y2="210" class="arrow"/>
+  <line x1="650" y1="164" x2="650" y2="210" class="arrow"/>
+
+  <!-- WebSocket label -->
+  <text x="400" y="195" text-anchor="middle" class="box-sub">WebSocket + REST</text>
+
+  <!-- ═══════════ BACKEND ═══════════ -->
+  <rect x="60" y="215" width="720" height="280" rx="10" fill="none" stroke="#009688" stroke-width="1.5" opacity="0.6"/>
+  <text x="80" y="238" class="section-label">BACKEND — FASTAPI</text>
+
+  <!-- Row 1: Core services -->
+  <rect x="80" y="250" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="145" y="270" text-anchor="middle" class="box-label">Intent Recog.</text>
+  <text x="145" y="283" text-anchor="middle" class="box-sub">Ranked + Feedback</text>
+
+  <rect x="225" y="250" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="290" y="270" text-anchor="middle" class="box-label">Agent Router</text>
+  <text x="290" y="283" text-anchor="middle" class="box-sub">8 Roles · ReAct</text>
+
+  <rect x="370" y="250" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="435" y="270" text-anchor="middle" class="box-label">Action Executor</text>
+  <text x="435" y="283" text-anchor="middle" class="box-sub">MCP + Plugins</text>
+
+  <rect x="515" y="250" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="580" y="270" text-anchor="middle" class="box-label">RAG Service</text>
+  <text x="580" y="283" text-anchor="middle" class="box-sub">Hybrid Search</text>
+
+  <rect x="660" y="250" width="105" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="712" y="270" text-anchor="middle" class="box-label">Hook System</text>
+  <text x="712" y="283" text-anchor="middle" class="box-sub">Open-Core API</text>
+
+  <!-- Row 2: Support services -->
+  <rect x="80" y="310" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="145" y="330" text-anchor="middle" class="box-label">Memory</text>
+  <text x="145" y="343" text-anchor="middle" class="box-sub">Long-term Recall</text>
+
+  <rect x="225" y="310" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="290" y="330" text-anchor="middle" class="box-label">Notifications</text>
+  <text x="290" y="343" text-anchor="middle" class="box-sub">Webhooks + Reminders</text>
+
+  <rect x="370" y="310" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="435" y="330" text-anchor="middle" class="box-label">Room Service</text>
+  <text x="435" y="343" text-anchor="middle" class="box-sub">Output Routing</text>
+
+  <rect x="515" y="310" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="580" y="330" text-anchor="middle" class="box-label">Speaker Recog.</text>
+  <text x="580" y="343" text-anchor="middle" class="box-sub">SpeechBrain</text>
+
+  <rect x="660" y="310" width="105" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="712" y="330" text-anchor="middle" class="box-label">Auth (RPBAC)</text>
+  <text x="712" y="343" text-anchor="middle" class="box-sub">JWT + Roles</text>
+
+  <!-- Row 3: Audio -->
+  <rect x="80" y="370" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="145" y="390" text-anchor="middle" class="box-label">Whisper STT</text>
+  <text x="145" y="403" text-anchor="middle" class="box-sub">Speech-to-Text</text>
+
+  <rect x="225" y="370" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="290" y="390" text-anchor="middle" class="box-label">Piper TTS</text>
+  <text x="290" y="403" text-anchor="middle" class="box-sub">Text-to-Speech</text>
+
+  <rect x="370" y="370" width="130" height="44" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="435" y="390" text-anchor="middle" class="box-label">Circuit Breaker</text>
+  <text x="435" y="403" text-anchor="middle" class="box-sub">LLM + Agent</text>
+
+  <rect x="515" y="370" width="250" height="44" rx="6" fill="#1E1E2A" stroke="#9c27b0" stroke-width="1" opacity="0.7"/>
+  <text x="640" y="390" text-anchor="middle" class="box-label">Complexity Detector → Agent Loop</text>
+  <text x="640" y="403" text-anchor="middle" class="box-sub">Simple → Single Intent · Complex → ReAct Multi-Step</text>
+
+  <!-- Arrows: Intent → Agent → Action flow -->
+  <line x1="210" y1="272" x2="225" y2="272" class="arrow" stroke="#666"/>
+  <line x1="355" y1="272" x2="370" y2="272" class="arrow" stroke="#666"/>
+  <line x1="500" y1="272" x2="515" y2="272" class="arrow" stroke="#666"/>
+
+  <!-- ═══════════ DATA LAYER ═══════════ -->
+  <rect x="60" y="510" width="720" height="55" rx="10" fill="#1E1E2A" stroke="#f9a825" stroke-width="1.2" opacity="0.7"/>
+  <text x="80" y="534" class="section-label">DATA</text>
+  <text x="155" y="544" text-anchor="middle" class="box-label">PostgreSQL 16</text>
+  <text x="300" y="544" text-anchor="middle" class="box-sub">pgvector · Embeddings</text>
+  <text x="450" y="544" text-anchor="middle" class="box-sub">Conversations · Memories · Documents</text>
+  <text x="640" y="544" text-anchor="middle" class="box-sub">Rooms · Speakers · Feedback</text>
+  <text x="745" y="534" text-anchor="middle" class="box-label">Redis 7</text>
+
+  <!-- Arrow: Backend → Data -->
+  <line x1="420" y1="495" x2="420" y2="510" class="arrow"/>
+
+  <!-- ═══════════ EXTERNAL SERVICES (right side) ═══════════ -->
+  <text x="830" y="100" class="section-label">EXTERNAL SERVICES</text>
+
+  <!-- Ollama -->
+  <rect x="820" y="112" width="240" height="52" rx="8" fill="#1E1E2A" stroke="#C41E3A" stroke-width="1.5"/>
+  <text x="940" y="135" text-anchor="middle" class="box-label">Ollama (Local LLM)</text>
+  <text x="940" y="150" text-anchor="middle" class="box-sub">Chat · Intent · RAG · Agent · Embeddings</text>
+
+  <!-- Arrow: Backend → Ollama -->
+  <line x1="780" y1="272" x2="820" y2="140" class="arrow" stroke="#C41E3A" opacity="0.6"/>
+
+  <!-- MCP Servers -->
+  <text x="830" y="195" class="section-label">MCP SERVERS (8)</text>
+
+  <rect x="820" y="208" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="877" y="232" text-anchor="middle" class="box-label">Home Assist.</text>
+
+  <rect x="945" y="208" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="1002" y="232" text-anchor="middle" class="box-label">n8n</text>
+
+  <rect x="820" y="258" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="877" y="282" text-anchor="middle" class="box-label">Weather</text>
+
+  <rect x="945" y="258" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="1002" y="282" text-anchor="middle" class="box-label">Search</text>
+
+  <rect x="820" y="308" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="877" y="332" text-anchor="middle" class="box-label">News</text>
+
+  <rect x="945" y="308" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="1002" y="332" text-anchor="middle" class="box-label">Jellyfin</text>
+
+  <rect x="820" y="358" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="877" y="382" text-anchor="middle" class="box-label">Paperless</text>
+
+  <rect x="945" y="358" width="115" height="40" rx="6" fill="#1E1E2A" stroke="#444" stroke-width="1"/>
+  <text x="1002" y="382" text-anchor="middle" class="box-label">Email</text>
+
+  <!-- Arrow: Backend → MCP -->
+  <line x1="780" y1="332" x2="820" y2="332" class="arrow"/>
+  <text x="795" y="325" text-anchor="middle" class="box-sub" style="font-size:9px">MCP</text>
+
+  <!-- ═══════════ SATELLITE DETAIL (bottom right) ═══════════ -->
+  <text x="830" y="440" class="section-label">SATELLITE FLOW</text>
+
+  <rect x="820" y="452" width="240" height="115" rx="8" fill="#1E1E2A" stroke="#2ea44f" stroke-width="1.2"/>
+
+  <text x="940" y="476" text-anchor="middle" class="box-sub" style="fill:#2ea44f">Pi Zero 2 W + ReSpeaker HAT</text>
+  <text x="940" y="496" text-anchor="middle" class="box-sub">Wake Word (OpenWakeWord)</text>
+  <text x="870" y="516" text-anchor="middle" class="box-sub">↓</text>
+  <text x="940" y="516" text-anchor="middle" class="box-sub">Audio Stream → Backend</text>
+  <text x="870" y="536" text-anchor="middle" class="box-sub">↓</text>
+  <text x="940" y="536" text-anchor="middle" class="box-sub">Whisper → Intent → Action → TTS</text>
+  <text x="870" y="556" text-anchor="middle" class="box-sub">↓</text>
+  <text x="940" y="556" text-anchor="middle" class="box-sub">Audio Playback on Satellite</text>
+
+  <!-- Data flow line: Satellite → Backend → Satellite -->
+  <path d="M820 510 Q790 510 780 440 Q770 370 750 370" class="arrow-data" marker-end="url(#arrowhead-cyan)"/>
+  <path d="M750 400 Q770 400 780 470 Q790 540 820 540" class="arrow-data" marker-end="url(#arrowhead-cyan)"/>
+
+  <!-- ═══════════ FOOTER ═══════════ -->
+  <text x="550" y="700" text-anchor="middle" class="box-sub" style="font-size:11px; fill:#555">
+    Python 3.11 · FastAPI · React 18 · PostgreSQL 16 · pgvector · Redis 7 · Ollama · Docker Compose
+  </text>
+</svg>
