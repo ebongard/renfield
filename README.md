@@ -23,6 +23,38 @@
 - **8 MCP servers, 100+ tools, Agent Loop** — Weather, search, news, smart home, media, documents, email, workflows. ReAct agent chains tools autonomously for complex queries.
 - **Fully offline, self-hosted, GDPR-friendly** — Runs entirely on your hardware. No cloud dependencies. Your data never leaves your network.
 
+## Screenshots
+
+<details>
+<summary><b>Chat Interface</b> — Conversation history, streaming responses, voice input</summary>
+<p align="center"><img src="docs/screenshots/chat-dark.png" width="800" alt="Chat Interface"></p>
+</details>
+
+<details>
+<summary><b>Knowledge Base (RAG)</b> — Document upload, hybrid search, knowledge bases</summary>
+<p align="center"><img src="docs/screenshots/knowledge-dark.png" width="800" alt="Knowledge Base"></p>
+</details>
+
+<details>
+<summary><b>Integrations</b> — 8 MCP servers, 36+ tools, all online</summary>
+<p align="center"><img src="docs/screenshots/integrations-dark.png" width="800" alt="Integrations"></p>
+</details>
+
+<details>
+<summary><b>Room Management</b> — 17 rooms synced with Home Assistant</summary>
+<p align="center"><img src="docs/screenshots/rooms-dark.png" width="800" alt="Room Management"></p>
+</details>
+
+<details>
+<summary><b>Satellite Monitor</b> — Live status of voice satellites</summary>
+<p align="center"><img src="docs/screenshots/satellites-dark.png" width="800" alt="Satellite Monitor"></p>
+</details>
+
+<details>
+<summary><b>Memory</b> — Long-term recall of preferences and facts</summary>
+<p align="center"><img src="docs/screenshots/memory-dark.png" width="800" alt="Memory"></p>
+</details>
+
 ## Features
 
 ### Core
@@ -89,34 +121,7 @@ Open **http://localhost:3000** and start chatting.
 
 ## Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                       RENFIELD ECOSYSTEM                         │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│   Satellite (Pi Zero 2 W)  ──┐                                  │
-│   Satellite (Pi Zero 2 W)  ──┼── WebSocket ──▶  Frontend (PWA)  │
-│   Web Panel / Tablet       ──┘                       │          │
-│                                                      ▼          │
-│                                              Backend (FastAPI)   │
-│                                              ┌──────────────┐   │
-│                                              │ Intent Recog. │   │
-│                                              │ Agent Router  │   │
-│                                              │ RAG Service   │   │
-│                                              │ Memory        │   │
-│                                              │ Whisper / TTS │   │
-│                                              └──────┬───────┘   │
-│                                                     │           │
-│                    ┌────────────────────────────────┼──────┐    │
-│                    │         PostgreSQL + pgvector + Redis  │    │
-│                    └────────────────────────────────┼──────┘    │
-│                                                     │           │
-│   ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────┴───┐      │
-│   │ Ollama │ │  HA    │ │  n8n   │ │ Search │ │ +5 MCP │      │
-│   │ (LLM)  │ │ (MCP)  │ │ (MCP)  │ │ (MCP)  │ │servers │      │
-│   └────────┘ └────────┘ └────────┘ └────────┘ └────────┘      │
-└──────────────────────────────────────────────────────────────────┘
-```
+<p align="center"><img src="docs/assets/architecture.svg" width="900" alt="Renfield Architecture"></p>
 
 ## Configuration
 
