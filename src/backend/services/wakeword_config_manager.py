@@ -31,6 +31,11 @@ from utils.config import settings
 # Available wake word keywords with their metadata
 AVAILABLE_KEYWORDS = [
     {
+        "id": "hey_renfield",
+        "label": "Hey Renfield",
+        "description": "Custom trained wake word (ONNX)"
+    },
+    {
         "id": "alexa",
         "label": "Alexa",
         "description": "Pre-trained wake word (32-bit ONNX, recommended)"
