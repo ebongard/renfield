@@ -255,6 +255,26 @@ export default function RoomsPage() {
     }
   };
 
+  const deleteDevice = async (device) => {
+    const confirmed = await confirm({
+      title: t('rooms.deleteDevice'),
+      message: t('rooms.deleteDeviceConfirm', { name: device.device_name || device.device_id }),
+      confirmLabel: t('common.delete'),
+      cancelLabel: t('common.cancel'),
+      variant: 'danger',
+    });
+
+    if (!confirmed) return;
+
+    try {
+      await apiClient.delete(`/api/rooms/devices/${device.device_id}`);
+      loadRooms();
+    } catch (err) {
+      console.error('Failed to delete device:', err);
+      setError(t('common.error'));
+    }
+  };
+
   const openEditModal = (room) => {
     setSelectedRoom(room);
     setEditRoomName(room.name);
@@ -431,6 +451,15 @@ export default function RoomsPage() {
                             <span className={device.is_online ? 'text-green-600 dark:text-green-400' : 'text-gray-500'}>
                               {device.is_online ? t('common.online') : t('common.offline')}
                             </span>
+                            {!device.is_online && (
+                              <button
+                                onClick={() => deleteDevice(device)}
+                                className="p-0.5 rounded hover:bg-red-100 dark:hover:bg-red-600/20 text-red-400 hover:text-red-600 dark:hover:text-red-400"
+                                aria-label={t('rooms.deleteDevice')}
+                              >
+                                <Trash2 className="w-3 h-3" aria-hidden="true" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );

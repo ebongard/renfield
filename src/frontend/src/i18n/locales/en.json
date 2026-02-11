@@ -238,7 +238,9 @@
     "exportResult": "Export: {{exported}} created, {{linked}} linked",
     "syncResult": "Sync: {{imported}} imported, {{exported}} exported",
     "haAreasCount": "Home Assistant Areas ({{count}})",
-    "haNotConnected": "No HA areas found. Is Home Assistant connected?"
+    "haNotConnected": "No HA areas found. Is Home Assistant connected?",
+    "deleteDevice": "Delete device?",
+    "deleteDeviceConfirm": "Do you really want to remove \"{{name}}\"?"
   },
   "speakers": {
     "title": "Speaker Recognition",
