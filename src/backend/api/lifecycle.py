@@ -379,6 +379,38 @@ async def _notify_devices_shutdown():
         logger.warning(f"⚠️ Error notifying devices: {e}")
 
 
+async def _load_plugin_module():
+    """Load the plugin module specified in settings.plugin_module.
+
+    Format: "package.module:callable" — the callable receives no args
+    and is expected to call register_hook() for the events it cares about.
+    """
+    spec = settings.plugin_module
+    if not spec:
+        return
+
+    try:
+        import importlib
+
+        if ":" in spec:
+            module_path, attr_name = spec.rsplit(":", 1)
+        else:
+            module_path, attr_name = spec, None
+
+        mod = importlib.import_module(module_path)
+
+        if attr_name:
+            fn = getattr(mod, attr_name)
+            result = fn()
+            # Support async register functions
+            if asyncio.iscoroutine(result):
+                await result
+
+        logger.info(f"Plugin module loaded: {spec}")
+    except Exception:
+        logger.opt(exception=True).error(f"Failed to load plugin module: {spec}")
+
+
 @asynccontextmanager
 async def lifespan(app: "FastAPI"):
     """
@@ -430,10 +462,19 @@ async def lifespan(app: "FastAPI"):
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)
 
+    # Plugin / Hook System
+    await _load_plugin_module()
+    from utils.hooks import run_hooks
+    await run_hooks("startup", app=app)
+    await run_hooks("register_routes", app=app)
+
     yield
 
     # Shutdown sequence
     logger.info("👋 Renfield wird heruntergefahren...")
+
+    from utils.hooks import run_hooks
+    await run_hooks("shutdown", app=app)
 
     await _cancel_startup_tasks()
     await _notify_devices_shutdown()

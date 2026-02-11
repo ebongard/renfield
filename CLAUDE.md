@@ -195,6 +195,35 @@ AGENT_MODEL=                 # Optional: separate model for agent
 - `stream` — Final answer (same as single-intent path)
 - `done` with `agent_steps` count
 
+### Hook System (Extension API)
+
+Minimal async hook system for the Open-Core plugin architecture. External packages (e.g. `renfield-twin`) register async callbacks at well-defined lifecycle points — renfield never crashes due to a plugin error (each hook is wrapped in `try/except`).
+
+**Key file:** `utils/hooks.py`
+
+**Hook Events:**
+
+| Event | kwargs | Purpose |
+|-------|--------|---------|
+| `startup` | `app` | Initialize extension services |
+| `shutdown` | `app` | Clean up extension resources |
+| `register_routes` | `app` | Mount additional FastAPI routes |
+| `register_tools` | `registry` (AgentToolRegistry) | Add custom agent tools |
+| `post_message` | `user_msg`, `assistant_msg`, `user_id`, `session_id` | Post-processing (e.g. graph extraction) |
+| `retrieve_context` | `query`, `user_id`, `lang` | Inject additional LLM context (return `str`) |
+
+**Insertion Points:**
+
+| File | Hook Event | Execution |
+|------|-----------|-----------|
+| `api/lifecycle.py` | `startup`, `register_routes` | Awaited during startup (after all core services) |
+| `api/lifecycle.py` | `shutdown` | Awaited before MCP shutdown |
+| `api/websocket/chat_handler.py` | `post_message` | Fire-and-forget background task |
+| `api/websocket/chat_handler.py` | `retrieve_context` | Awaited, results appended to memory context |
+| `services/agent_tools.py` | `register_tools` | Background task via `create_task` |
+
+**Plugin Loading:** Set `PLUGIN_MODULE=package.module:callable` — the callable is invoked at startup and should call `register_hook()`. Format: `module:function` (function receives no args). See `api/lifecycle.py:_load_plugin_module()`.
+
 ### LLM Client Factory
 
 All services obtain their `ollama.AsyncClient` through a central factory in `utils/llm_client.py` instead of instantiating clients directly. The factory provides URL-based caching (same URL → same client instance) and a `LLMClient` Protocol that `ollama.AsyncClient` satisfies via structural typing.
@@ -319,6 +348,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`
 - `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
+- `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 
 ## Common Development Patterns
 
@@ -356,6 +386,43 @@ All external integrations run via MCP servers. To add a new one:
    | `examples` | No | Bilingual example queries (`de`/`en`) for LLM prompt |
 
 3. Tools are auto-discovered as `mcp.your_service.<tool_name>` intents. `ActionExecutor` routes `mcp.*` intents to `MCPManager.execute_tool()` automatically — no code changes needed.
+
+### Extending via Hooks
+
+For extensions that need deeper integration than MCP (e.g. injecting LLM context, post-processing messages, adding routes):
+
+1. Create a Python package with a registration function:
+   ```python
+   # renfield_twin/hooks.py
+   from utils.hooks import register_hook
+
+   async def _on_post_message(user_msg, assistant_msg, user_id, session_id, **kw):
+       # Extract knowledge graph triples from the exchange
+       ...
+
+   async def _on_retrieve_context(query, user_id, lang, **kw):
+       # Return additional context from the knowledge graph
+       return "## Graph Context\n- ..."
+
+   def register():
+       register_hook("post_message", _on_post_message)
+       register_hook("retrieve_context", _on_retrieve_context)
+   ```
+
+2. Set the environment variable:
+   ```bash
+   PLUGIN_MODULE=renfield_twin.hooks:register
+   ```
+
+3. Hooks are called automatically at the defined insertion points. Errors in hooks are logged but never crash renfield.
+
+**Key rules:**
+- Hook functions must be `async`
+- `retrieve_context` hooks should return a `str` (or `None` to skip)
+- `post_message` runs as fire-and-forget — don't block on it
+- Use `register_tools` to add custom tools to the Agent Loop
+- Use `register_routes` to mount additional FastAPI routers
+- All hook events are whitelisted in `HOOK_EVENTS` — typos raise `ValueError`
 
 ### Adding a New Frontend Page
 
