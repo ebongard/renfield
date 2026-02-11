@@ -61,6 +61,12 @@ export const WAKEWORD_CONFIG: WakeWordConfigType = {
   // Add custom trained models here (e.g., hey_renfield.onnx)
   availableKeywords: [
     {
+      id: 'hey_renfield',
+      label: 'Hey Renfield',
+      model: 'hey_renfield.onnx',
+      description: 'Custom trained wake word'
+    },
+    {
       id: 'hey_jarvis',
       label: 'Hey Jarvis',
       model: 'hey_jarvis_v0.1.onnx',
@@ -78,19 +84,12 @@ export const WAKEWORD_CONFIG: WakeWordConfigType = {
       model: 'hey_mycroft_v0.1.onnx',
       description: 'Pre-trained wake word'
     },
-    // Uncomment after training custom model:
-    // {
-    //   id: 'hey_renfield',
-    //   label: 'Hey Renfield',
-    //   model: 'hey_renfield.onnx',
-    //   description: 'Custom trained wake word'
-    // },
   ],
 
   // Default settings
   defaults: {
     enabled: false,           // Disabled by default (opt-in for privacy)
-    keyword: 'hey_jarvis',    // Default wake word
+    keyword: 'hey_renfield',  // Default wake word
     threshold: 0.5,           // Detection sensitivity (0.0 - 1.0)
     cooldownMs: 2000,         // Minimum ms between detections
     audioFeedback: true,      // Play sound on detection

@@ -141,7 +141,6 @@ class ModelDownloader:
             return False, "Server URL not configured"
 
         download_url = f"{self.server_base_url}/api/settings/wakeword/models/{model_id}"
-        model_path = self.models_path / f"{model_id}.tflite"
 
         print(f"📥 Downloading model: {model_id} from {download_url}")
 
@@ -163,10 +162,17 @@ class ModelDownloader:
             async with aiohttp.ClientSession() as session:
                 async with session.get(download_url, headers=headers, ssl=ssl_ctx) as response:
                     if response.status == 200:
+                        # Determine file extension from Content-Disposition header
+                        cd = response.headers.get("Content-Disposition", "")
+                        ext = ".onnx"  # Default to ONNX
+                        if "filename=" in cd:
+                            fname = cd.split("filename=")[-1].strip('"')
+                            ext = Path(fname).suffix or ".onnx"
                         # Save model file
+                        model_path = self.models_path / f"{model_id}{ext}"
                         content = await response.read()
                         model_path.write_bytes(content)
-                        print(f"✅ Model downloaded: {model_id} ({len(content)} bytes)")
+                        print(f"✅ Model downloaded: {model_id} ({len(content)} bytes) -> {model_path.name}")
                         return True, None
 
                     elif response.status == 404:

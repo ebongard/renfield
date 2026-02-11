@@ -95,7 +95,7 @@ class Settings(BaseSettings):
 
     # Wake Word Detection
     wake_word_enabled: bool = False  # Disabled by default (opt-in)
-    wake_word_default: str = "alexa"  # Default wake word for satellites (alexa has 32-bit ONNX model)
+    wake_word_default: str = "hey_renfield"  # Default wake word
     wake_word_threshold: float = 0.5
     wake_word_cooldown_ms: int = 2000
 
