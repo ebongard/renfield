@@ -243,32 +243,36 @@ TFLITE_MODELS_PATH = Path("/app/wakeword-models")
 
 def _find_model_file(model_id: str) -> Path | None:
     """
-    Find a TFLite model file for the given model ID.
+    Find a wake word model file (TFLite or ONNX) for the given model ID.
 
-    Searches in the openwakeword-wasm-browser models directory.
+    Searches in the wakeword-models directory.
     """
     if not TFLITE_MODELS_PATH.exists():
-        logger.warning(f"TFLite models path does not exist: {TFLITE_MODELS_PATH}")
+        logger.warning(f"Models path does not exist: {TFLITE_MODELS_PATH}")
         return None
 
-    # Try exact match first
-    exact_path = TFLITE_MODELS_PATH / f"{model_id}.tflite"
-    if exact_path.exists():
-        return exact_path
+    # Try exact match first (TFLite, then ONNX)
+    for ext in [".tflite", ".onnx"]:
+        exact_path = TFLITE_MODELS_PATH / f"{model_id}{ext}"
+        if exact_path.exists():
+            return exact_path
 
     # Try with version suffix
-    versioned_path = TFLITE_MODELS_PATH / f"{model_id}_v0.1.tflite"
-    if versioned_path.exists():
-        return versioned_path
+    for ext in [".tflite", ".onnx"]:
+        versioned_path = TFLITE_MODELS_PATH / f"{model_id}_v0.1{ext}"
+        if versioned_path.exists():
+            return versioned_path
 
     # Search for any matching file
-    for tflite_file in TFLITE_MODELS_PATH.glob("*.tflite"):
+    for model_file in TFLITE_MODELS_PATH.glob("*"):
+        if model_file.suffix not in (".tflite", ".onnx"):
+            continue
         # Skip preprocessing models
-        if tflite_file.stem in ["melspectrogram", "embedding_model"]:
+        if model_file.stem in ["melspectrogram", "embedding_model"]:
             continue
         # Check if model_id is in the filename
-        if model_id in tflite_file.stem.lower():
-            return tflite_file
+        if model_id in model_file.stem.lower():
+            return model_file
 
     return None
 
@@ -292,7 +296,7 @@ async def list_available_models():
             "label": kw["label"],
             "description": kw["description"],
             "available": model_file is not None,
-            "model_type": "tflite",
+            "model_type": model_file.suffix.lstrip(".") if model_file else "unknown",
             "file_size": model_file.stat().st_size if model_file else None,
             "download_url": f"/api/settings/wakeword/models/{model_id}" if model_file else None,
         }
@@ -332,11 +336,13 @@ async def download_model(model_id: str):
             detail=f"Model file not found for: {model_id}"
         )
 
+    suffix = model_file.suffix  # ".tflite" or ".onnx"
+    filename = f"{model_id}{suffix}"
     logger.info(f"📦 Serving wake word model: {model_id} ({model_file.name})")
 
     return FileResponse(
         path=model_file,
         media_type="application/octet-stream",
-        filename=f"{model_id}.tflite",
-        headers={"Content-Disposition": f"attachment; filename={model_id}.tflite"}
+        filename=filename,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )

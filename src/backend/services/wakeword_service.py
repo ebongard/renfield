@@ -33,6 +33,7 @@ class WakeWordService:
 
     # Available wake word models
     AVAILABLE_KEYWORDS = [
+        "hey_renfield",
         "hey_jarvis",
         "alexa",
         "hey_mycroft",

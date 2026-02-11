@@ -22,7 +22,7 @@ server_auth_enabled: false
 server_verify_tls: false
 
 # Wake word
-wakeword_model: "alexa"
+wakeword_model: "hey_renfield"
 wakeword_threshold: 0.5
 
 # VAD
