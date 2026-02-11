@@ -636,6 +636,30 @@ intents:
 
 > **Hinweis:** MCP-Server sind der bevorzugte Integrationsweg. YAML-Plugins nutzen `*_PLUGIN_ENABLED` Variablen, um Konflikte mit MCP-Server `*_ENABLED` zu vermeiden.
 
+## Hook System (Extension API)
+
+Async Hook-System für die Open-Core-Architektur. Externe Pakete registrieren Callbacks an 6 Lifecycle-Stellen — renfield crasht nie wegen eines Plugin-Fehlers.
+
+**Aktivierung:**
+```bash
+PLUGIN_MODULE=renfield_twin.hooks:register
+```
+
+**Verfügbare Hook Events:**
+
+| Event | Zweck | Ausführung |
+|-------|-------|------------|
+| `startup` | Extension-Services initialisieren | Awaited beim Start |
+| `shutdown` | Ressourcen aufräumen | Awaited beim Shutdown |
+| `register_routes` | FastAPI-Routen hinzufügen | Awaited beim Start |
+| `register_tools` | Agent-Tools registrieren | Background Task |
+| `post_message` | Nachrichten nachverarbeiten (z.B. Graph-Extraktion) | Fire-and-forget |
+| `retrieve_context` | Zusätzlichen LLM-Kontext injizieren | Awaited, Ergebnis angehängt |
+
+**Key files:** `utils/hooks.py`, `api/lifecycle.py` (Plugin-Loading)
+
+> **Hinweis:** Hooks sind für tiefe Integrationen gedacht (Kontext-Injektion, Post-Processing, Custom Routes). Für einfache Tool-Integrationen bleiben MCP-Server der bevorzugte Weg.
+
 ---
 
 Ausführliche Entwickler-Dokumentation (Architektur, Patterns, Commands) in [CLAUDE.md](../CLAUDE.md).

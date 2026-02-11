@@ -800,6 +800,29 @@ PAPERLESS_API_URL=http://paperless.local:8000
 
 ---
 
+## Hook / Extension System
+
+Das Hook-System ermöglicht externen Paketen (z.B. `renfield-twin`) sich an definierten Lifecycle-Stellen einzuhängen, ohne dass renfield eine Abhängigkeit zum Plugin hat.
+
+```bash
+# Entry-Point für Hook-basierte Extensions
+# Format: "package.module:callable" — wird beim Startup aufgerufen
+# Leer = deaktiviert (Standard)
+PLUGIN_MODULE=
+
+# Beispiel: renfield-twin Extension
+PLUGIN_MODULE=renfield_twin.hooks:register
+```
+
+**Defaults:**
+- `PLUGIN_MODULE`: `""` (deaktiviert)
+
+**Hook Events:** `startup`, `shutdown`, `register_routes`, `register_tools`, `post_message`, `retrieve_context`
+
+**Hinweis:** Das Hook-System ist der empfohlene Weg für tiefe Integrationen (Kontext-Injektion, Post-Processing, Custom Routes). Für einfache Tool-Integrationen sind MCP-Server weiterhin der bevorzugte Weg.
+
+---
+
 ## Plugin System (Legacy YAML)
 
 > **Hinweis:** YAML-Plugins werden durch MCP-Server ersetzt. Plugins verwenden `*_PLUGIN_ENABLED` zur Aktivierung, um Konflikte mit MCP-Server `*_ENABLED` Variablen zu vermeiden.

@@ -319,32 +319,45 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
 
 async def _retrieve_memory_context(content: str, user_id: int | None, lang: str) -> str:
     """Retrieve relevant memories and format as prompt section."""
-    if not settings.memory_enabled:
-        return ""
+    from utils.hooks import run_hooks
 
-    from services.conversation_memory_service import ConversationMemoryService
-    from services.prompt_manager import prompt_manager
+    sections: list[str] = []
 
+    # Built-in memory retrieval
+    if settings.memory_enabled:
+        from services.conversation_memory_service import ConversationMemoryService
+        from services.prompt_manager import prompt_manager
+
+        try:
+            async with AsyncSessionLocal() as db:
+                service = ConversationMemoryService(db)
+                memories = await service.retrieve(content, user_id=user_id)
+                if memories:
+                    lines = []
+                    for m in memories:
+                        cat_label = m["category"].upper()
+                        lines.append(f"- [{cat_label}] {m['content']}")
+                    memories_str = "\n".join(lines)
+
+                    sections.append(prompt_manager.get(
+                        "chat", "memory_context_section", lang=lang,
+                        memories=memories_str
+                    ))
+        except Exception as e:
+            logger.warning(f"Memory retrieval failed: {e}")
+
+    # Hook: retrieve_context — plugins can inject additional context (e.g. graph)
     try:
-        async with AsyncSessionLocal() as db:
-            service = ConversationMemoryService(db)
-            memories = await service.retrieve(content, user_id=user_id)
-            if not memories:
-                return ""
-
-            lines = []
-            for m in memories:
-                cat_label = m["category"].upper()
-                lines.append(f"- [{cat_label}] {m['content']}")
-            memories_str = "\n".join(lines)
-
-            return prompt_manager.get(
-                "chat", "memory_context_section", lang=lang,
-                memories=memories_str
-            )
+        hook_results = await run_hooks(
+            "retrieve_context", query=content, user_id=user_id, lang=lang
+        )
+        for r in hook_results:
+            if isinstance(r, str) and r.strip():
+                sections.append(r)
     except Exception as e:
-        logger.warning(f"Memory retrieval failed: {e}")
-        return ""
+        logger.warning(f"retrieve_context hook failed: {e}")
+
+    return "\n\n".join(sections)
 
 
 async def _stream_rag_response(
@@ -821,6 +834,18 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 )
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
+
+            # Hook: post_message (fire-and-forget for plugins like renfield-twin)
+            from utils.hooks import run_hooks
+            _pm_task = asyncio.create_task(run_hooks(
+                "post_message",
+                user_msg=content,
+                assistant_msg=full_response,
+                user_id=user_id,
+                session_id=msg_session_id,
+            ))
+            _background_tasks.add(_pm_task)
+            _pm_task.add_done_callback(_background_tasks.discard)
 
             logger.info(f"✅ WebSocket Response gesendet (tts_handled={tts_handled_by_server})")
 

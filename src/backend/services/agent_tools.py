@@ -68,6 +68,9 @@ class AgentToolRegistry:
         # Register internal agent tools (room resolution, media playback)
         self._register_internal_tools(internal_filter=internal_filter)
 
+        # Hook: register_tools — plugins can add their own tool definitions
+        self._schedule_register_tools_hook()
+
     def _register_plugin_tools(self, plugin_registry: "PluginRegistry") -> None:
         """Register all plugin intents as agent tools."""
         for intent_def in plugin_registry.get_all_intents():
@@ -107,6 +110,22 @@ class AgentToolRegistry:
             )
             self._tools[tool.name] = tool
             logger.debug(f"Internal agent tool registered: {tool.name}")
+
+    def _schedule_register_tools_hook(self) -> None:
+        """Fire the register_tools hook so plugins can add tool definitions."""
+        import asyncio
+
+        from utils.hooks import run_hooks
+
+        async def _run():
+            await run_hooks("register_tools", registry=self)
+
+        try:
+            loop = asyncio.get_running_loop()
+            # Store reference to prevent GC (RUF006)
+            self._hook_task = loop.create_task(_run())
+        except RuntimeError:
+            pass  # No event loop (e.g. sync tests) — skip
 
     def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: list[str] | None = None) -> None:
         """Register MCP tools as agent tools.
