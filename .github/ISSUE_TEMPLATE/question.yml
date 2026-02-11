@@ -1,0 +1,42 @@
+name: Question
+description: Ask a question about setup, usage, or architecture
+title: "[Question]: "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have a question? We're happy to help! You can also check [GitHub Discussions](https://github.com/ebongard/renfield/discussions) for community Q&A.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      description: What area is your question about?
+      options:
+        - Installation / Setup
+        - Configuration
+        - Satellite Hardware
+        - MCP Integrations
+        - RAG / Knowledge Base
+        - Agent System
+        - Voice (STT/TTS)
+        - Home Assistant
+        - Development / Contributing
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any relevant details (setup, what you've tried, etc.)
