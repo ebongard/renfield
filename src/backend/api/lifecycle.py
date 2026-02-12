@@ -2,7 +2,7 @@
 Application lifecycle management for Renfield AI Assistant.
 
 This module handles:
-- Startup initialization (database, services, plugins)
+- Startup initialization (database, services)
 - Background task management
 - Graceful shutdown with device notification
 """
@@ -71,28 +71,6 @@ async def _init_task_queue(app: "FastAPI") -> TaskQueue:
     logger.info("✅ Task Queue bereit")
     return task_queue
 
-
-async def _init_plugins(app: "FastAPI"):
-    """Initialize the plugin system."""
-    if settings.plugins_enabled:
-        try:
-            from integrations.core.plugin_loader import PluginLoader
-            from integrations.core.plugin_registry import PluginRegistry
-
-            loader = PluginLoader(settings.plugins_dir)
-            plugins = loader.load_all_plugins()
-
-            plugin_registry = PluginRegistry()
-            plugin_registry.register_plugins(plugins)
-
-            app.state.plugin_registry = plugin_registry
-            logger.info(f"✅ Plugin System bereit: {len(plugins)} plugins geladen")
-        except Exception as e:
-            logger.error(f"❌ Plugin System konnte nicht geladen werden: {e}")
-            app.state.plugin_registry = None
-    else:
-        app.state.plugin_registry = None
-        logger.info("⏭️  Plugin System deaktiviert")
 
 
 def _schedule_whisper_preload():
@@ -421,7 +399,6 @@ async def lifespan(app: "FastAPI"):
     - Authentication system setup
     - Ollama LLM service
     - Task queue
-    - Plugin system
     - Whisper STT (background)
     - Home Assistant keywords (background)
     - Zeroconf for satellite discovery
@@ -444,7 +421,6 @@ async def lifespan(app: "FastAPI"):
     await asyncio.gather(
         _init_ollama(app),
         _init_task_queue(app),
-        _init_plugins(app),
         _init_mcp(app),
     )
 

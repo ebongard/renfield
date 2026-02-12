@@ -1,7 +1,7 @@
 """
 Tests for AgentToolRegistry — Tool descriptions for the Agent Loop.
 
-Tools are registered dynamically from MCP servers and plugins.
+Tools are registered dynamically from MCP servers.
 """
 
 from unittest.mock import MagicMock
@@ -172,77 +172,6 @@ class TestAgentToolRegistryMCPTools:
         assert registry.is_valid_tool("HassTurnOn") is True
         assert registry.is_valid_tool("mcp.homeassistant.HassTurnOn") is True
         assert registry.is_valid_tool("NonExistent") is False
-
-
-class TestAgentToolRegistryPluginTools:
-    """Test plugin tool registration."""
-
-    @pytest.mark.unit
-    def test_plugin_tools_registered(self):
-        """Plugin intents should be registered as agent tools."""
-        mock_registry = MagicMock()
-
-        mock_param = MagicMock()
-        mock_param.name = "location"
-        mock_param.description = "City name"
-        mock_param.required = True
-
-        mock_intent = MagicMock()
-        mock_intent.name = "weather.get_current"
-        mock_intent.description = "Get current weather"
-        mock_intent.parameters = [mock_param]
-
-        mock_registry.get_all_intents.return_value = [mock_intent]
-
-        registry = AgentToolRegistry(plugin_registry=mock_registry)
-        assert registry.is_valid_tool("weather.get_current") is True
-
-        tool = registry.get_tool("weather.get_current")
-        assert tool.description == "Get current weather"
-        assert "location" in tool.parameters
-        assert "(required)" in tool.parameters["location"]
-
-    @pytest.mark.unit
-    def test_plugin_and_mcp_tools_coexist(self):
-        """Both MCP tools and plugin tools should be available."""
-        mock_plugin_registry = MagicMock()
-        mock_intent = MagicMock()
-        mock_intent.name = "weather.get_current"
-        mock_intent.description = "Get weather"
-        mock_intent.parameters = []
-        mock_plugin_registry.get_all_intents.return_value = [mock_intent]
-
-        mock_mcp = MagicMock()
-        mock_tool = MagicMock()
-        mock_tool.namespaced_name = "mcp.homeassistant.turn_on"
-        mock_tool.description = "Turn on"
-        mock_tool.input_schema = {"properties": {}, "required": []}
-        mock_mcp.get_all_tools.return_value = [mock_tool]
-
-        registry = AgentToolRegistry(plugin_registry=mock_plugin_registry, mcp_manager=mock_mcp)
-        assert registry.is_valid_tool("mcp.homeassistant.turn_on") is True
-        assert registry.is_valid_tool("weather.get_current") is True
-
-    @pytest.mark.unit
-    def test_optional_parameter_no_required_marker(self):
-        """Optional parameters should not have (required) marker."""
-        mock_registry = MagicMock()
-
-        mock_param = MagicMock()
-        mock_param.name = "units"
-        mock_param.description = "Temperature units"
-        mock_param.required = False
-
-        mock_intent = MagicMock()
-        mock_intent.name = "weather.get_current"
-        mock_intent.description = "Get weather"
-        mock_intent.parameters = [mock_param]
-
-        mock_registry.get_all_intents.return_value = [mock_intent]
-
-        registry = AgentToolRegistry(plugin_registry=mock_registry)
-        tool = registry.get_tool("weather.get_current")
-        assert "(required)" not in tool.parameters["units"]
 
 
 class TestAgentToolRegistryPrompt:

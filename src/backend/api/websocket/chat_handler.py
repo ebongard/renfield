@@ -478,8 +478,6 @@ async def websocket_endpoint(
     # Access app state through websocket.app
     app = websocket.app
     ollama = app.state.ollama
-    plugin_registry = app.state.plugin_registry
-
     # Try to auto-detect room context from IP address
     room_context = None
     try:
@@ -610,13 +608,12 @@ async def websocket_endpoint(
                     # Specialized agent loop (smart_home, documents, media, research, workflow, general)
                     agent_used = True
                     tool_registry = AgentToolRegistry(
-                        plugin_registry=plugin_registry,
                         mcp_manager=mcp_manager,
                         server_filter=role.mcp_servers,
                         internal_filter=role.internal_tools,
                     )
                     agent = AgentService(tool_registry, role=role)
-                    executor = ActionExecutor(plugin_registry, mcp_manager=mcp_manager)
+                    executor = ActionExecutor(mcp_manager=mcp_manager)
 
                     agent_tool_results = []
                     async for step in agent.run(
@@ -653,7 +650,6 @@ async def websocket_endpoint(
                 logger.info("🔍 Extrahiere Ranked Intents...")
                 ranked_intents = await ollama.extract_ranked_intents(
                     content,
-                    plugin_registry,
                     room_context=room_context,
                     conversation_history=session_state.conversation_history if session_state.conversation_history else None
                 )
@@ -675,7 +671,7 @@ async def websocket_endpoint(
                         intent_used = intent_candidate
                         break
 
-                    executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
+                    executor = ActionExecutor(mcp_manager=mcp_mgr)
                     candidate_result = await executor.execute(intent_candidate)
 
                     if candidate_result.get("success") and not candidate_result.get("empty_result"):

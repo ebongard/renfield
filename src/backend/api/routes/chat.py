@@ -102,9 +102,9 @@ async def send_message(
                 from services.agent_tools import AgentToolRegistry
 
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
-                tool_registry = AgentToolRegistry(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
+                tool_registry = AgentToolRegistry(mcp_manager=mcp_manager)
                 agent = AgentService(tool_registry)
-                executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_manager)
+                executor = ActionExecutor(mcp_manager=mcp_manager)
 
                 async for step in agent.run(
                     message=chat_request.message,
@@ -151,8 +151,8 @@ async def send_message(
                 intent_used = intent_candidate
                 break
 
-            executor = ActionExecutor(plugin_registry=app.state.plugin_registry, mcp_manager=mcp_mgr)
-            candidate_result = await executor.execute(intent_candidate, user=current_user)
+            executor = ActionExecutor(mcp_manager=mcp_mgr)
+            candidate_result = await executor.execute(intent_candidate)
 
             if candidate_result.get("success") and not candidate_result.get("empty_result"):
                 intent = intent_candidate

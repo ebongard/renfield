@@ -4,7 +4,6 @@ Agent Tool Registry — Wraps existing infrastructure as tool descriptions for t
 Generates compact tool descriptions from:
 - MCP servers (Home Assistant, n8n, weather, search, etc.)
 - Internal tools (room resolution, media playback)
-- Legacy plugins (YAML-based)
 
 These descriptions are included in the Agent Loop prompt so the LLM knows
 which tools it can call.
@@ -18,7 +17,6 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 if TYPE_CHECKING:
-    from integrations.core.plugin_registry import PluginRegistry
     from services.mcp_client import MCPManager
 
 
@@ -35,12 +33,11 @@ class AgentToolRegistry:
 
     Tools are registered dynamically from:
     - MCP servers (Home Assistant, n8n, weather, search, etc.)
-    - Plugins (legacy YAML-based plugins)
+    - Internal tools (room resolution, media playback)
     """
 
     def __init__(
         self,
-        plugin_registry: Optional["PluginRegistry"] = None,
         mcp_manager: Optional["MCPManager"] = None,
         server_filter: list[str] | None = None,
         internal_filter: list[str] | None = None,
@@ -48,7 +45,6 @@ class AgentToolRegistry:
         """Initialize the tool registry.
 
         Args:
-            plugin_registry: Legacy plugin registry
             mcp_manager: MCP server manager
             server_filter: If set, only include MCP tools from these server names.
                           None means include all servers.
@@ -56,10 +52,6 @@ class AgentToolRegistry:
                             None means include all internal tools.
         """
         self._tools: dict[str, ToolDefinition] = {}
-
-        # Register plugin tools
-        if plugin_registry:
-            self._register_plugin_tools(plugin_registry)
 
         # Register MCP tools (includes HA, n8n, weather, search, etc.)
         if mcp_manager:
@@ -70,22 +62,6 @@ class AgentToolRegistry:
 
         # Hook: register_tools — plugins can add their own tool definitions
         self._schedule_register_tools_hook()
-
-    def _register_plugin_tools(self, plugin_registry: "PluginRegistry") -> None:
-        """Register all plugin intents as agent tools."""
-        for intent_def in plugin_registry.get_all_intents():
-            params = {}
-            for p in intent_def.parameters:
-                req_marker = " (required)" if p.required else ""
-                params[p.name] = f"{p.description}{req_marker}"
-
-            tool = ToolDefinition(
-                name=intent_def.name,
-                description=intent_def.description,
-                parameters=params,
-            )
-            self._tools[tool.name] = tool
-            logger.debug(f"🔧 Agent tool registered: {tool.name}")
 
     def _register_internal_tools(self, internal_filter: list[str] | None = None) -> None:
         """Register internal agent tools (room resolution, media playback).

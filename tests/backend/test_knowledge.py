@@ -199,7 +199,7 @@ class TestRoleModel:
         """Prüft, dass alle erwarteten Spalten vorhanden sind"""
         expected_columns = {
             'id', 'name', 'description', 'permissions',
-            'is_system', 'created_at', 'updated_at', 'allowed_plugins'
+            'is_system', 'created_at', 'updated_at'
         }
 
         async with async_engine.connect() as conn:

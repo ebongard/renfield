@@ -43,26 +43,10 @@ class Settings(BaseSettings):
     # Frigate
     frigate_url: str | None = None
 
-    # Plugin System
-    plugins_enabled: bool = True
-    plugins_dir: str = "integrations/plugins"
-
-    # Weather Plugin
+    # MCP integration toggles (used by mcp_servers.yaml)
     weather_enabled: bool = False
-    openweather_api_url: str | None = "https://api.openweathermap.org/data/2.5"
-    openweather_api_key: SecretStr | None = None
-
-    # News Plugin
     news_enabled: bool = False
-    newsapi_url: str | None = "https://newsapi.org/v2"
-    newsapi_key: SecretStr | None = None
-
-    # Search Plugin
     search_enabled: bool = False
-    duckduckgo_api_url: str | None = "https://api.duckduckgo.com"
-
-    # Music Plugin (reserved for future use)
-    # spotify_* fields removed — unused. Re-add when music integration is implemented.
 
     # Sprache
     default_language: str = "de"

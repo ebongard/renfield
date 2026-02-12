@@ -11,7 +11,7 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   Shield, Plus, Pencil, Trash2, Loader, AlertCircle, CheckCircle,
-  Lock, RefreshCw, ChevronDown, ChevronRight, Info, Puzzle
+  Lock, RefreshCw, ChevronDown, ChevronRight, Info
 } from 'lucide-react';
 
 // Permission categories for better organization
@@ -40,10 +40,6 @@ const PERMISSION_CATEGORIES = {
     description: 'Voice profile management',
     permissions: ['speakers.own', 'speakers.all']
   },
-  'Plugins': {
-    description: 'Plugin usage and management',
-    permissions: ['plugins.none', 'plugins.use', 'plugins.manage']
-  },
   'Administration': {
     description: 'System administration',
     permissions: ['admin']
@@ -69,9 +65,6 @@ const PERMISSION_DESCRIPTIONS = {
   'rooms.manage': 'Manage rooms and devices',
   'speakers.own': 'Manage own speaker profile',
   'speakers.all': 'Manage all speaker profiles',
-  'plugins.none': 'No access to plugins',
-  'plugins.use': 'Use enabled plugins',
-  'plugins.manage': 'Manage plugins (enable/disable)',
   'admin': 'Full system administration'
 };
 
@@ -82,7 +75,6 @@ export default function RolesPage() {
 
   const [roles, setRoles] = useState([]);
   const [allPermissions, setAllPermissions] = useState([]);
-  const [availablePlugins, setAvailablePlugins] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
@@ -95,8 +87,7 @@ export default function RolesPage() {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
-    permissions: [],
-    allowed_plugins: []  // Empty = all plugins allowed
+    permissions: []
   });
   const [formLoading, setFormLoading] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState({});
@@ -108,15 +99,13 @@ export default function RolesPage() {
       const token = getAccessToken();
       const headers = { Authorization: `Bearer ${token}` };
 
-      const [rolesRes, permsRes, pluginsRes] = await Promise.all([
+      const [rolesRes, permsRes] = await Promise.all([
         apiClient.get('/api/roles', { headers }),
-        apiClient.get('/api/auth/permissions', { headers }),
-        apiClient.get('/api/plugins', { headers }).catch(() => ({ data: { plugins: [] } }))
+        apiClient.get('/api/auth/permissions', { headers })
       ]);
 
       setRoles(Array.isArray(rolesRes.data) ? rolesRes.data : []);
       setAllPermissions(Array.isArray(permsRes.data) ? permsRes.data : []);
-      setAvailablePlugins(pluginsRes.data?.plugins || []);
     } catch (err) {
       setError(err.response?.data?.detail || t('roles.failedToLoad'));
     } finally {
@@ -153,8 +142,7 @@ export default function RolesPage() {
     setFormData({
       name: '',
       description: '',
-      permissions: [],
-      allowed_plugins: []  // Empty = all plugins allowed
+      permissions: []
     });
     // Expand all categories for new role
     const expanded = {};
@@ -171,8 +159,7 @@ export default function RolesPage() {
     setFormData({
       name: role.name,
       description: role.description || '',
-      permissions: [...role.permissions],
-      allowed_plugins: [...(role.allowed_plugins || [])]
+      permissions: [...role.permissions]
     });
     // Expand categories that have selected permissions
     const expanded = {};
@@ -216,20 +203,6 @@ export default function RolesPage() {
     }));
   };
 
-  // Toggle plugin in allowed list
-  const toggleAllowedPlugin = (pluginName) => {
-    setFormData(prev => {
-      const allowed = prev.allowed_plugins.includes(pluginName)
-        ? prev.allowed_plugins.filter(p => p !== pluginName)
-        : [...prev.allowed_plugins, pluginName];
-      return { ...prev, allowed_plugins: allowed };
-    });
-  };
-
-  // Check if plugin restrictions are active (plugins.use or plugins.manage selected)
-  const hasPluginPermission = formData.permissions.includes('plugins.use') ||
-                              formData.permissions.includes('plugins.manage');
-
   // Submit form
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -242,8 +215,7 @@ export default function RolesPage() {
       const data = {
         name: formData.name,
         description: formData.description || null,
-        permissions: formData.permissions,
-        allowed_plugins: hasPluginPermission ? formData.allowed_plugins : []
+        permissions: formData.permissions
       };
 
       if (editingRole) {
@@ -565,94 +537,6 @@ export default function RolesPage() {
               })}
             </div>
           </div>
-
-          {/* Allowed Plugins (only shown when plugins.use or plugins.manage is selected) */}
-          {hasPluginPermission && availablePlugins.length > 0 && (
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-2">
-                  <Puzzle className="w-5 h-5 text-primary-400" />
-                  <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('roles.allowedPlugins')}</h3>
-                </div>
-                <span className="text-sm text-gray-500 dark:text-gray-400">
-                  {formData.allowed_plugins.length === 0
-                    ? t('roles.allPlugins')
-                    : t('roles.selected', { count: formData.allowed_plugins.length })}
-                </span>
-              </div>
-
-              <div className="p-3 bg-gray-100 dark:bg-gray-850 border border-gray-200 dark:border-gray-700 rounded-lg">
-                <div className="flex items-start space-x-2 mb-3 text-sm">
-                  <Info className="w-4 h-4 text-blue-500 dark:text-blue-400 shrink-0 mt-0.5" />
-                  <p className="text-gray-500 dark:text-gray-400">
-                    {t('roles.pluginSelectionHint')}
-                  </p>
-                </div>
-
-                {/* Quick actions */}
-                <div className="flex space-x-2 mb-3">
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({
-                      ...prev,
-                      allowed_plugins: availablePlugins.map(p => p.name)
-                    }))}
-                    className="text-xs text-primary-600 hover:text-primary-500 dark:text-primary-400 dark:hover:text-primary-300"
-                  >
-                    {t('roles.selectAll')}
-                  </button>
-                  <span className="text-gray-300 dark:text-gray-600">|</span>
-                  <button
-                    type="button"
-                    onClick={() => setFormData(prev => ({ ...prev, allowed_plugins: [] }))}
-                    className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
-                  >
-                    {t('roles.clearAllowAll')}
-                  </button>
-                </div>
-
-                {/* Plugin checkboxes */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-48 overflow-y-auto">
-                  {availablePlugins.map((plugin) => (
-                    <label
-                      key={plugin.name}
-                      className="flex items-start space-x-3 p-2 rounded-sm hover:bg-gray-200 dark:hover:bg-gray-800 cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={formData.allowed_plugins.length === 0 || formData.allowed_plugins.includes(plugin.name)}
-                        onChange={() => {
-                          // If currently "all" (empty array) and we click one, select only that one
-                          if (formData.allowed_plugins.length === 0) {
-                            setFormData(prev => ({ ...prev, allowed_plugins: [plugin.name] }));
-                          } else {
-                            toggleAllowedPlugin(plugin.name);
-                          }
-                        }}
-                        className="mt-0.5 w-4 h-4 rounded-sm border-gray-300 dark:border-gray-600 bg-gray-100 dark:bg-gray-700 text-primary-600 focus:ring-primary-500"
-                        disabled={formLoading}
-                      />
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center space-x-2">
-                          <p className="text-gray-900 dark:text-white text-sm font-medium truncate">{plugin.name}</p>
-                          {plugin.enabled ? (
-                            <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-1.5 py-0.5 rounded-sm">
-                              {t('plugins.enabled')}
-                            </span>
-                          ) : (
-                            <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1.5 py-0.5 rounded-sm">
-                              {t('plugins.disabled')}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-gray-400 dark:text-gray-500 text-xs truncate">{plugin.description}</p>
-                      </div>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Info for system roles */}
           {editingRole?.is_system && (

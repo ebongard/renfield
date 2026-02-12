@@ -185,7 +185,6 @@ async def _process_text_input(
 
     try:
         ollama = app.state.ollama
-        plugin_registry = app.state.plugin_registry
 
         # Build room context for intent processing
         room_context = None
@@ -204,7 +203,7 @@ async def _process_text_input(
             logger.info(f"🏠 Room context: {device.room} (ID: {device.room_id})")
 
         # Extract intent with room context
-        intent = await ollama.extract_intent(text, plugin_registry, room_context=room_context)
+        intent = await ollama.extract_intent(text, room_context=room_context)
         logger.info(f"🎯 Intent: {intent.get('intent')}")
 
         # Execute action if needed
@@ -212,7 +211,7 @@ async def _process_text_input(
         if intent.get("intent") != "general.conversation":
             from services.action_executor import ActionExecutor
             mcp_mgr = getattr(app.state, 'mcp_manager', None)
-            executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
+            executor = ActionExecutor(mcp_manager=mcp_mgr)
             action_result = await executor.execute(intent)
             logger.info(f"⚡ Action result: {action_result.get('success')}")
             await device_manager.send_action_result(session_id, intent, action_result.get("success", False))

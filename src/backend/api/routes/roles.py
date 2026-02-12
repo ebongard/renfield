@@ -33,7 +33,6 @@ class RoleResponse(BaseModel):
     name: str
     description: str | None
     permissions: list[str]
-    allowed_plugins: list[str] = []  # Empty = all plugins allowed
     is_system: bool
     user_count: int = 0
     created_at: datetime
@@ -48,7 +47,6 @@ class CreateRoleRequest(BaseModel):
     name: str = Field(..., min_length=2, max_length=50)
     description: str | None = Field(None, max_length=255)
     permissions: list[str] = Field(default_factory=list)
-    allowed_plugins: list[str] = Field(default_factory=list)  # Empty = all plugins
 
 
 class UpdateRoleRequest(BaseModel):
@@ -56,7 +54,6 @@ class UpdateRoleRequest(BaseModel):
     name: str | None = Field(None, min_length=2, max_length=50)
     description: str | None = Field(None, max_length=255)
     permissions: list[str] | None = None
-    allowed_plugins: list[str] | None = None
 
 
 # =============================================================================
@@ -88,7 +85,7 @@ async def list_roles(
             name=role.name,
             description=role.description,
             permissions=role.permissions or [],
-            allowed_plugins=role.allowed_plugins or [],
+
             is_system=role.is_system,
             user_count=user_count,
             created_at=role.created_at,
@@ -129,7 +126,7 @@ async def get_role(
         name=role.name,
         description=role.description,
         permissions=role.permissions or [],
-        allowed_plugins=role.allowed_plugins or [],
+
         is_system=role.is_system,
         user_count=user_count,
         created_at=role.created_at,
@@ -170,7 +167,6 @@ async def create_role(
         name=request.name,
         description=request.description,
         permissions=request.permissions,
-        allowed_plugins=request.allowed_plugins,
         is_system=False  # User-created roles are never system roles
     )
 
@@ -185,7 +181,7 @@ async def create_role(
         name=role.name,
         description=role.description,
         permissions=role.permissions or [],
-        allowed_plugins=role.allowed_plugins or [],
+
         is_system=role.is_system,
         user_count=0,
         created_at=role.created_at,
@@ -247,9 +243,6 @@ async def update_role(
                 )
         role.permissions = request.permissions
 
-    if request.allowed_plugins is not None:
-        role.allowed_plugins = request.allowed_plugins
-
     await db.commit()
     await db.refresh(role)
 
@@ -266,7 +259,7 @@ async def update_role(
         name=role.name,
         description=role.description,
         permissions=role.permissions or [],
-        allowed_plugins=role.allowed_plugins or [],
+
         is_system=role.is_system,
         user_count=user_count,
         created_at=role.created_at,

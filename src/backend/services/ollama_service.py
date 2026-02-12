@@ -8,10 +8,9 @@ import asyncio
 import json
 import re
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from integrations.core.plugin_registry import PluginRegistry
     from models.database import Message
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,17 +201,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     async def extract_intent(
         self,
         message: str,
-        plugin_registry=None,
         room_context: dict | None = None,
         conversation_history: list[dict] | None = None,
         lang: str | None = None
     ) -> dict:
         """
-        Extrahiere Intent und Parameter aus Nachricht mit Plugin-Unterstützung.
+        Extrahiere Intent und Parameter aus Nachricht.
 
         Args:
             message: Die Benutzernachricht
-            plugin_registry: Optional Plugin Registry für zusätzliche Intents
             room_context: Optional Room Context mit Informationen wie:
                 - room_name: Name des Raums in dem sich das Gerät befindet
                 - room_id: Datenbank-ID des Raums
@@ -230,10 +227,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         # Build dynamic intent types from IntentRegistry
         from services.intent_registry import intent_registry
-
-        # Set plugin registry if provided (for dynamic plugin intents)
-        if plugin_registry:
-            intent_registry.set_plugin_registry(plugin_registry)
 
         # Run entity context + correction lookup in parallel (both are I/O-bound)
         entity_context, correction_examples = await asyncio.gather(
@@ -508,7 +501,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     async def extract_ranked_intents(
         self,
         message: str,
-        plugin_registry=None,
         room_context: dict | None = None,
         conversation_history: list[dict] | None = None,
         lang: str | None = None
@@ -521,7 +513,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
         Args:
             message: User message
-            plugin_registry: Optional plugin registry
             room_context: Optional room context
             conversation_history: Optional conversation history
             lang: Language (de/en)
@@ -532,7 +523,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         """
         raw = await self.extract_intent(
             message,
-            plugin_registry=plugin_registry,
             room_context=room_context,
             conversation_history=conversation_history,
             lang=lang
@@ -867,41 +857,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         from services.conversation_service import ConversationService
         service = ConversationService(db)
         return await service.search(query, limit)
-
-    def _build_plugin_context(self, plugin_registry: Optional["PluginRegistry"]) -> str:
-        """
-        Build plugin context for LLM prompt
-
-        Generates a section listing all available plugin intents
-        """
-        if not plugin_registry:
-            return ""
-
-        intents = plugin_registry.get_all_intents()
-
-        if not intents:
-            return ""
-
-        lines = ["PLUGIN INTENTS:"]
-
-        for intent_def in intents:
-            # Format parameters
-            params_str = ", ".join([
-                f"{p.name}{'*' if p.required else ''}"
-                for p in intent_def.parameters
-            ])
-
-            lines.append(
-                f"- {intent_def.name}: {intent_def.description} "
-                f"(params: {params_str})" if params_str else f"- {intent_def.name}: {intent_def.description}"
-            )
-
-            # Add examples if available
-            if intent_def.examples:
-                for example in intent_def.examples[:2]:  # Max 2 examples per intent
-                    lines.append(f"  Example: \"{example}\"")
-
-        return "\n".join(lines)
 
     # ==========================================================================
     # RAG (Retrieval-Augmented Generation) Methods

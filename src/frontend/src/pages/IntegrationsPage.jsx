@@ -1,6 +1,6 @@
 /**
  * Integrations Page
- * Unified admin page for managing MCP servers and YAML plugins
+ * Admin page for managing MCP server integrations
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +8,6 @@ import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
 import {
-  Puzzle,
   Server,
   RefreshCw,
   AlertCircle,
@@ -20,36 +19,24 @@ import {
   ChevronDown,
   ChevronRight,
   Info,
-  Power,
-  PowerOff,
-  Settings,
-  Code,
-  Zap,
 } from 'lucide-react';
 
 export default function IntegrationsPage() {
   const { t } = useTranslation();
-  const { getAccessToken, hasPermission } = useAuth();
+  const { getAccessToken } = useAuth();
 
   // State
   const [mcpStatus, setMcpStatus] = useState(null);
   const [mcpTools, setMcpTools] = useState([]);
-  const [plugins, setPlugins] = useState([]);
-  const [pluginsEnabled, setPluginsEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [togglingPlugin, setTogglingPlugin] = useState(null);
 
   // UI State
   const [expandedServers, setExpandedServers] = useState({});
   const [selectedTool, setSelectedTool] = useState(null);
-  const [selectedPlugin, setSelectedPlugin] = useState(null);
-  const [expandedIntents, setExpandedIntents] = useState({});
   const [togglingTools, setTogglingTools] = useState({});
-
-  const canManagePlugins = hasPermission('plugins.manage');
 
   // Load data on mount
   useEffect(() => {
@@ -74,17 +61,14 @@ export default function IntegrationsPage() {
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
-      // Load MCP status, tools, and plugins in parallel
-      const [statusRes, toolsRes, pluginsRes] = await Promise.all([
+      // Load MCP status and tools in parallel
+      const [statusRes, toolsRes] = await Promise.all([
         apiClient.get('/api/mcp/status', { headers }).catch(() => ({ data: { enabled: false, servers: [], total_tools: 0 } })),
         apiClient.get('/api/mcp/tools', { headers }).catch(() => ({ data: { tools: [] } })),
-        apiClient.get('/api/plugins', { headers }).catch(() => ({ data: { plugins: [], plugins_enabled: false } })),
       ]);
 
       setMcpStatus(statusRes.data);
       setMcpTools(toolsRes.data.tools || []);
-      setPlugins(pluginsRes.data?.plugins || []);
-      setPluginsEnabled(pluginsRes.data?.plugins_enabled ?? true);
     } catch (err) {
       setError(err.response?.data?.detail || t('integrations.loadError'));
     } finally {
@@ -109,39 +93,10 @@ export default function IntegrationsPage() {
     }
   };
 
-  // Toggle plugin
-  const togglePlugin = async (plugin) => {
-    if (!canManagePlugins) return;
-
-    setTogglingPlugin(plugin.name);
-    try {
-      const token = getAccessToken();
-      const response = await apiClient.post(
-        `/api/plugins/${encodeURIComponent(plugin.name)}/toggle`,
-        { enabled: !plugin.enabled },
-        { headers: { Authorization: `Bearer ${token}` } }
-      );
-
-      setSuccess(response.data.message);
-      loadData();
-    } catch (err) {
-      setError(err.response?.data?.detail || t('plugins.failedToToggle'));
-    } finally {
-      setTogglingPlugin(null);
-    }
-  };
-
   const toggleServerExpand = (serverName) => {
     setExpandedServers(prev => ({
       ...prev,
       [serverName]: !prev[serverName]
-    }));
-  };
-
-  const toggleIntent = (intentName) => {
-    setExpandedIntents(prev => ({
-      ...prev,
-      [intentName]: !prev[intentName]
     }));
   };
 
@@ -231,9 +186,6 @@ export default function IntegrationsPage() {
   const mcpServerCount = mcpStatus?.servers?.length || 0;
   const mcpConnectedCount = mcpStatus?.servers?.filter(s => s.connected).length || 0;
   const mcpToolCount = mcpStatus?.total_tools || 0;
-  const pluginCount = plugins.length;
-  const enabledPluginCount = plugins.filter(p => p.enabled).length;
-  const totalIntentCount = plugins.reduce((sum, p) => sum + (p.intents?.length || 0), 0);
 
   // Loading state
   if (loading) {
@@ -295,7 +247,7 @@ export default function IntegrationsPage() {
       )}
 
       {/* Overall Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="card text-center py-4">
           <p className="text-2xl font-bold text-gray-900 dark:text-white">{mcpServerCount}</p>
           <p className="text-gray-500 dark:text-gray-400 text-sm">{t('integrations.mcpServers')}</p>
@@ -307,18 +259,6 @@ export default function IntegrationsPage() {
         <div className="card text-center py-4">
           <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">{mcpToolCount}</p>
           <p className="text-gray-500 dark:text-gray-400 text-sm">{t('integrations.mcpTools')}</p>
-        </div>
-        <div className="card text-center py-4">
-          <p className="text-2xl font-bold text-amber-600 dark:text-amber-400">{pluginCount}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('integrations.yamlPlugins')}</p>
-        </div>
-        <div className="card text-center py-4">
-          <p className="text-2xl font-bold text-green-600 dark:text-green-400">{enabledPluginCount}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('integrations.pluginsActive')}</p>
-        </div>
-        <div className="card text-center py-4">
-          <p className="text-2xl font-bold text-primary-600 dark:text-primary-400">{totalIntentCount}</p>
-          <p className="text-gray-500 dark:text-gray-400 text-sm">{t('integrations.intents')}</p>
         </div>
       </div>
 
@@ -507,143 +447,6 @@ export default function IntegrationsPage() {
         )}
       </div>
 
-      {/* YAML Plugins Section */}
-      <div className="card">
-        <div className="flex items-center space-x-3 mb-4">
-          <Puzzle className="w-6 h-6 text-amber-500" />
-          <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-            {t('integrations.yamlPlugins')}
-          </h2>
-          {pluginsEnabled ? (
-            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-              {t('integrations.enabled')}
-            </span>
-          ) : (
-            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
-              {t('integrations.disabled')}
-            </span>
-          )}
-        </div>
-
-        {/* Plugins disabled warning */}
-        {!pluginsEnabled && (
-          <div className="mb-4 p-3 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
-            <div className="flex items-center space-x-2">
-              <Info className="w-4 h-4 text-yellow-500" />
-              <p className="text-sm text-yellow-700 dark:text-yellow-400">
-                {t('plugins.systemDisabled')} <code className="bg-gray-200 dark:bg-gray-800 px-1 rounded-sm">PLUGINS_ENABLED=true</code>
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Plugin List */}
-        {plugins.length > 0 ? (
-          <div className="space-y-3">
-            {plugins.map((plugin) => (
-              <div
-                key={plugin.name}
-                className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
-              >
-                <div className="flex items-center space-x-4 flex-1 min-w-0">
-                  {/* Icon */}
-                  <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    plugin.enabled ? 'bg-amber-100 dark:bg-amber-900/50' : 'bg-gray-200 dark:bg-gray-700'
-                  }`}>
-                    <Zap className={`w-5 h-5 ${
-                      plugin.enabled ? 'text-amber-600 dark:text-amber-400' : 'text-gray-400 dark:text-gray-500'
-                    }`} />
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center space-x-2 flex-wrap">
-                      <span className="font-medium text-gray-900 dark:text-white">
-                        {plugin.name}
-                      </span>
-                      <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
-                        v{plugin.version}
-                      </span>
-                      {plugin.enabled ? (
-                        <span className="flex items-center space-x-1 text-xs bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-400 px-2 py-0.5 rounded-sm">
-                          <Power className="w-3 h-3" />
-                          <span>{t('plugins.enabled')}</span>
-                        </span>
-                      ) : (
-                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-500 px-2 py-0.5 rounded-sm">
-                          <PowerOff className="w-3 h-3" />
-                          <span>{t('plugins.disabled')}</span>
-                        </span>
-                      )}
-                    </div>
-                    {plugin.description && (
-                      <p className="text-gray-500 dark:text-gray-400 text-sm truncate mt-1">{plugin.description}</p>
-                    )}
-                    {/* Intent badges */}
-                    {plugin.intents?.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-2">
-                        {plugin.intents.slice(0, 3).map((intent) => (
-                          <span
-                            key={intent.name}
-                            className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm"
-                          >
-                            {intent.name}
-                          </span>
-                        ))}
-                        {plugin.intents.length > 3 && (
-                          <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
-                            +{plugin.intents.length - 3}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Actions */}
-                <div className="flex items-center space-x-2 ml-4">
-                  <button
-                    onClick={() => setSelectedPlugin(plugin)}
-                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title={t('plugins.viewDetails')}
-                  >
-                    <Info className="w-5 h-5" />
-                  </button>
-                  {canManagePlugins && (
-                    <button
-                      onClick={() => togglePlugin(plugin)}
-                      disabled={togglingPlugin === plugin.name}
-                      className={`p-2 rounded-lg transition-colors ${
-                        plugin.enabled
-                          ? 'text-green-600 hover:text-green-500 hover:bg-green-100 dark:text-green-400 dark:hover:text-green-300 dark:hover:bg-green-900/20'
-                          : 'text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700'
-                      }`}
-                      title={plugin.enabled ? t('plugins.disablePlugin') : t('plugins.enablePlugin')}
-                    >
-                      {togglingPlugin === plugin.name ? (
-                        <Loader className="w-5 h-5 animate-spin" />
-                      ) : plugin.enabled ? (
-                        <Power className="w-5 h-5" />
-                      ) : (
-                        <PowerOff className="w-5 h-5" />
-                      )}
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="text-center py-8">
-            <Puzzle className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-4" />
-            <p className="text-gray-500 dark:text-gray-400">{t('integrations.noPlugins')}</p>
-            <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">
-              {t('integrations.pluginsDisabledHint')}
-            </p>
-          </div>
-        )}
-      </div>
-
       {/* MCP Tool Detail Modal */}
       <Modal
         isOpen={!!selectedTool}
@@ -706,158 +509,6 @@ export default function IntegrationsPage() {
         )}
       </Modal>
 
-      {/* Plugin Detail Modal */}
-      <Modal
-        isOpen={!!selectedPlugin}
-        onClose={() => setSelectedPlugin(null)}
-        title={selectedPlugin?.name || t('plugins.pluginDetails')}
-        maxWidth="max-w-2xl"
-      >
-        {selectedPlugin && (
-          <div className="space-y-6">
-            {/* Basic Info */}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.version')}</p>
-                <p className="text-gray-900 dark:text-white">{selectedPlugin.version}</p>
-              </div>
-              <div>
-                <p className="text-gray-400 dark:text-gray-500 text-sm">{t('common.status')}</p>
-                <p className={selectedPlugin.enabled ? 'text-green-600 dark:text-green-400' : 'text-gray-500 dark:text-gray-500'}>
-                  {selectedPlugin.enabled ? t('plugins.enabled') : t('plugins.disabled')}
-                </p>
-              </div>
-              {selectedPlugin.author && (
-                <div>
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.author')}</p>
-                  <p className="text-gray-900 dark:text-white">{selectedPlugin.author}</p>
-                </div>
-              )}
-              {selectedPlugin.rate_limit && (
-                <div>
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.rateLimit')}</p>
-                  <p className="text-gray-900 dark:text-white">{selectedPlugin.rate_limit} req/min</p>
-                </div>
-              )}
-            </div>
-
-            {/* Description */}
-            <div>
-              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">{t('common.description')}</p>
-              <p className="text-gray-700 dark:text-gray-300">{selectedPlugin.description}</p>
-            </div>
-
-            {/* Configuration */}
-            {selectedPlugin.has_config && selectedPlugin.config_vars?.length > 0 && (
-              <div>
-                <div className="flex items-center space-x-2 mb-2">
-                  <Settings className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.configVariables')}</p>
-                </div>
-                <div className="bg-gray-100 dark:bg-gray-850 p-3 rounded-lg">
-                  <div className="flex flex-wrap gap-2">
-                    {selectedPlugin.config_vars.map((varName) => (
-                      <code key={varName} className="text-xs bg-gray-200 text-primary-600 dark:bg-gray-700 dark:text-primary-400 px-2 py-1 rounded-sm">
-                        {varName}
-                      </code>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Enable Variable */}
-            <div>
-              <p className="text-gray-400 dark:text-gray-500 text-sm mb-1">{t('plugins.enableVariable')}</p>
-              <code className="text-sm bg-gray-100 text-primary-600 dark:bg-gray-850 dark:text-primary-400 px-2 py-1 rounded-sm">
-                {selectedPlugin.enabled_var}=true
-              </code>
-            </div>
-
-            {/* Intents */}
-            {selectedPlugin.intents?.length > 0 && (
-              <div>
-                <div className="flex items-center space-x-2 mb-2">
-                  <Code className="w-4 h-4 text-gray-400 dark:text-gray-500" />
-                  <p className="text-gray-400 dark:text-gray-500 text-sm">{t('plugins.intents')} ({selectedPlugin.intents.length})</p>
-                </div>
-                <div className="space-y-2 max-h-64 overflow-y-auto">
-                  {selectedPlugin.intents.map((intent) => (
-                    <div key={intent.name} className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => toggleIntent(intent.name)}
-                        className="w-full flex items-center justify-between p-3 bg-gray-100 hover:bg-gray-200 dark:bg-gray-850 dark:hover:bg-gray-800 transition-colors"
-                      >
-                        <div className="flex items-center space-x-2">
-                          {expandedIntents[intent.name] ? (
-                            <ChevronDown className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                          ) : (
-                            <ChevronRight className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-                          )}
-                          <span className="text-gray-900 dark:text-white font-medium">{intent.name}</span>
-                        </div>
-                        {intent.parameters?.length > 0 && (
-                          <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
-                            {intent.parameters.length} {t('plugins.params')}
-                          </span>
-                        )}
-                      </button>
-
-                      {expandedIntents[intent.name] && (
-                        <div className="p-3 bg-gray-50 dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
-                          <p className="text-gray-500 dark:text-gray-400 text-sm mb-3">{intent.description}</p>
-
-                          {intent.parameters?.length > 0 && (
-                            <div className="space-y-2">
-                              <p className="text-gray-400 dark:text-gray-500 text-xs uppercase tracking-wider">{t('plugins.parameters')}</p>
-                              {intent.parameters.map((param) => (
-                                <div key={param.name} className="bg-gray-100 dark:bg-gray-850 p-2 rounded-sm">
-                                  <div className="flex items-center space-x-2">
-                                    <code className="text-primary-600 dark:text-primary-400 text-sm">{param.name}</code>
-                                    <span className="text-gray-400 dark:text-gray-500 text-xs">({param.type})</span>
-                                    {param.required && (
-                                      <span className="text-xs bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-400 px-1 rounded-sm">
-                                        {t('plugins.required')}
-                                      </span>
-                                    )}
-                                  </div>
-                                  {param.description && (
-                                    <p className="text-gray-400 dark:text-gray-500 text-xs mt-1">{param.description}</p>
-                                  )}
-                                  {param.enum && (
-                                    <div className="flex flex-wrap gap-1 mt-1">
-                                      {param.enum.map((v) => (
-                                        <span key={v} className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-1 rounded-sm">
-                                          {v}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Close button */}
-            <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
-              <button
-                onClick={() => setSelectedPlugin(null)}
-                className="w-full btn btn-secondary"
-              >
-                {t('common.close')}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }

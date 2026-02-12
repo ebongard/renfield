@@ -488,18 +488,6 @@ def mock_speaker_service():
     return service
 
 
-@pytest.fixture
-def mock_plugin_registry():
-    """Mock plugin registry"""
-    registry = MagicMock()
-
-    registry.get_plugin_for_intent.return_value = None
-    registry.get_all_intents.return_value = []
-    registry.generate_llm_prompt.return_value = ""
-
-    return registry
-
-
 # ============================================================================
 # Service Fixtures
 # ============================================================================
@@ -524,12 +512,11 @@ def mock_mcp_manager():
 
 
 @pytest.fixture
-def action_executor(mock_plugin_registry, mock_mcp_manager):
+def action_executor(mock_mcp_manager):
     """Create ActionExecutor with mocked dependencies"""
     from services.action_executor import ActionExecutor
 
     executor = ActionExecutor(
-        plugin_registry=mock_plugin_registry,
         mcp_manager=mock_mcp_manager,
     )
 
