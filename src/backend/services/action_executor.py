@@ -3,51 +3,19 @@ Action Executor - Führt erkannte Intents aus
 
 All external integrations (Home Assistant, n8n, camera, weather, search, etc.)
 are executed via MCP servers. Only internal intents (knowledge/RAG, general
-conversation) and legacy plugins have dedicated handlers here.
+conversation) have dedicated handlers here.
 """
-from typing import TYPE_CHECKING, Optional
-
 from loguru import logger
 
-if TYPE_CHECKING:
-    from models.database import User
 
 class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
 
-    def __init__(self, plugin_registry=None, mcp_manager=None):
-        # Plugin system
-        self.plugin_registry = plugin_registry
-
+    def __init__(self, mcp_manager=None):
         # MCP system (handles HA, n8n, camera, weather, search, news, etc.)
         self.mcp_manager = mcp_manager
 
-    def _check_plugin_permission(self, intent: str, user: Optional["User"]) -> tuple[bool, str]:
-        """
-        Check if user has permission to execute a plugin intent.
-
-        Args:
-            intent: The plugin intent (e.g., "weather.get_current")
-            user: The user making the request (None if auth disabled)
-
-        Returns:
-            Tuple of (allowed, error_message)
-        """
-        # If no user context (auth disabled), allow
-        if user is None:
-            return True, ""
-
-        # Extract plugin name from intent (e.g., "weather" from "weather.get_current")
-        plugin_name = intent.split(".")[0] if "." in intent else intent
-
-        # Check if user can use this plugin
-        if not user.can_use_plugin(plugin_name):
-            logger.warning(f"🚫 User {user.username} denied plugin access: {plugin_name}")
-            return False, f"No permission to use plugin: {plugin_name}"
-
-        return True, ""
-
-    async def execute(self, intent_data: dict, user: Optional["User"] = None) -> dict:
+    async def execute(self, intent_data: dict) -> dict:
         """
         Führt einen Intent aus
 
@@ -57,7 +25,6 @@ class ActionExecutor:
                 "parameters": {...},
                 "confidence": 0.9
             }
-            user: Optional user context for permission checks
 
         Returns:
             {
@@ -93,23 +60,6 @@ class ActionExecutor:
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
             return await self.mcp_manager.execute_tool(intent, parameters)
-
-        # Plugin intents - check permission first
-        if self.plugin_registry:
-            plugin = self.plugin_registry.get_plugin_for_intent(intent)
-            if plugin:
-                # Check plugin permission
-                allowed, error = self._check_plugin_permission(intent, user)
-                if not allowed:
-                    return {
-                        "success": False,
-                        "message": error,
-                        "action_taken": False,
-                        "error_code": "permission_denied"
-                    }
-
-                logger.info(f"🔌 Executing plugin intent: {intent}")
-                return await plugin.execute(intent, parameters)
 
         # Unknown intent
         return {

@@ -28,7 +28,6 @@ from api.routes import (
     knowledge,
     memory,
     notifications,
-    plugins,
     preferences,
     roles,
     rooms,
@@ -144,7 +143,6 @@ app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
-app.include_router(plugins.router, prefix="/api/plugins", tags=["Plugins"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])

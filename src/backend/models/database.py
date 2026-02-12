@@ -568,11 +568,6 @@ class Role(Base):
     # Example: ["ha.full", "kb.shared", "cam.view", "chat.own"]
     permissions = Column(JSON, default=list, nullable=False)
 
-    # Allowed plugins as JSON array of plugin names
-    # Empty array = all plugins allowed (if user has plugins.use permission)
-    # Example: ["weather", "news", "search"]
-    allowed_plugins = Column(JSON, default=list, nullable=False)
-
     # System roles cannot be deleted
     is_system = Column(Boolean, default=False, nullable=False)
 
@@ -592,26 +587,6 @@ class Role(Base):
         except ValueError:
             return permission in (self.permissions or [])
 
-    def can_use_plugin(self, plugin_name: str) -> bool:
-        """
-        Check if this role can use a specific plugin.
-
-        Returns True if:
-        - Role has plugins.use or plugins.manage permission AND
-        - Either allowed_plugins is empty (all allowed) OR plugin_name is in allowed_plugins
-        """
-        from models.permissions import Permission
-
-        # Check if role has plugin permission
-        if not (self.has_permission(Permission.PLUGINS_USE.value) or
-                self.has_permission(Permission.PLUGINS_MANAGE.value)):
-            return False
-
-        # Empty allowed_plugins = all plugins allowed
-        if not self.allowed_plugins:
-            return True
-
-        return plugin_name in self.allowed_plugins
 
 
 class User(Base):
@@ -666,17 +641,6 @@ class User(Base):
             return []
         return self.role.permissions or []
 
-    def can_use_plugin(self, plugin_name: str) -> bool:
-        """Check if this user can use a specific plugin via their role."""
-        if not self.role:
-            return False
-        return self.role.can_use_plugin(plugin_name)
-
-    def get_allowed_plugins(self) -> list:
-        """Get the list of allowed plugins for this user."""
-        if not self.role:
-            return []
-        return self.role.allowed_plugins or []
 
 
 # =============================================================================

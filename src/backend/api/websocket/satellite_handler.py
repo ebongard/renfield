@@ -360,7 +360,6 @@ async def satellite_websocket(
                 # Process with Ollama (intent extraction + action)
                 try:
                     ollama = app.state.ollama
-                    plugin_registry = app.state.plugin_registry
 
                     # Load conversation history from DB if not already loaded (once per day)
                     if satellite_db_session_id and not satellite_history_loaded:
@@ -395,7 +394,6 @@ async def satellite_websocket(
                     # Extract ranked intents with room context and conversation history
                     ranked_intents = await ollama.extract_ranked_intents(
                         text,
-                        plugin_registry,
                         room_context=room_context,
                         conversation_history=satellite_conversation_history if satellite_conversation_history else None
                     )
@@ -414,7 +412,7 @@ async def satellite_websocket(
                             intent = intent_candidate
                             break
 
-                        executor = ActionExecutor(plugin_registry, mcp_manager=mcp_mgr)
+                        executor = ActionExecutor(mcp_manager=mcp_mgr)
                         candidate_result = await executor.execute(intent_candidate)
 
                         if candidate_result.get("success") and not candidate_result.get("empty_result"):

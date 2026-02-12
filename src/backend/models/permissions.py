@@ -74,10 +74,6 @@ class Permission(str, Enum):
     NOTIFICATIONS_VIEW = "notifications.view"       # View notifications
     NOTIFICATIONS_MANAGE = "notifications.manage"   # Send notifications, manage webhook token
 
-    # === Plugins ===
-    PLUGINS_NONE = "plugins.none"       # No plugin access
-    PLUGINS_USE = "plugins.use"         # Use enabled plugins (can trigger intents)
-    PLUGINS_MANAGE = "plugins.manage"   # Enable/disable plugins, configure
 
 
 # Permission hierarchy definitions
@@ -132,11 +128,6 @@ PERMISSION_HIERARCHY = {
     # Settings permissions (settings.manage > settings.view)
     Permission.SETTINGS_MANAGE: {Permission.SETTINGS_VIEW},
     Permission.SETTINGS_VIEW: set(),
-
-    # Plugin permissions (plugins.manage > plugins.use > plugins.none)
-    Permission.PLUGINS_MANAGE: {Permission.PLUGINS_USE, Permission.PLUGINS_NONE},
-    Permission.PLUGINS_USE: {Permission.PLUGINS_NONE},
-    Permission.PLUGINS_NONE: set(),
 
     # Notification permissions (notifications.manage > notifications.view)
     Permission.NOTIFICATIONS_MANAGE: {Permission.NOTIFICATIONS_VIEW},
@@ -256,10 +247,6 @@ def get_all_permissions() -> list[dict]:
         Permission.SETTINGS_VIEW: "System-Einstellungen ansehen",
         Permission.SETTINGS_MANAGE: "System-Einstellungen ändern",
 
-        Permission.PLUGINS_NONE: "Kein Zugriff auf Plugins",
-        Permission.PLUGINS_USE: "Plugins verwenden (Intents ausführen)",
-        Permission.PLUGINS_MANAGE: "Plugins verwalten (aktivieren/deaktivieren)",
-
         Permission.NOTIFICATIONS_VIEW: "Benachrichtigungen ansehen",
         Permission.NOTIFICATIONS_MANAGE: "Benachrichtigungen senden und Webhook-Token verwalten",
     }
@@ -292,7 +279,6 @@ DEFAULT_ROLES = [
             Permission.USERS_MANAGE.value,
             Permission.ROLES_MANAGE.value,
             Permission.SETTINGS_MANAGE.value,
-            Permission.PLUGINS_MANAGE.value,
             Permission.NOTIFICATIONS_MANAGE.value,
         ],
         "is_system": True
@@ -309,7 +295,6 @@ DEFAULT_ROLES = [
             Permission.SPEAKERS_OWN.value,
             Permission.TASKS_VIEW.value,
             Permission.RAG_USE.value,
-            Permission.PLUGINS_USE.value,
             Permission.NOTIFICATIONS_VIEW.value,
         ],
         "is_system": True
@@ -323,7 +308,6 @@ DEFAULT_ROLES = [
             Permission.CAM_NONE.value,
             Permission.CHAT_OWN.value,
             Permission.ROOMS_READ.value,
-            Permission.PLUGINS_NONE.value,
         ],
         "is_system": True
     }

@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
-import { BASE_URL, mockMcpStatus, mockMcpTools, mockPlugins } from '../mocks/handlers.js';
+import { BASE_URL, mockMcpStatus, mockMcpTools } from '../mocks/handlers.js';
 import IntegrationsPage from '../../../../src/frontend/src/pages/IntegrationsPage';
 import { renderWithProviders } from '../test-utils.jsx';
 import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
@@ -16,12 +16,12 @@ vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
 // Default mock values for admin user
 const adminAuthMock = {
   getAccessToken: () => 'mock-token',
-  hasPermission: (perm) => perm === 'plugins.manage' || perm === 'admin',
+  hasPermission: (perm) => perm === 'admin',
   hasAnyPermission: () => true,
   isAuthenticated: true,
   authEnabled: true,
   loading: false,
-  user: { username: 'admin', role: 'Admin', permissions: ['admin', 'plugins.manage'] }
+  user: { username: 'admin', role: 'Admin', permissions: ['admin'] }
 };
 
 // Mock values for user without manage permission
@@ -32,7 +32,7 @@ const userAuthMock = {
   isAuthenticated: true,
   authEnabled: true,
   loading: false,
-  user: { username: 'user', role: 'User', permissions: ['plugins.use'] }
+  user: { username: 'user', role: 'User', permissions: [] }
 };
 
 describe('IntegrationsPage', () => {
@@ -76,18 +76,6 @@ describe('IntegrationsPage', () => {
       expect(mcpServerTexts.length).toBeGreaterThan(0);
     });
 
-    it('displays YAML Plugins section', async () => {
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      // YAML Plugins appears in both stats and section header
-      const yamlPluginsTexts = screen.getAllByText('YAML Plugins');
-      expect(yamlPluginsTexts.length).toBeGreaterThan(0);
-    });
-
     it('shows overall statistics', async () => {
       renderWithProviders(<IntegrationsPage />);
 
@@ -95,14 +83,10 @@ describe('IntegrationsPage', () => {
         expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
       });
 
-      // MCP stats - using getAllByText for items that appear multiple times
+      // MCP stats
       expect(screen.getAllByText('MCP Server').length).toBeGreaterThan(0);
       expect(screen.getByText('Verbunden')).toBeInTheDocument();
       expect(screen.getByText('MCP Tools')).toBeInTheDocument();
-      // Plugin stats
-      expect(screen.getAllByText('YAML Plugins').length).toBeGreaterThan(0);
-      expect(screen.getByText('Plugins aktiv')).toBeInTheDocument();
-      expect(screen.getByText('Intents')).toBeInTheDocument();
     });
 
     it('displays MCP server names', async () => {
@@ -234,155 +218,6 @@ describe('IntegrationsPage', () => {
     });
   });
 
-  describe('YAML Plugins Section', () => {
-    it('shows plugin list with details', async () => {
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      expect(screen.getByText('calendar')).toBeInTheDocument();
-    });
-
-    it('shows enabled/disabled badges for plugins', async () => {
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      // weather plugin is enabled, calendar is disabled
-      const enabledBadges = screen.getAllByText('Aktiviert');
-      expect(enabledBadges.length).toBeGreaterThan(0);
-
-      const disabledBadges = screen.getAllByText('Deaktiviert');
-      expect(disabledBadges.length).toBeGreaterThan(0);
-    });
-
-    it('shows empty state when no plugins', async () => {
-      server.use(
-        http.get(`${BASE_URL}/api/plugins`, () => {
-          return HttpResponse.json({
-            plugins: [],
-            total: 0,
-            plugins_enabled: true
-          });
-        })
-      );
-
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      expect(screen.getByText('Keine YAML-Plugins gefunden')).toBeInTheDocument();
-    });
-  });
-
-  describe('Plugin Details Modal', () => {
-    it('opens plugin detail modal when clicking info button', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      // Find and click the info button for a plugin
-      const infoButtons = screen.getAllByTitle('Details anzeigen');
-      await user.click(infoButtons[0]);
-
-      await waitFor(() => {
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
-      });
-
-      // Check modal content
-      expect(screen.getByText('Version')).toBeInTheDocument();
-    });
-
-    it('shows plugin intents in detail modal', async () => {
-      const user = userEvent.setup();
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      // weather plugin has 1 intent
-      const infoButtons = screen.getAllByTitle('Details anzeigen');
-      // First plugin is weather (sorted alphabetically by mock data order: weather, calendar)
-      await user.click(infoButtons[0]);
-
-      await waitFor(() => {
-        expect(screen.getByRole('dialog')).toBeInTheDocument();
-      });
-
-      // The modal shows "Intents (1)" for the weather plugin
-      expect(screen.getByText(/Intents \(1\)/)).toBeInTheDocument();
-    });
-  });
-
-  describe('Plugin Toggle', () => {
-    it('shows toggle button for users with plugins.manage permission', async () => {
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      const toggleButtons = screen.getAllByTitle(/Plugin (aktivieren|deaktivieren)/i);
-      expect(toggleButtons.length).toBeGreaterThan(0);
-    });
-
-    it('calls toggle API when clicking toggle button', async () => {
-      const user = userEvent.setup();
-      let toggleCalled = false;
-
-      server.use(
-        http.post(`${BASE_URL}/api/plugins/:name/toggle`, () => {
-          toggleCalled = true;
-          return HttpResponse.json({
-            name: 'weather',
-            enabled: false,
-            message: 'Plugin disabled',
-            requires_restart: true
-          });
-        })
-      );
-
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      const toggleButtons = screen.getAllByTitle(/Plugin (aktivieren|deaktivieren)/i);
-      await user.click(toggleButtons[0]);
-
-      await waitFor(() => {
-        expect(toggleCalled).toBe(true);
-      });
-    });
-
-    it('hides toggle buttons for users without plugins.manage permission', async () => {
-      vi.mocked(useAuth).mockReturnValue(userAuthMock);
-
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      const infoButtons = screen.getAllByTitle('Details anzeigen');
-      expect(infoButtons.length).toBeGreaterThan(0);
-
-      const toggleButtons = screen.queryAllByTitle(/Plugin (aktivieren|deaktivieren)/i);
-      expect(toggleButtons.length).toBe(0);
-    });
-  });
-
   describe('Refresh', () => {
     it('refreshes MCP connections when clicking refresh button', async () => {
       const user = userEvent.setup();
@@ -488,13 +323,6 @@ describe('IntegrationsPage', () => {
             total: 0
           });
         }),
-        http.get(`${BASE_URL}/api/plugins`, () => {
-          return HttpResponse.json({
-            plugins: [],
-            total: 0,
-            plugins_enabled: false
-          });
-        })
       );
 
       renderWithProviders(<IntegrationsPage />);
@@ -534,26 +362,4 @@ describe('IntegrationsPage', () => {
     });
   });
 
-  describe('Plugins System Disabled', () => {
-    it('shows warning when plugins system is disabled', async () => {
-      server.use(
-        http.get(`${BASE_URL}/api/plugins`, () => {
-          return HttpResponse.json({
-            plugins: mockPlugins,
-            total: mockPlugins.length,
-            plugins_enabled: false
-          });
-        })
-      );
-
-      renderWithProviders(<IntegrationsPage />);
-
-      await waitFor(() => {
-        expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
-      });
-
-      // Component shows warning when plugins_enabled is false
-      expect(screen.getByText(/PLUGINS_ENABLED=true/)).toBeInTheDocument();
-    });
-  });
 });

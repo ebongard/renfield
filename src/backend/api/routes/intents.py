@@ -42,13 +42,6 @@ class IntegrationStatusResponse(BaseModel):
     intents: list[IntentResponse]
 
 
-class PluginIntentResponse(BaseModel):
-    """Plugin intent summary."""
-    name: str
-    description: str
-    plugin: str
-
-
 class MCPToolResponse(BaseModel):
     """MCP tool summary."""
     intent: str
@@ -62,7 +55,6 @@ class IntentRegistryStatusResponse(BaseModel):
     enabled_integrations: int
     disabled_integrations: int
     integrations: list[IntegrationStatusResponse]
-    plugins: list[PluginIntentResponse]
     mcp_tools: list[MCPToolResponse]
 
 
@@ -130,17 +122,6 @@ async def get_intent_status(
             intents=intents
         ))
 
-    # Plugin intents
-    plugins = []
-    if intent_registry._plugin_registry and settings.plugins_enabled:
-        for intent_def in intent_registry._plugin_registry.get_all_intents():
-            plugins.append(PluginIntentResponse(
-                name=intent_def.name,
-                description=intent_def.description,
-                plugin=intent_def.name.split(".")[0] if "." in intent_def.name else "unknown"
-            ))
-        total_intents += len(plugins)
-
     # MCP tools
     mcp_tools = []
     if settings.mcp_enabled and intent_registry._mcp_tools:
@@ -157,7 +138,6 @@ async def get_intent_status(
         enabled_integrations=enabled_count,
         disabled_integrations=disabled_count,
         integrations=integrations,
-        plugins=plugins,
         mcp_tools=mcp_tools
     )
 
@@ -234,6 +214,5 @@ async def get_integrations_summary():
     return {
         "enabled": enabled,
         "disabled": disabled,
-        "plugins_enabled": settings.plugins_enabled,
         "mcp_enabled": settings.mcp_enabled
     }

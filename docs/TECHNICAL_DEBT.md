@@ -100,11 +100,11 @@ api/
 
 ---
 
-#### ~~5. Print Statements in CLI-Tools~~ ✅ Dokumentiert
+#### ~~5. Print Statements in CLI-Tools~~ ✅ Entfernt
 
-**Status:** Dokumentiert am 2026-01-25
+**Status:** Entfernt am 2026-02-11
 
-**Lösung:** CLI-Test-Tools (`test_plugins.py`, `test_url_encoding.py`, `test_error_handling.py`) sind jetzt als interaktive CLI-Tools dokumentiert, wo `print()` für Ausgabe angemessen ist.
+**Lösung:** CLI-Test-Tools (`test_plugins.py`, `test_url_encoding.py`, `test_error_handling.py`) wurden zusammen mit dem Legacy-Plugin-System entfernt.
 
 ---
 
@@ -113,9 +113,9 @@ api/
 **Status:** Verbessert am 2026-01-25
 
 **Änderungen:**
-- `ollama_service.py`: `ensure_model_loaded() -> None`, `_build_plugin_context() -> str`
+- `ollama_service.py`: `ensure_model_loaded() -> None`
 - `audio_output_service.py`: `_ensure_cache_dir() -> None`, `_cleanup_old_cache_files() -> None`
-- TYPE_CHECKING Imports für PluginRegistry und Message hinzugefügt
+- TYPE_CHECKING Imports für Message hinzugefügt
 
 **Empfehlung:** Weitere Type Hints schrittweise hinzufügen, mit `mypy` prüfen.
 
@@ -173,7 +173,6 @@ Die initiale Migration (`9a0d8ccea5b0_add_room_management.py`) hat korrekt `pass
 - `main.py`, `models/permissions.py`
 - `api/routes/`: rooms, users, roles, satellites, preferences, homeassistant, camera, settings, speakers, knowledge
 - `api/websocket/`: chat_handler, shared
-- `integrations/core/plugin_schema.py`
 - `services/`: auth, rag, database, document_processor, output_routing, wakeword_config_manager, zeroconf, device_manager, audio_output, piper
 
 #### ~~10. Docstrings fehlen teilweise~~ ✅ Dokumentiert
@@ -486,8 +485,6 @@ Bereits gepinnte Images:
 - ✅ **WebSocket Rate Limiting**: `websocket_rate_limiter.py`
   - Chat, Device, Satellite Handler
   - Konfigurierbar: `ws_rate_limit_per_second`, `ws_rate_limit_per_minute`
-- ✅ **Plugin Rate Limiting**: Per-Plugin in YAML
-  - Weather: 60/min, News: 100/min, Search: 120/min
 
 **Angewandt auf:**
 - `api/routes/auth.py`: login, register, refresh, voice (10/min)

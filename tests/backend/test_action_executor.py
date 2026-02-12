@@ -2,9 +2,8 @@
 Tests für ActionExecutor
 
 Testet:
-- Intent Routing (MCP, Knowledge, Plugin, General)
+- Intent Routing (MCP, Knowledge, General)
 - MCP Tool Execution
-- Plugin Dispatch
 - Fehlerbehandlung
 """
 
@@ -101,31 +100,6 @@ class TestActionExecutorRouting:
         assert "unknown intent" in result["message"].lower()
 
     @pytest.mark.unit
-    async def test_route_plugin_intent(self, action_executor, mock_plugin_registry):
-        """Test: Plugin Intent wird an Plugin Registry weitergeleitet"""
-        mock_plugin = AsyncMock()
-        mock_plugin.execute.return_value = {
-            "success": True,
-            "message": "Weather data fetched",
-            "action_taken": True
-        }
-        mock_plugin_registry.get_plugin_for_intent.return_value = mock_plugin
-
-        intent_data = {
-            "intent": "weather.get_current",
-            "parameters": {"location": "Berlin"},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is True
-        mock_plugin.execute.assert_called_once_with(
-            "weather.get_current",
-            {"location": "Berlin"}
-        )
-
-    @pytest.mark.unit
     async def test_route_knowledge_intent(self, action_executor):
         """Test: Knowledge Intent wird an RAG-Service geroutet"""
         intent_data = {
@@ -162,7 +136,7 @@ class TestActionExecutorMCP:
         """Test: Ohne mcp_manager wird MCP Intent als unknown behandelt"""
         from services.action_executor import ActionExecutor
 
-        executor = ActionExecutor(plugin_registry=None, mcp_manager=None)
+        executor = ActionExecutor(mcp_manager=None)
 
         intent_data = {
             "intent": "mcp.homeassistant.turn_on",
@@ -229,73 +203,6 @@ class TestActionExecutorEdgeCases:
 
         assert result["success"] is False
         assert "keine suchanfrage" in result["message"].lower()
-
-
-# ============================================================================
-# ActionExecutor Plugin Integration Tests
-# ============================================================================
-
-class TestActionExecutorPluginIntegration:
-    """Tests für Plugin Integration"""
-
-    @pytest.mark.unit
-    async def test_plugin_not_found_returns_unknown(
-        self, action_executor, mock_plugin_registry
-    ):
-        """Test: Nicht gefundenes Plugin führt zu unknown intent"""
-        mock_plugin_registry.get_plugin_for_intent.return_value = None
-
-        intent_data = {
-            "intent": "custom.unregistered_action",
-            "parameters": {},
-            "confidence": 0.8
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is False
-        assert "unknown intent" in result["message"].lower()
-
-    @pytest.mark.unit
-    async def test_plugin_execution_error(
-        self, action_executor, mock_plugin_registry
-    ):
-        """Test: Plugin Execution Fehler werden propagiert"""
-        mock_plugin = AsyncMock()
-        mock_plugin.execute.return_value = {
-            "success": False,
-            "message": "API rate limited",
-            "action_taken": False
-        }
-        mock_plugin_registry.get_plugin_for_intent.return_value = mock_plugin
-
-        intent_data = {
-            "intent": "plugin.rate_limited",
-            "parameters": {},
-            "confidence": 0.9
-        }
-
-        result = await action_executor.execute(intent_data)
-
-        assert result["success"] is False
-        assert result["message"] == "API rate limited"
-
-    @pytest.mark.unit
-    async def test_no_plugin_registry(self):
-        """Test: ActionExecutor ohne Plugin Registry"""
-        from services.action_executor import ActionExecutor
-
-        executor = ActionExecutor(plugin_registry=None, mcp_manager=None)
-
-        intent_data = {
-            "intent": "custom.action",
-            "parameters": {},
-            "confidence": 0.9
-        }
-
-        result = await executor.execute(intent_data)
-
-        assert result["success"] is False
 
 
 # ============================================================================

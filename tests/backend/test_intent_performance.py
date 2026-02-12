@@ -230,7 +230,7 @@ class TestIntentRegistryCache:
         """Second call to build_intent_prompt should return cached result."""
         with patch('services.intent_registry.settings') as mock_settings:
             mock_settings.rag_enabled = False
-            mock_settings.plugins_enabled = False
+
             mock_settings.mcp_enabled = False
 
             from services.intent_registry import IntentRegistry
@@ -247,7 +247,7 @@ class TestIntentRegistryCache:
         """Second call to build_examples_prompt should return cached result."""
         with patch('services.intent_registry.settings') as mock_settings:
             mock_settings.rag_enabled = False
-            mock_settings.plugins_enabled = False
+
             mock_settings.mcp_enabled = False
 
             from services.intent_registry import IntentRegistry
@@ -263,7 +263,7 @@ class TestIntentRegistryCache:
         """Cache should be cleared when MCP tools change."""
         with patch('services.intent_registry.settings') as mock_settings:
             mock_settings.rag_enabled = False
-            mock_settings.plugins_enabled = False
+
             mock_settings.mcp_enabled = False
 
             from services.intent_registry import IntentRegistry
@@ -278,31 +278,12 @@ class TestIntentRegistryCache:
             assert len(registry._prompt_cache) == 0
 
     @pytest.mark.unit
-    def test_cache_invalidated_on_plugin_registry_change(self):
-        """Cache should be cleared when plugin registry changes."""
-        with patch('services.intent_registry.settings') as mock_settings:
-            mock_settings.rag_enabled = False
-            mock_settings.plugins_enabled = False
-            mock_settings.mcp_enabled = False
-
-            from services.intent_registry import IntentRegistry
-            registry = IntentRegistry()
-
-            # Populate cache
-            registry.build_intent_prompt(lang="de")
-            assert len(registry._prompt_cache) > 0
-
-            # Change plugin registry should invalidate
-            mock_plugin_registry = MagicMock()
-            registry.set_plugin_registry(mock_plugin_registry)
-            assert len(registry._prompt_cache) == 0
-
     @pytest.mark.unit
     def test_different_languages_cached_separately(self):
         """Different language prompts should be cached separately."""
         with patch('services.intent_registry.settings') as mock_settings:
             mock_settings.rag_enabled = False
-            mock_settings.plugins_enabled = False
+
             mock_settings.mcp_enabled = False
 
             from services.intent_registry import IntentRegistry

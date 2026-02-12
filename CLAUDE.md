@@ -176,7 +176,7 @@ User → ComplexityDetector → simple? → Single-Intent (as before)
 
 **Key Components:**
 - `services/complexity_detector.py` — Regex-based detection (zero-cost, no LLM call)
-- `services/agent_tools.py` — Wraps MCP + Plugin tools as descriptions for the LLM prompt
+- `services/agent_tools.py` — Wraps MCP tools as descriptions for the LLM prompt
 - `services/agent_service.py` — Core loop: LLM → Tool → LLM → ... → Answer (AsyncGenerator)
 
 **Configuration** (all opt-in, disabled by default):

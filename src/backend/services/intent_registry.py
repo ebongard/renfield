@@ -3,7 +3,7 @@ Intent Registry — Central registry for all available intents.
 
 Dynamically manages intents based on enabled integrations.
 Core integrations (Home Assistant, Frigate, n8n, RAG) register their intents here.
-Plugins and MCP tools also contribute their intents.
+MCP tools also contribute their intents.
 
 Usage:
     from services.intent_registry import intent_registry
@@ -16,12 +16,8 @@ Usage:
         ...
 """
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
 
 from utils.config import settings
-
-if TYPE_CHECKING:
-    from integrations.core.plugin_registry import PluginRegistry
 
 
 @dataclass
@@ -125,12 +121,10 @@ class IntentRegistry:
 
     Manages intents from:
     - Core integrations (Home Assistant, Frigate, n8n, RAG)
-    - Plugins (via PluginRegistry)
     - MCP servers (dynamically discovered)
     """
 
     def __init__(self):
-        self._plugin_registry: PluginRegistry | None = None
         self._mcp_tools: list[dict] = []
         self._mcp_examples: dict[str, dict[str, list[str]]] = {}  # server_name → {"de": [...], "en": [...]}
         self._mcp_prompt_tools: dict[str, list[str]] = {}  # server_name → [tool_name, ...]
@@ -142,11 +136,6 @@ class IntentRegistry:
         """Clear cached prompt outputs when configuration changes."""
         self._prompt_cache.clear()
         self._examples_cache.clear()
-
-    def set_plugin_registry(self, registry: "PluginRegistry") -> None:
-        """Set the plugin registry for plugin intent access."""
-        self._plugin_registry = registry
-        self._invalidate_prompt_cache()
 
     def set_mcp_tools(self, tools: list[dict]) -> None:
         """Set available MCP tools for intent prompt."""
@@ -184,11 +173,6 @@ class IntentRegistry:
             for intent in integration.intents:
                 if intent.name == intent_name:
                     return True
-
-        # Check plugins
-        if self._plugin_registry:
-            if self._plugin_registry.get_plugin_for_intent(intent_name):
-                return True
 
         # Check MCP tools
         return any(tool.get("intent") == intent_name for tool in self._mcp_tools)
@@ -236,26 +220,6 @@ class IntentRegistry:
                 section_lines.append(f"- {intent.name}: {intent.get_description(lang)}{params_str}")
 
             sections.append("\n".join(section_lines))
-
-        # Plugins (if registry available)
-        if self._plugin_registry and settings.plugins_enabled:
-            plugin_intents = self._plugin_registry.get_all_intents()
-            if plugin_intents:
-                title = "PLUGINS"
-                section_lines = [f"=== {title} ==="]
-
-                for intent_def in plugin_intents:
-                    params_str = ""
-                    if intent_def.parameters:
-                        params = [
-                            f"{p.name}{'*' if p.required else ''}"
-                            for p in intent_def.parameters
-                        ]
-                        params_str = f" ({', '.join(params)})"
-
-                    section_lines.append(f"- {intent_def.name}: {intent_def.description}{params_str}")
-
-                sections.append("\n".join(section_lines))
 
         # MCP Tools (if enabled and tools available)
         # Only tools listed in prompt_tools YAML config are shown to avoid
@@ -386,7 +350,6 @@ class IntentRegistry:
             "enabled_integrations": [],
             "disabled_integrations": [],
             "total_intents": 0,
-            "plugins": 0,
             "mcp_tools": 0,
         }
 
@@ -400,11 +363,6 @@ class IntentRegistry:
                 status["total_intents"] += len(integration.intents)
             else:
                 status["disabled_integrations"].append(integration.integration_name)
-
-        if self._plugin_registry:
-            plugin_intents = self._plugin_registry.get_all_intents()
-            status["plugins"] = len(plugin_intents)
-            status["total_intents"] += len(plugin_intents)
 
         status["mcp_tools"] = len(self._mcp_tools)
         status["total_intents"] += len(self._mcp_tools)

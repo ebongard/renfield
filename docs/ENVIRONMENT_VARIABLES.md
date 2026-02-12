@@ -12,8 +12,6 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 - [Audio Output Routing](#audio-output-routing)
 - [Integrationen](#integrationen)
 - [MCP Server Configuration](#mcp-server-configuration)
-- [Plugin System (Legacy YAML)](#plugin-system-legacy-yaml)
-- [Verfügbare Plugins](#verfügbare-plugins)
 - [Best Practices](#best-practices)
 - [Troubleshooting](#troubleshooting)
 
@@ -21,32 +19,12 @@ Vollständige Referenz aller Umgebungsvariablen für Renfield.
 
 ## Naming Conventions
 
-### Plugin-spezifische Variablen
-
-**Format:**
-```
-{PLUGIN_NAME}_PLUGIN_{PURPOSE}    # YAML-Plugin Aktivierung
-{SERVICE_NAME}_{PURPOSE}          # MCP-Server Aktivierung & Konfiguration
-```
-
-**Beispiele:**
-```bash
-# MCP-Server (bevorzugt)
-WEATHER_ENABLED=true              # MCP-Server aktivieren
-OPENWEATHER_API_KEY=abc123        # API-Schlüssel (in Produktion: Docker Secret)
-
-# YAML-Plugin (Legacy)
-WEATHER_PLUGIN_ENABLED=true       # YAML-Plugin aktivieren
-OPENWEATHER_API_URL=https://...   # API-URL
-```
-
 ### Regeln
 
 1. **UPPERCASE_SNAKE_CASE** - Alle Buchstaben groß, Wörter mit Unterstrich getrennt
 2. **Beschreibende Namen** - Klar erkennbar, wofür die Variable ist
 3. **Konsistente Suffixe:**
    - `_ENABLED` - Boolean zum Aktivieren (MCP-Server)
-   - `_PLUGIN_ENABLED` - Boolean zum Aktivieren (YAML-Plugins)
    - `_URL` - API-Endpunkte
    - `_KEY` - API-Schlüssel
    - `_TOKEN` - Authentifizierungs-Token
@@ -823,162 +801,6 @@ PLUGIN_MODULE=renfield_twin.hooks:register
 
 ---
 
-## Plugin System (Legacy YAML)
-
-> **Hinweis:** YAML-Plugins werden durch MCP-Server ersetzt. Plugins verwenden `*_PLUGIN_ENABLED` zur Aktivierung, um Konflikte mit MCP-Server `*_ENABLED` Variablen zu vermeiden.
-
-### System-Kontrolle
-
-```bash
-# Plugin System aktivieren/deaktivieren
-PLUGINS_ENABLED=true
-
-# Plugin-Verzeichnis (relativ zum Backend)
-PLUGINS_DIR=integrations/plugins
-```
-
-**Defaults:**
-- `PLUGINS_ENABLED`: `true`
-- `PLUGINS_DIR`: `integrations/plugins`
-
-**Hinweis:** Wenn `PLUGINS_ENABLED=false`, werden KEINE Plugins geladen.
-
----
-
-## Verfügbare Plugins
-
-### Weather Plugin (OpenWeatherMap)
-
-```bash
-# Plugin aktivieren
-WEATHER_PLUGIN_ENABLED=true
-
-# API-Konfiguration
-OPENWEATHER_API_URL=https://api.openweathermap.org/data/2.5
-OPENWEATHER_API_KEY=your_api_key_here
-```
-
-**Erforderlich:**
-- `WEATHER_PLUGIN_ENABLED` - Boolean
-- `OPENWEATHER_API_URL` - API-Basis-URL
-- `OPENWEATHER_API_KEY` - API-Schlüssel
-
-**API-Key erhalten:**
-1. https://openweathermap.org/api registrieren
-2. Free Tier auswählen (60 calls/minute)
-3. API-Key kopieren
-
-**Intents:**
-- `weather.get_current` - Aktuelles Wetter
-- `weather.get_forecast` - Wettervorhersage
-
----
-
-### News Plugin (NewsAPI)
-
-```bash
-# Plugin aktivieren
-NEWS_PLUGIN_ENABLED=true
-
-# API-Konfiguration
-NEWSAPI_URL=https://newsapi.org/v2
-NEWSAPI_KEY=your_api_key_here
-```
-
-**Erforderlich:**
-- `NEWS_PLUGIN_ENABLED` - Boolean
-- `NEWSAPI_URL` - API-Basis-URL
-- `NEWSAPI_KEY` - API-Schlüssel
-
-**API-Key erhalten:**
-1. https://newsapi.org/register registrieren
-2. Free Tier: 100 requests/day
-3. API-Key kopieren
-
-**Intents:**
-- `news.get_headlines` - Top-Schlagzeilen
-- `news.search` - Artikel-Suche
-
----
-
-### Search Plugin (SearXNG)
-
-```bash
-# Plugin aktivieren
-SEARCH_PLUGIN_ENABLED=true
-
-# SearXNG-Instanz URL (kein Key nötig!)
-SEARXNG_API_URL=http://cuda.local:3002
-```
-
-**Erforderlich:**
-- `SEARCH_PLUGIN_ENABLED` - Boolean
-- `SEARXNG_API_URL` - SearXNG-Instanz-URL
-
-**API-Key:** Nicht erforderlich! ✅
-
-**Hinweis:** Benötigt eine laufende SearXNG-Instanz.
-SearXNG ist eine Privacy-respektierende Metasearch-Engine.
-
-**Setup:** https://docs.searxng.org/
-
-**Intents:**
-- `search.web` - Web-Suche
-- `search.instant_answer` - Schnelle Antworten
-
----
-
-### Jellyfin Plugin (DLNA/UPnP Media Server)
-
-```bash
-# Plugin aktivieren
-JELLYFIN_PLUGIN_ENABLED=true
-
-# API-Konfiguration
-JELLYFIN_URL=http://192.168.1.123:8096
-JELLYFIN_API_KEY=your_api_key_here
-JELLYFIN_USER_ID=your_user_id_here
-```
-
-**Erforderlich:**
-- `JELLYFIN_PLUGIN_ENABLED` - Boolean
-- `JELLYFIN_URL` - Jellyfin Server URL (inkl. Port, Standard: 8096)
-- `JELLYFIN_API_KEY` - API-Schlüssel
-- `JELLYFIN_USER_ID` - Benutzer-ID für personalisierte Bibliothek
-
-**API-Key erhalten:**
-1. Jellyfin Dashboard öffnen → Administration → API Keys
-2. "+" klicken, Namen vergeben (z.B. "Renfield")
-3. API-Key kopieren
-
-**User-ID erhalten:**
-1. Jellyfin Dashboard → Administration → Users
-2. Gewünschten Benutzer auswählen
-3. User-ID aus der URL kopieren (z.B. `d4f8...`)
-4. Oder: `curl "http://192.168.1.123:8096/Users?api_key=YOUR_KEY"` → `Id` Feld
-
-**Intents:**
-- `jellyfin.search_music` - Musik suchen (Songs, Alben, Künstler)
-- `jellyfin.list_albums` - Alle Alben anzeigen
-- `jellyfin.list_artists` - Alle Künstler anzeigen
-- `jellyfin.get_album_tracks` - Tracks eines Albums
-- `jellyfin.get_artist_albums` - Alben eines Künstlers
-- `jellyfin.get_genres` - Alle Genres anzeigen
-- `jellyfin.get_recent` - Kürzlich hinzugefügte Musik
-- `jellyfin.get_favorites` - Favoriten anzeigen
-- `jellyfin.get_playlists` - Playlists anzeigen
-- `jellyfin.get_stream_url` - Streaming-URL abrufen
-- `jellyfin.library_stats` - Bibliotheks-Statistiken
-
-**Beispiele:**
-- "Suche nach Musik von Queen"
-- "Zeige mir alle Alben"
-- "Welche Künstler habe ich?"
-- "Neue Musik anzeigen"
-- "Meine Lieblingssongs"
-
----
-
 ## Best Practices
 
 ### 1. Niemals Secrets committen
@@ -1044,29 +866,11 @@ LOG_LEVEL=INFO
 
 ---
 
-### 5. Dokumentiere Custom-Variablen
-
-Wenn du eigene Plugins erstellst, dokumentiere die Variablen:
-
-```yaml
-# In plugin YAML:
-config:
-  url: MY_PLUGIN_API_URL
-  api_key: MY_PLUGIN_API_KEY
-
-# In .env:
-MY_PLUGIN_ENABLED=true
-MY_PLUGIN_API_URL=https://api.example.com
-MY_PLUGIN_API_KEY=abc123
-```
-
----
-
 ## Troubleshooting
 
 ### Variable wird nicht geladen
 
-**Problem:** Plugin findet API-Key nicht
+**Problem:** Service findet Konfiguration nicht
 
 **Prüfen:**
 ```bash
@@ -1093,23 +897,6 @@ docker exec renfield-backend python3 -c "import os; print(os.getenv('WEATHER_API
 
 ---
 
-### Plugin lädt nicht
-
-**Problem:** `*_PLUGIN_ENABLED` Variable nicht gesetzt
-
-**Prüfen:**
-```bash
-# Logs checken
-docker logs renfield-backend | grep -i plugin
-
-# Sollte zeigen:
-# ✅ Loaded plugin: weather v1.0.0
-# Nicht:
-# ⏭️  Skipped disabled plugin: weather
-```
-
----
-
 ### Umlaute/Sonderzeichen
 
 **Problem:** Encoding-Fehler in .env
@@ -1123,27 +910,6 @@ file .env
 # Falls nicht, konvertieren:
 iconv -f ISO-8859-1 -t UTF-8 .env > .env.utf8
 mv .env.utf8 .env
-```
-
----
-
-## Template für neue Plugins
-
-```bash
-# =============================================================================
-# {PLUGIN_NAME} Plugin
-# =============================================================================
-
-# Plugin aktivieren
-{PLUGIN_NAME}_PLUGIN_ENABLED=false
-
-# API-Konfiguration
-{PLUGIN_NAME}_API_URL=https://api.example.com
-{PLUGIN_NAME}_API_KEY=your_api_key_here
-
-# Optionale Zusatz-Konfiguration
-{PLUGIN_NAME}_REGION=eu-central-1
-{PLUGIN_NAME}_TIMEOUT=10
 ```
 
 ---
@@ -1236,12 +1002,7 @@ ADVERTISE_HOST=demeter.local
 ADVERTISE_PORT=8000
 
 # -----------------------------------------------------------------------------
-# Plugin System
-# -----------------------------------------------------------------------------
-PLUGINS_ENABLED=true
-
-# -----------------------------------------------------------------------------
-# MCP Server (bevorzugt)
+# MCP Server
 # -----------------------------------------------------------------------------
 MCP_ENABLED=true
 WEATHER_ENABLED=true
@@ -1267,12 +1028,6 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # PAPERLESS_API_TOKEN=...     → secrets/paperless_api_token
 # MAIL_REGFISH_PASSWORD=...   → secrets/mail_regfish_password
 
-# -----------------------------------------------------------------------------
-# YAML-Plugins (Legacy — deaktiviert wenn MCP aktiv)
-# -----------------------------------------------------------------------------
-# WEATHER_PLUGIN_ENABLED=false
-# NEWS_PLUGIN_ENABLED=false
-# SEARCH_PLUGIN_ENABLED=false
 ```
 
 ---
