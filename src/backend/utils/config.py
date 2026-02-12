@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     weather_enabled: bool = False
     news_enabled: bool = False
     search_enabled: bool = False
+    calendar_enabled: bool = False
 
     # Sprache
     default_language: str = "de"
