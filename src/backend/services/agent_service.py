@@ -490,6 +490,7 @@ class AgentService:
         lang: str | None = None,
         memory_context: str = "",
         document_context: str = "",
+        user_permissions: list[str] | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -503,6 +504,8 @@ class AgentService:
             lang: Language for prompts and responses (de/en). None = default_lang
             memory_context: Formatted memory section for the agent prompt
             document_context: Formatted document section for the agent prompt
+            user_permissions: User's permission strings for MCP access control.
+                None means no auth / allow all (backwards-compatible).
         """
         # Use ollama's default language if not specified
         lang = lang or ollama.default_lang
@@ -753,7 +756,9 @@ class AgentService:
                     "parameters": resolved_parameters,
                     "confidence": 1.0,
                 }
-                result = await executor.execute(intent_data)
+                result = await executor.execute(
+                    intent_data, user_permissions=user_permissions
+                )
             except Exception as e:
                 logger.error(f"❌ Agent tool execution failed: {action} — {e}")
                 error_msg = f"Tool error: {e!s}" if lang == "en" else f"Tool-Fehler: {e!s}"

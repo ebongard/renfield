@@ -404,6 +404,29 @@ async def satellite_websocket(
                     action_result = None
                     intent = None
 
+                    # Load user permissions from speaker recognition
+                    sat_user_permissions = None
+                    if speaker_name and settings.auth_enabled:
+                        try:
+                            from sqlalchemy import select
+
+                            from models.database import Speaker, User
+                            async with AsyncSessionLocal() as perm_db:
+                                spk_result = await perm_db.execute(
+                                    select(Speaker).where(Speaker.name == speaker_name)
+                                )
+                                spk = spk_result.scalar_one_or_none()
+                                if spk:
+                                    # Speaker → User via User.speaker_id FK
+                                    usr_result = await perm_db.execute(
+                                        select(User).where(User.speaker_id == spk.id)
+                                    )
+                                    usr = usr_result.scalar_one_or_none()
+                                    if usr:
+                                        sat_user_permissions = usr.get_permissions()
+                        except Exception as e:
+                            logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
+
                     for intent_candidate in ranked_intents:
                         intent_name = intent_candidate.get("intent", "general.conversation")
                         logger.info(f"🎯 Satellite versucht Intent: {intent_name} (confidence: {intent_candidate.get('confidence', 0):.2f})")
@@ -413,7 +436,9 @@ async def satellite_websocket(
                             break
 
                         executor = ActionExecutor(mcp_manager=mcp_mgr)
-                        candidate_result = await executor.execute(intent_candidate)
+                        candidate_result = await executor.execute(
+                            intent_candidate, user_permissions=sat_user_permissions
+                        )
 
                         if candidate_result.get("success") and not candidate_result.get("empty_result"):
                             intent = intent_candidate
