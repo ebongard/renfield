@@ -66,7 +66,12 @@ Follow existing test patterns in the respective test files. See `tests/` directo
    Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
    ```
 
-4. **Typische Commit-Types**
+4. **Dokumentation vor Push aktualisieren**
+   - Vor jedem Push MUSS die entsprechende Dokumentation aktualisiert werden
+   - CLAUDE.md, docs/, README etc. müssen die Änderungen widerspiegeln
+   - Keine Code-Änderungen ohne passende Dokumentations-Updates pushen
+
+5. **Typische Commit-Types**
    - `feat`: Neues Feature
    - `fix`: Bugfix
    - `docs`: Dokumentation
@@ -293,11 +298,30 @@ Optional (`AUTH_ENABLED=true`). JWT-based auth with role-permission system.
 kb.all > kb.shared > kb.own > kb.none
 ha.full > ha.control > ha.read > ha.none
 cam.full > cam.view > cam.none
+mcp.* > mcp.<server>.* > mcp.<server>.<tool>
 ```
 
-**Default Roles:** Admin (full access), Familie (ha.full, kb.shared, cam.view), Gast (ha.read, kb.none, cam.none)
+**MCP Permissions:** Dynamic permission strings for MCP tool access control. Hybrid system:
+- **Convention-based:** Server `weather` auto-requires `mcp.weather` (no YAML config needed)
+- **YAML granular:** `permissions` (server-level) and `tool_permissions` (per-tool) in `mcp_servers.yaml`
+- **Wildcards:** `mcp.*` (all MCP tools), `mcp.calendar.*` (all calendar tools)
+- **Backwards-compatible:** `AUTH_ENABLED=false` or `user_permissions=None` → all tools allowed
 
-**Key files:** `models/permissions.py`, `services/auth_service.py`, `api/routes/auth.py`, `api/routes/roles.py`
+```yaml
+# mcp_servers.yaml — optional permission fields
+servers:
+  - name: calendar
+    permissions: ["mcp.calendar.read", "mcp.calendar.manage"]
+    tool_permissions:
+      list_events: "mcp.calendar.read"
+      create_event: "mcp.calendar.manage"
+```
+
+**Permission resolution order:** (1) None → allow, (2) `mcp.*` → allow, (3) tool_permissions match, (4) server permissions match, (5) convention `mcp.<server>` match, (6) deny.
+
+**Default Roles:** Admin (`mcp.*`, full access), Familie (`mcp.*`, ha.full, kb.shared, cam.view), Gast (no MCP, ha.read, kb.none, cam.none)
+
+**Key files:** `models/permissions.py`, `services/auth_service.py`, `api/routes/auth.py`, `api/routes/roles.py`, `services/mcp_client.py`
 
 **Documentation:** See `ACCESS_CONTROL.md`.
 
@@ -384,6 +408,8 @@ All external integrations run via MCP servers. To add a new one:
    | `prompt_tools` | No | Tool base names to include in LLM intent prompt. Omit = show all. All tools remain executable. |
    | `example_intent` | No | Override intent name in prompt examples. Defaults to first tool. |
    | `examples` | No | Bilingual example queries (`de`/`en`) for LLM prompt |
+   | `permissions` | No | Server-level permission strings (e.g. `["mcp.calendar.read", "mcp.calendar.manage"]`). User needs at least one. |
+   | `tool_permissions` | No | Per-tool permission mapping (e.g. `{list_events: "mcp.calendar.read"}`). Takes priority over server-level. |
 
 3. Tools are auto-discovered as `mcp.your_service.<tool_name>` intents. `ActionExecutor` routes `mcp.*` intents to `MCPManager.execute_tool()` automatically — no code changes needed.
 
