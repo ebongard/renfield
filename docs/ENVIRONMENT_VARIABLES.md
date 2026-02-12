@@ -741,6 +741,9 @@ PAPERLESS_ENABLED=true
 
 # Email (IMAP/SMTP)
 EMAIL_MCP_ENABLED=true
+
+# Calendar (Google Calendar via n8n)
+CALENDAR_ENABLED=true
 ```
 
 **Defaults:** Alle `false`
@@ -772,6 +775,9 @@ SEARXNG_API_URL=http://cuda.local:3002
 
 # Paperless-NGX URL
 PAPERLESS_API_URL=http://paperless.local:8000
+
+# Calendar MCP URL (n8n MCP Server Trigger)
+CALENDAR_MCP_URL=http://n8n:5678/mcp/calendar/sse
 ```
 
 **Hinweis:** In Produktion werden Secrets über Docker Compose File-Based Secrets bereitgestellt und von `mcp_client.py` automatisch in `os.environ` injiziert. Siehe `docs/SECRETS_MANAGEMENT.md`.

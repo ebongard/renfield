@@ -232,6 +232,29 @@ servers:
         - "Search emails from Amazon"
         - "Send an email to max@example.com"
 
+  # --- Google Calendar MCP Server (via n8n) ---
+  # Uses n8n MCP Server Trigger workflow as calendar bridge.
+  # Requires: n8n "Calendar MCP Server" workflow active
+  - name: calendar
+    transport: sse
+    url: "${CALENDAR_MCP_URL:-http://n8n:5678/mcp/calendar/sse}"
+    enabled: "${CALENDAR_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.calendar.SearchEvent
+    prompt_tools:
+      - SearchEvent
+      - CreateEvent
+    examples:
+      de:
+        - "Was steht heute in meinem Kalender?"
+        - "Erstelle einen Termin morgen um 14 Uhr: Zahnarzt"
+        - "Bin ich morgen Nachmittag frei?"
+        - "Wann ist mein nächster Termin?"
+      en:
+        - "What's on my calendar today?"
+        - "Create an appointment tomorrow at 2 PM: Dentist"
+        - "Am I free tomorrow afternoon?"
+
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp
   # Requires: MCP Server integration enabled in HA

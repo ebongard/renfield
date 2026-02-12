@@ -1,0 +1,139 @@
+{
+  "name": "Calendar MCP Server",
+  "meta": {
+    "templateId": 3569,
+    "description": "MCP Server for Google Calendar — exposes SearchEvent, CreateEvent, UpdateEvent, DeleteEvent as MCP tools. Used by Renfield as calendar bridge via SSE transport.",
+    "notes": "Credential ID 'hsXFmEfCRMaamQeR' and calendar ID are instance-specific. Update after import."
+  },
+  "nodes": [
+    {
+      "id": "ec4aa55d-c6ee-4990-9c51-6ee1892600dd",
+      "name": "Google Calendar MCP",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "position": [400, 60],
+      "parameters": {
+        "path": "calendar"
+      },
+      "typeVersion": 1
+    },
+    {
+      "id": "42800020-7ed3-4419-9847-d2a751aa3071",
+      "name": "SearchEvent",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "position": [400, 260],
+      "parameters": {
+        "operation": "getAll",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "8hgqtcsiej7sucgg50ub3v1uss@group.calendar.google.com"
+        },
+        "timeMin": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('After', ``, 'string') }}",
+        "timeMax": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Before', ``, 'string') }}",
+        "limit": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Limit', ``, 'number') }}",
+        "options": {}
+      },
+      "typeVersion": 1.3,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "hsXFmEfCRMaamQeR",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "5d2bce57-f77d-4fd1-9342-d81107a6009d",
+      "name": "CreateEvent",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "position": [520, 260],
+      "parameters": {
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "8hgqtcsiej7sucgg50ub3v1uss@group.calendar.google.com"
+        },
+        "start": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Start', ``, 'string') }}",
+        "end": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('End', ``, 'string') }}",
+        "additionalFields": {
+          "summary": "={{ $fromAI(\"event_title\", \"The event title\", \"string\") }}",
+          "description": "={{ $fromAI(\"event_description\", \"The event description\", \"string\") }}"
+        }
+      },
+      "typeVersion": 1.3,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "hsXFmEfCRMaamQeR",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "dbebec9c-fecc-4154-ba77-cfbb519ba40a",
+      "name": "UpdateEvent",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "position": [640, 260],
+      "parameters": {
+        "operation": "update",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "8hgqtcsiej7sucgg50ub3v1uss@group.calendar.google.com"
+        },
+        "eventId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Event_ID', ``, 'string') }}",
+        "updateFields": {
+          "start": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Start', ``, 'string') }}",
+          "end": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('End', ``, 'string') }}",
+          "summary": "={{ $fromAI(\"event_title\", \"The event title\", \"string\") }}",
+          "description": "={{ $fromAI(\"event_description\", \"The event description\", \"string\") }}"
+        }
+      },
+      "typeVersion": 1.3,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "hsXFmEfCRMaamQeR",
+          "name": "Google Calendar account"
+        }
+      }
+    },
+    {
+      "id": "24ef1fd5-29dc-4208-a33b-5337307d01e0",
+      "name": "DeleteEvent",
+      "type": "n8n-nodes-base.googleCalendarTool",
+      "position": [760, 260],
+      "parameters": {
+        "operation": "delete",
+        "calendar": {
+          "__rl": true,
+          "mode": "id",
+          "value": "8hgqtcsiej7sucgg50ub3v1uss@group.calendar.google.com"
+        },
+        "eventId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('Event_ID', ``, 'string') }}",
+        "options": {}
+      },
+      "typeVersion": 1.3,
+      "credentials": {
+        "googleCalendarOAuth2Api": {
+          "id": "hsXFmEfCRMaamQeR",
+          "name": "Google Calendar account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "SearchEvent": {
+      "ai_tool": [[{"node": "Google Calendar MCP", "type": "ai_tool", "index": 0}]]
+    },
+    "CreateEvent": {
+      "ai_tool": [[{"node": "Google Calendar MCP", "type": "ai_tool", "index": 0}]]
+    },
+    "UpdateEvent": {
+      "ai_tool": [[{"node": "Google Calendar MCP", "type": "ai_tool", "index": 0}]]
+    },
+    "DeleteEvent": {
+      "ai_tool": [[{"node": "Google Calendar MCP", "type": "ai_tool", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
