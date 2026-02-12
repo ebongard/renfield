@@ -9,14 +9,14 @@ Provides endpoints for managing user roles:
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Role, User
-from models.permissions import Permission, get_all_permissions
+from models.permissions import Permission, get_all_permissions, get_mcp_permissions
 from services.auth_service import require_permission
 from services.database import get_db
 
@@ -156,6 +156,8 @@ async def create_role(
     # Validate permissions (only check if they're valid permission strings)
     valid_perms = {p.value for p in Permission}
     for perm in request.permissions:
+        if perm.startswith("mcp."):
+            continue  # Dynamic MCP permissions are always valid
         if perm not in valid_perms:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -236,6 +238,8 @@ async def update_role(
         # Validate permissions
         valid_perms = {p.value for p in Permission}
         for perm in request.permissions:
+            if perm.startswith("mcp."):
+                continue  # Dynamic MCP permissions are always valid
             if perm not in valid_perms:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -318,11 +322,21 @@ async def delete_role(
 
 
 @router.get("/permissions/all")
-async def list_permissions():
+async def list_permissions(request: Request):
     """
-    List all available permissions.
+    List all available permissions including dynamic MCP permissions.
 
     This endpoint is public (no auth required) as it's useful for
     understanding the permission system.
     """
-    return get_all_permissions()
+    permissions = get_all_permissions()
+
+    # Add dynamic MCP permissions from connected servers
+    try:
+        mcp_manager = getattr(request.app.state, "mcp_manager", None)
+        if mcp_manager:
+            permissions.extend(get_mcp_permissions(mcp_manager))
+    except Exception:
+        pass  # MCP manager not available, skip dynamic permissions
+
+    return permissions

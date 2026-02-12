@@ -138,20 +138,34 @@ PERMISSION_HIERARCHY = {
 }
 
 
-def has_permission(user_permissions: list[str], required: Permission) -> bool:
+def has_permission(user_permissions: list[str], required: "Permission | str") -> bool:
     """
     Check if a user has the required permission.
 
     Takes into account permission hierarchy - e.g., if user has kb.all,
     they implicitly have kb.shared, kb.own, and kb.none.
 
+    For dynamic MCP permissions (strings starting with "mcp."), use
+    has_mcp_permission() which supports wildcard matching.
+
     Args:
         user_permissions: List of permission strings the user has
-        required: The permission that is required
+        required: The permission that is required (Permission enum or string)
 
     Returns:
         True if the user has the required permission (directly or via hierarchy)
     """
+    # Handle string-based MCP permissions
+    if isinstance(required, str):
+        if required.startswith("mcp."):
+            return has_mcp_permission(user_permissions, required)
+        # Try to convert to Permission enum
+        try:
+            required = Permission(required)
+        except ValueError:
+            # Unknown permission string — check exact match
+            return required in user_permissions
+
     # Direct permission check
     if required.value in user_permissions:
         return True
@@ -165,8 +179,50 @@ def has_permission(user_permissions: list[str], required: Permission) -> bool:
             if required in implied:
                 return True
         except ValueError:
-            # Unknown permission string, skip
+            # Unknown permission string (e.g. mcp.*), skip for enum checks
             continue
+
+    return False
+
+
+def has_mcp_permission(user_permissions: list[str], required: str) -> bool:
+    """
+    Check if a user has the required MCP permission.
+
+    Supports wildcard matching:
+    - "mcp.*" grants access to all MCP tools
+    - "mcp.calendar.*" grants access to all calendar tools
+    - "mcp.calendar.read" grants exact match
+    - "mcp.calendar" grants access to all tools on the calendar server
+
+    Args:
+        user_permissions: List of permission strings the user has
+        required: The MCP permission string to check (e.g. "mcp.weather")
+
+    Returns:
+        True if the user has the required MCP permission
+    """
+    for perm_str in user_permissions:
+        if not perm_str.startswith("mcp."):
+            continue
+
+        # Exact match
+        if perm_str == required:
+            return True
+
+        # Wildcard: "mcp.*" matches everything
+        if perm_str == "mcp.*":
+            return True
+
+        # Wildcard: "mcp.calendar.*" matches "mcp.calendar" and "mcp.calendar.read"
+        if perm_str.endswith(".*"):
+            prefix = perm_str[:-2]  # "mcp.calendar.*" → "mcp.calendar"
+            if required.startswith(prefix + ".") or required == prefix:
+                return True
+
+        # Server-level: "mcp.calendar" matches "mcp.calendar.read"
+        if not perm_str.endswith(".*") and required.startswith(perm_str + "."):
+            return True
 
     return False
 
@@ -261,6 +317,45 @@ def get_all_permissions() -> list[dict]:
     ]
 
 
+def get_mcp_permissions(mcp_manager=None) -> list[dict]:
+    """
+    Get dynamic MCP permissions derived from connected MCP servers.
+
+    Returns permission entries that can be assigned to roles for
+    controlling access to MCP tools.
+
+    Args:
+        mcp_manager: Optional MCPManager instance. If provided, derives
+            permissions from connected servers. Otherwise returns empty list.
+
+    Returns:
+        List of dicts with permission value, name, and description.
+    """
+    if mcp_manager is None:
+        return []
+
+    permissions = []
+    for name, state in mcp_manager._servers.items():
+        # Server-level permission (convention-based)
+        permissions.append({
+            "value": f"mcp.{name}",
+            "name": f"MCP_{name.upper()}",
+            "description": f"Zugriff auf MCP-Server '{name}' ({len(state.tools)} Tools)",
+        })
+
+        # Tool-level permissions from YAML config
+        if state.config.permissions:
+            for perm in state.config.permissions:
+                if perm != f"mcp.{name}":
+                    permissions.append({
+                        "value": perm,
+                        "name": f"MCP_{perm.replace('.', '_').upper()}",
+                        "description": f"MCP Permission: {perm}",
+                    })
+
+    return permissions
+
+
 # Default role configurations
 DEFAULT_ROLES = [
     {
@@ -280,6 +375,7 @@ DEFAULT_ROLES = [
             Permission.ROLES_MANAGE.value,
             Permission.SETTINGS_MANAGE.value,
             Permission.NOTIFICATIONS_MANAGE.value,
+            "mcp.*",
         ],
         "is_system": True
     },
@@ -296,6 +392,7 @@ DEFAULT_ROLES = [
             Permission.TASKS_VIEW.value,
             Permission.RAG_USE.value,
             Permission.NOTIFICATIONS_VIEW.value,
+            "mcp.*",
         ],
         "is_system": True
     },
