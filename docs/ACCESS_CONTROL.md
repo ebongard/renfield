@@ -109,6 +109,7 @@ Beim ersten Start mit `AUTH_ENABLED=true`:
 | **Einstellungen** | `settings.view`, `settings.manage` | System-Einstellungen |
 | **Benachrichtigungen** | `notifications.view`, `notifications.manage` | Proaktive Benachrichtigungen |
 | **Plugins** | `plugins.none`, `plugins.use`, `plugins.manage` | Plugin-Zugriff |
+| **MCP Tools** | `mcp.*`, `mcp.<server>.*`, `mcp.<server>.<tool>` | MCP-Server Tool-Zugriff |
 | **Admin** | `admin` | Admin-Endpoints |
 
 ### Permission-Hierarchie
@@ -148,6 +149,9 @@ Rollen:
 
 Einstellungen:
   settings.manage → settings.view
+
+MCP Tools:
+  mcp.* → mcp.<server>.* → mcp.<server>.<tool>
 ```
 
 **Beispiel:** Ein Benutzer mit `ha.full` hat automatisch auch `ha.control` und `ha.read`.
@@ -178,9 +182,9 @@ Einstellungen:
 
 | Rolle | Beschreibung | Berechtigungen |
 |-------|--------------|----------------|
-| **Admin** | Vollzugriff | Alle Berechtigungen |
-| **Familie** | Familienmitglieder | `kb.shared`, `ha.full`, `cam.view`, `chat.own`, `rooms.read`, `speakers.own`, `tasks.view`, `rag.use`, `plugins.use`, `notifications.view` |
-| **Gast** | Eingeschränkter Zugriff | `kb.none`, `ha.read`, `cam.none`, `chat.own`, `rooms.read`, `plugins.none` |
+| **Admin** | Vollzugriff | Alle Berechtigungen + `mcp.*` |
+| **Familie** | Familienmitglieder | `kb.shared`, `ha.full`, `cam.view`, `chat.own`, `rooms.read`, `speakers.own`, `tasks.view`, `rag.use`, `plugins.use`, `notifications.view`, `mcp.*` |
+| **Gast** | Eingeschränkter Zugriff | `kb.none`, `ha.read`, `cam.none`, `chat.own`, `rooms.read`, `plugins.none` (kein MCP-Zugriff) |
 
 ### System-Rollen
 
@@ -519,6 +523,102 @@ curl -X PATCH "http://localhost:8000/api/knowledge/bases/$KB_ID/public" \
   -H "Content-Type: application/json" \
   -d '{"is_public": true}'
 ```
+
+---
+
+## MCP Tool Permissions
+
+### Übersicht
+
+MCP-Tools (Home Assistant, n8n, Wetter, Suche, etc.) werden durch dynamische Permissions geschützt. Das System ist ein **Hybrid aus Konvention und YAML-Konfiguration**.
+
+### Permission-Typen
+
+| Typ | Beispiel | Beschreibung |
+|-----|---------|-------------|
+| **Admin-Wildcard** | `mcp.*` | Zugriff auf alle MCP-Tools |
+| **Server-Wildcard** | `mcp.calendar.*` | Zugriff auf alle Tools eines Servers |
+| **Server-Konvention** | `mcp.weather` | Zugriff auf alle Tools des Servers `weather` |
+| **Tool-spezifisch** | `mcp.calendar.read` | Zugriff nur auf ein bestimmtes Tool |
+
+### Konventionsbasiert (Standard)
+
+Ohne explizite YAML-Konfiguration wird automatisch `mcp.<server_name>` als Permission benötigt:
+
+```
+Server "weather" → User braucht "mcp.weather"
+Server "homeassistant" → User braucht "mcp.homeassistant"
+```
+
+### YAML-Konfiguration (optional, granular)
+
+In `config/mcp_servers.yaml` können Server-Level und Tool-Level Permissions definiert werden:
+
+```yaml
+servers:
+  - name: calendar
+    url: "${CALENDAR_MCP_URL:-http://localhost:9095/mcp}"
+    transport: streamable_http
+    enabled: "${CALENDAR_ENABLED:-false}"
+    # Server-Level: User braucht mindestens eine dieser Permissions
+    permissions:
+      - "mcp.calendar.read"
+      - "mcp.calendar.manage"
+    # Tool-Level: Spezifische Permission pro Tool (überschreibt Server-Level)
+    tool_permissions:
+      list_events: "mcp.calendar.read"
+      create_event: "mcp.calendar.manage"
+      delete_event: "mcp.calendar.manage"
+```
+
+### Auflösungsreihenfolge
+
+Die Permission-Prüfung folgt dieser Reihenfolge (first match wins):
+
+1. `user_permissions = None` → **Erlaubt** (AUTH_ENABLED=false, abwärtskompatibel)
+2. `mcp.*` in User-Permissions → **Erlaubt** (Admin-Wildcard)
+3. `tool_permissions` hat Mapping → Prüfe spezifische Permission
+4. `permissions` definiert (Server-Level) → Prüfe ob User mindestens eine hat
+5. Keine YAML-Config → Konvention: `mcp.<server_name>` prüfen
+6. Keine Übereinstimmung → **Abgelehnt**
+
+### Wildcard-Matching
+
+```
+mcp.* → Erlaubt Zugriff auf mcp.weather, mcp.calendar.read, mcp.n8n.list, ...
+mcp.calendar.* → Erlaubt mcp.calendar.read, mcp.calendar.manage, ...
+mcp.calendar → Erlaubt mcp.calendar UND mcp.calendar.read (Server-Konvention)
+```
+
+### Rollen konfigurieren
+
+MCP-Permissions können beim Erstellen/Bearbeiten von Rollen angegeben werden:
+
+```bash
+curl -X POST http://localhost:8000/api/roles \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Smart-Home-Nutzer",
+    "description": "Nur HA und Wetter",
+    "permissions": ["ha.read", "mcp.homeassistant", "mcp.weather"]
+  }'
+```
+
+### Dynamische Permission-Discovery
+
+Der Endpoint `GET /api/roles/permissions/all` liefert auch dynamische MCP-Permissions basierend auf den aktuell verbundenen MCP-Servern. Diese werden im Rollen-Editor im Frontend angezeigt.
+
+### Satellite Voice Auth
+
+Bei Satellites wird die Permission des erkannten Sprechers verwendet:
+1. OpenWakeWord erkennt Wake Word
+2. Audio wird transkribiert (Whisper)
+3. Sprecher wird identifiziert (SpeechBrain)
+4. Verknüpfter User wird geladen → `user.get_permissions()`
+5. Permission-Check bei MCP-Tool-Ausführung
+
+Wenn kein Sprecher erkannt wird oder kein User verknüpft ist, wird `user_permissions=None` verwendet (alle Tools erlaubt, da Offline-Szenario).
 
 ---
 
