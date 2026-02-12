@@ -193,7 +193,7 @@ class TestIntentRegistry:
     def test_build_intent_prompt_german(self, mock_settings):
         """Test building intent prompt in German."""
         mock_settings.rag_enabled = True
-        mock_settings.plugins_enabled = False
+
         mock_settings.mcp_enabled = False
 
         registry = IntentRegistry()
@@ -206,7 +206,7 @@ class TestIntentRegistry:
     def test_build_intent_prompt_english(self, mock_settings):
         """Test building intent prompt in English."""
         mock_settings.rag_enabled = True
-        mock_settings.plugins_enabled = False
+
         mock_settings.mcp_enabled = False
 
         registry = IntentRegistry()
@@ -218,7 +218,7 @@ class TestIntentRegistry:
     def test_build_intent_prompt_with_mcp(self, mock_settings):
         """Test MCP tools appear in prompt when enabled."""
         mock_settings.rag_enabled = False
-        mock_settings.plugins_enabled = False
+
         mock_settings.mcp_enabled = True
 
         registry = IntentRegistry()
@@ -236,7 +236,7 @@ class TestIntentRegistry:
     def test_build_intent_prompt_excludes_disabled(self, mock_settings):
         """Test that disabled integrations are excluded from prompt."""
         mock_settings.rag_enabled = False  # Knowledge disabled
-        mock_settings.plugins_enabled = False
+
         mock_settings.mcp_enabled = False
 
         registry = IntentRegistry()
@@ -383,15 +383,6 @@ class TestIntentRegistry:
         enabled_names = [i["name"] for i in status["enabled_integrations"]]
         assert "knowledge" in enabled_names
         assert "general" in enabled_names
-
-    def test_set_plugin_registry(self):
-        """Test setting plugin registry."""
-        registry = IntentRegistry()
-        mock_plugin_registry = MagicMock()
-
-        registry.set_plugin_registry(mock_plugin_registry)
-
-        assert registry._plugin_registry == mock_plugin_registry
 
     def test_set_mcp_tools(self):
         """Test setting MCP tools."""

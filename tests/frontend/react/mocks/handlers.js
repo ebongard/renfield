@@ -187,55 +187,12 @@ const mockMcpTools = [
   }
 ];
 
-// Default mock data
-const mockPlugins = [
-  {
-    name: 'weather',
-    version: '1.0.0',
-    description: 'Weather information plugin',
-    author: 'Renfield',
-    enabled: true,
-    enabled_var: 'WEATHER_ENABLED',
-    has_config: true,
-    config_vars: ['WEATHER_API_KEY'],
-    intents: [
-      {
-        name: 'weather.get_current',
-        description: 'Get current weather',
-        parameters: [
-          { name: 'location', type: 'string', required: true, description: 'Location name' }
-        ]
-      }
-    ],
-    rate_limit: 60
-  },
-  {
-    name: 'calendar',
-    version: '1.0.0',
-    description: 'Calendar integration plugin',
-    author: 'Renfield',
-    enabled: false,
-    enabled_var: 'CALENDAR_ENABLED',
-    has_config: true,
-    config_vars: ['CALENDAR_URL', 'CALENDAR_API_KEY'],
-    intents: [
-      {
-        name: 'calendar.get_events',
-        description: 'Get calendar events',
-        parameters: []
-      }
-    ],
-    rate_limit: null
-  }
-];
-
 const mockRoles = [
   {
     id: 1,
     name: 'Admin',
     description: 'Full access to all resources',
-    permissions: ['admin', 'plugins.manage', 'kb.all', 'ha.full'],
-    allowed_plugins: [],
+    permissions: ['admin', 'kb.all', 'ha.full'],
     is_system: true,
     user_count: 1,
     created_at: '2024-01-01T00:00:00Z',
@@ -245,8 +202,7 @@ const mockRoles = [
     id: 2,
     name: 'User',
     description: 'Standard user access',
-    permissions: ['plugins.use', 'kb.own', 'ha.control'],
-    allowed_plugins: ['weather'],
+    permissions: ['kb.own', 'ha.control'],
     is_system: false,
     user_count: 5,
     created_at: '2024-01-01T00:00:00Z',
@@ -255,9 +211,6 @@ const mockRoles = [
 ];
 
 const mockPermissions = [
-  { value: 'plugins.none', name: 'PLUGINS_NONE', description: 'No plugin access' },
-  { value: 'plugins.use', name: 'PLUGINS_USE', description: 'Use plugins' },
-  { value: 'plugins.manage', name: 'PLUGINS_MANAGE', description: 'Manage plugins' },
   { value: 'admin', name: 'ADMIN', description: 'Admin access' },
   { value: 'kb.all', name: 'KB_ALL', description: 'All knowledge bases' },
   { value: 'ha.full', name: 'HA_FULL', description: 'Full Home Assistant access' }
@@ -280,37 +233,6 @@ export const handlers = [
     return HttpResponse.json({
       message: 'MCP connections refreshed successfully',
       servers_reconnected: 1
-    });
-  }),
-
-  // Plugins API
-  http.get(`${BASE_URL}/api/plugins`, () => {
-    return HttpResponse.json({
-      plugins: mockPlugins,
-      total: mockPlugins.length,
-      plugins_enabled: true
-    });
-  }),
-
-  http.get(`${BASE_URL}/api/plugins/:name`, ({ params }) => {
-    const plugin = mockPlugins.find(p => p.name === params.name);
-    if (!plugin) {
-      return new HttpResponse(null, { status: 404 });
-    }
-    return HttpResponse.json(plugin);
-  }),
-
-  http.post(`${BASE_URL}/api/plugins/:name/toggle`, async ({ params, request }) => {
-    const body = await request.json();
-    const plugin = mockPlugins.find(p => p.name === params.name);
-    if (!plugin) {
-      return new HttpResponse(null, { status: 404 });
-    }
-    return HttpResponse.json({
-      name: params.name,
-      enabled: body.enabled,
-      message: `Plugin ${params.name} ${body.enabled ? 'enabled' : 'disabled'}. Restart required.`,
-      requires_restart: true
     });
   }),
 
@@ -378,7 +300,7 @@ export const handlers = [
       email: 'admin@example.com',
       role: 'Admin',
       role_id: 1,
-      permissions: ['admin', 'plugins.manage', 'kb.all', 'ha.full'],
+      permissions: ['admin', 'kb.all', 'ha.full'],
       is_active: true
     });
   }),
@@ -514,4 +436,4 @@ export const handlers = [
 ];
 
 // Export BASE_URL for use in tests that need to override handlers
-export { BASE_URL, mockPlugins, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth, mockConversations, mockConversationHistory, mockMcpStatus, mockMcpTools };
+export { BASE_URL, mockRoles, mockPermissions, mockUsers, mockSpeakers, mockHealth, mockConversations, mockConversationHistory, mockMcpStatus, mockMcpTools };

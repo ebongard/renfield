@@ -73,7 +73,6 @@ class TestIntentStatus:
         assert "enabled_integrations" in data
         assert "disabled_integrations" in data
         assert "integrations" in data
-        assert "plugins" in data
         assert "mcp_tools" in data
 
     @pytest.mark.unit
@@ -202,12 +201,11 @@ class TestIntegrationsSummary:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_summary_structure(self, intents_client):
-        """Should have enabled, disabled, plugins_enabled, mcp_enabled."""
+        """Should have enabled, disabled, mcp_enabled."""
         resp = await intents_client.get("/api/intents/integrations/summary")
         data = resp.json()
         assert "enabled" in data
         assert "disabled" in data
-        assert "plugins_enabled" in data
         assert "mcp_enabled" in data
         assert isinstance(data["enabled"], list)
         assert isinstance(data["disabled"], list)

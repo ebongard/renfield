@@ -617,25 +617,6 @@ Siehe [LLM_MODEL_GUIDE.md](LLM_MODEL_GUIDE.md) für Modell-Empfehlungen und Benc
 
 Alle Services nutzen eine zentrale Factory (`utils/llm_client.py`) mit URL-basiertem Caching (gleiche URL → gleiche Client-Instanz) und einem `LLMClient` Protocol.
 
-## Plugin System (Legacy)
-
-YAML-basierte REST-API-Integrationen für einfache Dienste ohne eigenen MCP-Server.
-
-```yaml
-name: mein_plugin
-version: 1.0.0
-enabled_var: MEIN_PLUGIN_ENABLED
-config:
-  url: MEIN_PLUGIN_API_URL
-intents:
-  - name: mein_plugin.aktion
-    api:
-      method: GET
-      url: "{config.url}/endpoint"
-```
-
-> **Hinweis:** MCP-Server sind der bevorzugte Integrationsweg. YAML-Plugins nutzen `*_PLUGIN_ENABLED` Variablen, um Konflikte mit MCP-Server `*_ENABLED` zu vermeiden.
-
 ## Hook System (Extension API)
 
 Async Hook-System für die Open-Core-Architektur. Externe Pakete registrieren Callbacks an 6 Lifecycle-Stellen — renfield crasht nie wegen eines Plugin-Fehlers.
