@@ -539,8 +539,25 @@ async def websocket_endpoint(
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to load conversation history: {e}")
 
-            # Retrieve memory context (long-term user knowledge)
+            # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+            user_permissions = None
+            if user_id is not None:
+                try:
+                    from sqlalchemy import select
+
+                    from models.database import User
+                    async with AsyncSessionLocal() as db_session:
+                        result = await db_session.execute(
+                            select(User).where(User.id == int(user_id))
+                        )
+                        user_obj = result.scalar_one_or_none()
+                        if user_obj:
+                            user_permissions = user_obj.get_permissions()
+                except Exception as e:
+                    logger.warning(f"⚠️ Failed to load user permissions: {e}")
+
+            # Retrieve memory context (long-term user knowledge)
             memory_context = await _retrieve_memory_context(
                 content, user_id=user_id, lang=ollama.default_lang
             )
@@ -624,6 +641,7 @@ async def websocket_endpoint(
                         room_context=room_context,
                         memory_context=memory_context,
                         document_context=document_context,
+                        user_permissions=user_permissions,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -672,7 +690,9 @@ async def websocket_endpoint(
                         break
 
                     executor = ActionExecutor(mcp_manager=mcp_mgr)
-                    candidate_result = await executor.execute(intent_candidate)
+                    candidate_result = await executor.execute(
+                        intent_candidate, user_permissions=user_permissions
+                    )
 
                     if candidate_result.get("success") and not candidate_result.get("empty_result"):
                         intent = intent_candidate

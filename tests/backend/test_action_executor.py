@@ -32,7 +32,8 @@ class TestActionExecutorRouting:
         assert result["success"] is True
         action_executor.mcp_manager.execute_tool.assert_called_once_with(
             "mcp.homeassistant.turn_on",
-            {"entity_id": "light.wohnzimmer"}
+            {"entity_id": "light.wohnzimmer"},
+            user_permissions=None,
         )
 
     @pytest.mark.unit
@@ -49,7 +50,8 @@ class TestActionExecutorRouting:
         assert result["success"] is True
         action_executor.mcp_manager.execute_tool.assert_called_once_with(
             "mcp.n8n.n8n_list_workflows",
-            {}
+            {},
+            user_permissions=None,
         )
 
     @pytest.mark.unit
@@ -66,7 +68,8 @@ class TestActionExecutorRouting:
         assert result["success"] is True
         action_executor.mcp_manager.execute_tool.assert_called_once_with(
             "mcp.weather.get_current_weather",
-            {"location": "Berlin"}
+            {"location": "Berlin"},
+            user_permissions=None,
         )
 
     @pytest.mark.unit

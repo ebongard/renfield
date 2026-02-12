@@ -212,6 +212,9 @@ async def _process_text_input(
             from services.action_executor import ActionExecutor
             mcp_mgr = getattr(app.state, 'mcp_manager', None)
             executor = ActionExecutor(mcp_manager=mcp_mgr)
+            # Note: device handler currently has no user context for permissions.
+            # When auth is enabled, the device WebSocket token could carry user_id
+            # for permission loading. For now, pass None (allow all).
             action_result = await executor.execute(intent)
             logger.info(f"⚡ Action result: {action_result.get('success')}")
             await device_manager.send_action_result(session_id, intent, action_result.get("success", False))

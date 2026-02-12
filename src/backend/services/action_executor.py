@@ -15,7 +15,11 @@ class ActionExecutor:
         # MCP system (handles HA, n8n, camera, weather, search, news, etc.)
         self.mcp_manager = mcp_manager
 
-    async def execute(self, intent_data: dict) -> dict:
+    async def execute(
+        self,
+        intent_data: dict,
+        user_permissions: list[str] | None = None,
+    ) -> dict:
         """
         Führt einen Intent aus
 
@@ -25,6 +29,8 @@ class ActionExecutor:
                 "parameters": {...},
                 "confidence": 0.9
             }
+            user_permissions: User's permission strings for MCP access control.
+                None means no auth / allow all (backwards-compatible).
 
         Returns:
             {
@@ -59,7 +65,9 @@ class ActionExecutor:
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
-            return await self.mcp_manager.execute_tool(intent, parameters)
+            return await self.mcp_manager.execute_tool(
+                intent, parameters, user_permissions=user_permissions
+            )
 
         # Unknown intent
         return {

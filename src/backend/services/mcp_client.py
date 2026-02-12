@@ -562,6 +562,11 @@ class MCPTransportType(str, Enum):
     STDIO = "stdio"
 
 
+class MCPPermissionError(Exception):
+    """Raised when user lacks permission for an MCP tool."""
+    pass
+
+
 @dataclass
 class MCPServerConfig:
     """Configuration for a single MCP server."""
@@ -579,6 +584,8 @@ class MCPServerConfig:
     example_intent: str | None = None  # Override intent name used in prompt examples
     prompt_tools: list[str] | None = None  # Tool names to register from server (None = all)
     tool_hints: dict[str, str] = field(default_factory=dict)  # {tool_name: "hint to append to description"}
+    permissions: list[str] = field(default_factory=list)  # e.g. ["mcp.calendar.read", "mcp.calendar.manage"]
+    tool_permissions: dict[str, str] = field(default_factory=dict)  # e.g. {"list_events": "mcp.calendar.read"}
 
 
 @dataclass
@@ -719,6 +726,8 @@ class MCPManager:
                     example_intent=entry.get("example_intent"),
                     prompt_tools=entry.get("prompt_tools"),
                     tool_hints=entry.get("tool_hints", {}),
+                    permissions=entry.get("permissions", []),
+                    tool_permissions=entry.get("tool_permissions", {}),
                 )
 
                 if not config.enabled:
@@ -914,14 +923,80 @@ class MCPManager:
                     pass
                 state.exit_stack = None
 
-    async def execute_tool(self, namespaced_name: str, arguments: dict) -> dict:
+    def _check_tool_permission(
+        self,
+        tool_info: MCPToolInfo,
+        user_permissions: list[str] | None,
+    ) -> str | None:
+        """
+        Check if user has permission to call this MCP tool.
+
+        Returns None if allowed, or an error message string if denied.
+
+        Permission resolution order:
+        1. user_permissions is None → allow (AUTH_ENABLED=false, backwards-compatible)
+        2. "mcp.*" in user_permissions → allow (admin wildcard)
+        3. tool_permissions has mapping for this tool → check specific permission
+        4. permissions defined (server-level) → check if user has at least one
+        5. Nothing defined → convention: check "mcp.<server_name>" in user_permissions
+        6. No match → denied
+        """
+        if user_permissions is None:
+            return None
+
+        server_name = tool_info.server_name
+        tool_name = tool_info.original_name
+
+        # Import here to avoid circular dependency
+        from models.permissions import has_mcp_permission
+
+        # Admin wildcard
+        if has_mcp_permission(user_permissions, "mcp.*"):
+            return None
+
+        state = self._servers.get(server_name)
+        config = state.config if state else None
+
+        # Tool-level permission mapping
+        if config and config.tool_permissions and tool_name in config.tool_permissions:
+            required = config.tool_permissions[tool_name]
+            if has_mcp_permission(user_permissions, required):
+                return None
+            return f"Permission denied: {required} required for {tool_info.namespaced_name}"
+
+        # Server-level permissions
+        if config and config.permissions:
+            for perm in config.permissions:
+                if has_mcp_permission(user_permissions, perm):
+                    return None
+            return f"Permission denied: one of {config.permissions} required for {tool_info.namespaced_name}"
+
+        # Convention: mcp.<server_name>
+        convention_perm = f"mcp.{server_name}"
+        if has_mcp_permission(user_permissions, convention_perm):
+            return None
+
+        return f"Permission denied: mcp.{server_name} required for {tool_info.namespaced_name}"
+
+    async def execute_tool(
+        self,
+        namespaced_name: str,
+        arguments: dict,
+        user_permissions: list[str] | None = None,
+    ) -> dict:
         """
         Execute an MCP tool by its namespaced name.
 
         Includes:
+        - Permission checking (if user_permissions provided)
         - Input validation against JSON schema
         - Rate limiting per server
         - Response truncation for large outputs
+
+        Args:
+            namespaced_name: Tool name in "mcp.<server>.<tool>" format
+            arguments: Tool arguments
+            user_permissions: User's permission strings (None = no auth / allow all)
 
         Returns:
             {"success": bool, "message": str, "data": Any}
@@ -957,6 +1032,16 @@ class MCPManager:
             return {
                 "success": False,
                 "message": f"Unknown MCP tool: {namespaced_name}",
+                "data": None,
+            }
+
+        # === Permission Check ===
+        perm_error = self._check_tool_permission(tool_info, user_permissions)
+        if perm_error:
+            logger.warning(f"🔒 MCP permission denied: {namespaced_name} — {perm_error}")
+            return {
+                "success": False,
+                "message": perm_error,
                 "data": None,
             }
 

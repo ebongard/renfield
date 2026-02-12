@@ -782,6 +782,7 @@ class TestMCPIntentRouting:
         mock_manager.execute_tool.assert_called_once_with(
             "mcp.n8n.send_email",
             {"to": "user@example.com", "subject": "Test"},
+            user_permissions=None,
         )
 
     @pytest.mark.unit
