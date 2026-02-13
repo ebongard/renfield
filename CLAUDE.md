@@ -324,11 +324,13 @@ servers:
 **User-ID Propagation:** `user_id` flows through the entire execution chain for per-user filtering:
 - `chat_handler.py` → extracts `user_id` from JWT auth
 - `satellite_handler.py` → extracts `user_id` from Speaker→User FK lookup
-- `ActionExecutor.execute(intent_data, user_permissions=..., user_id=...)` → injects `_user_id` into MCP tool parameters
+- `ActionExecutor.execute(intent_data, user_permissions=..., user_id=...)` → injects `user_id` into MCP tool parameters
 - `AgentService.run(..., user_id=...)` → passes through to executor
 - `MCPManager.execute_tool(..., user_id=...)` → debug logging with user context
 
-MCP servers receive `_user_id` in their tool parameters and can use it for per-user filtering (e.g. calendar visibility). When `user_id` is `None` (no auth / unauthenticated), `_user_id` is not injected.
+MCP servers receive `user_id` in their tool parameters and can use it for per-user filtering (e.g. calendar visibility). When `user_id` is `None` (no auth / unauthenticated), `user_id` is not injected.
+
+**Calendar Visibility:** Per-user calendar filtering via `visibility`/`owner_id` fields in `config/calendar_accounts.yaml`. `visibility: shared` (default) = all users see it. `visibility: owner` + `owner_id: N` = only user N sees it. `user_id=None` (no auth / notification poller) = all calendars visible. Filtering happens in the calendar MCP server, not in Renfield backend. See `docs/ACCESS_CONTROL.md`.
 
 **Key files:** `models/permissions.py`, `services/auth_service.py`, `api/routes/auth.py`, `api/routes/roles.py`, `services/mcp_client.py`
 
