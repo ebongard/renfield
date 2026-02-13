@@ -29,6 +29,7 @@ from api.routes import (
     memory,
     notifications,
     preferences,
+    presence,
     roles,
     rooms,
     satellites,
@@ -148,6 +149,7 @@ app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
+app.include_router(presence.router, tags=["Presence"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

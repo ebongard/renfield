@@ -950,6 +950,25 @@ class MemoryHistory(Base):
     memory = relationship("ConversationMemory", foreign_keys=[memory_id])
 
 
+# ==========================================================================
+# BLE Presence Detection
+# ==========================================================================
+
+class UserBleDevice(Base):
+    """Registered BLE device for room-level presence detection."""
+    __tablename__ = "user_ble_devices"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    mac_address = Column(String(17), unique=True, nullable=False, index=True)  # "AA:BB:CC:DD:EE:FF"
+    device_name = Column(String(100), nullable=False)   # "Emma's iPhone"
+    device_type = Column(String(50), default="phone")   # phone, watch, tracker
+    is_enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    user = relationship("User", backref="ble_devices")
+
+
 # System Setting Keys
 SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"
