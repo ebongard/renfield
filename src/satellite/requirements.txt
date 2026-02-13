@@ -45,3 +45,6 @@ zeroconf>=0.100.0
 
 # System metrics (for monitoring)
 psutil>=5.9.0
+
+# BLE scanning (for presence detection, optional)
+bleak>=0.22.0
