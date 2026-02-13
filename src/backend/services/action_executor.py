@@ -19,6 +19,7 @@ class ActionExecutor:
         self,
         intent_data: dict,
         user_permissions: list[str] | None = None,
+        user_id: int | None = None,
     ) -> dict:
         """
         Führt einen Intent aus
@@ -31,6 +32,8 @@ class ActionExecutor:
             }
             user_permissions: User's permission strings for MCP access control.
                 None means no auth / allow all (backwards-compatible).
+            user_id: Authenticated user ID. Passed to MCP tools as _user_id
+                for per-user filtering (e.g. calendar visibility).
 
         Returns:
             {
@@ -65,8 +68,11 @@ class ActionExecutor:
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
+            if user_id is not None:
+                parameters["_user_id"] = user_id
             return await self.mcp_manager.execute_tool(
-                intent, parameters, user_permissions=user_permissions
+                intent, parameters, user_permissions=user_permissions,
+                user_id=user_id,
             )
 
         # Unknown intent

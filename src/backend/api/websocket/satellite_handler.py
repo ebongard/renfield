@@ -406,6 +406,7 @@ async def satellite_websocket(
 
                     # Load user permissions from speaker recognition
                     sat_user_permissions = None
+                    sat_user_id = None
                     if speaker_name and settings.auth_enabled:
                         try:
                             from sqlalchemy import select
@@ -424,6 +425,7 @@ async def satellite_websocket(
                                     usr = usr_result.scalar_one_or_none()
                                     if usr:
                                         sat_user_permissions = usr.get_permissions()
+                                        sat_user_id = usr.id
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
 
@@ -437,7 +439,8 @@ async def satellite_websocket(
 
                         executor = ActionExecutor(mcp_manager=mcp_mgr)
                         candidate_result = await executor.execute(
-                            intent_candidate, user_permissions=sat_user_permissions
+                            intent_candidate, user_permissions=sat_user_permissions,
+                            user_id=sat_user_id,
                         )
 
                         if candidate_result.get("success") and not candidate_result.get("empty_result"):
