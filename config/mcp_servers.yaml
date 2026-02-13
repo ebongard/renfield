@@ -253,6 +253,17 @@ servers:
       - list_calendars
       - list_events
       - create_event
+    permissions:
+      - mcp.calendar.read
+      - mcp.calendar.manage
+    tool_permissions:
+      list_calendars: mcp.calendar.read
+      list_events: mcp.calendar.read
+      get_event: mcp.calendar.read
+      get_pending_notifications: mcp.calendar.read
+      create_event: mcp.calendar.manage
+      update_event: mcp.calendar.manage
+      delete_event: mcp.calendar.manage
     notifications:
       enabled: "${NOTIFICATION_POLLER_ENABLED:-false}"
       poll_interval: 900           # 15 minutes

@@ -617,9 +617,80 @@ Bei Satellites wird die Permission des erkannten Sprechers verwendet:
 3. Sprecher wird identifiziert (SpeechBrain)
 4. Verknüpfter User wird geladen → `user.get_permissions()` + `user.id`
 5. Permission-Check bei MCP-Tool-Ausführung
-6. `user_id` wird als `_user_id` in MCP-Tool-Parameter injiziert (für per-User-Filterung)
+6. `user_id` wird als `user_id` in MCP-Tool-Parameter injiziert (für per-User-Filterung)
 
 Wenn kein Sprecher erkannt wird oder kein User verknüpft ist, wird `user_permissions=None` und `user_id=None` verwendet (alle Tools erlaubt, kein User-Filter).
+
+---
+
+## Kalender-Sichtbarkeit (Calendar Visibility)
+
+### Übersicht
+
+Das Calendar MCP Server (`renfield-mcp-calendar`) unterstützt per-User-Sichtbarkeit von Kalendern. Dies ermöglicht es, bestimmte Kalender (z.B. Firmenkalender) nur für bestimmte Benutzer sichtbar zu machen.
+
+### Konfiguration
+
+In `config/calendar_accounts.yaml`:
+
+| Feld | Werte | Default | Beschreibung |
+|------|-------|---------|--------------|
+| `visibility` | `shared`, `owner` | `shared` | Wer sieht den Kalender? |
+| `owner_id` | `int` | `null` | User-ID des Besitzers (pflicht bei `visibility: owner`) |
+
+```yaml
+calendars:
+  - name: work
+    label: "Firmenkalender"
+    type: ews
+    visibility: owner     # Nur der Owner sieht diesen Kalender
+    owner_id: 1           # Admin (User-ID 1)
+    # ...
+
+  - name: family
+    label: "Familienkalender"
+    type: google
+    visibility: shared    # Alle authentifizierten User sehen diesen Kalender
+    # ...
+```
+
+### Sichtbarkeits-Regeln
+
+| Bedingung | Ergebnis |
+|-----------|----------|
+| `user_id = None` (kein Auth / Poller) | **Alle** Kalender sichtbar |
+| `visibility: shared` | Sichtbar für **jeden** authentifizierten User |
+| `visibility: owner` + `owner_id` match | Sichtbar nur für den Owner |
+| `visibility: owner` + kein match | **Nicht sichtbar** (Access denied) |
+
+### MCP Tool-Permissions
+
+Zusätzlich zur Sichtbarkeit schützen MCP-Permissions den Zugriff auf Kalender-Tools:
+
+```yaml
+# mcp_servers.yaml
+- name: calendar
+  permissions:
+    - mcp.calendar.read
+    - mcp.calendar.manage
+  tool_permissions:
+    list_calendars: mcp.calendar.read
+    list_events: mcp.calendar.read
+    get_event: mcp.calendar.read
+    get_pending_notifications: mcp.calendar.read
+    create_event: mcp.calendar.manage
+    update_event: mcp.calendar.manage
+    delete_event: mcp.calendar.manage
+```
+
+Admin und Familie haben `mcp.*` → voller Zugriff. Gast hat kein MCP → automatisch blockiert.
+
+### Zusammenspiel
+
+1. **MCP Permission** (Renfield Backend) → Darf der User *überhaupt* Kalender-Tools nutzen?
+2. **Calendar Visibility** (Calendar MCP Server) → *Welche* Kalender sieht der User?
+
+Beide Prüfungen sind unabhängig voneinander. Die Permission-Prüfung erfolgt im Renfield Backend, die Sichtbarkeitsprüfung im Calendar MCP Server basierend auf dem injizierten `user_id`.
 
 ---
 
