@@ -99,11 +99,13 @@ services:
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro  # Email MCP account config
+      - ./config/calendar_accounts.yaml:/config/calendar_accounts.yaml:ro  # Calendar MCP account config
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
+      - calendar_tokens:/data/calendar  # Google Calendar token persistence
     depends_on:
       postgres:
         condition: service_healthy
@@ -158,11 +160,13 @@ services:
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro  # Email MCP account config
+      - ./config/calendar_accounts.yaml:/config/calendar_accounts.yaml:ro  # Calendar MCP account config
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
       - whisper_models:/root/.cache/whisper
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
+      - calendar_tokens:/data/calendar  # Google Calendar token persistence
     depends_on:
       postgres:
         condition: service_healthy
@@ -255,6 +259,7 @@ volumes:
   piper_models:
   huggingface_cache:
   rag_uploads:        # RAG document uploads
+  calendar_tokens:    # Google Calendar OAuth2 token persistence
 
 secrets:
   postgres_password:
