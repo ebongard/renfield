@@ -11,9 +11,12 @@
 calendars:
   # --- Exchange 2019 (Firmenkalender) ---
   # Direct EWS endpoint (no Autodiscover, no Microsoft 365)
+  # visibility: owner — only the owner (user_id 1) sees this calendar
   - name: work
     label: "Firmenkalender"
     type: ews
+    visibility: owner
+    owner_id: 1
     ews_url: "https://exchange2019.ionos.eu/EWS/Exchange.asmx"
     username_env: CALENDAR_WORK_USERNAME
     password_env: CALENDAR_WORK_PASSWORD
@@ -21,9 +24,11 @@ calendars:
   # --- Google Calendar (Familienkalender) ---
   # OAuth2 Desktop Flow — initial auth required once:
   #   docker exec -it renfield-backend python -m renfield_mcp_calendar --auth google
+  # visibility: shared (default) — all users see this calendar
   - name: family
     label: "Familienkalender"
     type: google
+    visibility: shared
     calendar_id: "primary"
     credentials_file: "/config/google_calendar_credentials.json"
     token_file: "/data/calendar/google_calendar_token.json"

@@ -303,16 +303,16 @@ class TestActionExecutorUserIdPropagation:
 
         await action_executor.execute(intent_data, user_id=42)
 
-        # Verify _user_id was injected into the parameters
+        # Verify user_id was injected into the parameters
         call_args = action_executor.mcp_manager.execute_tool.call_args
         params = call_args.args[1]  # second positional arg = arguments
-        assert params["_user_id"] == 42
+        assert params["user_id"] == 42
         assert params["calendar"] == "work"
         assert call_args.kwargs["user_id"] == 42
 
     @pytest.mark.unit
     async def test_no_user_id_means_no_injection(self, action_executor):
-        """Without user_id, _user_id is NOT added to parameters."""
+        """Without user_id, user_id is NOT added to parameters."""
         action_executor.mcp_manager.execute_tool.return_value = {
             "success": True,
             "message": "OK",
@@ -329,7 +329,7 @@ class TestActionExecutorUserIdPropagation:
 
         call_args = action_executor.mcp_manager.execute_tool.call_args
         params = call_args.args[1]
-        assert "_user_id" not in params
+        assert "user_id" not in params
 
     @pytest.mark.unit
     async def test_user_id_none_means_no_injection(self, action_executor):
@@ -350,7 +350,7 @@ class TestActionExecutorUserIdPropagation:
 
         call_args = action_executor.mcp_manager.execute_tool.call_args
         params = call_args.args[1]
-        assert "_user_id" not in params
+        assert "user_id" not in params
 
     @pytest.mark.unit
     async def test_user_id_not_injected_for_non_mcp(self):
