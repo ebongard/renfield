@@ -29,6 +29,7 @@ from .network.discovery import ServiceDiscovery
 from .network.auth import fetch_ws_token, http_url_from_ws
 from .network.model_downloader import get_model_downloader, ModelDownloader
 from .wakeword.detector import MICRO_BUILTIN_MODELS
+from .ble.scanner import BLEScanner, BLEAK_AVAILABLE
 from .update import UpdateManager, UpdateStage
 
 
@@ -174,6 +175,20 @@ class Satellite:
         # OTA Update manager
         self.update_manager = UpdateManager()
 
+        # BLE Scanner (optional, for presence detection)
+        self.ble_scanner: Optional[BLEScanner] = None
+        self._ble_known_macs: set = set()
+        if self.config.ble.enabled and BLEAK_AVAILABLE:
+            self.ble_scanner = BLEScanner(
+                scan_duration=self.config.ble.scan_duration,
+                rssi_threshold=self.config.ble.rssi_threshold,
+            )
+            # Pre-populate from config (backend will push updates)
+            self._ble_known_macs = {mac.upper() for mac in self.config.ble.known_devices}
+            print(f"BLE scanning enabled (interval={self.config.ble.scan_interval}s)")
+        elif self.config.ble.enabled and not BLEAK_AVAILABLE:
+            print("Warning: BLE enabled in config but bleak not installed. BLE scanning disabled.")
+
         # Wire up callbacks
         self._setup_callbacks()
 
@@ -190,6 +205,9 @@ class Satellite:
         self.ws_client.on_config_update(self._on_config_update)
         self.ws_client.on_update_request(self._on_update_request)
         self.ws_client.set_metrics_callback(self._get_metrics)
+
+        # BLE known devices callback
+        self.ws_client.on_ble_known_devices(self._on_ble_known_devices)
 
         # Update manager progress callback
         self.update_manager.on_progress(self._on_update_progress)
@@ -668,6 +686,10 @@ class Satellite:
         # Apply config and send acknowledgment asynchronously
         self._schedule_async(self._apply_config_and_ack(config))
 
+        # Start BLE scan loop if enabled
+        if self.ble_scanner and self.ble_scanner.available:
+            self._schedule_async(self._start_ble_scan_loop())
+
         self._set_state(SatelliteState.IDLE)
 
     def _on_disconnected(self):
@@ -840,6 +862,40 @@ class Satellite:
             print(f"✅ Wake word configuration applied successfully: {active_keywords}")
         else:
             print(f"⚠️ Wake word configuration partially applied: active={active_keywords}, failed={failed_keywords}")
+
+    def _on_ble_known_devices(self, devices: list):
+        """Handle BLE known devices list pushed from server"""
+        self._ble_known_macs = {mac.upper() for mac in devices}
+        print(f"BLE known devices updated: {len(self._ble_known_macs)} MACs")
+
+    async def _start_ble_scan_loop(self):
+        """Start the BLE scanning background loop"""
+        # Avoid duplicate loops
+        if hasattr(self, '_ble_task') and self._ble_task and not self._ble_task.done():
+            return
+        self._ble_task = asyncio.create_task(self._ble_scan_loop())
+
+    async def _ble_scan_loop(self):
+        """Background loop that periodically scans for BLE devices"""
+        print("BLE scan loop started")
+        try:
+            while self._running:
+                await asyncio.sleep(self.config.ble.scan_interval)
+                if not self._running or not self.ws_client.is_connected:
+                    continue
+                if not self._ble_known_macs:
+                    continue
+
+                try:
+                    devices = await self.ble_scanner.scan(self._ble_known_macs)
+                    if devices:
+                        await self.ws_client.send_ble_presence(devices)
+                        print(f"BLE scan: {len(devices)} known devices detected")
+                except Exception as e:
+                    print(f"BLE scan error: {e}")
+        except asyncio.CancelledError:
+            pass
+        print("BLE scan loop stopped")
 
     def _on_update_request(self, target_version: str, package_url: str, checksum: str, size_bytes: int):
         """

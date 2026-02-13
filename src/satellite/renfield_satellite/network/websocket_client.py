@@ -112,6 +112,7 @@ class WebSocketClient:
         self._on_error: Optional[Callable[[str], None]] = None
         self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
         self._on_update_request: Optional[Callable[[str, str, str, int], None]] = None  # version, url, checksum, size
+        self._on_ble_known_devices: Optional[Callable[[List[str]], None]] = None
 
         # Tasks
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -194,6 +195,10 @@ class WebSocketClient:
     def on_update_request(self, callback: Callable[[str, str, str, int], None]):
         """Register callback for OTA update requests (version, url, checksum, size)"""
         self._on_update_request = callback
+
+    def on_ble_known_devices(self, callback: Callable[[List[str]], None]):
+        """Register callback for BLE known devices list from server"""
+        self._on_ble_known_devices = callback
 
     def set_metrics_callback(self, callback: Callable[[], Dict[str, Any]]):
         """Register callback to get current metrics for heartbeat"""
@@ -508,6 +513,13 @@ class WebSocketClient:
             if self._on_update_request:
                 self._on_update_request(target_version, package_url, checksum, size_bytes)
 
+        elif msg_type == "ble_known_devices":
+            # Server pushed list of known BLE MAC addresses
+            devices = data.get("devices", [])
+            print(f"BLE known devices received: {len(devices)} MACs")
+            if self._on_ble_known_devices:
+                self._on_ble_known_devices(devices)
+
     async def _heartbeat_loop(self):
         """Background task sending periodic heartbeats with metrics"""
         while self._running and self._ws:
@@ -723,4 +735,21 @@ class WebSocketClient:
             "stage": stage,
             "error": error,
             "rolled_back": rolled_back
+        })
+
+    async def send_ble_presence(self, devices: List[Dict[str, Any]]):
+        """
+        Send BLE presence scan results to server.
+
+        Args:
+            devices: List of detected devices [{mac, rssi}]
+        """
+        if not self.is_connected:
+            return
+
+        await self._send({
+            "type": "ble_presence",
+            "satellite_id": self.satellite_id,
+            "devices": devices,
+            "timestamp": int(time.time() * 1000)
         })

@@ -314,6 +314,35 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 
 ---
 
+### Presence Detection (BLE)
+
+```bash
+# BLE-basierte Raum-Präsenzerkennung
+# Satelliten scannen nach bekannten BLE-Geräten (Telefone, Uhren) und melden RSSI-Werte
+PRESENCE_ENABLED=false
+PRESENCE_STALE_TIMEOUT=120               # Sekunden bis Benutzer als abwesend markiert
+PRESENCE_HYSTERESIS_SCANS=2              # Aufeinanderfolgende Scans vor Raumwechsel
+```
+
+**Satellite-Konfiguration** (in `satellite.yaml`):
+```yaml
+ble:
+  enabled: true
+  scan_interval: 30        # Sekunden zwischen Scans
+  scan_duration: 5         # Sekunden pro Scan
+  rssi_threshold: -80      # Schwächere Signale ignorieren
+```
+
+**Endpunkte:**
+- `GET /api/presence/rooms` — Alle Räume mit Anwesenden
+- `GET /api/presence/room/{id}` — Anwesende in einem Raum
+- `GET /api/presence/user/{id}` — Standort + allein?
+- `GET /api/presence/devices` — Registrierte BLE-Geräte (Admin)
+- `POST /api/presence/devices` — BLE-Gerät registrieren (Admin)
+- `DELETE /api/presence/devices/{id}` — BLE-Gerät entfernen (Admin)
+
+---
+
 ### RAG (Wissensspeicher)
 
 ```bash

@@ -221,6 +221,21 @@ async def satellite_websocket(
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
+                # Push known BLE MACs to satellite for presence scanning
+                if settings.presence_enabled:
+                    try:
+                        from services.presence_service import get_presence_service
+                        presence_svc = get_presence_service()
+                        known_macs = presence_svc.get_known_macs()
+                        if known_macs:
+                            await websocket.send_json({
+                                "type": "ble_known_devices",
+                                "devices": list(known_macs),
+                            })
+                            logger.debug(f"Pushed {len(known_macs)} BLE MACs to {satellite_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to push BLE MACs: {e}")
+
             # Handle config acknowledgment from satellite
             elif msg_type == "config_ack":
                 ack_success = data.get("success", False)
@@ -536,6 +551,22 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     satellite_manager.update_heartbeat(satellite_id, metrics, version)
                     # Send heartbeat ack
                     await websocket.send_json({"type": "heartbeat_ack"})
+
+            # Handle BLE presence scan results
+            elif msg_type == "ble_presence":
+                if satellite_id and settings.presence_enabled:
+                    ble_devices = data.get("devices", [])
+                    satellite = satellite_manager.get_satellite(satellite_id)
+                    ble_room_id = satellite.room_id if satellite else None
+
+                    from services.presence_service import get_presence_service
+                    presence_svc = get_presence_service()
+                    presence_svc.process_ble_report(
+                        satellite_id=satellite_id,
+                        room_id=ble_room_id,
+                        devices=ble_devices,
+                        room_name=satellite.room if satellite else None,
+                    )
 
             # Handle OTA update progress
             elif msg_type == "update_progress":

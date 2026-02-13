@@ -75,6 +75,13 @@ satellite_python_packages:
   - noisereduce
   - aiohttp
   - requests
+  - bleak
+
+# BLE Presence Detection
+ble_enabled: false
+ble_scan_interval: 30
+ble_scan_duration: 5
+ble_rssi_threshold: -80
 
 # openwakeword installed separately with --no-deps for Python 3.13+ compat
 openwakeword_package: "openwakeword"

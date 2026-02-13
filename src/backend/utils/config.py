@@ -287,6 +287,11 @@ class Settings(BaseSettings):
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
 
+    # Presence Detection (BLE-based room-level)
+    presence_enabled: bool = False                      # Master-Switch for BLE presence detection
+    presence_stale_timeout: int = 120                   # Seconds before user marked absent
+    presence_hysteresis_scans: int = 2                  # Consecutive scans before room change
+
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
     notification_poller_startup_delay: int = 30         # Delay before first poll (seconds)
