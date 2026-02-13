@@ -32,7 +32,7 @@ class ActionExecutor:
             }
             user_permissions: User's permission strings for MCP access control.
                 None means no auth / allow all (backwards-compatible).
-            user_id: Authenticated user ID. Passed to MCP tools as _user_id
+            user_id: Authenticated user ID. Passed to MCP tools as user_id
                 for per-user filtering (e.g. calendar visibility).
 
         Returns:
@@ -69,7 +69,7 @@ class ActionExecutor:
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
             if user_id is not None:
-                parameters["_user_id"] = user_id
+                parameters["user_id"] = user_id
             return await self.mcp_manager.execute_tool(
                 intent, parameters, user_permissions=user_permissions,
                 user_id=user_id,
