@@ -232,28 +232,38 @@ servers:
         - "Search emails from Amazon"
         - "Send an email to max@example.com"
 
-  # --- Google Calendar MCP Server (via n8n) ---
-  # Uses n8n MCP Server Trigger workflow as calendar bridge.
-  # Requires: n8n "Calendar MCP Server" workflow active
+  # --- Unified Calendar MCP Server ---
+  # Custom Python MCP server supporting Exchange EWS, Google Calendar, and CalDAV.
+  # Multi-account via YAML config (config/calendar_accounts.yaml).
+  # GitHub: https://github.com/ebongard/renfield-mcp-calendar
   - name: calendar
-    transport: sse
-    url: "${CALENDAR_MCP_URL:-http://n8n:5678/mcp/calendar/sse}"
+    transport: stdio
+    command: python
+    args: ["-m", "renfield_mcp_calendar"]
     enabled: "${CALENDAR_ENABLED:-false}"
     refresh_interval: 300
-    example_intent: mcp.calendar.SearchEvent
+    env:
+      CALENDAR_CONFIG: "${CALENDAR_CONFIG:-/config/calendar_accounts.yaml}"
+      CALENDAR_WORK_USERNAME: "${CALENDAR_WORK_USERNAME:-}"
+      CALENDAR_WORK_PASSWORD: "${CALENDAR_WORK_PASSWORD:-}"
+      CALENDAR_VEREIN_USERNAME: "${CALENDAR_VEREIN_USERNAME:-}"
+      CALENDAR_VEREIN_PASSWORD: "${CALENDAR_VEREIN_PASSWORD:-}"
+    example_intent: mcp.calendar.list_events
     prompt_tools:
-      - SearchEvent
-      - CreateEvent
+      - list_calendars
+      - list_events
+      - create_event
     examples:
       de:
         - "Was steht heute in meinem Kalender?"
-        - "Erstelle einen Termin morgen um 14 Uhr: Zahnarzt"
+        - "Was steht im Firmenkalender diese Woche?"
+        - "Erstelle einen Familientermin morgen um 14 Uhr: Zahnarzt"
+        - "Wann ist das nächste Vereinstreffen?"
         - "Bin ich morgen Nachmittag frei?"
-        - "Wann ist mein nächster Termin?"
       en:
         - "What's on my calendar today?"
-        - "Create an appointment tomorrow at 2 PM: Dentist"
-        - "Am I free tomorrow afternoon?"
+        - "What's in the work calendar this week?"
+        - "Create a family appointment tomorrow at 2 PM: Dentist"
 
   # --- Home Assistant MCP Server ---
   # Uses HA's built-in MCP server at /api/mcp

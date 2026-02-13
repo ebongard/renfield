@@ -1,0 +1,38 @@
+# Calendar Account Configuration
+# ==============================
+# Multi-account calendar setup for renfield-mcp-calendar.
+# Supports: Exchange EWS, Google Calendar, CalDAV (Nextcloud, etc.)
+#
+# Sensitive values (passwords, tokens) are referenced via env var names,
+# NOT stored directly in this file.
+#
+# See: docs/kalender-integration-plan.md
+
+calendars:
+  # --- Exchange 2019 (Firmenkalender) ---
+  # Direct EWS endpoint (no Autodiscover, no Microsoft 365)
+  - name: work
+    label: "Firmenkalender"
+    type: ews
+    ews_url: "https://exchange2019.ionos.eu/EWS/Exchange.asmx"
+    username_env: CALENDAR_WORK_USERNAME
+    password_env: CALENDAR_WORK_PASSWORD
+
+  # --- Google Calendar (Familienkalender) ---
+  # OAuth2 Desktop Flow — initial auth required once:
+  #   docker exec -it renfield-backend python -m renfield_mcp_calendar --auth google
+  - name: family
+    label: "Familienkalender"
+    type: google
+    calendar_id: "primary"
+    credentials_file: "/config/google_calendar_credentials.json"
+    token_file: "/data/calendar/google_calendar_token.json"
+
+  # --- Nextcloud CalDAV (Vereinskalender) ---
+  # Use an App Password (Nextcloud → Settings → Security → App passwords)
+  # - name: verein
+  #   label: "Vereinskalender"
+  #   type: caldav
+  #   url: "https://nextcloud.example.com/remote.php/dav/calendars/user/verein/"
+  #   username_env: CALENDAR_VEREIN_USERNAME
+  #   password_env: CALENDAR_VEREIN_PASSWORD

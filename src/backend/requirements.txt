@@ -77,6 +77,9 @@ renfield-mcp-paperless @ https://github.com/ebongard/renfield-mcp-paperless/arch
 renfield-mcp-mail @ https://github.com/ebongard/renfield-mcp-mail/archive/refs/heads/main.tar.gz
 aiosmtplib>=3.0                  # Required by renfield-mcp-mail (not auto-resolved from archive installs)
 renfield-mcp-jellyfin @ https://github.com/ebongard/renfield-mcp-jellyfin/archive/refs/heads/main.tar.gz
+renfield-mcp-calendar @ https://github.com/ebongard/renfield-mcp-calendar/archive/refs/heads/main.tar.gz
+exchangelib>=5.4                     # Required by renfield-mcp-calendar (EWS backend)
+caldav>=1.4                          # Required by renfield-mcp-calendar (CalDAV backend)
 
 # Monitoring & Logging
 loguru==0.7.2
