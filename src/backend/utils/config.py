@@ -287,6 +287,10 @@ class Settings(BaseSettings):
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
 
+    # Notification Polling (generic MCP server polling)
+    notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
+    notification_poller_startup_delay: int = 30         # Delay before first poll (seconds)
+
     # Phase 3: Reminders
     proactive_reminders_enabled: bool = False
     proactive_reminder_check_interval: int = 15        # Sekunden

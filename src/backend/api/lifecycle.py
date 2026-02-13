@@ -209,6 +209,25 @@ def _schedule_upload_cleanup():
     )
 
 
+def _schedule_notification_poller(app):
+    """Start the MCP notification poller for servers with notifications enabled."""
+    if not settings.notification_poller_enabled:
+        return
+    if not getattr(app.state, "mcp_manager", None):
+        return
+
+    async def poller_main():
+        from services.notification_poller import NotificationPollerService
+
+        poller = NotificationPollerService(app.state.mcp_manager)
+        app.state.notification_poller = poller
+        await poller.start()
+
+    task = asyncio.create_task(poller_main())
+    _startup_tasks.append(task)
+    logger.info("Notification Poller scheduled")
+
+
 def _schedule_ha_keywords_preload():
     """Schedule Home Assistant keywords preloading in background."""
     try:
@@ -432,6 +451,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_ha_keywords_preload()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
+    _schedule_notification_poller(app)
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
 
@@ -453,6 +473,11 @@ async def lifespan(app: "FastAPI"):
     await run_hooks("shutdown", app=app)
 
     await _cancel_startup_tasks()
+
+    # Stop notification poller before MCP shutdown
+    if getattr(app.state, "notification_poller", None):
+        await app.state.notification_poller.stop()
+
     await _notify_devices_shutdown()
 
     # Shutdown MCP
