@@ -1000,6 +1000,7 @@ class MCPManager:
         namespaced_name: str,
         arguments: dict,
         user_permissions: list[str] | None = None,
+        user_id: int | None = None,
     ) -> dict:
         """
         Execute an MCP tool by its namespaced name.
@@ -1014,6 +1015,7 @@ class MCPManager:
             namespaced_name: Tool name in "mcp.<server>.<tool>" format
             arguments: Tool arguments
             user_permissions: User's permission strings (None = no auth / allow all)
+            user_id: Authenticated user ID for audit logging
 
         Returns:
             {"success": bool, "message": str, "data": Any}
@@ -1098,6 +1100,8 @@ class MCPManager:
             }
 
         try:
+            user_info = f" (user_id={user_id})" if user_id is not None else ""
+            logger.debug(f"MCP call: {namespaced_name}{user_info}")
             result = await asyncio.wait_for(
                 state.session.call_tool(tool_info.original_name, arguments),
                 timeout=settings.mcp_call_timeout,

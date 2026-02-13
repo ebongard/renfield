@@ -321,6 +321,15 @@ servers:
 
 **Default Roles:** Admin (`mcp.*`, full access), Familie (`mcp.*`, ha.full, kb.shared, cam.view), Gast (no MCP, ha.read, kb.none, cam.none)
 
+**User-ID Propagation:** `user_id` flows through the entire execution chain for per-user filtering:
+- `chat_handler.py` → extracts `user_id` from JWT auth
+- `satellite_handler.py` → extracts `user_id` from Speaker→User FK lookup
+- `ActionExecutor.execute(intent_data, user_permissions=..., user_id=...)` → injects `_user_id` into MCP tool parameters
+- `AgentService.run(..., user_id=...)` → passes through to executor
+- `MCPManager.execute_tool(..., user_id=...)` → debug logging with user context
+
+MCP servers receive `_user_id` in their tool parameters and can use it for per-user filtering (e.g. calendar visibility). When `user_id` is `None` (no auth / unauthenticated), `_user_id` is not injected.
+
 **Key files:** `models/permissions.py`, `services/auth_service.py`, `api/routes/auth.py`, `api/routes/roles.py`, `services/mcp_client.py`
 
 **Documentation:** See `ACCESS_CONTROL.md`.

@@ -34,6 +34,7 @@ class TestActionExecutorRouting:
             "mcp.homeassistant.turn_on",
             {"entity_id": "light.wohnzimmer"},
             user_permissions=None,
+            user_id=None,
         )
 
     @pytest.mark.unit
@@ -52,6 +53,7 @@ class TestActionExecutorRouting:
             "mcp.n8n.n8n_list_workflows",
             {},
             user_permissions=None,
+            user_id=None,
         )
 
     @pytest.mark.unit
@@ -70,6 +72,7 @@ class TestActionExecutorRouting:
             "mcp.weather.get_current_weather",
             {"location": "Berlin"},
             user_permissions=None,
+            user_id=None,
         )
 
     @pytest.mark.unit
@@ -274,3 +277,94 @@ class TestActionExecutorKnowledgeEmptyResult:
         assert result["success"] is True
         assert result.get("empty_result") is not True
         assert result["data"]["results_count"] == 1
+
+
+# ============================================================================
+# User-ID Propagation Tests
+# ============================================================================
+
+class TestActionExecutorUserIdPropagation:
+    """Tests for user_id propagation to MCP tools."""
+
+    @pytest.mark.unit
+    async def test_user_id_injected_into_mcp_params(self, action_executor):
+        """user_id is injected as _user_id into MCP tool parameters."""
+        action_executor.mcp_manager.execute_tool.return_value = {
+            "success": True,
+            "message": "OK",
+            "data": {},
+        }
+
+        intent_data = {
+            "intent": "mcp.calendar.list_events",
+            "parameters": {"calendar": "work"},
+            "confidence": 0.9,
+        }
+
+        await action_executor.execute(intent_data, user_id=42)
+
+        # Verify _user_id was injected into the parameters
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        params = call_args.args[1]  # second positional arg = arguments
+        assert params["_user_id"] == 42
+        assert params["calendar"] == "work"
+        assert call_args.kwargs["user_id"] == 42
+
+    @pytest.mark.unit
+    async def test_no_user_id_means_no_injection(self, action_executor):
+        """Without user_id, _user_id is NOT added to parameters."""
+        action_executor.mcp_manager.execute_tool.return_value = {
+            "success": True,
+            "message": "OK",
+            "data": {},
+        }
+
+        intent_data = {
+            "intent": "mcp.calendar.list_events",
+            "parameters": {"calendar": "work"},
+            "confidence": 0.9,
+        }
+
+        await action_executor.execute(intent_data)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        params = call_args.args[1]
+        assert "_user_id" not in params
+
+    @pytest.mark.unit
+    async def test_user_id_none_means_no_injection(self, action_executor):
+        """user_id=None explicitly does NOT inject _user_id."""
+        action_executor.mcp_manager.execute_tool.return_value = {
+            "success": True,
+            "message": "OK",
+            "data": {},
+        }
+
+        intent_data = {
+            "intent": "mcp.weather.get_weather",
+            "parameters": {"location": "Berlin"},
+            "confidence": 0.9,
+        }
+
+        await action_executor.execute(intent_data, user_id=None)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        params = call_args.args[1]
+        assert "_user_id" not in params
+
+    @pytest.mark.unit
+    async def test_user_id_not_injected_for_non_mcp(self):
+        """user_id is ignored for non-MCP intents (knowledge, conversation)."""
+        from services.action_executor import ActionExecutor
+
+        executor = ActionExecutor(mcp_manager=None)
+
+        intent_data = {
+            "intent": "general.conversation",
+            "parameters": {},
+            "confidence": 0.9,
+        }
+
+        result = await executor.execute(intent_data, user_id=42)
+        assert result["success"] is True
+        assert result["action_taken"] is False

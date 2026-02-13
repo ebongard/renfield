@@ -642,6 +642,7 @@ async def websocket_endpoint(
                         memory_context=memory_context,
                         document_context=document_context,
                         user_permissions=user_permissions,
+                        user_id=user_id,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -691,7 +692,8 @@ async def websocket_endpoint(
 
                     executor = ActionExecutor(mcp_manager=mcp_mgr)
                     candidate_result = await executor.execute(
-                        intent_candidate, user_permissions=user_permissions
+                        intent_candidate, user_permissions=user_permissions,
+                        user_id=user_id,
                     )
 
                     if candidate_result.get("success") and not candidate_result.get("empty_result"):
