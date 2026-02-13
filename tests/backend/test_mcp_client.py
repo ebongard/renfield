@@ -783,6 +783,7 @@ class TestMCPIntentRouting:
             "mcp.n8n.send_email",
             {"to": "user@example.com", "subject": "Test"},
             user_permissions=None,
+            user_id=None,
         )
 
     @pytest.mark.unit
