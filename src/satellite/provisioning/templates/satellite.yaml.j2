@@ -52,3 +52,9 @@ led:
 button:
   gpio_pin: {{ button_gpio_pin }}
   debounce_ms: 50
+
+ble:
+  enabled: {{ ble_enabled | lower }}
+  scan_interval: {{ ble_scan_interval }}
+  scan_duration: {{ ble_scan_duration }}
+  rssi_threshold: {{ ble_rssi_threshold }}

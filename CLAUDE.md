@@ -277,6 +277,18 @@ Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satell
 
 Automatic speaker identification using SpeechBrain ECAPA-TDNN. 192-dim voice embeddings stored in PostgreSQL, cosine similarity matching (threshold: 0.25). Auto-discovery of unknown speakers, continuous learning. **Documentation:** See `SPEAKER_RECOGNITION.md`.
 
+### Presence Detection (BLE)
+
+Room-level presence detection using BLE scanning from satellites. Satellites scan for known BLE devices (phones, watches) via `bleak`, report RSSI over WebSocket. Backend `PresenceService` uses in-memory state with "strongest RSSI wins" + hysteresis (N consecutive scans) to prevent room flicker.
+
+**Key files:** `services/presence_service.py`, `api/routes/presence.py`, `models/database.py` (UserBleDevice)
+
+**Satellite side:** `ble/scanner.py` (BLEScanner), config `ble.enabled`, env var `RENFIELD_BLE_ENABLED`
+
+**API:** `GET /api/presence/rooms` (all rooms with occupants), `GET /api/presence/user/{id}` (user location + alone?), `POST /api/presence/devices` (admin: register BLE device). MAC whitelist pushed to satellites after registration.
+
+**Privacy:** `is_user_alone_in_room(user_id)` enables privacy-aware TTS decisions (e.g. confidential calendar reminders only when user is alone). Disabled by default (`PRESENCE_ENABLED=false`).
+
 ### Device Management
 
 Multiple device types (satellite, web_panel, web_tablet, web_browser, web_kiosk) connect via `/ws/device`. IP-based room detection for stationary devices provides automatic room context:
@@ -383,6 +395,9 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`, `CALENDAR_ENABLED`
 - `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
 - `NOTIFICATION_POLLER_ENABLED` — Generic MCP notification polling for proactive alerts (default: `false`, opt-in)
+- `PRESENCE_ENABLED` — BLE-based room-level presence detection (default: `false`, opt-in)
+- `PRESENCE_STALE_TIMEOUT` — Seconds before user marked absent (default: `120`)
+- `PRESENCE_HYSTERESIS_SCANS` — Consecutive scans before room change (default: `2`)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 

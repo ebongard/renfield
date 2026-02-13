@@ -99,6 +99,16 @@ class ButtonConfig:
 
 
 @dataclass
+class BLEConfig:
+    """BLE presence detection settings"""
+    enabled: bool = False
+    scan_interval: int = 30       # seconds between scans
+    scan_duration: float = 5.0    # seconds per scan
+    rssi_threshold: int = -80     # ignore weaker signals
+    known_devices: List[str] = field(default_factory=list)  # MAC whitelist, pushed from backend
+
+
+@dataclass
 class Config:
     """Main configuration container"""
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
@@ -108,6 +118,7 @@ class Config:
     vad: VADConfig = field(default_factory=VADConfig)
     led: LEDConfig = field(default_factory=LEDConfig)
     button: ButtonConfig = field(default_factory=ButtonConfig)
+    ble: BLEConfig = field(default_factory=BLEConfig)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -214,6 +225,15 @@ def load_config(config_path: Optional[str] = None) -> Config:
         btn = config_data["button"]
         config.button.gpio_pin = btn.get("gpio_pin", config.button.gpio_pin)
 
+    if "ble" in config_data:
+        ble = config_data["ble"]
+        config.ble.enabled = ble.get("enabled", config.ble.enabled)
+        config.ble.scan_interval = ble.get("scan_interval", config.ble.scan_interval)
+        config.ble.scan_duration = ble.get("scan_duration", config.ble.scan_duration)
+        config.ble.rssi_threshold = ble.get("rssi_threshold", config.ble.rssi_threshold)
+        if "known_devices" in ble:
+            config.ble.known_devices = ble["known_devices"]
+
     # Environment variable overrides
     if os.environ.get("RENFIELD_SATELLITE_ID"):
         config.satellite.id = os.environ["RENFIELD_SATELLITE_ID"]
@@ -234,5 +254,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.server.auth_token = os.environ["RENFIELD_AUTH_TOKEN"]
     if os.environ.get("RENFIELD_VERIFY_TLS"):
         config.server.verify_tls = os.environ["RENFIELD_VERIFY_TLS"].lower() in ("true", "1", "yes")
+    if os.environ.get("RENFIELD_BLE_ENABLED"):
+        config.ble.enabled = os.environ["RENFIELD_BLE_ENABLED"].lower() in ("true", "1", "yes")
 
     return config
