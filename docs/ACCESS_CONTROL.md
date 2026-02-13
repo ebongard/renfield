@@ -615,10 +615,11 @@ Bei Satellites wird die Permission des erkannten Sprechers verwendet:
 1. OpenWakeWord erkennt Wake Word
 2. Audio wird transkribiert (Whisper)
 3. Sprecher wird identifiziert (SpeechBrain)
-4. Verknüpfter User wird geladen → `user.get_permissions()`
+4. Verknüpfter User wird geladen → `user.get_permissions()` + `user.id`
 5. Permission-Check bei MCP-Tool-Ausführung
+6. `user_id` wird als `_user_id` in MCP-Tool-Parameter injiziert (für per-User-Filterung)
 
-Wenn kein Sprecher erkannt wird oder kein User verknüpft ist, wird `user_permissions=None` verwendet (alle Tools erlaubt, da Offline-Szenario).
+Wenn kein Sprecher erkannt wird oder kein User verknüpft ist, wird `user_permissions=None` und `user_id=None` verwendet (alle Tools erlaubt, kein User-Filter).
 
 ---
 
