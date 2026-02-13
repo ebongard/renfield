@@ -284,6 +284,15 @@ PROACTIVE_FEEDBACK_SIMILARITY_THRESHOLD=0.80
 - `GET /api/notifications/suppressions` — Aktive Suppression-Regeln
 - `DELETE /api/notifications/suppressions/{id}` — Suppression aufheben
 
+#### MCP Notification Polling
+
+```bash
+# Generic polling of MCP servers for proactive notifications (e.g. calendar reminders)
+# Requires: MCP server with get_pending_notifications tool + notifications config in mcp_servers.yaml
+NOTIFICATION_POLLER_ENABLED=false
+NOTIFICATION_POLLER_STARTUP_DELAY=30     # Delay before first poll (seconds)
+```
+
 #### Reminders
 
 ```bash

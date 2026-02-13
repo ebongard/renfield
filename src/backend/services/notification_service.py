@@ -417,6 +417,7 @@ class NotificationService:
         tts: bool | None = None,
         data: dict | None = None,
         enrich: bool = False,
+        source: str = "ha_automation",
     ) -> dict:
         """
         Process an incoming webhook notification.
@@ -479,7 +480,7 @@ class NotificationService:
             urgency=urgency,
             room_id=room_id,
             room_name=room_name,
-            source="ha_automation",
+            source=source,
             source_data=data,
             status=NOTIFICATION_PENDING,
             tts_delivered=False,

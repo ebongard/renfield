@@ -253,6 +253,11 @@ servers:
       - list_calendars
       - list_events
       - create_event
+    notifications:
+      enabled: "${NOTIFICATION_POLLER_ENABLED:-false}"
+      poll_interval: 900           # 15 minutes
+      tool: get_pending_notifications
+      lookahead_minutes: 45
     examples:
       de:
         - "Was steht heute in meinem Kalender?"

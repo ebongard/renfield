@@ -371,6 +371,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
 - Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`, `CALENDAR_ENABLED`
 - `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
+- `NOTIFICATION_POLLER_ENABLED` — Generic MCP notification polling for proactive alerts (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 
@@ -410,6 +411,7 @@ All external integrations run via MCP servers. To add a new one:
    | `examples` | No | Bilingual example queries (`de`/`en`) for LLM prompt |
    | `permissions` | No | Server-level permission strings (e.g. `["mcp.calendar.read", "mcp.calendar.manage"]`). User needs at least one. |
    | `tool_permissions` | No | Per-tool permission mapping (e.g. `{list_events: "mcp.calendar.read"}`). Takes priority over server-level. |
+   | `notifications` | No | Proactive notification polling config: `{enabled: true, poll_interval: 900, tool: "get_pending_notifications"}`. Requires `NOTIFICATION_POLLER_ENABLED=true`. |
 
 3. Tools are auto-discovered as `mcp.your_service.<tool_name>` intents. `ActionExecutor` routes `mcp.*` intents to `MCPManager.execute_tool()` automatically — no code changes needed.
 
