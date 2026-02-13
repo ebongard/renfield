@@ -586,6 +586,7 @@ class MCPServerConfig:
     tool_hints: dict[str, str] = field(default_factory=dict)  # {tool_name: "hint to append to description"}
     permissions: list[str] = field(default_factory=list)  # e.g. ["mcp.calendar.read", "mcp.calendar.manage"]
     tool_permissions: dict[str, str] = field(default_factory=dict)  # e.g. {"list_events": "mcp.calendar.read"}
+    notifications: dict | None = None  # {"enabled": true, "poll_interval": 900, "tool": "get_pending_notifications"}
 
 
 @dataclass
@@ -630,6 +631,21 @@ def _substitute_env_vars(value: str) -> str:
         return ""
 
     return re.sub(r"\$\{(\w+)(:-(.*?))?\}", _replace, value)
+
+
+def _parse_notifications(raw: dict | None) -> dict | None:
+    """Parse and validate the notifications section from YAML config."""
+    if not raw or not isinstance(raw, dict):
+        return None
+    enabled = _resolve_value(raw.get("enabled", False))
+    if not enabled:
+        return None
+    return {
+        "enabled": True,
+        "poll_interval": int(raw.get("poll_interval", 900)),
+        "tool": raw.get("tool", "get_pending_notifications"),
+        "lookahead_minutes": int(raw.get("lookahead_minutes", 45)),
+    }
 
 
 def _resolve_value(value: Any) -> Any:
@@ -728,6 +744,7 @@ class MCPManager:
                     tool_hints=entry.get("tool_hints", {}),
                     permissions=entry.get("permissions", []),
                     tool_permissions=entry.get("tool_permissions", {}),
+                    notifications=_parse_notifications(entry.get("notifications")),
                 )
 
                 if not config.enabled:
