@@ -776,8 +776,13 @@ SEARXNG_API_URL=http://cuda.local:3002
 # Paperless-NGX URL
 PAPERLESS_API_URL=http://paperless.local:8000
 
-# Calendar MCP URL (n8n MCP Server Trigger)
-CALENDAR_MCP_URL=http://n8n:5678/mcp/calendar/sse
+# Calendar (Unified Calendar MCP Server — EWS, Google, CalDAV)
+# Config via config/calendar_accounts.yaml
+# CALENDAR_CONFIG=/config/calendar_accounts.yaml
+# CALENDAR_WORK_USERNAME=user@example.com
+# CALENDAR_WORK_PASSWORD=secret
+# CALENDAR_VEREIN_USERNAME=user
+# CALENDAR_VEREIN_PASSWORD=secret
 ```
 
 **Hinweis:** In Produktion werden Secrets über Docker Compose File-Based Secrets bereitgestellt und von `mcp_client.py` automatisch in `os.environ` injiziert. Siehe `docs/SECRETS_MANAGEMENT.md`.
