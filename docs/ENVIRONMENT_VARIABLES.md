@@ -314,11 +314,13 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 
 ---
 
-### Presence Detection (BLE)
+### Presence Detection
 
 ```bash
-# BLE-basierte Raum-Präsenzerkennung
-# Satelliten scannen nach bekannten BLE-Geräten (Telefone, Uhren) und melden RSSI-Werte
+# Raum-Präsenzerkennung aus mehreren Quellen:
+# 1. BLE-Scanning: Satelliten scannen nach bekannten BLE-Geräten (Telefone, Uhren) und melden RSSI-Werte
+# 2. Voice Presence: Sprechererkennung auf Satelliten aktualisiert den Raum sofort (ohne Hysterese)
+# 3. Web Auth Presence: Authentifizierte Web-Nutzer mit Raum-Kontext aktualisieren den Raum sofort
 PRESENCE_ENABLED=false
 PRESENCE_STALE_TIMEOUT=120               # Sekunden bis Benutzer als abwesend markiert
 PRESENCE_HYSTERESIS_SCANS=2              # Aufeinanderfolgende Scans vor Raumwechsel

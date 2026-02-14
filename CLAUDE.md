@@ -281,11 +281,17 @@ Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satell
 
 Automatic speaker identification using SpeechBrain ECAPA-TDNN. 192-dim voice embeddings stored in PostgreSQL, cosine similarity matching (threshold: 0.25). Auto-discovery of unknown speakers, continuous learning. **Documentation:** See `SPEAKER_RECOGNITION.md`.
 
-### Presence Detection (BLE)
+### Presence Detection
 
-Room-level presence detection using BLE scanning from satellites. Satellites scan for known BLE devices (phones, watches) via `bleak`, report RSSI over WebSocket. Backend `PresenceService` uses in-memory state with "strongest RSSI wins" + hysteresis (N consecutive scans) to prevent room flicker.
+Room-level presence detection using multiple sources:
 
-**Key files:** `services/presence_service.py`, `api/routes/presence.py`, `models/database.py` (UserBleDevice)
+1. **BLE Scanning** — Satellites scan for known BLE devices (phones, watches) via `bleak`, report RSSI over WebSocket. Uses "strongest RSSI wins" + hysteresis (N consecutive scans) to prevent room flicker.
+2. **Voice Presence** — When Speaker Recognition identifies a user on a satellite, `register_voice_presence()` immediately updates their room. Bypasses hysteresis (voice = certain presence).
+3. **Web Auth Presence** — When an authenticated user interacts via the web interface from a room-assigned device, their location is updated via the same `register_voice_presence()` path.
+
+Voice/auth presence bypasses BLE hysteresis — a single interaction moves the user's room immediately and fires enter/leave hooks.
+
+**Key files:** `services/presence_service.py`, `api/routes/presence.py`, `models/database.py` (UserBleDevice), `api/websocket/satellite_handler.py` (voice presence trigger), `api/websocket/chat_handler.py` (auth presence trigger)
 
 **Satellite side:** `ble/scanner.py` (BLEScanner), config `ble.enabled`, env var `RENFIELD_BLE_ENABLED`
 
