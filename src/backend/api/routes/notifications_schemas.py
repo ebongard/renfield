@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field, field_validator
 VALID_URGENCIES = {"critical", "info", "low", "auto"}
 
 
+VALID_PRIVACY_LEVELS = {"public", "personal", "confidential"}
+
+
 class WebhookRequest(BaseModel):
     """Incoming webhook payload from HA automation."""
     event_type: str = Field(..., min_length=1, max_length=100)
@@ -17,12 +20,21 @@ class WebhookRequest(BaseModel):
     tts: bool | None = None
     data: dict | None = None
     enrich: bool = False
+    privacy: str = Field(default="public", max_length=20)
+    target_user_id: int | None = None
 
     @field_validator("urgency")
     @classmethod
     def validate_urgency(cls, v: str) -> str:
         if v not in VALID_URGENCIES:
             raise ValueError(f"urgency must be one of {VALID_URGENCIES}")
+        return v
+
+    @field_validator("privacy")
+    @classmethod
+    def validate_privacy(cls, v: str) -> str:
+        if v not in VALID_PRIVACY_LEVELS:
+            raise ValueError(f"privacy must be one of {VALID_PRIVACY_LEVELS}")
         return v
 
 

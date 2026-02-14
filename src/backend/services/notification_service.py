@@ -418,6 +418,8 @@ class NotificationService:
         data: dict | None = None,
         enrich: bool = False,
         source: str = "ha_automation",
+        privacy: str = "public",
+        target_user_id: int | None = None,
     ) -> dict:
         """
         Process an incoming webhook notification.
@@ -489,12 +491,26 @@ class NotificationService:
             enriched=enriched,
             original_message=original_message,
             urgency_auto=urgency_auto,
+            privacy=privacy,
+            target_user_id=target_user_id,
         )
         self.db.add(notification)
         await self.db.commit()
         await self.db.refresh(notification)
 
         logger.info(f"📨 Notification #{notification.id} erstellt: {title} (urgency={urgency})")
+
+        # Resolve target user's room from presence if no room specified
+        if target_user_id and not room_id and settings.presence_enabled:
+            try:
+                from services.presence_service import get_presence_service
+                presence = get_presence_service()
+                user_p = presence.get_user_presence(target_user_id)
+                if user_p and user_p.room_id:
+                    notification.room_id = user_p.room_id
+                    notification.room_name = user_p.room_name or ""
+            except Exception as e:
+                logger.debug("Could not resolve target user room: %s", e)
 
         # Store embedding in background
         if embedding:
@@ -565,12 +581,30 @@ class NotificationService:
 
         logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
 
-        # TTS delivery
+        # TTS delivery (with privacy gate)
         if tts:
-            tts_delivered = await self._deliver_tts(notification)
-            if tts_delivered:
-                notification.tts_delivered = True
-                ws_message["tts_handled"] = True
+            tts_allowed = True
+            if notification.privacy and notification.privacy != "public":
+                try:
+                    from services.database import AsyncSessionLocal
+                    from services.notification_privacy import should_play_tts
+                    async with AsyncSessionLocal() as privacy_db:
+                        tts_allowed = await should_play_tts(
+                            privacy=notification.privacy,
+                            target_user_id=notification.target_user_id,
+                            room_id=notification.room_id,
+                            db=privacy_db,
+                        )
+                except Exception as e:
+                    logger.warning("Privacy gate error, suppressing TTS: %s", e)
+                    tts_allowed = False
+            if tts_allowed:
+                tts_delivered = await self._deliver_tts(notification)
+                if tts_delivered:
+                    notification.tts_delivered = True
+                    ws_message["tts_handled"] = True
+            else:
+                logger.info("TTS suppressed for #%d (privacy=%s)", notification.id, notification.privacy)
 
         return delivered_ids
 

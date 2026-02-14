@@ -187,6 +187,8 @@ class NotificationPollerService:
                     tts=notification.get("tts", True),
                     data=notification.get("data"),
                     source=f"mcp_poll:{server_name}",
+                    privacy=notification.get("privacy", "public"),
+                    target_user_id=notification.get("target_user_id"),
                 )
                 logger.info(
                     "Notification delivered from '%s': %s",

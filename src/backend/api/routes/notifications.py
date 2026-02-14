@@ -112,6 +112,8 @@ async def receive_webhook(
             tts=body.tts,
             data=body.data,
             enrich=body.enrich,
+            privacy=body.privacy,
+            target_user_id=body.target_user_id,
         )
         return WebhookResponse(**result)
     except ValueError as e:
