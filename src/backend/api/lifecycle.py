@@ -458,6 +458,12 @@ async def lifespan(app: "FastAPI"):
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)
 
+    # Presence webhooks
+    if settings.presence_enabled:
+        from services.presence_webhook import register_presence_webhooks
+
+        register_presence_webhooks()
+
     # Plugin / Hook System
     await _load_plugin_module()
     from utils.hooks import run_hooks

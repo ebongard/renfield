@@ -55,6 +55,7 @@ class PresenceService:
         self._rssi_threshold: int = settings.presence_rssi_threshold
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
+        self._pending_events: list[tuple[str, dict]] = []  # (event_name, kwargs)
 
     async def load_device_registry(self, db: AsyncSession):
         """Load UserBleDevice table into MAC → user_id cache."""
@@ -83,7 +84,7 @@ class PresenceService:
         """Get cached username for a user_id."""
         return self._user_names.get(user_id)
 
-    def process_ble_report(
+    async def process_ble_report(
         self,
         satellite_id: str,
         room_id: int | None,
@@ -132,6 +133,9 @@ class PresenceService:
 
         # Clean up stale presence
         self._cleanup_stale(now)
+
+        # Fire collected presence events
+        await self._fire_pending_events()
 
     def _assign_room(self, mac: str):
         """Assign a user to a room based on multi-satellite RSSI aggregation with hysteresis."""
@@ -213,13 +217,50 @@ class PresenceService:
             # Different room — apply hysteresis
             current.consecutive_room_count += 1
             if current.room_id is None or current.consecutive_room_count >= self._hysteresis_threshold:
-                old_room = current.room_name or current.room_id
+                old_room_id = current.room_id
+                old_room_name = current.room_name
+
+                # Check if house was empty before this user (first_arrived detection)
+                was_first = old_room_id is None and len(self._presence) == 1
+
                 current.room_id = best_room_id
                 current.room_name = self._room_names.get(best_room_id) if best_room_id else None
                 current.satellite_id = best_satellite_id
                 current.consecutive_room_count = 1
                 new_room = current.room_name or current.room_id
-                logger.debug(f"Presence: user {user_id} moved {old_room} → {new_room}")
+                logger.debug(f"Presence: user {user_id} moved {old_room_name or old_room_id} → {new_room}")
+
+                # Fire leave event for old room
+                if old_room_id is not None and old_room_id != best_room_id:
+                    self._pending_events.append(("presence_leave_room", {
+                        "user_id": user_id,
+                        "user_name": self.get_user_name(user_id),
+                        "room_id": old_room_id,
+                        "room_name": old_room_name,
+                    }))
+                    # Check if old room is now empty
+                    if not self.get_room_occupants(old_room_id):
+                        self._pending_events.append(("presence_last_left", {
+                            "room_id": old_room_id,
+                            "room_name": old_room_name,
+                        }))
+
+                # Fire enter event for new room
+                if best_room_id is not None:
+                    self._pending_events.append(("presence_enter_room", {
+                        "user_id": user_id,
+                        "user_name": self.get_user_name(user_id),
+                        "room_id": best_room_id,
+                        "room_name": self._room_names.get(best_room_id),
+                        "confidence": confidence,
+                    }))
+                    if was_first:
+                        self._pending_events.append(("presence_first_arrived", {
+                            "user_id": user_id,
+                            "user_name": self.get_user_name(user_id),
+                            "room_id": best_room_id,
+                            "room_name": self._room_names.get(best_room_id),
+                        }))
             # else: not enough consecutive scans, keep current room
 
     def _cleanup_stale(self, now: float):
@@ -232,6 +273,27 @@ class PresenceService:
         for user_id in stale_users:
             old = self._presence.pop(user_id)
             logger.debug(f"Presence: user {user_id} marked absent (was in {old.room_name or old.room_id})")
+            if old.room_id is not None:
+                self._pending_events.append(("presence_leave_room", {
+                    "user_id": user_id,
+                    "user_name": self.get_user_name(user_id),
+                    "room_id": old.room_id,
+                    "room_name": old.room_name,
+                }))
+                if not self.get_room_occupants(old.room_id):
+                    self._pending_events.append(("presence_last_left", {
+                        "room_id": old.room_id,
+                        "room_name": old.room_name,
+                    }))
+
+    async def _fire_pending_events(self):
+        """Fire all collected presence events via the hook system."""
+        from utils.hooks import run_hooks
+
+        events = self._pending_events[:]
+        self._pending_events.clear()
+        for event_name, kwargs in events:
+            await run_hooks(event_name, **kwargs)
 
     def get_room_occupants(self, room_id: int) -> list[UserPresence]:
         """Get all users currently in a room."""

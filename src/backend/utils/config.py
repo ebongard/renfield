@@ -293,6 +293,8 @@ class Settings(BaseSettings):
     presence_hysteresis_scans: int = 2                  # Consecutive scans before room change
     presence_rssi_threshold: int = -80                     # dBm, signals weaker than this are ignored
     presence_household_roles: str = "Admin,Familie"        # Roles considered household members for privacy TTS
+    presence_webhook_url: str = ""                           # URL to POST presence events (empty = disabled)
+    presence_webhook_secret: str = ""                        # Shared secret for webhook auth (X-Webhook-Secret header)
 
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
