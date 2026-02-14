@@ -27,7 +27,10 @@ def service():
     svc._sightings = {}
     svc._hysteresis_threshold = 2
     svc._stale_timeout = 120.0
+    svc._rssi_threshold = -80
     svc._room_names = {}
+    svc._user_names = {}
+    svc._pending_events = []
     return svc
 
 
@@ -40,14 +43,15 @@ class TestAPIGetRoomsPresence:
         all_p = service.get_all_presence()
         assert all_p == {}
 
-    def test_rooms_grouped_with_occupants(self, service):
+    @pytest.mark.asyncio
+    async def test_rooms_grouped_with_occupants(self, service):
         """Endpoint returns rooms grouped with their occupants."""
         # Populate two rooms
-        service.process_ble_report("sat-1", 10, [
+        await service.process_ble_report("sat-1", 10, [
             {"mac": "AA:BB:CC:DD:EE:01", "rssi": -50},
             {"mac": "AA:BB:CC:DD:EE:02", "rssi": -60},
         ], room_name="Kitchen")
-        service.process_ble_report("sat-2", 20, [
+        await service.process_ble_report("sat-2", 20, [
             {"mac": "AA:BB:CC:DD:EE:03", "rssi": -45},
         ], room_name="Living Room")
 
@@ -73,9 +77,10 @@ class TestAPIGetUserPresence:
         p = service.get_user_presence(999)
         assert p is None
 
-    def test_tracked_user_with_alone_status(self, service):
+    @pytest.mark.asyncio
+    async def test_tracked_user_with_alone_status(self, service):
         """Endpoint returns room + alone flag."""
-        service.process_ble_report("sat-1", 10, [
+        await service.process_ble_report("sat-1", 10, [
             {"mac": "AA:BB:CC:DD:EE:01", "rssi": -50},
         ], room_name="Kitchen")
 
@@ -85,9 +90,10 @@ class TestAPIGetUserPresence:
         assert p.room_name == "Kitchen"
         assert service.is_user_alone_in_room(1) is True
 
-    def test_tracked_user_not_alone(self, service):
+    @pytest.mark.asyncio
+    async def test_tracked_user_not_alone(self, service):
         """Endpoint shows alone=False when others in room."""
-        service.process_ble_report("sat-1", 10, [
+        await service.process_ble_report("sat-1", 10, [
             {"mac": "AA:BB:CC:DD:EE:01", "rssi": -50},
             {"mac": "AA:BB:CC:DD:EE:02", "rssi": -55},
         ])
@@ -106,9 +112,10 @@ class TestAPIGetRoomPresence:
         occupants = service.get_room_occupants(999)
         assert occupants == []
 
-    def test_room_with_occupants(self, service):
+    @pytest.mark.asyncio
+    async def test_room_with_occupants(self, service):
         """Endpoint returns occupant list."""
-        service.process_ble_report("sat-1", 10, [
+        await service.process_ble_report("sat-1", 10, [
             {"mac": "AA:BB:CC:DD:EE:01", "rssi": -50},
             {"mac": "AA:BB:CC:DD:EE:02", "rssi": -60},
         ])

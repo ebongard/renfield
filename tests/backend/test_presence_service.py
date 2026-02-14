@@ -28,6 +28,7 @@ def service():
     svc._rssi_threshold = -80
     svc._room_names = {}
     svc._user_names = {}
+    svc._pending_events = []
     return svc
 
 
@@ -39,14 +40,16 @@ def service_with_devices(service):
         "AA:BB:CC:DD:EE:02": 1,  # second device for user 1
         "AA:BB:CC:DD:EE:03": 2,
     }
+    service._user_names = {1: "alice", 2: "bob"}
     return service
 
 
 @pytest.mark.unit
 class TestProcessBleReport:
-    def test_assigns_room_on_first_sighting(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_assigns_room_on_first_sighting(self, service_with_devices):
         """Strongest RSSI wins room assignment."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -58,9 +61,10 @@ class TestProcessBleReport:
         assert p.room_id == 10
         assert p.room_name == "Kitchen"
 
-    def test_unknown_mac_ignored(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_unknown_mac_ignored(self, service_with_devices):
         """MAC not in registry has no effect."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "FF:FF:FF:FF:FF:FF", "rssi": -30}],
@@ -68,17 +72,18 @@ class TestProcessBleReport:
 
         assert service_with_devices.get_all_presence() == {}
 
-    def test_strongest_rssi_wins(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_strongest_rssi_wins(self, service_with_devices):
         """When multiple satellites report same device, strongest RSSI wins."""
         # First report from kitchen
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -70}],
             room_name="Kitchen",
         )
         # Second report from living room (stronger)
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
@@ -86,15 +91,9 @@ class TestProcessBleReport:
         )
 
         p = service_with_devices.get_user_presence(1)
-        # First sighting sets room to 10, second triggers hysteresis
-        # With hysteresis_threshold=2, need 2 consecutive different scans
-        # But first time room_id is None -> direct assignment, then room_id=10
-        # Then room_id changes to 20 but consecutive_room_count starts at 1
-        # So after 2nd scan with room 20, count >= threshold -> room changes
         assert p is not None
-        # After two reports, the second (stronger) should eventually win
         # Let's do one more scan from living room to satisfy hysteresis
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
@@ -104,9 +103,10 @@ class TestProcessBleReport:
         assert p.room_id == 20
         assert p.room_name == "Living Room"
 
-    def test_multiple_devices_same_user(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_multiple_devices_same_user(self, service_with_devices):
         """Any device from same user updates presence."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -119,10 +119,11 @@ class TestProcessBleReport:
 
 @pytest.mark.unit
 class TestHysteresis:
-    def test_prevents_room_flicker(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_prevents_room_flicker(self, service_with_devices):
         """Room change requires N consecutive scans from different room."""
         # Establish in kitchen
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -131,29 +132,19 @@ class TestHysteresis:
         assert service_with_devices.get_user_presence(1).room_id == 10
 
         # Single scan from living room (stronger RSSI) — NOT enough to switch
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
             room_name="Living Room",
         )
-        # With hysteresis, first different-room scan increments count but
-        # needs threshold (2) consecutive scans. After first different scan:
         service_with_devices.get_user_presence(1)
-        # The second scan starts the count at 1, needs 2 to switch
-        # So room should still be kitchen (10)
-        # However our implementation starts consecutive_room_count at 1 on detection
-        # Let's verify the actual behavior
-        # Actually: first scan sets room_id=10 (first time, room was None).
-        # Second scan: room_id differs (10 vs 20), consecutive_room_count was already >=1 from first scan
-        # The count was 1 after first scan. On second scan with different room, we check >=2, it's only 1+1=2 -> switches
-        # So with threshold=2, it switches on the 2nd consecutive different scan.
-        # That's correct behavior - 2 consecutive scans from different room.
 
-    def test_same_room_reinforces(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_same_room_reinforces(self, service_with_devices):
         """Repeated scans from same room reinforce assignment."""
         for _ in range(5):
-            service_with_devices.process_ble_report(
+            await service_with_devices.process_ble_report(
                 satellite_id="sat-kitchen",
                 room_id=10,
                 devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -167,12 +158,13 @@ class TestHysteresis:
 
 @pytest.mark.unit
 class TestStaleTimeout:
-    def test_stale_device_marked_absent(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_stale_device_marked_absent(self, service_with_devices):
         """No report for > stale_timeout → user removed from presence."""
         # Set a very short timeout for testing
         service_with_devices._stale_timeout = 0.01
 
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -183,7 +175,7 @@ class TestStaleTimeout:
         time.sleep(0.02)
 
         # Process empty report to trigger cleanup
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[],
@@ -193,9 +185,10 @@ class TestStaleTimeout:
 
 @pytest.mark.unit
 class TestRoomOccupants:
-    def test_get_room_occupants(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_get_room_occupants(self, service_with_devices):
         """Returns correct users in a room."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[
@@ -215,18 +208,20 @@ class TestRoomOccupants:
 
 @pytest.mark.unit
 class TestIsUserAlone:
-    def test_user_alone_in_room(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_user_alone_in_room(self, service_with_devices):
         """True when only one user in room."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
         )
         assert service_with_devices.is_user_alone_in_room(1) is True
 
-    def test_user_not_alone(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_user_not_alone(self, service_with_devices):
         """False when multiple users in room."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[
@@ -303,9 +298,10 @@ class TestDeviceManagement:
 
 @pytest.mark.unit
 class TestConfidence:
-    def test_confidence_single_satellite(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_confidence_single_satellite(self, service_with_devices):
         """Single satellite confidence: 70% RSSI + 30% satellite coverage (1/3)."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -30}],
@@ -315,9 +311,10 @@ class TestConfidence:
         # confidence = 1.0 * 0.7 + 0.333 * 0.3 = 0.8
         assert abs(p.confidence - 0.8) < 0.01
 
-    def test_weak_signal_below_threshold_ignored(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_weak_signal_below_threshold_ignored(self, service_with_devices):
         """Signals below RSSI threshold (-80 dBm) are ignored entirely."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -90}],
@@ -328,24 +325,23 @@ class TestConfidence:
 
 @pytest.mark.unit
 class TestMultiSatelliteAggregation:
-    def test_two_satellites_strongest_room_wins(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_two_satellites_strongest_room_wins(self, service_with_devices):
         """Device seen by sats in different rooms — stronger room wins."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -60}],
             room_name="Kitchen",
         )
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
             room_name="Living Room",
         )
-        # Both rooms have 1 satellite each, no multi-sat bonus
-        # Living room wins: -40 > -60
         # Need additional scan to overcome hysteresis
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
@@ -354,27 +350,22 @@ class TestMultiSatelliteAggregation:
         p = service_with_devices.get_user_presence(1)
         assert p.room_id == 20
 
-    def test_multi_satellite_bonus(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_multi_satellite_bonus(self, service_with_devices):
         """Room seen by 2 sats beats room seen by 1 sat despite weaker individual RSSI."""
-        # Room 10: 2 satellites at -50 dBm each → score = -50 + 5*(2-1) = -45
-        # Room 20: 1 satellite at -45 dBm → score = -45 + 5*(1-1) = -45
-        # Actually tie, so let's make it clearer:
-        # Room 10: 2 sats at -48 → score = -48 + 5 = -43
-        # Room 20: 1 sat at -44 → score = -44
-        # Room 10 wins (-43 > -44)
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen-1",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -48}],
             room_name="Kitchen",
         )
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen-2",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -48}],
             room_name="Kitchen",
         )
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -44}],
@@ -384,16 +375,17 @@ class TestMultiSatelliteAggregation:
         p = service_with_devices.get_user_presence(1)
         assert p.room_id == 10  # Multi-sat bonus wins
 
-    def test_rssi_threshold_filters_weak_signals(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_rssi_threshold_filters_weak_signals(self, service_with_devices):
         """Sightings below -80 dBm are ignored in aggregation."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
             room_name="Kitchen",
         )
         # This weak signal should be ignored
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-bedroom",
             room_id=30,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -85}],
@@ -403,14 +395,15 @@ class TestMultiSatelliteAggregation:
         p = service_with_devices.get_user_presence(1)
         assert p.room_id == 10  # Kitchen wins, bedroom ignored
 
-    def test_rssi_threshold_all_filtered(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_rssi_threshold_all_filtered(self, service_with_devices):
         """If all sightings below threshold, user not assigned."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -85}],
         )
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-living",
             room_id=20,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -95}],
@@ -419,10 +412,11 @@ class TestMultiSatelliteAggregation:
         p = service_with_devices.get_user_presence(1)
         assert p is None
 
-    def test_confidence_increases_with_satellites(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_confidence_increases_with_satellites(self, service_with_devices):
         """More satellites → higher confidence due to satellite coverage factor."""
         # Single satellite
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen-1",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -432,7 +426,7 @@ class TestMultiSatelliteAggregation:
         conf_1_sat = p1.confidence
 
         # Add second satellite for same room
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen-2",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -442,7 +436,7 @@ class TestMultiSatelliteAggregation:
         conf_2_sat = p2.confidence
 
         # Add third satellite
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen-3",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -454,9 +448,10 @@ class TestMultiSatelliteAggregation:
         assert conf_2_sat > conf_1_sat
         assert conf_3_sat > conf_2_sat
 
-    def test_single_satellite_still_works(self, service_with_devices):
+    @pytest.mark.asyncio
+    async def test_single_satellite_still_works(self, service_with_devices):
         """Backward compatible: single satellite assignment works same as before."""
-        service_with_devices.process_ble_report(
+        await service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
@@ -479,3 +474,201 @@ class TestUserNameCache:
         assert service.get_user_name(1) == "alice"
         assert service.get_user_name(2) == "bob"
         assert service.get_user_name(999) is None
+
+
+@pytest.mark.unit
+class TestPresenceHooks:
+    """Tests for presence automation hook events."""
+
+    @pytest.mark.asyncio
+    async def test_enter_room_fires_hook(self, service_with_devices):
+        """User assigned to room fires presence_enter_room hook."""
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-kitchen",
+                room_id=10,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+                room_name="Kitchen",
+            )
+
+        calls = [c for c in mock_run.call_args_list if c[0][0] == "presence_enter_room"]
+        assert len(calls) == 1
+        kwargs = calls[0][1]
+        assert kwargs["user_id"] == 1
+        assert kwargs["room_id"] == 10
+        assert kwargs["room_name"] == "Kitchen"
+
+    @pytest.mark.asyncio
+    async def test_leave_room_fires_hook(self, service_with_devices):
+        """User moving rooms fires presence_leave_room for old room."""
+        mock_run = AsyncMock(return_value=[])
+        # First establish user in kitchen
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        # Move to living room (need 2 scans for hysteresis)
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+
+        leave_calls = [c for c in mock_run.call_args_list if c[0][0] == "presence_leave_room"]
+        assert len(leave_calls) >= 1
+        kwargs = leave_calls[0][1]
+        assert kwargs["user_id"] == 1
+        assert kwargs["room_id"] == 10
+        assert kwargs["room_name"] == "Kitchen"
+
+    @pytest.mark.asyncio
+    async def test_room_change_fires_both(self, service_with_devices):
+        """Room A→B fires leave(A) + enter(B)."""
+        mock_run = AsyncMock(return_value=[])
+        # Establish in kitchen
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        # Move to living room
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+
+        event_names = [c[0][0] for c in mock_run.call_args_list]
+        assert "presence_leave_room" in event_names
+        assert "presence_enter_room" in event_names
+
+    @pytest.mark.asyncio
+    async def test_first_arrived_fires_when_house_empty(self, service_with_devices):
+        """First user detected fires presence_first_arrived."""
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-kitchen", room_id=10,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+                room_name="Kitchen",
+            )
+
+        first_arrived = [c for c in mock_run.call_args_list if c[0][0] == "presence_first_arrived"]
+        assert len(first_arrived) == 1
+        kwargs = first_arrived[0][1]
+        assert kwargs["user_id"] == 1
+        assert kwargs["room_id"] == 10
+
+    @pytest.mark.asyncio
+    async def test_first_arrived_not_fired_when_others_present(self, service_with_devices):
+        """Second user arriving does NOT fire presence_first_arrived."""
+        # First user arrives
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        # Second user arrives
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-kitchen", room_id=10,
+                devices=[{"mac": "AA:BB:CC:DD:EE:03", "rssi": -50}],
+                room_name="Kitchen",
+            )
+
+        first_arrived = [c for c in mock_run.call_args_list if c[0][0] == "presence_first_arrived"]
+        assert len(first_arrived) == 0
+
+    @pytest.mark.asyncio
+    async def test_last_left_fires_when_room_empty(self, service_with_devices):
+        """Last occupant leaving fires presence_last_left for that room."""
+        # Establish user in kitchen
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        # Move to living room (leaves kitchen empty)
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-living", room_id=20,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+                room_name="Living Room",
+            )
+
+        last_left = [c for c in mock_run.call_args_list if c[0][0] == "presence_last_left"]
+        assert len(last_left) >= 1
+        kwargs = last_left[0][1]
+        assert kwargs["room_id"] == 10
+        assert kwargs["room_name"] == "Kitchen"
+
+    @pytest.mark.asyncio
+    async def test_stale_cleanup_fires_leave(self, service_with_devices):
+        """Stale user fires presence_leave_room."""
+        service_with_devices._stale_timeout = 0.01
+
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        time.sleep(0.02)
+
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-kitchen", room_id=10, devices=[],
+            )
+
+        leave_calls = [c for c in mock_run.call_args_list if c[0][0] == "presence_leave_room"]
+        assert len(leave_calls) >= 1
+        assert leave_calls[0][1]["user_id"] == 1
+
+    @pytest.mark.asyncio
+    async def test_no_hooks_when_same_room(self, service_with_devices):
+        """Reinforcing same room fires no enter/leave hooks."""
+        # First scan establishes room
+        await service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen", room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        # Second scan reinforces same room — no hooks
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service_with_devices.process_ble_report(
+                satellite_id="sat-kitchen", room_id=10,
+                devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+                room_name="Kitchen",
+            )
+
+        event_names = [c[0][0] for c in mock_run.call_args_list]
+        assert "presence_enter_room" not in event_names
+        assert "presence_leave_room" not in event_names
