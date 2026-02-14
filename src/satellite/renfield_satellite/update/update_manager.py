@@ -272,11 +272,29 @@ class UpdateManager:
                     )
 
             # Run download in thread pool to avoid blocking
+            # Use unverified SSL context for self-signed certs on local network
+            import ssl
+            ssl_ctx = ssl.create_default_context()
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+            def _download():
+                req = urllib.request.Request(request.package_url)
+                with urllib.request.urlopen(req, context=ssl_ctx) as response:
+                    total_size = int(response.headers.get("Content-Length", 0))
+                    with open(package_path, "wb") as f:
+                        block_size = 8192
+                        count = 0
+                        while True:
+                            chunk = response.read(block_size)
+                            if not chunk:
+                                break
+                            f.write(chunk)
+                            count += 1
+                            report_hook(count, block_size, total_size)
+
             loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: urllib.request.urlretrieve(request.package_url, package_path, report_hook)
-            )
+            await loop.run_in_executor(None, _download)
 
             self._report_progress(UpdateStage.DOWNLOADING, 40, "Download complete")
 
