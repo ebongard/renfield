@@ -22,6 +22,7 @@ Unterstützung oder Billigung durch solche Dritte.
 - **Konversations-Gedächtnis** — Langzeit-Erinnerungen (Präferenzen, Fakten, Anweisungen) mit Widerspruchserkennung
 - **Intent Feedback Learning** — Lernt aus Korrekturen und verbessert Intent-Erkennung über semantisches Matching
 - **Spracheingabe & -ausgabe** — Whisper STT und Piper TTS, Sprechererkennung mit SpeechBrain
+- **Präsenzerkennung** — BLE-Scanning, Sprechererkennung und Web-Auth verfolgen, wer sich in welchem Raum befindet
 
 ### Integrationen (8 MCP-Server)
 | Server | Beschreibung | Transport | Aktivierung |
@@ -51,6 +52,20 @@ Unterstützung oder Billigung durch solche Dritte.
 - **Wake-Word-Erkennung** — Lokales OpenWakeWord, zentrale Verwaltung
 - **Audio-Output-Routing** — TTS-Ausgabe auf optimales Gerät im Raum
 - **IP-basierte Raumerkennung** — Automatischer Raum-Kontext für Befehle
+
+### Präsenzerkennung
+
+Raumbasierte Präsenzerkennung aus drei Quellen:
+
+| Quelle | Auslöser | Latenz |
+|--------|----------|--------|
+| BLE-Scanning | Satellit erkennt Telefon/Uhr via Bluetooth | ~30s (Hysterese) |
+| Voice Presence | Sprechererkennung identifiziert Nutzer | Sofort |
+| Web Auth | Authentifizierter Nutzer mit Raumzuweisung | Sofort |
+
+- **Privacy-aware TTS** — Benachrichtigungen respektieren Raumbelegung (public / personal / confidential)
+- **Automation-Hooks** — `enter_room`, `leave_room`, `first_arrived`, `last_left` Events feuern Webhooks für n8n / Home Assistant
+- **Presence Dashboard** — Echtzeit-Raumbelegung im Admin-UI
 
 ### Sicherheit & Zugriffskontrolle
 - **RPBAC** — Role-Permission Based Access Control mit JWT (optional)
@@ -253,6 +268,9 @@ PROACTIVE_REMINDERS_ENABLED=false # Erinnerungen (opt-in)
 
 # Authentifizierung
 AUTH_ENABLED=false                # RPBAC (opt-in)
+
+# Präsenzerkennung
+PRESENCE_ENABLED=false           # Raum-Präsenzerkennung (opt-in)
 
 # Monitoring
 METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
