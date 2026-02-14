@@ -646,10 +646,11 @@
   },
   "presence": {
     "title": "Anwesenheit",
-    "subtitle": "Wer ist wo \u2014 BLE-basierte Raumpr\u00e4senz",
+    "subtitle": "Wer ist wo \u2014 Raumpr\u00e4senz via BLE, Sprache und Web",
     "roomOccupancy": "Raumbelegung",
     "noData": "Keine Pr\u00e4senzdaten verf\u00fcgbar",
     "presenceDisabled": "Pr\u00e4senzerkennung ist deaktiviert (PRESENCE_ENABLED=false)",
+    "noOccupants": "Keine Anwesenden erkannt \u2014 Pr\u00e4senz wird aktualisiert wenn Satelliten BLE-Ger\u00e4te scannen oder Sprecher erkennen",
     "trackedUsers": "Erfasste Personen",
     "occupiedRooms": "Belegte R\u00e4ume",
     "confidence": "Konfidenz",

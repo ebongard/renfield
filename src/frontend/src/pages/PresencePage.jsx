@@ -257,6 +257,7 @@ export default function PresencePage() {
   const [error, setError] = useState(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showAddDevice, setShowAddDevice] = useState(false);
+  const [presenceEnabled, setPresenceEnabled] = useState(null);
 
   const refreshIntervalRef = useRef(null);
 
@@ -297,6 +298,9 @@ export default function PresencePage() {
     loadPresence();
     loadDevices();
     loadUsers();
+    apiClient.get('/api/presence/status')
+      .then(res => setPresenceEnabled(res.data?.enabled ?? false))
+      .catch(() => setPresenceEnabled(false));
   }, [loadPresence, loadDevices, loadUsers]);
 
   // Auto-refresh presence data
@@ -435,7 +439,9 @@ export default function PresencePage() {
             {t('presence.noData')}
           </h3>
           <p className="text-gray-500 dark:text-gray-400">
-            {t('presence.presenceDisabled')}
+            {presenceEnabled === false
+              ? t('presence.presenceDisabled')
+              : t('presence.noOccupants')}
           </p>
         </div>
       ) : (
