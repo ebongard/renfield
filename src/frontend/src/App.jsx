@@ -25,6 +25,7 @@ const IntegrationsPage = lazy(() => import('./pages/IntegrationsPage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SatellitesPage = lazy(() => import('./pages/SatellitesPage'));
 const IntentsPage = lazy(() => import('./pages/IntentsPage'));
+const PresencePage = lazy(() => import('./pages/PresencePage'));
 
 function App() {
   return (
@@ -102,6 +103,11 @@ function App() {
                   <Route path="/admin/intents" element={
                     <AdminRoute>
                       <IntentsPage />
+                    </AdminRoute>
+                  } />
+                  <Route path="/admin/presence" element={
+                    <AdminRoute>
+                      <PresencePage />
                     </AdminRoute>
                   } />
                 </Routes>

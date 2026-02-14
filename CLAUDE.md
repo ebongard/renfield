@@ -403,6 +403,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_ENABLED` — BLE-based room-level presence detection (default: `false`, opt-in)
 - `PRESENCE_STALE_TIMEOUT` — Seconds before user marked absent (default: `120`)
 - `PRESENCE_HYSTERESIS_SCANS` — Consecutive scans before room change (default: `2`)
+- `PRESENCE_RSSI_THRESHOLD` — RSSI threshold in dBm; signals weaker than this are ignored for room assignment (default: `-80`)
 - `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)

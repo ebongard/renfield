@@ -23,6 +23,7 @@ router = APIRouter(prefix="/api/presence")
 
 class UserPresenceResponse(BaseModel):
     user_id: int
+    user_name: str | None = None
     room_id: int | None = None
     room_name: str | None = None
     satellite_id: str | None = None
@@ -76,6 +77,7 @@ async def get_rooms_presence():
             )
         rooms[p.room_id].occupants.append(UserPresenceResponse(
             user_id=p.user_id,
+            user_name=presence.get_user_name(p.user_id),
             room_id=p.room_id,
             room_name=p.room_name,
             satellite_id=p.satellite_id,
@@ -101,6 +103,7 @@ async def get_room_presence(room_id: int):
         room_name = room_name or p.room_name
         items.append(UserPresenceResponse(
             user_id=p.user_id,
+            user_name=presence.get_user_name(p.user_id),
             room_id=p.room_id,
             room_name=p.room_name,
             satellite_id=p.satellite_id,
@@ -128,6 +131,7 @@ async def get_user_presence(user_id: int):
 
     return UserPresenceResponse(
         user_id=p.user_id,
+        user_name=presence.get_user_name(p.user_id),
         room_id=p.room_id,
         room_name=p.room_name,
         satellite_id=p.satellite_id,
