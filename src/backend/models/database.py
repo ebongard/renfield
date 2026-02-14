@@ -806,8 +806,13 @@ class Notification(Base):
     original_message = Column(Text, nullable=True)
     urgency_auto = Column(Boolean, default=False)
 
+    # Privacy-aware TTS delivery
+    privacy = Column(String(20), default="public")
+    target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
     # Relationships
     room = relationship("Room", foreign_keys=[room_id])
+    target_user = relationship("User", foreign_keys=[target_user_id])
 
 
 class NotificationSuppression(Base):
