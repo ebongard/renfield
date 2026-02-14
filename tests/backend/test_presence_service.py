@@ -12,6 +12,7 @@ with patch("utils.config.settings") as mock_settings:
     mock_settings.presence_enabled = True
     mock_settings.presence_stale_timeout = 120
     mock_settings.presence_hysteresis_scans = 2
+    mock_settings.presence_rssi_threshold = -80
     from services.presence_service import PresenceService
 
 
@@ -24,7 +25,9 @@ def service():
     svc._sightings = {}
     svc._hysteresis_threshold = 2
     svc._stale_timeout = 120.0
+    svc._rssi_threshold = -80
     svc._room_names = {}
+    svc._user_names = {}
     return svc
 
 
@@ -300,23 +303,179 @@ class TestDeviceManagement:
 
 @pytest.mark.unit
 class TestConfidence:
-    def test_confidence_calculation(self, service_with_devices):
-        """RSSI is converted to 0-1 confidence."""
+    def test_confidence_single_satellite(self, service_with_devices):
+        """Single satellite confidence: 70% RSSI + 30% satellite coverage (1/3)."""
         service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -30}],
         )
         p = service_with_devices.get_user_presence(1)
-        assert p.confidence == 1.0  # -30 dBm = max confidence
+        # rssi_conf = 1.0, sat_factor = 1/3 ≈ 0.333
+        # confidence = 1.0 * 0.7 + 0.333 * 0.3 = 0.8
+        assert abs(p.confidence - 0.8) < 0.01
 
-        # Reset and test weak signal
-        service_with_devices._presence.clear()
-        service_with_devices._sightings.clear()
+    def test_weak_signal_below_threshold_ignored(self, service_with_devices):
+        """Signals below RSSI threshold (-80 dBm) are ignored entirely."""
         service_with_devices.process_ble_report(
             satellite_id="sat-kitchen",
             room_id=10,
             devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -90}],
         )
         p = service_with_devices.get_user_presence(1)
-        assert p.confidence == 0.0  # -90 dBm = min confidence
+        assert p is None  # Below threshold, not assigned
+
+
+@pytest.mark.unit
+class TestMultiSatelliteAggregation:
+    def test_two_satellites_strongest_room_wins(self, service_with_devices):
+        """Device seen by sats in different rooms — stronger room wins."""
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -60}],
+            room_name="Kitchen",
+        )
+        service_with_devices.process_ble_report(
+            satellite_id="sat-living",
+            room_id=20,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+            room_name="Living Room",
+        )
+        # Both rooms have 1 satellite each, no multi-sat bonus
+        # Living room wins: -40 > -60
+        # Need additional scan to overcome hysteresis
+        service_with_devices.process_ble_report(
+            satellite_id="sat-living",
+            room_id=20,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -40}],
+            room_name="Living Room",
+        )
+        p = service_with_devices.get_user_presence(1)
+        assert p.room_id == 20
+
+    def test_multi_satellite_bonus(self, service_with_devices):
+        """Room seen by 2 sats beats room seen by 1 sat despite weaker individual RSSI."""
+        # Room 10: 2 satellites at -50 dBm each → score = -50 + 5*(2-1) = -45
+        # Room 20: 1 satellite at -45 dBm → score = -45 + 5*(1-1) = -45
+        # Actually tie, so let's make it clearer:
+        # Room 10: 2 sats at -48 → score = -48 + 5 = -43
+        # Room 20: 1 sat at -44 → score = -44
+        # Room 10 wins (-43 > -44)
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen-1",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -48}],
+            room_name="Kitchen",
+        )
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen-2",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -48}],
+            room_name="Kitchen",
+        )
+        service_with_devices.process_ble_report(
+            satellite_id="sat-living",
+            room_id=20,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -44}],
+            room_name="Living Room",
+        )
+
+        p = service_with_devices.get_user_presence(1)
+        assert p.room_id == 10  # Multi-sat bonus wins
+
+    def test_rssi_threshold_filters_weak_signals(self, service_with_devices):
+        """Sightings below -80 dBm are ignored in aggregation."""
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+        # This weak signal should be ignored
+        service_with_devices.process_ble_report(
+            satellite_id="sat-bedroom",
+            room_id=30,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -85}],
+            room_name="Bedroom",
+        )
+
+        p = service_with_devices.get_user_presence(1)
+        assert p.room_id == 10  # Kitchen wins, bedroom ignored
+
+    def test_rssi_threshold_all_filtered(self, service_with_devices):
+        """If all sightings below threshold, user not assigned."""
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -85}],
+        )
+        service_with_devices.process_ble_report(
+            satellite_id="sat-living",
+            room_id=20,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -95}],
+        )
+
+        p = service_with_devices.get_user_presence(1)
+        assert p is None
+
+    def test_confidence_increases_with_satellites(self, service_with_devices):
+        """More satellites → higher confidence due to satellite coverage factor."""
+        # Single satellite
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen-1",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+        p1 = service_with_devices.get_user_presence(1)
+        conf_1_sat = p1.confidence
+
+        # Add second satellite for same room
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen-2",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+        p2 = service_with_devices.get_user_presence(1)
+        conf_2_sat = p2.confidence
+
+        # Add third satellite
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen-3",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+        p3 = service_with_devices.get_user_presence(1)
+        conf_3_sat = p3.confidence
+
+        assert conf_2_sat > conf_1_sat
+        assert conf_3_sat > conf_2_sat
+
+    def test_single_satellite_still_works(self, service_with_devices):
+        """Backward compatible: single satellite assignment works same as before."""
+        service_with_devices.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        p = service_with_devices.get_user_presence(1)
+        assert p is not None
+        assert p.room_id == 10
+        assert p.room_name == "Kitchen"
+        assert p.satellite_id == "sat-kitchen"
+        assert p.confidence > 0
+
+
+@pytest.mark.unit
+class TestUserNameCache:
+    def test_get_user_name(self, service):
+        """get_user_name returns cached username."""
+        service._user_names = {1: "alice", 2: "bob"}
+        assert service.get_user_name(1) == "alice"
+        assert service.get_user_name(2) == "bob"
+        assert service.get_user_name(999) is None

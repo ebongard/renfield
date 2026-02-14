@@ -21,7 +21,8 @@ import {
   Satellite,
   Blocks,
   Zap,
-  Brain
+  Brain,
+  MapPin
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -48,6 +49,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'] },
+  { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
 ];
 
