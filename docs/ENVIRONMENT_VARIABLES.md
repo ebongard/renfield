@@ -322,6 +322,7 @@ Siehe `docs/PROACTIVE_SCHEDULING_TEMPLATES.md` für fertige Templates.
 PRESENCE_ENABLED=false
 PRESENCE_STALE_TIMEOUT=120               # Sekunden bis Benutzer als abwesend markiert
 PRESENCE_HYSTERESIS_SCANS=2              # Aufeinanderfolgende Scans vor Raumwechsel
+PRESENCE_HOUSEHOLD_ROLES="Admin,Familie" # Rollen die als Haushaltsmitglieder gelten (für Privacy-TTS)
 ```
 
 **Satellite-Konfiguration** (in `satellite.yaml`):

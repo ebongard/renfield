@@ -10,9 +10,7 @@ Tests:
 - Integration with NotificationService
 """
 
-import asyncio
 import json
-from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,7 +22,6 @@ from services.mcp_client import (
     _parse_notifications,
 )
 from services.notification_poller import NotificationPollerService
-
 
 # ============================================================================
 # _parse_notifications
@@ -317,6 +314,94 @@ class TestPollOnce:
         with patch.object(poller, "_process_notification", new_callable=AsyncMock) as mock_process:
             await poller._poll_once("calendar", "mcp.calendar.get_pending_notifications", 45)
             mock_process.assert_not_called()
+
+
+class TestPrivacyFieldForwarding:
+    """Test that privacy and target_user_id are forwarded to process_webhook."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_privacy_fields_forwarded(self, poller):
+        """Privacy and target_user_id from poll result are passed to process_webhook."""
+        notification = {
+            "event_type": "calendar.reminder_upcoming",
+            "title": "Arzttermin",
+            "message": "In 30 Minuten: Arzttermin",
+            "urgency": "warning",
+            "dedup_key": "cal:private:456:30min",
+            "tts": True,
+            "privacy": "confidential",
+            "target_user_id": 42,
+        }
+
+        mock_service = MagicMock()
+        mock_service.process_webhook = AsyncMock()
+
+        # Create mock async context manager for AsyncSessionLocal
+        mock_db = AsyncMock()
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        import services.notification_poller as poller_mod
+        with patch.object(poller_mod, "__builtins__", poller_mod.__builtins__):
+            # Patch the lazy imports inside _process_notification
+            import types
+            mock_db_module = types.ModuleType("services.database")
+            mock_db_module.AsyncSessionLocal = mock_session_factory
+            mock_svc_module = types.ModuleType("services.notification_service")
+            mock_svc_module.NotificationService = MagicMock(return_value=mock_service)
+
+            import sys
+            with patch.dict(sys.modules, {
+                "services.database": mock_db_module,
+                "services.notification_service": mock_svc_module,
+            }):
+                await poller._process_notification("calendar", notification)
+
+                mock_service.process_webhook.assert_called_once()
+                call_kwargs = mock_service.process_webhook.call_args
+                assert call_kwargs.kwargs.get("privacy") == "confidential"
+                assert call_kwargs.kwargs.get("target_user_id") == 42
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_missing_privacy_defaults_public(self, poller):
+        """When privacy is missing from poll result, defaults to 'public'."""
+        notification = {
+            "event_type": "calendar.reminder_upcoming",
+            "title": "Meeting",
+            "message": "In 30 Minuten: Meeting",
+            "dedup_key": "cal:shared:789:30min",
+        }
+
+        mock_service = MagicMock()
+        mock_service.process_webhook = AsyncMock()
+
+        mock_db = AsyncMock()
+        mock_session = AsyncMock()
+        mock_session.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_session.__aexit__ = AsyncMock(return_value=False)
+        mock_session_factory = MagicMock(return_value=mock_session)
+
+        import types
+        mock_db_module = types.ModuleType("services.database")
+        mock_db_module.AsyncSessionLocal = mock_session_factory
+        mock_svc_module = types.ModuleType("services.notification_service")
+        mock_svc_module.NotificationService = MagicMock(return_value=mock_service)
+
+        import sys
+        with patch.dict(sys.modules, {
+            "services.database": mock_db_module,
+            "services.notification_service": mock_svc_module,
+        }):
+            await poller._process_notification("calendar", notification)
+
+            mock_service.process_webhook.assert_called_once()
+            call_kwargs = mock_service.process_webhook.call_args
+            assert call_kwargs.kwargs.get("privacy") == "public"
+            assert call_kwargs.kwargs.get("target_user_id") is None
 
 
 class TestSeenKeysPruning:

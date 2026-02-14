@@ -291,6 +291,7 @@ class Settings(BaseSettings):
     presence_enabled: bool = False                      # Master-Switch for BLE presence detection
     presence_stale_timeout: int = 120                   # Seconds before user marked absent
     presence_hysteresis_scans: int = 2                  # Consecutive scans before room change
+    presence_household_roles: str = "Admin,Familie"        # Roles considered household members for privacy TTS
 
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling

@@ -287,7 +287,12 @@ Room-level presence detection using BLE scanning from satellites. Satellites sca
 
 **API:** `GET /api/presence/rooms` (all rooms with occupants), `GET /api/presence/user/{id}` (user location + alone?), `POST /api/presence/devices` (admin: register BLE device). MAC whitelist pushed to satellites after registration.
 
-**Privacy:** `is_user_alone_in_room(user_id)` enables privacy-aware TTS decisions (e.g. confidential calendar reminders only when user is alone). Disabled by default (`PRESENCE_ENABLED=false`).
+**Privacy-Aware TTS Delivery:** Notifications carry `privacy` and `target_user_id` metadata. The privacy gate (`services/notification_privacy.py`) checks room occupancy before allowing TTS:
+- `public` — TTS always plays
+- `personal` — TTS only when all room occupants have household roles (`PRESENCE_HOUSEHOLD_ROLES`)
+- `confidential` — TTS only when the target user is completely alone in the room
+
+When `PRESENCE_ENABLED=false`, only `public` notifications get TTS. Web notifications are always delivered regardless of privacy level. Calendar MCP derives privacy from `visibility: owner` → `confidential`, `visibility: shared` → `personal`.
 
 ### Device Management
 
@@ -398,6 +403,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_ENABLED` — BLE-based room-level presence detection (default: `false`, opt-in)
 - `PRESENCE_STALE_TIMEOUT` — Seconds before user marked absent (default: `120`)
 - `PRESENCE_HYSTERESIS_SCANS` — Consecutive scans before room change (default: `2`)
+- `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 
