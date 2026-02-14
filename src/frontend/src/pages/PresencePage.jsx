@@ -285,7 +285,8 @@ export default function PresencePage() {
   const loadUsers = useCallback(async () => {
     try {
       const response = await apiClient.get('/api/users');
-      setUsers(response.data || []);
+      const data = response.data;
+      setUsers(Array.isArray(data) ? data : data?.users || []);
     } catch {
       // Non-critical
     }
