@@ -2,8 +2,8 @@
 Presence Service — BLE-based room-level presence detection.
 
 In-memory state management for tracking which users are in which rooms,
-based on BLE scan reports from satellites. Uses "strongest RSSI wins"
-with hysteresis to prevent room flicker.
+based on BLE scan reports from satellites. Aggregates RSSI from multiple
+satellites for robust room assignment with hysteresis to prevent room flicker.
 """
 
 import time
@@ -52,11 +52,13 @@ class PresenceService:
         self._sightings: dict[str, list[DeviceSighting]] = {}  # MAC → recent sightings
         self._hysteresis_threshold: int = settings.presence_hysteresis_scans
         self._stale_timeout: float = float(settings.presence_stale_timeout)
+        self._rssi_threshold: int = settings.presence_rssi_threshold
         self._room_names: dict[int, str] = {}            # room_id → name cache
+        self._user_names: dict[int, str] = {}            # user_id → username
 
     async def load_device_registry(self, db: AsyncSession):
         """Load UserBleDevice table into MAC → user_id cache."""
-        from models.database import UserBleDevice
+        from models.database import User, UserBleDevice
 
         result = await db.execute(
             select(UserBleDevice).where(UserBleDevice.is_enabled == True)  # noqa: E712
@@ -66,11 +68,20 @@ class PresenceService:
         self._mac_to_user = {
             d.mac_address.upper(): d.user_id for d in devices
         }
+
+        # Cache user names for frontend display
+        user_result = await db.execute(select(User))
+        self._user_names = {u.id: u.username for u in user_result.scalars().all()}
+
         logger.info(f"Presence: loaded {len(self._mac_to_user)} BLE devices")
 
     def set_room_name(self, room_id: int, name: str):
         """Cache a room name for display."""
         self._room_names[room_id] = name
+
+    def get_user_name(self, user_id: int) -> str | None:
+        """Get cached username for a user_id."""
+        return self._user_names.get(user_id)
 
     def process_ble_report(
         self,
@@ -123,7 +134,7 @@ class PresenceService:
         self._cleanup_stale(now)
 
     def _assign_room(self, mac: str):
-        """Assign a user to a room based on strongest RSSI with hysteresis."""
+        """Assign a user to a room based on multi-satellite RSSI aggregation with hysteresis."""
         user_id = self._mac_to_user.get(mac)
         if user_id is None:
             return
@@ -132,31 +143,80 @@ class PresenceService:
         if not sightings:
             return
 
-        # Find strongest RSSI among recent sightings
-        best = max(sightings, key=lambda s: s.rssi)
+        # Filter by RSSI threshold
+        valid = [s for s in sightings if s.rssi >= self._rssi_threshold]
+        if not valid:
+            return
+
+        # Group by room — keep latest sighting per (room, satellite) pair
+        latest_per_key: dict[tuple[int, str], DeviceSighting] = {}
+        for s in valid:
+            if s.room_id is None:
+                continue
+            key = (s.room_id, s.satellite_id)
+            if key not in latest_per_key or s.timestamp > latest_per_key[key].timestamp:
+                latest_per_key[key] = s
+
+        # Collect RSSI values per room
+        room_rssi: dict[int, list[int]] = {}
+        for (room_id, _), s in latest_per_key.items():
+            room_rssi.setdefault(room_id, []).append(s.rssi)
+
+        if not room_rssi:
+            return
+
+        # Score each room: mean RSSI + multi-satellite bonus (5 dBm per extra satellite)
+        best_room_id = None
+        best_score = float("-inf")
+        best_rssi_values: list[int] = []
+
+        for room_id, rssi_values in room_rssi.items():
+            mean_rssi = sum(rssi_values) / len(rssi_values)
+            score = mean_rssi + 5 * (len(rssi_values) - 1)
+            if score > best_score:
+                best_score = score
+                best_room_id = room_id
+                best_rssi_values = rssi_values
+
+        # Find strongest satellite_id in the winning room
+        best_satellite_id = None
+        best_sat_rssi = float("-inf")
+        best_timestamp = 0.0
+        for (room_id, sat_id), s in latest_per_key.items():
+            if room_id == best_room_id:
+                if s.rssi > best_sat_rssi:
+                    best_sat_rssi = s.rssi
+                    best_satellite_id = sat_id
+                if s.timestamp > best_timestamp:
+                    best_timestamp = s.timestamp
 
         current = self._presence.get(user_id)
         if current is None:
             current = UserPresence(user_id=user_id)
             self._presence[user_id] = current
 
-        current.last_seen = best.timestamp
+        current.last_seen = best_timestamp
 
-        # Calculate confidence from RSSI (0-1 scale, -30 dBm = 1.0, -90 dBm = 0.0)
-        current.confidence = max(0.0, min(1.0, (best.rssi + 90) / 60.0))
+        # Confidence: RSSI component (70%) + satellite count component (30%)
+        mean_rssi = sum(best_rssi_values) / len(best_rssi_values)
+        rssi_conf = max(0.0, min(1.0, (mean_rssi + 90) / 60.0))
+        sat_factor = min(1.0, len(best_rssi_values) / 3.0)
+        confidence = rssi_conf * 0.7 + sat_factor * 0.3
 
-        if best.room_id == current.room_id:
+        current.confidence = confidence
+
+        if best_room_id == current.room_id:
             # Same room — reinforce
             current.consecutive_room_count += 1
-            current.satellite_id = best.satellite_id
+            current.satellite_id = best_satellite_id
         else:
             # Different room — apply hysteresis
             current.consecutive_room_count += 1
             if current.room_id is None or current.consecutive_room_count >= self._hysteresis_threshold:
                 old_room = current.room_name or current.room_id
-                current.room_id = best.room_id
-                current.room_name = self._room_names.get(best.room_id) if best.room_id else None
-                current.satellite_id = best.satellite_id
+                current.room_id = best_room_id
+                current.room_name = self._room_names.get(best_room_id) if best_room_id else None
+                current.satellite_id = best_satellite_id
                 current.consecutive_room_count = 1
                 new_room = current.room_name or current.room_id
                 logger.debug(f"Presence: user {user_id} moved {old_room} → {new_room}")
