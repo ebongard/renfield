@@ -561,7 +561,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
                     from services.presence_service import get_presence_service
                     presence_svc = get_presence_service()
-                    presence_svc.process_ble_report(
+                    await presence_svc.process_ble_report(
                         satellite_id=satellite_id,
                         room_id=ble_room_id,
                         devices=ble_devices,
