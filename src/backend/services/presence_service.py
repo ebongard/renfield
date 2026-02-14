@@ -295,6 +295,89 @@ class PresenceService:
         for event_name, kwargs in events:
             await run_hooks(event_name, **kwargs)
 
+    async def register_voice_presence(
+        self,
+        user_id: int,
+        room_id: int,
+        room_name: str | None = None,
+        confidence: float = 1.0,
+    ):
+        """
+        Register presence from voice interaction (speaker recognition or auth).
+
+        Voice/auth = certain presence, so this bypasses BLE hysteresis.
+        A single call is enough to move the user to the new room.
+        """
+        now = time.time()
+
+        if room_name and room_id:
+            self._room_names[room_id] = room_name
+
+        current = self._presence.get(user_id)
+
+        if current is not None and current.room_id == room_id:
+            # Same room — just refresh last_seen, no hooks
+            current.last_seen = now
+            current.confidence = confidence
+            return
+
+        # Different room or first appearance — bypass hysteresis
+        if current is None:
+            current = UserPresence(user_id=user_id)
+            self._presence[user_id] = current
+
+        old_room_id = current.room_id
+        old_room_name = current.room_name
+
+        # Check if house was empty before this user (first_arrived detection)
+        was_first = old_room_id is None and len(self._presence) == 1
+
+        # Fire leave event for old room
+        if old_room_id is not None and old_room_id != room_id:
+            self._pending_events.append(("presence_leave_room", {
+                "user_id": user_id,
+                "user_name": self.get_user_name(user_id),
+                "room_id": old_room_id,
+                "room_name": old_room_name,
+            }))
+            # Check if old room is now empty (user hasn't moved yet, so exclude them)
+            other_occupants = [
+                p for p in self._presence.values()
+                if p.room_id == old_room_id and p.user_id != user_id
+            ]
+            if not other_occupants:
+                self._pending_events.append(("presence_last_left", {
+                    "room_id": old_room_id,
+                    "room_name": old_room_name,
+                }))
+
+        # Update presence state
+        current.room_id = room_id
+        current.room_name = room_name or self._room_names.get(room_id)
+        current.confidence = confidence
+        current.last_seen = now
+        current.consecutive_room_count = 1
+
+        # Fire enter event for new room
+        self._pending_events.append(("presence_enter_room", {
+            "user_id": user_id,
+            "user_name": self.get_user_name(user_id),
+            "room_id": room_id,
+            "room_name": current.room_name,
+            "confidence": confidence,
+        }))
+        if was_first:
+            self._pending_events.append(("presence_first_arrived", {
+                "user_id": user_id,
+                "user_name": self.get_user_name(user_id),
+                "room_id": room_id,
+                "room_name": current.room_name,
+            }))
+
+        logger.debug(f"Presence: voice/auth — user {user_id} → {current.room_name or room_id}")
+
+        await self._fire_pending_events()
+
     def get_room_occupants(self, room_id: int) -> list[UserPresence]:
         """Get all users currently in a room."""
         return [

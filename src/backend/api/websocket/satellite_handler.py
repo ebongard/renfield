@@ -422,7 +422,7 @@ async def satellite_websocket(
                     # Load user permissions from speaker recognition
                     sat_user_permissions = None
                     sat_user_id = None
-                    if speaker_name and settings.auth_enabled:
+                    if speaker_name and (settings.auth_enabled or settings.presence_enabled):
                         try:
                             from sqlalchemy import select
 
@@ -443,6 +443,19 @@ async def satellite_websocket(
                                         sat_user_id = usr.id
                         except Exception as e:
                             logger.warning(f"⚠️ Failed to load satellite user permissions: {e}")
+
+                    # Register voice presence if speaker was recognized
+                    if sat_user_id and settings.presence_enabled and satellite and satellite.room_id:
+                        try:
+                            from services.presence_service import get_presence_service
+                            presence_svc = get_presence_service()
+                            await presence_svc.register_voice_presence(
+                                user_id=sat_user_id,
+                                room_id=satellite.room_id,
+                                room_name=satellite.room,
+                            )
+                        except Exception as e:
+                            logger.warning(f"⚠️ Voice presence update failed: {e}")
 
                     for intent_candidate in ranked_intents:
                         intent_name = intent_candidate.get("intent", "general.conversation")
