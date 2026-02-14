@@ -617,9 +617,70 @@ Siehe [LLM_MODEL_GUIDE.md](LLM_MODEL_GUIDE.md) für Modell-Empfehlungen und Benc
 
 Alle Services nutzen eine zentrale Factory (`utils/llm_client.py`) mit URL-basiertem Caching (gleiche URL → gleiche Client-Instanz) und einem `LLMClient` Protocol.
 
+## Presence Detection
+
+### Übersicht
+
+Raum-basierte Präsenzerkennung aus drei Quellen:
+
+| Quelle | Auslöser | Hysterese | Konfidenz |
+|--------|----------|-----------|-----------|
+| **BLE-Scanning** | Satellit erkennt BLE-Gerät (Telefon, Uhr) | Ja (N Scans) | RSSI-basiert |
+| **Voice Presence** | Sprechererkennung identifiziert Nutzer | Nein (sofort) | 1.0 |
+| **Web Auth Presence** | Authentifizierter Nutzer mit Raum-Kontext | Nein (sofort) | 1.0 |
+
+Voice- und Auth-Presence umgehen die BLE-Hysterese — eine einzelne Interaktion verschiebt den Nutzer sofort und feuert Enter/Leave-Hooks.
+
+### BLE-Scanning
+
+Satelliten scannen per `bleak` nach registrierten BLE-Geräten und melden RSSI-Werte per WebSocket. Backend `PresenceService` nutzt "stärkstes RSSI gewinnt" + Hysterese (N aufeinanderfolgende Scans) um Raum-Flicker zu verhindern.
+
+### Voice Presence
+
+Wenn die Sprechererkennung einen Nutzer auf einem Satelliten identifiziert, wird `register_voice_presence()` aufgerufen. Dies aktualisiert den Raum sofort und feuert die entsprechenden Hooks (`presence_enter_room`, `presence_leave_room`, etc.).
+
+### Web Auth Presence
+
+Authentifizierte Nutzer, die über die Web-Oberfläche von einem raumzugewiesenen Gerät interagieren, aktualisieren ebenfalls ihre Position über denselben `register_voice_presence()`-Pfad.
+
+### Privacy-Aware TTS
+
+Benachrichtigungen tragen `privacy` und `target_user_id` Metadaten. Die Privacy-Gate prüft die Raumbelegung vor TTS-Ausgabe:
+- `public` — TTS immer aktiv
+- `personal` — TTS nur wenn alle Raumbewohner Haushaltsmitglieder sind
+- `confidential` — TTS nur wenn der Zielnutzer allein im Raum ist
+
+### Automation-Hooks
+
+Presence-Events feuern Hooks für externe Automatisierung (z.B. n8n-Workflows):
+- `presence_enter_room` — Nutzer betritt Raum
+- `presence_leave_room` — Nutzer verlässt Raum
+- `presence_first_arrived` — Erster Nutzer erkannt (Haus war leer)
+- `presence_last_left` — Letzter Bewohner hat Raum verlassen
+
+Optional: Webhook-Dispatch an externe URL (`PRESENCE_WEBHOOK_URL`).
+
+### Konfiguration
+
+```env
+PRESENCE_ENABLED=false
+PRESENCE_STALE_TIMEOUT=120
+PRESENCE_HYSTERESIS_SCANS=2
+PRESENCE_RSSI_THRESHOLD=-80
+PRESENCE_HOUSEHOLD_ROLES="Admin,Familie"
+PRESENCE_WEBHOOK_URL=""
+PRESENCE_WEBHOOK_SECRET=""
+```
+
+### Endpunkte
+
+- `GET /api/presence/rooms` — Alle Räume mit Anwesenden
+- `GET /api/presence/user/{id}` — Standort + allein?
+- `POST /api/presence/devices` — BLE-Gerät registrieren (Admin)
+
 ## Hook System (Extension API)
 
-Async Hook-System für die Open-Core-Architektur. Externe Pakete registrieren Callbacks an 6 Lifecycle-Stellen — renfield crasht nie wegen eines Plugin-Fehlers.
+Async Hook-System für die Open-Core-Architektur. Externe Pakete registrieren Callbacks an 10 Lifecycle-Stellen — renfield crasht nie wegen eines Plugin-Fehlers.
 
 **Aktivierung:**
 ```bash
@@ -636,6 +697,10 @@ PLUGIN_MODULE=renfield_twin.hooks:register
 | `register_tools` | Agent-Tools registrieren | Background Task |
 | `post_message` | Nachrichten nachverarbeiten (z.B. Graph-Extraktion) | Fire-and-forget |
 | `retrieve_context` | Zusätzlichen LLM-Kontext injizieren | Awaited, Ergebnis angehängt |
+| `presence_enter_room` | Nutzer betritt Raum | Fire-and-forget |
+| `presence_leave_room` | Nutzer verlässt Raum | Fire-and-forget |
+| `presence_first_arrived` | Erster Nutzer im Haus erkannt | Fire-and-forget |
+| `presence_last_left` | Letzter Bewohner hat Raum verlassen | Fire-and-forget |
 
 **Key files:** `utils/hooks.py`, `api/lifecycle.py` (Plugin-Loading)
 
