@@ -646,10 +646,11 @@
   },
   "presence": {
     "title": "Presence",
-    "subtitle": "Who is where \u2014 BLE-based room presence",
+    "subtitle": "Who is where \u2014 room presence via BLE, voice, and web",
     "roomOccupancy": "Room Occupancy",
     "noData": "No presence data available",
     "presenceDisabled": "Presence detection is disabled (PRESENCE_ENABLED=false)",
+    "noOccupants": "No occupants detected — presence updates when satellites scan BLE devices or recognize speakers",
     "trackedUsers": "Tracked Users",
     "occupiedRooms": "Occupied Rooms",
     "confidence": "Confidence",
