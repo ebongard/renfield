@@ -216,6 +216,10 @@ Minimal async hook system for the Open-Core plugin architecture. External packag
 | `register_tools` | `registry` (AgentToolRegistry) | Add custom agent tools |
 | `post_message` | `user_msg`, `assistant_msg`, `user_id`, `session_id` | Post-processing (e.g. graph extraction) |
 | `retrieve_context` | `query`, `user_id`, `lang` | Inject additional LLM context (return `str`) |
+| `presence_enter_room` | `user_id`, `user_name`, `room_id`, `room_name`, `confidence` | User entered a room |
+| `presence_leave_room` | `user_id`, `user_name`, `room_id`, `room_name` | User left a room |
+| `presence_first_arrived` | `user_id`, `user_name`, `room_id`, `room_name` | First user detected (house was empty) |
+| `presence_last_left` | `room_id`, `room_name` | Last occupant left a room |
 
 **Insertion Points:**
 
@@ -405,6 +409,8 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_HYSTERESIS_SCANS` — Consecutive scans before room change (default: `2`)
 - `PRESENCE_RSSI_THRESHOLD` — RSSI threshold in dBm; signals weaker than this are ignored for room assignment (default: `-80`)
 - `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
+- `PRESENCE_WEBHOOK_URL` — URL to POST presence events to (empty = disabled). Supports n8n webhook triggers (default: `""`)
+- `PRESENCE_WEBHOOK_SECRET` — Shared secret sent as X-Webhook-Secret header for webhook authentication (default: `""`)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 
