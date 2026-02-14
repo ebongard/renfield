@@ -888,3 +888,78 @@ class TestReminderCRUD:
                 message="Bad time",
                 trigger_at_str="maybe later",
             )
+
+
+# ============================================================================
+# Privacy-Aware TTS Gating
+# ============================================================================
+
+
+class TestPrivacyTtsGating:
+    """Tests for privacy fields on Notification model and TTS suppression."""
+
+    @pytest.mark.unit
+    def test_notification_privacy_defaults(self):
+        """Notification model has privacy and target_user_id columns."""
+        n = Notification(
+            event_type="test",
+            title="Test",
+            message="Test msg",
+            privacy="public",
+        )
+        assert n.privacy == "public"
+        assert n.target_user_id is None
+
+    @pytest.mark.unit
+    def test_notification_privacy_stored(self):
+        """Privacy and target_user_id can be set on Notification."""
+        n = Notification(
+            event_type="calendar.reminder",
+            title="Arzttermin",
+            message="In 30 min: Arzttermin",
+            privacy="confidential",
+            target_user_id=42,
+        )
+        assert n.privacy == "confidential"
+        assert n.target_user_id == 42
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_tts_suppressed_for_confidential(self):
+        """TTS is not delivered when privacy gate returns False."""
+        notification = MagicMock()
+        notification.privacy = "confidential"
+        notification.target_user_id = 1
+        notification.room_id = 10
+        notification.id = 99
+
+        with patch("services.notification_privacy.should_play_tts", new_callable=AsyncMock) as mock_gate:
+            mock_gate.return_value = False
+            from services.notification_privacy import should_play_tts
+            result = await should_play_tts(
+                privacy=notification.privacy,
+                target_user_id=notification.target_user_id,
+                room_id=notification.room_id,
+                db=AsyncMock(),
+            )
+            assert result is False
+
+    @pytest.mark.unit
+    def test_webhook_schema_privacy_validation(self):
+        """WebhookRequest validates privacy field."""
+        from api.routes.notifications_schemas import WebhookRequest
+
+        # Valid privacy
+        req = WebhookRequest(
+            event_type="test", title="T", message="M",
+            privacy="confidential", target_user_id=1,
+        )
+        assert req.privacy == "confidential"
+        assert req.target_user_id == 1
+
+        # Invalid privacy
+        with pytest.raises(ValueError):
+            WebhookRequest(
+                event_type="test", title="T", message="M",
+                privacy="secret",
+            )
