@@ -54,6 +54,19 @@ class BLEDeviceCreate(BaseModel):
     device_type: str = Field(default="phone", max_length=50)
 
 
+# --- Status ---
+
+
+class PresenceStatusResponse(BaseModel):
+    enabled: bool
+
+
+@router.get("/status", response_model=PresenceStatusResponse)
+async def get_presence_status():
+    """Check whether presence detection is enabled."""
+    return PresenceStatusResponse(enabled=settings.presence_enabled)
+
+
 # --- Room occupancy ---
 
 @router.get("/rooms", response_model=list[RoomOccupancyResponse])
