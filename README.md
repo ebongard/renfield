@@ -20,7 +20,7 @@
 ## Why Renfield?
 
 - **Voice-first with physical satellites** — Raspberry Pi Zero 2 W + ReSpeaker HAT in every room (~$30/satellite). Wake word, STT, TTS — fully local.
-- **8 MCP servers, 100+ tools, Agent Loop** — Weather, search, news, smart home, media, documents, email, workflows. ReAct agent chains tools autonomously for complex queries.
+- **9 MCP servers, 100+ tools, Agent Loop** — Weather, search, news, calendar, smart home, media, documents, email, workflows. ReAct agent chains tools autonomously for complex queries.
 - **Fully offline, self-hosted, GDPR-friendly** — Runs entirely on your hardware. No cloud dependencies. Your data never leaves your network.
 
 ## Screenshots
@@ -36,7 +36,7 @@
 </details>
 
 <details>
-<summary><b>Integrations</b> — 8 MCP servers, 36+ tools, all online</summary>
+<summary><b>Integrations</b> — 9 MCP servers, 100+ tools</summary>
 <p align="center"><img src="docs/screenshots/integrations-dark.png" width="800" alt="Integrations"></p>
 </details>
 
@@ -59,19 +59,20 @@
 
 ### Core
 - **Chat interface** with streaming responses, conversation history, follow-up questions
-- **ReAct Agent System** with 8 specialized roles and multi-step tool chaining
+- **ReAct Agent System** with specialized roles and multi-step tool chaining
 - **Conversational memory** — long-term recall of preferences, facts, and instructions with contradiction detection
 - **Intent feedback learning** — learns from corrections via semantic matching
 - **Voice I/O** — Whisper STT + Piper TTS + SpeechBrain speaker recognition
 - **Presence detection** — BLE scanning, voice recognition, and web auth track who's in which room
 
-### Integrations (8 MCP Servers)
+### Integrations (9 MCP Servers)
 
 | Server | Description | Transport |
 |--------|-------------|-----------|
 | Weather | OpenWeatherMap forecasts | stdio |
 | Search | SearXNG metasearch | stdio |
 | News | NewsAPI headlines | stdio |
+| Calendar | Exchange, Google, CalDAV (multi-account) | stdio |
 | Jellyfin | Media server queries | stdio |
 | n8n | Workflow automation | stdio |
 | Home Assistant | Smart home control | streamable_http |
