@@ -557,6 +557,20 @@ async def websocket_endpoint(
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
 
+            # Register voice/auth presence if user is authenticated in a known room
+            if (user_id and settings.presence_enabled
+                    and room_context and room_context.get("room_id")):
+                try:
+                    from services.presence_service import get_presence_service
+                    presence_svc = get_presence_service()
+                    await presence_svc.register_voice_presence(
+                        user_id=int(user_id),
+                        room_id=room_context["room_id"],
+                        room_name=room_context.get("room_name"),
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Auth presence update failed: {e}")
+
             # Retrieve memory context (long-term user knowledge)
             memory_context = await _retrieve_memory_context(
                 content, user_id=user_id, lang=ollama.default_lang

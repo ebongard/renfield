@@ -672,3 +672,134 @@ class TestPresenceHooks:
         event_names = [c[0][0] for c in mock_run.call_args_list]
         assert "presence_enter_room" not in event_names
         assert "presence_leave_room" not in event_names
+
+
+@pytest.mark.unit
+class TestVoicePresence:
+    """Tests for voice/auth-based presence detection (bypasses BLE hysteresis)."""
+
+    @pytest.mark.asyncio
+    async def test_voice_registers_presence(self, service):
+        """First voice interaction sets room and fires enter hook."""
+        service._user_names = {1: "alice"}
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service.register_voice_presence(
+                user_id=1, room_id=10, room_name="Kitchen",
+            )
+
+        p = service.get_user_presence(1)
+        assert p is not None
+        assert p.room_id == 10
+        assert p.room_name == "Kitchen"
+        assert p.confidence == 1.0
+
+        enter_calls = [c for c in mock_run.call_args_list if c[0][0] == "presence_enter_room"]
+        assert len(enter_calls) == 1
+        assert enter_calls[0][1]["user_id"] == 1
+        assert enter_calls[0][1]["room_id"] == 10
+
+    @pytest.mark.asyncio
+    async def test_voice_same_room_refreshes_only(self, service):
+        """Same room refreshes last_seen, no enter/leave hooks."""
+        service._user_names = {1: "alice"}
+        # Establish presence
+        await service.register_voice_presence(
+            user_id=1, room_id=10, room_name="Kitchen",
+        )
+        old_last_seen = service.get_user_presence(1).last_seen
+
+        # Same room again — should only refresh
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service.register_voice_presence(
+                user_id=1, room_id=10, room_name="Kitchen",
+            )
+
+        p = service.get_user_presence(1)
+        assert p.last_seen >= old_last_seen
+        # No hooks should have fired
+        mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_voice_room_change_fires_hooks(self, service):
+        """Room A→B fires leave(A) + enter(B)."""
+        service._user_names = {1: "alice"}
+        service._room_names = {10: "Kitchen", 20: "Living Room"}
+        # Establish in Kitchen
+        await service.register_voice_presence(
+            user_id=1, room_id=10, room_name="Kitchen",
+        )
+
+        # Move to Living Room
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service.register_voice_presence(
+                user_id=1, room_id=20, room_name="Living Room",
+            )
+
+        event_names = [c[0][0] for c in mock_run.call_args_list]
+        assert "presence_leave_room" in event_names
+        assert "presence_enter_room" in event_names
+
+        leave = next(c for c in mock_run.call_args_list if c[0][0] == "presence_leave_room")
+        assert leave[1]["room_id"] == 10
+        assert leave[1]["room_name"] == "Kitchen"
+
+        enter = next(c for c in mock_run.call_args_list if c[0][0] == "presence_enter_room")
+        assert enter[1]["room_id"] == 20
+        assert enter[1]["room_name"] == "Living Room"
+
+    @pytest.mark.asyncio
+    async def test_voice_first_arrived(self, service):
+        """First user triggers presence_first_arrived."""
+        service._user_names = {1: "alice"}
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service.register_voice_presence(
+                user_id=1, room_id=10, room_name="Kitchen",
+            )
+
+        first_arrived = [c for c in mock_run.call_args_list if c[0][0] == "presence_first_arrived"]
+        assert len(first_arrived) == 1
+        assert first_arrived[0][1]["user_id"] == 1
+        assert first_arrived[0][1]["room_id"] == 10
+
+    @pytest.mark.asyncio
+    async def test_voice_last_left_on_room_change(self, service):
+        """Sole occupant leaving room triggers presence_last_left."""
+        service._user_names = {1: "alice"}
+        # Establish in Kitchen
+        await service.register_voice_presence(
+            user_id=1, room_id=10, room_name="Kitchen",
+        )
+
+        # Move to Living Room — Kitchen becomes empty
+        mock_run = AsyncMock(return_value=[])
+        with patch("utils.hooks.run_hooks", mock_run):
+            await service.register_voice_presence(
+                user_id=1, room_id=20, room_name="Living Room",
+            )
+
+        last_left = [c for c in mock_run.call_args_list if c[0][0] == "presence_last_left"]
+        assert len(last_left) == 1
+        assert last_left[0][1]["room_id"] == 10
+        assert last_left[0][1]["room_name"] == "Kitchen"
+
+    @pytest.mark.asyncio
+    async def test_voice_bypasses_hysteresis(self, service):
+        """Single voice call moves room immediately (no N consecutive scans)."""
+        service._user_names = {1: "alice"}
+        service._hysteresis_threshold = 5  # High threshold — BLE would need 5 scans
+
+        # Establish in Kitchen
+        await service.register_voice_presence(
+            user_id=1, room_id=10, room_name="Kitchen",
+        )
+        assert service.get_user_presence(1).room_id == 10
+
+        # Single voice interaction moves to Living Room immediately
+        await service.register_voice_presence(
+            user_id=1, room_id=20, room_name="Living Room",
+        )
+        assert service.get_user_presence(1).room_id == 20
