@@ -2,7 +2,7 @@
 
 # Renfield - Persönlicher KI-Assistent
 
-Ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Multi-Channel-Steuerung in einer Oberfläche bündelt. Renfield dient mehreren Nutzern parallel im Haushalt, mit abfragbarer Wissensbasis (RAG), gebündeltem Tool-Zugriff über MCP-Server und Smart-Home-Steuerung.
+Ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Multi-Channel-Steuerung in einer Oberfläche bündelt. Renfield dient mehreren Nutzern parallel im Haushalt, mit abfragbarer Wissensbasis (RAG), gebündeltem Tool-Zugriff über 9 MCP-Server und Smart-Home-Steuerung.
 
 **Tech Stack:** Python 3.11 · FastAPI · React 18 · TypeScript · PostgreSQL 16 · Redis 7 · Ollama · Docker Compose
 
@@ -18,18 +18,19 @@ Unterstützung oder Billigung durch solche Dritte.
 ### Kernfunktionen
 - **Chat-Interface** — Text- und sprachbasierte Kommunikation mit Streaming-Antworten
 - **Konversations-Historie** — Sidebar mit Chatverläufen, Datumsgruppierung, Session-Persistenz, Follow-up-Fragen
-- **Agent System (ReAct)** — Mehrstufige Anfragen mit Tool-Verkettung, Agent Router mit 8 spezialisierten Rollen
+- **Agent System (ReAct)** — Mehrstufige Anfragen mit Tool-Verkettung, Agent Router mit spezialisierten Rollen
 - **Konversations-Gedächtnis** — Langzeit-Erinnerungen (Präferenzen, Fakten, Anweisungen) mit Widerspruchserkennung
 - **Intent Feedback Learning** — Lernt aus Korrekturen und verbessert Intent-Erkennung über semantisches Matching
 - **Spracheingabe & -ausgabe** — Whisper STT und Piper TTS, Sprechererkennung mit SpeechBrain
 - **Präsenzerkennung** — BLE-Scanning, Sprechererkennung und Web-Auth verfolgen, wer sich in welchem Raum befindet
 
-### Integrationen (8 MCP-Server)
+### Integrationen (9 MCP-Server)
 | Server | Beschreibung | Transport | Aktivierung |
 |--------|-------------|-----------|-------------|
 | Weather | OpenWeatherMap | stdio | `WEATHER_ENABLED=true` |
 | Search | SearXNG Metasearch | stdio | `SEARCH_ENABLED=true` |
 | News | NewsAPI | stdio | `NEWS_ENABLED=true` |
+| Calendar | Exchange, Google, CalDAV (Multi-Account) | stdio | `CALENDAR_ENABLED=true` |
 | Jellyfin | Media Server | stdio | `JELLYFIN_ENABLED=true` |
 | n8n | Workflow Automation | stdio | `N8N_MCP_ENABLED=true` |
 | Home Assistant | Smart Home | streamable_http | `HA_MCP_ENABLED=true` |
@@ -114,8 +115,8 @@ Raumbasierte Präsenzerkennung aus drei Quellen:
 │  │  │ (Long-term)    │  │ Service        │  │   (Hybrid Search)      │   │   │
 │  │  └────────────────┘  └────────────────┘  └────────────────────────┘   │   │
 │  │  ┌────────┐ ┌────────┐ ┌─────────────┐ ┌──────────┐ ┌────────────┐   │   │
-│  │  │Whisper │ │ Piper  │ │RoomService  │ │ Speaker  │ │  Circuit   │   │   │
-│  │  │ (STT)  │ │ (TTS)  │ │OutputRouting│ │ Recog.   │ │  Breaker   │   │   │
+│  │  │Whisper │ │ Piper  │ │RoomService  │ │ Speaker  │ │ Presence   │   │   │
+│  │  │ (STT)  │ │ (TTS)  │ │OutputRouting│ │ Recog.   │ │ Detection  │   │   │
 │  │  └────────┘ └────────┘ └─────────────┘ └──────────┘ └────────────┘   │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
 │              │                    │                    │                      │
@@ -131,11 +132,11 @@ Raumbasierte Präsenzerkennung aus drei Quellen:
 │  │  │ Ollama │ │Home    │ │Frigate │ │  n8n   │ │Weather │ │Search  │  │   │
 │  │  │ (LLM)  │ │Assist. │ │ (NVR)  │ │  MCP   │ │  MCP   │ │  MCP   │  │   │
 │  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘  │   │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐                                    │   │
-│  │  │ News   │ │Jellyfin│ │Paper-  │                                    │   │
-│  │  │  MCP   │ │  MCP   │ │less/   │                                    │   │
-│  │  │        │ │        │ │Email   │                                    │   │
-│  │  └────────┘ └────────┘ └────────┘                                    │   │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                        │   │
+│  │  │ News   │ │Jellyfin│ │Paper-  │ │Calendar│                        │   │
+│  │  │  MCP   │ │  MCP   │ │less/   │ │  MCP   │                        │   │
+│  │  │        │ │        │ │Email   │ │        │                        │   │
+│  │  └────────┘ └────────┘ └────────┘ └────────┘                        │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -247,6 +248,7 @@ N8N_MCP_ENABLED=true              # + N8N_BASE_URL, N8N_API_KEY
 HA_MCP_ENABLED=true               # + HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN
 PAPERLESS_ENABLED=true            # + PAPERLESS_API_URL, PAPERLESS_API_TOKEN
 EMAIL_MCP_ENABLED=true            # + config/mail_accounts.yaml
+CALENDAR_ENABLED=true             # + config/calendar_accounts.yaml
 ```
 
 API-Keys in Produktion als Docker Secrets bereitstellen. Siehe [docs/SECRETS_MANAGEMENT.md](docs/SECRETS_MANAGEMENT.md).
