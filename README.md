@@ -63,6 +63,7 @@
 - **Conversational memory** — long-term recall of preferences, facts, and instructions with contradiction detection
 - **Intent feedback learning** — learns from corrections via semantic matching
 - **Voice I/O** — Whisper STT + Piper TTS + SpeechBrain speaker recognition
+- **Presence detection** — BLE scanning, voice recognition, and web auth track who's in which room
 
 ### Integrations (8 MCP Servers)
 
@@ -94,6 +95,20 @@
 - Local wake word detection (OpenWakeWord)
 - Audio output routing to best device per room
 - IP-based room context detection
+
+### Presence Detection
+
+Multi-source room-level presence tracking:
+
+| Source | Trigger | Latency |
+|--------|---------|---------|
+| BLE Scanning | Satellite detects phone/watch via Bluetooth | ~30s (hysteresis) |
+| Voice Presence | Speaker recognition identifies user | Instant |
+| Web Auth | Authenticated user on room-assigned device | Instant |
+
+- **Privacy-aware TTS** — notifications respect room occupancy (public / personal / confidential)
+- **Automation hooks** — `enter_room`, `leave_room`, `first_arrived`, `last_left` events fire webhooks for n8n / Home Assistant
+- **Presence dashboard** — real-time room occupancy in the admin UI
 
 ### Security & Access Control
 - Role-permission based access control (RPBAC) with JWT
@@ -148,6 +163,7 @@ AGENT_ENABLED=false               # ReAct agent loop (opt-in)
 MEMORY_ENABLED=false              # long-term memory (opt-in)
 AUTH_ENABLED=false                 # RPBAC auth (opt-in)
 MCP_ENABLED=true                  # master switch for integrations
+PRESENCE_ENABLED=false            # room presence detection (opt-in)
 METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 ```
 
