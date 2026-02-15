@@ -12,7 +12,7 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   MapPin, Users, Wifi, Smartphone, Plus, Trash2, RefreshCw,
-  AlertCircle, Clock, Watch, Radio, BarChart3,
+  AlertCircle, Clock, Watch, Radio, BarChart3, Bluetooth, Info,
 } from 'lucide-react';
 import AnalyticsTab from '../components/presence/AnalyticsTab';
 
@@ -119,6 +119,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
     mac_address: '',
     device_name: '',
     device_type: 'phone',
+    detection_method: 'ble',
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -148,8 +149,9 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
         mac_address: form.mac_address.toUpperCase(),
         device_name: form.device_name.trim(),
         device_type: form.device_type,
+        detection_method: form.detection_method,
       });
-      setForm({ user_id: '', mac_address: '', device_name: '', device_type: 'phone' });
+      setForm({ user_id: '', mac_address: '', device_name: '', device_type: 'phone', detection_method: 'ble' });
       onClose();
     } catch (err) {
       if (err.response?.status === 409) {
@@ -230,6 +232,26 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
             <option value="watch">{t('presence.watch')}</option>
             <option value="tracker">{t('presence.tracker')}</option>
           </select>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {t('presence.detectionMethod')}
+          </label>
+          <select
+            value={form.detection_method}
+            onChange={(e) => setForm({ ...form, detection_method: e.target.value })}
+            className="input w-full"
+          >
+            <option value="ble">{t('presence.detectionBle')}</option>
+            <option value="classic_bt">{t('presence.detectionClassicBt')}</option>
+          </select>
+          {form.detection_method === 'classic_bt' && (
+            <p className="mt-1.5 text-xs text-blue-600 dark:text-blue-400 flex items-start gap-1">
+              <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              {t('presence.classicBtHint')}
+            </p>
+          )}
         </div>
 
         <div className="flex gap-3 pt-2">
@@ -524,6 +546,7 @@ export default function PresencePage() {
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.macAddress')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.user')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceType')}</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.detectionMethod')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.enabled')}</th>
                   <th className="text-right py-3 px-4"></th>
                 </tr>
@@ -542,6 +565,19 @@ export default function PresencePage() {
                       <td className="py-3 px-4 font-mono text-gray-600 dark:text-gray-400">{device.mac_address}</td>
                       <td className="py-3 px-4 text-gray-900 dark:text-white">{user?.username || `User ${device.user_id}`}</td>
                       <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{t(`presence.${device.device_type}`)}</td>
+                      <td className="py-3 px-4">
+                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                          device.detection_method === 'classic_bt'
+                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
+                            : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
+                        }`}>
+                          {device.detection_method === 'classic_bt' ? (
+                            <><Bluetooth className="w-3 h-3" /> Classic</>
+                          ) : (
+                            <>BLE</>
+                          )}
+                        </span>
+                      </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                           device.is_enabled

@@ -48,6 +48,7 @@ class PresenceService:
 
     def __init__(self):
         self._mac_to_user: dict[str, int] = {}          # MAC → user_id cache
+        self._mac_to_method: dict[str, str] = {}         # MAC → detection_method cache
         self._presence: dict[int, UserPresence] = {}     # user_id → presence
         self._sightings: dict[str, list[DeviceSighting]] = {}  # MAC → recent sightings
         self._hysteresis_threshold: int = settings.presence_hysteresis_scans
@@ -69,12 +70,17 @@ class PresenceService:
         self._mac_to_user = {
             d.mac_address.upper(): d.user_id for d in devices
         }
+        self._mac_to_method = {
+            d.mac_address.upper(): (d.detection_method or "ble") for d in devices
+        }
 
         # Cache user names for frontend display
         user_result = await db.execute(select(User))
         self._user_names = {u.id: u.username for u in user_result.scalars().all()}
 
-        logger.info(f"Presence: loaded {len(self._mac_to_user)} BLE devices")
+        logger.info(f"Presence: loaded {len(self._mac_to_user)} devices "
+                     f"(BLE: {sum(1 for m in self._mac_to_method.values() if m == 'ble')}, "
+                     f"Classic BT: {sum(1 for m in self._mac_to_method.values() if m == 'classic_bt')})")
 
     def set_room_name(self, room_id: int, name: str):
         """Cache a room name for display."""
@@ -418,6 +424,41 @@ class PresenceService:
         """Get all known MAC addresses for pushing to satellites."""
         return set(self._mac_to_user.keys())
 
+    def get_ble_macs(self) -> set[str]:
+        """Get MAC addresses of BLE devices only."""
+        return {mac for mac, method in self._mac_to_method.items() if method == "ble"}
+
+    def get_classic_bt_macs(self) -> set[str]:
+        """Get MAC addresses of Classic BT devices only."""
+        return {mac for mac, method in self._mac_to_method.items() if method == "classic_bt"}
+
+    async def push_macs_to_satellites(self):
+        """Push current known MACs to all connected satellites."""
+        from services.satellite_manager import get_satellite_manager
+
+        manager = get_satellite_manager()
+        ble_macs = list(self.get_ble_macs())
+        classic_macs = list(self.get_classic_bt_macs())
+
+        if not ble_macs and not classic_macs:
+            return
+
+        for sat_id, sat_info in manager.satellites.items():
+            try:
+                if ble_macs:
+                    await sat_info.websocket.send_json({
+                        "type": "ble_known_devices",
+                        "devices": ble_macs,
+                    })
+                if classic_macs:
+                    await sat_info.websocket.send_json({
+                        "type": "classic_bt_known_devices",
+                        "devices": classic_macs,
+                    })
+                logger.debug(f"Pushed {len(ble_macs)} BLE + {len(classic_macs)} Classic BT MACs to {sat_id}")
+            except Exception as e:
+                logger.warning(f"Failed to push MACs to {sat_id}: {e}")
+
     async def add_device(
         self,
         user_id: int,
@@ -425,8 +466,9 @@ class PresenceService:
         name: str,
         device_type: str,
         db: AsyncSession,
+        detection_method: str = "ble",
     ):
-        """Add a BLE device to the registry and DB."""
+        """Add a BLE/Classic BT device to the registry and DB."""
         from models.database import UserBleDevice
 
         mac = mac.upper()
@@ -435,14 +477,20 @@ class PresenceService:
             mac_address=mac,
             device_name=name,
             device_type=device_type,
+            detection_method=detection_method,
         )
         db.add(device)
         await db.commit()
         await db.refresh(device)
 
-        # Update cache
+        # Update caches
         self._mac_to_user[mac] = user_id
-        logger.info(f"Presence: registered BLE device {mac} for user {user_id}")
+        self._mac_to_method[mac] = detection_method
+        logger.info(f"Presence: registered {detection_method} device {mac} for user {user_id}")
+
+        # Push updated MACs to all connected satellites
+        await self.push_macs_to_satellites()
+
         return device
 
     async def remove_device(self, device_id: int, db: AsyncSession):
@@ -456,10 +504,15 @@ class PresenceService:
         if device:
             mac = device.mac_address.upper()
             self._mac_to_user.pop(mac, None)
+            self._mac_to_method.pop(mac, None)
             self._sightings.pop(mac, None)
             await db.delete(device)
             await db.commit()
             logger.info(f"Presence: removed BLE device {mac}")
+
+            # Push updated MACs to all connected satellites
+            await self.push_macs_to_satellites()
+
             return True
         return False
 

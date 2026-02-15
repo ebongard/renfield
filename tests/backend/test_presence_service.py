@@ -21,6 +21,7 @@ def service():
     """Create a fresh PresenceService for each test."""
     svc = PresenceService.__new__(PresenceService)
     svc._mac_to_user = {}
+    svc._mac_to_method = {}
     svc._presence = {}
     svc._sightings = {}
     svc._hysteresis_threshold = 2
@@ -39,6 +40,11 @@ def service_with_devices(service):
         "AA:BB:CC:DD:EE:01": 1,
         "AA:BB:CC:DD:EE:02": 1,  # second device for user 1
         "AA:BB:CC:DD:EE:03": 2,
+    }
+    service._mac_to_method = {
+        "AA:BB:CC:DD:EE:01": "ble",
+        "AA:BB:CC:DD:EE:02": "ble",
+        "AA:BB:CC:DD:EE:03": "ble",
     }
     service._user_names = {1: "alice", 2: "bob"}
     return service
@@ -803,3 +809,132 @@ class TestVoicePresence:
             user_id=1, room_id=20, room_name="Living Room",
         )
         assert service.get_user_presence(1).room_id == 20
+
+
+@pytest.mark.unit
+class TestDetectionMethodSplit:
+    """Tests for BLE vs Classic BT MAC separation."""
+
+    def test_get_ble_macs(self, service):
+        """get_ble_macs returns only BLE devices."""
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+            "AA:BB:CC:DD:EE:03": "ble",
+        }
+        assert service.get_ble_macs() == {"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:03"}
+
+    def test_get_classic_bt_macs(self, service):
+        """get_classic_bt_macs returns only Classic BT devices."""
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+            "AA:BB:CC:DD:EE:03": "classic_bt",
+        }
+        assert service.get_classic_bt_macs() == {"AA:BB:CC:DD:EE:02", "AA:BB:CC:DD:EE:03"}
+
+    def test_empty_when_no_method(self, service):
+        """Empty sets when no devices."""
+        assert service.get_ble_macs() == set()
+        assert service.get_classic_bt_macs() == set()
+
+    def test_get_known_macs_returns_all(self, service):
+        """get_known_macs still returns all MACs regardless of method."""
+        service._mac_to_user = {
+            "AA:BB:CC:DD:EE:01": 1,
+            "AA:BB:CC:DD:EE:02": 2,
+        }
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+        }
+        assert service.get_known_macs() == {"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"}
+
+    @pytest.mark.asyncio
+    async def test_add_device_with_detection_method(self, service):
+        """add_device stores detection_method in cache."""
+        mock_db = AsyncMock()
+
+        async def mock_refresh(obj):
+            obj.id = 1
+            obj.user_id = 1
+            obj.mac_address = "AA:BB:CC:DD:EE:FF"
+            obj.device_name = "Test Phone"
+            obj.device_type = "phone"
+            obj.detection_method = "classic_bt"
+            obj.is_enabled = True
+
+        mock_db.refresh = mock_refresh
+
+        await service.add_device(
+            user_id=1,
+            mac="aa:bb:cc:dd:ee:ff",
+            name="Test Phone",
+            device_type="phone",
+            db=mock_db,
+            detection_method="classic_bt",
+        )
+        assert service._mac_to_user["AA:BB:CC:DD:EE:FF"] == 1
+        assert service._mac_to_method["AA:BB:CC:DD:EE:FF"] == "classic_bt"
+
+    @pytest.mark.asyncio
+    async def test_add_device_default_ble(self, service):
+        """add_device defaults to 'ble' detection method."""
+        mock_db = AsyncMock()
+
+        async def mock_refresh(obj):
+            obj.id = 1
+            obj.user_id = 1
+            obj.mac_address = "AA:BB:CC:DD:EE:FF"
+            obj.device_name = "Test Phone"
+            obj.device_type = "phone"
+            obj.detection_method = "ble"
+            obj.is_enabled = True
+
+        mock_db.refresh = mock_refresh
+
+        await service.add_device(
+            user_id=1,
+            mac="aa:bb:cc:dd:ee:ff",
+            name="Test Phone",
+            device_type="phone",
+            db=mock_db,
+        )
+        assert service._mac_to_method["AA:BB:CC:DD:EE:FF"] == "ble"
+
+    @pytest.mark.asyncio
+    async def test_remove_device_clears_method_cache(self, service):
+        """remove_device clears both _mac_to_user and _mac_to_method."""
+        service._mac_to_user = {"AA:BB:CC:DD:EE:01": 1}
+        service._mac_to_method = {"AA:BB:CC:DD:EE:01": "classic_bt"}
+
+        mock_db = AsyncMock()
+        mock_device = MagicMock()
+        mock_device.mac_address = "AA:BB:CC:DD:EE:01"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_device
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        await service.remove_device(1, mock_db)
+        assert "AA:BB:CC:DD:EE:01" not in service._mac_to_user
+        assert "AA:BB:CC:DD:EE:01" not in service._mac_to_method
+
+    @pytest.mark.asyncio
+    async def test_classic_bt_device_works_in_presence_pipeline(self, service):
+        """Classic BT devices flow through BLE pipeline correctly."""
+        service._mac_to_user = {"AA:BB:CC:DD:EE:01": 1}
+        service._mac_to_method = {"AA:BB:CC:DD:EE:01": "classic_bt"}
+        service._user_names = {1: "alice"}
+
+        # Classic BT reports come with synthetic RSSI of -50
+        await service.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        p = service.get_user_presence(1)
+        assert p is not None
+        assert p.room_id == 10
+        assert p.room_name == "Kitchen"

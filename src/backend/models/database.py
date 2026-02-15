@@ -968,6 +968,7 @@ class UserBleDevice(Base):
     mac_address = Column(String(17), unique=True, nullable=False, index=True)  # "AA:BB:CC:DD:EE:FF"
     device_name = Column(String(100), nullable=False)   # "Emma's iPhone"
     device_type = Column(String(50), default="phone")   # phone, watch, tracker
+    detection_method = Column(String(20), default="ble")  # "ble" | "classic_bt"
     is_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=_utcnow)
 

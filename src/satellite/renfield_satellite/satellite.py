@@ -30,6 +30,7 @@ from .network.auth import fetch_ws_token, http_url_from_ws
 from .network.model_downloader import get_model_downloader, ModelDownloader
 from .wakeword.detector import MICRO_BUILTIN_MODELS
 from .ble.scanner import BLEScanner, BLEAK_AVAILABLE
+from .ble.classic_scanner import ClassicBTScanner
 from .update import UpdateManager, UpdateStage
 
 
@@ -189,6 +190,14 @@ class Satellite:
         elif self.config.ble.enabled and not BLEAK_AVAILABLE:
             print("Warning: BLE enabled in config but bleak not installed. BLE scanning disabled.")
 
+        # Classic BT Scanner (for Apple devices with permanent Classic BT MACs)
+        self.classic_bt_scanner = ClassicBTScanner(timeout=5.0)
+        self._classic_bt_known_macs: set = set()
+        if self.config.ble.enabled and self.classic_bt_scanner.available:
+            print("Classic BT scanning enabled (hcitool available)")
+        elif self.config.ble.enabled:
+            print("Warning: hcitool not found. Classic BT scanning disabled.")
+
         # Wire up callbacks
         self._setup_callbacks()
 
@@ -208,6 +217,8 @@ class Satellite:
 
         # BLE known devices callback
         self.ws_client.on_ble_known_devices(self._on_ble_known_devices)
+        # Classic BT known devices callback
+        self.ws_client.on_classic_bt_known_devices(self._on_classic_bt_known_devices)
 
         # Update manager progress callback
         self.update_manager.on_progress(self._on_update_progress)
@@ -690,6 +701,10 @@ class Satellite:
         if self.ble_scanner and self.ble_scanner.available:
             self._schedule_async(self._start_ble_scan_loop())
 
+        # Start Classic BT scan loop if enabled
+        if self.classic_bt_scanner.available and self.config.ble.enabled:
+            self._schedule_async(self._start_classic_bt_scan_loop())
+
         self._set_state(SatelliteState.IDLE)
 
     def _on_disconnected(self):
@@ -868,6 +883,11 @@ class Satellite:
         self._ble_known_macs = {mac.upper() for mac in devices}
         print(f"BLE known devices updated: {len(self._ble_known_macs)} MACs")
 
+    def _on_classic_bt_known_devices(self, devices: list):
+        """Handle Classic BT known devices list pushed from server"""
+        self._classic_bt_known_macs = {mac.upper() for mac in devices}
+        print(f"Classic BT known devices updated: {len(self._classic_bt_known_macs)} MACs")
+
     async def _start_ble_scan_loop(self):
         """Start the BLE scanning background loop"""
         # Avoid duplicate loops
@@ -896,6 +916,35 @@ class Satellite:
         except asyncio.CancelledError:
             pass
         print("BLE scan loop stopped")
+
+    async def _start_classic_bt_scan_loop(self):
+        """Start the Classic BT scanning background loop"""
+        if hasattr(self, '_classic_bt_task') and self._classic_bt_task and not self._classic_bt_task.done():
+            return
+        self._classic_bt_task = asyncio.create_task(self._classic_bt_scan_loop())
+
+    async def _classic_bt_scan_loop(self):
+        """Background loop that periodically scans for Classic BT devices"""
+        print("Classic BT scan loop started")
+        try:
+            while self._running:
+                # Classic BT scans are slower, use double the BLE interval
+                await asyncio.sleep(self.config.ble.scan_interval * 2)
+                if not self._running or not self.ws_client.is_connected:
+                    continue
+                if not self._classic_bt_known_macs:
+                    continue
+
+                try:
+                    devices = await self.classic_bt_scanner.scan(self._classic_bt_known_macs)
+                    if devices:
+                        await self.ws_client.send_ble_presence(devices)
+                        print(f"Classic BT scan: {len(devices)} known devices detected")
+                except Exception as e:
+                    print(f"Classic BT scan error: {e}")
+        except asyncio.CancelledError:
+            pass
+        print("Classic BT scan loop stopped")
 
     def _on_update_request(self, target_version: str, package_url: str, checksum: str, size_bytes: int):
         """

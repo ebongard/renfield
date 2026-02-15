@@ -45,7 +45,11 @@ class BLEDeviceResponse(BaseModel):
     mac_address: str
     device_name: str
     device_type: str
+    detection_method: str = "ble"
     is_enabled: bool
+
+
+VALID_DETECTION_METHODS = {"ble", "classic_bt"}
 
 
 class BLEDeviceCreate(BaseModel):
@@ -53,6 +57,7 @@ class BLEDeviceCreate(BaseModel):
     mac_address: str = Field(..., pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
     device_name: str = Field(..., min_length=1, max_length=100)
     device_type: str = Field(default="phone", max_length=50)
+    detection_method: str = Field(default="ble", max_length=20)
 
 
 # --- Status ---
@@ -175,6 +180,7 @@ async def list_devices(
             mac_address=d.mac_address,
             device_name=d.device_name,
             device_type=d.device_type,
+            detection_method=d.detection_method or "ble",
             is_enabled=d.is_enabled,
         )
         for d in devices
@@ -189,6 +195,13 @@ async def register_device(
 ):
     """Register a new BLE device for presence tracking."""
     from models.database import UserBleDevice
+
+    # Validate detection_method
+    if body.detection_method not in VALID_DETECTION_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid detection_method. Must be one of: {', '.join(VALID_DETECTION_METHODS)}",
+        )
 
     # Check for duplicate MAC
     mac = body.mac_address.upper()
@@ -205,6 +218,7 @@ async def register_device(
         name=body.device_name,
         device_type=body.device_type,
         db=db,
+        detection_method=body.detection_method,
     )
 
     return BLEDeviceResponse(
@@ -213,6 +227,7 @@ async def register_device(
         mac_address=device.mac_address,
         device_name=device.device_name,
         device_type=device.device_type,
+        detection_method=device.detection_method or "ble",
         is_enabled=device.is_enabled,
     )
 

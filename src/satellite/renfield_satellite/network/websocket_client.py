@@ -113,6 +113,7 @@ class WebSocketClient:
         self._on_config_update: Optional[Callable[[ServerConfig], None]] = None
         self._on_update_request: Optional[Callable[[str, str, str, int], None]] = None  # version, url, checksum, size
         self._on_ble_known_devices: Optional[Callable[[List[str]], None]] = None
+        self._on_classic_bt_known_devices: Optional[Callable[[List[str]], None]] = None
 
         # Tasks
         self._heartbeat_task: Optional[asyncio.Task] = None
@@ -199,6 +200,10 @@ class WebSocketClient:
     def on_ble_known_devices(self, callback: Callable[[List[str]], None]):
         """Register callback for BLE known devices list from server"""
         self._on_ble_known_devices = callback
+
+    def on_classic_bt_known_devices(self, callback: Callable[[List[str]], None]):
+        """Register callback for Classic BT known devices list from server"""
+        self._on_classic_bt_known_devices = callback
 
     def set_metrics_callback(self, callback: Callable[[], Dict[str, Any]]):
         """Register callback to get current metrics for heartbeat"""
@@ -519,6 +524,13 @@ class WebSocketClient:
             print(f"BLE known devices received: {len(devices)} MACs")
             if self._on_ble_known_devices:
                 self._on_ble_known_devices(devices)
+
+        elif msg_type == "classic_bt_known_devices":
+            # Server pushed list of known Classic BT MAC addresses
+            devices = data.get("devices", [])
+            print(f"Classic BT known devices received: {len(devices)} MACs")
+            if self._on_classic_bt_known_devices:
+                self._on_classic_bt_known_devices(devices)
 
     async def _heartbeat_loop(self):
         """Background task sending periodic heartbeats with metrics"""

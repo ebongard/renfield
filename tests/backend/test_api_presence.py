@@ -23,6 +23,11 @@ def service():
         "AA:BB:CC:DD:EE:02": 2,
         "AA:BB:CC:DD:EE:03": 3,
     }
+    svc._mac_to_method = {
+        "AA:BB:CC:DD:EE:01": "ble",
+        "AA:BB:CC:DD:EE:02": "ble",
+        "AA:BB:CC:DD:EE:03": "ble",
+    }
     svc._presence = {}
     svc._sightings = {}
     svc._hysteresis_threshold = 2
