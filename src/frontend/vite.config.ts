@@ -27,6 +27,8 @@ export default defineConfig({
       '@context': path.resolve(__dirname, './src/context'),
       '@utils': path.resolve(__dirname, './src/utils'),
       '@types': path.resolve(__dirname, './src/types'),
+      // Force WASM-only bundle (no JSEP/WebGPU) — JSEP crashes Safari
+      'onnxruntime-web': 'onnxruntime-web/wasm',
     },
   },
   plugins: [

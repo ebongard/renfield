@@ -45,6 +45,8 @@ class UserResponse(BaseModel):
     """Response model for user information."""
     id: int
     username: str
+    first_name: str | None = None
+    last_name: str | None = None
     email: str | None
     role_id: int
     role_name: str
@@ -73,6 +75,8 @@ class CreateUserRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8)
     email: EmailStr | None = None
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
     role_id: int
     is_active: bool = True
 
@@ -81,6 +85,8 @@ class UpdateUserRequest(BaseModel):
     """Request model for updating a user."""
     username: str | None = Field(None, min_length=3, max_length=100)
     email: EmailStr | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     role_id: int | None = None
     is_active: bool | None = None
 
@@ -146,6 +152,8 @@ async def list_users(
             UserResponse(
                 id=user.id,
                 username=user.username,
+                first_name=user.first_name,
+                last_name=user.last_name,
                 email=user.email,
                 role_id=user.role_id,
                 role_name=user.role.name if user.role else "Unknown",
@@ -192,6 +200,8 @@ async def get_user(
     return UserResponse(
         id=user.id,
         username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
         email=user.email,
         role_id=user.role_id,
         role_name=user.role.name if user.role else "Unknown",
@@ -252,6 +262,8 @@ async def create_user(
     # Create user
     user = User(
         username=request.username,
+        first_name=request.first_name,
+        last_name=request.last_name,
         email=request.email,
         password_hash=get_password_hash(request.password),
         role_id=request.role_id,
@@ -267,6 +279,8 @@ async def create_user(
     return UserResponse(
         id=user.id,
         username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
         email=user.email,
         role_id=user.role_id,
         role_name=role.name,
@@ -336,6 +350,12 @@ async def update_user(
             )
         user.role_id = request.role_id
 
+    # Update first/last name if provided
+    if request.first_name is not None:
+        user.first_name = request.first_name or None
+    if request.last_name is not None:
+        user.last_name = request.last_name or None
+
     # Update active status
     if request.is_active is not None:
         # Prevent deactivating yourself
@@ -354,6 +374,8 @@ async def update_user(
     return UserResponse(
         id=user.id,
         username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
         email=user.email,
         role_id=user.role_id,
         role_name=user.role.name if user.role else "Unknown",
@@ -499,6 +521,8 @@ async def link_speaker(
     return UserResponse(
         id=user.id,
         username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
         email=user.email,
         role_id=user.role_id,
         role_name=user.role.name if user.role else "Unknown",
@@ -550,6 +574,8 @@ async def unlink_speaker(
     return UserResponse(
         id=user.id,
         username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name,
         email=user.email,
         role_id=user.role_id,
         role_name=user.role.name if user.role else "Unknown",

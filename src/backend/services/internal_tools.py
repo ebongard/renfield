@@ -5,11 +5,14 @@ These tools handle cross-cutting concerns that don't belong to any
 specific MCP server:
 - Room resolution (room name → media_player entity)
 - Media playback (any URL → any room's audio device via HA)
+- Presence queries (user location via BLE/voice presence)
 
 This keeps playback logic provider-agnostic: Jellyfin, Spotify, or any
 future provider just needs to supply a stream URL. The internal tools
 handle routing it to the correct room device.
 """
+import time
+
 from loguru import logger
 
 
@@ -32,11 +35,23 @@ class InternalToolService:
                 "force": "Set to 'true' to interrupt current playback (default: false)",
             },
         },
+        "internal.get_user_location": {
+            "description": "Get the current or last known room location of a user. Accepts username or first/last name.",
+            "parameters": {
+                "user_name": "Name of the user to locate (username, first name, or last name)",
+            },
+        },
+        "internal.get_all_presence": {
+            "description": "Get all currently present users and their room locations. Use this when asked 'where is everyone?' or 'who is home?'.",
+            "parameters": {},
+        },
     }
 
     _HANDLERS = {
         "internal.resolve_room_player": "_resolve_room_player",
         "internal.play_in_room": "_play_in_room",
+        "internal.get_user_location": "_get_user_location",
+        "internal.get_all_presence": "_get_all_presence",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -272,3 +287,98 @@ class InternalToolService:
                 "message": f"Error playing media: {e!s}",
                 "action_taken": False,
             }
+
+    @staticmethod
+    def _format_last_seen(last_seen: float) -> str:
+        """Format a timestamp as human-readable relative time."""
+        delta = time.time() - last_seen
+        if delta < 60:
+            return "just now"
+        if delta < 3600:
+            minutes = int(delta / 60)
+            return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+        if delta < 86400:
+            hours = int(delta / 3600)
+            return f"{hours} hour{'s' if hours != 1 else ''} ago"
+        days = int(delta / 86400)
+        return f"{days} day{'s' if days != 1 else ''} ago"
+
+    async def _get_user_location(self, params: dict) -> dict:
+        """Get the current or last known room location of a user."""
+        from services.presence_service import get_presence_service
+
+        user_name = (params.get("user_name") or "").strip()
+        if not user_name:
+            return {
+                "success": False,
+                "message": "Parameter 'user_name' is required",
+                "action_taken": False,
+            }
+
+        presence_service = get_presence_service()
+        user_id = presence_service.find_user_by_name(user_name)
+
+        if user_id is None:
+            return {
+                "success": False,
+                "message": f"User '{user_name}' not found",
+                "action_taken": False,
+            }
+
+        display_name = presence_service.get_display_name(user_id)
+        presence = presence_service.get_user_presence(user_id)
+
+        if presence is None or presence.room_id is None:
+            return {
+                "success": True,
+                "message": f"{display_name} has no known location",
+                "action_taken": True,
+                "data": {
+                    "user_name": display_name,
+                    "status": "unknown",
+                },
+            }
+
+        return {
+            "success": True,
+            "message": f"{display_name} is in {presence.room_name or 'unknown room'}",
+            "action_taken": True,
+            "data": {
+                "user_name": display_name,
+                "status": "present",
+                "room_name": presence.room_name,
+                "room_id": presence.room_id,
+                "last_seen": self._format_last_seen(presence.last_seen),
+                "confidence": round(presence.confidence, 2),
+            },
+        }
+
+    async def _get_all_presence(self, params: dict) -> dict:
+        """Get all currently present users and their room locations."""
+        from services.presence_service import get_presence_service
+
+        presence_service = get_presence_service()
+        all_presence = presence_service.get_all_presence()
+
+        if not all_presence:
+            return {
+                "success": True,
+                "message": "Nobody is currently detected at home",
+                "action_taken": True,
+                "data": {"users": []},
+            }
+
+        users = []
+        for user_id, presence in all_presence.items():
+            users.append({
+                "name": presence_service.get_display_name(user_id),
+                "room": presence.room_name or "unknown",
+                "last_seen": self._format_last_seen(presence.last_seen),
+            })
+
+        return {
+            "success": True,
+            "message": f"{len(users)} user(s) detected at home",
+            "action_taken": True,
+            "data": {"users": users},
+        }

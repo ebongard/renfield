@@ -23,6 +23,11 @@ def service():
         "AA:BB:CC:DD:EE:02": 2,
         "AA:BB:CC:DD:EE:03": 3,
     }
+    svc._mac_to_method = {
+        "AA:BB:CC:DD:EE:01": "ble",
+        "AA:BB:CC:DD:EE:02": "ble",
+        "AA:BB:CC:DD:EE:03": "ble",
+    }
     svc._presence = {}
     svc._sightings = {}
     svc._hysteresis_threshold = 2
@@ -171,3 +176,46 @@ class TestAPIDeviceRegistration:
         # The service adds to cache regardless — DB unique constraint prevents dupes
         # Verify MAC is already in cache
         assert "AA:BB:CC:DD:EE:01" in service.get_known_macs()
+
+
+@pytest.mark.unit
+class TestAPIDeviceUpdate:
+    """Tests matching PATCH /api/presence/devices/{id} behavior."""
+
+    @pytest.mark.asyncio
+    async def test_update_device_changes_method(self, service):
+        """PATCH updates detection_method in DB and cache."""
+        mock_db = AsyncMock()
+        mock_device = MagicMock()
+        mock_device.id = 1
+        mock_device.user_id = 1
+        mock_device.mac_address = "AA:BB:CC:DD:EE:01"
+        mock_device.device_name = "Phone"
+        mock_device.device_type = "phone"
+        mock_device.detection_method = "ble"
+        mock_device.is_enabled = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_device
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        async def mock_refresh(obj):
+            obj.detection_method = "classic_bt"
+        mock_db.refresh = mock_refresh
+
+        assert service._mac_to_method["AA:BB:CC:DD:EE:01"] == "ble"
+        device = await service.update_device(1, "classic_bt", mock_db)
+
+        assert device is not None
+        assert service._mac_to_method["AA:BB:CC:DD:EE:01"] == "classic_bt"
+
+    @pytest.mark.asyncio
+    async def test_update_device_not_found(self, service):
+        """PATCH returns None for unknown device ID."""
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        device = await service.update_device(999, "classic_bt", mock_db)
+        assert device is None

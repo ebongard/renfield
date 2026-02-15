@@ -209,6 +209,30 @@ def _schedule_upload_cleanup():
     )
 
 
+def _schedule_presence_event_cleanup():
+    """Schedule daily cleanup of old presence analytics events."""
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(86400)  # 24 hours
+                from services.presence_analytics import PresenceAnalyticsService
+
+                async with AsyncSessionLocal() as db_session:
+                    service = PresenceAnalyticsService(db_session)
+                    await service.cleanup_old_events()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Presence event cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Presence Event Cleanup Scheduler gestartet "
+        f"(retention={settings.presence_analytics_retention_days}d, täglich)"
+    )
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -458,11 +482,33 @@ async def lifespan(app: "FastAPI"):
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)
 
-    # Presence webhooks
+    # Presence webhooks + analytics
     if settings.presence_enabled:
         from services.presence_webhook import register_presence_webhooks
 
         register_presence_webhooks()
+
+        from services.presence_analytics import register_presence_analytics_hooks
+
+        register_presence_analytics_hooks()
+        _schedule_presence_event_cleanup()
+
+        # Load BLE device registry (MAC → user_id) from database
+        from services.presence_service import get_presence_service
+
+        presence_svc = get_presence_service()
+        async with AsyncSessionLocal() as db_session:
+            await presence_svc.load_device_registry(db_session)
+
+        # Cache room names for presence display
+        from models.database import Room
+
+        async with AsyncSessionLocal() as db_session:
+            from sqlalchemy import select
+
+            rooms = (await db_session.execute(select(Room))).scalars().all()
+            for room in rooms:
+                presence_svc.set_room_name(room.id, room.name)
 
     # Plugin / Hook System
     await _load_plugin_module()

@@ -92,6 +92,30 @@ KNOWLEDGE_INTENTS = IntegrationIntents(
     ],
 )
 
+PRESENCE_INTENTS = IntegrationIntents(
+    integration_name="presence",
+    title_de="ANWESENHEIT",
+    title_en="PRESENCE",
+    is_enabled_func=lambda: settings.presence_enabled,
+    intents=[
+        IntentDef(
+            name="internal.get_user_location",
+            description_de="Aktuellen oder letzten bekannten Aufenthaltsort eines Benutzers abfragen",
+            description_en="Get current or last known room location of a user",
+            parameters=[IntentParam("user_name", "Name des Benutzers (Username, Vorname oder Nachname)", required=True)],
+            examples_de=["Wo ist Edi?", "In welchem Raum ist evdb?"],
+            examples_en=["Where is Edi?", "Which room is evdb in?"],
+        ),
+        IntentDef(
+            name="internal.get_all_presence",
+            description_de="Alle aktuell anwesenden Benutzer und ihre Räume anzeigen",
+            description_en="Get all currently present users and their room locations",
+            examples_de=["Wer ist zuhause?", "Wo sind alle?"],
+            examples_en=["Who is home?", "Where is everyone?"],
+        ),
+    ],
+)
+
 GENERAL_INTENTS = IntegrationIntents(
     integration_name="general",
     title_de="ALLGEMEIN",
@@ -111,6 +135,7 @@ GENERAL_INTENTS = IntegrationIntents(
 # All core integrations (HA, n8n, camera are now MCP-only)
 CORE_INTEGRATIONS = [
     KNOWLEDGE_INTENTS,
+    PRESENCE_INTENTS,
     GENERAL_INTENTS,
 ]
 

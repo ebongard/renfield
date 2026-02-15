@@ -552,10 +552,165 @@ class TestInternalToolsDefinition:
     def test_tools_have_parameters(self):
         for name, defn in InternalToolService.TOOLS.items():
             assert "parameters" in defn, f"{name} missing parameters"
-            assert len(defn["parameters"]) > 0, f"{name} has no parameters"
 
     @pytest.mark.unit
     def test_all_tools_have_handlers(self):
         """Every tool in TOOLS has a matching handler."""
         for name in InternalToolService.TOOLS:
             assert name in InternalToolService._HANDLERS, f"{name} missing handler"
+
+
+# ============================================================================
+# Test get_user_location
+# ============================================================================
+
+class TestGetUserLocation:
+    """Test internal.get_user_location tool."""
+
+    @pytest.mark.unit
+    async def test_user_found_in_room(self, internal_tools):
+        """User with active presence returns room info."""
+        from services.presence_service import UserPresence
+        import time
+
+        mock_presence_service = MagicMock()
+        mock_presence_service.find_user_by_name.return_value = 1
+        mock_presence_service.get_display_name.return_value = "Edi"
+        mock_presence_service.get_user_presence.return_value = UserPresence(
+            user_id=1,
+            room_id=10,
+            room_name="Wohnzimmer",
+            confidence=0.85,
+            last_seen=time.time() - 30,
+        )
+
+        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+            result = await internal_tools._get_user_location({"user_name": "Edi"})
+
+        assert result["success"] is True
+        assert result["data"]["status"] == "present"
+        assert result["data"]["room_name"] == "Wohnzimmer"
+        assert result["data"]["user_name"] == "Edi"
+        assert "just now" in result["data"]["last_seen"] or "minute" in result["data"]["last_seen"]
+        mock_presence_service.find_user_by_name.assert_called_once_with("Edi")
+
+    @pytest.mark.unit
+    async def test_user_found_not_present(self, internal_tools):
+        """User exists but has no presence data returns unknown status."""
+        mock_presence_service = MagicMock()
+        mock_presence_service.find_user_by_name.return_value = 1
+        mock_presence_service.get_display_name.return_value = "evdb"
+        mock_presence_service.get_user_presence.return_value = None
+
+        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+            result = await internal_tools._get_user_location({"user_name": "evdb"})
+
+        assert result["success"] is True
+        assert result["data"]["status"] == "unknown"
+
+    @pytest.mark.unit
+    async def test_user_not_found(self, internal_tools):
+        """Unknown user returns error."""
+        mock_presence_service = MagicMock()
+        mock_presence_service.find_user_by_name.return_value = None
+
+        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+            result = await internal_tools._get_user_location({"user_name": "nobody"})
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+
+    @pytest.mark.unit
+    async def test_missing_user_name_param(self, internal_tools):
+        """Missing user_name returns error."""
+        result = await internal_tools._get_user_location({})
+        assert result["success"] is False
+        assert "required" in result["message"]
+
+    @pytest.mark.unit
+    async def test_empty_user_name_param(self, internal_tools):
+        """Empty user_name returns error."""
+        result = await internal_tools._get_user_location({"user_name": "  "})
+        assert result["success"] is False
+        assert "required" in result["message"]
+
+
+# ============================================================================
+# Test get_all_presence
+# ============================================================================
+
+class TestGetAllPresence:
+    """Test internal.get_all_presence tool."""
+
+    @pytest.mark.unit
+    async def test_users_present(self, internal_tools):
+        """Returns all currently present users."""
+        from services.presence_service import UserPresence
+        import time
+
+        now = time.time()
+        mock_presence_service = MagicMock()
+        mock_presence_service.get_all_presence.return_value = {
+            1: UserPresence(user_id=1, room_id=10, room_name="Wohnzimmer", last_seen=now - 10),
+            2: UserPresence(user_id=2, room_id=20, room_name="Küche", last_seen=now - 120),
+        }
+        mock_presence_service.get_display_name.side_effect = lambda uid: {1: "Edi", 2: "Alice"}[uid]
+
+        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+            result = await internal_tools._get_all_presence({})
+
+        assert result["success"] is True
+        assert len(result["data"]["users"]) == 2
+        names = [u["name"] for u in result["data"]["users"]]
+        assert "Edi" in names
+        assert "Alice" in names
+
+    @pytest.mark.unit
+    async def test_nobody_home(self, internal_tools):
+        """Empty presence returns informative message."""
+        mock_presence_service = MagicMock()
+        mock_presence_service.get_all_presence.return_value = {}
+
+        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+            result = await internal_tools._get_all_presence({})
+
+        assert result["success"] is True
+        assert result["data"]["users"] == []
+        assert "Nobody" in result["message"]
+
+
+# ============================================================================
+# Test _format_last_seen
+# ============================================================================
+
+class TestFormatLastSeen:
+    """Test relative time formatting."""
+
+    @pytest.mark.unit
+    def test_just_now(self, internal_tools):
+        import time
+        assert internal_tools._format_last_seen(time.time() - 10) == "just now"
+
+    @pytest.mark.unit
+    def test_minutes_ago(self, internal_tools):
+        import time
+        result = internal_tools._format_last_seen(time.time() - 300)
+        assert "5 minutes ago" == result
+
+    @pytest.mark.unit
+    def test_one_minute_ago(self, internal_tools):
+        import time
+        result = internal_tools._format_last_seen(time.time() - 90)
+        assert "1 minute ago" == result
+
+    @pytest.mark.unit
+    def test_hours_ago(self, internal_tools):
+        import time
+        result = internal_tools._format_last_seen(time.time() - 7200)
+        assert "2 hours ago" == result
+
+    @pytest.mark.unit
+    def test_days_ago(self, internal_tools):
+        import time
+        result = internal_tools._format_last_seen(time.time() - 172800)
+        assert "2 days ago" == result

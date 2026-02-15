@@ -35,6 +35,8 @@ export default function UsersPage() {
   // Form state
   const [formData, setFormData] = useState({
     username: '',
+    first_name: '',
+    last_name: '',
     email: '',
     password: '',
     role_id: '',
@@ -88,6 +90,8 @@ export default function UsersPage() {
     setEditingUser(null);
     setFormData({
       username: '',
+      first_name: '',
+      last_name: '',
       email: '',
       password: '',
       role_id: roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || '',
@@ -102,6 +106,8 @@ export default function UsersPage() {
     setEditingUser(user);
     setFormData({
       username: user.username,
+      first_name: user.first_name || '',
+      last_name: user.last_name || '',
       email: user.email || '',
       password: '',
       role_id: user.role_id,
@@ -124,6 +130,8 @@ export default function UsersPage() {
         // Update user
         const updateData = {
           username: formData.username,
+          first_name: formData.first_name || null,
+          last_name: formData.last_name || null,
           email: formData.email || null,
           role_id: parseInt(formData.role_id),
           is_active: formData.is_active
@@ -143,6 +151,8 @@ export default function UsersPage() {
         // Create user
         await apiClient.post('/api/users', {
           username: formData.username,
+          first_name: formData.first_name || null,
+          last_name: formData.last_name || null,
           email: formData.email || null,
           password: formData.password,
           role_id: parseInt(formData.role_id),
@@ -320,7 +330,14 @@ export default function UsersPage() {
                   {/* Info */}
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{user.username}</h3>
+                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                        {user.first_name || user.last_name
+                          ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
+                          : user.username}
+                      </h3>
+                      {(user.first_name || user.last_name) && (
+                        <span className="text-sm text-gray-500 dark:text-gray-400">({user.username})</span>
+                      )}
                       {user.id === currentUser?.id && (
                         <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded-sm">{t('users.you')}</span>
                       )}
@@ -418,6 +435,38 @@ export default function UsersPage() {
               minLength={3}
               disabled={formLoading}
             />
+          </div>
+
+          {/* First Name / Last Name */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('users.firstName')}
+              </label>
+              <input
+                type="text"
+                value={formData.first_name}
+                onChange={(e) => setFormData({ ...formData, first_name: e.target.value })}
+                className="input w-full"
+                placeholder={t('users.firstNamePlaceholder')}
+                maxLength={100}
+                disabled={formLoading}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('users.lastName')}
+              </label>
+              <input
+                type="text"
+                value={formData.last_name}
+                onChange={(e) => setFormData({ ...formData, last_name: e.target.value })}
+                className="input w-full"
+                placeholder={t('users.lastNamePlaceholder')}
+                maxLength={100}
+                disabled={formLoading}
+              />
+            </div>
           </div>
 
           {/* Email */}
