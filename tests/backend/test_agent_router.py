@@ -76,6 +76,16 @@ SAMPLE_CONFIG = {
             "max_steps": 4,
             "prompt_key": "agent_prompt_workflow",
         },
+        "presence": {
+            "description": {
+                "de": "Anwesenheit: Wo ist eine Person, wer ist zuhause",
+                "en": "Presence: where is a person, who is home",
+            },
+            "mcp_servers": [],
+            "internal_tools": ["internal.get_user_location", "internal.get_all_presence"],
+            "max_steps": 2,
+            "prompt_key": "agent_prompt",
+        },
         "knowledge": {
             "description": {
                 "de": "Wissensdatenbank",
@@ -136,7 +146,7 @@ class TestParseRoles:
     @pytest.mark.unit
     def test_parse_all_roles(self):
         roles = _parse_roles(SAMPLE_CONFIG)
-        assert len(roles) == 8
+        assert len(roles) == 9
         assert "smart_home" in roles
         assert "research" in roles
         assert "documents" in roles
@@ -176,6 +186,16 @@ class TestParseRoles:
         assert role.mcp_servers is None  # None = all
         assert role.internal_tools is None  # None = all
         assert role.max_steps == 12
+
+    @pytest.mark.unit
+    def test_presence_role_properties(self):
+        roles = _parse_roles(SAMPLE_CONFIG)
+        role = roles["presence"]
+        assert role.name == "presence"
+        assert role.mcp_servers == []
+        assert role.internal_tools == ["internal.get_user_location", "internal.get_all_presence"]
+        assert role.max_steps == 2
+        assert role.has_agent_loop is True
 
     @pytest.mark.unit
     def test_empty_config(self):
@@ -228,7 +248,7 @@ class TestFilterAvailableRoles:
     def test_no_filter_keeps_all(self):
         roles = _parse_roles(SAMPLE_CONFIG)
         filtered = _filter_available_roles(roles, connected_servers=None)
-        assert len(filtered) == 8
+        assert len(filtered) == 9
 
     @pytest.mark.unit
     def test_filter_excludes_unavailable_servers(self):
@@ -262,6 +282,15 @@ class TestFilterAvailableRoles:
         assert "knowledge" in filtered
         assert "smart_home" not in filtered
 
+    @pytest.mark.unit
+    def test_internal_only_role_always_available(self):
+        """Roles with mcp_servers=[] (internal-only) are always kept."""
+        roles = _parse_roles(SAMPLE_CONFIG)
+        # Even with no connected servers, presence should be available
+        filtered = _filter_available_roles(roles, connected_servers=[])
+        assert "presence" in filtered
+        assert filtered["presence"].has_agent_loop is True
+
 
 # ============================================================================
 # Test AgentRouter
@@ -273,7 +302,7 @@ class TestAgentRouter:
     @pytest.mark.unit
     def test_init_without_mcp(self):
         router = AgentRouter(SAMPLE_CONFIG)
-        assert len(router.roles) == 8
+        assert len(router.roles) == 9
 
     @pytest.mark.unit
     def test_init_with_mcp_filter(self):
@@ -580,6 +609,26 @@ class TestRouterToolIntegration:
 
         assert agent.max_steps == 4
         assert agent._prompt_key == "agent_prompt_smart_home"
+
+    @pytest.mark.unit
+    def test_presence_role_only_gets_presence_tools(self):
+        """presence role should only get presence internal tools, no MCP tools."""
+        from services.agent_tools import AgentToolRegistry
+
+        roles = _parse_roles(SAMPLE_CONFIG)
+        role = roles["presence"]
+
+        registry = AgentToolRegistry(
+            server_filter=role.mcp_servers,
+            internal_filter=role.internal_tools,
+        )
+
+        tool_names = registry.get_tool_names()
+        assert "internal.get_user_location" in tool_names
+        assert "internal.get_all_presence" in tool_names
+        # No other tools should be present
+        for name in tool_names:
+            assert name in ("internal.get_user_location", "internal.get_all_presence"), f"Unexpected tool: {name}"
 
     @pytest.mark.unit
     def test_agent_service_without_role(self):
