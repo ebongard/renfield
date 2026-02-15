@@ -263,7 +263,7 @@ export default function Layout({ children }) {
       <aside
         ref={sidebarRef}
         id="sidebar"
-        className={`fixed top-0 left-0 h-full w-72 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
+        className={`fixed top-0 left-0 h-full w-72 flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-label={t('nav.mainNavigation')}
@@ -325,7 +325,7 @@ export default function Layout({ children }) {
               <div
                 id="admin-menu"
                 className={`overflow-hidden transition-all duration-200 ease-in-out ${
-                  adminExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
+                  adminExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'
                 }`}
               >
                 <div className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-1 py-1">
@@ -381,7 +381,7 @@ export default function Layout({ children }) {
         </nav>
 
         {/* Sidebar Footer - Device Status */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
           <DeviceStatus />
         </div>
       </aside>

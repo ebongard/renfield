@@ -151,10 +151,16 @@ export function useWakeWord({
       throw new Error('Wake word detection not available. Please rebuild the application.');
     }
 
+    // Build model file map from config (includes custom keywords like hey_renfield)
+    const modelFiles: Record<string, string> = {};
+    for (const kw of WAKEWORD_CONFIG.availableKeywords) {
+      modelFiles[kw.id] = kw.model;
+    }
+
     const engine = new WakeWordEngineClass({
       baseAssetUrl: WAKEWORD_CONFIG.modelBasePath,
-      // Let onnxruntime-web load its WASM files from default location
       keywords: [settings.keyword],
+      modelFiles,
       detectionThreshold: settings.threshold,
       cooldownMs: WAKEWORD_CONFIG.defaults.cooldownMs,
     });

@@ -493,6 +493,23 @@ async def lifespan(app: "FastAPI"):
         register_presence_analytics_hooks()
         _schedule_presence_event_cleanup()
 
+        # Load BLE device registry (MAC → user_id) from database
+        from services.presence_service import get_presence_service
+
+        presence_svc = get_presence_service()
+        async with AsyncSessionLocal() as db_session:
+            await presence_svc.load_device_registry(db_session)
+
+        # Cache room names for presence display
+        from models.database import Room
+
+        async with AsyncSessionLocal() as db_session:
+            from sqlalchemy import select
+
+            rooms = (await db_session.execute(select(Room))).scalars().all()
+            for room in rooms:
+                presence_svc.set_room_name(room.id, room.name)
+
     # Plugin / Hook System
     await _load_plugin_module()
     from utils.hooks import run_hooks
