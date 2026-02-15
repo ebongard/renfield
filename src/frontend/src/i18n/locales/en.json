@@ -674,6 +674,7 @@
     "detectionBle": "BLE (Standard)",
     "detectionClassicBt": "Bluetooth Classic (Apple)",
     "classicBtHint": "Find your MAC in iPhone Settings > General > About > Bluetooth",
+    "toggleDetectionMethod": "Toggle detection method",
     "noDevices": "No devices registered",
     "noDevicesDesc": "Register BLE or Bluetooth Classic devices (smartphones, smartwatches) to detect people in rooms.",
     "deviceAdded": "Device \"{{name}}\" registered",

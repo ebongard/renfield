@@ -674,6 +674,7 @@
     "detectionBle": "BLE (Standard)",
     "detectionClassicBt": "Bluetooth Classic (Apple)",
     "classicBtHint": "MAC-Adresse findest du unter iPhone Einstellungen > Allgemein > Info > Bluetooth",
+    "toggleDetectionMethod": "Erkennungsmethode umschalten",
     "noDevices": "Keine Ger\u00e4te registriert",
     "noDevicesDesc": "Registriere BLE- oder Bluetooth-Classic-Ger\u00e4te (Smartphones, Smartwatches) um Personen in R\u00e4umen zu erkennen.",
     "deviceAdded": "Ger\u00e4t \"{{name}}\" wurde registriert",

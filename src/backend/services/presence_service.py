@@ -493,6 +493,36 @@ class PresenceService:
 
         return device
 
+    async def update_device(
+        self,
+        device_id: int,
+        detection_method: str,
+        db: AsyncSession,
+    ):
+        """Update a device's detection method."""
+        from models.database import UserBleDevice
+
+        result = await db.execute(
+            select(UserBleDevice).where(UserBleDevice.id == device_id)
+        )
+        device = result.scalar_one_or_none()
+        if not device:
+            return None
+
+        mac = device.mac_address.upper()
+        device.detection_method = detection_method
+        await db.commit()
+        await db.refresh(device)
+
+        # Update cache
+        self._mac_to_method[mac] = detection_method
+        logger.info(f"Presence: updated {mac} to {detection_method}")
+
+        # Push updated MACs to all connected satellites
+        await self.push_macs_to_satellites()
+
+        return device
+
     async def remove_device(self, device_id: int, db: AsyncSession):
         """Remove a BLE device from the registry and DB."""
         from models.database import UserBleDevice

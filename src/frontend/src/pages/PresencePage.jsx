@@ -344,6 +344,18 @@ export default function PresencePage() {
     await loadDevices();
   };
 
+  const handleToggleDetectionMethod = async (device) => {
+    const newMethod = device.detection_method === 'classic_bt' ? 'ble' : 'classic_bt';
+    try {
+      await apiClient.patch(`/api/presence/devices/${device.id}`, {
+        detection_method: newMethod,
+      });
+      await loadDevices();
+    } catch {
+      setError(t('common.error'));
+    }
+  };
+
   const handleDeleteDevice = async (device) => {
     const confirmed = await confirm({
       title: t('presence.deleteDevice'),
@@ -566,17 +578,21 @@ export default function PresencePage() {
                       <td className="py-3 px-4 text-gray-900 dark:text-white">{user?.username || `User ${device.user_id}`}</td>
                       <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{t(`presence.${device.device_type}`)}</td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                          device.detection_method === 'classic_bt'
-                            ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400'
-                            : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
-                        }`}>
+                        <button
+                          onClick={() => handleToggleDetectionMethod(device)}
+                          title={t('presence.toggleDetectionMethod')}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${
+                            device.detection_method === 'classic_bt'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50'
+                              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                          }`}
+                        >
                           {device.detection_method === 'classic_bt' ? (
                             <><Bluetooth className="w-3 h-3" /> Classic</>
                           ) : (
                             <>BLE</>
                           )}
-                        </span>
+                        </button>
                       </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${

@@ -232,6 +232,40 @@ async def register_device(
     )
 
 
+class BLEDeviceUpdate(BaseModel):
+    detection_method: str = Field(..., max_length=20)
+
+
+@router.patch("/devices/{device_id}", response_model=BLEDeviceResponse)
+async def update_device(
+    device_id: int,
+    body: BLEDeviceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Update a device's detection method."""
+    if body.detection_method not in VALID_DETECTION_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid detection_method. Must be one of: {', '.join(VALID_DETECTION_METHODS)}",
+        )
+
+    presence = get_presence_service()
+    device = await presence.update_device(device_id, body.detection_method, db)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return BLEDeviceResponse(
+        id=device.id,
+        user_id=device.user_id,
+        mac_address=device.mac_address,
+        device_name=device.device_name,
+        device_type=device.device_type,
+        detection_method=device.detection_method or "ble",
+        is_enabled=device.is_enabled,
+    )
+
+
 @router.delete("/devices/{device_id}", status_code=204)
 async def delete_device(
     device_id: int,
