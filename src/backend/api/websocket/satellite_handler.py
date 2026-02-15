@@ -221,20 +221,28 @@ async def satellite_websocket(
                 })
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
-                # Push known BLE MACs to satellite for presence scanning
+                # Push known BLE + Classic BT MACs to satellite for presence scanning
                 if settings.presence_enabled:
                     try:
                         from services.presence_service import get_presence_service
                         presence_svc = get_presence_service()
-                        known_macs = presence_svc.get_known_macs()
-                        if known_macs:
+                        ble_macs = presence_svc.get_ble_macs()
+                        if ble_macs:
                             await websocket.send_json({
                                 "type": "ble_known_devices",
-                                "devices": list(known_macs),
+                                "devices": list(ble_macs),
                             })
-                            logger.debug(f"Pushed {len(known_macs)} BLE MACs to {satellite_id}")
+                        classic_macs = presence_svc.get_classic_bt_macs()
+                        if classic_macs:
+                            await websocket.send_json({
+                                "type": "classic_bt_known_devices",
+                                "devices": list(classic_macs),
+                            })
+                        total = len(ble_macs) + len(classic_macs)
+                        if total:
+                            logger.debug(f"Pushed {len(ble_macs)} BLE + {len(classic_macs)} Classic BT MACs to {satellite_id}")
                     except Exception as e:
-                        logger.warning(f"Failed to push BLE MACs: {e}")
+                        logger.warning(f"Failed to push MACs: {e}")
 
             # Handle config acknowledgment from satellite
             elif msg_type == "config_ack":

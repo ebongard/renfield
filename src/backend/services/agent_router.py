@@ -121,8 +121,8 @@ def _filter_available_roles(
         if not role.has_agent_loop:
             # conversation, knowledge — always available
             filtered[name] = role
-        elif role.mcp_servers is None:
-            # general — always available
+        elif role.mcp_servers is None or role.mcp_servers == []:
+            # general or internal-only roles — always available
             filtered[name] = role
         else:
             # Check if at least one required server is connected

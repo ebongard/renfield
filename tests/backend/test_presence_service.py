@@ -21,6 +21,7 @@ def service():
     """Create a fresh PresenceService for each test."""
     svc = PresenceService.__new__(PresenceService)
     svc._mac_to_user = {}
+    svc._mac_to_method = {}
     svc._presence = {}
     svc._sightings = {}
     svc._hysteresis_threshold = 2
@@ -28,6 +29,8 @@ def service():
     svc._rssi_threshold = -80
     svc._room_names = {}
     svc._user_names = {}
+    svc._user_first_names = {}
+    svc._user_last_names = {}
     svc._pending_events = []
     return svc
 
@@ -39,6 +42,11 @@ def service_with_devices(service):
         "AA:BB:CC:DD:EE:01": 1,
         "AA:BB:CC:DD:EE:02": 1,  # second device for user 1
         "AA:BB:CC:DD:EE:03": 2,
+    }
+    service._mac_to_method = {
+        "AA:BB:CC:DD:EE:01": "ble",
+        "AA:BB:CC:DD:EE:02": "ble",
+        "AA:BB:CC:DD:EE:03": "ble",
     }
     service._user_names = {1: "alice", 2: "bob"}
     return service
@@ -803,3 +811,193 @@ class TestVoicePresence:
             user_id=1, room_id=20, room_name="Living Room",
         )
         assert service.get_user_presence(1).room_id == 20
+
+
+@pytest.mark.unit
+class TestDetectionMethodSplit:
+    """Tests for BLE vs Classic BT MAC separation."""
+
+    def test_get_ble_macs(self, service):
+        """get_ble_macs returns only BLE devices."""
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+            "AA:BB:CC:DD:EE:03": "ble",
+        }
+        assert service.get_ble_macs() == {"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:03"}
+
+    def test_get_classic_bt_macs(self, service):
+        """get_classic_bt_macs returns only Classic BT devices."""
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+            "AA:BB:CC:DD:EE:03": "classic_bt",
+        }
+        assert service.get_classic_bt_macs() == {"AA:BB:CC:DD:EE:02", "AA:BB:CC:DD:EE:03"}
+
+    def test_empty_when_no_method(self, service):
+        """Empty sets when no devices."""
+        assert service.get_ble_macs() == set()
+        assert service.get_classic_bt_macs() == set()
+
+    def test_get_known_macs_returns_all(self, service):
+        """get_known_macs still returns all MACs regardless of method."""
+        service._mac_to_user = {
+            "AA:BB:CC:DD:EE:01": 1,
+            "AA:BB:CC:DD:EE:02": 2,
+        }
+        service._mac_to_method = {
+            "AA:BB:CC:DD:EE:01": "ble",
+            "AA:BB:CC:DD:EE:02": "classic_bt",
+        }
+        assert service.get_known_macs() == {"AA:BB:CC:DD:EE:01", "AA:BB:CC:DD:EE:02"}
+
+    @pytest.mark.asyncio
+    async def test_add_device_with_detection_method(self, service):
+        """add_device stores detection_method in cache."""
+        mock_db = AsyncMock()
+
+        async def mock_refresh(obj):
+            obj.id = 1
+            obj.user_id = 1
+            obj.mac_address = "AA:BB:CC:DD:EE:FF"
+            obj.device_name = "Test Phone"
+            obj.device_type = "phone"
+            obj.detection_method = "classic_bt"
+            obj.is_enabled = True
+
+        mock_db.refresh = mock_refresh
+
+        await service.add_device(
+            user_id=1,
+            mac="aa:bb:cc:dd:ee:ff",
+            name="Test Phone",
+            device_type="phone",
+            db=mock_db,
+            detection_method="classic_bt",
+        )
+        assert service._mac_to_user["AA:BB:CC:DD:EE:FF"] == 1
+        assert service._mac_to_method["AA:BB:CC:DD:EE:FF"] == "classic_bt"
+
+    @pytest.mark.asyncio
+    async def test_add_device_default_ble(self, service):
+        """add_device defaults to 'ble' detection method."""
+        mock_db = AsyncMock()
+
+        async def mock_refresh(obj):
+            obj.id = 1
+            obj.user_id = 1
+            obj.mac_address = "AA:BB:CC:DD:EE:FF"
+            obj.device_name = "Test Phone"
+            obj.device_type = "phone"
+            obj.detection_method = "ble"
+            obj.is_enabled = True
+
+        mock_db.refresh = mock_refresh
+
+        await service.add_device(
+            user_id=1,
+            mac="aa:bb:cc:dd:ee:ff",
+            name="Test Phone",
+            device_type="phone",
+            db=mock_db,
+        )
+        assert service._mac_to_method["AA:BB:CC:DD:EE:FF"] == "ble"
+
+    @pytest.mark.asyncio
+    async def test_remove_device_clears_method_cache(self, service):
+        """remove_device clears both _mac_to_user and _mac_to_method."""
+        service._mac_to_user = {"AA:BB:CC:DD:EE:01": 1}
+        service._mac_to_method = {"AA:BB:CC:DD:EE:01": "classic_bt"}
+
+        mock_db = AsyncMock()
+        mock_device = MagicMock()
+        mock_device.mac_address = "AA:BB:CC:DD:EE:01"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_device
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        await service.remove_device(1, mock_db)
+        assert "AA:BB:CC:DD:EE:01" not in service._mac_to_user
+        assert "AA:BB:CC:DD:EE:01" not in service._mac_to_method
+
+    @pytest.mark.asyncio
+    async def test_classic_bt_device_works_in_presence_pipeline(self, service):
+        """Classic BT devices flow through BLE pipeline correctly."""
+        service._mac_to_user = {"AA:BB:CC:DD:EE:01": 1}
+        service._mac_to_method = {"AA:BB:CC:DD:EE:01": "classic_bt"}
+        service._user_names = {1: "alice"}
+
+        # Classic BT reports come with synthetic RSSI of -50
+        await service.process_ble_report(
+            satellite_id="sat-kitchen",
+            room_id=10,
+            devices=[{"mac": "AA:BB:CC:DD:EE:01", "rssi": -50}],
+            room_name="Kitchen",
+        )
+
+        p = service.get_user_presence(1)
+        assert p is not None
+        assert p.room_id == 10
+        assert p.room_name == "Kitchen"
+
+
+@pytest.mark.unit
+class TestFindUserByName:
+    """Test find_user_by_name() — case-insensitive name lookup."""
+
+    def test_find_by_username(self, service):
+        service._user_names = {1: "evdb", 2: "alice"}
+        assert service.find_user_by_name("evdb") == 1
+        assert service.find_user_by_name("alice") == 2
+
+    def test_find_by_username_case_insensitive(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.find_user_by_name("EVDB") == 1
+        assert service.find_user_by_name("Evdb") == 1
+
+    def test_find_by_first_name(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.find_user_by_name("Edi") == 1
+        assert service.find_user_by_name("edi") == 1
+
+    def test_find_by_last_name(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_last_names = {1: "van der Berg"}
+        assert service.find_user_by_name("van der Berg") == 1
+        assert service.find_user_by_name("VAN DER BERG") == 1
+
+    def test_find_not_found(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.find_user_by_name("nobody") is None
+
+    def test_find_empty_input(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.find_user_by_name("") is None
+        assert service.find_user_by_name("   ") is None
+
+    def test_username_takes_priority_over_first_name(self, service):
+        """Username match returns first, even if first_name also matches another user."""
+        service._user_names = {1: "Edi", 2: "bob"}
+        service._user_first_names = {2: "Edi"}
+        # "Edi" matches username of user 1 first
+        assert service.find_user_by_name("Edi") == 1
+
+
+@pytest.mark.unit
+class TestGetDisplayName:
+    """Test get_display_name() — first_name > username."""
+
+    def test_returns_first_name_when_available(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.get_display_name(1) == "Edi"
+
+    def test_falls_back_to_username(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.get_display_name(1) == "evdb"
+
+    def test_falls_back_to_user_id(self, service):
+        assert service.get_display_name(99) == "User 99"

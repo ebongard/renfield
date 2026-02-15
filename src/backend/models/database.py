@@ -600,6 +600,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(100), unique=True, nullable=False, index=True)
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
     email = Column(String(255), unique=True, nullable=True, index=True)
     password_hash = Column(String(255), nullable=False)
 
@@ -968,10 +970,28 @@ class UserBleDevice(Base):
     mac_address = Column(String(17), unique=True, nullable=False, index=True)  # "AA:BB:CC:DD:EE:FF"
     device_name = Column(String(100), nullable=False)   # "Emma's iPhone"
     device_type = Column(String(50), default="phone")   # phone, watch, tracker
+    detection_method = Column(String(20), default="ble")  # "ble" | "classic_bt"
     is_enabled = Column(Boolean, default=True)
     created_at = Column(DateTime, default=_utcnow)
 
     user = relationship("User", backref="ble_devices")
+
+
+class PresenceEvent(Base):
+    """Persisted presence event for analytics (heatmap, predictions)."""
+    __tablename__ = "presence_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
+    event_type = Column(String(20), nullable=False)  # "enter" | "leave"
+    source = Column(String(20), default="ble")        # "ble" | "voice" | "web"
+    confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
+
+    __table_args__ = (
+        Index('ix_presence_events_analytics', 'user_id', 'room_id', 'created_at'),
+    )
 
 
 # System Setting Keys

@@ -57,6 +57,15 @@ roles:
     max_steps: 10
     prompt_key: agent_prompt_workflow
 
+  presence:
+    description:
+      de: "Anwesenheit: Wo ist eine Person, wer ist zuhause, in welchem Raum ist jemand"
+      en: "Presence: where is a person, who is home, which room is someone in"
+    mcp_servers: []
+    internal_tools: [internal.get_user_location, internal.get_all_presence]
+    max_steps: 2
+    prompt_key: agent_prompt
+
   knowledge:
     description:
       de: "Wissensdatenbank: Suche in eigenen hochgeladenen Dokumenten"

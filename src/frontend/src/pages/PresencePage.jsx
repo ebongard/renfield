@@ -12,8 +12,9 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   MapPin, Users, Wifi, Smartphone, Plus, Trash2, RefreshCw,
-  AlertCircle, Clock, Watch, Radio,
+  AlertCircle, Clock, Watch, Radio, BarChart3, Bluetooth, Info,
 } from 'lucide-react';
+import AnalyticsTab from '../components/presence/AnalyticsTab';
 
 
 // Confidence bar component
@@ -118,6 +119,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
     mac_address: '',
     device_name: '',
     device_type: 'phone',
+    detection_method: 'ble',
   });
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -147,8 +149,9 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
         mac_address: form.mac_address.toUpperCase(),
         device_name: form.device_name.trim(),
         device_type: form.device_type,
+        detection_method: form.detection_method,
       });
-      setForm({ user_id: '', mac_address: '', device_name: '', device_type: 'phone' });
+      setForm({ user_id: '', mac_address: '', device_name: '', device_type: 'phone', detection_method: 'ble' });
       onClose();
     } catch (err) {
       if (err.response?.status === 409) {
@@ -231,6 +234,26 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
           </select>
         </div>
 
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {t('presence.detectionMethod')}
+          </label>
+          <select
+            value={form.detection_method}
+            onChange={(e) => setForm({ ...form, detection_method: e.target.value })}
+            className="input w-full"
+          >
+            <option value="ble">{t('presence.detectionBle')}</option>
+            <option value="classic_bt">{t('presence.detectionClassicBt')}</option>
+          </select>
+          {form.detection_method === 'classic_bt' && (
+            <p className="mt-1.5 text-xs text-blue-600 dark:text-blue-400 flex items-start gap-1">
+              <Info className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+              {t('presence.classicBtHint')}
+            </p>
+          )}
+        </div>
+
         <div className="flex gap-3 pt-2">
           <button type="button" onClick={onClose} className="flex-1 btn btn-secondary">
             {t('common.cancel')}
@@ -250,6 +273,7 @@ export default function PresencePage() {
   const formatAgo = useFormatAgo(t);
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
+  const [activeTab, setActiveTab] = useState('live');
   const [rooms, setRooms] = useState([]);
   const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
@@ -320,6 +344,18 @@ export default function PresencePage() {
     await loadDevices();
   };
 
+  const handleToggleDetectionMethod = async (device) => {
+    const newMethod = device.detection_method === 'classic_bt' ? 'ble' : 'classic_bt';
+    try {
+      await apiClient.patch(`/api/presence/devices/${device.id}`, {
+        detection_method: newMethod,
+      });
+      await loadDevices();
+    } catch {
+      setError(t('common.error'));
+    }
+  };
+
   const handleDeleteDevice = async (device) => {
     const confirmed = await confirm({
       title: t('presence.deleteDevice'),
@@ -371,27 +407,63 @@ export default function PresencePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            {t('presence.autoRefresh')}
-          </label>
+        {activeTab === 'live' && (
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              {t('presence.autoRefresh')}
+            </label>
 
-          <button
-            onClick={loadPresence}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            title={t('common.refresh')}
-          >
-            <RefreshCw className="w-5 h-5" />
-          </button>
-        </div>
+            <button
+              onClick={loadPresence}
+              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              title={t('common.refresh')}
+            >
+              <RefreshCw className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'live'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Radio className="w-4 h-4" />
+            {t('presence.tabLive')}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'analytics'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" />
+            {t('presence.tabAnalytics')}
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'analytics' ? (
+        <AnalyticsTab users={users} />
+      ) : (
+      <>
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
@@ -486,6 +558,7 @@ export default function PresencePage() {
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.macAddress')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.user')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceType')}</th>
+                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.detectionMethod')}</th>
                   <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.enabled')}</th>
                   <th className="text-right py-3 px-4"></th>
                 </tr>
@@ -504,6 +577,23 @@ export default function PresencePage() {
                       <td className="py-3 px-4 font-mono text-gray-600 dark:text-gray-400">{device.mac_address}</td>
                       <td className="py-3 px-4 text-gray-900 dark:text-white">{user?.username || `User ${device.user_id}`}</td>
                       <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{t(`presence.${device.device_type}`)}</td>
+                      <td className="py-3 px-4">
+                        <button
+                          onClick={() => handleToggleDetectionMethod(device)}
+                          title={t('presence.toggleDetectionMethod')}
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${
+                            device.detection_method === 'classic_bt'
+                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50'
+                              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          {device.detection_method === 'classic_bt' ? (
+                            <><Bluetooth className="w-3 h-3" /> Classic</>
+                          ) : (
+                            <>BLE</>
+                          )}
+                        </button>
+                      </td>
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
                           device.is_enabled
@@ -539,6 +629,8 @@ export default function PresencePage() {
         users={users}
       />
       {ConfirmDialogComponent}
+      </>
+      )}
     </div>
   );
 }

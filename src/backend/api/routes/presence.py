@@ -1,10 +1,11 @@
 """
 Presence Detection API Routes
 
-Endpoints for room occupancy, user presence, and BLE device management.
+Endpoints for room occupancy, user presence, BLE device management,
+and presence analytics (heatmap, predictions).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,7 +45,11 @@ class BLEDeviceResponse(BaseModel):
     mac_address: str
     device_name: str
     device_type: str
+    detection_method: str = "ble"
     is_enabled: bool
+
+
+VALID_DETECTION_METHODS = {"ble", "classic_bt"}
 
 
 class BLEDeviceCreate(BaseModel):
@@ -52,6 +57,7 @@ class BLEDeviceCreate(BaseModel):
     mac_address: str = Field(..., pattern=r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
     device_name: str = Field(..., min_length=1, max_length=100)
     device_type: str = Field(default="phone", max_length=50)
+    detection_method: str = Field(default="ble", max_length=20)
 
 
 # --- Status ---
@@ -174,6 +180,7 @@ async def list_devices(
             mac_address=d.mac_address,
             device_name=d.device_name,
             device_type=d.device_type,
+            detection_method=d.detection_method or "ble",
             is_enabled=d.is_enabled,
         )
         for d in devices
@@ -188,6 +195,13 @@ async def register_device(
 ):
     """Register a new BLE device for presence tracking."""
     from models.database import UserBleDevice
+
+    # Validate detection_method
+    if body.detection_method not in VALID_DETECTION_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid detection_method. Must be one of: {', '.join(VALID_DETECTION_METHODS)}",
+        )
 
     # Check for duplicate MAC
     mac = body.mac_address.upper()
@@ -204,6 +218,7 @@ async def register_device(
         name=body.device_name,
         device_type=body.device_type,
         db=db,
+        detection_method=body.detection_method,
     )
 
     return BLEDeviceResponse(
@@ -212,6 +227,41 @@ async def register_device(
         mac_address=device.mac_address,
         device_name=device.device_name,
         device_type=device.device_type,
+        detection_method=device.detection_method or "ble",
+        is_enabled=device.is_enabled,
+    )
+
+
+class BLEDeviceUpdate(BaseModel):
+    detection_method: str = Field(..., max_length=20)
+
+
+@router.patch("/devices/{device_id}", response_model=BLEDeviceResponse)
+async def update_device(
+    device_id: int,
+    body: BLEDeviceUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Update a device's detection method."""
+    if body.detection_method not in VALID_DETECTION_METHODS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid detection_method. Must be one of: {', '.join(VALID_DETECTION_METHODS)}",
+        )
+
+    presence = get_presence_service()
+    device = await presence.update_device(device_id, body.detection_method, db)
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    return BLEDeviceResponse(
+        id=device.id,
+        user_id=device.user_id,
+        mac_address=device.mac_address,
+        device_name=device.device_name,
+        device_type=device.device_type,
+        detection_method=device.detection_method or "ble",
         is_enabled=device.is_enabled,
     )
 
@@ -227,3 +277,64 @@ async def delete_device(
     removed = await presence.remove_device(device_id, db)
     if not removed:
         raise HTTPException(status_code=404, detail="Device not found")
+
+
+# --- Analytics ---
+
+class HeatmapCell(BaseModel):
+    room_id: int
+    room_name: str
+    hour: int
+    count: int
+
+
+class PredictionEntry(BaseModel):
+    room_id: int
+    room_name: str
+    day_of_week: int
+    hour: int
+    probability: float
+
+
+class DailySummary(BaseModel):
+    date: str
+    enter_count: int
+    leave_count: int
+
+
+@router.get("/analytics/heatmap", response_model=list[HeatmapCell])
+async def get_heatmap(
+    days: int = Query(default=30, ge=1, le=365),
+    user_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Room x hour heatmap of enter events."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_heatmap(days=days, user_id=user_id)
+
+
+@router.get("/analytics/predictions", response_model=list[PredictionEntry])
+async def get_predictions(
+    user_id: int = Query(...),
+    days: int = Query(default=60, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-user room presence predictions by day-of-week and hour."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_predictions(user_id=user_id, days=days)
+
+
+@router.get("/analytics/daily", response_model=list[DailySummary])
+async def get_daily_summary(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily enter/leave event counts."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_daily_summary(days=days)

@@ -78,7 +78,7 @@ satellite_python_packages:
   - bleak
 
 # BLE Presence Detection
-ble_enabled: false
+ble_enabled: true
 ble_scan_interval: 30
 ble_scan_duration: 5
 ble_rssi_threshold: -80
