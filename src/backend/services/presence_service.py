@@ -56,6 +56,8 @@ class PresenceService:
         self._rssi_threshold: int = settings.presence_rssi_threshold
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
+        self._user_first_names: dict[int, str] = {}      # user_id → first_name
+        self._user_last_names: dict[int, str] = {}       # user_id → last_name
         self._pending_events: list[tuple[str, dict]] = []  # (event_name, kwargs)
 
     async def load_device_registry(self, db: AsyncSession):
@@ -74,9 +76,12 @@ class PresenceService:
             d.mac_address.upper(): (d.detection_method or "ble") for d in devices
         }
 
-        # Cache user names for frontend display
+        # Cache user names for frontend display and chat lookup
         user_result = await db.execute(select(User))
-        self._user_names = {u.id: u.username for u in user_result.scalars().all()}
+        users = user_result.scalars().all()
+        self._user_names = {u.id: u.username for u in users}
+        self._user_first_names = {u.id: u.first_name for u in users if u.first_name}
+        self._user_last_names = {u.id: u.last_name for u in users if u.last_name}
 
         logger.info(f"Presence: loaded {len(self._mac_to_user)} devices "
                      f"(BLE: {sum(1 for m in self._mac_to_method.values() if m == 'ble')}, "
@@ -89,6 +94,38 @@ class PresenceService:
     def get_user_name(self, user_id: int) -> str | None:
         """Get cached username for a user_id."""
         return self._user_names.get(user_id)
+
+    def get_display_name(self, user_id: int) -> str:
+        """Get best display name: first_name > username."""
+        return self._user_first_names.get(user_id) or self._user_names.get(user_id, f"User {user_id}")
+
+    def find_user_by_name(self, name: str) -> int | None:
+        """
+        Find a user_id by name (case-insensitive).
+
+        Searches in order: username, first_name, last_name.
+        Returns user_id or None.
+        """
+        name_lower = name.strip().lower()
+        if not name_lower:
+            return None
+
+        # Check usernames
+        for uid, uname in self._user_names.items():
+            if uname.lower() == name_lower:
+                return uid
+
+        # Check first names
+        for uid, fname in self._user_first_names.items():
+            if fname.lower() == name_lower:
+                return uid
+
+        # Check last names
+        for uid, lname in self._user_last_names.items():
+            if lname.lower() == name_lower:
+                return uid
+
+        return None
 
     async def process_ble_report(
         self,

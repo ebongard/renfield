@@ -449,7 +449,11 @@
     "role": "Role",
     "selectRole": "Select a role",
     "leaveEmptyToKeep": "leave empty to keep current",
-    "accountActive": "Account is active"
+    "accountActive": "Account is active",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "firstNamePlaceholder": "e.g. John",
+    "lastNamePlaceholder": "e.g. Doe"
   },
   "roles": {
     "title": "Role Management",

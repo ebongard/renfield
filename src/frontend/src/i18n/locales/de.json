@@ -449,7 +449,11 @@
     "role": "Rolle",
     "selectRole": "Rolle auswählen",
     "leaveEmptyToKeep": "leer lassen um aktuelles zu behalten",
-    "accountActive": "Konto ist aktiv"
+    "accountActive": "Konto ist aktiv",
+    "firstName": "Vorname",
+    "lastName": "Nachname",
+    "firstNamePlaceholder": "z.B. Max",
+    "lastNamePlaceholder": "z.B. Mustermann"
   },
   "roles": {
     "title": "Rollenverwaltung",

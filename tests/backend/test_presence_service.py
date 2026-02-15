@@ -29,6 +29,8 @@ def service():
     svc._rssi_threshold = -80
     svc._room_names = {}
     svc._user_names = {}
+    svc._user_first_names = {}
+    svc._user_last_names = {}
     svc._pending_events = []
     return svc
 
@@ -938,3 +940,64 @@ class TestDetectionMethodSplit:
         assert p is not None
         assert p.room_id == 10
         assert p.room_name == "Kitchen"
+
+
+@pytest.mark.unit
+class TestFindUserByName:
+    """Test find_user_by_name() — case-insensitive name lookup."""
+
+    def test_find_by_username(self, service):
+        service._user_names = {1: "evdb", 2: "alice"}
+        assert service.find_user_by_name("evdb") == 1
+        assert service.find_user_by_name("alice") == 2
+
+    def test_find_by_username_case_insensitive(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.find_user_by_name("EVDB") == 1
+        assert service.find_user_by_name("Evdb") == 1
+
+    def test_find_by_first_name(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.find_user_by_name("Edi") == 1
+        assert service.find_user_by_name("edi") == 1
+
+    def test_find_by_last_name(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_last_names = {1: "van der Berg"}
+        assert service.find_user_by_name("van der Berg") == 1
+        assert service.find_user_by_name("VAN DER BERG") == 1
+
+    def test_find_not_found(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.find_user_by_name("nobody") is None
+
+    def test_find_empty_input(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.find_user_by_name("") is None
+        assert service.find_user_by_name("   ") is None
+
+    def test_username_takes_priority_over_first_name(self, service):
+        """Username match returns first, even if first_name also matches another user."""
+        service._user_names = {1: "Edi", 2: "bob"}
+        service._user_first_names = {2: "Edi"}
+        # "Edi" matches username of user 1 first
+        assert service.find_user_by_name("Edi") == 1
+
+
+@pytest.mark.unit
+class TestGetDisplayName:
+    """Test get_display_name() — first_name > username."""
+
+    def test_returns_first_name_when_available(self, service):
+        service._user_names = {1: "evdb"}
+        service._user_first_names = {1: "Edi"}
+        assert service.get_display_name(1) == "Edi"
+
+    def test_falls_back_to_username(self, service):
+        service._user_names = {1: "evdb"}
+        assert service.get_display_name(1) == "evdb"
+
+    def test_falls_back_to_user_id(self, service):
+        assert service.get_display_name(99) == "User 99"
