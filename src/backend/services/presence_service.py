@@ -237,6 +237,7 @@ class PresenceService:
                         "user_name": self.get_user_name(user_id),
                         "room_id": old_room_id,
                         "room_name": old_room_name,
+                        "source": "ble",
                     }))
                     # Check if old room is now empty
                     if not self.get_room_occupants(old_room_id):
@@ -253,6 +254,7 @@ class PresenceService:
                         "room_id": best_room_id,
                         "room_name": self._room_names.get(best_room_id),
                         "confidence": confidence,
+                        "source": "ble",
                     }))
                     if was_first:
                         self._pending_events.append(("presence_first_arrived", {
@@ -260,6 +262,7 @@ class PresenceService:
                             "user_name": self.get_user_name(user_id),
                             "room_id": best_room_id,
                             "room_name": self._room_names.get(best_room_id),
+                            "source": "ble",
                         }))
             # else: not enough consecutive scans, keep current room
 
@@ -279,6 +282,7 @@ class PresenceService:
                     "user_name": self.get_user_name(user_id),
                     "room_id": old.room_id,
                     "room_name": old.room_name,
+                    "source": "ble",
                 }))
                 if not self.get_room_occupants(old.room_id):
                     self._pending_events.append(("presence_last_left", {
@@ -339,6 +343,7 @@ class PresenceService:
                 "user_name": self.get_user_name(user_id),
                 "room_id": old_room_id,
                 "room_name": old_room_name,
+                "source": "voice",
             }))
             # Check if old room is now empty (user hasn't moved yet, so exclude them)
             other_occupants = [
@@ -365,6 +370,7 @@ class PresenceService:
             "room_id": room_id,
             "room_name": current.room_name,
             "confidence": confidence,
+            "source": "voice",
         }))
         if was_first:
             self._pending_events.append(("presence_first_arrived", {
@@ -372,6 +378,7 @@ class PresenceService:
                 "user_name": self.get_user_name(user_id),
                 "room_id": room_id,
                 "room_name": current.room_name,
+                "source": "voice",
             }))
 
         logger.debug(f"Presence: voice/auth — user {user_id} → {current.room_name or room_id}")

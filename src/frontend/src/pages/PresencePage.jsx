@@ -12,8 +12,9 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   MapPin, Users, Wifi, Smartphone, Plus, Trash2, RefreshCw,
-  AlertCircle, Clock, Watch, Radio,
+  AlertCircle, Clock, Watch, Radio, BarChart3,
 } from 'lucide-react';
+import AnalyticsTab from '../components/presence/AnalyticsTab';
 
 
 // Confidence bar component
@@ -250,6 +251,7 @@ export default function PresencePage() {
   const formatAgo = useFormatAgo(t);
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
+  const [activeTab, setActiveTab] = useState('live');
   const [rooms, setRooms] = useState([]);
   const [devices, setDevices] = useState([]);
   const [users, setUsers] = useState([]);
@@ -371,27 +373,63 @@ export default function PresencePage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
-          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={autoRefresh}
-              onChange={(e) => setAutoRefresh(e.target.checked)}
-              className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-            />
-            {t('presence.autoRefresh')}
-          </label>
+        {activeTab === 'live' && (
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoRefresh}
+                onChange={(e) => setAutoRefresh(e.target.checked)}
+                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+              />
+              {t('presence.autoRefresh')}
+            </label>
 
-          <button
-            onClick={loadPresence}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-            title={t('common.refresh')}
-          >
-            <RefreshCw className="w-5 h-5" />
-          </button>
-        </div>
+            <button
+              onClick={loadPresence}
+              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+              title={t('common.refresh')}
+            >
+              <RefreshCw className="w-5 h-5" />
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* Tabs */}
+      <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
+        <button
+          onClick={() => setActiveTab('live')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'live'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Radio className="w-4 h-4" />
+            {t('presence.tabLive')}
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab('analytics')}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'analytics'
+              ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
+              : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <BarChart3 className="w-4 h-4" />
+            {t('presence.tabAnalytics')}
+          </span>
+        </button>
+      </div>
+
+      {activeTab === 'analytics' ? (
+        <AnalyticsTab users={users} />
+      ) : (
+      <>
       {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
@@ -539,6 +577,8 @@ export default function PresencePage() {
         users={users}
       />
       {ConfirmDialogComponent}
+      </>
+      )}
     </div>
   );
 }

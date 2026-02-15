@@ -295,6 +295,7 @@ class Settings(BaseSettings):
     presence_household_roles: str = "Admin,Familie"        # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                           # URL to POST presence events (empty = disabled)
     presence_webhook_secret: str = ""                        # Shared secret for webhook auth (X-Webhook-Secret header)
+    presence_analytics_retention_days: int = 90              # Days to keep presence events for analytics
 
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling

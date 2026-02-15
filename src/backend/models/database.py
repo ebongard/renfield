@@ -974,6 +974,23 @@ class UserBleDevice(Base):
     user = relationship("User", backref="ble_devices")
 
 
+class PresenceEvent(Base):
+    """Persisted presence event for analytics (heatmap, predictions)."""
+    __tablename__ = "presence_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
+    event_type = Column(String(20), nullable=False)  # "enter" | "leave"
+    source = Column(String(20), default="ble")        # "ble" | "voice" | "web"
+    confidence = Column(Float, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
+
+    __table_args__ = (
+        Index('ix_presence_events_analytics', 'user_id', 'room_id', 'created_at'),
+    )
+
+
 # System Setting Keys
 SETTING_WAKEWORD_KEYWORD = "wakeword.keyword"
 SETTING_WAKEWORD_THRESHOLD = "wakeword.threshold"

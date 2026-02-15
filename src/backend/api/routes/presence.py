@@ -1,10 +1,11 @@
 """
 Presence Detection API Routes
 
-Endpoints for room occupancy, user presence, and BLE device management.
+Endpoints for room occupancy, user presence, BLE device management,
+and presence analytics (heatmap, predictions).
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -227,3 +228,64 @@ async def delete_device(
     removed = await presence.remove_device(device_id, db)
     if not removed:
         raise HTTPException(status_code=404, detail="Device not found")
+
+
+# --- Analytics ---
+
+class HeatmapCell(BaseModel):
+    room_id: int
+    room_name: str
+    hour: int
+    count: int
+
+
+class PredictionEntry(BaseModel):
+    room_id: int
+    room_name: str
+    day_of_week: int
+    hour: int
+    probability: float
+
+
+class DailySummary(BaseModel):
+    date: str
+    enter_count: int
+    leave_count: int
+
+
+@router.get("/analytics/heatmap", response_model=list[HeatmapCell])
+async def get_heatmap(
+    days: int = Query(default=30, ge=1, le=365),
+    user_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Room x hour heatmap of enter events."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_heatmap(days=days, user_id=user_id)
+
+
+@router.get("/analytics/predictions", response_model=list[PredictionEntry])
+async def get_predictions(
+    user_id: int = Query(...),
+    days: int = Query(default=60, ge=7, le=365),
+    db: AsyncSession = Depends(get_db),
+):
+    """Per-user room presence predictions by day-of-week and hour."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_predictions(user_id=user_id, days=days)
+
+
+@router.get("/analytics/daily", response_model=list[DailySummary])
+async def get_daily_summary(
+    days: int = Query(default=7, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+):
+    """Daily enter/leave event counts."""
+    from services.presence_analytics import PresenceAnalyticsService
+
+    service = PresenceAnalyticsService(db)
+    return await service.get_daily_summary(days=days)
