@@ -904,6 +904,51 @@ class KnowledgeGraphService:
 
         return relation_dicts, total
 
+    async def update_relation(
+        self,
+        relation_id: int,
+        predicate: str | None = None,
+        confidence: float | None = None,
+        subject_id: int | None = None,
+        object_id: int | None = None,
+    ) -> KGRelation | None:
+        """Update an existing relation's predicate, confidence, or endpoints."""
+        result = await self.db.execute(
+            select(KGRelation).where(
+                KGRelation.id == relation_id,
+                KGRelation.is_active == True,  # noqa: E712
+            )
+        )
+        relation = result.scalar_one_or_none()
+        if not relation:
+            return None
+
+        new_subject = subject_id if subject_id is not None else relation.subject_id
+        new_object = object_id if object_id is not None else relation.object_id
+
+        if new_subject == new_object:
+            raise ValueError("Subject and object must be different entities")
+
+        # Validate that referenced entities exist
+        for eid in (new_subject, new_object):
+            if eid != relation.subject_id and eid != relation.object_id:
+                entity = await self.get_entity(eid)
+                if not entity:
+                    raise ValueError(f"Entity {eid} not found")
+
+        if predicate is not None:
+            relation.predicate = predicate
+        if confidence is not None:
+            relation.confidence = confidence
+        if subject_id is not None:
+            relation.subject_id = subject_id
+        if object_id is not None:
+            relation.object_id = object_id
+
+        await self.db.commit()
+        await self.db.refresh(relation)
+        return relation
+
     async def delete_relation(self, relation_id: int) -> bool:
         result = await self.db.execute(
             select(KGRelation).where(
