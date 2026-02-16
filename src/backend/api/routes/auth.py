@@ -92,6 +92,7 @@ class AuthStatusResponse(BaseModel):
     allow_registration: bool
     authenticated: bool
     user: UserResponse | None = None
+    features: dict[str, bool] = {}
 
 
 # =============================================================================
@@ -354,7 +355,8 @@ async def get_auth_status(
         auth_enabled=settings.auth_enabled,
         allow_registration=settings.allow_registration,
         authenticated=user is not None,
-        user=user_response
+        user=user_response,
+        features=settings.features
     )
 
 

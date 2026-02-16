@@ -17,6 +17,8 @@ const defaultMockAuth = {
   authEnabled: true,
   allowRegistration: false,
   loading: false,
+  features: { smart_home: true, cameras: true, satellites: true },
+  isFeatureEnabled: (feature) => true,
   login: async () => {},
   logout: () => {},
   register: async () => {},
