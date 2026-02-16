@@ -215,6 +215,7 @@ Minimal async hook system for the Open-Core plugin architecture. External packag
 | `register_routes` | `app` | Mount additional FastAPI routes |
 | `register_tools` | `registry` (AgentToolRegistry) | Add custom agent tools |
 | `post_message` | `user_msg`, `assistant_msg`, `user_id`, `session_id` | Post-processing (e.g. graph extraction) |
+| `post_document_ingest` | `chunks`, `document_id`, `user_id` | KG extraction from ingested document chunks |
 | `retrieve_context` | `query`, `user_id`, `lang` | Inject additional LLM context (return `str`) |
 | `presence_enter_room` | `user_id`, `user_name`, `room_id`, `room_name`, `confidence` | User entered a room |
 | `presence_leave_room` | `user_id`, `user_name`, `room_id`, `room_name` | User left a room |
@@ -229,6 +230,8 @@ Minimal async hook system for the Open-Core plugin architecture. External packag
 | `api/lifecycle.py` | `shutdown` | Awaited before MCP shutdown |
 | `api/websocket/chat_handler.py` | `post_message` | Fire-and-forget background task |
 | `api/websocket/chat_handler.py` | `retrieve_context` | Awaited, results appended to memory context |
+| `services/rag_service.py` | `post_document_ingest` | Fire-and-forget after RAG ingest |
+| `api/routes/chat_upload.py` | `post_document_ingest` | Fire-and-forget after text extraction |
 | `services/agent_tools.py` | `register_tools` | Background task via `create_task` |
 
 **Plugin Loading:** Set `PLUGIN_MODULE=package.module:callable` — the callable is invoked at startup and should call `register_hook()`. Format: `module:function` (function receives no args). See `api/lifecycle.py:_load_plugin_module()`.
@@ -279,9 +282,10 @@ Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satell
 
 ### Knowledge Graph
 
-Entity-Relation triples extracted from conversations via LLM, stored with pgvector embeddings for semantic entity resolution. Opt-in via `KNOWLEDGE_GRAPH_ENABLED=true`.
+Entity-Relation triples extracted from conversations and documents via LLM, stored with pgvector embeddings for semantic entity resolution. Opt-in via `KNOWLEDGE_GRAPH_ENABLED=true`.
 
-- **Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
+- **Chat Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
+- **Document Extraction:** `post_document_ingest` hook processes RAG document chunks and chat-uploaded text through KG extraction (fire-and-forget, sequential per chunk)
 - **Entity Resolution:** Exact name match → embedding cosine similarity (threshold 0.92) → create new
 - **Context Injection:** `retrieve_context` hook embeds query, finds similar entities via pgvector, fetches their relations, formats as triples
 - **Entity Types:** `person`, `place`, `organization`, `thing`, `event`, `concept`

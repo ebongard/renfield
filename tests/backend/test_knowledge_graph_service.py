@@ -1,19 +1,22 @@
 """
 Tests for Knowledge Graph Service — Entity resolution, relation saving,
-extraction parsing, and context retrieval formatting.
+extraction parsing, context retrieval formatting, and document extraction.
 
 Uses in-memory SQLite (no pgvector). Embedding generation is mocked.
 pgvector SQL queries are tested for error handling; actual similarity
 search requires PostgreSQL and is covered by e2e tests.
 """
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KG_ENTITY_TYPES, KGEntity, KGRelation
-from services.knowledge_graph_service import KnowledgeGraphService
+from services.knowledge_graph_service import (
+    KnowledgeGraphService,
+    kg_post_document_ingest_hook,
+)
 
 # ==========================================================================
 # Fixtures
@@ -506,6 +509,222 @@ class TestCRUD:
 
         assert total == 1
         assert relations[0]["predicate"] == "lives_in"
+
+
+# ==========================================================================
+# Extract from Text (Document Chunks)
+# ==========================================================================
+
+class TestExtractFromText:
+    """Tests for KnowledgeGraphService.extract_from_text()."""
+
+    @pytest.mark.unit
+    async def test_extract_from_text_parses_entities(self, kg_service, db_session):
+        """Mock LLM output is parsed and entities + relations are saved from text."""
+        llm_response = MagicMock()
+        llm_response.message.content = '''{
+            "entities": [
+                {"name": "Munich", "type": "place", "description": "Capital of Bavaria"},
+                {"name": "BMW", "type": "organization"}
+            ],
+            "relations": [
+                {"subject": "BMW", "predicate": "headquartered_in", "object": "Munich", "confidence": 0.95}
+            ]
+        }'''
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        mock_client.embeddings = AsyncMock(
+            return_value=MagicMock(embedding=[0.1] * 768)
+        )
+        kg_service._ollama_client = mock_client
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        entities, relations = await kg_service.extract_from_text(
+            "BMW has its headquarters in Munich, the capital of Bavaria.",
+            user_id=None,
+            source_ref="doc:42",
+        )
+
+        assert len(entities) == 2
+        assert len(relations) == 1
+        assert any(e.name == "Munich" for e in entities)
+        assert any(e.name == "BMW" for e in entities)
+        assert relations[0].predicate == "headquartered_in"
+
+    @pytest.mark.unit
+    async def test_extract_from_text_empty_result(self, kg_service, db_session):
+        """Empty LLM response returns empty lists."""
+        llm_response = MagicMock()
+        llm_response.message.content = '{"entities": [], "relations": []}'
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._ollama_client = mock_client
+
+        entities, relations = await kg_service.extract_from_text(
+            "This is a table of contents with page numbers.",
+        )
+
+        assert entities == []
+        assert relations == []
+
+    @pytest.mark.unit
+    async def test_extract_from_text_llm_failure(self, kg_service, db_session):
+        """LLM failure returns empty lists gracefully."""
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(side_effect=Exception("LLM down"))
+        kg_service._ollama_client = mock_client
+
+        entities, relations = await kg_service.extract_from_text("Some text")
+
+        assert entities == []
+        assert relations == []
+
+
+# ==========================================================================
+# Extract from Chunks
+# ==========================================================================
+
+class TestExtractFromChunks:
+    """Tests for KnowledgeGraphService.extract_from_chunks()."""
+
+    @pytest.mark.unit
+    async def test_extract_from_chunks_iterates(self, kg_service, db_session):
+        """Iterates over chunks and aggregates results."""
+        entity_a = MagicMock(spec=KGEntity)
+        entity_a.name = "A"
+        entity_b = MagicMock(spec=KGEntity)
+        entity_b.name = "B"
+        relation = MagicMock(spec=KGRelation)
+
+        kg_service.extract_from_text = AsyncMock(
+            side_effect=[
+                ([entity_a], []),
+                ([entity_b], [relation]),
+            ]
+        )
+
+        entities, relations = await kg_service.extract_from_chunks(
+            ["Chunk one about A.", "Chunk two about B."],
+            source_ref="doc:1",
+        )
+
+        assert len(entities) == 2
+        assert len(relations) == 1
+        assert kg_service.extract_from_text.call_count == 2
+
+    @pytest.mark.unit
+    async def test_extract_from_chunks_skips_empty(self, kg_service, db_session):
+        """Empty or whitespace-only chunks are skipped."""
+        kg_service.extract_from_text = AsyncMock(return_value=([], []))
+
+        await kg_service.extract_from_chunks(
+            ["", "  ", "valid text"],
+            source_ref="doc:2",
+        )
+
+        assert kg_service.extract_from_text.call_count == 1
+
+    @pytest.mark.unit
+    async def test_extract_from_chunks_handles_failure(self, kg_service, db_session):
+        """One chunk failure doesn't stop processing of remaining chunks."""
+        entity = MagicMock(spec=KGEntity)
+        entity.name = "Good"
+
+        kg_service.extract_from_text = AsyncMock(
+            side_effect=[
+                Exception("LLM error"),
+                ([entity], []),
+            ]
+        )
+
+        entities, _relations = await kg_service.extract_from_chunks(
+            ["bad chunk", "good chunk"],
+            source_ref="doc:3",
+        )
+
+        assert len(entities) == 1
+        assert kg_service.extract_from_text.call_count == 2
+
+
+# ==========================================================================
+# Document Ingest Hook
+# ==========================================================================
+
+class TestDocumentIngestHook:
+    """Tests for kg_post_document_ingest_hook()."""
+
+    @pytest.mark.unit
+    async def test_hook_calls_extract_from_chunks(self, db_session):
+        """Hook creates service and calls extract_from_chunks."""
+        mock_svc = MagicMock(spec=KnowledgeGraphService)
+        mock_svc.extract_from_chunks = AsyncMock(return_value=([], []))
+
+        mock_session_cls = MagicMock()
+        mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=db_session)
+        mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # Patch the import target inside the hook function
+        import services.knowledge_graph_service as kg_mod
+        with (
+            patch.object(kg_mod, "KnowledgeGraphService", return_value=mock_svc),
+            patch.dict("sys.modules", {"services.database": MagicMock(AsyncSessionLocal=mock_session_cls)}),
+        ):
+            await kg_post_document_ingest_hook(
+                chunks=["chunk1", "chunk2"],
+                document_id=42,
+                user_id=1,
+            )
+
+            mock_svc.extract_from_chunks.assert_awaited_once_with(
+                ["chunk1", "chunk2"],
+                user_id=1,
+                source_ref="doc:42",
+                lang="de",
+            )
+
+    @pytest.mark.unit
+    async def test_hook_no_document_id(self, db_session):
+        """Hook handles None document_id gracefully."""
+        mock_svc = MagicMock(spec=KnowledgeGraphService)
+        mock_svc.extract_from_chunks = AsyncMock(return_value=([], []))
+
+        mock_session_cls = MagicMock()
+        mock_session_cls.return_value.__aenter__ = AsyncMock(return_value=db_session)
+        mock_session_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        import services.knowledge_graph_service as kg_mod
+        with (
+            patch.object(kg_mod, "KnowledgeGraphService", return_value=mock_svc),
+            patch.dict("sys.modules", {"services.database": MagicMock(AsyncSessionLocal=mock_session_cls)}),
+        ):
+            await kg_post_document_ingest_hook(
+                chunks=["text"],
+                document_id=None,
+                user_id=None,
+            )
+
+            mock_svc.extract_from_chunks.assert_awaited_once_with(
+                ["text"],
+                user_id=None,
+                source_ref=None,
+                lang="de",
+            )
+
+    @pytest.mark.unit
+    async def test_hook_handles_exception(self):
+        """Hook catches exceptions without raising."""
+        # Make the local import raise an exception
+        broken_mod = MagicMock()
+        broken_mod.AsyncSessionLocal = MagicMock(side_effect=Exception("DB down"))
+
+        with patch.dict("sys.modules", {"services.database": broken_mod}):
+            # Should not raise
+            await kg_post_document_ingest_hook(
+                chunks=["text"],
+                document_id=1,
+            )
 
 
 # ==========================================================================

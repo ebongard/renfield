@@ -320,6 +320,138 @@ class KnowledgeGraphService:
 
         return saved_entities, saved_relations
 
+    async def extract_from_text(
+        self,
+        text: str,
+        user_id: int | None = None,
+        source_ref: str | None = None,
+        lang: str = "de",
+    ) -> tuple[list[KGEntity], list[KGRelation]]:
+        """Extract entities and relations from a free-text passage (e.g. document chunk)."""
+        from services.prompt_manager import prompt_manager
+
+        prompt = prompt_manager.get(
+            "knowledge_graph", "document_extraction_prompt", lang=lang,
+            text=text,
+        )
+        system_msg = prompt_manager.get(
+            "knowledge_graph", "extraction_system", lang=lang,
+        )
+        llm_options = prompt_manager.get_config("knowledge_graph", "llm_options") or {}
+
+        model = settings.kg_extraction_model or settings.ollama_model
+
+        try:
+            client = await self._get_ollama_client()
+            response = await client.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                options=llm_options,
+            )
+            raw_text = response.message.content
+        except Exception as e:
+            logger.warning(f"KG document extraction LLM call failed: {e}")
+            return [], []
+
+        extracted = self._parse_extraction_response(raw_text)
+        if not extracted:
+            return [], []
+
+        entities_data = extracted.get("entities", [])
+        relations_data = extracted.get("relations", [])
+
+        # Resolve entities
+        entity_map: dict[str, KGEntity] = {}
+        saved_entities = []
+        for ent in entities_data:
+            name = ent.get("name", "").strip()
+            etype = ent.get("type", "thing").strip().lower()
+            desc = ent.get("description", "").strip() or None
+            if not name:
+                continue
+
+            entity = await self.resolve_entity(name, etype, user_id, desc)
+            entity_map[name.lower()] = entity
+            saved_entities.append(entity)
+
+        # Save relations
+        saved_relations = []
+        for rel in relations_data:
+            subj_name = rel.get("subject", "").strip().lower()
+            pred = rel.get("predicate", "").strip()
+            obj_name = rel.get("object", "").strip().lower()
+            conf = rel.get("confidence", 0.8)
+
+            if not subj_name or not pred or not obj_name:
+                continue
+
+            subject = entity_map.get(subj_name)
+            obj = entity_map.get(obj_name)
+
+            if not subject or not obj:
+                continue
+
+            try:
+                conf = max(0.1, min(1.0, float(conf)))
+            except (TypeError, ValueError):
+                conf = 0.8
+
+            relation = await self.save_relation(
+                subject_id=subject.id,
+                predicate=pred,
+                object_id=obj.id,
+                user_id=user_id,
+                confidence=conf,
+                source_session_id=source_ref,
+            )
+            saved_relations.append(relation)
+
+        await self.db.commit()
+
+        if saved_entities or saved_relations:
+            logger.info(
+                f"KG: Extracted {len(saved_entities)} entities, "
+                f"{len(saved_relations)} relations from text "
+                f"(user_id={user_id}, source={source_ref})"
+            )
+
+        return saved_entities, saved_relations
+
+    async def extract_from_chunks(
+        self,
+        chunks: list[str],
+        user_id: int | None = None,
+        source_ref: str | None = None,
+        lang: str = "de",
+    ) -> tuple[list[KGEntity], list[KGRelation]]:
+        """Extract entities and relations from multiple text chunks sequentially."""
+        all_entities: list[KGEntity] = []
+        all_relations: list[KGRelation] = []
+
+        for i, chunk_text in enumerate(chunks):
+            if not chunk_text or not chunk_text.strip():
+                continue
+            try:
+                entities, relations = await self.extract_from_text(
+                    chunk_text, user_id=user_id, source_ref=source_ref, lang=lang,
+                )
+                all_entities.extend(entities)
+                all_relations.extend(relations)
+            except Exception as e:
+                logger.warning(f"KG: Chunk {i} extraction failed: {e}")
+
+        if all_entities or all_relations:
+            logger.info(
+                f"KG: Extracted {len(all_entities)} entities, "
+                f"{len(all_relations)} relations from {len(chunks)} chunks "
+                f"(source={source_ref})"
+            )
+
+        return all_entities, all_relations
+
     @staticmethod
     def _parse_extraction_response(raw_text: str) -> dict | None:
         """Parse JSON object from LLM extraction response."""
@@ -723,3 +855,24 @@ async def kg_retrieve_context_hook(
     except Exception as e:
         logger.warning(f"KG retrieve_context hook failed: {e}")
         return None
+
+
+async def kg_post_document_ingest_hook(
+    chunks: list[str],
+    document_id: int | None = None,
+    user_id: int | None = None,
+    **kwargs,
+):
+    """Extract KG entities from ingested document chunks (post_document_ingest hook)."""
+    try:
+        from services.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            svc = KnowledgeGraphService(db)
+            source_ref = f"doc:{document_id}" if document_id else None
+            lang = kwargs.get("lang", settings.default_language)
+            await svc.extract_from_chunks(
+                chunks, user_id=user_id, source_ref=source_ref, lang=lang,
+            )
+    except Exception as e:
+        logger.warning(f"KG post_document_ingest hook failed: {e}")

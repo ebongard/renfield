@@ -36,6 +36,35 @@ de:
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
+  document_extraction_prompt: |
+    Analysiere den folgenden Textabschnitt aus einem Dokument und extrahiere benannte Entitaeten und ihre Beziehungen.
+
+    ENTITAETEN extrahieren:
+    - Personen (Name, Spitzname)
+    - Orte (Staedte, Laender, Gebaeude)
+    - Organisationen (Firmen, Vereine)
+    - Dinge (Haustiere, Geraete, Fahrzeuge)
+    - Ereignisse (Urlaube, Termine, Feiern)
+    - Konzepte (Hobbys, Berufe, Faecher)
+
+    RELATIONEN extrahieren:
+    - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit")
+    - Nur Relationen die EXPLIZIT im Text erwaehnt werden
+    - confidence: 0.5-1.0 (wie sicher ist die Relation)
+
+    IGNORIERE:
+    - Formatierung, Seitenzahlen, Inhaltsverzeichnisse
+    - Generische/unbenannte Verweise
+
+    Text:
+    {text}
+
+    Antworte als JSON-Objekt (leere Arrays wenn nichts relevant):
+    {{
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
+    }}
+
 en:
   extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object."
 
@@ -63,6 +92,35 @@ en:
     Dialog:
     User: {user_message}
     Assistant: {assistant_response}
+
+    Reply as JSON object (empty arrays if nothing relevant):
+    {{
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
+    }}
+
+  document_extraction_prompt: |
+    Analyze the following text passage from a document and extract named entities and their relationships.
+
+    EXTRACT entities:
+    - People (names, nicknames)
+    - Places (cities, countries, buildings)
+    - Organizations (companies, clubs)
+    - Things (pets, devices, vehicles)
+    - Events (vacations, appointments, celebrations)
+    - Concepts (hobbies, professions, subjects)
+
+    EXTRACT relations:
+    - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to")
+    - Only relations EXPLICITLY mentioned in the text
+    - confidence: 0.5-1.0 (how certain is the relation)
+
+    IGNORE:
+    - Formatting, page numbers, tables of contents
+    - Generic/unnamed references
+
+    Text:
+    {text}
 
     Reply as JSON object (empty arrays if nothing relevant):
     {{
