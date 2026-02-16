@@ -1,0 +1,63 @@
+---
+import FeatureCard from './FeatureCard.astro';
+
+const features = [
+  {
+    icon: '\u{1F399}\uFE0F',
+    title: 'Voice Satellites',
+    description: 'Pi Zero 2 W with wake word detection, STT & TTS. One per room, starting at ~30 EUR.',
+  },
+  {
+    icon: '\u{1F578}\uFE0F',
+    title: 'Knowledge Graph',
+    description: 'Entities & relations extracted from conversations and documents via LLM, stored with vector embeddings.',
+  },
+  {
+    icon: '\u{1F50D}',
+    title: 'RAG Hybrid Search',
+    description: 'Dense + BM25 via Reciprocal Rank Fusion. Ingest PDF, DOCX, XLSX, and more.',
+  },
+  {
+    icon: '\u{1F4CD}',
+    title: 'Presence Detection',
+    description: 'BLE scanning, speaker recognition, and web-auth presence. Room-level tracking with privacy-aware TTS.',
+  },
+  {
+    icon: '\u{1F916}',
+    title: 'Agent Loop (100+ Tools)',
+    description: 'ReAct agent with 9 MCP servers: Home Assistant, n8n, weather, search, news, calendar, and more.',
+  },
+  {
+    icon: '\u{1F9E0}',
+    title: 'Long-Term Memory',
+    description: 'Learns preferences and facts over time with contradiction detection and semantic recall.',
+  },
+  {
+    icon: '\u{1F3E0}',
+    title: 'Smart Home',
+    description: 'Control Home Assistant devices with natural language. Dynamic keyword matching for accurate intent.',
+  },
+  {
+    icon: '\u{1F512}',
+    title: 'Offline & Private',
+    description: 'Your hardware, your data. No cloud dependency. GDPR-compliant by design.',
+  },
+];
+---
+
+<section class="py-20 sm:py-28">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6">
+    <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
+      Features
+    </h2>
+    <p class="text-center text-gray-600 dark:text-gray-400 mb-12 max-w-2xl mx-auto">
+      Everything you need for a private, self-hosted AI assistant.
+    </p>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+      {features.map((f) => (
+        <FeatureCard icon={f.icon} title={f.title} description={f.description} />
+      ))}
+    </div>
+  </div>
+</section>

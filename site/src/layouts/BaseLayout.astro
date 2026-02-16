@@ -1,0 +1,41 @@
+---
+const title = 'Renfield — Self-Hosted AI Assistant';
+const description = 'Self-hosted AI assistant with voice satellites, 100+ tool integrations, and full offline capability.';
+---
+
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta name="generator" content={Astro.generator} />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content="/social-preview.svg" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title}</title>
+
+    <!-- Analytics -->
+    <script defer src="https://analytics.renfield.de/script.js" data-website-id="74193c41-37b0-4423-b59e-5715b7ef5206"></script>
+
+    <!-- Prevent FOUC: apply theme before render -->
+    <script is:inline>
+      (function() {
+        const stored = localStorage.getItem('renfield-theme');
+        if (stored === 'light') {
+          document.documentElement.classList.remove('dark');
+        }
+        // Default: dark (class already set on <html>)
+      })();
+    </script>
+  </head>
+  <body class="min-h-screen">
+    <slot />
+  </body>
+</html>

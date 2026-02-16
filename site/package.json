@@ -1,0 +1,17 @@
+{
+  "name": "renfield-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "npm run copy-assets && astro build",
+    "preview": "astro preview",
+    "copy-assets": "node scripts/copy-assets.mjs"
+  },
+  "dependencies": {
+    "astro": "^5.7.0",
+    "@astrojs/tailwind": "^6.0.2",
+    "tailwindcss": "^3.4.17"
+  }
+}

@@ -1,0 +1,80 @@
+---
+const tabs = [
+  { id: 'chat', label: 'Chat' },
+  { id: 'knowledge', label: 'Knowledge Base' },
+  { id: 'integrations', label: 'Integrations' },
+  { id: 'rooms', label: 'Rooms' },
+  { id: 'satellites', label: 'Satellites' },
+  { id: 'memory', label: 'Memory' },
+];
+---
+
+<section class="py-20 sm:py-28 bg-gray-50 dark:bg-gray-900/50">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6">
+    <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
+      Screenshots
+    </h2>
+    <p class="text-center text-gray-600 dark:text-gray-400 mb-10 max-w-2xl mx-auto">
+      A clean, responsive interface with full dark mode support.
+    </p>
+
+    <!-- Tab Buttons -->
+    <div class="flex flex-wrap justify-center gap-2 mb-8" id="screenshot-tabs">
+      {tabs.map((tab, i) => (
+        <button
+          data-tab={tab.id}
+          class:list={[
+            'px-4 py-2 text-sm font-medium rounded-lg transition-colors',
+            i === 0
+              ? 'bg-brand-blue text-white'
+              : 'bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-700',
+          ]}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
+
+    <!-- Screenshot Images -->
+    <div class="relative max-w-4xl mx-auto" id="screenshot-container">
+      {tabs.map((tab, i) => (
+        <div
+          data-screenshot={tab.id}
+          class:list={['rounded-xl overflow-hidden shadow-2xl border border-gray-200 dark:border-gray-700', i !== 0 && 'hidden']}
+        >
+          <img
+            src={`/screenshots/${tab.id}-dark.png`}
+            alt={`${tab.label} - Dark Mode`}
+            class="w-full hidden dark:block"
+            loading="lazy"
+          />
+          <img
+            src={`/screenshots/${tab.id}-light.png`}
+            alt={`${tab.label} - Light Mode`}
+            class="w-full block dark:hidden"
+            loading="lazy"
+          />
+        </div>
+      ))}
+    </div>
+  </div>
+</section>
+
+<script is:inline>
+  document.getElementById('screenshot-tabs').addEventListener('click', function(e) {
+    const btn = e.target.closest('[data-tab]');
+    if (!btn) return;
+    const tab = btn.dataset.tab;
+
+    // Update button styles
+    this.querySelectorAll('[data-tab]').forEach(function(b) {
+      b.className = 'px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-gray-200 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-300 dark:hover:bg-gray-700';
+    });
+    btn.className = 'px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-brand-blue text-white';
+
+    // Show/hide screenshots
+    document.querySelectorAll('[data-screenshot]').forEach(function(el) {
+      el.classList.toggle('hidden', el.dataset.screenshot !== tab);
+    });
+  });
+</script>

@@ -1,0 +1,38 @@
+---
+---
+
+<section class="py-20 sm:py-28">
+  <div class="max-w-6xl mx-auto px-4 sm:px-6">
+    <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
+      Architecture
+    </h2>
+    <p class="text-center text-gray-600 dark:text-gray-400 mb-10 max-w-2xl mx-auto">
+      Modular design with MCP protocol for tool integration, local LLM inference via Ollama,
+      and a React PWA frontend.
+    </p>
+
+    <div class="max-w-4xl mx-auto rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700 bg-gray-900">
+      <img
+        src="/architecture.svg"
+        alt="Renfield Architecture Diagram"
+        class="w-full"
+        loading="lazy"
+      />
+    </div>
+
+    <!-- Request flow summary -->
+    <div class="mt-10 max-w-3xl mx-auto">
+      <div class="flex flex-col sm:flex-row items-center justify-center gap-2 sm:gap-3 text-sm text-gray-500 dark:text-gray-400 flex-wrap">
+        <span class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-800">User Input</span>
+        <span>&rarr;</span>
+        <span class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-800">Intent Recognition</span>
+        <span>&rarr;</span>
+        <span class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-800">Agent / Action</span>
+        <span>&rarr;</span>
+        <span class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-800">MCP Tools</span>
+        <span>&rarr;</span>
+        <span class="px-3 py-1 rounded bg-gray-100 dark:bg-gray-800">Response</span>
+      </div>
+    </div>
+  </div>
+</section>
