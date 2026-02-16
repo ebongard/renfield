@@ -10,6 +10,12 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Anwendungs-Einstellungen"""
 
+    # Edition & Feature Flags
+    renfield_edition: str = "community"  # "community" (full/home) or "pro" (business, no smart home)
+    feature_smart_home: bool | None = None   # None = use edition default
+    feature_cameras: bool | None = None      # None = use edition default
+    feature_satellites: bool | None = None   # None = use edition default
+
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: str | None = None
     postgres_user: str = "renfield"
@@ -312,6 +318,20 @@ class Settings(BaseSettings):
     # Phase 3: Reminders
     proactive_reminders_enabled: bool = False
     proactive_reminder_check_interval: int = 15        # Sekunden
+
+    @property
+    def features(self) -> dict[str, bool]:
+        """Resolve feature flags: explicit override > edition preset."""
+        presets = {
+            "community": {"smart_home": True, "cameras": True, "satellites": True},
+            "pro": {"smart_home": False, "cameras": False, "satellites": False},
+        }
+        defaults = presets.get(self.renfield_edition, presets["pro"])
+        return {
+            "smart_home": self.feature_smart_home if self.feature_smart_home is not None else defaults["smart_home"],
+            "cameras": self.feature_cameras if self.feature_cameras is not None else defaults["cameras"],
+            "satellites": self.feature_satellites if self.feature_satellites is not None else defaults["satellites"],
+        }
 
     @property
     def allowed_extensions_list(self) -> list[str]:

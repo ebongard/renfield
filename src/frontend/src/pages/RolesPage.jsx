@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 
 // Permission categories for better organization
+// Categories with a 'feature' key are only shown when that feature is enabled
 const PERMISSION_CATEGORIES = {
   'Knowledge Bases': {
     description: 'Access to knowledge base documents',
@@ -22,11 +23,13 @@ const PERMISSION_CATEGORIES = {
   },
   'Home Assistant': {
     description: 'Smart home device control',
-    permissions: ['ha.none', 'ha.read', 'ha.control', 'ha.full']
+    permissions: ['ha.none', 'ha.read', 'ha.control', 'ha.full'],
+    feature: 'smart_home'
   },
   'Cameras': {
     description: 'Camera and video access',
-    permissions: ['cam.none', 'cam.view', 'cam.full']
+    permissions: ['cam.none', 'cam.view', 'cam.full'],
+    feature: 'cameras'
   },
   'Conversations': {
     description: 'Chat history access',
@@ -70,7 +73,7 @@ const PERMISSION_DESCRIPTIONS = {
 
 export default function RolesPage() {
   const { t } = useTranslation();
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, isFeatureEnabled } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   const [roles, setRoles] = useState([]);
@@ -455,7 +458,9 @@ export default function RolesPage() {
             </div>
 
             <div className="space-y-2 max-h-96 overflow-y-auto pr-2">
-              {Object.entries(PERMISSION_CATEGORIES).map(([category, { description, permissions }]) => {
+              {Object.entries(PERMISSION_CATEGORIES).filter(([, { feature }]) =>
+                !feature || isFeatureEnabled(feature)
+              ).map(([category, { description, permissions }]) => {
                 const isExpanded = expandedCategories[category];
                 const selectedCount = getCategoryPermissionCount(category, formData.permissions);
 
