@@ -42,14 +42,17 @@ de:
     ENTITAETEN extrahieren:
     - Personen (Name, Spitzname)
     - Orte (Staedte, Laender, Gebaeude)
-    - Organisationen (Firmen, Vereine)
+    - Organisationen (Firmen, Vereine, Behoerden)
     - Dinge (Haustiere, Geraete, Fahrzeuge)
     - Ereignisse (Urlaube, Termine, Feiern)
     - Konzepte (Hobbys, Berufe, Faecher)
 
     RELATIONEN extrahieren:
-    - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit")
-    - Nur Relationen die EXPLIZIT im Text erwaehnt werden
+    - Persoenliche Beziehungen: "wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit"
+    - Dokumentbeziehungen: "sendet_an", "empfaengt_von", "adressiert_an", "unterzeichnet_von", "ausgestellt_von", "erstellt_fuer"
+    - Geschaeftliche Beziehungen: "beauftragt", "liefert_an", "ist_kunde_von", "ist_mitglied_von", "vertritt"
+    - Erkenne Absender/Empfaenger aus dem Dokumentkontext (Briefkopf, Anrede, Unterschrift, Adressfelder)
+    - Auch IMPLIZITE Relationen aus der Dokumentstruktur extrahieren (z.B. Firma im Briefkopf + Person in der Anrede = "sendet_an")
     - confidence: 0.5-1.0 (wie sicher ist die Relation)
 
     IGNORIERE:
@@ -105,14 +108,17 @@ en:
     EXTRACT entities:
     - People (names, nicknames)
     - Places (cities, countries, buildings)
-    - Organizations (companies, clubs)
+    - Organizations (companies, clubs, authorities)
     - Things (pets, devices, vehicles)
     - Events (vacations, appointments, celebrations)
     - Concepts (hobbies, professions, subjects)
 
     EXTRACT relations:
-    - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to")
-    - Only relations EXPLICITLY mentioned in the text
+    - Personal relationships: "lives_in", "works_at", "likes", "owns", "knows", "married_to"
+    - Document relationships: "sends_to", "receives_from", "addressed_to", "signed_by", "issued_by", "created_for"
+    - Business relationships: "commissions", "supplies_to", "is_customer_of", "is_member_of", "represents"
+    - Identify sender/recipient from document context (letterhead, salutation, signature, address fields)
+    - Also extract IMPLIED relations from document structure (e.g. company in letterhead + person in salutation = "sends_to")
     - confidence: 0.5-1.0 (how certain is the relation)
 
     IGNORE:
