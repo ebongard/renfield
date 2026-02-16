@@ -17,12 +17,22 @@ export function useQuickActions() {
         message: response.data.message,
       });
     } catch (error) {
+      const status = error.response?.status;
       const detail = error.response?.data?.detail || 'Unknown error';
-      setActionResult({
-        type: 'indexing',
-        success: false,
-        message: detail,
-      });
+      if (status === 409) {
+        // Already indexed (e.g. by auto-index) — treat as success
+        setActionResult({
+          type: 'indexing',
+          success: true,
+          message: detail,
+        });
+      } else {
+        setActionResult({
+          type: 'indexing',
+          success: false,
+          message: detail,
+        });
+      }
     } finally {
       setActionLoading(prev => {
         const next = { ...prev };

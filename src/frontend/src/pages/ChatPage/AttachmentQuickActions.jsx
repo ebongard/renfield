@@ -102,17 +102,19 @@ export default function AttachmentQuickActions({
 
       {open && (
         <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
-          {/* Add to KB */}
-          <button
-            onClick={handleAddToKb}
-            className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-          >
-            <BookOpen className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
-            {t('chat.addToKb')}
-          </button>
+          {/* Add to KB — hide when already indexed */}
+          {!attachment.indexed && (
+            <button
+              onClick={handleAddToKb}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              <BookOpen className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              {t('chat.addToKb')}
+            </button>
+          )}
 
           {/* KB sub-list */}
-          {showKbList && (
+          {showKbList && !attachment.indexed && (
             <div className="border-t border-gray-100 dark:border-gray-700 max-h-32 overflow-y-auto">
               {kbLoading ? (
                 <div className="px-3 py-1.5 text-xs text-gray-400">

@@ -52,6 +52,22 @@ class RelationResponse(BaseModel):
     created_at: str | None = None
 
 
+class RelationCreate(BaseModel):
+    """Create a new relation between two entities."""
+    subject_id: int
+    predicate: str
+    object_id: int
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0)
+
+
+class RelationUpdate(BaseModel):
+    """Update an existing relation."""
+    predicate: str | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    subject_id: int | None = None
+    object_id: int | None = None
+
+
 class MergeEntitiesRequest(BaseModel):
     source_id: int
     target_id: int

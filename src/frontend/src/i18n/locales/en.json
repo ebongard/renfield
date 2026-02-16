@@ -830,6 +830,12 @@
     "public": "Public",
     "scopeFilter": "Scope",
     "changeScope": "Change scope",
-    "scopeUpdated": "{{name}} is now {{scope}}"
+    "scopeUpdated": "{{name}} is now {{scope}}",
+    "editRelation": "Edit Relation",
+    "createRelation": "Create Relation",
+    "selectEntity": "Select entity...",
+    "predicateLabel": "Relationship type",
+    "confidenceLabel": "Confidence",
+    "selfLinkError": "Subject and object must be different"
   }
 }

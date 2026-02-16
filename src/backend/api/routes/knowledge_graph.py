@@ -14,8 +14,10 @@ from api.routes.knowledge_graph_schemas import (
     EntityUpdate,
     KGStatsResponse,
     MergeEntitiesRequest,
+    RelationCreate,
     RelationListResponse,
     RelationResponse,
+    RelationUpdate,
     ScopesListResponse,
 )
 from models.database import User
@@ -239,6 +241,92 @@ async def list_relations(
         )
     except Exception as e:
         logger.error(f"List KG relations error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/relations", response_model=RelationResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def create_relation(
+    request: Request,
+    body: RelationCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Create a new relation between two entities."""
+    if body.subject_id == body.object_id:
+        raise HTTPException(status_code=400, detail="Subject and object must be different entities")
+    try:
+        svc = KnowledgeGraphService(db)
+        # Validate entities exist
+        subject = await svc.get_entity(body.subject_id)
+        if not subject:
+            raise HTTPException(status_code=400, detail=f"Subject entity {body.subject_id} not found")
+        obj = await svc.get_entity(body.object_id)
+        if not obj:
+            raise HTTPException(status_code=400, detail=f"Object entity {body.object_id} not found")
+
+        relation = await svc.save_relation(
+            subject_id=body.subject_id,
+            predicate=body.predicate,
+            object_id=body.object_id,
+            user_id=user.id if user else None,
+            confidence=body.confidence,
+        )
+        await db.commit()
+        return RelationResponse(
+            id=relation.id,
+            subject=EntityBrief(id=subject.id, name=subject.name, entity_type=subject.entity_type),
+            predicate=relation.predicate,
+            object=EntityBrief(id=obj.id, name=obj.name, entity_type=obj.entity_type),
+            confidence=relation.confidence,
+            created_at=relation.created_at.isoformat() if relation.created_at else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Create KG relation error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.put("/relations/{relation_id}", response_model=RelationResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def update_relation(
+    request: Request,
+    relation_id: int,
+    body: RelationUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Update a relation's predicate, confidence, or endpoints."""
+    try:
+        svc = KnowledgeGraphService(db)
+        relation = await svc.update_relation(
+            relation_id=relation_id,
+            predicate=body.predicate,
+            confidence=body.confidence,
+            subject_id=body.subject_id,
+            object_id=body.object_id,
+        )
+        if not relation:
+            raise HTTPException(status_code=404, detail="Relation not found")
+
+        # Fetch entity data for response
+        subject = await svc.get_entity(relation.subject_id)
+        obj = await svc.get_entity(relation.object_id)
+        return RelationResponse(
+            id=relation.id,
+            subject=EntityBrief(id=subject.id, name=subject.name, entity_type=subject.entity_type) if subject else None,
+            predicate=relation.predicate,
+            object=EntityBrief(id=obj.id, name=obj.name, entity_type=obj.entity_type) if obj else None,
+            confidence=relation.confidence,
+            created_at=relation.created_at.isoformat() if relation.created_at else None,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update KG relation error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
