@@ -36,19 +36,19 @@ const mainNavigationConfig = [
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare },
-  { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'] },
+  { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
 
 // Admin navigation with translation keys
 const adminNavigationConfig = [
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
-  { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'] },
+  { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
   { nameKey: 'nav.integrations', href: '/admin/integrations', icon: Blocks, permission: ['admin', 'plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.intents', href: '/admin/intents', icon: Zap, permission: ['admin'] },
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
-  { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'] },
+  { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'], feature: 'satellites' },
   { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
   { nameKey: 'nav.knowledgeGraph', href: '/admin/knowledge-graph', icon: Brain, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
@@ -70,7 +70,7 @@ export default function Layout({ children }) {
   const firstFocusableRef = useRef(null);
 
   // Auth context
-  const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, loading: authLoading } = useAuth();
+  const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, isFeatureEnabled, loading: authLoading } = useAuth();
 
   // Translate navigation items
   const mainNavigation = mainNavigationConfig.map(item => ({
@@ -83,11 +83,14 @@ export default function Layout({ children }) {
     name: t(item.nameKey)
   }));
 
-  // Filter navigation items based on permissions
+  // Filter navigation items based on features and permissions
   const filterNavItems = (items) => {
-    if (!authEnabled) return items; // Show all if auth disabled
     return items.filter(item => {
-      if (!item.permission) return true; // No permission required
+      // Feature flag check first
+      if (item.feature && !isFeatureEnabled(item.feature)) return false;
+      // Permission check
+      if (!authEnabled) return true;
+      if (!item.permission) return true;
       return hasAnyPermission(item.permission);
     });
   };

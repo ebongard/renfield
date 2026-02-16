@@ -7,7 +7,7 @@ import ChatPage from './pages/ChatPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import { DeviceProvider } from './context/DeviceContext';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import LoadingSpinner from './components/LoadingSpinner';
 
@@ -28,6 +28,104 @@ const IntentsPage = lazy(() => import('./pages/IntentsPage'));
 const PresencePage = lazy(() => import('./pages/PresencePage'));
 const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
 
+function AppRoutes() {
+  const { isFeatureEnabled } = useAuth();
+
+  return (
+    <Routes>
+      {/* Public routes without layout */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+
+      {/* Routes with layout */}
+      <Route path="/*" element={
+        <Layout>
+          <Routes>
+            <Route path="/" element={<ChatPage />} />
+            <Route path="/chat" element={<Navigate to="/" replace />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            {isFeatureEnabled('cameras') && (
+              <Route path="/camera" element={
+                <ProtectedRoute permission={['cam.view', 'cam.full']} requireAny>
+                  <CameraPage />
+                </ProtectedRoute>
+              } />
+            )}
+            {isFeatureEnabled('smart_home') && (
+              <Route path="/homeassistant" element={
+                <ProtectedRoute permission={['ha.read', 'ha.control', 'ha.full']} requireAny>
+                  <HomeAssistantPage />
+                </ProtectedRoute>
+              } />
+            )}
+            <Route path="/speakers" element={
+              <ProtectedRoute permission={['speakers.own', 'speakers.all']} requireAny>
+                <SpeakersPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/rooms" element={
+              <ProtectedRoute permission={['rooms.read', 'rooms.manage']} requireAny>
+                <RoomsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/knowledge" element={
+              <ProtectedRoute permission={['kb.own', 'kb.shared', 'kb.all']} requireAny>
+                <KnowledgePage />
+              </ProtectedRoute>
+            } />
+            <Route path="/memory" element={<MemoryPage />} />
+            {/* Redirect old /plugins route to new integrations page */}
+            <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
+            {/* Admin routes */}
+            <Route path="/admin/users" element={
+              <AdminRoute>
+                <UsersPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/roles" element={
+              <AdminRoute>
+                <RolesPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/settings" element={
+              <AdminRoute>
+                <SettingsPage />
+              </AdminRoute>
+            } />
+            {isFeatureEnabled('satellites') && (
+              <Route path="/admin/satellites" element={
+                <AdminRoute>
+                  <SatellitesPage />
+                </AdminRoute>
+              } />
+            )}
+            <Route path="/admin/integrations" element={
+              <AdminRoute>
+                <IntegrationsPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/intents" element={
+              <AdminRoute>
+                <IntentsPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/presence" element={
+              <AdminRoute>
+                <PresencePage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/knowledge-graph" element={
+              <AdminRoute>
+                <KnowledgeGraphPage />
+              </AdminRoute>
+            } />
+          </Routes>
+        </Layout>
+      } />
+    </Routes>
+  );
+}
+
 function App() {
   return (
     <ErrorBoundary>
@@ -35,91 +133,7 @@ function App() {
         <AuthProvider>
           <DeviceProvider>
           <Suspense fallback={<LoadingSpinner />}>
-          <Routes>
-            {/* Public routes without layout */}
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/register" element={<RegisterPage />} />
-
-            {/* Routes with layout */}
-            <Route path="/*" element={
-              <Layout>
-                <Routes>
-                  <Route path="/" element={<ChatPage />} />
-                  <Route path="/chat" element={<Navigate to="/" replace />} />
-                  <Route path="/tasks" element={<TasksPage />} />
-                  <Route path="/camera" element={
-                    <ProtectedRoute permission={['cam.view', 'cam.full']} requireAny>
-                      <CameraPage />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/homeassistant" element={
-                    <ProtectedRoute permission={['ha.read', 'ha.control', 'ha.full']} requireAny>
-                      <HomeAssistantPage />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/speakers" element={
-                    <ProtectedRoute permission={['speakers.own', 'speakers.all']} requireAny>
-                      <SpeakersPage />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/rooms" element={
-                    <ProtectedRoute permission={['rooms.read', 'rooms.manage']} requireAny>
-                      <RoomsPage />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/knowledge" element={
-                    <ProtectedRoute permission={['kb.own', 'kb.shared', 'kb.all']} requireAny>
-                      <KnowledgePage />
-                    </ProtectedRoute>
-                  } />
-                  <Route path="/memory" element={<MemoryPage />} />
-                  {/* Redirect old /plugins route to new integrations page */}
-                  <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
-                  {/* Admin routes */}
-                  <Route path="/admin/users" element={
-                    <AdminRoute>
-                      <UsersPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/roles" element={
-                    <AdminRoute>
-                      <RolesPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/settings" element={
-                    <AdminRoute>
-                      <SettingsPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/satellites" element={
-                    <AdminRoute>
-                      <SatellitesPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/integrations" element={
-                    <AdminRoute>
-                      <IntegrationsPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/intents" element={
-                    <AdminRoute>
-                      <IntentsPage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/presence" element={
-                    <AdminRoute>
-                      <PresencePage />
-                    </AdminRoute>
-                  } />
-                  <Route path="/admin/knowledge-graph" element={
-                    <AdminRoute>
-                      <KnowledgeGraphPage />
-                    </AdminRoute>
-                  } />
-                </Routes>
-              </Layout>
-            } />
-          </Routes>
+            <AppRoutes />
           </Suspense>
           </DeviceProvider>
         </AuthProvider>

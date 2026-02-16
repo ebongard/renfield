@@ -18,6 +18,7 @@ const adminAuthMock = {
   getAccessToken: () => 'mock-token',
   hasPermission: () => true,
   hasAnyPermission: () => true,
+  isFeatureEnabled: () => true,
   isAuthenticated: true,
   authEnabled: true,
   loading: false,

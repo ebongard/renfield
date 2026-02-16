@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useConfirmDialog } from './ConfirmDialog';
+import { useAuth } from '../context/AuthContext';
 
 // Output device type icons
 const OUTPUT_TYPE_ICONS = {
@@ -26,6 +27,8 @@ const OUTPUT_TYPE_ICONS = {
 export default function RoomOutputSettings({ roomId, roomName }) {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
+  const { isFeatureEnabled } = useAuth();
+  const showHA = isFeatureEnabled('smart_home');
   // State
   const [expanded, setExpanded] = useState(false);
   const [outputDevices, setOutputDevices] = useState([]);
@@ -36,7 +39,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
   const [error, setError] = useState(null);
 
   // Add form state
-  const [selectedType, setSelectedType] = useState('homeassistant'); // 'renfield' or 'homeassistant'
+  const [selectedType, setSelectedType] = useState(showHA ? 'homeassistant' : 'renfield'); // 'renfield' or 'homeassistant'
   const [selectedDevice, setSelectedDevice] = useState('');
   const [allowInterruption, setAllowInterruption] = useState(false);
   const [ttsVolume, setTtsVolume] = useState(50);
@@ -76,7 +79,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
 
   const openAddModal = () => {
     loadAvailableOutputs();
-    setSelectedType('homeassistant');
+    setSelectedType(showHA ? 'homeassistant' : 'renfield');
     setSelectedDevice('');
     setAllowInterruption(false);
     setTtsVolume(50);
@@ -186,11 +189,12 @@ export default function RoomOutputSettings({ roomId, roomName }) {
       return availableOutputs.renfield_devices.filter(
         d => !configuredRenfieldIds.has(d.device_id)
       );
-    } else {
+    } else if (showHA) {
       return availableOutputs.ha_media_players.filter(
         d => !configuredHAIds.has(d.entity_id)
       );
     }
+    return [];
   };
 
   return (
@@ -340,20 +344,22 @@ export default function RoomOutputSettings({ roomId, roomName }) {
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Geraetetyp:</label>
                 <div className="flex space-x-2">
-                  <button
-                    onClick={() => {
-                      setSelectedType('homeassistant');
-                      setSelectedDevice('');
-                    }}
-                    className={`flex-1 p-3 rounded-lg border ${
-                      selectedType === 'homeassistant'
-                        ? 'border-blue-500 bg-blue-500/20'
-                        : 'border-gray-700 bg-gray-800'
-                    }`}
-                  >
-                    <Speaker className="w-5 h-5 mx-auto mb-1 text-blue-400" />
-                    <span className="text-sm text-gray-300">HA Media Player</span>
-                  </button>
+                  {showHA && (
+                    <button
+                      onClick={() => {
+                        setSelectedType('homeassistant');
+                        setSelectedDevice('');
+                      }}
+                      className={`flex-1 p-3 rounded-lg border ${
+                        selectedType === 'homeassistant'
+                          ? 'border-blue-500 bg-blue-500/20'
+                          : 'border-gray-700 bg-gray-800'
+                      }`}
+                    >
+                      <Speaker className="w-5 h-5 mx-auto mb-1 text-blue-400" />
+                      <span className="text-sm text-gray-300">HA Media Player</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => {
                       setSelectedType('renfield');
