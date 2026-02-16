@@ -50,6 +50,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'] },
   { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
+  { nameKey: 'nav.knowledgeGraph', href: '/admin/knowledge-graph', icon: Brain, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
 ];
 

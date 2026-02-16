@@ -1,0 +1,78 @@
+# Knowledge Graph Extraction Prompts
+# Used by KnowledgeGraphService.extract_and_save() to extract
+# entities and relations from conversation exchanges.
+
+de:
+  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt."
+
+  extraction_prompt: |
+    Analysiere den folgenden Dialog und extrahiere benannte Entitaeten und ihre Beziehungen.
+
+    ENTITAETEN extrahieren:
+    - Personen (Name, Spitzname)
+    - Orte (Staedte, Laender, Gebaeude)
+    - Organisationen (Firmen, Vereine)
+    - Dinge (Haustiere, Geraete, Fahrzeuge)
+    - Ereignisse (Urlaube, Termine, Feiern)
+    - Konzepte (Hobbys, Berufe, Faecher)
+
+    RELATIONEN extrahieren:
+    - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit")
+    - Nur Relationen die EXPLIZIT im Dialog erwaehnt werden
+    - confidence: 0.5-1.0 (wie sicher ist die Relation)
+
+    IGNORIERE:
+    - Einmalige Befehle ("Schalte das Licht ein")
+    - Smalltalk ohne benannte Entitaeten
+    - Informationen die der Assistent gegeben hat (nur Fakten VOM Benutzer)
+
+    Dialog:
+    User: {user_message}
+    Assistent: {assistant_response}
+
+    Antworte als JSON-Objekt (leere Arrays wenn nichts relevant):
+    {{
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
+    }}
+
+en:
+  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object."
+
+  extraction_prompt: |
+    Analyze the following dialog and extract named entities and their relationships.
+
+    EXTRACT entities:
+    - People (names, nicknames)
+    - Places (cities, countries, buildings)
+    - Organizations (companies, clubs)
+    - Things (pets, devices, vehicles)
+    - Events (vacations, appointments, celebrations)
+    - Concepts (hobbies, professions, subjects)
+
+    EXTRACT relations:
+    - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to")
+    - Only relations EXPLICITLY mentioned in the dialog
+    - confidence: 0.5-1.0 (how certain is the relation)
+
+    IGNORE:
+    - One-time commands ("Turn on the light")
+    - Smalltalk without named entities
+    - Information given BY the assistant (only facts FROM the user)
+
+    Dialog:
+    User: {user_message}
+    Assistant: {assistant_response}
+
+    Reply as JSON object (empty arrays if nothing relevant):
+    {{
+      "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
+      "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
+    }}
+
+# LLM options for extraction (low temperature for consistency)
+llm_options:
+  temperature: 0.1
+  top_p: 0.2
+  num_predict: 1024
+  num_ctx: 4096

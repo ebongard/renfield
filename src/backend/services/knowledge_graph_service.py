@@ -1,0 +1,725 @@
+"""
+Knowledge Graph Service — Entity-Relation triples from conversations.
+
+Extracts named entities and their relationships from chat messages via LLM,
+stores them with pgvector embeddings for semantic entity resolution, and
+provides context retrieval for LLM prompt injection.
+
+Pattern follows ConversationMemoryService for embedding generation and
+cosine similarity search via raw SQL (pgvector).
+"""
+import json
+import re
+from datetime import UTC, datetime
+
+from loguru import logger
+from sqlalchemy import func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from models.database import KG_ENTITY_TYPES, KGEntity, KGRelation
+from utils.config import settings
+from utils.llm_client import get_default_client
+
+
+class KnowledgeGraphService:
+    """Manages knowledge graph entities and relations with pgvector."""
+
+    def __init__(self, db: AsyncSession):
+        self.db = db
+        self._ollama_client = None
+
+    async def _get_ollama_client(self):
+        if self._ollama_client is None:
+            self._ollama_client = get_default_client()
+        return self._ollama_client
+
+    async def _get_embedding(self, text_input: str) -> list[float]:
+        """Generate embedding using Ollama."""
+        client = await self._get_ollama_client()
+        response = await client.embeddings(
+            model=settings.ollama_embed_model,
+            prompt=text_input,
+        )
+        return response.embedding
+
+    # =========================================================================
+    # Entity Resolution
+    # =========================================================================
+
+    async def resolve_entity(
+        self,
+        name: str,
+        entity_type: str,
+        user_id: int | None,
+        description: str | None = None,
+    ) -> KGEntity:
+        """
+        Resolve an entity by name, creating or merging as needed.
+
+        1. Exact name match (case-insensitive) for same user → update
+        2. Embedding cosine similarity > threshold → merge
+        3. Otherwise → create new entity
+        """
+        # 1. Exact match
+        query = select(KGEntity).where(
+            func.lower(KGEntity.name) == name.lower(),
+            KGEntity.is_active == True,  # noqa: E712
+        )
+        if user_id is not None:
+            query = query.where(KGEntity.user_id == user_id)
+        else:
+            query = query.where(KGEntity.user_id.is_(None))
+
+        result = await self.db.execute(query)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            existing.mention_count = (existing.mention_count or 1) + 1
+            existing.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+            if description and not existing.description:
+                existing.description = description
+            await self.db.flush()
+            return existing
+
+        # 2. Embedding similarity check
+        embedding = None
+        try:
+            embedding = await self._get_embedding(name)
+        except Exception as e:
+            logger.warning(f"KG: Could not generate embedding for entity '{name}': {e}")
+
+        if embedding:
+            similar = await self._find_similar_entity(embedding, user_id)
+            if similar:
+                similar.mention_count = (similar.mention_count or 1) + 1
+                similar.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+                if description and not similar.description:
+                    similar.description = description
+                await self.db.flush()
+                return similar
+
+        # 3. Check max limit
+        if user_id is not None:
+            count_result = await self.db.execute(
+                select(func.count(KGEntity.id)).where(
+                    KGEntity.user_id == user_id,
+                    KGEntity.is_active == True,  # noqa: E712
+                )
+            )
+            count = count_result.scalar() or 0
+            if count >= settings.kg_max_entities_per_user:
+                logger.warning(f"KG: Entity limit reached for user {user_id}")
+                # Return a best-effort match or skip
+                return await self._get_oldest_entity(user_id)
+
+        # Create new entity
+        entity = KGEntity(
+            user_id=user_id,
+            name=name,
+            entity_type=entity_type if entity_type in KG_ENTITY_TYPES else "thing",
+            description=description,
+            embedding=embedding,
+        )
+        self.db.add(entity)
+        await self.db.flush()
+        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id}")
+        return entity
+
+    async def _find_similar_entity(
+        self,
+        embedding: list[float],
+        user_id: int | None,
+    ) -> KGEntity | None:
+        """Find an existing entity above the similarity threshold."""
+        threshold = settings.kg_similarity_threshold
+        embedding_str = f"[{','.join(map(str, embedding))}]"
+
+        user_filter = "AND user_id = :user_id" if user_id is not None else "AND user_id IS NULL"
+
+        sql = text(f"""
+            SELECT id,
+                   1 - (embedding <=> CAST(:embedding AS vector)) as similarity
+            FROM kg_entities
+            WHERE is_active = true
+              AND embedding IS NOT NULL
+              {user_filter}
+            ORDER BY embedding <=> CAST(:embedding AS vector)
+            LIMIT 1
+        """)
+
+        params: dict = {"embedding": embedding_str}
+        if user_id is not None:
+            params["user_id"] = user_id
+
+        result = await self.db.execute(sql, params)
+        row = result.fetchone()
+
+        if row and float(row.similarity) >= threshold:
+            entity_result = await self.db.execute(
+                select(KGEntity).where(KGEntity.id == row.id)
+            )
+            return entity_result.scalar_one_or_none()
+
+        return None
+
+    async def _get_oldest_entity(self, user_id: int) -> KGEntity | None:
+        """Get the oldest entity for a user (fallback when limit reached)."""
+        result = await self.db.execute(
+            select(KGEntity)
+            .where(KGEntity.user_id == user_id, KGEntity.is_active == True)  # noqa: E712
+            .order_by(KGEntity.first_seen_at.asc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    # =========================================================================
+    # Relations
+    # =========================================================================
+
+    async def save_relation(
+        self,
+        subject_id: int,
+        predicate: str,
+        object_id: int,
+        user_id: int | None = None,
+        confidence: float = 0.8,
+        source_session_id: str | None = None,
+    ) -> KGRelation:
+        """Save a relation, deduplicating same subject+predicate+object."""
+        # Check for existing relation
+        query = select(KGRelation).where(
+            KGRelation.subject_id == subject_id,
+            KGRelation.predicate == predicate,
+            KGRelation.object_id == object_id,
+            KGRelation.is_active == True,  # noqa: E712
+        )
+        result = await self.db.execute(query)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update confidence (take the max)
+            existing.confidence = max(existing.confidence or 0, confidence)
+            await self.db.flush()
+            return existing
+
+        relation = KGRelation(
+            user_id=user_id,
+            subject_id=subject_id,
+            predicate=predicate,
+            object_id=object_id,
+            confidence=confidence,
+            source_session_id=source_session_id,
+        )
+        self.db.add(relation)
+        await self.db.flush()
+        logger.debug(f"KG: New relation {subject_id} --{predicate}--> {object_id}")
+        return relation
+
+    # =========================================================================
+    # Extract from Conversation
+    # =========================================================================
+
+    async def extract_and_save(
+        self,
+        user_message: str,
+        assistant_response: str,
+        user_id: int | None = None,
+        session_id: str | None = None,
+        lang: str = "de",
+    ) -> tuple[list[KGEntity], list[KGRelation]]:
+        """Extract entities and relations from a conversation exchange."""
+        from services.prompt_manager import prompt_manager
+
+        prompt = prompt_manager.get(
+            "knowledge_graph", "extraction_prompt", lang=lang,
+            user_message=user_message,
+            assistant_response=assistant_response,
+        )
+        system_msg = prompt_manager.get(
+            "knowledge_graph", "extraction_system", lang=lang,
+        )
+        llm_options = prompt_manager.get_config("knowledge_graph", "llm_options") or {}
+
+        model = settings.kg_extraction_model or settings.ollama_model
+
+        try:
+            client = await self._get_ollama_client()
+            response = await client.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                options=llm_options,
+            )
+            raw_text = response.message.content
+        except Exception as e:
+            logger.warning(f"KG extraction LLM call failed: {e}")
+            return [], []
+
+        extracted = self._parse_extraction_response(raw_text)
+        if not extracted:
+            return [], []
+
+        entities_data = extracted.get("entities", [])
+        relations_data = extracted.get("relations", [])
+
+        # Resolve entities
+        entity_map: dict[str, KGEntity] = {}  # name -> entity
+        saved_entities = []
+        for ent in entities_data:
+            name = ent.get("name", "").strip()
+            etype = ent.get("type", "thing").strip().lower()
+            desc = ent.get("description", "").strip() or None
+            if not name:
+                continue
+
+            entity = await self.resolve_entity(name, etype, user_id, desc)
+            entity_map[name.lower()] = entity
+            saved_entities.append(entity)
+
+        # Save relations
+        saved_relations = []
+        for rel in relations_data:
+            subj_name = rel.get("subject", "").strip().lower()
+            pred = rel.get("predicate", "").strip()
+            obj_name = rel.get("object", "").strip().lower()
+            conf = rel.get("confidence", 0.8)
+
+            if not subj_name or not pred or not obj_name:
+                continue
+
+            subject = entity_map.get(subj_name)
+            obj = entity_map.get(obj_name)
+
+            if not subject or not obj:
+                continue
+
+            try:
+                conf = max(0.1, min(1.0, float(conf)))
+            except (TypeError, ValueError):
+                conf = 0.8
+
+            relation = await self.save_relation(
+                subject_id=subject.id,
+                predicate=pred,
+                object_id=obj.id,
+                user_id=user_id,
+                confidence=conf,
+                source_session_id=session_id,
+            )
+            saved_relations.append(relation)
+
+        await self.db.commit()
+
+        if saved_entities or saved_relations:
+            logger.info(
+                f"KG: Extracted {len(saved_entities)} entities, "
+                f"{len(saved_relations)} relations (user_id={user_id})"
+            )
+
+        return saved_entities, saved_relations
+
+    @staticmethod
+    def _parse_extraction_response(raw_text: str) -> dict | None:
+        """Parse JSON object from LLM extraction response."""
+        if not raw_text:
+            return None
+
+        text_content = raw_text.strip()
+
+        # Remove markdown code blocks
+        if "```" in text_content:
+            match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text_content, re.DOTALL)
+            if match:
+                text_content = match.group(1)
+
+        # Find JSON object
+        first_brace = text_content.find('{')
+        last_brace = text_content.rfind('}')
+        if first_brace >= 0 and last_brace > first_brace:
+            text_content = text_content[first_brace:last_brace + 1]
+
+        try:
+            data = json.loads(text_content)
+            if isinstance(data, dict):
+                return data
+            return None
+        except (json.JSONDecodeError, TypeError):
+            logger.debug(f"KG extraction: could not parse JSON from: {raw_text[:200]}")
+            return None
+
+    # =========================================================================
+    # Retrieve Context
+    # =========================================================================
+
+    async def get_relevant_context(
+        self,
+        query: str,
+        user_id: int | None = None,
+        lang: str = "de",
+    ) -> str | None:
+        """
+        Retrieve relevant graph triples for a query.
+
+        Returns formatted context string or None if nothing relevant.
+        """
+        try:
+            query_embedding = await self._get_embedding(query)
+        except Exception as e:
+            logger.warning(f"KG: Could not embed query: {e}")
+            return None
+
+        if not query_embedding:
+            return None
+
+        embedding_str = f"[{','.join(map(str, query_embedding))}]"
+        threshold = settings.kg_retrieval_threshold
+        max_triples = settings.kg_max_context_triples
+
+        user_filter = "AND e.user_id = :user_id" if user_id is not None else ""
+
+        # Find top-N similar entities
+        sql = text(f"""
+            SELECT e.id, e.name, e.entity_type,
+                   1 - (e.embedding <=> CAST(:embedding AS vector)) as similarity
+            FROM kg_entities e
+            WHERE e.is_active = true
+              AND e.embedding IS NOT NULL
+              {user_filter}
+            ORDER BY e.embedding <=> CAST(:embedding AS vector)
+            LIMIT 10
+        """)
+
+        params: dict = {"embedding": embedding_str}
+        if user_id is not None:
+            params["user_id"] = user_id
+
+        result = await self.db.execute(sql, params)
+        rows = result.fetchall()
+
+        # Filter by threshold
+        relevant_ids = []
+        for row in rows:
+            sim = float(row.similarity) if row.similarity else 0
+            if sim >= threshold:
+                relevant_ids.append(row.id)
+
+        if not relevant_ids:
+            return None
+
+        # Fetch relations involving those entities
+        relations = await self.db.execute(
+            select(KGRelation)
+            .where(
+                KGRelation.is_active == True,  # noqa: E712
+                (KGRelation.subject_id.in_(relevant_ids)) | (KGRelation.object_id.in_(relevant_ids)),
+            )
+            .limit(max_triples)
+        )
+        relation_rows = relations.scalars().all()
+
+        if not relation_rows:
+            return None
+
+        # Fetch all entity names we need
+        entity_ids = set()
+        for r in relation_rows:
+            entity_ids.add(r.subject_id)
+            entity_ids.add(r.object_id)
+
+        entities_result = await self.db.execute(
+            select(KGEntity).where(KGEntity.id.in_(entity_ids))
+        )
+        entity_map = {e.id: e.name for e in entities_result.scalars().all()}
+
+        # Format triples
+        triples = []
+        for r in relation_rows:
+            subj = entity_map.get(r.subject_id, "?")
+            obj = entity_map.get(r.object_id, "?")
+            triples.append(f"- {subj} {r.predicate} {obj}")
+
+        if not triples:
+            return None
+
+        header = "## Wissensgraph" if lang == "de" else "## Knowledge Graph"
+        return f"{header}\n" + "\n".join(triples)
+
+    # =========================================================================
+    # CRUD for API
+    # =========================================================================
+
+    async def list_entities(
+        self,
+        user_id: int | None = None,
+        entity_type: str | None = None,
+        search: str | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> tuple[list[KGEntity], int]:
+        """List active entities with filters."""
+        query = select(KGEntity).where(KGEntity.is_active == True)  # noqa: E712
+        count_query = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
+
+        if user_id is not None:
+            query = query.where(KGEntity.user_id == user_id)
+            count_query = count_query.where(KGEntity.user_id == user_id)
+        if entity_type:
+            query = query.where(KGEntity.entity_type == entity_type)
+            count_query = count_query.where(KGEntity.entity_type == entity_type)
+        if search:
+            like_pattern = f"%{search}%"
+            query = query.where(KGEntity.name.ilike(like_pattern))
+            count_query = count_query.where(KGEntity.name.ilike(like_pattern))
+
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        offset = (page - 1) * size
+        query = query.order_by(KGEntity.last_seen_at.desc()).offset(offset).limit(size)
+        result = await self.db.execute(query)
+        entities = list(result.scalars().all())
+
+        return entities, total
+
+    async def get_entity(self, entity_id: int) -> KGEntity | None:
+        result = await self.db.execute(
+            select(KGEntity).where(
+                KGEntity.id == entity_id,
+                KGEntity.is_active == True,  # noqa: E712
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def update_entity(
+        self,
+        entity_id: int,
+        name: str | None = None,
+        entity_type: str | None = None,
+        description: str | None = None,
+    ) -> KGEntity | None:
+        entity = await self.get_entity(entity_id)
+        if not entity:
+            return None
+
+        if name is not None:
+            entity.name = name
+            # Re-embed with new name
+            try:
+                entity.embedding = await self._get_embedding(name)
+            except Exception:
+                pass
+        if entity_type is not None and entity_type in KG_ENTITY_TYPES:
+            entity.entity_type = entity_type
+        if description is not None:
+            entity.description = description
+
+        await self.db.commit()
+        await self.db.refresh(entity)
+        return entity
+
+    async def delete_entity(self, entity_id: int) -> bool:
+        """Soft-delete an entity and its relations."""
+        entity = await self.get_entity(entity_id)
+        if not entity:
+            return False
+
+        entity.is_active = False
+
+        # Deactivate related relations
+        await self.db.execute(
+            update(KGRelation)
+            .where(
+                (KGRelation.subject_id == entity_id) | (KGRelation.object_id == entity_id)
+            )
+            .values(is_active=False)
+        )
+
+        await self.db.commit()
+        return True
+
+    async def merge_entities(
+        self,
+        source_id: int,
+        target_id: int,
+    ) -> KGEntity | None:
+        """Merge source entity into target. Moves relations, deactivates source."""
+        source = await self.get_entity(source_id)
+        target = await self.get_entity(target_id)
+        if not source or not target:
+            return None
+
+        # Move source's relations to target
+        await self.db.execute(
+            update(KGRelation)
+            .where(KGRelation.subject_id == source_id, KGRelation.is_active == True)  # noqa: E712
+            .values(subject_id=target_id)
+        )
+        await self.db.execute(
+            update(KGRelation)
+            .where(KGRelation.object_id == source_id, KGRelation.is_active == True)  # noqa: E712
+            .values(object_id=target_id)
+        )
+
+        # Accumulate mention count
+        target.mention_count = (target.mention_count or 1) + (source.mention_count or 1)
+        if source.description and not target.description:
+            target.description = source.description
+
+        # Deactivate source
+        source.is_active = False
+
+        await self.db.commit()
+        await self.db.refresh(target)
+        return target
+
+    async def list_relations(
+        self,
+        user_id: int | None = None,
+        entity_id: int | None = None,
+        page: int = 1,
+        size: int = 50,
+    ) -> tuple[list[dict], int]:
+        """List active relations with entity data."""
+        query = (
+            select(KGRelation)
+            .where(KGRelation.is_active == True)  # noqa: E712
+        )
+        count_query = select(func.count(KGRelation.id)).where(KGRelation.is_active == True)  # noqa: E712
+
+        if user_id is not None:
+            query = query.where(KGRelation.user_id == user_id)
+            count_query = count_query.where(KGRelation.user_id == user_id)
+        if entity_id is not None:
+            query = query.where(
+                (KGRelation.subject_id == entity_id) | (KGRelation.object_id == entity_id)
+            )
+            count_query = count_query.where(
+                (KGRelation.subject_id == entity_id) | (KGRelation.object_id == entity_id)
+            )
+
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar() or 0
+
+        offset = (page - 1) * size
+        query = query.order_by(KGRelation.created_at.desc()).offset(offset).limit(size)
+        result = await self.db.execute(query)
+        relations = list(result.scalars().all())
+
+        # Fetch entity names
+        entity_ids = set()
+        for r in relations:
+            entity_ids.add(r.subject_id)
+            entity_ids.add(r.object_id)
+
+        entity_map = {}
+        if entity_ids:
+            entities_result = await self.db.execute(
+                select(KGEntity).where(KGEntity.id.in_(entity_ids))
+            )
+            entity_map = {e.id: e for e in entities_result.scalars().all()}
+
+        relation_dicts = []
+        for r in relations:
+            subj = entity_map.get(r.subject_id)
+            obj = entity_map.get(r.object_id)
+            relation_dicts.append({
+                "id": r.id,
+                "subject": {
+                    "id": subj.id, "name": subj.name, "entity_type": subj.entity_type,
+                } if subj else None,
+                "predicate": r.predicate,
+                "object": {
+                    "id": obj.id, "name": obj.name, "entity_type": obj.entity_type,
+                } if obj else None,
+                "confidence": r.confidence,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+
+        return relation_dicts, total
+
+    async def delete_relation(self, relation_id: int) -> bool:
+        result = await self.db.execute(
+            select(KGRelation).where(
+                KGRelation.id == relation_id,
+                KGRelation.is_active == True,  # noqa: E712
+            )
+        )
+        relation = result.scalar_one_or_none()
+        if not relation:
+            return False
+        relation.is_active = False
+        await self.db.commit()
+        return True
+
+    async def get_stats(self, user_id: int | None = None) -> dict:
+        """Get knowledge graph statistics."""
+        base_entity = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
+        base_relation = select(func.count(KGRelation.id)).where(KGRelation.is_active == True)  # noqa: E712
+
+        if user_id is not None:
+            base_entity = base_entity.where(KGEntity.user_id == user_id)
+            base_relation = base_relation.where(KGRelation.user_id == user_id)
+
+        entity_count = (await self.db.execute(base_entity)).scalar() or 0
+        relation_count = (await self.db.execute(base_relation)).scalar() or 0
+
+        # Entity type distribution
+        type_query = (
+            select(KGEntity.entity_type, func.count(KGEntity.id))
+            .where(KGEntity.is_active == True)  # noqa: E712
+            .group_by(KGEntity.entity_type)
+        )
+        if user_id is not None:
+            type_query = type_query.where(KGEntity.user_id == user_id)
+
+        type_result = await self.db.execute(type_query)
+        entity_types = {row[0]: row[1] for row in type_result.fetchall()}
+
+        return {
+            "entity_count": entity_count,
+            "relation_count": relation_count,
+            "entity_types": entity_types,
+        }
+
+
+# =============================================================================
+# Hook Functions (module-level, registered in lifecycle.py)
+# =============================================================================
+
+async def kg_post_message_hook(
+    user_msg: str,
+    assistant_msg: str,
+    user_id: int | None = None,
+    session_id: str | None = None,
+    **kwargs,
+):
+    """Extract entities and relations from conversation (post_message hook)."""
+    try:
+        from services.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            svc = KnowledgeGraphService(db)
+            lang = kwargs.get("lang", settings.default_language)
+            await svc.extract_and_save(user_msg, assistant_msg, user_id, session_id, lang)
+    except Exception as e:
+        logger.warning(f"KG post_message hook failed: {e}")
+
+
+async def kg_retrieve_context_hook(
+    query: str,
+    user_id: int | None = None,
+    lang: str = "de",
+    **kwargs,
+) -> str | None:
+    """Retrieve relevant graph context for LLM prompt (retrieve_context hook)."""
+    try:
+        from services.database import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as db:
+            svc = KnowledgeGraphService(db)
+            return await svc.get_relevant_context(query, user_id, lang)
+    except Exception as e:
+        logger.warning(f"KG retrieve_context hook failed: {e}")
+        return None
