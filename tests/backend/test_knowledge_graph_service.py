@@ -512,6 +512,103 @@ class TestCRUD:
 
 
 # ==========================================================================
+# Update Relation
+# ==========================================================================
+
+class TestUpdateRelation:
+    """Tests for KnowledgeGraphService.update_relation()."""
+
+    @pytest.mark.unit
+    async def test_update_relation_predicate(self, kg_service, db_session):
+        """Update predicate of an existing relation."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id)
+
+        result = await kg_service.update_relation(rel.id, predicate="works_in")
+
+        assert result is not None
+        assert result.predicate == "works_in"
+        assert result.subject_id == e1.id
+        assert result.object_id == e2.id
+
+    @pytest.mark.unit
+    async def test_update_relation_confidence(self, kg_service, db_session):
+        """Update confidence of an existing relation."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "knows", e2.id, confidence=0.5)
+
+        result = await kg_service.update_relation(rel.id, confidence=0.95)
+
+        assert result is not None
+        assert result.confidence == 0.95
+
+    @pytest.mark.unit
+    async def test_update_relation_subject(self, kg_service, db_session):
+        """Update subject of an existing relation."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        e3 = await _create_entity(db_session, name="C", entity_type="person")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id)
+
+        result = await kg_service.update_relation(rel.id, subject_id=e3.id)
+
+        assert result is not None
+        assert result.subject_id == e3.id
+        assert result.object_id == e2.id
+
+    @pytest.mark.unit
+    async def test_update_relation_object(self, kg_service, db_session):
+        """Update object of an existing relation."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        e3 = await _create_entity(db_session, name="C", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id)
+
+        result = await kg_service.update_relation(rel.id, object_id=e3.id)
+
+        assert result is not None
+        assert result.object_id == e3.id
+
+    @pytest.mark.unit
+    async def test_update_relation_self_link_raises(self, kg_service, db_session):
+        """Self-link (subject == object) raises ValueError."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id)
+
+        with pytest.raises(ValueError, match="Subject and object must be different"):
+            await kg_service.update_relation(rel.id, subject_id=e2.id)
+
+    @pytest.mark.unit
+    async def test_update_relation_nonexistent_entity_raises(self, kg_service, db_session):
+        """Referencing a non-existent entity raises ValueError."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id)
+
+        with pytest.raises(ValueError, match="not found"):
+            await kg_service.update_relation(rel.id, object_id=99999)
+
+    @pytest.mark.unit
+    async def test_update_relation_not_found(self, kg_service):
+        """Non-existent relation returns None."""
+        result = await kg_service.update_relation(99999, predicate="x")
+        assert result is None
+
+    @pytest.mark.unit
+    async def test_update_relation_inactive_returns_none(self, kg_service, db_session):
+        """Inactive relation returns None."""
+        e1 = await _create_entity(db_session, name="A", entity_type="person")
+        e2 = await _create_entity(db_session, name="B", entity_type="place")
+        rel = await _create_relation(db_session, e1.id, "lives_in", e2.id, is_active=False)
+
+        result = await kg_service.update_relation(rel.id, predicate="x")
+        assert result is None
+
+
+# ==========================================================================
 # Extract from Text (Document Chunks)
 # ==========================================================================
 

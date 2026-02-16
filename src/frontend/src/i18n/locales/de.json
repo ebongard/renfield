@@ -830,6 +830,12 @@
     "public": "Öffentlich",
     "scopeFilter": "Sichtbarkeit",
     "changeScope": "Sichtbarkeit ändern",
-    "scopeUpdated": "{{name}} ist jetzt {{scope}}"
+    "scopeUpdated": "{{name}} ist jetzt {{scope}}",
+    "editRelation": "Relation bearbeiten",
+    "createRelation": "Relation erstellen",
+    "selectEntity": "Entität auswählen...",
+    "predicateLabel": "Beziehungstyp",
+    "confidenceLabel": "Konfidenz",
+    "selfLinkError": "Subjekt und Objekt müssen unterschiedlich sein"
   }
 }

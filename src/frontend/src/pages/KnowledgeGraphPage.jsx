@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Brain, Link2, BarChart3, Search, Trash2, Edit3, Merge, X,
-  ChevronLeft, ChevronRight, ArrowRight, Lock, Users,
+  ChevronLeft, ChevronRight, ArrowRight, Lock, Users, Plus,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -59,6 +59,20 @@ export default function KnowledgeGraphPage() {
   // Merge state
   const [mergeMode, setMergeMode] = useState(false);
   const [mergeSelection, setMergeSelection] = useState([]);
+
+  // Relation edit/create modal
+  const [showRelationModal, setShowRelationModal] = useState(false);
+  const [editingRelation, setEditingRelation] = useState(null); // null = create mode
+  const [relFormPredicate, setRelFormPredicate] = useState('');
+  const [relFormConfidence, setRelFormConfidence] = useState(0.8);
+  const [relFormSubjectId, setRelFormSubjectId] = useState('');
+  const [relFormObjectId, setRelFormObjectId] = useState('');
+  const [relFormSubjectSearch, setRelFormSubjectSearch] = useState('');
+  const [relFormObjectSearch, setRelFormObjectSearch] = useState('');
+  const [subjectResults, setSubjectResults] = useState([]);
+  const [objectResults, setObjectResults] = useState([]);
+  const [subjectLabel, setSubjectLabel] = useState('');
+  const [objectLabel, setObjectLabel] = useState('');
 
   const PAGE_SIZE = 50;
 
@@ -265,6 +279,92 @@ export default function KnowledgeGraphPage() {
     setEntityFilter(String(entityId));
     setRelationsPage(1);
     setActiveTab('relations');
+  };
+
+  // Entity search for relation modal
+  const searchEntities = async (query, setter) => {
+    if (!query || query.length < 1) { setter([]); return; }
+    try {
+      const response = await apiClient.get('/api/knowledge-graph/entities', {
+        params: { search: query, size: 10 },
+      });
+      setter(response.data.entities || []);
+    } catch {
+      setter([]);
+    }
+  };
+
+  useEffect(() => {
+    const timer = setTimeout(() => searchEntities(relFormSubjectSearch, setSubjectResults), 300);
+    return () => clearTimeout(timer);
+  }, [relFormSubjectSearch]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => searchEntities(relFormObjectSearch, setObjectResults), 300);
+    return () => clearTimeout(timer);
+  }, [relFormObjectSearch]);
+
+  // Open relation edit modal
+  const openRelationEditModal = (rel) => {
+    setEditingRelation(rel);
+    setRelFormPredicate(rel.predicate);
+    setRelFormConfidence(rel.confidence || 0.8);
+    setRelFormSubjectId(rel.subject?.id || '');
+    setRelFormObjectId(rel.object?.id || '');
+    setSubjectLabel(rel.subject?.name || '');
+    setObjectLabel(rel.object?.name || '');
+    setRelFormSubjectSearch('');
+    setRelFormObjectSearch('');
+    setSubjectResults([]);
+    setObjectResults([]);
+    setShowRelationModal(true);
+  };
+
+  // Open relation create modal
+  const openRelationCreateModal = () => {
+    setEditingRelation(null);
+    setRelFormPredicate('');
+    setRelFormConfidence(0.8);
+    setRelFormSubjectId('');
+    setRelFormObjectId('');
+    setSubjectLabel('');
+    setObjectLabel('');
+    setRelFormSubjectSearch('');
+    setRelFormObjectSearch('');
+    setSubjectResults([]);
+    setObjectResults([]);
+    setShowRelationModal(true);
+  };
+
+  // Save relation (create or update)
+  const handleSaveRelation = async () => {
+    if (!relFormPredicate.trim() || !relFormSubjectId || !relFormObjectId) return;
+    if (String(relFormSubjectId) === String(relFormObjectId)) {
+      setError(t('knowledgeGraph.selfLinkError'));
+      return;
+    }
+    try {
+      if (editingRelation) {
+        await apiClient.put(`/api/knowledge-graph/relations/${editingRelation.id}`, {
+          predicate: relFormPredicate,
+          confidence: relFormConfidence,
+          subject_id: Number(relFormSubjectId),
+          object_id: Number(relFormObjectId),
+        });
+      } else {
+        await apiClient.post('/api/knowledge-graph/relations', {
+          subject_id: Number(relFormSubjectId),
+          predicate: relFormPredicate,
+          object_id: Number(relFormObjectId),
+          confidence: relFormConfidence,
+        });
+      }
+      setShowRelationModal(false);
+      setSuccess(t('common.success'));
+      loadRelations();
+    } catch (err) {
+      setError(err.response?.data?.detail || t('common.error'));
+    }
   };
 
   const totalEntitiesPages = Math.ceil(entitiesTotal / PAGE_SIZE);
@@ -564,6 +664,17 @@ export default function KnowledgeGraphPage() {
       {/* Relations Tab */}
       {activeTab === 'relations' && (
         <div>
+          {/* Controls */}
+          <div className="flex items-center justify-end mb-4">
+            <button
+              onClick={openRelationCreateModal}
+              className="btn-primary flex items-center gap-2 text-sm"
+            >
+              <Plus className="w-4 h-4" />
+              {t('knowledgeGraph.createRelation')}
+            </button>
+          </div>
+
           {/* Filter bar */}
           {entityFilter && (
             <div className="mb-4 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg flex items-center justify-between">
@@ -605,6 +716,13 @@ export default function KnowledgeGraphPage() {
                     {rel.object?.name || '?'}
                   </span>
                   <span className="ml-auto text-xs text-gray-400">{Math.round((rel.confidence || 0) * 100)}%</span>
+                  <button
+                    onClick={() => openRelationEditModal(rel)}
+                    className="p-1.5 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    title={t('common.edit')}
+                  >
+                    <Edit3 className="w-4 h-4" />
+                  </button>
                   <button
                     onClick={() => handleDeleteRelation(rel)}
                     className="p-1.5 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800"
@@ -710,7 +828,7 @@ export default function KnowledgeGraphPage() {
         </div>
       )}
 
-      {/* Edit Modal */}
+      {/* Entity Edit Modal */}
       {showEditModal && (
         <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title={t('common.edit')}>
           <div className="space-y-4">
@@ -755,6 +873,160 @@ export default function KnowledgeGraphPage() {
                 {t('common.cancel')}
               </button>
               <button onClick={handleSaveEntity} className="btn-primary" disabled={!formName.trim()}>
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* Relation Edit/Create Modal */}
+      {showRelationModal && (
+        <Modal
+          isOpen={showRelationModal}
+          onClose={() => setShowRelationModal(false)}
+          title={editingRelation ? t('knowledgeGraph.editRelation') : t('knowledgeGraph.createRelation')}
+        >
+          <div className="space-y-4">
+            {/* Subject */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('knowledgeGraph.subject')}
+              </label>
+              {subjectLabel && (
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">{subjectLabel}</span>
+                  <button
+                    onClick={() => { setSubjectLabel(''); setRelFormSubjectId(''); }}
+                    className="text-gray-400 hover:text-red-500"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              {!subjectLabel && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={relFormSubjectSearch}
+                    onChange={(e) => setRelFormSubjectSearch(e.target.value)}
+                    placeholder={t('knowledgeGraph.selectEntity')}
+                    className="input w-full"
+                  />
+                  {subjectResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {subjectResults.map(e => (
+                        <button
+                          key={e.id}
+                          onClick={() => {
+                            setRelFormSubjectId(e.id);
+                            setSubjectLabel(e.name);
+                            setRelFormSubjectSearch('');
+                            setSubjectResults([]);
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        >
+                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs ${TYPE_COLORS[e.entity_type] || TYPE_COLORS.thing}`}>
+                            {e.entity_type}
+                          </span>
+                          {e.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Predicate */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('knowledgeGraph.predicateLabel')}
+              </label>
+              <input
+                type="text"
+                value={relFormPredicate}
+                onChange={(e) => setRelFormPredicate(e.target.value)}
+                placeholder="e.g. lives_in, works_at, knows"
+                className="input w-full"
+              />
+            </div>
+
+            {/* Object */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('knowledgeGraph.object')}
+              </label>
+              {objectLabel && (
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-medium text-gray-900 dark:text-white">{objectLabel}</span>
+                  <button
+                    onClick={() => { setObjectLabel(''); setRelFormObjectId(''); }}
+                    className="text-gray-400 hover:text-red-500"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              )}
+              {!objectLabel && (
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={relFormObjectSearch}
+                    onChange={(e) => setRelFormObjectSearch(e.target.value)}
+                    placeholder={t('knowledgeGraph.selectEntity')}
+                    className="input w-full"
+                  />
+                  {objectResults.length > 0 && (
+                    <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                      {objectResults.map(e => (
+                        <button
+                          key={e.id}
+                          onClick={() => {
+                            setRelFormObjectId(e.id);
+                            setObjectLabel(e.name);
+                            setRelFormObjectSearch('');
+                            setObjectResults([]);
+                          }}
+                          className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        >
+                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs ${TYPE_COLORS[e.entity_type] || TYPE_COLORS.thing}`}>
+                            {e.entity_type}
+                          </span>
+                          {e.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Confidence */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                {t('knowledgeGraph.confidenceLabel')} ({Math.round(relFormConfidence * 100)}%)
+              </label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={relFormConfidence}
+                onChange={(e) => setRelFormConfidence(parseFloat(e.target.value))}
+                className="w-full"
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setShowRelationModal(false)} className="btn-secondary">
+                {t('common.cancel')}
+              </button>
+              <button
+                onClick={handleSaveRelation}
+                className="btn-primary"
+                disabled={!relFormPredicate.trim() || !relFormSubjectId || !relFormObjectId}
+              >
                 {t('common.save')}
               </button>
             </div>
