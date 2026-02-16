@@ -4,6 +4,7 @@ Memory API Routes — CRUD for conversation memories.
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.memory_schemas import (
@@ -14,7 +15,7 @@ from api.routes.memory_schemas import (
     MemoryResponse,
     MemoryUpdateRequest,
 )
-from models.database import User
+from models.database import ConversationMemory, User
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user
 from services.conversation_memory_service import ConversationMemoryService
@@ -22,6 +23,25 @@ from services.database import get_db
 from utils.config import settings
 
 router = APIRouter()
+
+
+async def _verify_memory_ownership(
+    memory_id: int, current_user: User | None, db: AsyncSession
+) -> None:
+    """Verify that the memory belongs to the current user. Raises 404 if not found or not owned."""
+    result = await db.execute(
+        select(ConversationMemory.user_id).where(ConversationMemory.id == memory_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Memory not found")
+
+    owner_id = row[0]
+    user_id = current_user.id if current_user else None
+
+    # Both None (no auth) → OK; both match → OK; otherwise → 404 (don't leak existence)
+    if owner_id != user_id:
+        raise HTTPException(status_code=404, detail="Memory not found")
 
 
 def _memory_to_response(memory) -> MemoryResponse:
@@ -121,6 +141,7 @@ async def update_memory(
     current_user: User | None = Depends(get_current_user),
 ):
     """Update a memory's content, category, or importance."""
+    await _verify_memory_ownership(memory_id, current_user, db)
     try:
         service = ConversationMemoryService(db)
         memory = await service.update(
@@ -150,6 +171,7 @@ async def get_memory_history(
     current_user: User | None = Depends(get_current_user),
 ):
     """Get modification history for a memory."""
+    await _verify_memory_ownership(memory_id, current_user, db)
     try:
         service = ConversationMemoryService(db)
         entries = await service.get_history(memory_id)
@@ -187,6 +209,7 @@ async def delete_memory(
     current_user: User | None = Depends(get_current_user),
 ):
     """Soft-delete a memory (set is_active=False)."""
+    await _verify_memory_ownership(memory_id, current_user, db)
     try:
         service = ConversationMemoryService(db)
         success = await service.delete(memory_id)
