@@ -137,10 +137,13 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(chat_upload.router, prefix="/api/chat", tags=["Chat Upload"])
 app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
-app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
-app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
+if settings.features["cameras"]:
+    app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
+if settings.features["smart_home"]:
+    app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
-app.include_router(satellites.router, prefix="/api/satellites", tags=["Satellites"])
+if settings.features["satellites"]:
+    app.include_router(satellites.router, prefix="/api/satellites", tags=["Satellites"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
 app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
@@ -155,7 +158,8 @@ app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowl
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
-app.include_router(satellite_router, tags=["WebSocket Satellite"])
+if settings.features["satellites"]:
+    app.include_router(satellite_router, tags=["WebSocket Satellite"])
 app.include_router(device_router, tags=["WebSocket Device"])
 
 

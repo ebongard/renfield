@@ -20,6 +20,8 @@ interface AuthContextValue {
   authEnabled: boolean;
   allowRegistration: boolean;
   isAuthenticated: boolean;
+  features: Record<string, boolean>;
+  isFeatureEnabled: (feature: string) => boolean;
   login: (username: string, password: string) => Promise<LoginResponse>;
   logout: () => void;
   register: (username: string, password: string, email?: string | null) => Promise<User>;
@@ -46,6 +48,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [loading, setLoading] = useState(true);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [allowRegistration, setAllowRegistration] = useState(false);
+  const [features, setFeatures] = useState<Record<string, boolean>>({});
 
   // Get stored tokens
   const getAccessToken = useCallback(() => localStorage.getItem(ACCESS_TOKEN_KEY), []);
@@ -86,6 +89,11 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const isAdmin = useCallback((): boolean => {
     return hasPermission('admin');
   }, [hasPermission]);
+
+  // Check if a feature is enabled (default true if unknown)
+  const isFeatureEnabled = useCallback((feature: string): boolean => {
+    return features[feature] !== false;
+  }, [features]);
 
   // Refresh access token
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
@@ -186,6 +194,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const response = await apiClient.get('/api/auth/status');
         setAuthEnabled(response.data.auth_enabled);
         setAllowRegistration(response.data.allow_registration);
+        setFeatures(response.data.features || {});
 
         if (response.data.auth_enabled) {
           await fetchUser();
@@ -261,6 +270,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     authEnabled,
     allowRegistration,
     isAuthenticated: !!user,
+    features,
+    isFeatureEnabled,
     login,
     logout,
     register,
