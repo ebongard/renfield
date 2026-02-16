@@ -3,6 +3,23 @@
 from pydantic import BaseModel, Field
 
 
+class ScopeInfo(BaseModel):
+    """Scope information."""
+    name: str           # e.g., "personal", "family", "public"
+    label: str          # Localized label (e.g., "Familie", "Family")
+    description: str    # Localized description
+
+
+class ScopesListResponse(BaseModel):
+    """List of available scopes."""
+    scopes: list[ScopeInfo]
+
+
+class EntityScopeUpdate(BaseModel):
+    """Update entity scope."""
+    scope: str  # e.g., "personal", "family", "public", or any custom scope from YAML
+
+
 class EntityResponse(BaseModel):
     id: int
     name: str
@@ -11,6 +28,7 @@ class EntityResponse(BaseModel):
     mention_count: int = 1
     first_seen_at: str = ""
     last_seen_at: str = ""
+    scope: str = "personal"  # New field
 
 
 class EntityUpdate(BaseModel):

@@ -286,12 +286,19 @@ Entity-Relation triples extracted from conversations and documents via LLM, stor
 
 - **Chat Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
 - **Document Extraction:** `post_document_ingest` hook processes RAG document chunks and chat-uploaded text through KG extraction (fire-and-forget, sequential per chunk)
-- **Entity Resolution:** Exact name match → embedding cosine similarity (threshold 0.92) → create new
-- **Context Injection:** `retrieve_context` hook embeds query, finds similar entities via pgvector, fetches their relations, formats as triples
+- **Entity Resolution:** Exact name match → embedding similarity → create new (checks personal scope first, then accessible custom scopes)
+- **Entity Scoping:** Flexible YAML-based scopes (`config/kg_scopes.yaml`):
+  - `personal` (built-in): Only visible to the owner (default)
+  - Custom scopes (e.g., `family`, `public`): Defined in YAML with role-based access control
+  - Each scope specifies which roles can access entities with that scope
+  - Resolution priority: custom scopes checked before creating new personal entities to prevent duplication
+- **Context Injection:** `retrieve_context` hook embeds query, finds similar entities based on user's accessible scopes
 - **Entity Types:** `person`, `place`, `organization`, `thing`, `event`, `concept`
+- **Admin Controls:** Change entity scope via `/admin/knowledge-graph`, define custom scopes in YAML
 - **Frontend:** Admin dashboard at `/admin/knowledge-graph` with Entities, Relations, Stats tabs
+- **Extensible:** Add new scopes by editing `config/kg_scopes.yaml` without code changes
 
-**Key files:** `services/knowledge_graph_service.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`
+**Key files:** `services/knowledge_graph_service.py`, `services/kg_scope_loader.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`, `config/kg_scopes.yaml`
 
 **Configuration:**
 ```bash
@@ -299,7 +306,7 @@ KNOWLEDGE_GRAPH_ENABLED=false     # Master switch (default: off)
 KG_EXTRACTION_MODEL=              # Empty = use default model
 KG_SIMILARITY_THRESHOLD=0.92     # Entity dedup threshold
 KG_RETRIEVAL_THRESHOLD=0.70      # Context retrieval threshold
-KG_MAX_ENTITIES_PER_USER=5000    # Per-user entity limit
+KG_MAX_ENTITIES_PER_USER=5000    # Per-user personal entity limit (custom scopes don't count)
 KG_MAX_CONTEXT_TRIPLES=15        # Max triples injected into prompt
 ```
 
