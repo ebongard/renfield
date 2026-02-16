@@ -824,6 +824,12 @@
     "organization": "Organisation",
     "thing": "Sache",
     "event": "Ereignis",
-    "concept": "Konzept"
+    "concept": "Konzept",
+    "personal": "Persönlich",
+    "family": "Familie",
+    "public": "Öffentlich",
+    "scopeFilter": "Sichtbarkeit",
+    "changeScope": "Sichtbarkeit ändern",
+    "scopeUpdated": "{{name}} ist jetzt {{scope}}"
   }
 }

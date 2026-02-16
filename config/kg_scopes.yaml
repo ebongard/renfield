@@ -1,0 +1,24 @@
+# Knowledge Graph Scopes — Define which roles can access each scope
+# The "personal" scope is hardcoded and always exists (owner-only)
+
+scopes:
+  # Family household scope
+  - name: family
+    label_de: Familie
+    label_en: Family
+    description_de: Sichtbar für Familienmitglieder
+    description_en: Visible to family members
+    roles:
+      - Admin
+      - Familie
+
+  # Public scope
+  - name: public
+    label_de: Öffentlich
+    label_en: Public
+    description_de: Sichtbar für alle Benutzer
+    description_en: Visible to all users
+    roles:
+      - Admin
+      - Familie
+      - Gast

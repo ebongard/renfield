@@ -16,7 +16,7 @@ from loguru import logger
 from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KG_ENTITY_TYPES, KGEntity, KGRelation
+from models.database import KG_ENTITY_TYPES, KG_SCOPE_PERSONAL, KGEntity, KGRelation
 from utils.config import settings
 from utils.llm_client import get_default_client
 
@@ -51,25 +51,29 @@ class KnowledgeGraphService:
         name: str,
         entity_type: str,
         user_id: int | None,
+        user_role: str | None = None,
         description: str | None = None,
     ) -> KGEntity:
         """
         Resolve an entity by name, creating or merging as needed.
 
-        1. Exact name match (case-insensitive) for same user → update
-        2. Embedding cosine similarity > threshold → merge
-        3. Otherwise → create new entity
+        Resolution order:
+        1. Exact name match in personal entities (user_id + scope=personal)
+        2. Exact name match in accessible custom scopes (based on user role)
+        3. Embedding similarity in personal entities
+        4. Embedding similarity in accessible custom scopes
+        5. Create new personal entity
         """
-        # 1. Exact match
+        from services.kg_scope_loader import get_scope_loader
+        scope_loader = get_scope_loader()
+
+        # Step 1: Personal exact match
         query = select(KGEntity).where(
             func.lower(KGEntity.name) == name.lower(),
             KGEntity.is_active == True,  # noqa: E712
+            KGEntity.user_id == user_id,
+            KGEntity.scope == KG_SCOPE_PERSONAL,
         )
-        if user_id is not None:
-            query = query.where(KGEntity.user_id == user_id)
-        else:
-            query = query.where(KGEntity.user_id.is_(None))
-
         result = await self.db.execute(query)
         existing = result.scalar_one_or_none()
 
@@ -81,7 +85,27 @@ class KnowledgeGraphService:
             await self.db.flush()
             return existing
 
-        # 2. Embedding similarity check
+        # Step 2: Custom scopes exact match (user's accessible scopes)
+        accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
+        if accessible_scopes:
+            query = select(KGEntity).where(
+                func.lower(KGEntity.name) == name.lower(),
+                KGEntity.is_active == True,  # noqa: E712
+                KGEntity.scope.in_(accessible_scopes),
+            )
+            result = await self.db.execute(query)
+            existing = result.scalar_one_or_none()
+
+            if existing:
+                # Update mention count but keep the original owner
+                existing.mention_count = (existing.mention_count or 1) + 1
+                existing.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+                if description and not existing.description:
+                    existing.description = description
+                await self.db.flush()
+                return existing
+
+        # Step 3 & 4: Embedding similarity check
         embedding = None
         try:
             embedding = await self._get_embedding(name)
@@ -89,7 +113,10 @@ class KnowledgeGraphService:
             logger.warning(f"KG: Could not generate embedding for entity '{name}': {e}")
 
         if embedding:
-            similar = await self._find_similar_entity(embedding, user_id)
+            # Check personal entities first
+            similar = await self._find_similar_entity(
+                embedding, user_id=user_id, accessible_scopes=None
+            )
             if similar:
                 similar.mention_count = (similar.mention_count or 1) + 1
                 similar.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
@@ -98,43 +125,78 @@ class KnowledgeGraphService:
                 await self.db.flush()
                 return similar
 
-        # 3. Check max limit
+            # Check accessible custom scopes
+            if accessible_scopes:
+                similar = await self._find_similar_entity(
+                    embedding, user_id=None, accessible_scopes=accessible_scopes
+                )
+                if similar:
+                    similar.mention_count = (similar.mention_count or 1) + 1
+                    similar.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+                    if description and not similar.description:
+                        similar.description = description
+                    await self.db.flush()
+                    return similar
+
+        # Step 5: Check personal entity limit (only personal entities count)
         if user_id is not None:
             count_result = await self.db.execute(
                 select(func.count(KGEntity.id)).where(
                     KGEntity.user_id == user_id,
                     KGEntity.is_active == True,  # noqa: E712
+                    KGEntity.scope == KG_SCOPE_PERSONAL,
                 )
             )
             count = count_result.scalar() or 0
             if count >= settings.kg_max_entities_per_user:
-                logger.warning(f"KG: Entity limit reached for user {user_id}")
+                logger.warning(f"KG: Personal entity limit reached for user {user_id}")
                 # Return a best-effort match or skip
                 return await self._get_oldest_entity(user_id)
 
-        # Create new entity
+        # Create new personal entity
         entity = KGEntity(
             user_id=user_id,
             name=name,
             entity_type=entity_type if entity_type in KG_ENTITY_TYPES else "thing",
             description=description,
             embedding=embedding,
+            scope=KG_SCOPE_PERSONAL,  # Personal by default
         )
         self.db.add(entity)
         await self.db.flush()
-        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id}")
+        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id} scope=personal")
         return entity
 
     async def _find_similar_entity(
         self,
         embedding: list[float],
         user_id: int | None,
+        accessible_scopes: list[str] | None = None,
     ) -> KGEntity | None:
-        """Find an existing entity above the similarity threshold."""
+        """
+        Find an existing entity above the similarity threshold.
+
+        Args:
+            embedding: Entity embedding vector
+            user_id: User ID for personal scope filtering (None = no personal filtering)
+            accessible_scopes: List of custom scope names accessible to the user (None = skip)
+        """
         threshold = settings.kg_similarity_threshold
         embedding_str = f"[{','.join(map(str, embedding))}]"
 
-        user_filter = "AND user_id = :user_id" if user_id is not None else "AND user_id IS NULL"
+        if accessible_scopes:
+            # Search in accessible custom scopes only
+            scopes_str = ','.join(f"'{s}'" for s in accessible_scopes)
+            user_filter = f"AND scope IN ({scopes_str})"
+            params: dict = {"embedding": embedding_str}
+        elif user_id is not None:
+            # Search in personal (user-owned) only
+            user_filter = "AND (user_id = :user_id AND scope = 'personal')"
+            params = {"embedding": embedding_str, "user_id": user_id}
+        else:
+            # No filtering (shouldn't happen in normal flow)
+            user_filter = ""
+            params = {"embedding": embedding_str}
 
         sql = text(f"""
             SELECT id,
@@ -146,10 +208,6 @@ class KnowledgeGraphService:
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)
-
-        params: dict = {"embedding": embedding_str}
-        if user_id is not None:
-            params["user_id"] = user_id
 
         result = await self.db.execute(sql, params)
         row = result.fetchone()
@@ -163,10 +221,14 @@ class KnowledgeGraphService:
         return None
 
     async def _get_oldest_entity(self, user_id: int) -> KGEntity | None:
-        """Get the oldest entity for a user (fallback when limit reached)."""
+        """Get the oldest personal entity for a user (fallback when limit reached)."""
         result = await self.db.execute(
             select(KGEntity)
-            .where(KGEntity.user_id == user_id, KGEntity.is_active == True)  # noqa: E712
+            .where(
+                KGEntity.user_id == user_id,
+                KGEntity.is_active == True,  # noqa: E712
+                KGEntity.scope == KG_SCOPE_PERSONAL,
+            )
             .order_by(KGEntity.first_seen_at.asc())
             .limit(1)
         )
@@ -228,7 +290,16 @@ class KnowledgeGraphService:
         lang: str = "de",
     ) -> tuple[list[KGEntity], list[KGRelation]]:
         """Extract entities and relations from a conversation exchange."""
+        from models.database import User
         from services.prompt_manager import prompt_manager
+
+        # Get user's role name if authenticated
+        user_role = None
+        if user_id is not None:
+            result = await self.db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user and user.role:
+                user_role = user.role.name
 
         prompt = prompt_manager.get(
             "knowledge_graph", "extraction_prompt", lang=lang,
@@ -274,7 +345,7 @@ class KnowledgeGraphService:
             if not name:
                 continue
 
-            entity = await self.resolve_entity(name, etype, user_id, desc)
+            entity = await self.resolve_entity(name, etype, user_id, user_role, desc)
             entity_map[name.lower()] = entity
             saved_entities.append(entity)
 
@@ -328,7 +399,16 @@ class KnowledgeGraphService:
         lang: str = "de",
     ) -> tuple[list[KGEntity], list[KGRelation]]:
         """Extract entities and relations from a free-text passage (e.g. document chunk)."""
+        from models.database import User
         from services.prompt_manager import prompt_manager
+
+        # Get user's role name if authenticated
+        user_role = None
+        if user_id is not None:
+            result = await self.db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if user and user.role:
+                user_role = user.role.name
 
         prompt = prompt_manager.get(
             "knowledge_graph", "document_extraction_prompt", lang=lang,
@@ -373,7 +453,7 @@ class KnowledgeGraphService:
             if not name:
                 continue
 
-            entity = await self.resolve_entity(name, etype, user_id, desc)
+            entity = await self.resolve_entity(name, etype, user_id, user_role, desc)
             entity_map[name.lower()] = entity
             saved_entities.append(entity)
 
@@ -489,13 +569,17 @@ class KnowledgeGraphService:
         self,
         query: str,
         user_id: int | None = None,
+        user_role: str | None = None,
         lang: str = "de",
     ) -> str | None:
         """
-        Retrieve relevant graph triples for a query.
+        Retrieve relevant graph triples for a query based on user's accessible scopes.
 
         Returns formatted context string or None if nothing relevant.
         """
+        from services.kg_scope_loader import get_scope_loader
+        scope_loader = get_scope_loader()
+
         try:
             query_embedding = await self._get_embedding(query)
         except Exception as e:
@@ -509,7 +593,32 @@ class KnowledgeGraphService:
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
-        user_filter = "AND e.user_id = :user_id" if user_id is not None else ""
+        # Build scope filter based on user's accessible scopes
+        if user_id is not None:
+            accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
+
+            if accessible_scopes:
+                # User sees: personal + accessible custom scopes
+                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
+                user_filter = f"""AND (
+                    (e.user_id = :user_id AND e.scope = 'personal')
+                    OR e.scope IN ({scopes_list})
+                )"""
+                params: dict = {"embedding": embedding_str, "user_id": user_id}
+            else:
+                # User sees: personal only
+                user_filter = "AND (e.user_id = :user_id AND e.scope = 'personal')"
+                params = {"embedding": embedding_str, "user_id": user_id}
+        else:
+            # No auth: only public scope if defined
+            accessible_scopes = scope_loader.get_accessible_scopes(None, include_personal=False)
+            if accessible_scopes:
+                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
+                user_filter = f"AND e.scope IN ({scopes_list})"
+                params = {"embedding": embedding_str}
+            else:
+                # No accessible scopes for unauthenticated users
+                return None
 
         # Find top-N similar entities
         sql = text(f"""
@@ -522,10 +631,6 @@ class KnowledgeGraphService:
             ORDER BY e.embedding <=> CAST(:embedding AS vector)
             LIMIT 10
         """)
-
-        params: dict = {"embedding": embedding_str}
-        if user_id is not None:
-            params["user_id"] = user_id
 
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
@@ -587,10 +692,14 @@ class KnowledgeGraphService:
         user_id: int | None = None,
         entity_type: str | None = None,
         search: str | None = None,
+        scope: str | None = None,
         page: int = 1,
         size: int = 50,
     ) -> tuple[list[KGEntity], int]:
         """List active entities with filters."""
+        from services.kg_scope_loader import get_scope_loader
+        scope_loader = get_scope_loader()
+
         query = select(KGEntity).where(KGEntity.is_active == True)  # noqa: E712
         count_query = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
 
@@ -604,6 +713,9 @@ class KnowledgeGraphService:
             like_pattern = f"%{search}%"
             query = query.where(KGEntity.name.ilike(like_pattern))
             count_query = count_query.where(KGEntity.name.ilike(like_pattern))
+        if scope is not None and scope_loader.is_valid_scope(scope):
+            query = query.where(KGEntity.scope == scope)
+            count_query = count_query.where(KGEntity.scope == scope)
 
         total_result = await self.db.execute(count_query)
         total = total_result.scalar() or 0
@@ -647,6 +759,27 @@ class KnowledgeGraphService:
         if description is not None:
             entity.description = description
 
+        await self.db.commit()
+        await self.db.refresh(entity)
+        return entity
+
+    async def update_entity_scope(
+        self,
+        entity_id: int,
+        scope: str,
+    ) -> KGEntity | None:
+        """Update scope of an entity (admin only)."""
+        from services.kg_scope_loader import get_scope_loader
+        scope_loader = get_scope_loader()
+
+        if not scope_loader.is_valid_scope(scope):
+            raise ValueError(f"Invalid scope: {scope}")
+
+        entity = await self.get_entity(entity_id)
+        if not entity:
+            return None
+
+        entity.scope = scope
         await self.db.commit()
         await self.db.refresh(entity)
         return entity
@@ -847,11 +980,20 @@ async def kg_retrieve_context_hook(
 ) -> str | None:
     """Retrieve relevant graph context for LLM prompt (retrieve_context hook)."""
     try:
+        from models.database import User
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
+            # Get user's role name if authenticated
+            user_role = None
+            if user_id is not None:
+                result = await db.execute(select(User).where(User.id == user_id))
+                user = result.scalar_one_or_none()
+                if user and user.role:
+                    user_role = user.role.name
+
             svc = KnowledgeGraphService(db)
-            return await svc.get_relevant_context(query, user_id, lang)
+            return await svc.get_relevant_context(query, user_id, user_role, lang)
     except Exception as e:
         logger.warning(f"KG retrieve_context hook failed: {e}")
         return None

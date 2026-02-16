@@ -10,11 +10,13 @@ from api.routes.knowledge_graph_schemas import (
     EntityBrief,
     EntityListResponse,
     EntityResponse,
+    EntityScopeUpdate,
     EntityUpdate,
     KGStatsResponse,
     MergeEntitiesRequest,
     RelationListResponse,
     RelationResponse,
+    ScopesListResponse,
 )
 from models.database import User
 from models.permissions import Permission
@@ -36,7 +38,23 @@ def _entity_to_response(entity) -> EntityResponse:
         mention_count=entity.mention_count or 1,
         first_seen_at=entity.first_seen_at.isoformat() if entity.first_seen_at else "",
         last_seen_at=entity.last_seen_at.isoformat() if entity.last_seen_at else "",
+        scope=entity.scope or "personal",
     )
+
+
+@router.get("/scopes", response_model=ScopesListResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def list_scopes(
+    request: Request,
+    lang: str = Query("de"),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """List available KG scopes with labels and descriptions."""
+    from services.kg_scope_loader import get_scope_loader
+    scope_loader = get_scope_loader()
+
+    scopes = scope_loader.get_all_scopes(lang)
+    return ScopesListResponse(scopes=scopes)
 
 
 @router.get("/entities", response_model=EntityListResponse)
@@ -46,6 +64,7 @@ async def list_entities(
     user_id: int | None = Query(None),
     type: str | None = Query(None),
     search: str | None = Query(None),
+    scope: str | None = Query(None),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -58,6 +77,7 @@ async def list_entities(
             user_id=user_id,
             entity_type=type,
             search=search,
+            scope=scope,
             page=page,
             size=size,
         )
@@ -113,6 +133,31 @@ async def update_entity(
         raise
     except Exception as e:
         logger.error(f"Update KG entity error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/entities/{entity_id}/scope")
+@limiter.limit(settings.api_rate_limit_admin)
+async def update_entity_scope(
+    request: Request,
+    entity_id: int,
+    body: EntityScopeUpdate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Update scope of an entity (admin only)."""
+    try:
+        svc = KnowledgeGraphService(db)
+        entity = await svc.update_entity_scope(entity_id, body.scope)
+        if not entity:
+            raise HTTPException(status_code=404, detail="Entity not found")
+        return _entity_to_response(entity)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update KG entity scope error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

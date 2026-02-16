@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Brain, Link2, BarChart3, Search, Trash2, Edit3, Merge, X,
-  ChevronLeft, ChevronRight, ArrowRight,
+  ChevronLeft, ChevronRight, ArrowRight, Lock, Users,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
@@ -36,6 +36,9 @@ export default function KnowledgeGraphPage() {
   const [entitiesPage, setEntitiesPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [scopeFilter, setScopeFilter] = useState('all');
+  const [availableScopes, setAvailableScopes] = useState([]);
+  const [scopeMenuEntity, setScopeMenuEntity] = useState(null);
 
   // Relations state
   const [relations, setRelations] = useState([]);
@@ -67,6 +70,29 @@ export default function KnowledgeGraphPage() {
     }
   }, [error, success]);
 
+  // Load scopes
+  const loadScopes = async () => {
+    try {
+      const response = await apiClient.get('/api/knowledge-graph/scopes', {
+        params: { lang: t('lang') === 'de' ? 'de' : 'en' }
+      });
+      setAvailableScopes(response.data.scopes);
+    } catch (err) {
+      console.error('Failed to load KG scopes:', err);
+      // Fallback to default scopes
+      setAvailableScopes([
+        { name: 'personal', label: t('knowledgeGraph.personal'), description: '' },
+        { name: 'family', label: t('knowledgeGraph.family'), description: '' },
+        { name: 'public', label: t('knowledgeGraph.public'), description: '' },
+      ]);
+    }
+  };
+
+  // Load scopes on mount
+  useEffect(() => {
+    loadScopes();
+  }, []);
+
   // Load entities
   const loadEntities = async () => {
     try {
@@ -76,6 +102,7 @@ export default function KnowledgeGraphPage() {
       params.set('size', String(PAGE_SIZE));
       if (typeFilter) params.set('type', typeFilter);
       if (searchQuery) params.set('search', searchQuery);
+      if (scopeFilter && scopeFilter !== 'all') params.set('scope', scopeFilter);
 
       const response = await apiClient.get(`/api/knowledge-graph/entities?${params}`);
       setEntities(response.data.entities);
@@ -126,7 +153,7 @@ export default function KnowledgeGraphPage() {
     if (activeTab === 'entities') loadEntities();
     else if (activeTab === 'relations') loadRelations();
     else if (activeTab === 'stats') loadStats();
-  }, [activeTab, entitiesPage, relationsPage, typeFilter, searchQuery, entityFilter]);
+  }, [activeTab, entitiesPage, relationsPage, typeFilter, searchQuery, scopeFilter, entityFilter]);
 
   // Edit entity
   const openEditModal = (entity) => {
@@ -208,6 +235,25 @@ export default function KnowledgeGraphPage() {
       setMergeMode(false);
       setMergeSelection([]);
       setSuccess(t('common.success'));
+      loadEntities();
+    } catch (err) {
+      setError(t('common.error'));
+    }
+  };
+
+  // Update entity scope
+  const handleUpdateScope = async (entity, newScope) => {
+    try {
+      await apiClient.patch(
+        `/api/knowledge-graph/entities/${entity.id}/scope`,
+        { scope: newScope }
+      );
+
+      const scopeInfo = availableScopes.find(s => s.name === newScope);
+      setSuccess(
+        t('knowledgeGraph.scopeUpdated', { name: entity.name, scope: scopeInfo?.label || newScope })
+      );
+      setScopeMenuEntity(null);
       loadEntities();
     } catch (err) {
       setError(t('common.error'));
@@ -304,6 +350,17 @@ export default function KnowledgeGraphPage() {
               ))}
             </select>
 
+            <select
+              value={scopeFilter}
+              onChange={(e) => { setScopeFilter(e.target.value); setEntitiesPage(1); }}
+              className="input w-auto"
+            >
+              <option value="all">{t('common.all')}</option>
+              {availableScopes.map(scope => (
+                <option key={scope.name} value={scope.name}>{scope.label}</option>
+              ))}
+            </select>
+
             <button
               onClick={() => { setMergeMode(!mergeMode); setMergeSelection([]); }}
               className={`btn-secondary flex items-center gap-2 ${mergeMode ? 'ring-2 ring-indigo-500' : ''}`}
@@ -392,9 +449,16 @@ export default function KnowledgeGraphPage() {
                           </div>
                         </td>
                         <td className="py-3 px-3">
-                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_COLORS[entity.entity_type] || TYPE_COLORS.thing}`}>
-                            {t(`knowledgeGraph.${entity.entity_type}`)}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_COLORS[entity.entity_type] || TYPE_COLORS.thing}`}>
+                              {t(`knowledgeGraph.${entity.entity_type}`)}
+                            </span>
+                            {entity.scope && entity.scope !== 'personal' && (
+                              <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                                {availableScopes.find(s => s.name === entity.scope)?.label || entity.scope}
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="py-3 px-3 text-sm text-gray-600 dark:text-gray-300">{entity.mention_count}</td>
                         <td className="py-3 px-3 text-sm text-gray-500 dark:text-gray-400">
@@ -403,6 +467,38 @@ export default function KnowledgeGraphPage() {
                         <td className="py-3 px-3 text-right">
                           {!mergeMode && (
                             <div className="flex items-center justify-end gap-1">
+                              <div className="relative">
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setScopeMenuEntity(scopeMenuEntity?.id === entity.id ? null : entity);
+                                  }}
+                                  className={`p-1.5 rounded ${
+                                    entity.scope === 'personal' ? 'text-gray-400' :
+                                    'text-green-600 dark:text-green-400'
+                                  } hover:bg-gray-100 dark:hover:bg-gray-800`}
+                                  title={t('knowledgeGraph.changeScope')}
+                                >
+                                  {entity.scope === 'personal' ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+                                </button>
+
+                                {scopeMenuEntity?.id === entity.id && (
+                                  <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10">
+                                    {availableScopes.map((scopeInfo) => (
+                                      <button
+                                        key={scopeInfo.name}
+                                        onClick={() => handleUpdateScope(entity, scopeInfo.name)}
+                                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${
+                                          entity.scope === scopeInfo.name ? 'font-semibold' : ''
+                                        }`}
+                                        title={scopeInfo.description}
+                                      >
+                                        {scopeInfo.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                               <button
                                 onClick={() => showRelationsForEntity(entity.id)}
                                 className="p-1.5 rounded text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-800"
