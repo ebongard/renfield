@@ -746,6 +746,54 @@ FRIGATE_URL=http://frigate.local:5000
 
 ---
 
+## Knowledge Graph
+
+Das Knowledge Graph-System extrahiert Entitäten und Relationen aus Konversationen und Dokumenten.
+
+### System-Kontrolle
+
+```bash
+# Knowledge Graph aktivieren
+KNOWLEDGE_GRAPH_ENABLED=false
+```
+
+**Default:** `false`
+
+### Konfiguration
+
+```bash
+# Modell für KG-Extraktion (leer = Standard-Modell verwenden)
+KG_EXTRACTION_MODEL=
+
+# Schwellenwert für Entity-Deduplizierung (Embedding-Ähnlichkeit)
+KG_SIMILARITY_THRESHOLD=0.92
+
+# Schwellenwert für Kontext-Retrieval (Embedding-Ähnlichkeit)
+KG_RETRIEVAL_THRESHOLD=0.70
+
+# Max. persönliche Entitäten pro Benutzer (custom scopes zählen nicht)
+KG_MAX_ENTITIES_PER_USER=5000
+
+# Max. Triples im LLM-Kontext
+KG_MAX_CONTEXT_TRIPLES=15
+```
+
+### Entity-Scoping
+
+Entitäten können verschiedene Sichtbarkeits-Scopes haben:
+
+- **`personal`** (built-in): Nur für den Besitzer sichtbar (Standard)
+- **Custom Scopes**: Definiert in `config/kg_scopes.yaml` mit rollenbasierter Zugriffskontrolle
+  - Beispiele: `family` (sichtbar für Familie-Rolle), `public` (für alle sichtbar)
+  - Jeder Scope definiert, welche Rollen darauf zugreifen können
+  - Erweiterbar: Neue Scopes können per YAML hinzugefügt werden ohne Code-Änderungen
+
+**Entity-Auflösung:** Custom Scopes werden vor Erstellung neuer persönlicher Entitäten geprüft → verhindert Duplikate.
+
+**Limit-Verhalten:** Nur `personal` Entitäten zählen zum `KG_MAX_ENTITIES_PER_USER` Limit. Family/Public Entitäten verbrauchen kein Benutzer-Kontingent.
+
+---
+
 ## MCP Server Configuration
 
 MCP (Model Context Protocol) Server stellen externe Tools für den Agent Loop bereit. Konfiguration in `config/mcp_servers.yaml`.

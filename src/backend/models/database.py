@@ -945,6 +945,9 @@ MEMORY_CHANGED_BY_RESOLUTION = "contradiction_resolution"
 # Entity Type Constants
 KG_ENTITY_TYPES = ["person", "place", "organization", "thing", "event", "concept"]
 
+# Knowledge Graph Scope Constants
+KG_SCOPE_PERSONAL = "personal"  # Built-in scope, always exists (owner-only)
+
 
 class KGEntity(Base):
     """Named entity extracted from conversations for the Knowledge Graph."""
@@ -963,9 +966,12 @@ class KGEntity(Base):
     first_seen_at = Column(DateTime, default=_utcnow)
     last_seen_at = Column(DateTime, default=_utcnow)
     is_active = Column(Boolean, default=True, index=True)
+    # Scope references either "personal" or a scope name from kg_scopes.yaml
+    scope = Column(String(50), default=KG_SCOPE_PERSONAL, nullable=False, index=True)
 
     __table_args__ = (
         Index('ix_kg_entities_user_active', 'user_id', 'is_active'),
+        Index('ix_kg_entities_scope_active', 'scope', 'is_active'),
     )
 
     user = relationship("User", foreign_keys=[user_id])
