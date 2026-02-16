@@ -365,7 +365,12 @@
     "reindexFailed": "Error reindexing document",
     "pages": "Pages",
     "size": "Size",
-    "errorLabel": "Error"
+    "errorLabel": "Error",
+    "moveDocument": "Move",
+    "moveDocuments": "Move ({{count}})",
+    "selectTargetKb": "Select target knowledge base",
+    "documentsMovedSuccess": "{{count}} document(s) moved",
+    "alreadyInTargetKb": "All documents are already in the target KB"
   },
   "memory": {
     "title": "Memories",

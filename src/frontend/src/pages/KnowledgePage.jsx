@@ -16,7 +16,8 @@ import {
   Database,
   Layers,
   File,
-  AlertCircle
+  AlertCircle,
+  ArrowRightLeft
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
@@ -45,6 +46,11 @@ export default function KnowledgePage() {
   const [showNewKbModal, setShowNewKbModal] = useState(false);
   const [newKbName, setNewKbName] = useState('');
   const [newKbDescription, setNewKbDescription] = useState('');
+
+  // Move / Bulk selection state
+  const [selectedDocs, setSelectedDocs] = useState(new Set());
+  const [moveTargetKbId, setMoveTargetKbId] = useState(null);
+  const [showMoveDropdown, setShowMoveDropdown] = useState(null); // doc id or 'bulk'
 
   // Load data
   const loadDocuments = useCallback(async () => {
@@ -212,6 +218,72 @@ export default function KnowledgePage() {
       console.error('Delete error:', error);
       alert(t('common.error'));
     }
+  };
+
+  // Move documents
+  const handleMoveDocuments = async (docIds, targetKbId) => {
+    if (!targetKbId || docIds.length === 0) return;
+
+    try {
+      const response = await apiClient.post('/api/knowledge/documents/move', {
+        document_ids: docIds,
+        target_knowledge_base_id: targetKbId
+      });
+      const moved = response.data.moved_count;
+      if (moved > 0) {
+        setUploadProgress(t('knowledge.documentsMovedSuccess', { count: moved }));
+      } else {
+        setUploadProgress(t('knowledge.alreadyInTargetKb'));
+      }
+      setTimeout(() => setUploadProgress(null), 3000);
+      setSelectedDocs(new Set());
+      setShowMoveDropdown(null);
+      await Promise.all([loadDocuments(), loadKnowledgeBases(), loadStats()]);
+    } catch (error) {
+      console.error('Move error:', error);
+      alert(error.response?.data?.detail || t('common.error'));
+    }
+  };
+
+  // Bulk selection helpers
+  const toggleDocSelection = (docId) => {
+    setSelectedDocs(prev => {
+      const next = new Set(prev);
+      if (next.has(docId)) next.delete(docId);
+      else next.add(docId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedDocs.size === documents.length) {
+      setSelectedDocs(new Set());
+    } else {
+      setSelectedDocs(new Set(documents.map(d => d.id)));
+    }
+  };
+
+  // KB selector dropdown for move
+  const MoveKbDropdown = ({ docIds, onClose }) => {
+    const targetBases = knowledgeBases.filter(kb => kb.id !== selectedKnowledgeBase);
+    if (targetBases.length === 0) return null;
+
+    return (
+      <div className="absolute right-0 top-full mt-1 z-20 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 rounded-lg shadow-lg py-1 min-w-48">
+        <div className="px-3 py-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+          {t('knowledge.selectTargetKb')}
+        </div>
+        {targetBases.map(kb => (
+          <button
+            key={kb.id}
+            onClick={() => { handleMoveDocuments(docIds, kb.id); onClose(); }}
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+          >
+            {kb.name}
+          </button>
+        ))}
+      </div>
+    );
   };
 
   // Status icon helper
@@ -494,6 +566,32 @@ export default function KnowledgePage() {
         ))}
       </div>
 
+      {/* Bulk Action Toolbar */}
+      {selectedDocs.size > 0 && knowledgeBases.length > 0 && (
+        <div className="card bg-primary-50 dark:bg-primary-900/20 border-primary-200 dark:border-primary-700">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-medium text-primary-700 dark:text-primary-300">
+              {selectedDocs.size} {t('knowledge.documents').toLowerCase()}
+            </span>
+            <div className="relative">
+              <button
+                onClick={() => setShowMoveDropdown(showMoveDropdown === 'bulk' ? null : 'bulk')}
+                className="btn-primary flex items-center gap-2 text-sm"
+              >
+                <ArrowRightLeft className="w-4 h-4" />
+                {t('knowledge.moveDocuments', { count: selectedDocs.size })}
+              </button>
+              {showMoveDropdown === 'bulk' && (
+                <MoveKbDropdown
+                  docIds={[...selectedDocs]}
+                  onClose={() => setShowMoveDropdown(null)}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Documents List */}
       <div className="space-y-4">
         {loading ? (
@@ -510,68 +608,109 @@ export default function KnowledgePage() {
             </p>
           </div>
         ) : (
-          documents.map((doc) => (
-            <div key={doc.id} className="card">
-              <div className="flex items-start space-x-4">
-                <div className="mt-1">{getFileIcon(doc.file_type)}</div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1 truncate">
-                    {doc.title || doc.filename}
-                  </h3>
-                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
-                    <span>{t('common.type')}: {doc.file_type?.toUpperCase()}</span>
-                    {doc.page_count && <span>{t('knowledge.pages')}: {doc.page_count}</span>}
-                    <span>{t('knowledge.chunks')}: {doc.chunk_count || 0}</span>
-                    {doc.file_size && (
-                      <span>
-                        {t('knowledge.size')}: {(doc.file_size / 1024 / 1024).toFixed(2)} MB
-                      </span>
+          <>
+            {/* Select All */}
+            {knowledgeBases.length > 0 && documents.length > 1 && (
+              <div className="flex items-center gap-2 px-1">
+                <input
+                  type="checkbox"
+                  checked={selectedDocs.size === documents.length}
+                  onChange={toggleSelectAll}
+                  className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                />
+                <span className="text-sm text-gray-500 dark:text-gray-400">{t('common.all')}</span>
+              </div>
+            )}
+            {documents.map((doc) => (
+              <div key={doc.id} className="card">
+                <div className="flex items-start space-x-4">
+                  {knowledgeBases.length > 0 && (
+                    <div className="mt-2">
+                      <input
+                        type="checkbox"
+                        checked={selectedDocs.has(doc.id)}
+                        onChange={() => toggleDocSelection(doc.id)}
+                        className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-primary-600 focus:ring-primary-500"
+                      />
+                    </div>
+                  )}
+                  <div className="mt-1">{getFileIcon(doc.file_type)}</div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1 truncate">
+                      {doc.title || doc.filename}
+                    </h3>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">
+                      <span>{t('common.type')}: {doc.file_type?.toUpperCase()}</span>
+                      {doc.page_count && <span>{t('knowledge.pages')}: {doc.page_count}</span>}
+                      <span>{t('knowledge.chunks')}: {doc.chunk_count || 0}</span>
+                      {doc.file_size && (
+                        <span>
+                          {t('knowledge.size')}: {(doc.file_size / 1024 / 1024).toFixed(2)} MB
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                      Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
+                    </p>
+                    {doc.error_message && (
+                      <p className="text-xs text-red-600 dark:text-red-400 mt-1">
+                        {t('knowledge.errorLabel')}: {doc.error_message}
+                      </p>
                     )}
                   </div>
-                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                    Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
-                  </p>
-                  {doc.error_message && (
-                    <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                      {t('knowledge.errorLabel')}: {doc.error_message}
-                    </p>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
                   <div className="flex items-center gap-2">
-                    {getStatusIcon(doc.status)}
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-medium ${
-                        doc.status === 'completed'
-                          ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
-                          : doc.status === 'failed'
-                          ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
-                          : doc.status === 'processing'
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                          : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
-                      }`}
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(doc.status)}
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-medium ${
+                          doc.status === 'completed'
+                            ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
+                            : doc.status === 'failed'
+                            ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
+                            : doc.status === 'processing'
+                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
+                            : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
+                        }`}
+                      >
+                        {doc.status}
+                      </span>
+                    </div>
+                    {knowledgeBases.length > 0 && (
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowMoveDropdown(showMoveDropdown === doc.id ? null : doc.id)}
+                          className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          title={t('knowledge.moveDocument')}
+                        >
+                          <ArrowRightLeft className="w-4 h-4" />
+                        </button>
+                        {showMoveDropdown === doc.id && (
+                          <MoveKbDropdown
+                            docIds={[doc.id]}
+                            onClose={() => setShowMoveDropdown(null)}
+                          />
+                        )}
+                      </div>
+                    )}
+                    <button
+                      onClick={() => handleReindexDocument(doc.id)}
+                      className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      title={t('knowledge.reindex')}
                     >
-                      {doc.status}
-                    </span>
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                      className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      title={t('common.delete')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
-                  <button
-                    onClick={() => handleReindexDocument(doc.id)}
-                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title={t('knowledge.reindex')}
-                  >
-                    <RefreshCw className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteDocument(doc.id, doc.filename)}
-                    className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
-                    title={t('common.delete')}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
                 </div>
               </div>
-            </div>
-          ))
+            ))}
+          </>
         )}
       </div>
 
