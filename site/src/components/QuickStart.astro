@@ -1,0 +1,53 @@
+---
+---
+
+<section id="quickstart" class="py-20 sm:py-28 bg-gray-50 dark:bg-gray-900/50">
+  <div class="max-w-4xl mx-auto px-4 sm:px-6">
+    <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
+      Quick Start
+    </h2>
+    <p class="text-center text-gray-600 dark:text-gray-400 mb-12 max-w-xl mx-auto">
+      Up and running in three steps. No cloud account required.
+    </p>
+
+    <div class="space-y-8">
+      <!-- Step 1 -->
+      <div class="flex gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand-blue text-white flex items-center justify-center font-bold text-lg">
+          1
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Clone & configure</h3>
+          <pre class="overflow-x-auto rounded-lg bg-gray-900 dark:bg-gray-800 text-gray-100 text-sm p-4 leading-relaxed"><code>git clone https://github.com/ebongard/renfield.git
+cd renfield
+cp .env.example .env    # edit to your needs</code></pre>
+        </div>
+      </div>
+
+      <!-- Step 2 -->
+      <div class="flex gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand-blue text-white flex items-center justify-center font-bold text-lg">
+          2
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Start the stack</h3>
+          <pre class="overflow-x-auto rounded-lg bg-gray-900 dark:bg-gray-800 text-gray-100 text-sm p-4 leading-relaxed"><code>docker compose up -d</code></pre>
+        </div>
+      </div>
+
+      <!-- Step 3 -->
+      <div class="flex gap-4">
+        <div class="flex-shrink-0 w-10 h-10 rounded-full bg-brand-blue text-white flex items-center justify-center font-bold text-lg">
+          3
+        </div>
+        <div class="flex-1 min-w-0">
+          <h3 class="font-semibold text-gray-900 dark:text-white mb-2">Pull a model</h3>
+          <pre class="overflow-x-auto rounded-lg bg-gray-900 dark:bg-gray-800 text-gray-100 text-sm p-4 leading-relaxed"><code>docker exec -it renfield-ollama ollama pull qwen3:8b</code></pre>
+          <p class="text-sm text-gray-500 dark:text-gray-400 mt-2">
+            Open <code class="text-brand-cyan">http://localhost:3000</code> and start chatting.
+          </p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
