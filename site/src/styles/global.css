@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-white dark:bg-brand-dark text-gray-900 dark:text-gray-100 font-sans antialiased;
+  }
+}
+
+@layer components {
+  .glow-cyan {
+    filter: drop-shadow(0 0 20px rgba(0, 255, 208, 0.4))
+            drop-shadow(0 0 40px rgba(0, 255, 208, 0.2));
+  }
+
+  .glow-cyan-pulse {
+    animation: glowPulse 3s ease-in-out infinite;
+  }
+
+  @keyframes glowPulse {
+    0%, 100% {
+      filter: drop-shadow(0 0 20px rgba(0, 255, 208, 0.4))
+              drop-shadow(0 0 40px rgba(0, 255, 208, 0.2));
+    }
+    50% {
+      filter: drop-shadow(0 0 30px rgba(0, 255, 208, 0.6))
+              drop-shadow(0 0 60px rgba(0, 255, 208, 0.3));
+    }
+  }
+}
