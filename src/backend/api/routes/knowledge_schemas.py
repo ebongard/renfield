@@ -107,6 +107,11 @@ class SearchResponse(BaseModel):
 
 # --- Stats Models ---
 
+class MoveDocumentsRequest(BaseModel):
+    document_ids: list[int] = Field(..., min_length=1)
+    target_knowledge_base_id: int
+
+
 class StatsResponse(BaseModel):
     document_count: int
     completed_documents: int

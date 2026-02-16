@@ -29,6 +29,7 @@ from .knowledge_schemas import (
     KBPermissionResponse,
     KnowledgeBaseCreate,
     KnowledgeBaseResponse,
+    MoveDocumentsRequest,
     SearchRequest,
     SearchResponse,
     SearchResult,
@@ -461,6 +462,40 @@ async def reindex_document(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/documents/move")
+async def move_documents(
+    request: MoveDocumentsRequest,
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Verschiebt Dokumente in eine andere Knowledge Base"""
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_OWN):
+            raise HTTPException(status_code=403, detail="Permission required: kb.own or higher")
+
+        # Prüfe Write-Zugriff auf Ziel-KB
+        result = await db.execute(
+            select(KnowledgeBase).where(KnowledgeBase.id == request.target_knowledge_base_id)
+        )
+        target_kb = result.scalar_one_or_none()
+        if target_kb and not await check_kb_access(target_kb, user, "write", db):
+            raise HTTPException(status_code=403, detail="No write access to target knowledge base")
+
+    try:
+        moved = await rag.move_documents(request.document_ids, request.target_knowledge_base_id)
+        return {
+            "message": f"{moved} Dokument(e) verschoben",
+            "moved_count": moved,
+            "target_knowledge_base_id": request.target_knowledge_base_id
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # =============================================================================
