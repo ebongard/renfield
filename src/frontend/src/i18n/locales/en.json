@@ -824,6 +824,12 @@
     "organization": "Organization",
     "thing": "Thing",
     "event": "Event",
-    "concept": "Concept"
+    "concept": "Concept",
+    "personal": "Personal",
+    "family": "Family",
+    "public": "Public",
+    "scopeFilter": "Scope",
+    "changeScope": "Change scope",
+    "scopeUpdated": "{{name}} is now {{scope}}"
   }
 }
