@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Volume2, Plus, Trash2, Loader, ChevronDown, ChevronUp,
   GripVertical, Power, PowerOff, Speaker, Radio, Monitor
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { useConfirmDialog } from './ConfirmDialog';
 
 // Output device type icons
 const OUTPUT_TYPE_ICONS = {
@@ -22,6 +24,8 @@ const OUTPUT_TYPE_ICONS = {
  * - Drag-and-drop reordering (simplified: up/down buttons)
  */
 export default function RoomOutputSettings({ roomId, roomName }) {
+  const { t } = useTranslation();
+  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
   // State
   const [expanded, setExpanded] = useState(false);
   const [outputDevices, setOutputDevices] = useState([]);
@@ -123,7 +127,12 @@ export default function RoomOutputSettings({ roomId, roomName }) {
   };
 
   const deleteOutputDevice = async (deviceId) => {
-    if (!confirm('Ausgabegeraet wirklich entfernen?')) return;
+    const confirmed = await confirm({
+      title: t('rooms.removeOutputDevice'),
+      message: t('rooms.removeOutputDeviceConfirm'),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/rooms/output-devices/${deviceId}`);
@@ -316,6 +325,8 @@ export default function RoomOutputSettings({ roomId, roomName }) {
           </button>
         </div>
       )}
+
+      {ConfirmDialogComponent}
 
       {/* Add Device Modal */}
       {showAddModal && (
