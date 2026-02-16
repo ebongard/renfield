@@ -513,6 +513,7 @@ async def lifespan(app: "FastAPI"):
     # Knowledge Graph hooks
     if settings.knowledge_graph_enabled:
         from services.knowledge_graph_service import (
+            kg_post_document_ingest_hook,
             kg_post_message_hook,
             kg_retrieve_context_hook,
         )
@@ -520,6 +521,7 @@ async def lifespan(app: "FastAPI"):
 
         register_hook("post_message", kg_post_message_hook)
         register_hook("retrieve_context", kg_retrieve_context_hook)
+        register_hook("post_document_ingest", kg_post_document_ingest_hook)
         logger.info("✅ Knowledge Graph hooks registered")
 
     # Plugin / Hook System

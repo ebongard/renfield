@@ -130,6 +130,17 @@ async def upload_chat_document(
     await db.commit()
     await db.refresh(upload)
 
+    # Fire KG extraction for extracted text (fire-and-forget)
+    if extracted_text and settings.knowledge_graph_enabled:
+        from utils.hooks import run_hooks
+        background_tasks.add_task(
+            run_hooks,
+            "post_document_ingest",
+            chunks=[extracted_text],
+            document_id=None,
+            user_id=None,
+        )
+
     # Auto-index to KB if enabled
     if settings.chat_upload_auto_index and status == UPLOAD_STATUS_COMPLETED:
         background_tasks.add_task(
