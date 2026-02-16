@@ -200,6 +200,17 @@ class RAGService:
 
             await self.db.refresh(doc)
 
+            # Fire KG extraction hook (fire-and-forget)
+            chunk_texts = [co.content for co in chunk_objects if co.content]
+            if chunk_texts:
+                from utils.hooks import run_hooks
+                _task = asyncio.create_task(run_hooks(  # noqa: RUF006
+                    "post_document_ingest",
+                    chunks=chunk_texts,
+                    document_id=doc.id,
+                    user_id=None,
+                ))
+
             logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")
             return doc
 
