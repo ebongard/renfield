@@ -1,10 +1,13 @@
 """
-Tests for Memory API — Service extensions (update, get_count) and Pydantic schemas.
+Tests for Memory API — Service extensions (update, get_count), Pydantic schemas,
+and ownership verification.
 
 Uses in-memory SQLite (no pgvector). Pattern follows test_conversation_memory.py.
 """
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.memory_schemas import (
@@ -13,8 +16,24 @@ from api.routes.memory_schemas import (
     MemoryResponse,
     MemoryUpdateRequest,
 )
-from models.database import ConversationMemory
+from models.database import ConversationMemory, User
 from services.conversation_memory_service import ConversationMemoryService
+
+
+async def _verify_memory_ownership(
+    memory_id: int, current_user: User | None, db: AsyncSession
+) -> None:
+    """Mirror of api.routes.memory._verify_memory_ownership for testing without slowapi import."""
+    result = await db.execute(
+        select(ConversationMemory.user_id).where(ConversationMemory.id == memory_id)
+    )
+    row = result.one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    owner_id = row[0]
+    user_id = current_user.id if current_user else None
+    if owner_id != user_id:
+        raise HTTPException(status_code=404, detail="Memory not found")
 
 # ==========================================================================
 # Fixtures
@@ -287,3 +306,66 @@ class TestMemorySchemas:
         )
         assert len(resp.memories) == 1
         assert resp.total == 1
+
+
+# ==========================================================================
+# Ownership Verification
+# ==========================================================================
+
+class TestMemoryOwnership:
+    """Tests for _verify_memory_ownership — prevents cross-user access."""
+
+    @pytest.mark.database
+    async def test_owner_can_access(self, db_session, test_user):
+        """Owner can access their own memory."""
+        memory = await _create_memory(db_session, user_id=test_user.id)
+
+        # Should not raise
+        await _verify_memory_ownership(memory.id, test_user, db_session)
+
+    @pytest.mark.database
+    async def test_other_user_blocked(self, db_session, test_user):
+        """Different user cannot access another user's memory."""
+        from models.database import Role
+
+        memory = await _create_memory(db_session, user_id=test_user.id)
+
+        # Create a second user
+        role = Role(name="OtherRole", permissions=["kb.own"], is_system=False)
+        db_session.add(role)
+        await db_session.commit()
+        other_user = User(
+            username="otheruser", email="other@example.com",
+            password_hash="fakehash", is_active=True, role_id=role.id,
+        )
+        db_session.add(other_user)
+        await db_session.commit()
+        await db_session.refresh(other_user)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _verify_memory_ownership(memory.id, other_user, db_session)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.database
+    async def test_nonexistent_memory(self, db_session, test_user):
+        """Non-existent memory ID raises 404."""
+        with pytest.raises(HTTPException) as exc_info:
+            await _verify_memory_ownership(99999, test_user, db_session)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.database
+    async def test_no_auth_accesses_null_user_memory(self, db_session):
+        """No-auth user (None) can access memories with user_id=None."""
+        memory = await _create_memory(db_session, user_id=None)
+
+        # Should not raise
+        await _verify_memory_ownership(memory.id, None, db_session)
+
+    @pytest.mark.database
+    async def test_no_auth_cannot_access_user_memory(self, db_session, test_user):
+        """No-auth user (None) cannot access a user's memory."""
+        memory = await _create_memory(db_session, user_id=test_user.id)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await _verify_memory_ownership(memory.id, None, db_session)
+        assert exc_info.value.status_code == 404
