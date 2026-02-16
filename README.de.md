@@ -19,10 +19,13 @@ Unterstützung oder Billigung durch solche Dritte.
 - **Chat-Interface** — Text- und sprachbasierte Kommunikation mit Streaming-Antworten
 - **Konversations-Historie** — Sidebar mit Chatverläufen, Datumsgruppierung, Session-Persistenz, Follow-up-Fragen
 - **Agent System (ReAct)** — Mehrstufige Anfragen mit Tool-Verkettung, Agent Router mit spezialisierten Rollen
+- **Knowledge Graph** — Entity-Relation-Tripel aus Konversationen und Dokumenten, semantische Entity-Auflösung via pgvector
 - **Konversations-Gedächtnis** — Langzeit-Erinnerungen (Präferenzen, Fakten, Anweisungen) mit Widerspruchserkennung
-- **Intent Feedback Learning** — Lernt aus Korrekturen und verbessert Intent-Erkennung über semantisches Matching
+- **Intent Feedback Learning** — Lernt aus Korrekturen und verbessert Intent-Erkennung über semantisches Matching (3 Scopes: Intent, Tool, Komplexität)
 - **Spracheingabe & -ausgabe** — Whisper STT und Piper TTS, Sprechererkennung mit SpeechBrain
 - **Präsenzerkennung** — BLE-Scanning, Sprechererkennung und Web-Auth verfolgen, wer sich in welchem Raum befindet
+- **Proaktive Benachrichtigungen** — Webhook-basierte Alerts von Home Assistant/n8n + generisches MCP Notification Polling
+- **Hook/Plugin-System** — Asynchrone Extension-API für eigene Integrationen ohne Core-Änderungen
 
 ### Integrationen (9 MCP-Server)
 | Server | Beschreibung | Transport | Aktivierung |
@@ -41,6 +44,7 @@ Unterstützung oder Billigung durch solche Dritte.
 - **Hybrid Search** — Dense Embeddings (pgvector) + BM25 Full-Text-Search, kombiniert via RRF
 - **Unterstützte Formate** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT
 - **Knowledge Bases** — Thematische Sammlungen mit Sharing und Zugriffssteuerung
+- **Knowledge Graph** — Entity-Relation-Tripel aus Dokumenten und Konversationen, semantische Entity-Auflösung, Admin-Dashboard
 - **Context Window** — Benachbarte Chunks werden automatisch zum Treffer hinzugefügt
 
 ### Proaktive Benachrichtigungen & Erinnerungen
@@ -274,6 +278,12 @@ AUTH_ENABLED=false                # RPBAC (opt-in)
 # Präsenzerkennung
 PRESENCE_ENABLED=false           # Raum-Präsenzerkennung (opt-in)
 
+# Knowledge Graph
+KNOWLEDGE_GRAPH_ENABLED=false    # Entity-Relation-Extraktion (opt-in)
+
+# Proaktive Benachrichtigungen
+NOTIFICATION_POLLER_ENABLED=false # MCP Notification Polling (opt-in)
+
 # Monitoring
 METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 ```
@@ -286,7 +296,7 @@ METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 make lint                    # Lint all code (ruff + eslint)
 make format-backend          # Format + auto-fix mit ruff
 make test                    # Alle Tests
-make test-backend            # Backend-Tests (1.700+)
+make test-backend            # Backend-Tests (2.100+)
 make test-frontend-react     # React-Tests (Vitest + RTL)
 make test-coverage           # Tests mit Coverage-Report (fail-under=50%)
 ```
@@ -412,11 +422,19 @@ curl -X POST "http://localhost:8000/admin/reembed"
 | [docs/FEATURES.md](docs/FEATURES.md) | Ausführliche Feature-Dokumentation |
 | [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) | Vollständige Konfigurationsreferenz |
 | [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) | Modell-Empfehlungen und Konfiguration |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment-Anleitung |
 | [docs/SECRETS_MANAGEMENT.md](docs/SECRETS_MANAGEMENT.md) | Docker Secrets für Produktion |
-| [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) | RPBAC-Zugriffskontrolle |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security Headers, CSP, Abhängigkeitssicherheit |
+| [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) | RPBAC-Zugriffskontrolle & MCP-Berechtigungen |
 | [docs/SPEAKER_RECOGNITION.md](docs/SPEAKER_RECOGNITION.md) | Sprechererkennung |
 | [docs/OUTPUT_ROUTING.md](docs/OUTPUT_ROUTING.md) | Audio-Output-Routing |
-| [docs/MULTILANGUAGE.md](docs/MULTILANGUAGE.md) | Mehrsprachigkeit |
+| [docs/PROACTIVE_NOTIFICATIONS.md](docs/PROACTIVE_NOTIFICATIONS.md) | Webhook-Benachrichtigungen & proaktive Alerts |
+| [docs/MULTILANGUAGE.md](docs/MULTILANGUAGE.md) | Mehrsprachigkeit (i18n) |
+| [docs/WAKEWORD_CONFIGURATION.md](docs/WAKEWORD_CONFIGURATION.md) | Wake-Word-Erkennung konfigurieren |
+| [docs/EXTERNAL_OLLAMA.md](docs/EXTERNAL_OLLAMA.md) | Externe Ollama-Instanzen |
+| [docs/SATELLITE_MONITORING.md](docs/SATELLITE_MONITORING.md) | Satellite-Monitoring |
+| [docs/SATELLITE_OTA_UPDATES.md](docs/SATELLITE_OTA_UPDATES.md) | Satellite Over-the-Air-Updates |
+| [docs/AUDIO_CAPTURE_4MIC.md](docs/AUDIO_CAPTURE_4MIC.md) | ReSpeaker 4-Mic-Array-Unterstützung |
 | [CLAUDE.md](CLAUDE.md) | Entwickler-Referenz (Architektur, Patterns, Commands) |
 
 ## Danksagungen

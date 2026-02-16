@@ -11,7 +11,7 @@
 [![React 18](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev)
 [![Ollama](https://img.shields.io/badge/Ollama-Local_LLM-000000)](https://ollama.ai)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-1700+-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-2100+-brightgreen)](tests/)
 
 </div>
 
@@ -60,10 +60,13 @@
 ### Core
 - **Chat interface** with streaming responses, conversation history, follow-up questions
 - **ReAct Agent System** with specialized roles and multi-step tool chaining
+- **Knowledge Graph** — entity-relation triples extracted from conversations and documents, semantic entity resolution via pgvector
 - **Conversational memory** — long-term recall of preferences, facts, and instructions with contradiction detection
-- **Intent feedback learning** — learns from corrections via semantic matching
+- **Intent feedback learning** — learns from corrections via semantic matching (3-scope: intent, tool, complexity)
 - **Voice I/O** — Whisper STT + Piper TTS + SpeechBrain speaker recognition
 - **Presence detection** — BLE scanning, voice recognition, and web auth track who's in which room
+- **Proactive notifications** — webhook-based alerts from Home Assistant/n8n + generic MCP notification polling
+- **Hook/Plugin system** — async extension API for custom integrations without modifying core
 
 ### Integrations (9 MCP Servers)
 
@@ -83,6 +86,7 @@
 - **Hybrid search** — dense embeddings (pgvector) + BM25 full-text, combined via RRF
 - **Formats** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT
 - **Knowledge bases** — thematic collections with sharing and access control
+- **Knowledge Graph** — entity-relation triples extracted from documents and conversations, semantic entity resolution, admin dashboard
 
 ### Multi-Room Voice Satellites
 
@@ -165,6 +169,8 @@ MEMORY_ENABLED=false              # long-term memory (opt-in)
 AUTH_ENABLED=false                 # RPBAC auth (opt-in)
 MCP_ENABLED=true                  # master switch for integrations
 PRESENCE_ENABLED=false            # room presence detection (opt-in)
+KNOWLEDGE_GRAPH_ENABLED=false     # entity-relation extraction (opt-in)
+NOTIFICATION_POLLER_ENABLED=false # proactive MCP notifications (opt-in)
 METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 ```
 
@@ -173,7 +179,7 @@ METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 ```bash
 make lint                    # lint all code (ruff + eslint)
 make test                    # all tests
-make test-backend            # backend tests (1,700+)
+make test-backend            # backend tests (2,100+)
 make test-frontend-react     # React tests (Vitest + RTL)
 make test-coverage           # tests with coverage report
 ```
@@ -197,10 +203,19 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 | [docs/FEATURES.md](docs/FEATURES.md) | Detailed feature documentation |
 | [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) | Full configuration reference |
 | [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) | Model recommendations |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide |
 | [docs/SECRETS_MANAGEMENT.md](docs/SECRETS_MANAGEMENT.md) | Docker secrets for production |
-| [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) | Role-based access control |
+| [docs/SECURITY.md](docs/SECURITY.md) | Security headers, CSP, dependency security |
+| [docs/ACCESS_CONTROL.md](docs/ACCESS_CONTROL.md) | Role-based access control & MCP permissions |
 | [docs/SPEAKER_RECOGNITION.md](docs/SPEAKER_RECOGNITION.md) | Speaker recognition |
 | [docs/OUTPUT_ROUTING.md](docs/OUTPUT_ROUTING.md) | Audio output routing |
+| [docs/PROACTIVE_NOTIFICATIONS.md](docs/PROACTIVE_NOTIFICATIONS.md) | Webhook notifications & proactive alerts |
+| [docs/MULTILANGUAGE.md](docs/MULTILANGUAGE.md) | Internationalization (i18n) |
+| [docs/WAKEWORD_CONFIGURATION.md](docs/WAKEWORD_CONFIGURATION.md) | Wake word detection setup |
+| [docs/EXTERNAL_OLLAMA.md](docs/EXTERNAL_OLLAMA.md) | External Ollama instances |
+| [docs/SATELLITE_MONITORING.md](docs/SATELLITE_MONITORING.md) | Satellite monitoring |
+| [docs/SATELLITE_OTA_UPDATES.md](docs/SATELLITE_OTA_UPDATES.md) | Satellite over-the-air updates |
+| [docs/AUDIO_CAPTURE_4MIC.md](docs/AUDIO_CAPTURE_4MIC.md) | ReSpeaker 4-Mic array support |
 | [CLAUDE.md](CLAUDE.md) | Developer reference (architecture, patterns) |
 
 ## Disclaimer
