@@ -365,7 +365,12 @@
     "reindexFailed": "Fehler beim Re-Indexieren des Dokuments",
     "pages": "Seiten",
     "size": "Größe",
-    "errorLabel": "Fehler"
+    "errorLabel": "Fehler",
+    "moveDocument": "Verschieben",
+    "moveDocuments": "Verschieben ({{count}})",
+    "selectTargetKb": "Ziel-Knowledge-Base wählen",
+    "documentsMovedSuccess": "{{count}} Dokument(e) verschoben",
+    "alreadyInTargetKb": "Alle Dokumente sind bereits in der Ziel-KB"
   },
   "memory": {
     "title": "Erinnerungen",

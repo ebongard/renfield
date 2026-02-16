@@ -767,6 +767,54 @@ class RAGService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def move_documents(
+        self,
+        document_ids: list[int],
+        target_kb_id: int
+    ) -> int:
+        """
+        Verschiebt Dokumente in eine andere Knowledge Base.
+
+        Args:
+            document_ids: Liste der Dokument-IDs
+            target_kb_id: Ziel-Knowledge-Base-ID
+
+        Returns:
+            Anzahl tatsächlich verschobener Dokumente
+
+        Raises:
+            ValueError: wenn Ziel-KB nicht existiert oder inaktiv ist
+        """
+        # Validiere Ziel-KB
+        target_kb = await self.get_knowledge_base(target_kb_id)
+        if not target_kb:
+            raise ValueError(f"Knowledge Base {target_kb_id} nicht gefunden")
+        if not target_kb.is_active:
+            raise ValueError(f"Knowledge Base '{target_kb.name}' ist nicht aktiv")
+
+        # Lade alle Dokumente
+        stmt = select(Document).where(Document.id.in_(document_ids))
+        result = await self.db.execute(stmt)
+        docs = list(result.scalars().all())
+
+        if not docs:
+            raise ValueError("Keine der angegebenen Dokumente gefunden")
+
+        # Verschiebe nur Dokumente die nicht bereits in der Ziel-KB sind
+        moved = 0
+        for doc in docs:
+            if doc.knowledge_base_id != target_kb_id:
+                doc.knowledge_base_id = target_kb_id
+                moved += 1
+
+        if moved > 0:
+            await self.db.commit()
+            logger.info(
+                f"📦 {moved} Dokument(e) nach KB '{target_kb.name}' (ID={target_kb_id}) verschoben"
+            )
+
+        return moved
+
     async def delete_knowledge_base(self, kb_id: int) -> bool:
         """Löscht eine Knowledge Base mit allen Dokumenten"""
         kb = await self.get_knowledge_base(kb_id)
