@@ -712,7 +712,7 @@ export default function KnowledgeGraphPage() {
 
       {/* Edit Modal */}
       {showEditModal && (
-        <Modal onClose={() => setShowEditModal(false)} title={t('common.edit')}>
+        <Modal isOpen={showEditModal} onClose={() => setShowEditModal(false)} title={t('common.edit')}>
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
