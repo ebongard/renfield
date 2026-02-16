@@ -242,7 +242,9 @@
     "haAreasCount": "Home Assistant Areas ({{count}})",
     "haNotConnected": "No HA areas found. Is Home Assistant connected?",
     "deleteDevice": "Delete device?",
-    "deleteDeviceConfirm": "Do you really want to remove \"{{name}}\"?"
+    "deleteDeviceConfirm": "Do you really want to remove \"{{name}}\"?",
+    "removeOutputDevice": "Remove output device",
+    "removeOutputDeviceConfirm": "Really remove this output device?"
   },
   "speakers": {
     "title": "Speaker Recognition",

@@ -19,9 +19,11 @@ import {
   AlertCircle
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { useConfirmDialog } from '../components/ConfirmDialog';
 
 export default function KnowledgePage() {
   const { t } = useTranslation();
+  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
   // State
   const [documents, setDocuments] = useState([]);
   const [knowledgeBases, setKnowledgeBases] = useState([]);
@@ -123,7 +125,12 @@ export default function KnowledgePage() {
 
   // Delete document
   const handleDeleteDocument = async (id, filename) => {
-    if (!confirm(t('knowledge.deleteDocument', { filename }))) return;
+    const confirmed = await confirm({
+      title: t('common.delete'),
+      message: t('knowledge.deleteDocument', { filename }),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/knowledge/documents/${id}`);
@@ -188,7 +195,12 @@ export default function KnowledgePage() {
 
   // Delete Knowledge Base
   const handleDeleteKnowledgeBase = async (id, name) => {
-    if (!confirm(t('knowledge.deleteKnowledgeBaseConfirm', { name }))) return;
+    const confirmed = await confirm({
+      title: t('knowledge.deleteKnowledgeBase'),
+      message: t('knowledge.deleteKnowledgeBaseConfirm', { name }),
+      variant: 'danger',
+    });
+    if (!confirmed) return;
 
     try {
       await apiClient.delete(`/api/knowledge/bases/${id}`);
@@ -562,6 +574,8 @@ export default function KnowledgePage() {
           ))
         )}
       </div>
+
+      {ConfirmDialogComponent}
 
       {/* New Knowledge Base Modal */}
       {showNewKbModal && (
