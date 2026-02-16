@@ -277,6 +277,28 @@ Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satell
 
 **Documentation:** See `src/backend/CONVERSATION_API.md` for API endpoints and usage.
 
+### Knowledge Graph
+
+Entity-Relation triples extracted from conversations via LLM, stored with pgvector embeddings for semantic entity resolution. Opt-in via `KNOWLEDGE_GRAPH_ENABLED=true`.
+
+- **Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
+- **Entity Resolution:** Exact name match → embedding cosine similarity (threshold 0.92) → create new
+- **Context Injection:** `retrieve_context` hook embeds query, finds similar entities via pgvector, fetches their relations, formats as triples
+- **Entity Types:** `person`, `place`, `organization`, `thing`, `event`, `concept`
+- **Frontend:** Admin dashboard at `/admin/knowledge-graph` with Entities, Relations, Stats tabs
+
+**Key files:** `services/knowledge_graph_service.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`
+
+**Configuration:**
+```bash
+KNOWLEDGE_GRAPH_ENABLED=false     # Master switch (default: off)
+KG_EXTRACTION_MODEL=              # Empty = use default model
+KG_SIMILARITY_THRESHOLD=0.92     # Entity dedup threshold
+KG_RETRIEVAL_THRESHOLD=0.70      # Context retrieval threshold
+KG_MAX_ENTITIES_PER_USER=5000    # Per-user entity limit
+KG_MAX_CONTEXT_TRIPLES=15        # Max triples injected into prompt
+```
+
 ### Speaker Recognition
 
 Automatic speaker identification using SpeechBrain ECAPA-TDNN. 192-dim voice embeddings stored in PostgreSQL, cosine similarity matching (threshold: 0.25). Auto-discovery of unknown speakers, continuous learning. **Documentation:** See `SPEAKER_RECOGNITION.md`.
@@ -417,6 +439,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
 - `PRESENCE_WEBHOOK_URL` — URL to POST presence events to (empty = disabled). Supports n8n webhook triggers (default: `""`)
 - `PRESENCE_WEBHOOK_SECRET` — Shared secret sent as X-Webhook-Secret header for webhook authentication (default: `""`)
+- `KNOWLEDGE_GRAPH_ENABLED` — Entity-relation triples extracted from conversations via LLM (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
 
