@@ -510,6 +510,18 @@ async def lifespan(app: "FastAPI"):
             for room in rooms:
                 presence_svc.set_room_name(room.id, room.name)
 
+    # Knowledge Graph hooks
+    if settings.knowledge_graph_enabled:
+        from services.knowledge_graph_service import (
+            kg_post_message_hook,
+            kg_retrieve_context_hook,
+        )
+        from utils.hooks import register_hook
+
+        register_hook("post_message", kg_post_message_hook)
+        register_hook("retrieve_context", kg_retrieve_context_hook)
+        logger.info("✅ Knowledge Graph hooks registered")
+
     # Plugin / Hook System
     await _load_plugin_module()
     from utils.hooks import run_hooks

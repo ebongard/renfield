@@ -144,6 +144,14 @@ class Settings(BaseSettings):
     memory_contradiction_threshold: float = Field(default=0.6, ge=0.3, le=0.89)  # Similarity range lower bound
     memory_contradiction_top_k: int = Field(default=5, ge=1, le=10)         # Max similar memories to compare
 
+    # Knowledge Graph (Entity-Relation triples from conversations)
+    knowledge_graph_enabled: bool = False                                        # Opt-in
+    kg_extraction_model: str = ""                                                # Empty = use default model
+    kg_similarity_threshold: float = Field(default=0.92, ge=0.5, le=1.0)        # Entity dedup threshold
+    kg_retrieval_threshold: float = Field(default=0.70, ge=0.0, le=1.0)         # Context retrieval threshold
+    kg_max_entities_per_user: int = Field(default=5000, ge=10, le=50000)         # Max active entities per user
+    kg_max_context_triples: int = Field(default=15, ge=1, le=50)                 # Max triples injected into prompt
+
     # Document Upload
     upload_dir: str = "/app/data/uploads"
     max_file_size_mb: int = Field(default=50, ge=1, le=500)

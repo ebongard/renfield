@@ -39,6 +39,7 @@ from api.routes import (
     voice,
 )
 from api.routes import homeassistant as ha_routes
+from api.routes import knowledge_graph as kg_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
 from api.websocket import chat_router, device_router, satellite_router
@@ -150,6 +151,7 @@ app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(presence.router, tags=["Presence"])
+app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
@@ -406,6 +408,7 @@ async def reembed_all(
         ConversationMemory,
         DocumentChunk,
         IntentCorrection,
+        KGEntity,
         Notification,
         NotificationSuppression,
     )
@@ -420,6 +423,7 @@ async def reembed_all(
         (IntentCorrection, lambda r: r.message_text, "intent_corrections"),
         (Notification, lambda r: f"{r.title} {r.message}", "notifications"),
         (NotificationSuppression, lambda r: r.event_pattern, "notification_suppressions"),
+        (KGEntity, lambda r: r.name, "kg_entities"),
     ]
 
     client = get_default_client()
