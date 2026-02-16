@@ -938,6 +938,66 @@ MEMORY_CHANGED_BY_USER = "user"
 MEMORY_CHANGED_BY_RESOLUTION = "contradiction_resolution"
 
 
+# ==========================================================================
+# Knowledge Graph (Entity-Relation Triples)
+# ==========================================================================
+
+# Entity Type Constants
+KG_ENTITY_TYPES = ["person", "place", "organization", "thing", "event", "concept"]
+
+
+class KGEntity(Base):
+    """Named entity extracted from conversations for the Knowledge Graph."""
+    __tablename__ = "kg_entities"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    name = Column(String(255), nullable=False)
+    entity_type = Column(String(50), nullable=False)  # person, place, organization, thing, event, concept
+    description = Column(Text, nullable=True)
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True
+    )
+    mention_count = Column(Integer, default=1)
+    first_seen_at = Column(DateTime, default=_utcnow)
+    last_seen_at = Column(DateTime, default=_utcnow)
+    is_active = Column(Boolean, default=True, index=True)
+
+    __table_args__ = (
+        Index('ix_kg_entities_user_active', 'user_id', 'is_active'),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    subject_relations = relationship(
+        "KGRelation", foreign_keys="KGRelation.subject_id",
+        back_populates="subject", cascade="all, delete-orphan"
+    )
+    object_relations = relationship(
+        "KGRelation", foreign_keys="KGRelation.object_id",
+        back_populates="object", cascade="all, delete-orphan"
+    )
+
+
+class KGRelation(Base):
+    """Directed relation between two entities in the Knowledge Graph."""
+    __tablename__ = "kg_relations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    subject_id = Column(Integer, ForeignKey("kg_entities.id"), nullable=False, index=True)
+    predicate = Column(String(100), nullable=False)
+    object_id = Column(Integer, ForeignKey("kg_entities.id"), nullable=False, index=True)
+    confidence = Column(Float, default=0.8)
+    source_session_id = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    is_active = Column(Boolean, default=True, index=True)
+
+    subject = relationship("KGEntity", foreign_keys=[subject_id], back_populates="subject_relations")
+    object = relationship("KGEntity", foreign_keys=[object_id], back_populates="object_relations")
+    user = relationship("User", foreign_keys=[user_id])
+
+
 class MemoryHistory(Base):
     """Audit trail for memory modifications (create/update/delete)."""
     __tablename__ = "memory_history"

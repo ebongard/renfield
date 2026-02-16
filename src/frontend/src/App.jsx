@@ -26,6 +26,7 @@ const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SatellitesPage = lazy(() => import('./pages/SatellitesPage'));
 const IntentsPage = lazy(() => import('./pages/IntentsPage'));
 const PresencePage = lazy(() => import('./pages/PresencePage'));
+const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
 
 function App() {
   return (
@@ -108,6 +109,11 @@ function App() {
                   <Route path="/admin/presence" element={
                     <AdminRoute>
                       <PresencePage />
+                    </AdminRoute>
+                  } />
+                  <Route path="/admin/knowledge-graph" element={
+                    <AdminRoute>
+                      <KnowledgeGraphPage />
                     </AdminRoute>
                   } />
                 </Routes>
