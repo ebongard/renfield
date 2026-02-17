@@ -4,6 +4,7 @@ Datenbank Models
 from datetime import UTC, datetime
 
 from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 
@@ -470,8 +471,8 @@ class DocumentChunk(Base):
     section_title = Column(String(512), nullable=True)
     chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, etc.
 
-    # Full-text search vector (populated during ingestion, actual type TSVECTOR via migration)
-    search_vector = Column(Text, nullable=True)
+    # Full-text search vector (populated during ingestion via to_tsvector())
+    search_vector = Column(TSVECTOR, nullable=True)
 
     # Additional Metadata (JSON für Flexibilität)
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)

@@ -146,6 +146,16 @@ class DocumentProcessor:
             logger.error(f"Konvertierungsfehler: {e}")
             return None
 
+    @staticmethod
+    def _strip_upload_hash(name: str) -> str:
+        """Remove the 32-char hex upload hash prefix added by the upload handler.
+
+        Uploaded files are stored as ``<sha256[:32]>_<original_name>``.
+        This strips that prefix so titles and filenames are human-readable.
+        """
+        import re
+        return re.sub(r'^[a-f0-9]{32}_', '', name)
+
     def _extract_metadata(self, doc, file_path: str) -> dict[str, Any]:
         """Extrahiert Dokument-Metadaten"""
         path = Path(file_path)
@@ -161,9 +171,9 @@ class DocumentProcessor:
         # Docling-Metadaten
         try:
             if hasattr(doc, 'name') and doc.name:
-                metadata["title"] = doc.name
+                metadata["title"] = self._strip_upload_hash(doc.name)
             else:
-                metadata["title"] = path.stem
+                metadata["title"] = self._strip_upload_hash(path.stem)
 
             if hasattr(doc, 'origin') and doc.origin:
                 if hasattr(doc.origin, 'author'):
