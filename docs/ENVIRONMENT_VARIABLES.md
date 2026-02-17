@@ -777,8 +777,8 @@ KNOWLEDGE_GRAPH_ENABLED=false
 # Modell für KG-Extraktion (leer = Standard-Modell verwenden)
 KG_EXTRACTION_MODEL=
 
-# Schwellenwert für Entity-Deduplizierung (Embedding-Ähnlichkeit)
-KG_SIMILARITY_THRESHOLD=0.92
+# Schwellenwert für Entity-Deduplizierung (Embedding-Ähnlichkeit, 0.85 mergt OCR-Varianten)
+KG_SIMILARITY_THRESHOLD=0.85
 
 # Schwellenwert für Kontext-Retrieval (Embedding-Ähnlichkeit)
 KG_RETRIEVAL_THRESHOLD=0.70
