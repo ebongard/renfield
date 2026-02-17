@@ -20,6 +20,58 @@ from models.database import KG_ENTITY_TYPES, KG_SCOPE_PERSONAL, KGEntity, KGRela
 from utils.config import settings
 from utils.llm_client import get_default_client
 
+# =============================================================================
+# Compiled regex patterns for entity validation (module-level for performance)
+# =============================================================================
+
+# Spaced-out characters: "F R E S E N", "0 8 . 0 6 . 2 0 2 2"
+_RE_SPACED_CHARS = re.compile(r'^(?:\S\s){2,}\S$')
+
+# URLs: www., http, .de/, .com, etc.
+_RE_URL = re.compile(r'(?:https?://|www\.|\.(?:de|com|org|net|io|eu|at|ch)/)', re.IGNORECASE)
+
+# Email addresses
+_RE_EMAIL = re.compile(r'\S+@\S+\.\S+')
+
+# Date patterns: 08.06.2022, 2022-06-08, 06/2022, etc.
+_RE_DATE = re.compile(
+    r'^(?:\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}|\d{4}[./\-]\d{1,2}[./\-]\d{1,2}|\d{1,2}/\d{4})$'
+)
+
+# Phone patterns: +49 30 123456, 030/123456, (030) 123456
+_RE_PHONE = re.compile(r'^\+?\d[\d\s/().\-]{6,}$')
+
+# IBAN-like: DE + mostly digits
+_RE_IBAN = re.compile(r'^[A-Z]{2}\d{2}[\s]?[\d\s]{10,}$')
+
+# Pure reference codes: uppercase + digits, no spaces, 5+ chars (e.g. Y25588501619C, DE811127597)
+_RE_REFCODE = re.compile(r'^[A-Z0-9]{5,}$')
+
+# Numbered roles: "Bediener 2", "Sachbearbeiter 3"
+_RE_NUMBERED_ROLE = re.compile(r'^.+\s+\d+$')
+
+# Generic roles blocklist (German legal/business roles) — person type only
+_GENERIC_ROLES = frozenset({
+    "kunde", "kundin", "kunden", "auftraggeber", "auftraggeberin",
+    "vermittler", "vermittlerin", "sachbearbeiter", "sachbearbeiterin",
+    "berater", "beraterin", "betreuer", "betreuerin",
+    "bediener", "bedienerin", "mitarbeiter", "mitarbeiterin",
+    "geschäftsführer", "geschäftsführerin", "geschaeftsfuehrer",
+    "vorstand", "vorsitzender", "vorsitzende",
+    "vollziehungsbeamter", "vollziehungsbeamtin", "gerichtsvollzieher",
+    "notar", "notarin", "richter", "richterin",
+    "rechtsanwalt", "rechtsanwältin", "rechtsanwaeltin", "anwalt", "anwältin",
+    "steuerberater", "steuerberaterin", "wirtschaftsprüfer",
+    "bürgermeister", "bürgermeisterin", "der bürgermeister",
+    "empfänger", "empfaenger", "absender", "antragsteller", "antragstellerin",
+    "kläger", "klägerin", "klaeger", "beklagter", "beklagte",
+    "schuldner", "schuldnerin", "gläubiger", "gläubigerin", "glaeubiger",
+    "vermieter", "vermieterin", "mieter", "mieterin",
+    "versicherungsnehmer", "versicherungsnehmerin", "versicherte", "versicherter",
+    "patient", "patientin", "arzt", "ärztin",
+    "unterzeichner", "unterzeichnerin", "bevollmächtigter", "bevollmächtigte",
+})
+
 
 class KnowledgeGraphService:
     """Manages knowledge graph entities and relations with pgvector."""
@@ -41,6 +93,79 @@ class KnowledgeGraphService:
             prompt=text_input,
         )
         return response.embedding
+
+    # =========================================================================
+    # Entity Validation (post-extraction filter)
+    # =========================================================================
+
+    @staticmethod
+    def _is_valid_entity(name: str, entity_type: str) -> bool:
+        """
+        Fast regex-based validation to reject garbage entities from LLM extraction.
+
+        Catches OCR artifacts, URLs, emails, IDs, reference codes, dates,
+        phone numbers, IBANs, and generic roles (for person type).
+        Called BEFORE resolve_entity() to avoid polluting the graph.
+        """
+        if not name:
+            return False
+
+        stripped = name.strip()
+
+        # Length bounds
+        if len(stripped) < 2 or len(stripped) > 120:
+            return False
+
+        # Spaced-out characters (OCR artifact): "F R E S E N"
+        if _RE_SPACED_CHARS.match(stripped):
+            return False
+
+        # URLs
+        if _RE_URL.search(stripped):
+            return False
+
+        # Email addresses
+        if _RE_EMAIL.search(stripped):
+            return False
+
+        # Pure digits/symbols (no alpha chars at all)
+        if not any(c.isalpha() for c in stripped):
+            return False
+
+        # Digit ratio > 50% (catches IDs, reference codes like DE811127597)
+        alpha_count = sum(1 for c in stripped if c.isalpha())
+        digit_count = sum(1 for c in stripped if c.isdigit())
+        if digit_count > 0 and digit_count / (alpha_count + digit_count) > 0.5:
+            return False
+
+        # Date patterns
+        if _RE_DATE.match(stripped):
+            return False
+
+        # Phone patterns
+        if _RE_PHONE.match(stripped):
+            return False
+
+        # IBAN-like
+        if _RE_IBAN.match(stripped):
+            return False
+
+        # Pure reference codes (uppercase + digits, no spaces, 5+ chars)
+        if _RE_REFCODE.match(stripped):
+            return False
+
+        # Person-specific: generic roles and numbered roles
+        if entity_type == "person":
+            name_lower = stripped.lower()
+            if name_lower in _GENERIC_ROLES:
+                return False
+            if _RE_NUMBERED_ROLE.match(stripped):
+                # Check if the text before the number is a generic role
+                base = stripped.rsplit(None, 1)[0].lower() if " " in stripped else ""
+                if base in _GENERIC_ROLES:
+                    return False
+
+        return True
 
     # =========================================================================
     # Entity Resolution
@@ -338,9 +463,10 @@ class KnowledgeGraphService:
         entities_data = extracted.get("entities", [])
         relations_data = extracted.get("relations", [])
 
-        # Resolve entities
+        # Resolve entities (with validation filter)
         entity_map: dict[str, KGEntity] = {}  # name -> entity
         saved_entities = []
+        rejected_count = 0
         for ent in entities_data:
             name = ent.get("name", "").strip()
             etype = ent.get("type", "thing").strip().lower()
@@ -348,9 +474,17 @@ class KnowledgeGraphService:
             if not name:
                 continue
 
+            if not self._is_valid_entity(name, etype):
+                logger.debug(f"KG: Rejected invalid entity: '{name}' ({etype})")
+                rejected_count += 1
+                continue
+
             entity = await self.resolve_entity(name, etype, user_id, user_role, desc)
             entity_map[name.lower()] = entity
             saved_entities.append(entity)
+
+        if rejected_count:
+            logger.info(f"KG: Filtered out {rejected_count} invalid entities from conversation")
 
         # Save relations
         saved_relations = []
@@ -449,9 +583,10 @@ class KnowledgeGraphService:
         entities_data = extracted.get("entities", [])
         relations_data = extracted.get("relations", [])
 
-        # Resolve entities
+        # Resolve entities (with validation filter)
         entity_map: dict[str, KGEntity] = {}
         saved_entities = []
+        rejected_count = 0
         for ent in entities_data:
             name = ent.get("name", "").strip()
             etype = ent.get("type", "thing").strip().lower()
@@ -459,9 +594,17 @@ class KnowledgeGraphService:
             if not name:
                 continue
 
+            if not self._is_valid_entity(name, etype):
+                logger.debug(f"KG: Rejected invalid entity: '{name}' ({etype})")
+                rejected_count += 1
+                continue
+
             entity = await self.resolve_entity(name, etype, user_id, user_role, desc)
             entity_map[name.lower()] = entity
             saved_entities.append(entity)
+
+        if rejected_count:
+            logger.info(f"KG: Filtered out {rejected_count} invalid entities from document")
 
         # Save relations
         saved_relations = []
