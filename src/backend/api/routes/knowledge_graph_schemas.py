@@ -91,3 +91,47 @@ class KGStatsResponse(BaseModel):
     entity_count: int = 0
     relation_count: int = 0
     entity_types: dict[str, int] = Field(default_factory=dict)
+
+
+# =============================================================================
+# Cleanup Schemas
+# =============================================================================
+
+class InvalidEntitySample(BaseModel):
+    id: int
+    name: str
+    entity_type: str
+
+
+class CleanupInvalidResponse(BaseModel):
+    dry_run: bool
+    total_scanned: int
+    invalid_count: int
+    orphaned_relations: int
+    samples: list[InvalidEntitySample] = Field(default_factory=list)
+
+
+class DuplicateEntityInfo(BaseModel):
+    id: int
+    name: str
+    mention_count: int
+    entity_type: str
+
+
+class DuplicateCluster(BaseModel):
+    canonical: DuplicateEntityInfo
+    duplicates: list[DuplicateEntityInfo]
+    cluster_size: int
+    entity_type: str
+
+
+class DuplicateClustersResponse(BaseModel):
+    clusters: list[DuplicateCluster]
+    total_clusters: int
+
+
+class MergeDuplicatesResponse(BaseModel):
+    dry_run: bool
+    clusters_found: int
+    entities_merged: int
+    clusters: list[dict] = Field(default_factory=list)

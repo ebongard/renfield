@@ -7,12 +7,16 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.knowledge_graph_schemas import (
+    CleanupInvalidResponse,
+    DuplicateCluster,
+    DuplicateClustersResponse,
     EntityBrief,
     EntityListResponse,
     EntityResponse,
     EntityScopeUpdate,
     EntityUpdate,
     KGStatsResponse,
+    MergeDuplicatesResponse,
     MergeEntitiesRequest,
     RelationCreate,
     RelationListResponse,
@@ -361,4 +365,83 @@ async def get_stats(
         return KGStatsResponse(**stats)
     except Exception as e:
         logger.error(f"KG stats error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =============================================================================
+# Cleanup Endpoints (admin only)
+# =============================================================================
+
+@router.post("/cleanup/invalid", response_model=CleanupInvalidResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def cleanup_invalid_entities(
+    request: Request,
+    dry_run: bool = Query(True, description="Preview mode — no deletions"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Scan and soft-delete entities failing validation rules. dry_run=true by default."""
+    try:
+        from services.kg_cleanup_service import KGCleanupService
+
+        svc = KGCleanupService(db)
+        result = await svc.cleanup_invalid_entities(dry_run=dry_run)
+        return CleanupInvalidResponse(**result)
+    except Exception as e:
+        logger.error(f"KG cleanup invalid error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/cleanup/duplicates", response_model=DuplicateClustersResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def find_duplicate_clusters(
+    request: Request,
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    threshold: float | None = Query(None, ge=0.5, le=1.0, description="Similarity threshold"),
+    limit: int = Query(50, ge=1, le=200, description="Max clusters to return"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Find clusters of likely-duplicate entities via embedding similarity."""
+    try:
+        from services.kg_cleanup_service import KGCleanupService
+
+        svc = KGCleanupService(db)
+        clusters = await svc.find_duplicate_clusters(
+            entity_type=entity_type,
+            threshold=threshold,
+            limit=limit,
+        )
+        return DuplicateClustersResponse(
+            clusters=[DuplicateCluster(**c) for c in clusters],
+            total_clusters=len(clusters),
+        )
+    except Exception as e:
+        logger.error(f"KG find duplicates error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/cleanup/merge-duplicates", response_model=MergeDuplicatesResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def merge_duplicate_clusters(
+    request: Request,
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    threshold: float | None = Query(None, ge=0.5, le=1.0, description="Similarity threshold"),
+    dry_run: bool = Query(True, description="Preview mode — no merges"),
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Auto-merge duplicate entity clusters. dry_run=true by default."""
+    try:
+        from services.kg_cleanup_service import KGCleanupService
+
+        svc = KGCleanupService(db)
+        result = await svc.merge_duplicate_clusters(
+            entity_type=entity_type,
+            threshold=threshold,
+            dry_run=dry_run,
+        )
+        return MergeDuplicatesResponse(**result)
+    except Exception as e:
+        logger.error(f"KG merge duplicates error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
