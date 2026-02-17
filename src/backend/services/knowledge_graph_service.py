@@ -50,6 +50,36 @@ _RE_REFCODE = re.compile(r'^[A-Z0-9]{5,}$')
 # Numbered roles: "Bediener 2", "Sachbearbeiter 3"
 _RE_NUMBERED_ROLE = re.compile(r'^.+\s+\d+$')
 
+# German month dates: "März 2013", "01. Januar 2019", "Dezember"
+_RE_GERMAN_MONTH = re.compile(
+    r'^(\d{1,2}\.?\s*)?'
+    r'(januar|februar|m[aä]rz|april|mai|juni|juli|august|september|oktober|november|dezember)'
+    r'(\s+\d{2,4})?$',
+    re.IGNORECASE,
+)
+
+# Currency symbols or codes: "100 EUR", "0,04 € /Minute"
+_RE_CURRENCY = re.compile(r'\b(EUR|USD|CHF|GBP)\b|[€$£]')
+
+# Field separators (asterisk/pipe/backslash delimited codes): "DUEL*MS*OS*BUEN/HA*BI"
+_RE_FIELD_SEPARATOR = re.compile(r'[*|\\]')
+
+# Nr. labels: "Vertragsnr. J269385", "Kunden Nr 12345"
+_RE_NR_LABEL = re.compile(r'nr\.?\s', re.IGNORECASE)
+
+# German field label suffixes — generic document field names (non-person only)
+_FIELD_LABEL_SUFFIXES = (
+    "nummer", "nummern",
+    "bedingungen", "bestimmungen",
+    "unterlagen", "dokumente", "nachweise",
+    "angaben", "hinweise",
+    "gebühren", "gebuehren", "entgelte",
+    "zeitraum", "fristen",
+    "bescheid", "bescheinigung",
+    "erklärung", "erklaerung",
+    "anschrift",
+)
+
 # Generic roles blocklist (German legal/business roles) — person type only
 _GENERIC_ROLES = frozenset({
     "kunde", "kundin", "kunden", "auftraggeber", "auftraggeberin",
@@ -154,6 +184,22 @@ class KnowledgeGraphService:
         if _RE_REFCODE.match(stripped):
             return False
 
+        # German month dates: "März 2013", "01. Januar 2019", "Dezember"
+        if _RE_GERMAN_MONTH.match(stripped):
+            return False
+
+        # Currency symbols or codes
+        if _RE_CURRENCY.search(stripped):
+            return False
+
+        # Field separator codes (asterisk/pipe/backslash)
+        if _RE_FIELD_SEPARATOR.search(stripped):
+            return False
+
+        # Nr. labels: "Vertragsnr. J269385"
+        if _RE_NR_LABEL.search(stripped):
+            return False
+
         # Person-specific: generic roles and numbered roles
         if entity_type == "person":
             name_lower = stripped.lower()
@@ -164,6 +210,11 @@ class KnowledgeGraphService:
                 base = stripped.rsplit(None, 1)[0].lower() if " " in stripped else ""
                 if base in _GENERIC_ROLES:
                     return False
+        else:
+            # Non-person: reject German field label suffixes
+            name_lower = stripped.lower()
+            if any(name_lower.endswith(suffix) for suffix in _FIELD_LABEL_SUFFIXES):
+                return False
 
         return True
 

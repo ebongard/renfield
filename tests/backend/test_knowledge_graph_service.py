@@ -981,6 +981,89 @@ class TestEntityValidation:
         """Numbered names that aren't generic roles pass."""
         assert KnowledgeGraphService._is_valid_entity("Terminal 2", "place")
 
+    # --- Rejected: German month dates ---
+
+    @pytest.mark.unit
+    def test_reject_german_month_date(self):
+        assert not KnowledgeGraphService._is_valid_entity("März 2013", "event")
+
+    @pytest.mark.unit
+    def test_reject_month_with_day(self):
+        assert not KnowledgeGraphService._is_valid_entity("01. Januar 2019", "event")
+
+    @pytest.mark.unit
+    def test_reject_month_alone(self):
+        assert not KnowledgeGraphService._is_valid_entity("Dezember", "event")
+
+    @pytest.mark.unit
+    def test_month_in_proper_name_allowed(self):
+        """Proper names containing month substrings pass."""
+        assert KnowledgeGraphService._is_valid_entity("Oktoberfest", "event")
+
+    # --- Rejected: currency ---
+
+    @pytest.mark.unit
+    def test_reject_currency_eur(self):
+        assert not KnowledgeGraphService._is_valid_entity("100 EUR", "thing")
+
+    @pytest.mark.unit
+    def test_reject_currency_euro_symbol(self):
+        assert not KnowledgeGraphService._is_valid_entity("0,04 € /Minute", "thing")
+
+    @pytest.mark.unit
+    def test_valid_org_euro_substring(self):
+        """Org names containing 'Euro' as substring pass (no currency code match)."""
+        assert KnowledgeGraphService._is_valid_entity("Eurotunnel", "organization")
+
+    # --- Rejected: field separators ---
+
+    @pytest.mark.unit
+    def test_reject_asterisk_separators(self):
+        assert not KnowledgeGraphService._is_valid_entity("DUEL*MS*OS*BUEN/HA*BI", "thing")
+
+    @pytest.mark.unit
+    def test_reject_pipe_separator(self):
+        assert not KnowledgeGraphService._is_valid_entity("Abteilung|Finanzen", "organization")
+
+    # --- Rejected: Nr. labels ---
+
+    @pytest.mark.unit
+    def test_reject_vertragsnr(self):
+        assert not KnowledgeGraphService._is_valid_entity("Vertragsnr. J269385", "thing")
+
+    @pytest.mark.unit
+    def test_reject_kunden_nr(self):
+        assert not KnowledgeGraphService._is_valid_entity("Kunden Nr 12345", "thing")
+
+    # --- Rejected: field label suffixes (non-person only) ---
+
+    @pytest.mark.unit
+    def test_reject_field_label_suffix_zahlungsbedingungen(self):
+        assert not KnowledgeGraphService._is_valid_entity("Zahlungsbedingungen", "concept")
+
+    @pytest.mark.unit
+    def test_reject_field_label_suffix_vertragsnummer(self):
+        assert not KnowledgeGraphService._is_valid_entity("Vertragsnummer", "thing")
+
+    @pytest.mark.unit
+    def test_reject_field_label_suffix_mahngebuehren(self):
+        assert not KnowledgeGraphService._is_valid_entity("Mahngebühren", "thing")
+
+    @pytest.mark.unit
+    def test_field_label_allowed_for_person(self):
+        """Person type is exempt from field label suffix check."""
+        assert KnowledgeGraphService._is_valid_entity("Frau Anschrift", "person")
+
+    # --- Valid: named things pass ---
+
+    @pytest.mark.unit
+    def test_valid_named_thing_iphone(self):
+        assert KnowledgeGraphService._is_valid_entity("iPhone 15", "thing")
+
+    @pytest.mark.unit
+    def test_valid_named_thing_tesla(self):
+        assert KnowledgeGraphService._is_valid_entity("Tesla Model 3", "thing")
+
 
 class TestEntityValidationInExtraction:
     """Test that _is_valid_entity is called during extraction."""
