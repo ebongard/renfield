@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     ollama_embed_model: str = "nomic-embed-text" # Default for dev; recommended: qwen3-embedding:4b (768 dim)
     ollama_intent_model: str = "llama3.2:3b"    # Default for dev; recommended: qwen3:8b
     ollama_num_ctx: int = 32768                   # Context window für alle Ollama-Calls
+    ollama_connect_timeout: float = 10.0          # TCP connect timeout in seconds (fast-fail when host is down)
+    ollama_read_timeout: float = 300.0            # Read timeout for long LLM responses
+    ollama_fallback_url: str = ""                 # Fallback Ollama URL if primary is unreachable (e.g. http://host.docker.internal:11434)
 
     # Home Assistant
     home_assistant_url: str | None = None
