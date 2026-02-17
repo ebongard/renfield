@@ -137,6 +137,11 @@ class Settings(BaseSettings):
     rag_context_window: int = 1               # Adjacent chunks per direction (0=disabled)
     rag_context_window_max: int = 3           # Maximum allowed window size
 
+    # OCR Processing
+    rag_force_ocr: bool = False               # Always force full-page OCR (ignores embedded text)
+    rag_ocr_auto_detect: bool = True          # Auto-detect garbled embedded text and re-run with OCR
+    rag_ocr_space_threshold: float = 0.03    # Space ratio below this triggers auto OCR (default 3%)
+
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in
     memory_retrieval_limit: int = Field(default=3, ge=1, le=10)              # Max memories per query

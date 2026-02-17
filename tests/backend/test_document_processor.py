@@ -12,6 +12,8 @@ _missing_stubs = [
     "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
     "docling", "docling.document_converter", "docling.chunking",
+    "docling.datamodel", "docling.datamodel.pipeline_options",
+    "docling.datamodel.base_models",
 ]
 for _mod in _missing_stubs:
     if _mod not in sys.modules:
@@ -24,10 +26,15 @@ import pytest
 from services.document_processor import DocumentProcessor
 
 
-def _make_mock_settings(rag_chunk_size=512, rag_chunk_overlap=50):
+def _make_mock_settings(rag_chunk_size=512, rag_chunk_overlap=50,
+                         rag_force_ocr=False, rag_ocr_auto_detect=True,
+                         rag_ocr_space_threshold=0.03):
     s = MagicMock()
     s.rag_chunk_size = rag_chunk_size
     s.rag_chunk_overlap = rag_chunk_overlap
+    s.rag_force_ocr = rag_force_ocr
+    s.rag_ocr_auto_detect = rag_ocr_auto_detect
+    s.rag_ocr_space_threshold = rag_ocr_space_threshold
     return s
 
 
@@ -366,3 +373,140 @@ class TestProcessDocument:
 
         assert result["status"] == "failed"
         assert "Docling crash" in result["error"]
+
+
+# ============================================================================
+# OCR / Garbled Text Detection Tests
+# ============================================================================
+
+@pytest.mark.unit
+class TestIsTextGarbled:
+    """Tests for _is_text_garbled() static method."""
+
+    def test_normal_text_not_garbled(self):
+        """Normal text with ~20% spaces is not garbled."""
+        text = "Das ist ein normaler Text mit genug Leerzeichen zwischen den Wörtern."
+        assert DocumentProcessor._is_text_garbled(text) is False
+
+    def test_garbled_text_no_spaces(self):
+        """Text with almost no spaces (< 3%) is detected as garbled."""
+        # Simulates: "Umschau,Marktplatz13,65183Wiesbaden" style
+        garbled = "UmschauMarktplatz13WiesbadenKundennummer4020545AnsprechpartnerAngelaBockhop"
+        assert DocumentProcessor._is_text_garbled(garbled) is True
+
+    def test_short_text_not_garbled(self):
+        """Short text (< 50 chars) is never considered garbled."""
+        short = "Nospaces"
+        assert DocumentProcessor._is_text_garbled(short) is False
+
+    def test_empty_text_not_garbled(self):
+        """Empty string returns False."""
+        assert DocumentProcessor._is_text_garbled("") is False
+
+    def test_threshold_boundary(self):
+        """Text exactly at the 3% space threshold."""
+        with patch("services.document_processor.settings") as mock_settings:
+            mock_settings.rag_ocr_space_threshold = 0.03
+            # 2 spaces in 100 chars = 2% < 3%: garbled
+            text_2pct = "a" * 48 + " " + "b" * 49 + " " + "c" * 1
+            # Only 2 spaces in 100 chars → space_ratio = 2% < 3%
+            assert DocumentProcessor._is_text_garbled(text_2pct) is True
+
+            # 4 spaces in 100 chars = 4% > 3%: not garbled
+            text_4pct = "a" * 47 + " " + "b" * 47 + " " + "c" * 2 + " " + "d" * 1 + " "
+            assert DocumentProcessor._is_text_garbled(text_4pct) is False
+
+
+@pytest.mark.unit
+class TestForceOcrPath:
+    """Tests for the force_ocr parameter in process_document()."""
+
+    @pytest.mark.asyncio
+    async def test_force_ocr_uses_ocr_converter(self, tmp_path):
+        """force_ocr=True routes to _convert_document_ocr()."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_bytes(b"pdf content")
+
+        processor = DocumentProcessor()
+        processor._initialized = True
+        processor._ocr_converter = MagicMock()
+        processor._converter = MagicMock()
+        processor._chunker = MagicMock()
+
+        mock_result = MagicMock()
+        mock_result.document = MagicMock()
+        mock_result.document.export_to_text.return_value = "Test text content"
+        processor._convert_document_ocr = MagicMock(return_value=mock_result)
+        processor._convert_document = MagicMock(return_value=mock_result)
+        processor._create_chunks = MagicMock(return_value=[])
+        processor._extract_metadata = MagicMock(return_value={})
+
+        with patch("services.document_processor.settings") as mock_settings:
+            mock_settings.rag_force_ocr = False
+            mock_settings.rag_ocr_auto_detect = False
+            mock_settings.rag_ocr_space_threshold = 0.03
+
+            await processor.process_document(str(test_file), force_ocr=True)
+
+        processor._convert_document_ocr.assert_called_once_with(str(test_file))
+        processor._convert_document.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_ocr_uses_standard_converter(self, tmp_path):
+        """force_ocr=False and rag_force_ocr=False uses standard converter."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_bytes(b"pdf content")
+
+        processor = DocumentProcessor()
+        processor._initialized = True
+        processor._ocr_converter = MagicMock()
+        processor._converter = MagicMock()
+        processor._chunker = MagicMock()
+
+        mock_result = MagicMock()
+        mock_result.document = MagicMock()
+        mock_result.document.export_to_text.return_value = "Normal text with spaces here."
+        processor._convert_document_ocr = MagicMock(return_value=mock_result)
+        processor._convert_document = MagicMock(return_value=mock_result)
+        processor._create_chunks = MagicMock(return_value=[])
+        processor._extract_metadata = MagicMock(return_value={})
+
+        with patch("services.document_processor.settings") as mock_settings:
+            mock_settings.rag_force_ocr = False
+            mock_settings.rag_ocr_auto_detect = False
+            mock_settings.rag_ocr_space_threshold = 0.03
+
+            await processor.process_document(str(test_file), force_ocr=False)
+
+        processor._convert_document.assert_called_once_with(str(test_file))
+        processor._convert_document_ocr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_global_rag_force_ocr_setting(self, tmp_path):
+        """rag_force_ocr=True in config triggers OCR even without force_ocr param."""
+        test_file = tmp_path / "test.pdf"
+        test_file.write_bytes(b"pdf content")
+
+        processor = DocumentProcessor()
+        processor._initialized = True
+        processor._ocr_converter = MagicMock()
+        processor._converter = MagicMock()
+        processor._chunker = MagicMock()
+
+        mock_result = MagicMock()
+        mock_result.document = MagicMock()
+        processor._convert_document_ocr = MagicMock(return_value=mock_result)
+        processor._convert_document = MagicMock(return_value=mock_result)
+        processor._create_chunks = MagicMock(return_value=[])
+        processor._extract_metadata = MagicMock(return_value={})
+
+        with patch("services.document_processor.settings") as mock_settings:
+            mock_settings.rag_force_ocr = True
+            mock_settings.rag_ocr_auto_detect = False
+            mock_settings.rag_ocr_space_threshold = 0.03
+
+            await processor.process_document(str(test_file), force_ocr=False)
+
+        # Global config overrides force_ocr=False
+        processor._convert_document_ocr.assert_called_once()
+        processor._convert_document.assert_not_called()

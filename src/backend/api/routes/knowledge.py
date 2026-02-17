@@ -159,6 +159,7 @@ async def get_user_kb_permission(
 async def upload_document(
     file: UploadFile = File(...),
     knowledge_base_id: int | None = Query(None, description="Knowledge Base ID"),
+    force_ocr: bool = Query(False, description="Force full-page OCR (ignores embedded text). Useful for scanned PDFs with garbled text layer."),
     rag: RAGService = Depends(get_rag_service),
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
@@ -273,7 +274,8 @@ async def upload_document(
             knowledge_base_id=knowledge_base_id,
             filename=file.filename,
             file_hash=file_hash,
-            user_id=user.id if user else None
+            user_id=user.id if user else None,
+            force_ocr=force_ocr
         )
 
         return DocumentResponse(

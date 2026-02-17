@@ -20,6 +20,7 @@ ollama>=0.4.0                 # Ollama Python client (async support)
 # RAG & Document Processing
 docling>=2.0.0                # IBM Docling for document parsing (includes docling-ibm-models)
 docling-core>=2.0.0           # Docling core functionality
+easyocr>=1.7.0                # EasyOCR for force_full_page_ocr on German/English PDFs
 transformers>=4.47.0          # Required for rt_detr_v2 model support
 pgvector>=0.2.4               # PostgreSQL vector extension for SQLAlchemy
 aiofiles>=23.2.0              # Async file operations
