@@ -825,6 +825,233 @@ class TestDocumentIngestHook:
 
 
 # ==========================================================================
+# Entity Validation (_is_valid_entity)
+# ==========================================================================
+
+class TestEntityValidation:
+    """Tests for KnowledgeGraphService._is_valid_entity()."""
+
+    # --- Valid entities (should pass) ---
+
+    @pytest.mark.unit
+    def test_valid_person_name(self):
+        assert KnowledgeGraphService._is_valid_entity("Eduard van den Bongard", "person")
+
+    @pytest.mark.unit
+    def test_valid_organization(self):
+        assert KnowledgeGraphService._is_valid_entity("Shell Deutschland GmbH", "organization")
+
+    @pytest.mark.unit
+    def test_valid_place(self):
+        assert KnowledgeGraphService._is_valid_entity("Berlin", "place")
+
+    @pytest.mark.unit
+    def test_valid_short_name(self):
+        assert KnowledgeGraphService._is_valid_entity("Ed", "person")
+
+    @pytest.mark.unit
+    def test_valid_concept(self):
+        assert KnowledgeGraphService._is_valid_entity("Maschinenbau", "concept")
+
+    # --- Rejected: empty/too short/too long ---
+
+    @pytest.mark.unit
+    def test_reject_empty(self):
+        assert not KnowledgeGraphService._is_valid_entity("", "person")
+
+    @pytest.mark.unit
+    def test_reject_single_char(self):
+        assert not KnowledgeGraphService._is_valid_entity("A", "person")
+
+    @pytest.mark.unit
+    def test_reject_too_long(self):
+        assert not KnowledgeGraphService._is_valid_entity("X" * 121, "person")
+
+    # --- Rejected: OCR spaced-out characters ---
+
+    @pytest.mark.unit
+    def test_reject_spaced_chars(self):
+        assert not KnowledgeGraphService._is_valid_entity("F R E S E N", "organization")
+
+    @pytest.mark.unit
+    def test_reject_spaced_date(self):
+        assert not KnowledgeGraphService._is_valid_entity("0 8 . 0 6 . 2 0 2 2", "event")
+
+    # --- Rejected: URLs ---
+
+    @pytest.mark.unit
+    def test_reject_url_www(self):
+        assert not KnowledgeGraphService._is_valid_entity("www.shell.de/energieeffizienz", "organization")
+
+    @pytest.mark.unit
+    def test_reject_url_http(self):
+        assert not KnowledgeGraphService._is_valid_entity("https://example.com", "thing")
+
+    @pytest.mark.unit
+    def test_reject_url_path(self):
+        assert not KnowledgeGraphService._is_valid_entity("tk.de/datenschutz", "organization")
+
+    # --- Rejected: email ---
+
+    @pytest.mark.unit
+    def test_reject_email(self):
+        assert not KnowledgeGraphService._is_valid_entity("info@example.com", "person")
+
+    # --- Rejected: pure digits/symbols ---
+
+    @pytest.mark.unit
+    def test_reject_pure_digits(self):
+        assert not KnowledgeGraphService._is_valid_entity("12345678", "thing")
+
+    @pytest.mark.unit
+    def test_reject_symbols(self):
+        assert not KnowledgeGraphService._is_valid_entity("---", "thing")
+
+    # --- Rejected: high digit ratio ---
+
+    @pytest.mark.unit
+    def test_reject_high_digit_ratio(self):
+        assert not KnowledgeGraphService._is_valid_entity("DE811127597", "organization")
+
+    @pytest.mark.unit
+    def test_reject_reference_code(self):
+        assert not KnowledgeGraphService._is_valid_entity("Y25588501619C", "thing")
+
+    # --- Rejected: dates ---
+
+    @pytest.mark.unit
+    def test_reject_date_dot(self):
+        assert not KnowledgeGraphService._is_valid_entity("08.06.2022", "event")
+
+    @pytest.mark.unit
+    def test_reject_date_dash(self):
+        assert not KnowledgeGraphService._is_valid_entity("2022-06-08", "event")
+
+    # --- Rejected: phone numbers ---
+
+    @pytest.mark.unit
+    def test_reject_phone(self):
+        assert not KnowledgeGraphService._is_valid_entity("+49 30 123456", "thing")
+
+    @pytest.mark.unit
+    def test_reject_phone_slash(self):
+        assert not KnowledgeGraphService._is_valid_entity("030/1234567", "thing")
+
+    # --- Rejected: IBAN ---
+
+    @pytest.mark.unit
+    def test_reject_iban(self):
+        assert not KnowledgeGraphService._is_valid_entity("DE89 3704 0044 0532 0130 00", "thing")
+
+    # --- Rejected: reference codes (uppercase+digits, no spaces) ---
+
+    @pytest.mark.unit
+    def test_reject_refcode(self):
+        assert not KnowledgeGraphService._is_valid_entity("DEUTDEMM", "organization")
+
+    # --- Rejected: generic roles (person type only) ---
+
+    @pytest.mark.unit
+    def test_reject_generic_role_kunde(self):
+        assert not KnowledgeGraphService._is_valid_entity("Kunde", "person")
+
+    @pytest.mark.unit
+    def test_reject_generic_role_sachbearbeiter(self):
+        assert not KnowledgeGraphService._is_valid_entity("Sachbearbeiter", "person")
+
+    @pytest.mark.unit
+    def test_reject_generic_role_vermittler(self):
+        assert not KnowledgeGraphService._is_valid_entity("Vermittler", "person")
+
+    @pytest.mark.unit
+    def test_generic_role_allowed_as_concept(self):
+        """Generic roles are valid when NOT person type."""
+        assert KnowledgeGraphService._is_valid_entity("Kunde", "concept")
+
+    @pytest.mark.unit
+    def test_reject_numbered_role(self):
+        assert not KnowledgeGraphService._is_valid_entity("Bediener 2", "person")
+
+    @pytest.mark.unit
+    def test_reject_numbered_sachbearbeiter(self):
+        assert not KnowledgeGraphService._is_valid_entity("Sachbearbeiter 3", "person")
+
+    @pytest.mark.unit
+    def test_numbered_non_role_allowed(self):
+        """Numbered names that aren't generic roles pass."""
+        assert KnowledgeGraphService._is_valid_entity("Terminal 2", "place")
+
+
+class TestEntityValidationInExtraction:
+    """Test that _is_valid_entity is called during extraction."""
+
+    @pytest.mark.unit
+    async def test_extract_filters_invalid_entities(self, kg_service, db_session):
+        """Invalid entities from LLM output are filtered out before resolve_entity."""
+        llm_response = MagicMock()
+        llm_response.message.content = '''{
+            "entities": [
+                {"name": "Eduard van den Bongard", "type": "person"},
+                {"name": "F R E S E N", "type": "organization"},
+                {"name": "DE811127597", "type": "thing"},
+                {"name": "www.shell.de/effizienz", "type": "organization"},
+                {"name": "Berlin", "type": "place"},
+                {"name": "Kunde", "type": "person"}
+            ],
+            "relations": []
+        }'''
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        mock_client.embeddings = AsyncMock(
+            return_value=MagicMock(embedding=[0.1] * 768)
+        )
+        kg_service._ollama_client = mock_client
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        entities, _relations = await kg_service.extract_and_save(
+            "Test message", "Test response", user_id=None,
+        )
+
+        # Only "Eduard van den Bongard" and "Berlin" should pass
+        assert len(entities) == 2
+        names = {e.name for e in entities}
+        assert "Eduard van den Bongard" in names
+        assert "Berlin" in names
+        assert "F R E S E N" not in names
+        assert "DE811127597" not in names
+        assert "Kunde" not in names
+
+    @pytest.mark.unit
+    async def test_extract_from_text_filters_invalid(self, kg_service, db_session):
+        """Invalid entities are also filtered in extract_from_text."""
+        llm_response = MagicMock()
+        llm_response.message.content = '''{
+            "entities": [
+                {"name": "Shell Deutschland", "type": "organization"},
+                {"name": "+49 30 123456", "type": "thing"},
+                {"name": "08.06.2022", "type": "event"}
+            ],
+            "relations": []
+        }'''
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        mock_client.embeddings = AsyncMock(
+            return_value=MagicMock(embedding=[0.1] * 768)
+        )
+        kg_service._ollama_client = mock_client
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        entities, _relations = await kg_service.extract_from_text(
+            "Document text", user_id=None,
+        )
+
+        assert len(entities) == 1
+        assert entities[0].name == "Shell Deutschland"
+
+
+# ==========================================================================
 # Entity Type Constants
 # ==========================================================================
 

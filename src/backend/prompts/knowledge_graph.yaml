@@ -3,17 +3,17 @@
 # entities and relations from conversation exchanges.
 
 de:
-  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt."
+  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt. Keine Nummern, IDs, URLs oder OCR-Artefakte als Entitaeten."
 
   extraction_prompt: |
     Analysiere den folgenden Dialog und extrahiere benannte Entitaeten und ihre Beziehungen.
 
-    ENTITAETEN extrahieren:
-    - Personen (Name, Spitzname)
-    - Orte (Staedte, Laender, Gebaeude)
-    - Organisationen (Firmen, Vereine)
-    - Dinge (Haustiere, Geraete, Fahrzeuge)
-    - Ereignisse (Urlaube, Termine, Feiern)
+    Nur KONKRETE, BENANNTE Entitaeten extrahieren — mit echtem Namen oder Titel:
+    - Personen (vollstaendiger Name oder Spitzname, NICHT generische Rollen)
+    - Orte (Staedte, Laender, Gebaeude — mit konkretem Namen)
+    - Organisationen (Firmen, Vereine — mit konkretem Namen)
+    - Dinge (Haustiere, Geraete, Fahrzeuge — mit konkretem Namen)
+    - Ereignisse (Urlaube, Termine, Feiern — mit konkretem Namen)
     - Konzepte (Hobbys, Berufe, Faecher)
 
     RELATIONEN extrahieren:
@@ -21,10 +21,14 @@ de:
     - Nur Relationen die EXPLIZIT im Dialog erwaehnt werden
     - confidence: 0.5-1.0 (wie sicher ist die Relation)
 
-    IGNORIERE:
+    IGNORIERE (NIEMALS als Entitaet extrahieren):
     - Einmalige Befehle ("Schalte das Licht ein")
     - Smalltalk ohne benannte Entitaeten
     - Informationen die der Assistent gegeben hat (nur Fakten VOM Benutzer)
+    - Generische Rollen OHNE konkreten Namen ("Kunde", "Sachbearbeiter", "Vermittler", "Berater", "Bediener")
+    - Nummern, IDs, Referenzcodes, Vertragsnummern, Aktenzeichen
+    - URLs, E-Mail-Adressen, Telefonnummern
+    - Datumsangaben als Entitaeten (nur in Beschreibungen verwenden)
 
     Dialog:
     User: {user_message}
@@ -39,12 +43,12 @@ de:
   document_extraction_prompt: |
     Analysiere den folgenden Textabschnitt aus einem Dokument und extrahiere benannte Entitaeten und ihre Beziehungen.
 
-    ENTITAETEN extrahieren:
-    - Personen (Name, Spitzname)
-    - Orte (Staedte, Laender, Gebaeude)
-    - Organisationen (Firmen, Vereine, Behoerden)
-    - Dinge (Haustiere, Geraete, Fahrzeuge)
-    - Ereignisse (Urlaube, Termine, Feiern)
+    Nur KONKRETE, BENANNTE Entitaeten mit echtem Namen extrahieren:
+    - Personen (vollstaendiger Name, NICHT generische Rollen wie "Kunde" oder "Sachbearbeiter")
+    - Orte (Staedte, Laender, Gebaeude — mit konkretem Namen)
+    - Organisationen (Firmen, Vereine, Behoerden — mit konkretem Namen)
+    - Dinge (Haustiere, Geraete, Fahrzeuge — mit konkretem Namen)
+    - Ereignisse (Urlaube, Termine, Feiern — mit konkretem Namen)
     - Konzepte (Hobbys, Berufe, Faecher)
 
     RELATIONEN extrahieren:
@@ -55,12 +59,18 @@ de:
     - Auch IMPLIZITE Relationen aus der Dokumentstruktur extrahieren (z.B. Firma im Briefkopf + Person in der Anrede = "sendet_an")
     - confidence: 0.5-1.0 (wie sicher ist die Relation)
 
-    IGNORIERE:
+    IGNORIERE (NIEMALS als Entitaet extrahieren):
     - Formatierung, Seitenzahlen, Inhaltsverzeichnisse
     - Generische/unbenannte Verweise
+    - OCR-Artefakte: Woerter mit ungewoehnlichen Leerzeichen ("F R E S E N"), unleserliche Fragmente, verstümmelte Woerter
     - Bankverbindungen, IBANs, BICs, Kontonummern (z.B. "IBAN DE12...", "BIC DEUTDEMM")
-    - Steueridentifikationsnummern, Umsatzsteuer-IDs
+    - Steueridentifikationsnummern, Umsatzsteuer-IDs (z.B. "DE811127597")
     - Generische Fusszeilentexte ("Gerichtsstand", "Handelsregister", "Registergericht")
+    - URLs, E-Mail-Adressen, Telefonnummern, Faxnummern
+    - Reine Nummern, Referenzcodes, Vertragsnummern, Aktenzeichen, Kundennummern
+    - Datumsangaben als Entitaeten (nur in Beschreibungen verwenden)
+    - Generische Rollen OHNE konkreten Namen ("Kunde", "Vermittler", "Sachbearbeiter", "Bediener", "Berater", "Vollziehungsbeamter")
+    - Nummerierte Rollen ("Bediener 2", "Sachbearbeiter 3")
 
     Text:
     {text}
@@ -72,17 +82,17 @@ de:
     }}
 
 en:
-  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object."
+  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object. No numbers, IDs, URLs, or OCR artifacts as entities."
 
   extraction_prompt: |
     Analyze the following dialog and extract named entities and their relationships.
 
-    EXTRACT entities:
-    - People (names, nicknames)
-    - Places (cities, countries, buildings)
-    - Organizations (companies, clubs)
-    - Things (pets, devices, vehicles)
-    - Events (vacations, appointments, celebrations)
+    Only extract CONCRETE, NAMED entities — with real names or titles:
+    - People (full names or nicknames, NOT generic roles)
+    - Places (cities, countries, buildings — with concrete names)
+    - Organizations (companies, clubs — with concrete names)
+    - Things (pets, devices, vehicles — with concrete names)
+    - Events (vacations, appointments, celebrations — with concrete names)
     - Concepts (hobbies, professions, subjects)
 
     EXTRACT relations:
@@ -90,10 +100,14 @@ en:
     - Only relations EXPLICITLY mentioned in the dialog
     - confidence: 0.5-1.0 (how certain is the relation)
 
-    IGNORE:
+    IGNORE (NEVER extract as entity):
     - One-time commands ("Turn on the light")
     - Smalltalk without named entities
     - Information given BY the assistant (only facts FROM the user)
+    - Generic roles WITHOUT concrete names ("customer", "clerk", "agent", "operator")
+    - Numbers, IDs, reference codes, contract numbers, file numbers
+    - URLs, email addresses, phone numbers
+    - Dates as entities (use only in descriptions)
 
     Dialog:
     User: {user_message}
@@ -108,12 +122,12 @@ en:
   document_extraction_prompt: |
     Analyze the following text passage from a document and extract named entities and their relationships.
 
-    EXTRACT entities:
-    - People (names, nicknames)
-    - Places (cities, countries, buildings)
-    - Organizations (companies, clubs, authorities)
-    - Things (pets, devices, vehicles)
-    - Events (vacations, appointments, celebrations)
+    Only extract CONCRETE, NAMED entities with real names:
+    - People (full names, NOT generic roles like "customer" or "clerk")
+    - Places (cities, countries, buildings — with concrete names)
+    - Organizations (companies, clubs, authorities — with concrete names)
+    - Things (pets, devices, vehicles — with concrete names)
+    - Events (vacations, appointments, celebrations — with concrete names)
     - Concepts (hobbies, professions, subjects)
 
     EXTRACT relations:
@@ -124,12 +138,18 @@ en:
     - Also extract IMPLIED relations from document structure (e.g. company in letterhead + person in salutation = "sends_to")
     - confidence: 0.5-1.0 (how certain is the relation)
 
-    IGNORE:
+    IGNORE (NEVER extract as entity):
     - Formatting, page numbers, tables of contents
     - Generic/unnamed references
+    - OCR artifacts: words with unusual spacing ("F R E S E N"), illegible fragments, garbled words
     - Bank details, IBANs, BICs, account numbers (e.g. "IBAN DE12...", "BIC DEUTDEMM")
-    - Tax IDs, VAT numbers
+    - Tax IDs, VAT numbers (e.g. "DE811127597")
     - Generic footer text ("jurisdiction", "commercial register", "court of registry")
+    - URLs, email addresses, phone numbers, fax numbers
+    - Pure numbers, reference codes, contract numbers, file numbers, customer IDs
+    - Dates as entities (use only in descriptions)
+    - Generic roles WITHOUT concrete names ("customer", "agent", "clerk", "operator", "advisor")
+    - Numbered roles ("Operator 2", "Clerk 3")
 
     Text:
     {text}
