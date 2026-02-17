@@ -82,7 +82,10 @@ class TestCreateLLMClient:
 
         result = create_llm_client("http://localhost:11434")
 
-        mock_cls.assert_called_once_with(host="http://localhost:11434")
+        # Client is created with host + explicit httpx.Timeout kwargs
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://localhost:11434"
+        assert "timeout" in kwargs
         assert result is sentinel
 
     @pytest.mark.unit
@@ -154,13 +157,56 @@ class TestGetDefaultClient:
     def test_uses_settings_ollama_url(self, mock_settings, mock_cls):
         """get_default_client() creates a client for settings.ollama_url."""
         mock_settings.ollama_url = "http://my-ollama:11434"
+        mock_settings.ollama_fallback_url = ""  # no fallback
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
         result = get_default_client()
 
-        mock_cls.assert_called_once_with(host="http://my-ollama:11434")
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://my-ollama:11434"
         assert result is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_returns_fallback_wrapper_when_fallback_url_configured(self, mock_settings, mock_cls):
+        """When OLLAMA_FALLBACK_URL is set, get_default_client returns a _FallbackLLMClient."""
+        from utils.llm_client import _FallbackLLMClient
+
+        mock_settings.ollama_url = "http://cuda.local:11434"
+        mock_settings.ollama_fallback_url = "http://host.docker.internal:11434"
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        mock_cls.return_value = MagicMock()
+
+        result = get_default_client()
+
+        assert isinstance(result, _FallbackLLMClient)
+        # Two clients created: primary + fallback
+        assert mock_cls.call_count == 2
+        hosts = [call.kwargs["host"] for call in mock_cls.call_args_list]
+        assert "http://cuda.local:11434" in hosts
+        assert "http://host.docker.internal:11434" in hosts
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_no_fallback_wrapper_when_same_url(self, mock_settings, mock_cls):
+        """No _FallbackLLMClient when fallback URL equals primary URL."""
+        from utils.llm_client import _FallbackLLMClient
+
+        mock_settings.ollama_url = "http://cuda.local:11434"
+        mock_settings.ollama_fallback_url = "http://cuda.local:11434"
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        mock_cls.return_value = MagicMock()
+
+        result = get_default_client()
+
+        assert not isinstance(result, _FallbackLLMClient)
 
 
 # ============================================================================
@@ -176,6 +222,9 @@ class TestGetAgentClient:
     def test_role_url_has_highest_priority(self, mock_settings, mock_cls):
         """role_url wins over fallback_url and default."""
         mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""  # no fallback
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
@@ -185,7 +234,6 @@ class TestGetAgentClient:
         )
 
         assert resolved == "http://role:11434"
-        mock_cls.assert_called_once_with(host="http://role:11434")
         assert client is sentinel
 
     @pytest.mark.unit
@@ -194,6 +242,9 @@ class TestGetAgentClient:
     def test_fallback_url_used_when_no_role_url(self, mock_settings, mock_cls):
         """fallback_url is used when role_url is None."""
         mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""  # no fallback
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
@@ -211,6 +262,9 @@ class TestGetAgentClient:
     def test_default_url_used_when_no_overrides(self, mock_settings, mock_cls):
         """settings.ollama_url is used when both role_url and fallback_url are None."""
         mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""  # no fallback
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
@@ -225,6 +279,9 @@ class TestGetAgentClient:
     def test_empty_string_fallback_treated_as_falsy(self, mock_settings, mock_cls):
         """Empty string fallback_url falls through to default."""
         mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""  # no fallback
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
         sentinel = MagicMock()
         mock_cls.return_value = sentinel
 
@@ -232,6 +289,86 @@ class TestGetAgentClient:
 
         assert resolved == "http://default:11434"
         assert client is sentinel
+
+
+# ============================================================================
+# Fallback Client Tests
+# ============================================================================
+
+
+class TestFallbackLLMClient:
+    """Tests for _FallbackLLMClient transparent retry behavior."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_uses_primary_on_success(self):
+        """chat() returns primary result when primary succeeds."""
+        from utils.llm_client import _FallbackLLMClient
+
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.return_value = "primary_result"
+
+        client = _FallbackLLMClient(primary, fallback, "http://fallback:11434")
+        result = await client.chat(model="test", messages=[])
+
+        assert result == "primary_result"
+        fallback.chat.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_retries_fallback_on_connect_error(self):
+        """chat() retries on fallback when primary raises ConnectError."""
+        import httpx
+
+        from utils.llm_client import _FallbackLLMClient
+
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectError("refused")
+        fallback.chat.return_value = "fallback_result"
+
+        client = _FallbackLLMClient(primary, fallback, "http://fallback:11434")
+        result = await client.chat(model="test", messages=[])
+
+        assert result == "fallback_result"
+        fallback.chat.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_retries_fallback_on_connect_timeout(self):
+        """chat() retries on fallback when primary raises ConnectTimeout."""
+        import httpx
+
+        from utils.llm_client import _FallbackLLMClient
+
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.chat.side_effect = httpx.ConnectTimeout("timed out")
+        fallback.chat.return_value = "fallback_after_timeout"
+
+        client = _FallbackLLMClient(primary, fallback, "http://fallback:11434")
+        result = await client.chat(model="test", messages=[])
+
+        assert result == "fallback_after_timeout"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_embeddings_also_falls_back(self):
+        """embeddings() also uses fallback on connect error."""
+        import httpx
+
+        from utils.llm_client import _FallbackLLMClient
+
+        primary = AsyncMock()
+        fallback = AsyncMock()
+        primary.embeddings.side_effect = httpx.ConnectError("refused")
+        fallback.embeddings.return_value = "embed_result"
+
+        client = _FallbackLLMClient(primary, fallback, "http://fallback:11434")
+        result = await client.embeddings(model="test", prompt="hello")
+
+        assert result == "embed_result"
 
 
 # ============================================================================

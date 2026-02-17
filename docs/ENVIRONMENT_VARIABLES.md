@@ -64,6 +64,15 @@ REDIS_URL=redis://redis:6379
 OLLAMA_URL=http://ollama:11434
 OLLAMA_URL=http://cuda.local:11434  # Externe GPU-Instanz
 
+# Optional: Fallback-URL wenn OLLAMA_URL nicht erreichbar (z.B. GPU-Host offline)
+# Empfohlen wenn OLLAMA_URL auf ein externes Gerät zeigt.
+# Im Docker-Container: http://host.docker.internal:11434 = Ollama auf dem Docker-Host
+OLLAMA_FALLBACK_URL=http://host.docker.internal:11434
+
+# Timeout-Konfiguration
+OLLAMA_CONNECT_TIMEOUT=10.0    # TCP-Verbindungs-Timeout in Sekunden (Default: 10)
+OLLAMA_READ_TIMEOUT=300.0      # Lese-Timeout für lange LLM-Antworten (Default: 300)
+
 # Legacy Modell (Fallback für alle Rollen)
 OLLAMA_MODEL=qwen3:8b
 
@@ -77,6 +86,9 @@ OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 
 **Defaults:**
 - `OLLAMA_URL`: `http://ollama:11434`
+- `OLLAMA_FALLBACK_URL`: `""` (kein Fallback)
+- `OLLAMA_CONNECT_TIMEOUT`: `10.0` Sekunden
+- `OLLAMA_READ_TIMEOUT`: `300.0` Sekunden
 - `OLLAMA_MODEL`: `llama3.2:3b` (dev fallback)
 - `OLLAMA_CHAT_MODEL`: `llama3.2:3b`
 - `OLLAMA_RAG_MODEL`: `llama3.2:latest`
