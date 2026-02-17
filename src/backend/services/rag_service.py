@@ -200,13 +200,21 @@ class RAGService:
 
             await self.db.refresh(doc)
 
-            # Fire KG extraction hook (fire-and-forget)
-            chunk_texts = [co.content for co in chunk_objects if co.content]
-            if chunk_texts:
+            # Fire KG extraction hook (fire-and-forget).
+            # Skip table/code/formula chunks: Docling flattens table cells into
+            # repetitive "field = value. field = value." text that confuses the
+            # LLM and produces hallucinated entities. Entity-rich information
+            # (names, addresses, organisations) is in text/paragraph chunks.
+            _KG_SKIP_TYPES = {"table", "code", "formula"}
+            kg_chunks = [
+                co.content for co in chunk_objects
+                if co.content and co.chunk_type not in _KG_SKIP_TYPES
+            ]
+            if kg_chunks:
                 from utils.hooks import run_hooks
                 _task = asyncio.create_task(run_hooks(  # noqa: RUF006
                     "post_document_ingest",
-                    chunks=chunk_texts,
+                    chunks=kg_chunks,
                     document_id=doc.id,
                     user_id=None,
                 ))
