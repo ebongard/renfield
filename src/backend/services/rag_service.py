@@ -13,6 +13,10 @@ from typing import Any
 from loguru import logger
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Keep strong references to fire-and-forget background tasks so they are not
+# garbage-collected before they finish (asyncio only holds weak refs).
+_background_tasks: set[asyncio.Task] = set()
 from sqlalchemy.orm import selectinload
 
 from models.database import (
@@ -93,7 +97,8 @@ class RAGService:
         knowledge_base_id: int | None = None,
         filename: str | None = None,
         file_hash: str | None = None,
-        user_id: int | None = None
+        user_id: int | None = None,
+        force_ocr: bool = False
     ) -> Document:
         """
         Verarbeitet und indexiert ein Dokument.
@@ -130,7 +135,7 @@ class RAGService:
 
         try:
             # 1. Dokument verarbeiten
-            result = await self.processor.process_document(file_path)
+            result = await self.processor.process_document(file_path, force_ocr=force_ocr)
 
             if result["status"] == "failed":
                 doc.status = DOC_STATUS_FAILED
@@ -213,12 +218,14 @@ class RAGService:
             ]
             if kg_chunks:
                 from utils.hooks import run_hooks
-                _task = asyncio.create_task(run_hooks(  # noqa: RUF006
+                _task = asyncio.create_task(run_hooks(
                     "post_document_ingest",
                     chunks=kg_chunks,
                     document_id=doc.id,
                     user_id=user_id,
                 ))
+                _background_tasks.add(_task)
+                _task.add_done_callback(_background_tasks.discard)
 
             logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")
             return doc

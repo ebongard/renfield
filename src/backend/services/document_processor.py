@@ -21,12 +21,19 @@ class DocumentProcessor:
 
     Docling bietet strukturierte Dokumentenextraktion mit:
     - Layout-Erkennung (Tabellen, Formeln, Code-Blöcke)
-    - OCR für gescannte Dokumente
+    - OCR für gescannte Dokumente (inkl. force_full_page_ocr für garbled PDFs)
     - Metadaten-Extraktion
+
+    OCR-Verhalten (konfigurierbar via Settings):
+    - Standard: Docling nutzt embedded Text + OCR für Bitmap-Regionen
+    - rag_force_ocr=True: Immer force_full_page_ocr (embedded Text ignoriert)
+    - rag_ocr_auto_detect=True: Erkennt garbled Text (Leerzeichen-Anteil < Schwellwert)
+      und wiederholt die Konvertierung mit force_full_page_ocr
     """
 
     def __init__(self):
         self._converter = None
+        self._ocr_converter = None   # Converter mit force_full_page_ocr=True
         self._chunker = None
         self._initialized = False
 
@@ -37,10 +44,27 @@ class DocumentProcessor:
 
         try:
             from docling.chunking import HybridChunker
-            from docling.document_converter import DocumentConverter
+            from docling.datamodel.pipeline_options import OcrAutoOptions, PdfPipelineOptions
+            from docling.document_converter import DocumentConverter, PdfFormatOption
+            from docling.datamodel.base_models import InputFormat
 
-            logger.info("Initialisiere Docling DocumentConverter...")
+            logger.info("Initialisiere Docling DocumentConverter (Standard)...")
             self._converter = DocumentConverter()
+
+            logger.info("Initialisiere Docling DocumentConverter (force_full_page_ocr / EasyOCR)...")
+            from docling.datamodel.pipeline_options import EasyOcrOptions
+            ocr_pipeline_options = PdfPipelineOptions()
+            ocr_pipeline_options.ocr_options = EasyOcrOptions(
+                lang=["de", "en"],         # Deutsch + Englisch
+                force_full_page_ocr=True,  # OCR auf jeder Seite, embedded Text ignoriert
+                bitmap_area_threshold=0.0,
+            )
+            ocr_pipeline_options.images_scale = 2.0  # Höhere Auflösung für bessere OCR-Qualität
+            self._ocr_converter = DocumentConverter(
+                format_options={
+                    InputFormat.PDF: PdfFormatOption(pipeline_options=ocr_pipeline_options)
+                }
+            )
 
             logger.info("Initialisiere Docling HybridChunker...")
             self._chunker = HybridChunker(
@@ -62,12 +86,40 @@ class DocumentProcessor:
             logger.error(f"Fehler beim Initialisieren von Docling: {e}")
             raise
 
-    async def process_document(self, file_path: str) -> dict[str, Any]:
+    @staticmethod
+    def _is_text_garbled(text: str) -> bool:
+        """Erkennt garbled/kaputten embedded Text (Leerzeichen-Verhältnis zu niedrig).
+
+        PDFs mit kaputtem Text-Layer enthalten Wörter ohne Leerzeichen
+        (z.B. 'UmschauMarktplatz13Wiesbaden'). Normale Texte haben ~15-25%
+        Leerzeichen. Unter dem konfigurierten Schwellwert (Standard: 3%)
+        wird ein OCR-Re-Lauf empfohlen.
+        """
+        if not text or len(text) < 50:
+            return False
+        space_ratio = text.count(' ') / len(text)
+        is_garbled = space_ratio < settings.rag_ocr_space_threshold
+        if is_garbled:
+            logger.warning(
+                f"Garbled embedded text detected (space ratio={space_ratio:.1%} "
+                f"< threshold={settings.rag_ocr_space_threshold:.1%}) — "
+                "re-running with force_full_page_ocr"
+            )
+        return is_garbled
+
+    async def process_document(
+        self,
+        file_path: str,
+        force_ocr: bool = False
+    ) -> dict[str, Any]:
         """
         Verarbeitet ein Dokument und extrahiert strukturierte Chunks.
 
         Args:
             file_path: Pfad zur Dokumentdatei
+            force_ocr: OCR auf allen Seiten erzwingen (ignoriert embedded Text).
+                       Nützlich für PDFs mit kaputtem Text-Layer.
+                       Überschreibt rag_force_ocr und rag_ocr_auto_detect.
 
         Returns:
             {
@@ -92,13 +144,21 @@ class DocumentProcessor:
 
             logger.info(f"Verarbeite Dokument: {path.name}")
 
+            # Bestimme ob force_full_page_ocr genutzt werden soll
+            use_ocr = force_ocr or settings.rag_force_ocr
+
             # Dokument in Thread-Pool konvertieren (CPU-intensiv)
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                self._convert_document,
-                file_path
-            )
+
+            if use_ocr:
+                logger.info(f"OCR erzwungen für: {path.name}")
+                result = await loop.run_in_executor(
+                    None, self._convert_document_ocr, file_path
+                )
+            else:
+                result = await loop.run_in_executor(
+                    None, self._convert_document, file_path
+                )
 
             if result is None:
                 return {
@@ -109,6 +169,23 @@ class DocumentProcessor:
                 }
 
             doc = result.document
+
+            # Auto-Erkennung garbled Text: wenn aktiviert und PDF, prüfe ob OCR nötig
+            if (
+                not use_ocr
+                and settings.rag_ocr_auto_detect
+                and path.suffix.lower() == ".pdf"
+            ):
+                # Schnellcheck: ersten Chunk-Text auf Leerzeichen prüfen
+                sample_text = doc.export_to_text() if hasattr(doc, 'export_to_text') else ""
+                if self._is_text_garbled(sample_text):
+                    logger.info(f"Re-konvertiere mit force_full_page_ocr: {path.name}")
+                    ocr_result = await loop.run_in_executor(
+                        None, self._convert_document_ocr, file_path
+                    )
+                    if ocr_result is not None:
+                        result = ocr_result
+                        doc = result.document
 
             # Metadaten extrahieren
             metadata = self._extract_metadata(doc, file_path)
@@ -144,6 +221,19 @@ class DocumentProcessor:
             return self._converter.convert(file_path)
         except Exception as e:
             logger.error(f"Konvertierungsfehler: {e}")
+            return None
+
+    def _convert_document_ocr(self, file_path: str):
+        """Synchrone Dokumentkonvertierung mit force_full_page_ocr (für Thread-Pool).
+
+        Ignoriert den embedded Text-Layer und führt vollständiges OCR auf
+        jeder Seite durch. Liefert bessere Ergebnisse bei gescannten PDFs
+        mit kaputtem Text-Layer (fehlende Leerzeichen etc.).
+        """
+        try:
+            return self._ocr_converter.convert(file_path)
+        except Exception as e:
+            logger.error(f"OCR-Konvertierungsfehler: {e}")
             return None
 
     @staticmethod
