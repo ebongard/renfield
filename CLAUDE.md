@@ -286,6 +286,7 @@ Entity-Relation triples extracted from conversations and documents via LLM, stor
 
 - **Chat Extraction:** `post_message` hook sends user+assistant messages to LLM, parses JSON response into entities + relations
 - **Document Extraction:** `post_document_ingest` hook processes RAG document chunks and chat-uploaded text through KG extraction (fire-and-forget, sequential per chunk)
+- **Post-Extraction Validation:** `_is_valid_entity()` filters OCR garbage, URLs, emails, IDs, dates, phone numbers, IBANs, generic roles, and spaced-out characters BEFORE entity resolution. Compiled regex patterns at module level for performance.
 - **Entity Resolution:** Exact name match → embedding similarity → create new (checks personal scope first, then accessible custom scopes)
 - **Entity Scoping:** Flexible YAML-based scopes (`config/kg_scopes.yaml`):
   - `personal` (built-in): Only visible to the owner (default)
@@ -295,16 +296,20 @@ Entity-Relation triples extracted from conversations and documents via LLM, stor
 - **Context Injection:** `retrieve_context` hook embeds query, finds similar entities based on user's accessible scopes
 - **Entity Types:** `person`, `place`, `organization`, `thing`, `event`, `concept`
 - **Admin Controls:** Change entity scope via `/admin/knowledge-graph`, define custom scopes in YAML
+- **Bulk Cleanup (admin):**
+  - `POST /api/knowledge-graph/cleanup/invalid` — Scan + soft-delete entities failing validation rules (`dry_run=true` default)
+  - `GET /api/knowledge-graph/cleanup/duplicates` — Find duplicate clusters via string similarity (difflib SequenceMatcher). Name normalization strips titles (Herr/Frau/Dr.) and org suffixes (GmbH/AG). Default threshold: 0.82.
+  - `POST /api/knowledge-graph/cleanup/merge-duplicates` — Auto-merge duplicate clusters (`dry_run=true` default). Threshold 0.93+ recommended for safe auto-merge.
 - **Frontend:** Admin dashboard at `/admin/knowledge-graph` with Entities, Relations, Stats tabs
 - **Extensible:** Add new scopes by editing `config/kg_scopes.yaml` without code changes
 
-**Key files:** `services/knowledge_graph_service.py`, `services/kg_scope_loader.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`, `config/kg_scopes.yaml`
+**Key files:** `services/knowledge_graph_service.py`, `services/kg_scope_loader.py`, `services/kg_cleanup_service.py`, `api/routes/knowledge_graph.py`, `models/database.py` (KGEntity, KGRelation), `prompts/knowledge_graph.yaml`, `config/kg_scopes.yaml`
 
 **Configuration:**
 ```bash
 KNOWLEDGE_GRAPH_ENABLED=false     # Master switch (default: off)
 KG_EXTRACTION_MODEL=              # Empty = use default model
-KG_SIMILARITY_THRESHOLD=0.92     # Entity dedup threshold
+KG_SIMILARITY_THRESHOLD=0.85     # Entity dedup threshold (0.85 merges OCR variants)
 KG_RETRIEVAL_THRESHOLD=0.70      # Context retrieval threshold
 KG_MAX_ENTITIES_PER_USER=5000    # Per-user personal entity limit (custom scopes don't count)
 KG_MAX_CONTEXT_TRIPLES=15        # Max triples injected into prompt
