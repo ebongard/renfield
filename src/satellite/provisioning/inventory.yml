@@ -9,3 +9,6 @@ all:
         satellite-fitnessraum:
           ansible_host: satellite-fitnessraum.local
           ansible_user: evdb
+        satellite-kinderbad:
+          ansible_host: satellite-kinderbad.local
+          ansible_user: evdb
