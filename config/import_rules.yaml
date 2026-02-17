@@ -1,0 +1,26 @@
+# Renfield Bulk Import — Klassifizierungsregeln
+# Verwendung: python bin/bulk_import.py --dir ~/Docs --config config/import_rules.yaml
+
+# Dateiname-Muster (Groß-/Kleinschreibung egal, Reihenfolge = Priorität)
+filename_patterns:
+  PRIVAT: privat        # → Knowledge Base "privat"
+  XIDRA:  xidra         # → Knowledge Base "xidra"
+  SSV:    ssv            # → Knowledge Base "ssv"
+  VuP:    VuP            # → Knowledge Base "VuP"
+  VP:     VuP            # → Knowledge Base "VuP" (Kurzform)
+
+# Adressat-Muster (Regex, gegen Text der 1. Seite des PDFs)
+# Werden nur geprüft wenn kein Dateiname-Muster greift.
+addressee_patterns:
+  'Eduard[.\s]+van\s+den\s+Bongard': privat
+  'Jutta[.\s]+van\s+den\s+Bongard':  privat
+  'XIDRA':                            xidra
+  'SSV.{0,30}Kleinenbroich':          ssv
+  'Schiess-Sport':                    ssv
+
+# Fallback: KB-Name für nicht erkannte Dokumente (null = überspringen + melden)
+fallback_kb: null
+
+# Auto-OCR: PDFs größer als N KB bekommen automatisch force_ocr=true
+# (0 = deaktiviert)
+ocr_size_threshold_kb: 500
