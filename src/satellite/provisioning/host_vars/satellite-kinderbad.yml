@@ -1,0 +1,21 @@
+---
+# ReSpeaker 2-Mic HAT configuration
+
+hat_type: "2mic-v2"
+satellite_id: "sat-kinderbad"
+satellite_room: "Kinderbad"
+
+# Audio (stereo with beamforming)
+audio_device: "capture"
+audio_playback_device: "plughw:0,0"
+audio_channels: 2
+beamforming_enabled: true
+beamforming_mic_spacing: 0.058
+
+# LEDs (2-Mic HAT: 3 LEDs on SPI 0:0, no power pin)
+led_num: 3
+led_spi_device: 0
+led_power_pin: null
+
+# 2-mic overlay variant: "simple" or "full"
+overlay_variant: "simple"
