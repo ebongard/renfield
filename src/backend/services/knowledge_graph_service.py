@@ -314,6 +314,8 @@ class KnowledgeGraphService:
         model = settings.kg_extraction_model or settings.ollama_model
 
         try:
+            from utils.llm_client import extract_response_content, get_classification_chat_kwargs
+
             client = await self._get_ollama_client()
             response = await client.chat(
                 model=model,
@@ -322,8 +324,9 @@ class KnowledgeGraphService:
                     {"role": "user", "content": prompt},
                 ],
                 options=llm_options,
+                **get_classification_chat_kwargs(model),
             )
-            raw_text = response.message.content
+            raw_text = extract_response_content(response)
         except Exception as e:
             logger.warning(f"KG extraction LLM call failed: {e}")
             return [], []
@@ -422,6 +425,8 @@ class KnowledgeGraphService:
         model = settings.kg_extraction_model or settings.ollama_model
 
         try:
+            from utils.llm_client import extract_response_content, get_classification_chat_kwargs
+
             client = await self._get_ollama_client()
             response = await client.chat(
                 model=model,
@@ -430,8 +435,9 @@ class KnowledgeGraphService:
                     {"role": "user", "content": prompt},
                 ],
                 options=llm_options,
+                **get_classification_chat_kwargs(model),
             )
-            raw_text = response.message.content
+            raw_text = extract_response_content(response)
         except Exception as e:
             logger.warning(f"KG document extraction LLM call failed: {e}")
             return [], []
