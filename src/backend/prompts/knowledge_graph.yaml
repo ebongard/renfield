@@ -3,7 +3,7 @@
 # entities and relations from conversation exchanges.
 
 de:
-  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt. Keine Nummern, IDs, URLs oder OCR-Artefakte als Entitaeten."
+  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt. Keine Nummern, IDs, URLs oder OCR-Artefakte als Entitaeten. Nur Entitaeten mit konkretem Eigennamen."
 
   extraction_prompt: |
     Analysiere den folgenden Dialog und extrahiere benannte Entitaeten und ihre Beziehungen.
@@ -12,9 +12,9 @@ de:
     - Personen (vollstaendiger Name oder Spitzname, NICHT generische Rollen)
     - Orte (Staedte, Laender, Gebaeude — mit konkretem Namen)
     - Organisationen (Firmen, Vereine — mit konkretem Namen)
-    - Dinge (Haustiere, Geraete, Fahrzeuge — mit konkretem Namen)
-    - Ereignisse (Urlaube, Termine, Feiern — mit konkretem Namen)
-    - Konzepte (Hobbys, Berufe, Faecher)
+    - Dinge: konkrete Produkte MIT Eigenname: "iPhone 15", "Tesla Model 3" — NICHT generische Begriffe wie "Handy", "Auto", "Flatrate", "Messstellenbetrieb"
+    - Ereignisse: konkrete, benannte Ereignisse: "Oktoberfest 2024", "Weihnachten 2025" — NICHT generische Zeitangaben wie "Maerz 2013"
+    - Konzepte: NUR persoenliche Hobbys, Studienfaecher, Berufsbezeichnungen — NICHT Dokumentfelder oder juristische Begriffe
 
     RELATIONEN extrahieren:
     - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit")
@@ -29,6 +29,9 @@ de:
     - Nummern, IDs, Referenzcodes, Vertragsnummern, Aktenzeichen
     - URLs, E-Mail-Adressen, Telefonnummern
     - Datumsangaben als Entitaeten (nur in Beschreibungen verwenden)
+    - KEINE einzelnen deutschen Substantive die Dokumentfelder beschreiben: z.B. "Inkasso", "Flatrate", "Messstellenbetrieb", "Mahngebuehren", "Zahlungsbedingungen"
+    - KEINE Geldbetraege oder Waehrungsangaben ("100 EUR", "0,04 Euro")
+    - KEINE generischen Geschaeftsbegriffe ("Leistungserbringer", "Zahlungsdienstleister", "Vertragsnummer", "Abrechnungszeitraum")
 
     Dialog:
     User: {user_message}
@@ -47,9 +50,9 @@ de:
     - Personen (vollstaendiger Name, NICHT generische Rollen wie "Kunde" oder "Sachbearbeiter")
     - Orte (Staedte, Laender, Gebaeude — mit konkretem Namen)
     - Organisationen (Firmen, Vereine, Behoerden — mit konkretem Namen)
-    - Dinge (Haustiere, Geraete, Fahrzeuge — mit konkretem Namen)
-    - Ereignisse (Urlaube, Termine, Feiern — mit konkretem Namen)
-    - Konzepte (Hobbys, Berufe, Faecher)
+    - Dinge: konkrete Produkte MIT Eigenname: "iPhone 15", "Tesla Model 3" — NICHT generische Begriffe wie "Handy", "Auto", "Flatrate", "Messstellenbetrieb"
+    - Ereignisse: konkrete, benannte Ereignisse: "Oktoberfest 2024" — NICHT generische Zeitangaben wie "Maerz 2013" oder "Dezember"
+    - Konzepte: NUR persoenliche Hobbys, Studienfaecher, Berufsbezeichnungen — NICHT Dokumentfelder oder juristische Begriffe
 
     RELATIONEN extrahieren:
     - Persoenliche Beziehungen: "wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit"
@@ -62,7 +65,7 @@ de:
     IGNORIERE (NIEMALS als Entitaet extrahieren):
     - Formatierung, Seitenzahlen, Inhaltsverzeichnisse
     - Generische/unbenannte Verweise
-    - OCR-Artefakte: Woerter mit ungewoehnlichen Leerzeichen ("F R E S E N"), unleserliche Fragmente, verstümmelte Woerter
+    - OCR-Artefakte: Woerter mit ungewoehnlichen Leerzeichen ("F R E S E N"), unleserliche Fragmente, verstuemmelte Woerter
     - Bankverbindungen, IBANs, BICs, Kontonummern (z.B. "IBAN DE12...", "BIC DEUTDEMM")
     - Steueridentifikationsnummern, Umsatzsteuer-IDs (z.B. "DE811127597")
     - Generische Fusszeilentexte ("Gerichtsstand", "Handelsregister", "Registergericht")
@@ -71,6 +74,9 @@ de:
     - Datumsangaben als Entitaeten (nur in Beschreibungen verwenden)
     - Generische Rollen OHNE konkreten Namen ("Kunde", "Vermittler", "Sachbearbeiter", "Bediener", "Berater", "Vollziehungsbeamter")
     - Nummerierte Rollen ("Bediener 2", "Sachbearbeiter 3")
+    - KEINE einzelnen deutschen Substantive die Dokumentfelder beschreiben: z.B. "Inkasso", "Flatrate", "Messstellenbetrieb", "Mahngebuehren", "Zahlungsbedingungen"
+    - KEINE Geldbetraege oder Waehrungsangaben ("100 EUR", "0,04 Euro")
+    - KEINE generischen Geschaeftsbegriffe ("Leistungserbringer", "Zahlungsdienstleister", "Vertragsnummer", "Abrechnungszeitraum")
 
     Text:
     {text}
@@ -82,7 +88,7 @@ de:
     }}
 
 en:
-  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object. No numbers, IDs, URLs, or OCR artifacts as entities."
+  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object. No numbers, IDs, URLs, or OCR artifacts as entities. Only entities with concrete proper names."
 
   extraction_prompt: |
     Analyze the following dialog and extract named entities and their relationships.
@@ -91,9 +97,9 @@ en:
     - People (full names or nicknames, NOT generic roles)
     - Places (cities, countries, buildings — with concrete names)
     - Organizations (companies, clubs — with concrete names)
-    - Things (pets, devices, vehicles — with concrete names)
-    - Events (vacations, appointments, celebrations — with concrete names)
-    - Concepts (hobbies, professions, subjects)
+    - Things: concrete products WITH proper names: "iPhone 15", "Tesla Model 3" — NOT generic terms like "phone", "car", "flatrate", "meter operation"
+    - Events: concrete, named events: "Oktoberfest 2024", "Christmas 2025" — NOT generic time references like "March 2013"
+    - Concepts: ONLY personal hobbies, fields of study, job titles — NOT document fields or legal terms
 
     EXTRACT relations:
     - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to")
@@ -108,6 +114,9 @@ en:
     - Numbers, IDs, reference codes, contract numbers, file numbers
     - URLs, email addresses, phone numbers
     - Dates as entities (use only in descriptions)
+    - NO single nouns describing document fields: e.g. "collection", "flatrate", "meter operation", "late fees", "payment terms"
+    - NO monetary amounts or currency references ("100 EUR", "0.04 Euro")
+    - NO generic business terms ("service provider", "payment processor", "contract number", "billing period")
 
     Dialog:
     User: {user_message}
@@ -126,9 +135,9 @@ en:
     - People (full names, NOT generic roles like "customer" or "clerk")
     - Places (cities, countries, buildings — with concrete names)
     - Organizations (companies, clubs, authorities — with concrete names)
-    - Things (pets, devices, vehicles — with concrete names)
-    - Events (vacations, appointments, celebrations — with concrete names)
-    - Concepts (hobbies, professions, subjects)
+    - Things: concrete products WITH proper names: "iPhone 15", "Tesla Model 3" — NOT generic terms like "phone", "car", "flatrate"
+    - Events: concrete, named events: "Oktoberfest 2024" — NOT generic time references like "March 2013" or "December"
+    - Concepts: ONLY personal hobbies, fields of study, job titles — NOT document fields or legal terms
 
     EXTRACT relations:
     - Personal relationships: "lives_in", "works_at", "likes", "owns", "knows", "married_to"
@@ -150,6 +159,9 @@ en:
     - Dates as entities (use only in descriptions)
     - Generic roles WITHOUT concrete names ("customer", "agent", "clerk", "operator", "advisor")
     - Numbered roles ("Operator 2", "Clerk 3")
+    - NO single nouns describing document fields: e.g. "collection", "flatrate", "meter operation", "late fees", "payment terms"
+    - NO monetary amounts or currency references ("100 EUR", "0.04 Euro")
+    - NO generic business terms ("service provider", "payment processor", "contract number", "billing period")
 
     Text:
     {text}
