@@ -86,6 +86,9 @@ ble_rssi_threshold: -80
 # openwakeword installed separately with --no-deps for Python 3.13+ compat
 openwakeword_package: "openwakeword"
 
+# 2-Mic V2 driver repo (TLV320AIC3104 codec)
+seeed_dtoverlays_repo: "https://github.com/Seeed-Studio/seeed-linux-dtoverlays.git"
+
 # Model URLs
 oww_base_url: "https://github.com/dscripka/openWakeWord/releases/download/v0.6.0"
 oww_models:

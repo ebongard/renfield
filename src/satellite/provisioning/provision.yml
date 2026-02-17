@@ -2,7 +2,7 @@
 # Renfield Satellite Provisioning Playbook
 #
 # Provisions a Raspberry Pi Zero 2 W as a Renfield voice satellite.
-# Supports both ReSpeaker 2-Mic HAT and 4-Mic Array via hat_type variable.
+# Supports ReSpeaker 2-Mic HAT (V1 + V2) and 4-Mic Array via hat_type variable.
 #
 # Usage:
 #   ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum -v
@@ -149,6 +149,36 @@
         cd /tmp/renfield-overlay && bash install-overlay.sh {{ overlay_variant | default('simple') }}
       args:
         creates: "/boot/firmware/overlays/seeed-2mic-gpclk-{{ overlay_variant | default('simple') }}.dtbo"
+      notify: reboot after driver install
+
+    # --- 2-Mic HAT V2: seeed-linux-dtoverlays (TLV320AIC3104) ---
+
+    - name: Clone seeed-linux-dtoverlays for 2-mic-v2 HAT
+      tags: [driver]
+      when: hat_type == "2mic-v2"
+      ansible.builtin.git:
+        repo: "{{ seeed_dtoverlays_repo }}"
+        dest: /tmp/seeed-linux-dtoverlays
+        depth: 1
+        force: true
+
+    - name: Compile respeaker-2mic-v2_0 overlay
+      tags: [driver]
+      when: hat_type == "2mic-v2"
+      ansible.builtin.shell: |
+        cd /tmp/seeed-linux-dtoverlays && make overlays/rpi/respeaker-2mic-v2_0-overlay.dtbo
+        cp overlays/rpi/respeaker-2mic-v2_0-overlay.dtbo /boot/firmware/overlays/respeaker-2mic-v2_0.dtbo
+      args:
+        creates: /boot/firmware/overlays/respeaker-2mic-v2_0.dtbo
+      notify: reboot after driver install
+
+    - name: Ensure 2-mic-v2 overlay in config.txt
+      tags: [driver]
+      when: hat_type == "2mic-v2"
+      ansible.builtin.lineinfile:
+        path: /boot/firmware/config.txt
+        line: "dtoverlay=respeaker-2mic-v2_0"
+        state: present
       notify: reboot after driver install
 
     # --- Flush handlers (reboot if driver was installed) ---
