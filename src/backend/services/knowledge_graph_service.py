@@ -13,7 +13,7 @@ import re
 from datetime import UTC, datetime
 
 from loguru import logger
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KG_ENTITY_TYPES, KG_SCOPE_PERSONAL, KGEntity, KGRelation
@@ -192,11 +192,11 @@ class KnowledgeGraphService:
         from services.kg_scope_loader import get_scope_loader
         scope_loader = get_scope_loader()
 
-        # Step 1: Personal exact match
+        # Step 1: Personal exact match (include unowned entities)
         query = select(KGEntity).where(
             func.lower(KGEntity.name) == name.lower(),
             KGEntity.is_active == True,  # noqa: E712
-            KGEntity.user_id == user_id,
+            or_(KGEntity.user_id == user_id, KGEntity.user_id.is_(None)),
             KGEntity.scope == KG_SCOPE_PERSONAL,
         )
         result = await self.db.execute(query)
@@ -315,8 +315,8 @@ class KnowledgeGraphService:
             user_filter = f"AND scope IN ({scopes_str})"
             params: dict = {"embedding": embedding_str}
         elif user_id is not None:
-            # Search in personal (user-owned) only
-            user_filter = "AND (user_id = :user_id AND scope = 'personal')"
+            # Search in personal (user-owned + unowned) only
+            user_filter = "AND ((user_id = :user_id OR user_id IS NULL) AND scope = 'personal')"
             params = {"embedding": embedding_str, "user_id": user_id}
         else:
             # No filtering (shouldn't happen in normal flow)
@@ -747,16 +747,16 @@ class KnowledgeGraphService:
             accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
 
             if accessible_scopes:
-                # User sees: personal + accessible custom scopes
+                # User sees: personal (owned + unowned) + accessible custom scopes
                 scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
                 user_filter = f"""AND (
-                    (e.user_id = :user_id AND e.scope = 'personal')
+                    ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')
                     OR e.scope IN ({scopes_list})
                 )"""
                 params: dict = {"embedding": embedding_str, "user_id": user_id}
             else:
-                # User sees: personal only
-                user_filter = "AND (e.user_id = :user_id AND e.scope = 'personal')"
+                # User sees: personal (owned + unowned) only
+                user_filter = "AND ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')"
                 params = {"embedding": embedding_str, "user_id": user_id}
         else:
             # No auth: only public scope if defined
