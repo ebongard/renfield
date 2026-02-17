@@ -23,6 +23,7 @@ from models.database import (
     ChatUpload,
     KnowledgeBase,
 )
+from services.auth_service import get_optional_user
 from services.database import AsyncSessionLocal, get_db
 from services.document_processor import DocumentProcessor
 from utils.config import settings
@@ -56,6 +57,7 @@ async def upload_chat_document(
     knowledge_base_id: int | None = Form(None),
     db: AsyncSession = Depends(get_db),
     background_tasks: BackgroundTasks = BackgroundTasks(),
+    user=Depends(get_optional_user),
 ):
     """
     Upload a document in chat for quick text extraction.
@@ -138,7 +140,7 @@ async def upload_chat_document(
             "post_document_ingest",
             chunks=[extracted_text],
             document_id=None,
-            user_id=None,
+            user_id=user.id if user else None,
         )
 
     # Auto-index to KB if enabled
