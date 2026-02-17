@@ -92,7 +92,8 @@ class RAGService:
         file_path: str,
         knowledge_base_id: int | None = None,
         filename: str | None = None,
-        file_hash: str | None = None
+        file_hash: str | None = None,
+        user_id: int | None = None
     ) -> Document:
         """
         Verarbeitet und indexiert ein Dokument.
@@ -216,7 +217,7 @@ class RAGService:
                     "post_document_ingest",
                     chunks=kg_chunks,
                     document_id=doc.id,
-                    user_id=None,
+                    user_id=user_id,
                 ))
 
             logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")

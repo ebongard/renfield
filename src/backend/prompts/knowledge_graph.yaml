@@ -58,6 +58,9 @@ de:
     IGNORIERE:
     - Formatierung, Seitenzahlen, Inhaltsverzeichnisse
     - Generische/unbenannte Verweise
+    - Bankverbindungen, IBANs, BICs, Kontonummern (z.B. "IBAN DE12...", "BIC DEUTDEMM")
+    - Steueridentifikationsnummern, Umsatzsteuer-IDs
+    - Generische Fusszeilentexte ("Gerichtsstand", "Handelsregister", "Registergericht")
 
     Text:
     {text}
@@ -124,6 +127,9 @@ en:
     IGNORE:
     - Formatting, page numbers, tables of contents
     - Generic/unnamed references
+    - Bank details, IBANs, BICs, account numbers (e.g. "IBAN DE12...", "BIC DEUTDEMM")
+    - Tax IDs, VAT numbers
+    - Generic footer text ("jurisdiction", "commercial register", "court of registry")
 
     Text:
     {text}
