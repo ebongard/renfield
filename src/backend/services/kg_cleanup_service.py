@@ -2,16 +2,40 @@
 Knowledge Graph Cleanup Service — Bulk operations for data quality.
 
 Provides admin-only operations to scan and clean up invalid entities,
-find duplicate clusters via embedding similarity, and auto-merge them.
+find duplicate clusters via string similarity, and auto-merge them.
 All destructive operations support dry_run mode.
 """
+import difflib
+from collections import defaultdict
+
 from loguru import logger
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KGEntity, KGRelation
 from services.knowledge_graph_service import KnowledgeGraphService
-from utils.config import settings
+
+# Prefixes stripped during name normalization (lowercase)
+_STRIP_PREFIXES = ("herr ", "frau ", "dr. ", "dr ", "prof. ", "prof ")
+# Suffixes stripped for organizations (lowercase)
+_STRIP_ORG_SUFFIXES = (" gmbh", " ag", " e.v.", " mbh", " ohg", " kg", " ug", " gbr")
+
+
+def _normalize_name(name: str, entity_type: str = "") -> str:
+    """Normalize entity name for string comparison."""
+    n = name.strip().lower()
+    # Strip common person titles
+    for prefix in _STRIP_PREFIXES:
+        if n.startswith(prefix):
+            n = n[len(prefix):]
+            break
+    # Strip common org suffixes
+    if entity_type == "organization":
+        for suffix in _STRIP_ORG_SUFFIXES:
+            if n.endswith(suffix):
+                n = n[: -len(suffix)]
+                break
+    return n.strip()
 
 
 class KGCleanupService:
@@ -103,45 +127,37 @@ class KGCleanupService:
         limit: int = 50,
     ) -> list[dict]:
         """
-        Find clusters of likely-duplicate entities via embedding similarity.
+        Find clusters of likely-duplicate entities via string similarity.
 
-        Returns clusters sorted by size, each with a canonical entity
-        (highest mention_count) and its duplicates.
+        Uses normalized Levenshtein ratio (difflib.SequenceMatcher) to detect
+        OCR variants and typos. Returns clusters sorted by size, each with
+        a canonical entity (highest mention_count) and its duplicates.
         """
         if threshold is None:
-            threshold = settings.kg_similarity_threshold
+            threshold = 0.82
 
-        # Build entity type filter
-        type_filter = ""
-        params: dict = {"threshold": threshold}
+        # Fetch all active entities
+        query = (
+            select(KGEntity.id, KGEntity.name, KGEntity.mention_count, KGEntity.entity_type)
+            .where(KGEntity.is_active == True)  # noqa: E712
+        )
         if entity_type:
-            type_filter = "AND a.entity_type = :entity_type AND b.entity_type = :entity_type"
-            params["entity_type"] = entity_type
+            query = query.where(KGEntity.entity_type == entity_type)
 
-        # Find pairs of similar entities using pgvector
-        sql = text(f"""
-            SELECT a.id as id_a, a.name as name_a, a.mention_count as mc_a,
-                   a.entity_type as type_a,
-                   b.id as id_b, b.name as name_b, b.mention_count as mc_b,
-                   b.entity_type as type_b,
-                   1 - (a.embedding <=> b.embedding) as similarity
-            FROM kg_entities a
-            JOIN kg_entities b ON a.id < b.id
-            WHERE a.is_active = true AND b.is_active = true
-              AND a.embedding IS NOT NULL AND b.embedding IS NOT NULL
-              AND a.entity_type = b.entity_type
-              AND 1 - (a.embedding <=> b.embedding) >= :threshold
-              {type_filter}
-            ORDER BY similarity DESC
-            LIMIT 500
-        """)
+        result = await self.db.execute(query)
+        rows = result.fetchall()
 
-        result = await self.db.execute(sql, params)
-        pairs = result.fetchall()
+        # Group by entity_type (only compare within same type)
+        by_type: dict[str, list] = defaultdict(list)
+        for row in rows:
+            by_type[row.entity_type].append(row)
 
-        # Build clusters via union-find
-        parent: dict[int, int] = {}
+        # Find similar pairs via string comparison
         entity_info: dict[int, dict] = {}
+        # Store best similarity per pair for output
+        pair_similarity: dict[tuple[int, int], float] = {}
+
+        parent: dict[int, int] = {}
 
         def find(x: int) -> int:
             while parent.get(x, x) != x:
@@ -154,28 +170,58 @@ class KGCleanupService:
             if rx != ry:
                 parent[rx] = ry
 
-        for row in pairs:
-            entity_info[row.id_a] = {
-                "id": row.id_a,
-                "name": row.name_a,
-                "mention_count": row.mc_a or 1,
-                "entity_type": row.type_a,
-            }
-            entity_info[row.id_b] = {
-                "id": row.id_b,
-                "name": row.name_b,
-                "mention_count": row.mc_b or 1,
-                "entity_type": row.type_b,
-            }
-            parent.setdefault(row.id_a, row.id_a)
-            parent.setdefault(row.id_b, row.id_b)
-            union(row.id_a, row.id_b)
+        for etype, entities in by_type.items():
+            # Pre-compute normalized names
+            normed = [(e, _normalize_name(e.name, etype)) for e in entities]
+            n = len(normed)
+
+            for i in range(n):
+                a_entity, a_name = normed[i]
+                if not a_name:
+                    continue
+
+                for j in range(i + 1, n):
+                    b_entity, b_name = normed[j]
+                    if not b_name:
+                        continue
+
+                    # Quick length filter — OCR variants have similar length
+                    len_a, len_b = len(a_name), len(b_name)
+                    if min(len_a, len_b) / max(len_a, len_b) < 0.5:
+                        continue
+
+                    # SequenceMatcher with quick_ratio pre-filter
+                    sm = difflib.SequenceMatcher(None, a_name, b_name)
+                    if sm.quick_ratio() < threshold:
+                        continue
+                    if sm.real_quick_ratio() < threshold:
+                        continue
+
+                    ratio = sm.ratio()
+                    if ratio < threshold:
+                        continue
+
+                    # Record match
+                    for e in (a_entity, b_entity):
+                        entity_info[e.id] = {
+                            "id": e.id,
+                            "name": e.name,
+                            "mention_count": e.mention_count or 1,
+                            "entity_type": e.entity_type,
+                        }
+
+                    parent.setdefault(a_entity.id, a_entity.id)
+                    parent.setdefault(b_entity.id, b_entity.id)
+                    union(a_entity.id, b_entity.id)
+
+                    key = (min(a_entity.id, b_entity.id), max(a_entity.id, b_entity.id))
+                    pair_similarity[key] = round(ratio, 3)
 
         # Group by cluster root
-        clusters_map: dict[int, list[int]] = {}
+        clusters_map: dict[int, list[int]] = defaultdict(list)
         for eid in entity_info:
             root = find(eid)
-            clusters_map.setdefault(root, []).append(eid)
+            clusters_map[root].append(eid)
 
         # Build output clusters (only multi-entity clusters)
         clusters = []
@@ -187,7 +233,14 @@ class KGCleanupService:
             # Canonical = highest mention_count
             members.sort(key=lambda m: m["mention_count"], reverse=True)
             canonical = members[0]
-            duplicates = members[1:]
+            canonical_id = canonical["id"]
+
+            # Add similarity score for each duplicate (relative to canonical)
+            duplicates = []
+            for m in members[1:]:
+                key = (min(canonical_id, m["id"]), max(canonical_id, m["id"]))
+                sim = pair_similarity.get(key)
+                duplicates.append({**m, "similarity": sim})
 
             clusters.append({
                 "canonical": canonical,
@@ -198,6 +251,11 @@ class KGCleanupService:
 
         # Sort by cluster size descending
         clusters.sort(key=lambda c: c["cluster_size"], reverse=True)
+
+        logger.info(
+            f"KG duplicates: Found {len(clusters)} clusters from "
+            f"{len(rows)} entities (threshold={threshold})"
+        )
         return clusters[:limit]
 
     async def merge_duplicate_clusters(
