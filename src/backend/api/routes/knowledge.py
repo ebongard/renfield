@@ -272,7 +272,8 @@ async def upload_document(
             str(file_path),
             knowledge_base_id=knowledge_base_id,
             filename=file.filename,
-            file_hash=file_hash
+            file_hash=file_hash,
+            user_id=user.id if user else None
         )
 
         return DocumentResponse(
