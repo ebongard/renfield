@@ -98,6 +98,7 @@ services:
       - ./pytest.ini:/pytest.ini
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions
+      - ./config/kg_scopes.yaml:/app/config/kg_scopes.yaml:ro      # Knowledge Graph scope definitions
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro  # Email MCP account config
       - ./config/calendar_accounts.yaml:/config/calendar_accounts.yaml:ro  # Calendar MCP account config
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download
@@ -159,6 +160,7 @@ services:
       - ./pytest.ini:/pytest.ini
       - ./config/mcp_servers.yaml:/app/config/mcp_servers.yaml:ro  # MCP server configuration
       - ./config/agent_roles.yaml:/app/config/agent_roles.yaml:ro  # Agent role definitions
+      - ./config/kg_scopes.yaml:/app/config/kg_scopes.yaml:ro      # Knowledge Graph scope definitions
       - ./config/mail_accounts.yaml:/config/mail_accounts.yaml:ro  # Email MCP account config
       - ./config/calendar_accounts.yaml:/config/calendar_accounts.yaml:ro  # Calendar MCP account config
       - ./data/wakeword-models:/app/wakeword-models:ro  # TFLite models for satellite download

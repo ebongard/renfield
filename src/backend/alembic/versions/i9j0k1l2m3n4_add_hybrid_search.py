@@ -17,10 +17,25 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    # 1. Add tsvector column for Full-Text Search
+    # 1. Add or fix tsvector column for Full-Text Search.
+    # Uses ADD COLUMN IF NOT EXISTS + ALTER COLUMN TYPE to handle both:
+    # - Fresh installs (column doesn't exist yet)
+    # - Existing installs where the column was created as 'text' by the ORM
     op.execute("""
         ALTER TABLE document_chunks
         ADD COLUMN IF NOT EXISTS search_vector tsvector
+    """)
+    # Ensure correct type in case the column already existed as 'text'
+    op.execute("""
+        DO $$
+        BEGIN
+            IF (SELECT data_type FROM information_schema.columns
+                WHERE table_name = 'document_chunks' AND column_name = 'search_vector') = 'text' THEN
+                ALTER TABLE document_chunks
+                ALTER COLUMN search_vector TYPE tsvector
+                USING search_vector::tsvector;
+            END IF;
+        END $$;
     """)
 
     # 2. GIN Index for Full-Text Search (fast tsvector lookups)
