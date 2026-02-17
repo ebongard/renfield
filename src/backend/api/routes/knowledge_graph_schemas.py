@@ -116,6 +116,7 @@ class DuplicateEntityInfo(BaseModel):
     name: str
     mention_count: int
     entity_type: str
+    similarity: float | None = None
 
 
 class DuplicateCluster(BaseModel):
