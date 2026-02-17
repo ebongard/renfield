@@ -4,10 +4,11 @@ Ansible playbook for provisioning Raspberry Pi Zero 2 W satellites with ReSpeake
 
 ## Supported Hardware
 
-| HAT | LEDs | SPI | Power Pin | ALSA Card |
-|-----|------|-----|-----------|-----------|
-| ReSpeaker 2-Mic HAT | 3 | 0:0 | — | `seeed2micvoicec` |
-| ReSpeaker 4-Mic Array | 12 | 0:1 | GPIO 5 | `seeed4micvoicec` |
+| HAT | `hat_type` | LEDs | SPI | Power Pin | ALSA Card |
+|-----|-----------|------|-----|-----------|-----------|
+| ReSpeaker 2-Mic HAT V1 (WM8960) | `2mic` | 3 | 0:0 | — | `seeed2micvoicec` |
+| ReSpeaker 2-Mic HAT V2 (TLV320AIC3104) | `2mic-v2` | 3 | 0:0 | — | `seeed2micvoicec` |
+| ReSpeaker 4-Mic Array | `4mic` | 12 | 0:1 | GPIO 5 | `seeed4micvoicec` |
 
 ## Prerequisites
 
@@ -72,7 +73,7 @@ ansible-playbook -i inventory.yml provision.yml --limit satellite-fitnessraum --
 
 | Variable | Description | 2-mic default | 4-mic default |
 |----------|-------------|---------------|---------------|
-| `hat_type` | `"2mic"` or `"4mic"` | `"2mic"` | `"4mic"` |
+| `hat_type` | `"2mic"`, `"2mic-v2"`, or `"4mic"` | `"2mic"` | `"4mic"` |
 | `satellite_id` | Unique satellite ID | — | — |
 | `satellite_room` | Room name | — | — |
 | `led_num` | Number of APA102 LEDs | `3` | `12` |
