@@ -731,7 +731,42 @@ class TestKnowledgeSearch:
         assert result["data"]["results_count"] == 2
         assert "rechnung_2022_03.pdf" in result["data"]["context"]
         assert "nebenkosten_2022.pdf" in result["data"]["context"]
-        mock_rag.search.assert_called_once_with(query="Rechnungen 2022 Am Stirkenbend", top_k=5)
+        mock_rag.search.assert_called_once_with(query="Rechnungen 2022 Am Stirkenbend", top_k=None)
+
+    @pytest.mark.unit
+    async def test_knowledge_search_custom_top_k(self, internal_tools):
+        """Custom top_k is forwarded to RAG search."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {
+                "chunk": {"content": "Test content"},
+                "document": {"filename": "test.pdf"},
+                "similarity": 0.9,
+            },
+        ])
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        _ensure_module = []
+        for mod_name in ["services.database", "services.rag_service"]:
+            if mod_name not in sys.modules:
+                fake = ModuleType(mod_name)
+                sys.modules[mod_name] = fake
+                _ensure_module.append(mod_name)
+
+        with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+             patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+            result = await internal_tools._knowledge_search({"query": "test", "top_k": "30"})
+
+        for mod_name in _ensure_module:
+            sys.modules.pop(mod_name, None)
+
+        assert result["success"] is True
+        mock_rag.search.assert_called_once_with(query="test", top_k=30)
 
     @pytest.mark.unit
     async def test_knowledge_search_no_results(self, internal_tools):
