@@ -163,6 +163,18 @@ def get_default_client() -> LLMClient:
     return _make_client_with_fallback(settings.ollama_url)
 
 
+def get_embed_client() -> LLMClient:
+    """Return the client for embedding calls.
+
+    Uses ``settings.ollama_embed_url`` when configured (separate Ollama instance
+    dedicated to embeddings), otherwise falls back to ``get_default_client()``.
+    Both paths include transparent fallback via ``OLLAMA_FALLBACK_URL``.
+    """
+    if settings.ollama_embed_url:
+        return _make_client_with_fallback(settings.ollama_embed_url)
+    return get_default_client()
+
+
 def get_agent_client(
     role_url: str | None = None,
     fallback_url: str | None = None,
