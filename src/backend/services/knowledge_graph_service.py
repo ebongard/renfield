@@ -957,7 +957,20 @@ class KnowledgeGraphService:
         if not triples:
             return None
 
-        header = "## Wissensgraph" if lang == "de" else "## Knowledge Graph"
+        if lang == "de":
+            header = (
+                "WISSENSGRAPH (persoenliche Fakten ueber den Benutzer und sein Umfeld):\n"
+                "Die folgenden Fakten stammen aus Dokumenten und Gespraechen des Benutzers.\n"
+                "Nutze NUR diese Fakten wenn die Frage sich auf genannte Personen/Orte/Organisationen bezieht.\n"
+                "Erfinde KEINE zusaetzlichen Informationen ueber diese Entitaeten."
+            )
+        else:
+            header = (
+                "KNOWLEDGE GRAPH (personal facts about the user and their environment):\n"
+                "The following facts come from the user's documents and conversations.\n"
+                "Use ONLY these facts when the question refers to named people/places/organizations.\n"
+                "Do NOT invent additional information about these entities."
+            )
         return f"{header}\n" + "\n".join(triples)
 
     # =========================================================================
