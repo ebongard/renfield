@@ -45,6 +45,12 @@ class InternalToolService:
             "description": "Get all currently present users and their room locations. Use this when asked 'where is everyone?' or 'who is home?'.",
             "parameters": {},
         },
+        "internal.knowledge_search": {
+            "description": "Search the user's local knowledge base (uploaded documents, invoices, contracts) by semantic similarity. Returns matching text passages with source document info.",
+            "parameters": {
+                "query": "Search query (required)",
+            },
+        },
     }
 
     _HANDLERS = {
@@ -52,6 +58,7 @@ class InternalToolService:
         "internal.play_in_room": "_play_in_room",
         "internal.get_user_location": "_get_user_location",
         "internal.get_all_presence": "_get_all_presence",
+        "internal.knowledge_search": "_knowledge_search",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -382,3 +389,64 @@ class InternalToolService:
             "action_taken": True,
             "data": {"users": users},
         }
+
+    async def _knowledge_search(self, params: dict) -> dict:
+        """Search the local knowledge base (RAG) by semantic similarity."""
+        query = (params.get("query") or "").strip()
+        if not query:
+            return {
+                "success": False,
+                "message": "Parameter 'query' is required",
+                "action_taken": False,
+            }
+
+        try:
+            from services.database import AsyncSessionLocal
+            from services.rag_service import RAGService
+
+            async with AsyncSessionLocal() as db:
+                rag = RAGService(db)
+                results = await rag.search(query=query, top_k=5)
+
+            if results:
+                context_parts = []
+                for r in results:
+                    content = (
+                        r.get("chunk", {}).get("content", "")
+                        if isinstance(r.get("chunk"), dict)
+                        else r.get("content", "")
+                    )
+                    source = (
+                        r.get("document", {}).get("filename", "")
+                        if isinstance(r.get("document"), dict)
+                        else r.get("filename", "")
+                    )
+                    if content:
+                        context_parts.append(f"[{source}] {content[:500]}")
+
+                return {
+                    "success": True,
+                    "message": f"Knowledge base results ({len(results)} hits)",
+                    "action_taken": True,
+                    "data": {
+                        "query": query,
+                        "results_count": len(results),
+                        "context": "\n\n".join(context_parts[:5]),
+                    },
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": f"No results in knowledge base for: {query}",
+                    "action_taken": True,
+                    "empty_result": True,
+                    "data": {"query": query, "results_count": 0},
+                }
+
+        except Exception as e:
+            logger.error(f"Error in knowledge_search: {e}")
+            return {
+                "success": False,
+                "message": f"Knowledge base search error: {e!s}",
+                "action_taken": False,
+            }

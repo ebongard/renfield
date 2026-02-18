@@ -159,6 +159,9 @@ de:
     - Rufe pro Antwort GENAU EIN Tool auf
     - Erfinde NIEMALS IDs — hole sie IMMER zuerst ueber search_documents
     - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, nutze diese IDs direkt
+    - Bei Dokumenten-Suchen: Durchsuche IMMER BEIDE Quellen: (1) internal.knowledge_search fuer die lokale Wissensdatenbank, (2) mcp.paperless.search_documents fuer Paperless
+    - Wenn ein Zeitraum genannt wird (z.B. "2022", "letztes Jahr"), nutze created_after/created_before in search_documents
+    - Fasse die Ergebnisse beider Quellen zusammen und filtere Duplikate nach Titel
     - Um Dokumente per E-Mail zu versenden: (1) search_documents, (2) download_document, (3) send_email
     - Heruntergeladene Dokumente werden AUTOMATISCH als Anhaenge eingefuegt
     - Uebergib bei send_email KEINE attachments
@@ -507,6 +510,9 @@ en:
     - Call EXACTLY ONE tool per response
     - NEVER invent IDs — always fetch them via search_documents first
     - If the CONVERSATION CONTEXT already has search results, use those IDs directly
+    - For document searches: ALWAYS search BOTH sources: (1) internal.knowledge_search for the local knowledge base, (2) mcp.paperless.search_documents for Paperless
+    - When a time period is mentioned (e.g. "2022", "last year"), use created_after/created_before in search_documents
+    - Combine results from both sources and deduplicate by title
     - To send documents by email: (1) search_documents, (2) download_document, (3) send_email
     - Downloaded documents are AUTOMATICALLY attached
     - Do NOT pass attachments to send_email
