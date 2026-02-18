@@ -683,6 +683,130 @@ class TestGetAllPresence:
 # Test _format_last_seen
 # ============================================================================
 
+# ============================================================================
+# Test knowledge_search
+# ============================================================================
+
+class TestKnowledgeSearch:
+    """Test internal.knowledge_search tool."""
+
+    @pytest.mark.unit
+    async def test_knowledge_search_returns_results(self, internal_tools):
+        """Successful RAG search returns formatted context."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[
+            {
+                "chunk": {"content": "Rechnung Am Stirkenbend 20 vom 15.03.2022"},
+                "document": {"filename": "rechnung_2022_03.pdf"},
+                "similarity": 0.85,
+            },
+            {
+                "chunk": {"content": "Nebenkostenabrechnung 2022"},
+                "document": {"filename": "nebenkosten_2022.pdf"},
+                "similarity": 0.78,
+            },
+        ])
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        _ensure_module = []
+        for mod_name in ["services.database", "services.rag_service"]:
+            if mod_name not in sys.modules:
+                fake = ModuleType(mod_name)
+                sys.modules[mod_name] = fake
+                _ensure_module.append(mod_name)
+
+        with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+             patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+            result = await internal_tools._knowledge_search({"query": "Rechnungen 2022 Am Stirkenbend"})
+
+        for mod_name in _ensure_module:
+            sys.modules.pop(mod_name, None)
+
+        assert result["success"] is True
+        assert result["data"]["results_count"] == 2
+        assert "rechnung_2022_03.pdf" in result["data"]["context"]
+        assert "nebenkosten_2022.pdf" in result["data"]["context"]
+        mock_rag.search.assert_called_once_with(query="Rechnungen 2022 Am Stirkenbend", top_k=5)
+
+    @pytest.mark.unit
+    async def test_knowledge_search_no_results(self, internal_tools):
+        """Empty RAG results return empty_result flag."""
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(return_value=[])
+
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        _ensure_module = []
+        for mod_name in ["services.database", "services.rag_service"]:
+            if mod_name not in sys.modules:
+                fake = ModuleType(mod_name)
+                sys.modules[mod_name] = fake
+                _ensure_module.append(mod_name)
+
+        with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+             patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+            result = await internal_tools._knowledge_search({"query": "nonexistent document"})
+
+        for mod_name in _ensure_module:
+            sys.modules.pop(mod_name, None)
+
+        assert result["success"] is True
+        assert result.get("empty_result") is True
+        assert result["data"]["results_count"] == 0
+
+    @pytest.mark.unit
+    async def test_knowledge_search_missing_query(self, internal_tools):
+        """Missing query returns error."""
+        result = await internal_tools._knowledge_search({})
+        assert result["success"] is False
+        assert "required" in result["message"]
+
+    @pytest.mark.unit
+    async def test_knowledge_search_empty_query(self, internal_tools):
+        """Empty query returns error."""
+        result = await internal_tools._knowledge_search({"query": "  "})
+        assert result["success"] is False
+        assert "required" in result["message"]
+
+    @pytest.mark.unit
+    async def test_knowledge_search_exception(self, internal_tools):
+        """RAG service exception returns clean error."""
+        mock_db = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_session():
+            yield mock_db
+
+        _ensure_module = []
+        for mod_name in ["services.database", "services.rag_service"]:
+            if mod_name not in sys.modules:
+                fake = ModuleType(mod_name)
+                sys.modules[mod_name] = fake
+                _ensure_module.append(mod_name)
+
+        mock_rag = MagicMock()
+        mock_rag.search = AsyncMock(side_effect=RuntimeError("DB connection failed"))
+
+        with patch("services.database.AsyncSessionLocal", mock_session, create=True), \
+             patch("services.rag_service.RAGService", return_value=mock_rag, create=True):
+            result = await internal_tools._knowledge_search({"query": "test"})
+
+        for mod_name in _ensure_module:
+            sys.modules.pop(mod_name, None)
+
+        assert result["success"] is False
+        assert "error" in result["message"].lower()
+
+
 class TestFormatLastSeen:
     """Test relative time formatting."""
 
