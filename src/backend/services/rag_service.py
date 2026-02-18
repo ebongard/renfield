@@ -392,8 +392,9 @@ class RAGService:
         """
         BM25-style search using PostgreSQL Full-Text Search.
 
-        Uses plainto_tsquery for natural language input and ts_rank_cd
-        (Cover Density Ranking) which is better for shorter text segments.
+        Uses websearch_to_tsquery with OR matching so any query term can match.
+        ts_rank_cd (Cover Density Ranking) ranks results by term coverage,
+        so chunks containing more query terms rank higher.
 
         Args:
             query: Natural language search query
@@ -405,6 +406,9 @@ class RAGService:
         """
         fts_config = settings.rag_hybrid_fts_config
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
+
+        # OR-match: any query term can match; ts_rank_cd ranks by coverage
+        or_query = " OR ".join(query.split())
 
         sql = text(f"""
             SELECT
@@ -418,18 +422,18 @@ class RAGService:
                 dc.chunk_metadata,
                 d.filename,
                 d.title as doc_title,
-                ts_rank_cd(dc.search_vector, plainto_tsquery(:fts_config, :query)) as rank
+                ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             WHERE d.status = 'completed'
             AND dc.search_vector IS NOT NULL
-            AND dc.search_vector @@ plainto_tsquery(:fts_config, :query)
+            AND dc.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
             {kb_filter}
             ORDER BY rank DESC
             LIMIT :limit
         """)
 
-        params = {"query": query, "fts_config": fts_config, "limit": top_k}
+        params = {"or_query": or_query, "fts_config": fts_config, "limit": top_k}
         if knowledge_base_id:
             params["kb_id"] = knowledge_base_id
 
