@@ -117,6 +117,8 @@ services:
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -174,6 +176,8 @@ services:
       - piper_models:/root/.local/share/piper
       - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

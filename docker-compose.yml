@@ -107,6 +107,8 @@ services:
       - huggingface_cache:/root/.cache/huggingface
       - rag_uploads:/app/data/uploads
       - calendar_tokens:/data/calendar  # Google Calendar token persistence
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
