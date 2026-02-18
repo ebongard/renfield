@@ -127,7 +127,7 @@ class Settings(BaseSettings):
     rag_enabled: bool = True
     rag_chunk_size: int = Field(default=512, ge=64, le=4096)
     rag_chunk_overlap: int = Field(default=50, ge=0, le=512)
-    rag_top_k: int = Field(default=5, ge=1, le=50)
+    rag_top_k: int = Field(default=20, ge=1, le=100)
     rag_similarity_threshold: float = Field(default=0.4, ge=0.0, le=1.0)
 
     # Hybrid Search (Dense + BM25 via PostgreSQL Full-Text Search)
