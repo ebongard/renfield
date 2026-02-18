@@ -468,6 +468,69 @@ class TestFTSReindex:
 
 
 # =============================================================================
+# BM25 OR Query Tests
+# =============================================================================
+
+class TestBM25OrQuery:
+    """Tests for BM25 OR matching via websearch_to_tsquery."""
+
+    @pytest.fixture
+    def rag_service(self):
+        db = AsyncMock()
+        return RAGService(db)
+
+    @pytest.mark.unit
+    async def test_bm25_uses_or_query(self, rag_service):
+        """_search_bm25 converts query words to OR-joined websearch_to_tsquery."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        rag_service.db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("services.rag_service.settings") as mock_settings:
+            mock_settings.rag_hybrid_fts_config = "german"
+
+            await rag_service._search_bm25("Rechnungen 2022 Stirkenbend", top_k=5)
+
+        call_args = rag_service.db.execute.call_args
+        params = call_args[0][1]
+        assert params["or_query"] == "Rechnungen OR 2022 OR Stirkenbend"
+        assert params["fts_config"] == "german"
+
+    @pytest.mark.unit
+    async def test_bm25_single_word_query(self, rag_service):
+        """Single-word query produces no OR — just the word itself."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        rag_service.db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("services.rag_service.settings") as mock_settings:
+            mock_settings.rag_hybrid_fts_config = "german"
+
+            await rag_service._search_bm25("Stirkenbend", top_k=5)
+
+        call_args = rag_service.db.execute.call_args
+        params = call_args[0][1]
+        assert params["or_query"] == "Stirkenbend"
+
+    @pytest.mark.unit
+    async def test_bm25_sql_uses_websearch_to_tsquery(self, rag_service):
+        """SQL query string uses websearch_to_tsquery, not plainto_tsquery."""
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        rag_service.db.execute = AsyncMock(return_value=mock_result)
+
+        with patch("services.rag_service.settings") as mock_settings:
+            mock_settings.rag_hybrid_fts_config = "german"
+
+            await rag_service._search_bm25("test query", top_k=5)
+
+        call_args = rag_service.db.execute.call_args
+        sql_text = str(call_args[0][0])
+        assert "websearch_to_tsquery" in sql_text
+        assert "plainto_tsquery" not in sql_text
+
+
+# =============================================================================
 # Config Tests
 # =============================================================================
 
@@ -509,13 +572,13 @@ class TestHybridSearchConfig:
 
     @pytest.mark.unit
     def test_default_fts_config(self):
-        """Default FTS config is 'simple'."""
+        """Default FTS config is 'german'."""
         s = Settings(
             _env_file=None,
             database_url="sqlite:///:memory:",
             postgres_host="localhost"
         )
-        assert s.rag_hybrid_fts_config == "simple"
+        assert s.rag_hybrid_fts_config == "german"
 
     @pytest.mark.unit
     def test_default_rrf_k(self):
