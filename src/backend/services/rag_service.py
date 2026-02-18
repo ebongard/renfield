@@ -277,7 +277,9 @@ class RAGService:
         # Hybrid Search or Dense-only
         if settings.rag_hybrid_enabled:
             candidate_k = top_k * 3  # Over-fetch for RRF fusion
-            dense_results = await self._search_dense(query_embedding, candidate_k, knowledge_base_id)
+            dense_results = await self._search_dense(
+                query_embedding, candidate_k, knowledge_base_id, threshold
+            )
             bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id)
             results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
             logger.info(
@@ -316,7 +318,7 @@ class RAGService:
             query_embedding: Pre-computed query embedding
             top_k: Number of results
             knowledge_base_id: Optional KB filter
-            threshold: Minimum cosine similarity (only applied in non-hybrid mode)
+            threshold: Minimum cosine similarity filter
 
         Returns:
             List of {chunk, document, similarity}
