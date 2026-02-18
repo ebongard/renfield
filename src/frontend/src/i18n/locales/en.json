@@ -42,6 +42,7 @@
     "knowledgeGraph": "Knowledge Graph",
     "memory": "Memories",
     "intents": "Intents",
+    "maintenance": "Maintenance",
     "settings": "Settings",
     "admin": "Admin",
     "skipToContent": "Skip to content",
@@ -795,6 +796,50 @@
     "confirm": "Confirm",
     "cancel": "Cancel",
     "loading": "Processing..."
+  },
+  "maintenance": {
+    "title": "Maintenance",
+    "subtitle": "System maintenance and diagnostic tools",
+    "searchIndexing": {
+      "title": "Search & Indexing",
+      "description": "Manage full-text search and Home Assistant keywords",
+      "reindexFts": "Reindex FTS",
+      "reindexFtsDescription": "Rebuild the full-text search index of all knowledge base documents",
+      "reindexFtsSuccess": "FTS index updated successfully",
+      "updatedCount": "Updated documents",
+      "ftsConfig": "FTS configuration",
+      "refreshKeywords": "Refresh HA Keywords",
+      "refreshKeywordsDescription": "Reload device names and keywords from Home Assistant",
+      "refreshKeywordsSuccess": "Keywords refreshed successfully",
+      "keywordsCount": "Keyword count",
+      "sampleKeywords": "Sample keywords"
+    },
+    "embeddings": {
+      "title": "Embeddings",
+      "description": "Re-calculate all vectors after changing the embedding model",
+      "reembedAll": "Re-embed All",
+      "reembedWarning": "This operation takes 10\u201330 minutes. Only run after changing the embedding model.",
+      "reembedSuccess": "Vectors re-calculated successfully",
+      "reembedModel": "Model",
+      "reembedTable": "Table",
+      "reembedErrors": "Errors",
+      "confirmReembed": "Re-embed all vectors? This can take 10\u201330 minutes."
+    },
+    "debug": {
+      "title": "Debug",
+      "description": "Diagnostic tools for intent recognition",
+      "testIntent": "Test Intent",
+      "testIntentDescription": "Enter a message to test intent recognition",
+      "messagePlaceholder": "e.g. Turn on the living room light",
+      "extractedIntent": "Extracted Intent",
+      "noMessage": "Please enter a message"
+    },
+    "errors": {
+      "reindexFailed": "FTS reindex failed",
+      "refreshKeywordsFailed": "Keyword refresh failed",
+      "reembedFailed": "Re-embedding failed",
+      "intentTestFailed": "Intent test failed"
+    }
   },
   "knowledgeGraph": {
     "title": "Knowledge Graph",

@@ -42,6 +42,7 @@
     "knowledgeGraph": "Wissensgraph",
     "memory": "Erinnerungen",
     "intents": "Intents",
+    "maintenance": "Wartung",
     "settings": "Einstellungen",
     "admin": "Admin",
     "skipToContent": "Zum Inhalt springen",
@@ -795,6 +796,50 @@
     "confirm": "Bestätigen",
     "cancel": "Abbrechen",
     "loading": "Wird ausgeführt..."
+  },
+  "maintenance": {
+    "title": "Wartung",
+    "subtitle": "Systemwartung und Diagnose-Tools",
+    "searchIndexing": {
+      "title": "Suche & Indexierung",
+      "description": "Volltextsuche und Home-Assistant-Keywords verwalten",
+      "reindexFts": "FTS neu indexieren",
+      "reindexFtsDescription": "Volltextindex aller Dokumente in der Wissensdatenbank neu aufbauen",
+      "reindexFtsSuccess": "FTS-Index erfolgreich aktualisiert",
+      "updatedCount": "Aktualisierte Dokumente",
+      "ftsConfig": "FTS-Konfiguration",
+      "refreshKeywords": "HA-Keywords aktualisieren",
+      "refreshKeywordsDescription": "Gerätenamen und Keywords aus Home Assistant neu laden",
+      "refreshKeywordsSuccess": "Keywords erfolgreich aktualisiert",
+      "keywordsCount": "Anzahl Keywords",
+      "sampleKeywords": "Beispiel-Keywords"
+    },
+    "embeddings": {
+      "title": "Embeddings",
+      "description": "Alle Vektoren nach Modellwechsel neu berechnen",
+      "reembedAll": "Alle neu einbetten",
+      "reembedWarning": "Dieser Vorgang dauert 10\u201330 Minuten. Nur nach einem Wechsel des Embedding-Modells ausf\u00fchren.",
+      "reembedSuccess": "Vektoren erfolgreich neu berechnet",
+      "reembedModel": "Modell",
+      "reembedTable": "Tabelle",
+      "reembedErrors": "Fehler",
+      "confirmReembed": "Alle Vektoren neu berechnen? Dies kann 10\u201330 Minuten dauern."
+    },
+    "debug": {
+      "title": "Debug",
+      "description": "Diagnose-Tools f\u00fcr Intent-Erkennung",
+      "testIntent": "Intent testen",
+      "testIntentDescription": "Nachricht eingeben um die Intent-Erkennung zu testen",
+      "messagePlaceholder": "z.B. Schalte das Licht im Wohnzimmer ein",
+      "extractedIntent": "Erkannter Intent",
+      "noMessage": "Bitte eine Nachricht eingeben"
+    },
+    "errors": {
+      "reindexFailed": "FTS-Neuindexierung fehlgeschlagen",
+      "refreshKeywordsFailed": "Keyword-Aktualisierung fehlgeschlagen",
+      "reembedFailed": "Neu-Einbettung fehlgeschlagen",
+      "intentTestFailed": "Intent-Test fehlgeschlagen"
+    }
   },
   "knowledgeGraph": {
     "title": "Wissensgraph",

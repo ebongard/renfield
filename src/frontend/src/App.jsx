@@ -27,6 +27,7 @@ const SatellitesPage = lazy(() => import('./pages/SatellitesPage'));
 const IntentsPage = lazy(() => import('./pages/IntentsPage'));
 const PresencePage = lazy(() => import('./pages/PresencePage'));
 const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
+const MaintenancePage = lazy(() => import('./pages/MaintenancePage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -117,6 +118,11 @@ function AppRoutes() {
             <Route path="/admin/knowledge-graph" element={
               <AdminRoute>
                 <KnowledgeGraphPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/maintenance" element={
+              <AdminRoute>
+                <MaintenancePage />
               </AdminRoute>
             } />
           </Routes>
