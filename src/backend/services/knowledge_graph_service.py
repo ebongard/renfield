@@ -124,6 +124,71 @@ class KnowledgeGraphService:
         )
         return response.embedding
 
+    async def _extract_query_entities(self, query: str, lang: str = "de") -> list[str]:
+        """
+        Extract entity names from a natural-language query via LLM.
+
+        Returns a list of proper names mentioned in the query, or an empty
+        list on any failure (LLM error, parse error, no entities found).
+        Used by get_relevant_context() to improve embedding search accuracy.
+        """
+        from services.prompt_manager import prompt_manager
+        from utils.llm_client import extract_response_content, get_classification_chat_kwargs
+
+        try:
+            prompt = prompt_manager.get(
+                "knowledge_graph", "query_entities_prompt", lang=lang,
+                query=query,
+            )
+            system_msg = prompt_manager.get(
+                "knowledge_graph", "query_entities_system", lang=lang,
+            )
+            llm_options = prompt_manager.get_config("knowledge_graph", "llm_options") or {}
+            model = settings.kg_extraction_model or settings.ollama_model
+
+            client = await self._get_ollama_client()
+            response = await client.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": prompt},
+                ],
+                options=llm_options,
+                **get_classification_chat_kwargs(model),
+            )
+            raw_text = extract_response_content(response)
+        except Exception as e:
+            logger.debug(f"KG: Query entity extraction LLM call failed: {e}")
+            return []
+
+        if not raw_text:
+            return []
+
+        # Parse JSON array from response
+        text_content = raw_text.strip()
+
+        # Remove markdown code blocks
+        if "```" in text_content:
+            match = re.search(r'```(?:json)?\s*(\[.*?\])\s*```', text_content, re.DOTALL)
+            if match:
+                text_content = match.group(1)
+
+        # Find JSON array
+        first_bracket = text_content.find('[')
+        last_bracket = text_content.rfind(']')
+        if first_bracket >= 0 and last_bracket > first_bracket:
+            text_content = text_content[first_bracket:last_bracket + 1]
+
+        try:
+            data = json.loads(text_content)
+            if isinstance(data, list):
+                # Filter to non-empty strings only
+                return [str(item).strip() for item in data if isinstance(item, str) and item.strip()]
+            return []
+        except (json.JSONDecodeError, TypeError):
+            logger.debug(f"KG: Could not parse entity list from: {raw_text[:200]}")
+            return []
+
     # =========================================================================
     # Entity Validation (post-extraction filter)
     # =========================================================================
@@ -775,21 +840,15 @@ class KnowledgeGraphService:
         """
         Retrieve relevant graph triples for a query based on user's accessible scopes.
 
+        Uses LLM entity extraction to convert natural-language queries into
+        entity name searches, improving cosine similarity matching. Falls back
+        to embedding the full query if no entity names are extracted.
+
         Returns formatted context string or None if nothing relevant.
         """
         from services.kg_scope_loader import get_scope_loader
         scope_loader = get_scope_loader()
 
-        try:
-            query_embedding = await self._get_embedding(query)
-        except Exception as e:
-            logger.warning(f"KG: Could not embed query: {e}")
-            return None
-
-        if not query_embedding:
-            return None
-
-        embedding_str = f"[{','.join(map(str, query_embedding))}]"
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
@@ -798,49 +857,67 @@ class KnowledgeGraphService:
             accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
 
             if accessible_scopes:
-                # User sees: personal (owned + unowned) + accessible custom scopes
                 scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
                 user_filter = f"""AND (
                     ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')
                     OR e.scope IN ({scopes_list})
                 )"""
-                params: dict = {"embedding": embedding_str, "user_id": user_id}
+                base_params: dict = {"user_id": user_id}
             else:
-                # User sees: personal (owned + unowned) only
                 user_filter = "AND ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')"
-                params = {"embedding": embedding_str, "user_id": user_id}
+                base_params = {"user_id": user_id}
         else:
-            # No auth: only public scope if defined
             accessible_scopes = scope_loader.get_accessible_scopes(None, include_personal=False)
             if accessible_scopes:
                 scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
                 user_filter = f"AND e.scope IN ({scopes_list})"
-                params = {"embedding": embedding_str}
+                base_params = {}
             else:
-                # No accessible scopes for unauthenticated users
                 return None
 
-        # Find top-N similar entities
-        sql = text(f"""
-            SELECT e.id, e.name, e.entity_type,
-                   1 - (e.embedding <=> CAST(:embedding AS vector)) as similarity
-            FROM kg_entities e
-            WHERE e.is_active = true
-              AND e.embedding IS NOT NULL
-              {user_filter}
-            ORDER BY e.embedding <=> CAST(:embedding AS vector)
-            LIMIT 10
-        """)
+        # Extract entity names from query, fall back to full query
+        extracted_names = await self._extract_query_entities(query, lang)
+        search_texts = extracted_names if extracted_names else [query]
 
-        result = await self.db.execute(sql, params)
-        rows = result.fetchall()
+        if extracted_names:
+            logger.debug(f"KG: Extracted entity names from query: {extracted_names}")
 
-        # Filter by threshold
-        relevant_ids = []
-        for row in rows:
-            sim = float(row.similarity) if row.similarity else 0
-            if sim >= threshold:
-                relevant_ids.append(row.id)
+        # Search for each text, collecting matching entity IDs
+        relevant_ids: list[int] = []
+        seen_ids: set[int] = set()
+
+        for search_text in search_texts:
+            try:
+                embedding = await self._get_embedding(search_text)
+            except Exception as e:
+                logger.warning(f"KG: Could not embed '{search_text}': {e}")
+                continue
+
+            if not embedding:
+                continue
+
+            embedding_str = f"[{','.join(map(str, embedding))}]"
+            params = {**base_params, "embedding": embedding_str}
+
+            sql = text(f"""
+                SELECT e.id, e.name, e.entity_type,
+                       1 - (e.embedding <=> CAST(:embedding AS vector)) as similarity
+                FROM kg_entities e
+                WHERE e.is_active = true
+                  AND e.embedding IS NOT NULL
+                  {user_filter}
+                ORDER BY e.embedding <=> CAST(:embedding AS vector)
+                LIMIT 10
+            """)
+
+            result = await self.db.execute(sql, params)
+            rows = result.fetchall()
+
+            for row in rows:
+                sim = float(row.similarity) if row.similarity else 0
+                if sim >= threshold and row.id not in seen_ids:
+                    relevant_ids.append(row.id)
+                    seen_ids.add(row.id)
 
         if not relevant_ids:
             return None

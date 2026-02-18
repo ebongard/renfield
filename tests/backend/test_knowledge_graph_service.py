@@ -1138,6 +1138,127 @@ class TestEntityValidationInExtraction:
 # Entity Type Constants
 # ==========================================================================
 
+# ==========================================================================
+# Query Entity Extraction
+# ==========================================================================
+
+class TestQueryEntityExtraction:
+    """Tests for KnowledgeGraphService._extract_query_entities()."""
+
+    @pytest.mark.unit
+    async def test_extract_query_entities_returns_names(self, kg_service, db_session):
+        """LLM returns entity names from a query."""
+        llm_response = MagicMock()
+        llm_response.message.content = '["Eduard van den Bongard", "Krefeld"]'
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._ollama_client = mock_client
+
+        result = await kg_service._extract_query_entities(
+            "Was weiss ich über Eduard van den Bongard aus Krefeld?"
+        )
+
+        assert result == ["Eduard van den Bongard", "Krefeld"]
+
+    @pytest.mark.unit
+    async def test_extract_query_entities_empty_on_no_entities(self, kg_service, db_session):
+        """LLM returns empty array for queries without proper names."""
+        llm_response = MagicMock()
+        llm_response.message.content = '[]'
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._ollama_client = mock_client
+
+        result = await kg_service._extract_query_entities("Wie wird das Wetter?")
+
+        assert result == []
+
+    @pytest.mark.unit
+    async def test_extract_query_entities_handles_llm_failure(self, kg_service, db_session):
+        """LLM failure returns empty list gracefully."""
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(side_effect=Exception("LLM down"))
+        kg_service._ollama_client = mock_client
+
+        result = await kg_service._extract_query_entities("Test query")
+
+        assert result == []
+
+    @pytest.mark.unit
+    async def test_extract_query_entities_handles_markdown_wrapped(self, kg_service, db_session):
+        """Markdown-wrapped JSON array is parsed correctly."""
+        llm_response = MagicMock()
+        llm_response.message.content = '```json\n["Eduard"]\n```'
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._ollama_client = mock_client
+
+        result = await kg_service._extract_query_entities("Wer ist Eduard?")
+
+        assert result == ["Eduard"]
+
+    @pytest.mark.unit
+    async def test_extract_query_entities_filters_non_strings(self, kg_service, db_session):
+        """Non-string items and empty strings are filtered out."""
+        llm_response = MagicMock()
+        llm_response.message.content = '["Valid", "", 42, "Also Valid"]'
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._ollama_client = mock_client
+
+        result = await kg_service._extract_query_entities("Test")
+
+        assert result == ["Valid", "Also Valid"]
+
+    @pytest.mark.unit
+    async def test_get_relevant_context_uses_extracted_entities(self, kg_service, db_session):
+        """get_relevant_context embeds extracted entity names, not the full query."""
+        kg_service._extract_query_entities = AsyncMock(return_value=["Eduard"])
+        # _get_embedding returns None (mocked in fixture) → no pgvector query
+        # We just verify _get_embedding is called with "Eduard" not the full query
+
+        embed_calls = []
+        original_get_embedding = kg_service._get_embedding
+
+        async def tracking_embed(text_input):
+            embed_calls.append(text_input)
+            return await original_get_embedding(text_input)
+
+        kg_service._get_embedding = tracking_embed
+
+        await kg_service.get_relevant_context(
+            "Was weiss ich über Eduard?", user_id=None,
+        )
+
+        # Should have embedded "Eduard", not the full query
+        assert embed_calls == ["Eduard"]
+
+    @pytest.mark.unit
+    async def test_get_relevant_context_falls_back_to_full_query(self, kg_service, db_session):
+        """Falls back to full query when no entities extracted."""
+        kg_service._extract_query_entities = AsyncMock(return_value=[])
+
+        embed_calls = []
+        original_get_embedding = kg_service._get_embedding
+
+        async def tracking_embed(text_input):
+            embed_calls.append(text_input)
+            return await original_get_embedding(text_input)
+
+        kg_service._get_embedding = tracking_embed
+
+        await kg_service.get_relevant_context(
+            "Wie wird das Wetter?", user_id=None,
+        )
+
+        # Should have embedded the full query as fallback
+        assert embed_calls == ["Wie wird das Wetter?"]
+
+
 class TestEntityTypeConstants:
     @pytest.mark.unit
     def test_entity_types(self):
