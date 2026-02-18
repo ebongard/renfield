@@ -115,9 +115,9 @@ class NotificationService:
 
     async def _get_embedding(self, text_input: str) -> list[float]:
         """Generate embedding via Ollama (same pattern as IntentFeedbackService)."""
-        from utils.llm_client import get_default_client
+        from utils.llm_client import get_embed_client
 
-        client = get_default_client()
+        client = get_embed_client()
         response = await client.embeddings(
             model=settings.ollama_embed_model,
             prompt=text_input,

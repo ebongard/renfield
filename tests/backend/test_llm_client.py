@@ -26,6 +26,7 @@ from utils.llm_client import (
     get_agent_client,
     get_classification_chat_kwargs,
     get_default_client,
+    get_embed_client,
     is_thinking_model,
 )
 
@@ -207,6 +208,86 @@ class TestGetDefaultClient:
         result = get_default_client()
 
         assert not isinstance(result, _FallbackLLMClient)
+
+
+# ============================================================================
+# get_embed_client Tests
+# ============================================================================
+
+class TestGetEmbedClient:
+    """Tests for get_embed_client() — separate embedding Ollama instance."""
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_uses_embed_url_when_configured(self, mock_settings, mock_cls):
+        """get_embed_client() creates a client for settings.ollama_embed_url."""
+        mock_settings.ollama_embed_url = "http://embed-host:11434"
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        sentinel = MagicMock()
+        mock_cls.return_value = sentinel
+
+        result = get_embed_client()
+
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://embed-host:11434"
+        assert result is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_falls_back_to_default_when_no_embed_url(self, mock_settings, mock_cls):
+        """get_embed_client() uses default client when ollama_embed_url is None."""
+        mock_settings.ollama_embed_url = None
+        mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        sentinel = MagicMock()
+        mock_cls.return_value = sentinel
+
+        result = get_embed_client()
+
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://default:11434"
+        assert result is sentinel
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_embed_client_gets_fallback_wrapper(self, mock_settings, mock_cls):
+        """When OLLAMA_FALLBACK_URL is set, embed client also gets fallback wrapper."""
+        from utils.llm_client import _FallbackLLMClient
+
+        mock_settings.ollama_embed_url = "http://embed-host:11434"
+        mock_settings.ollama_fallback_url = "http://fallback:11434"
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        mock_cls.return_value = MagicMock()
+
+        result = get_embed_client()
+
+        assert isinstance(result, _FallbackLLMClient)
+
+    @pytest.mark.unit
+    @patch("ollama.AsyncClient")
+    @patch("utils.llm_client.settings")
+    def test_empty_string_embed_url_uses_default(self, mock_settings, mock_cls):
+        """Empty string ollama_embed_url falls through to default."""
+        mock_settings.ollama_embed_url = ""
+        mock_settings.ollama_url = "http://default:11434"
+        mock_settings.ollama_fallback_url = ""
+        mock_settings.ollama_connect_timeout = 10.0
+        mock_settings.ollama_read_timeout = 300.0
+        sentinel = MagicMock()
+        mock_cls.return_value = sentinel
+
+        result = get_embed_client()
+
+        args, kwargs = mock_cls.call_args
+        assert kwargs.get("host") == "http://default:11434"
 
 
 # ============================================================================
