@@ -555,8 +555,8 @@ class TestHybridSearchConfig:
             database_url="sqlite:///:memory:",
             postgres_host="localhost"
         )
-        assert s.rag_hybrid_bm25_weight == 0.3
-        assert s.rag_hybrid_dense_weight == 0.7
+        assert s.rag_hybrid_bm25_weight == 0.5
+        assert s.rag_hybrid_dense_weight == 0.5
         assert s.rag_hybrid_bm25_weight + s.rag_hybrid_dense_weight == pytest.approx(1.0)
 
     @pytest.mark.unit

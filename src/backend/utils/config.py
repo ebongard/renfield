@@ -132,8 +132,8 @@ class Settings(BaseSettings):
 
     # Hybrid Search (Dense + BM25 via PostgreSQL Full-Text Search)
     rag_hybrid_enabled: bool = True           # Enable hybrid search (BM25 + dense)
-    rag_hybrid_bm25_weight: float = Field(default=0.3, ge=0.0, le=1.0)
-    rag_hybrid_dense_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    rag_hybrid_bm25_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    rag_hybrid_dense_weight: float = Field(default=0.5, ge=0.0, le=1.0)
     rag_hybrid_rrf_k: int = 60                # RRF constant k (standard: 60)
     rag_hybrid_fts_config: str = "german"     # PostgreSQL FTS config: simple/german/english
 
