@@ -43,6 +43,17 @@ de:
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
 
+  query_entities_system: "Extrahiere Entitaetsnamen aus Fragen. Antworte NUR mit einem JSON-Array von Strings."
+
+  query_entities_prompt: |
+    Welche konkreten Personen, Orte, Organisationen oder Dinge werden in dieser Frage namentlich erwaehnt?
+    Nur Eigennamen extrahieren, keine generischen Begriffe.
+
+    Frage: {query}
+
+    Antworte als JSON-Array (leer wenn keine Eigennamen):
+    ["Name1", "Name2"]
+
   document_extraction_prompt: |
     Analysiere den folgenden Textabschnitt aus einem Dokument und extrahiere benannte Entitaeten und ihre Beziehungen.
 
@@ -127,6 +138,17 @@ en:
       "entities": [{{"name": "...", "type": "person|place|organization|thing|event|concept", "description": "..."}}],
       "relations": [{{"subject": "...", "predicate": "...", "object": "...", "confidence": 0.8}}]
     }}
+
+  query_entities_system: "Extract entity names from questions. Reply ONLY with a JSON array of strings."
+
+  query_entities_prompt: |
+    Which specific people, places, organizations, or things are mentioned by name in this question?
+    Only extract proper names, no generic terms.
+
+    Question: {query}
+
+    Reply as JSON array (empty if no proper names):
+    ["Name1", "Name2"]
 
   document_extraction_prompt: |
     Analyze the following text passage from a document and extract named entities and their relationships.
