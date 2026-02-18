@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     ollama_connect_timeout: float = 10.0          # TCP connect timeout in seconds (fast-fail when host is down)
     ollama_read_timeout: float = 300.0            # Read timeout for long LLM responses
     ollama_fallback_url: str = ""                 # Fallback Ollama URL if primary is unreachable (e.g. http://host.docker.internal:11434)
+    ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Home Assistant
     home_assistant_url: str | None = None

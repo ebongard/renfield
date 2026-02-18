@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KG_ENTITY_TYPES, KG_SCOPE_PERSONAL, KGEntity, KGRelation
 from utils.config import settings
-from utils.llm_client import get_default_client
+from utils.llm_client import get_embed_client
 
 # =============================================================================
 # Compiled regex patterns for entity validation (module-level for performance)
@@ -112,7 +112,7 @@ class KnowledgeGraphService:
 
     async def _get_ollama_client(self):
         if self._ollama_client is None:
-            self._ollama_client = get_default_client()
+            self._ollama_client = get_embed_client()
         return self._ollama_client
 
     async def _get_embedding(self, text_input: str) -> list[float]:
