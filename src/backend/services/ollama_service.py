@@ -22,6 +22,7 @@ from utils.llm_client import (
     extract_response_content,
     get_classification_chat_kwargs,
     get_default_client,
+    get_embed_client,
 )
 
 _MAX_USER_INPUT_LENGTH = 4000
@@ -41,6 +42,7 @@ class OllamaService:
 
     def __init__(self):
         self.client = get_default_client()
+        self.embed_client = get_embed_client()
 
         # Multi-Modell Konfiguration
         self.model = settings.ollama_model  # Legacy
@@ -873,7 +875,7 @@ WICHTIGE REGELN FÜR ANTWORTEN:
             Liste von Floats (768 Dimensionen für nomic-embed-text)
         """
         try:
-            response = await self.client.embeddings(
+            response = await self.embed_client.embeddings(
                 model=self.embed_model,
                 prompt=text
             )

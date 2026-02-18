@@ -69,6 +69,10 @@ OLLAMA_URL=http://cuda.local:11434  # Externe GPU-Instanz
 # Im Docker-Container: http://host.docker.internal:11434 = Ollama auf dem Docker-Host
 OLLAMA_FALLBACK_URL=http://host.docker.internal:11434
 
+# Optional: Separate Ollama-Instanz nur für Embedding-Erzeugung
+# Verhindert, dass Embedding-Calls mit LLM-Inferenz um GPU-Ressourcen konkurrieren
+OLLAMA_EMBED_URL=http://host.docker.internal:11434
+
 # Timeout-Konfiguration
 OLLAMA_CONNECT_TIMEOUT=10.0    # TCP-Verbindungs-Timeout in Sekunden (Default: 10)
 OLLAMA_READ_TIMEOUT=300.0      # Lese-Timeout für lange LLM-Antworten (Default: 300)
@@ -87,6 +91,7 @@ OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 **Defaults:**
 - `OLLAMA_URL`: `http://ollama:11434`
 - `OLLAMA_FALLBACK_URL`: `""` (kein Fallback)
+- `OLLAMA_EMBED_URL`: `None` (verwendet `OLLAMA_URL`)
 - `OLLAMA_CONNECT_TIMEOUT`: `10.0` Sekunden
 - `OLLAMA_READ_TIMEOUT`: `300.0` Sekunden
 - `OLLAMA_MODEL`: `llama3.2:3b` (dev fallback)

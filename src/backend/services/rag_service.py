@@ -30,7 +30,7 @@ from models.database import (
 )
 from services.document_processor import DocumentProcessor
 from utils.config import settings
-from utils.llm_client import get_default_client
+from utils.llm_client import get_embed_client
 
 
 class RAGService:
@@ -58,7 +58,7 @@ class RAGService:
     async def _get_ollama_client(self):
         """Lazy initialization des Ollama Clients"""
         if self._ollama_client is None:
-            self._ollama_client = get_default_client()
+            self._ollama_client = get_embed_client()
         return self._ollama_client
 
     # ==========================================================================
