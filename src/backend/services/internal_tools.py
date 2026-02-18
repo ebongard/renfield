@@ -49,6 +49,7 @@ class InternalToolService:
             "description": "Search the user's local knowledge base (uploaded documents, invoices, contracts) by semantic similarity. Returns matching text passages with source document info.",
             "parameters": {
                 "query": "Search query (required)",
+                "top_k": "Maximum number of results to return (optional, default: from server config)",
             },
         },
     }
@@ -400,13 +401,21 @@ class InternalToolService:
                 "action_taken": False,
             }
 
+        # top_k: use parameter if provided, otherwise fall back to settings
+        top_k = None
+        if params.get("top_k"):
+            try:
+                top_k = int(params["top_k"])
+            except (ValueError, TypeError):
+                pass
+
         try:
             from services.database import AsyncSessionLocal
             from services.rag_service import RAGService
 
             async with AsyncSessionLocal() as db:
                 rag = RAGService(db)
-                results = await rag.search(query=query, top_k=5)
+                results = await rag.search(query=query, top_k=top_k)
 
             if results:
                 context_parts = []
@@ -431,7 +440,7 @@ class InternalToolService:
                     "data": {
                         "query": query,
                         "results_count": len(results),
-                        "context": "\n\n".join(context_parts[:5]),
+                        "context": "\n\n".join(context_parts),
                     },
                 }
             else:
