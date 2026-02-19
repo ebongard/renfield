@@ -995,6 +995,11 @@ class MCPManager:
 
         return f"Permission denied: mcp.{server_name} required for {tool_info.namespaced_name}"
 
+    def has_server(self, server_name: str) -> bool:
+        """Check if a server is configured and connected."""
+        state = self._servers.get(server_name)
+        return state is not None and state.connected
+
     async def execute_tool(
         self,
         namespaced_name: str,

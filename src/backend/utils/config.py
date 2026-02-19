@@ -201,6 +201,15 @@ class Settings(BaseSettings):
     paperless_api_url: str | None = None
     paperless_api_token: SecretStr | None = None
 
+    # Paperless Audit
+    paperless_audit_enabled: bool = False
+    paperless_audit_model: str = ""              # Empty = use default model
+    paperless_audit_schedule: str = "02:00"      # Daily at 02:00
+    paperless_audit_fix_mode: str = "review"     # review | auto_threshold | auto_all
+    paperless_audit_confidence_threshold: float = 0.9
+    paperless_audit_ocr_threshold: int = 2       # OCR <= 2 → suggest re-OCR
+    paperless_audit_batch_delay: float = 2.0     # Seconds between documents
+
     # Email MCP
     email_mcp_enabled: bool = False
     mail_regfish_password: SecretStr | None = None

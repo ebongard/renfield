@@ -233,6 +233,37 @@ def _schedule_presence_event_cleanup():
     )
 
 
+async def _init_paperless_audit(app: "FastAPI") -> None:
+    """Dynamically provision Paperless audit if MCP server is available.
+
+    Routes, service, and imports only happen inside this function.
+    If Paperless MCP is not configured, nothing is imported, no routes exist.
+    """
+    if not settings.paperless_audit_enabled:
+        return
+
+    mcp_manager = getattr(app.state, "mcp_manager", None)
+    if not mcp_manager or not mcp_manager.has_server("paperless"):
+        logger.info("Paperless MCP not configured — audit disabled")
+        return
+
+    # Lazy imports: only loaded when Paperless is available
+    from api.routes.paperless_audit import router as audit_router
+    from services.paperless_audit_service import PaperlessAuditService
+
+    # Mount routes dynamically
+    app.include_router(audit_router)
+
+    # Start service
+    audit_service = PaperlessAuditService(
+        mcp_manager=mcp_manager,
+        db_factory=AsyncSessionLocal,
+    )
+    app.state.paperless_audit = audit_service
+    await audit_service.start()
+    logger.info("Paperless Audit: Routes mounted, service started")
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -469,6 +500,7 @@ async def lifespan(app: "FastAPI"):
 
     # Stage 3: Depends on MCP
     await _init_agent_router(app)
+    await _init_paperless_audit(app)
 
     # Background preloading
     _schedule_whisper_preload()
@@ -539,6 +571,10 @@ async def lifespan(app: "FastAPI"):
     await run_hooks("shutdown", app=app)
 
     await _cancel_startup_tasks()
+
+    # Stop paperless audit before MCP shutdown
+    if getattr(app.state, "paperless_audit", None):
+        await app.state.paperless_audit.stop()
 
     # Stop notification poller before MCP shutdown
     if getattr(app.state, "notification_poller", None):
