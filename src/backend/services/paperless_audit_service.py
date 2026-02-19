@@ -356,6 +356,17 @@ class PaperlessAuditService:
         # 3. Call LLM for analysis
         analysis = await self._llm_analyze(doc, available_metadata)
 
+        # 3b. Validate suggested_storage_path — must be an existing category
+        if analysis:
+            suggested_sp = analysis.get("suggested_storage_path")
+            valid_paths = available_metadata.get("storage_paths", [])
+            if suggested_sp and suggested_sp not in valid_paths:
+                logger.debug(
+                    f"Discarding invalid storage_path suggestion: '{suggested_sp}' "
+                    f"(valid: {valid_paths})"
+                )
+                analysis["suggested_storage_path"] = None
+
         # 4. Determine changes_needed (extended logic)
         changes_needed = analysis.get("changes_needed", False) if analysis else False
         if analysis and not changes_needed:

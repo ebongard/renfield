@@ -15,7 +15,10 @@ de:
     - Titel soll aussagekräftig sein: "[Ansprechpartner] [Typ] [Datum/Details]"
     - suggested_date: Dokumentdatum im Format YYYY-MM-DD (aus Inhalt extrahieren)
     - detected_language: ISO 639-1 Sprachcode des Dokuments (z.B. "de", "en")
-    - suggested_storage_path: Passender Ablageort aus der Liste, oder null
+    - suggested_storage_path: Ablageorte sind BERECHTIGUNGSKATEGORIEN (z.B. privat, Firma, Verein).
+      Wähle NUR aus der Liste der verfügbaren Ablageorte. Erfinde KEINE neuen Pfade.
+      Ändere den Ablageort NUR wenn das Dokument eindeutig in die falsche Kategorie einsortiert ist.
+      Im Zweifel: den aktuellen Ablageort beibehalten (suggested_storage_path = aktueller Wert oder null).
     - suggested_custom_fields: Nur Felder setzen die im Schema definiert sind
 
   analyze_document: |
@@ -49,7 +52,7 @@ de:
       "suggested_document_type": "Rechnung",
       "suggested_tags": ["Rechnung", "privat"],
       "suggested_date": "2022-12-15",
-      "suggested_storage_path": "Rechnungen/Telekom",
+      "suggested_storage_path": "privat",
       "suggested_custom_fields": {{"Rechnungsbetrag": "45.99"}},
       "detected_language": "de",
       "changes_needed": true,
@@ -70,7 +73,10 @@ en:
     - Title should be descriptive: "[Correspondent] [Type] [Date/Details]"
     - suggested_date: Document date in YYYY-MM-DD format (extract from content)
     - detected_language: ISO 639-1 language code of the document (e.g. "de", "en")
-    - suggested_storage_path: Matching storage path from list, or null
+    - suggested_storage_path: Storage paths are PERMISSION CATEGORIES (e.g. private, company, club).
+      ONLY choose from the list of available storage paths. NEVER invent new paths.
+      Only change the storage path if the document is clearly in the wrong category.
+      When in doubt: keep the current storage path (suggested_storage_path = current value or null).
     - suggested_custom_fields: Only set fields defined in the schema
 
   analyze_document: |
@@ -104,7 +110,7 @@ en:
       "suggested_document_type": "Invoice",
       "suggested_tags": ["Invoice", "private"],
       "suggested_date": "2022-12-15",
-      "suggested_storage_path": "Invoices/Telekom",
+      "suggested_storage_path": "privat",
       "suggested_custom_fields": {{"Invoice Amount": "45.99"}},
       "detected_language": "en",
       "changes_needed": true,
