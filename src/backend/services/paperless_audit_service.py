@@ -636,6 +636,16 @@ class PaperlessAuditService:
 
         return {"triggered": triggered, "failed": failed}
 
+    # Columns allowed for sorting
+    _SORTABLE_COLUMNS = {
+        "paperless_doc_id", "current_title", "current_correspondent",
+        "current_document_type", "suggested_title", "suggested_correspondent",
+        "suggested_document_type", "confidence", "ocr_quality", "audited_at",
+        "current_date", "suggested_date", "detected_language",
+        "current_storage_path", "suggested_storage_path",
+        "content_completeness",
+    }
+
     async def get_results(
         self,
         page: int = 1,
@@ -647,8 +657,11 @@ class PaperlessAuditService:
         detected_language: str | None = None,
         completeness_max: int | None = None,
         duplicate_group_id: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str = "desc",
+        search: str | None = None,
     ) -> dict:
-        """Get paginated audit results."""
+        """Get paginated audit results with sorting and search."""
         from models.database import PaperlessAuditResult
 
         async with self._db_factory() as db:
@@ -673,12 +686,31 @@ class PaperlessAuditService:
             if duplicate_group_id:
                 query = query.where(PaperlessAuditResult.duplicate_group_id == duplicate_group_id)
 
+            # Text search across key fields
+            if search:
+                term = f"%{search}%"
+                query = query.where(
+                    PaperlessAuditResult.current_title.ilike(term)
+                    | PaperlessAuditResult.current_correspondent.ilike(term)
+                    | PaperlessAuditResult.current_document_type.ilike(term)
+                    | PaperlessAuditResult.suggested_title.ilike(term)
+                    | PaperlessAuditResult.suggested_correspondent.ilike(term)
+                    | PaperlessAuditResult.suggested_document_type.ilike(term)
+                    | PaperlessAuditResult.reasoning.ilike(term)
+                )
+
             # Count total
             count_query = select(func.count()).select_from(query.subquery())
             total = (await db.execute(count_query)).scalar() or 0
 
+            # Sort
+            if sort_by and sort_by in self._SORTABLE_COLUMNS:
+                col = getattr(PaperlessAuditResult, sort_by)
+                query = query.order_by(col.asc() if sort_order == "asc" else col.desc())
+            else:
+                query = query.order_by(PaperlessAuditResult.audited_at.desc())
+
             # Paginate
-            query = query.order_by(PaperlessAuditResult.audited_at.desc())
             query = query.offset((page - 1) * per_page).limit(per_page)
             results = (await db.execute(query)).scalars().all()
 
