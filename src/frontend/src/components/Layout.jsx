@@ -23,7 +23,8 @@ import {
   Zap,
   Brain,
   MapPin,
-  Wrench
+  Wrench,
+  FileSearch
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -52,6 +53,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'], feature: 'satellites' },
   { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
   { nameKey: 'nav.knowledgeGraph', href: '/admin/knowledge-graph', icon: Brain, permission: ['admin'] },
+  { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
 ];

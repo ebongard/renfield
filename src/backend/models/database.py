@@ -1073,3 +1073,45 @@ SYSTEM_SETTING_KEYS = [
     SETTING_WAKEWORD_COOLDOWN_MS,
     SETTING_NOTIFICATION_WEBHOOK_TOKEN,
 ]
+
+
+# ==========================================================================
+# Paperless Document Audit
+# ==========================================================================
+
+class PaperlessAuditResult(Base):
+    """Paperless document audit results from LLM analysis."""
+    __tablename__ = "paperless_audit_results"
+
+    id = Column(Integer, primary_key=True)
+    paperless_doc_id = Column(Integer, index=True, unique=True)
+
+    # Snapshot of current state
+    current_title = Column(String, nullable=True)
+    current_correspondent = Column(String, nullable=True)
+    current_document_type = Column(String, nullable=True)
+    current_tags = Column(JSON, nullable=True)
+
+    # LLM suggestions
+    suggested_title = Column(String, nullable=True)
+    suggested_correspondent = Column(String, nullable=True)
+    suggested_document_type = Column(String, nullable=True)
+    suggested_tags = Column(JSON, nullable=True)
+
+    # Assessment
+    ocr_quality = Column(Integer, nullable=True)          # 1-5
+    ocr_issues = Column(String, nullable=True)
+    confidence = Column(Float, nullable=True)             # 0.0-1.0
+    changes_needed = Column(Boolean, default=False)
+    reasoning = Column(Text, nullable=True)               # LLM reasoning
+
+    # Status: pending → applied/skipped/failed
+    status = Column(String, default="pending")
+
+    # Re-OCR
+    renfield_ocr_text = Column(Text, nullable=True)
+
+    # Timestamps
+    audited_at = Column(DateTime, default=_utcnow)
+    applied_at = Column(DateTime, nullable=True)
+    audit_run_id = Column(String, nullable=True, index=True)

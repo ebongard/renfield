@@ -850,6 +850,15 @@ HA_MCP_ENABLED=true
 # Paperless-NGX (Dokumentenverwaltung)
 PAPERLESS_ENABLED=true
 
+# Paperless Document Audit (LLM-basierte Metadaten-Prüfung)
+PAPERLESS_AUDIT_ENABLED=false          # Opt-in: Dokument-Audit aktivieren
+PAPERLESS_AUDIT_MODEL=                 # Leer = Default-Model
+PAPERLESS_AUDIT_SCHEDULE=02:00         # Tägliche Audit-Zeit
+PAPERLESS_AUDIT_FIX_MODE=review        # review | auto_threshold | auto_all
+PAPERLESS_AUDIT_CONFIDENCE_THRESHOLD=0.9
+PAPERLESS_AUDIT_OCR_THRESHOLD=2        # OCR-Qualität ≤ 2 → Re-OCR vorschlagen
+PAPERLESS_AUDIT_BATCH_DELAY=2.0        # Sekunden zwischen Dokumenten
+
 # Email (IMAP/SMTP)
 EMAIL_MCP_ENABLED=true
 
