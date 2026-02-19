@@ -931,7 +931,9 @@
       "skip": "Skip",
       "approveSelected": "Approve Selected",
       "skipSelected": "Skip Selected",
-      "noResults": "No pending changes"
+      "noResults": "No pending changes",
+      "noSearchResults": "No results for this search",
+      "searchPlaceholder": "Search title, correspondent, type..."
     },
     "ocr": {
       "quality": "OCR Quality",

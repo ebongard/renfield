@@ -97,8 +97,11 @@ async def get_results(
     detected_language: str | None = None,
     completeness_max: int | None = None,
     duplicate_group_id: str | None = None,
+    sort_by: str | None = None,
+    sort_order: str = "desc",
+    search: str | None = None,
 ):
-    """Get paginated audit results with optional filters."""
+    """Get paginated audit results with optional filters, sorting, and search."""
     service = _get_service(request)
     return await service.get_results(
         page=page,
@@ -110,6 +113,9 @@ async def get_results(
         detected_language=detected_language,
         completeness_max=completeness_max,
         duplicate_group_id=duplicate_group_id,
+        sort_by=sort_by,
+        sort_order=sort_order,
+        search=search,
     )
 
 
