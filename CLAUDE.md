@@ -280,6 +280,32 @@ Full conversation persistence with PostgreSQL across Chat, WebSocket, and Satell
 
 **Documentation:** See `src/backend/CONVERSATION_API.md` for API endpoints and usage.
 
+### Paperless Document Audit
+
+Automated metadata auditing for Paperless-NGX documents using local LLMs. Opt-in via `PAPERLESS_AUDIT_ENABLED=true`. Requires Paperless MCP server to be configured and connected.
+
+- **Architecture:** All Paperless interactions via MCPManager → MCP stdio server (no direct API access)
+- **Dynamic Provisioning:** Routes, service, and imports only loaded when `PAPERLESS_AUDIT_ENABLED=true` AND Paperless MCP connected. Zero footprint otherwise.
+- **Audit Process:** For each document: fetch via MCP → heuristic OCR quality check (1-5) → LLM metadata analysis → store results in `paperless_audit_results` table
+- **Fix Modes:** `review` (manual approval in admin UI), `auto_threshold` (apply if confidence ≥ threshold), `auto_all` (apply all suggestions)
+- **OCR Quality:** Heuristic scoring (no LLM) — checks for garbled text, repeated chars, high special-char ratio
+- **Admin UI:** `/admin/paperless-audit` with 4 tabs: Audit Control, Review Queue, OCR Issues, Statistics
+- **API:** `POST /api/admin/paperless-audit/start`, `GET /status`, `GET /results`, `POST /apply`, `POST /skip`, `GET /stats`, `POST /re-ocr`
+- **Scheduled:** Optional daily run at configurable time (default: 02:00)
+
+**Key files:** `services/paperless_audit_service.py`, `api/routes/paperless_audit.py`, `models/database.py` (PaperlessAuditResult), `prompts/paperless_audit.yaml`, `pages/PaperlessAuditPage.jsx`
+
+**Configuration:**
+```bash
+PAPERLESS_AUDIT_ENABLED=false              # Master switch (default: off)
+PAPERLESS_AUDIT_MODEL=                     # Empty = use default model
+PAPERLESS_AUDIT_SCHEDULE=02:00             # Daily run time (HH:MM)
+PAPERLESS_AUDIT_FIX_MODE=review            # review | auto_threshold | auto_all
+PAPERLESS_AUDIT_CONFIDENCE_THRESHOLD=0.9   # For auto_threshold mode
+PAPERLESS_AUDIT_OCR_THRESHOLD=2            # OCR score ≤ this → offer re-OCR
+PAPERLESS_AUDIT_BATCH_DELAY=2.0            # Seconds between documents
+```
+
 ### Knowledge Graph
 
 Entity-Relation triples extracted from conversations and documents via LLM, stored with pgvector embeddings for semantic entity resolution. Opt-in via `KNOWLEDGE_GRAPH_ENABLED=true`.
@@ -455,6 +481,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
 - `PRESENCE_WEBHOOK_URL` — URL to POST presence events to (empty = disabled). Supports n8n webhook triggers (default: `""`)
 - `PRESENCE_WEBHOOK_SECRET` — Shared secret sent as X-Webhook-Secret header for webhook authentication (default: `""`)
+- `PAPERLESS_AUDIT_ENABLED` — Automated document metadata audit using local LLMs (default: `false`, opt-in). Requires `PAPERLESS_ENABLED=true`.
 - `KNOWLEDGE_GRAPH_ENABLED` — Entity-relation triples extracted from conversations via LLM (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
 - `PLUGIN_MODULE` — Hook-based extension entry point (default: `""`, e.g. `"renfield_twin.hooks:register"`)
