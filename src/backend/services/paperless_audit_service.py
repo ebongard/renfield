@@ -184,20 +184,64 @@ class PaperlessAuditService:
         return run_id
 
     async def _fetch_all_doc_ids(self) -> list[int]:
-        """Fetch all document IDs from Paperless via MCP."""
-        result = await self._mcp.execute_tool(
-            "mcp.paperless.search_documents", {"max_results": 500}
-        )
-        if not result.get("success"):
-            logger.warning(f"Failed to fetch documents: {result.get('message')}")
-            return []
+        """Fetch all document IDs from Paperless via MCP.
 
-        parsed = self._parse_mcp_result(result)
-        if not parsed:
-            return []
+        Uses date-based pagination since MCP responses are truncated
+        to ~10KB (mcp_max_response_size). Each page yields ~20 results
+        with snippets, so we walk backwards by created date.
+        """
+        all_ids: list[int] = []
+        created_before: str | None = None
+        seen_ids: set[int] = set()
 
-        results = parsed.get("results", [])
-        return [doc["id"] for doc in results if "id" in doc]
+        for page in range(200):  # Safety limit: max 200 pages
+            params: dict = {"max_results": 100, "ordering": "-created"}
+            if created_before:
+                params["created_before"] = created_before
+
+            result = await self._mcp.execute_tool(
+                "mcp.paperless.search_documents", params
+            )
+            if not result.get("success"):
+                logger.warning(f"Failed to fetch documents page {page}: {result.get('message')}")
+                break
+
+            parsed = self._parse_mcp_result(result)
+            if not parsed:
+                break
+
+            results = parsed.get("results", [])
+            if not results:
+                break
+
+            new_count = 0
+            oldest_date = None
+            for doc in results:
+                doc_id = doc.get("id")
+                if doc_id and doc_id not in seen_ids:
+                    all_ids.append(doc_id)
+                    seen_ids.add(doc_id)
+                    new_count += 1
+                if doc.get("created"):
+                    oldest_date = doc["created"]
+
+            # Check if we got all documents
+            total_matching = parsed.get("summary", {}).get("total_matching", 0)
+            if len(all_ids) >= total_matching:
+                break
+
+            # No new documents found — we've exhausted this date range
+            if new_count == 0:
+                break
+
+            # Move pagination cursor to day before oldest result
+            if oldest_date:
+                created_before = oldest_date
+            else:
+                break
+
+        logger.info(f"Fetched {len(all_ids)} document IDs in {page + 1} page(s)")
+        return all_ids
 
     async def _filter_unaudited(self, doc_ids: list[int]) -> list[int]:
         """Filter out already-audited document IDs."""
@@ -661,14 +705,28 @@ class PaperlessAuditService:
 
     @staticmethod
     def _parse_mcp_result(result: dict) -> dict | None:
-        """Parse the inner JSON from MCP tool response."""
+        """Parse the inner JSON from MCP tool response.
+
+        Handles truncated responses from MCPManager's _truncate_response(),
+        which appends a text suffix like '[... Showing N of M results]'
+        after the JSON, causing 'Extra data' errors.
+        """
         message = result.get("message", "")
         if not message:
             return None
 
         try:
             return json.loads(message)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError as e:
+            # Truncated response: parse up to the error position
+            if e.pos and e.pos > 1:
+                try:
+                    return json.loads(message[:e.pos])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            logger.warning(f"_parse_mcp_result: JSON parse failed: {e}")
+            return None
+        except TypeError:
             return None
 
     @staticmethod
