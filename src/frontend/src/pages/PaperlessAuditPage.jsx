@@ -168,7 +168,7 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const params = { status: 'pending', changes_needed: true, limit: PAGE_SIZE, offset: reviewPage * PAGE_SIZE };
+      const params = { status: 'pending', changes_needed: true, per_page: PAGE_SIZE, page: reviewPage + 1 };
       if (reviewSortBy) {
         params.sort_by = reviewSortBy;
         params.sort_order = reviewSortOrder;
@@ -269,7 +269,7 @@ export default function PaperlessAuditPage() {
       const headers = await authHeaders();
       const res = await apiClient.get('/api/admin/paperless-audit/results', {
         headers,
-        params: { ocr_quality_max: 2, limit: PAGE_SIZE, offset: ocrPage * PAGE_SIZE },
+        params: { ocr_quality_max: 2, per_page: PAGE_SIZE, page: ocrPage + 1 },
       });
       setOcrResults(res.data.results || res.data || []);
       setOcrTotal(res.data.total ?? (res.data.results || res.data || []).length);
@@ -330,7 +330,7 @@ export default function PaperlessAuditPage() {
       const headers = await authHeaders();
       const res = await apiClient.get('/api/admin/paperless-audit/results', {
         headers,
-        params: { completeness_max: 2, limit: PAGE_SIZE, offset: completenessPage * PAGE_SIZE },
+        params: { completeness_max: 2, per_page: PAGE_SIZE, page: completenessPage + 1 },
       });
       setCompletenessResults(res.data.results || res.data || []);
       setCompletenessTotal(res.data.total ?? (res.data.results || res.data || []).length);
