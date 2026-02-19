@@ -43,6 +43,7 @@
     "memory": "Erinnerungen",
     "intents": "Intents",
     "maintenance": "Wartung",
+    "paperlessAudit": "Paperless Audit",
     "settings": "Einstellungen",
     "admin": "Admin",
     "skipToContent": "Zum Inhalt springen",
@@ -887,5 +888,61 @@
     "predicateLabel": "Beziehungstyp",
     "confidenceLabel": "Konfidenz",
     "selfLinkError": "Subjekt und Objekt müssen unterschiedlich sein"
+  },
+  "paperlessAudit": {
+    "title": "Paperless Dokument-Audit",
+    "tabs": {
+      "control": "Audit-Steuerung",
+      "review": "Prüf-Warteschlange",
+      "ocr": "OCR-Probleme",
+      "stats": "Statistiken"
+    },
+    "control": {
+      "start": "Audit starten",
+      "stop": "Stoppen",
+      "mode": "Modus",
+      "modeNewOnly": "Nur neue Dokumente",
+      "modeFull": "Alle Dokumente",
+      "fixMode": "Fix-Modus",
+      "fixReview": "Manuell prüfen",
+      "fixAutoThreshold": "Auto (über Schwellwert)",
+      "fixAutoAll": "Auto (alle)",
+      "confidenceThreshold": "Konfidenz-Schwellwert",
+      "running": "Audit läuft...",
+      "progress": "{{current}} von {{total}} Dokumenten"
+    },
+    "review": {
+      "docId": "Dok-ID",
+      "currentTitle": "Aktueller Titel",
+      "suggestedTitle": "Vorgeschlagener Titel",
+      "correspondent": "Ansprechpartner",
+      "type": "Dokumenttyp",
+      "tags": "Tags",
+      "confidence": "Konfidenz",
+      "reasoning": "Begründung",
+      "approve": "Übernehmen",
+      "skip": "Überspringen",
+      "approveSelected": "Ausgewählte übernehmen",
+      "skipSelected": "Ausgewählte überspringen",
+      "noResults": "Keine ausstehenden Änderungen"
+    },
+    "ocr": {
+      "quality": "OCR-Qualität",
+      "issues": "Probleme",
+      "reocr": "Neu verarbeiten",
+      "noIssues": "Keine OCR-Probleme gefunden"
+    },
+    "stats": {
+      "totalAudited": "Geprüft",
+      "changesNeeded": "Änderungen nötig",
+      "applied": "Angewendet",
+      "skipped": "Übersprungen",
+      "pending": "Ausstehend",
+      "failed": "Fehlgeschlagen",
+      "avgConfidence": "Durchschnittl. Konfidenz",
+      "ocrDistribution": "OCR-Qualitätsverteilung"
+    },
+    "notConfigured": "Paperless Audit ist nicht konfiguriert. Aktiviere PAPERLESS_AUDIT_ENABLED=true und stelle sicher, dass der Paperless MCP-Server verbunden ist.",
+    "error": "Fehler beim Laden der Audit-Daten"
   }
 }

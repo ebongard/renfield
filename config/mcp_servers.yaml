@@ -192,6 +192,8 @@ servers:
       PAPERLESS_API_TOKEN: "${PAPERLESS_API_TOKEN:-}"
     prompt_tools:
       - search_documents
+      - get_document
+      - update_document
       - upload_document
     examples:
       de:

@@ -43,6 +43,7 @@
     "memory": "Memories",
     "intents": "Intents",
     "maintenance": "Maintenance",
+    "paperlessAudit": "Paperless Audit",
     "settings": "Settings",
     "admin": "Admin",
     "skipToContent": "Skip to content",
@@ -887,5 +888,61 @@
     "predicateLabel": "Relationship type",
     "confidenceLabel": "Confidence",
     "selfLinkError": "Subject and object must be different"
+  },
+  "paperlessAudit": {
+    "title": "Paperless Document Audit",
+    "tabs": {
+      "control": "Audit Control",
+      "review": "Review Queue",
+      "ocr": "OCR Issues",
+      "stats": "Statistics"
+    },
+    "control": {
+      "start": "Start Audit",
+      "stop": "Stop",
+      "mode": "Mode",
+      "modeNewOnly": "New documents only",
+      "modeFull": "All documents",
+      "fixMode": "Fix Mode",
+      "fixReview": "Manual review",
+      "fixAutoThreshold": "Auto (above threshold)",
+      "fixAutoAll": "Auto (all)",
+      "confidenceThreshold": "Confidence Threshold",
+      "running": "Audit running...",
+      "progress": "{{current}} of {{total}} documents"
+    },
+    "review": {
+      "docId": "Doc ID",
+      "currentTitle": "Current Title",
+      "suggestedTitle": "Suggested Title",
+      "correspondent": "Correspondent",
+      "type": "Document Type",
+      "tags": "Tags",
+      "confidence": "Confidence",
+      "reasoning": "Reasoning",
+      "approve": "Approve",
+      "skip": "Skip",
+      "approveSelected": "Approve Selected",
+      "skipSelected": "Skip Selected",
+      "noResults": "No pending changes"
+    },
+    "ocr": {
+      "quality": "OCR Quality",
+      "issues": "Issues",
+      "reocr": "Re-process",
+      "noIssues": "No OCR issues found"
+    },
+    "stats": {
+      "totalAudited": "Audited",
+      "changesNeeded": "Changes Needed",
+      "applied": "Applied",
+      "skipped": "Skipped",
+      "pending": "Pending",
+      "failed": "Failed",
+      "avgConfidence": "Avg. Confidence",
+      "ocrDistribution": "OCR Quality Distribution"
+    },
+    "notConfigured": "Paperless Audit is not configured. Enable PAPERLESS_AUDIT_ENABLED=true and ensure the Paperless MCP server is connected.",
+    "error": "Failed to load audit data"
   }
 }
