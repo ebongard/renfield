@@ -10,10 +10,11 @@ import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import {
   FileSearch, Play, Square, Loader, AlertCircle, Check, X,
-  RotateCcw, BarChart3, ClipboardList, Eye, ChevronLeft, ChevronRight
+  RotateCcw, BarChart3, ClipboardList, Eye, ChevronLeft, ChevronRight,
+  Copy, Users, FileText, Languages
 } from 'lucide-react';
 
-const TABS = ['control', 'review', 'ocr', 'stats'];
+const TABS = ['control', 'review', 'ocr', 'completeness', 'duplicates', 'correspondents', 'stats'];
 const PAGE_SIZE = 20;
 
 const OCR_COLORS = {
@@ -67,6 +68,22 @@ export default function PaperlessAuditPage() {
   // Stats tab state
   const [stats, setStats] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
+
+  // Completeness tab state
+  const [completenessResults, setCompletenessResults] = useState([]);
+  const [completenessLoading, setCompletenessLoading] = useState(false);
+  const [completenessPage, setCompletenessPage] = useState(0);
+  const [completenessTotal, setCompletenessTotal] = useState(0);
+
+  // Duplicates tab state
+  const [duplicateGroups, setDuplicateGroups] = useState([]);
+  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
+  const [detectingDuplicates, setDetectingDuplicates] = useState(false);
+
+  // Correspondents tab state
+  const [correspondentClusters, setCorrespondentClusters] = useState([]);
+  const [correspondentsLoading, setCorrespondentsLoading] = useState(false);
+  const [corrThreshold, setCorrThreshold] = useState(0.82);
 
   const authHeaders = useCallback(async () => {
     const token = await getAccessToken();
@@ -278,6 +295,87 @@ export default function PaperlessAuditPage() {
     if (activeTab === 'stats') loadStats();
   }, [activeTab, loadStats]);
 
+  // --- Completeness Tab ---
+  const loadCompleteness = useCallback(async () => {
+    setCompletenessLoading(true);
+    setError(null);
+    try {
+      const headers = await authHeaders();
+      const res = await apiClient.get('/api/admin/paperless-audit/results', {
+        headers,
+        params: { completeness_max: 2, limit: PAGE_SIZE, offset: completenessPage * PAGE_SIZE },
+      });
+      setCompletenessResults(res.data.results || res.data || []);
+      setCompletenessTotal(res.data.total ?? (res.data.results || res.data || []).length);
+      setNotConfigured(false);
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setCompletenessLoading(false);
+    }
+  }, [authHeaders, handleApiError, completenessPage]);
+
+  useEffect(() => {
+    if (activeTab === 'completeness') loadCompleteness();
+  }, [activeTab, loadCompleteness]);
+
+  // --- Duplicates Tab ---
+  const loadDuplicates = useCallback(async () => {
+    setDuplicatesLoading(true);
+    setError(null);
+    try {
+      const headers = await authHeaders();
+      const res = await apiClient.get('/api/admin/paperless-audit/duplicate-groups', { headers });
+      setDuplicateGroups(res.data || []);
+      setNotConfigured(false);
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setDuplicatesLoading(false);
+    }
+  }, [authHeaders, handleApiError]);
+
+  useEffect(() => {
+    if (activeTab === 'duplicates') loadDuplicates();
+  }, [activeTab, loadDuplicates]);
+
+  const detectDuplicates = async () => {
+    setDetectingDuplicates(true);
+    setError(null);
+    try {
+      const headers = await authHeaders();
+      await apiClient.post('/api/admin/paperless-audit/detect-duplicates', {}, { headers });
+      await loadDuplicates();
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setDetectingDuplicates(false);
+    }
+  };
+
+  // --- Correspondents Tab ---
+  const loadCorrespondents = useCallback(async () => {
+    setCorrespondentsLoading(true);
+    setError(null);
+    try {
+      const headers = await authHeaders();
+      const res = await apiClient.get('/api/admin/paperless-audit/correspondent-normalization', {
+        headers,
+        params: { threshold: corrThreshold },
+      });
+      setCorrespondentClusters(res.data.clusters || []);
+      setNotConfigured(false);
+    } catch (err) {
+      handleApiError(err);
+    } finally {
+      setCorrespondentsLoading(false);
+    }
+  }, [authHeaders, handleApiError, corrThreshold]);
+
+  useEffect(() => {
+    if (activeTab === 'correspondents') loadCorrespondents();
+  }, [activeTab, loadCorrespondents]);
+
   // --- Not Configured State ---
   if (notConfigured) {
     return (
@@ -300,6 +398,9 @@ export default function PaperlessAuditPage() {
     control: Play,
     review: ClipboardList,
     ocr: Eye,
+    completeness: FileText,
+    duplicates: Copy,
+    correspondents: Users,
     stats: BarChart3,
   };
 
@@ -391,6 +492,38 @@ export default function PaperlessAuditPage() {
           setPage={setOcrPage}
           actionLoading={ocrActionLoading}
           onReOcr={reOcr}
+        />
+      )}
+
+      {activeTab === 'completeness' && (
+        <CompletenessTab
+          t={t}
+          results={completenessResults}
+          loading={completenessLoading}
+          total={completenessTotal}
+          page={completenessPage}
+          setPage={setCompletenessPage}
+        />
+      )}
+
+      {activeTab === 'duplicates' && (
+        <DuplicatesTab
+          t={t}
+          groups={duplicateGroups}
+          loading={duplicatesLoading}
+          detecting={detectingDuplicates}
+          onDetect={detectDuplicates}
+        />
+      )}
+
+      {activeTab === 'correspondents' && (
+        <CorrespondentsTab
+          t={t}
+          clusters={correspondentClusters}
+          loading={correspondentsLoading}
+          threshold={corrThreshold}
+          setThreshold={setCorrThreshold}
+          onScan={loadCorrespondents}
         />
       )}
 
@@ -580,6 +713,10 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.currentTitle')} / {t('paperlessAudit.review.suggestedTitle')}</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.correspondent')}</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.type')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.date')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.language')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.storagePath')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.missing')}</th>
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.confidence')}</th>
               <th className="text-right py-3 px-2 font-medium text-gray-500 dark:text-gray-400"></th>
             </tr>
@@ -597,7 +734,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                       className="rounded border-gray-300 dark:border-gray-600"
                     />
                   </td>
-                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.document_id}</td>
+                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
                   <td className="py-3 px-2 max-w-xs">
                     <DiffValue current={r.current_title} suggested={r.suggested_title} />
                     {r.suggested_tags && r.suggested_tags.length > 0 && (
@@ -615,6 +752,30 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                   </td>
                   <td className="py-3 px-2">
                     <DiffValue current={r.current_document_type} suggested={r.suggested_document_type} />
+                  </td>
+                  <td className="py-3 px-2">
+                    <DiffValue current={r.current_date} suggested={r.suggested_date} />
+                  </td>
+                  <td className="py-3 px-2">
+                    {r.detected_language && (
+                      <span className="inline-block px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded font-mono">
+                        {r.detected_language}
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-3 px-2">
+                    <DiffValue current={r.current_storage_path} suggested={r.suggested_storage_path} />
+                  </td>
+                  <td className="py-3 px-2">
+                    {r.missing_fields && r.missing_fields.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {r.missing_fields.map((f, i) => (
+                          <span key={i} className="inline-block px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded">
+                            {f}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td className="py-3 px-2">
                     <ConfidenceBadge value={r.confidence} />
@@ -694,7 +855,7 @@ function OcrTab({ t, results, loading, total, page, setPage, actionLoading, onRe
               const quality = r.ocr_quality ?? 0;
               return (
                 <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.document_id}</td>
+                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
                   <td className="py-3 px-2 text-gray-900 dark:text-gray-100">{r.current_title || r.suggested_title || '-'}</td>
                   <td className="py-3 px-2">
                     <span className={`inline-flex items-center gap-1.5 ${OCR_TEXT_COLORS[quality] || 'text-gray-500'}`}>
@@ -749,9 +910,11 @@ function StatsTab({ t, stats, loading }) {
     { key: 'skipped', value: stats.skipped ?? 0, color: 'bg-gray-500' },
     { key: 'pending', value: stats.pending ?? 0, color: 'bg-orange-500' },
     { key: 'failed', value: stats.failed ?? 0, color: 'bg-red-500' },
+    { key: 'missingMetadata', value: stats.missing_metadata_count ?? 0, color: 'bg-yellow-500' },
+    { key: 'duplicateGroups', value: stats.duplicate_groups ?? 0, color: 'bg-purple-500' },
   ];
 
-  const ocrDist = stats.ocr_distribution || {};
+  const ocrDist = stats.ocr_quality_distribution || stats.ocr_distribution || {};
   const maxOcr = Math.max(...Object.values(ocrDist), 1);
 
   return (
@@ -801,6 +964,228 @@ function StatsTab({ t, stats, loading }) {
               );
             })}
           </div>
+        </div>
+      )}
+
+      {/* Language Distribution */}
+      {stats.language_distribution && Object.keys(stats.language_distribution).length > 0 && (
+        <div className="card p-4">
+          <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">
+            {t('paperlessAudit.stats.languageDistribution')}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            {Object.entries(stats.language_distribution)
+              .sort(([, a], [, b]) => b - a)
+              .map(([lang, count]) => (
+                <div key={lang} className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded">
+                  <span className="font-mono text-sm font-medium text-blue-700 dark:text-blue-300">{lang}</span>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">{count}</span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
+
+      {/* Completeness Distribution */}
+      {stats.completeness_distribution && Object.keys(stats.completeness_distribution).length > 0 && (
+        <div className="card p-4">
+          <div className="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">
+            {t('paperlessAudit.stats.completenessDistribution')}
+          </div>
+          <div className="space-y-2">
+            {[1, 2, 3, 4, 5].map((level) => {
+              const count = stats.completeness_distribution[level] || 0;
+              const maxComp = Math.max(...Object.values(stats.completeness_distribution), 1);
+              const pct = (count / maxComp) * 100;
+              return (
+                <div key={level} className="flex items-center gap-3">
+                  <span className={`text-sm font-mono w-4 ${OCR_TEXT_COLORS[level]}`}>{level}</span>
+                  <div className="flex-1 h-5 bg-gray-100 dark:bg-gray-700 rounded overflow-hidden">
+                    <div
+                      className={`h-full ${OCR_COLORS[level]} transition-all duration-300 rounded`}
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="text-sm text-gray-600 dark:text-gray-400 w-10 text-right">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Completeness Tab Component ---
+function CompletenessTab({ t, results, loading, total, page, setPage }) {
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader className="w-6 h-6 animate-spin text-gray-400" />
+      </div>
+    );
+  }
+
+  if (results.length === 0) {
+    return (
+      <div className="card p-8 text-center">
+        <FileText className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+        <p className="text-gray-500 dark:text-gray-400">{t('paperlessAudit.completeness.noIssues')}</p>
+      </div>
+    );
+  }
+
+  const totalPages = Math.ceil(total / PAGE_SIZE);
+
+  return (
+    <div className="space-y-4">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-200 dark:border-gray-700">
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.docId')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.currentTitle')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.completeness.score')}</th>
+              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.completeness.issues')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {results.map((r) => {
+              const score = r.content_completeness ?? 0;
+              return (
+                <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
+                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100">{r.current_title || '-'}</td>
+                  <td className="py-3 px-2">
+                    <span className={`inline-flex items-center gap-1.5 ${OCR_TEXT_COLORS[score] || 'text-gray-500'}`}>
+                      <span className={`w-2.5 h-2.5 rounded-full ${OCR_COLORS[score] || 'bg-gray-400'}`} />
+                      {score}/5
+                    </span>
+                  </td>
+                  <td className="py-3 px-2 text-gray-600 dark:text-gray-400 text-xs max-w-xs truncate">
+                    {r.completeness_issues || '-'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      )}
+    </div>
+  );
+}
+
+// --- Duplicates Tab Component ---
+function DuplicatesTab({ t, groups, loading, detecting, onDetect }) {
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3">
+        <button
+          onClick={onDetect}
+          disabled={detecting}
+          className="btn-primary flex items-center gap-2"
+        >
+          {detecting ? <Loader className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+          {t('paperlessAudit.duplicates.detect')}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader className="w-6 h-6 animate-spin text-gray-400" />
+        </div>
+      ) : groups.length === 0 ? (
+        <div className="card p-8 text-center">
+          <Copy className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+          <p className="text-gray-500 dark:text-gray-400">{t('paperlessAudit.duplicates.noGroups')}</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <div key={group.group_id} className="card p-4">
+              <div className="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                {t('paperlessAudit.duplicates.group')}: {group.group_id}
+              </div>
+              <div className="space-y-2">
+                {group.documents.map((doc) => (
+                  <div key={doc.id} className="flex items-center gap-3 p-2 rounded bg-gray-50 dark:bg-gray-800/50">
+                    <span className="font-mono text-xs text-gray-500">{doc.paperless_doc_id}</span>
+                    <span className="text-sm text-gray-900 dark:text-gray-100 flex-1 truncate">{doc.current_title || '-'}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">{doc.current_correspondent}</span>
+                    {doc.duplicate_score != null && (
+                      <span className="text-xs font-mono text-orange-600 dark:text-orange-400">
+                        {(doc.duplicate_score * 100).toFixed(0)}%
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// --- Correspondents Tab Component ---
+function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onScan }) {
+  return (
+    <div className="space-y-4">
+      <div className="card p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+        <div className="flex-1">
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {t('paperlessAudit.correspondents.threshold')}: {threshold.toFixed(2)}
+          </label>
+          <input
+            type="range"
+            min="0.5"
+            max="1.0"
+            step="0.01"
+            value={threshold}
+            onChange={(e) => setThreshold(parseFloat(e.target.value))}
+            className="w-full"
+          />
+        </div>
+        <button
+          onClick={onScan}
+          disabled={loading}
+          className="btn-primary flex items-center gap-2"
+        >
+          {loading ? <Loader className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
+          {t('paperlessAudit.correspondents.scan')}
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader className="w-6 h-6 animate-spin text-gray-400" />
+        </div>
+      ) : clusters.length === 0 ? (
+        <div className="card p-8 text-center">
+          <Users className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+          <p className="text-gray-500 dark:text-gray-400">{t('paperlessAudit.correspondents.noClusters')}</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {clusters.map((cluster, i) => (
+            <div key={i} className="card p-4">
+              <div className="font-medium text-gray-900 dark:text-white mb-2">{cluster.canonical}</div>
+              <div className="flex flex-wrap gap-2">
+                {cluster.variants.map((v, j) => (
+                  <span key={j} className="inline-flex items-center gap-1.5 px-2 py-1 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded text-sm">
+                    {v.name}
+                    <span className="text-xs font-mono opacity-70">{(v.similarity * 100).toFixed(0)}%</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>

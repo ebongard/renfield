@@ -7,7 +7,7 @@ Paperless MCP server is configured. See lifecycle.py.
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,10 @@ async def get_results(
     status: str | None = None,
     changes_needed: bool | None = None,
     ocr_quality_max: int | None = None,
+    missing_field: str | None = None,
+    detected_language: str | None = None,
+    completeness_max: int | None = None,
+    duplicate_group_id: str | None = None,
 ):
     """Get paginated audit results with optional filters."""
     service = _get_service(request)
@@ -102,6 +106,10 @@ async def get_results(
         status=status,
         changes_needed=changes_needed,
         ocr_quality_max=ocr_quality_max,
+        missing_field=missing_field,
+        detected_language=detected_language,
+        completeness_max=completeness_max,
+        duplicate_group_id=duplicate_group_id,
     )
 
 
@@ -141,3 +149,31 @@ async def trigger_reocr(body: ReOcrRequest, request: Request):
     """Trigger re-OCR for selected results."""
     service = _get_service(request)
     return await service.reprocess_documents(body.result_ids)
+
+
+@router.post("/detect-duplicates")
+async def detect_duplicates(request: Request):
+    """Run duplicate detection post-audit pass."""
+    service = _get_service(request)
+
+    if service.get_status()["running"]:
+        raise HTTPException(status_code=409, detail="Audit is running — wait for completion")
+
+    return await service.run_duplicate_detection()
+
+
+@router.get("/duplicate-groups")
+async def get_duplicate_groups(request: Request):
+    """Get all duplicate groups with their documents."""
+    service = _get_service(request)
+    return await service.get_duplicate_groups()
+
+
+@router.get("/correspondent-normalization")
+async def correspondent_normalization(
+    request: Request,
+    threshold: float = Query(0.82, ge=0.5, le=1.0),
+):
+    """Scan for similar correspondent names that may be duplicates."""
+    service = _get_service(request)
+    return await service.run_correspondent_normalization(threshold=threshold)
