@@ -8,11 +8,15 @@ de:
     passende Metadaten vor. Antworte NUR mit validem JSON.
 
     REGELN:
-    - Nutze BESTEHENDE Typen/Ansprechpartner/Tags wenn möglich
+    - Nutze BESTEHENDE Typen/Ansprechpartner/Tags/Ablageorte wenn möglich
     - Schlage neue nur vor wenn kein bestehender passt
     - changes_needed=false wenn alles bereits korrekt ist
     - confidence: 0.0-1.0 (wie sicher bist du bei deinen Vorschlägen?)
     - Titel soll aussagekräftig sein: "[Ansprechpartner] [Typ] [Datum/Details]"
+    - suggested_date: Dokumentdatum im Format YYYY-MM-DD (aus Inhalt extrahieren)
+    - detected_language: ISO 639-1 Sprachcode des Dokuments (z.B. "de", "en")
+    - suggested_storage_path: Passender Ablageort aus der Liste, oder null
+    - suggested_custom_fields: Nur Felder setzen die im Schema definiert sind
 
   analyze_document: |
     Analysiere dieses Dokument und schlage Metadaten vor.
@@ -22,10 +26,16 @@ de:
     - Ansprechpartner: {correspondent}
     - Dokumenttyp: {document_type}
     - Tags: {tags}
+    - Datum: {current_date}
+    - Ablageort: {storage_path}
 
     VERFÜGBARE DOKUMENTTYPEN: {available_types}
     VERFÜGBARE ANSPRECHPARTNER (Auswahl): {available_correspondents}
     VERFÜGBARE TAGS (Auswahl): {available_tags}
+    VERFÜGBARE ABLAGEORTE: {available_storage_paths}
+
+    BENUTZERDEFINIERTE FELDER (Schema):
+    {custom_fields_schema}
 
     DOKUMENT-INHALT (OCR, erste 3000 Zeichen):
     ---
@@ -38,6 +48,10 @@ de:
       "suggested_correspondent": "Telekom",
       "suggested_document_type": "Rechnung",
       "suggested_tags": ["Rechnung", "privat"],
+      "suggested_date": "2022-12-15",
+      "suggested_storage_path": "Rechnungen/Telekom",
+      "suggested_custom_fields": {{"Rechnungsbetrag": "45.99"}},
+      "detected_language": "de",
       "changes_needed": true,
       "confidence": 0.85,
       "reasoning": "Absender Telekom erkennbar, Rechnungsbetrag vorhanden"
@@ -49,11 +63,15 @@ en:
     appropriate metadata. Respond ONLY with valid JSON.
 
     RULES:
-    - Use EXISTING types/correspondents/tags when possible
+    - Use EXISTING types/correspondents/tags/storage paths when possible
     - Only suggest new ones when no existing match fits
     - changes_needed=false if everything is already correct
     - confidence: 0.0-1.0 (how confident are you in your suggestions?)
     - Title should be descriptive: "[Correspondent] [Type] [Date/Details]"
+    - suggested_date: Document date in YYYY-MM-DD format (extract from content)
+    - detected_language: ISO 639-1 language code of the document (e.g. "de", "en")
+    - suggested_storage_path: Matching storage path from list, or null
+    - suggested_custom_fields: Only set fields defined in the schema
 
   analyze_document: |
     Analyze this document and suggest metadata.
@@ -63,10 +81,16 @@ en:
     - Correspondent: {correspondent}
     - Document Type: {document_type}
     - Tags: {tags}
+    - Date: {current_date}
+    - Storage Path: {storage_path}
 
     AVAILABLE DOCUMENT TYPES: {available_types}
     AVAILABLE CORRESPONDENTS (selection): {available_correspondents}
     AVAILABLE TAGS (selection): {available_tags}
+    AVAILABLE STORAGE PATHS: {available_storage_paths}
+
+    CUSTOM FIELDS (Schema):
+    {custom_fields_schema}
 
     DOCUMENT CONTENT (OCR, first 3000 characters):
     ---
@@ -79,6 +103,10 @@ en:
       "suggested_correspondent": "Telekom",
       "suggested_document_type": "Invoice",
       "suggested_tags": ["Invoice", "private"],
+      "suggested_date": "2022-12-15",
+      "suggested_storage_path": "Invoices/Telekom",
+      "suggested_custom_fields": {{"Invoice Amount": "45.99"}},
+      "detected_language": "en",
       "changes_needed": true,
       "confidence": 0.85,
       "reasoning": "Sender Telekom identified, invoice amount present"
@@ -86,4 +114,4 @@ en:
 
 llm_options:
   temperature: 0.1
-  num_predict: 800
+  num_predict: 1200

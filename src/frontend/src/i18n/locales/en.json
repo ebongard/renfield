@@ -895,6 +895,9 @@
       "control": "Audit Control",
       "review": "Review Queue",
       "ocr": "OCR Issues",
+      "completeness": "Completeness",
+      "duplicates": "Duplicates",
+      "correspondents": "Correspondents",
       "stats": "Statistics"
     },
     "control": {
@@ -918,6 +921,10 @@
       "correspondent": "Correspondent",
       "type": "Document Type",
       "tags": "Tags",
+      "date": "Date",
+      "language": "Language",
+      "storagePath": "Storage Path",
+      "missing": "Missing Fields",
       "confidence": "Confidence",
       "reasoning": "Reasoning",
       "approve": "Approve",
@@ -932,6 +939,21 @@
       "reocr": "Re-process",
       "noIssues": "No OCR issues found"
     },
+    "completeness": {
+      "score": "Completeness",
+      "issues": "Issues",
+      "noIssues": "No completeness issues found"
+    },
+    "duplicates": {
+      "detect": "Detect Duplicates",
+      "group": "Group",
+      "noGroups": "No duplicate groups found"
+    },
+    "correspondents": {
+      "threshold": "Similarity Threshold",
+      "scan": "Scan",
+      "noClusters": "No similar correspondents found"
+    },
     "stats": {
       "totalAudited": "Audited",
       "changesNeeded": "Changes Needed",
@@ -939,8 +961,12 @@
       "skipped": "Skipped",
       "pending": "Pending",
       "failed": "Failed",
+      "missingMetadata": "Missing Metadata",
+      "duplicateGroups": "Duplicate Groups",
       "avgConfidence": "Avg. Confidence",
-      "ocrDistribution": "OCR Quality Distribution"
+      "ocrDistribution": "OCR Quality Distribution",
+      "languageDistribution": "Language Distribution",
+      "completenessDistribution": "Completeness Distribution"
     },
     "notConfigured": "Paperless Audit is not configured. Enable PAPERLESS_AUDIT_ENABLED=true and ensure the Paperless MCP server is connected.",
     "error": "Failed to load audit data"
