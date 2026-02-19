@@ -57,6 +57,10 @@ export default function PaperlessAuditPage() {
   const [reviewTotal, setReviewTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [actionLoading, setActionLoading] = useState(new Set());
+  const [reviewSortBy, setReviewSortBy] = useState(null);
+  const [reviewSortOrder, setReviewSortOrder] = useState('desc');
+  const [reviewSearch, setReviewSearch] = useState('');
+  const reviewSearchTimer = useRef(null);
 
   // OCR tab state
   const [ocrResults, setOcrResults] = useState([]);
@@ -164,10 +168,15 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/results', {
-        headers,
-        params: { status: 'pending', changes_needed: true, limit: PAGE_SIZE, offset: reviewPage * PAGE_SIZE },
-      });
+      const params = { status: 'pending', changes_needed: true, limit: PAGE_SIZE, offset: reviewPage * PAGE_SIZE };
+      if (reviewSortBy) {
+        params.sort_by = reviewSortBy;
+        params.sort_order = reviewSortOrder;
+      }
+      if (reviewSearch.trim()) {
+        params.search = reviewSearch.trim();
+      }
+      const res = await apiClient.get('/api/admin/paperless-audit/results', { headers, params });
       setReviewResults(res.data.results || res.data || []);
       setReviewTotal(res.data.total ?? (res.data.results || res.data || []).length);
       setSelectedIds(new Set());
@@ -177,7 +186,7 @@ export default function PaperlessAuditPage() {
     } finally {
       setReviewLoading(false);
     }
-  }, [authHeaders, handleApiError, reviewPage]);
+  }, [authHeaders, handleApiError, reviewPage, reviewSortBy, reviewSortOrder, reviewSearch]);
 
   useEffect(() => {
     if (activeTab === 'review') loadReview();
@@ -232,6 +241,24 @@ export default function PaperlessAuditPage() {
     } else {
       setSelectedIds(new Set(reviewResults.map(r => r.id)));
     }
+  };
+
+  const handleReviewSort = (column) => {
+    if (reviewSortBy === column) {
+      setReviewSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setReviewSortBy(column);
+      setReviewSortOrder('asc');
+    }
+    setReviewPage(0);
+  };
+
+  const handleReviewSearch = (value) => {
+    setReviewSearch(value);
+    clearTimeout(reviewSearchTimer.current);
+    reviewSearchTimer.current = setTimeout(() => {
+      setReviewPage(0);
+    }, 300);
   };
 
   // --- OCR Tab ---
@@ -479,6 +506,11 @@ export default function PaperlessAuditPage() {
           onToggleSelectAll={toggleSelectAll}
           onApprove={approveResults}
           onSkip={skipResults}
+          sortBy={reviewSortBy}
+          sortOrder={reviewSortOrder}
+          onSort={handleReviewSort}
+          search={reviewSearch}
+          onSearch={handleReviewSearch}
         />
       )}
 
@@ -649,75 +681,98 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
 }
 
 // --- Review Tab Component ---
-function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip }) {
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader className="w-6 h-6 animate-spin text-gray-400" />
-      </div>
-    );
-  }
-
-  if (results.length === 0) {
-    return (
-      <div className="card p-8 text-center">
-        <ClipboardList className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
-        <p className="text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.noResults')}</p>
-      </div>
-    );
-  }
-
+function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, sortBy, sortOrder, onSort, search, onSearch }) {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const allSelected = selectedIds.size === results.length && results.length > 0;
 
+  const SortHeader = ({ column, children, className = '' }) => {
+    const active = sortBy === column;
+    return (
+      <th
+        className={`text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400 cursor-pointer select-none hover:text-gray-700 dark:hover:text-gray-200 transition-colors ${className}`}
+        onClick={() => onSort(column)}
+      >
+        <span className="inline-flex items-center gap-1">
+          {children}
+          {active && (
+            <span className="text-primary-500">{sortOrder === 'asc' ? '\u2191' : '\u2193'}</span>
+          )}
+        </span>
+      </th>
+    );
+  };
+
   return (
     <div className="space-y-4">
-      {/* Bulk Actions */}
-      <div className="flex items-center gap-3">
-        <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+      {/* Search + Bulk Actions */}
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <FileSearch className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
-            type="checkbox"
-            checked={allSelected}
-            onChange={onToggleSelectAll}
-            className="rounded border-gray-300 dark:border-gray-600"
+            type="text"
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            placeholder={t('paperlessAudit.review.searchPlaceholder')}
+            className="input pl-9 py-1.5 text-sm w-full"
           />
-          {t('common.all')}
-        </label>
-        {selectedIds.size > 0 && (
-          <>
-            <button
-              onClick={() => onApprove([...selectedIds])}
-              className="btn-primary text-sm flex items-center gap-1"
-            >
-              <Check className="w-3.5 h-3.5" />
-              {t('paperlessAudit.review.approveSelected')}
-            </button>
-            <button
-              onClick={() => onSkip([...selectedIds])}
-              className="btn-secondary text-sm flex items-center gap-1"
-            >
-              <X className="w-3.5 h-3.5" />
-              {t('paperlessAudit.review.skipSelected')}
-            </button>
-          </>
-        )}
+        </div>
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={onToggleSelectAll}
+              className="rounded border-gray-300 dark:border-gray-600"
+            />
+            {t('common.all')}
+          </label>
+          {selectedIds.size > 0 && (
+            <>
+              <button
+                onClick={() => onApprove([...selectedIds])}
+                className="btn-primary text-sm flex items-center gap-1"
+              >
+                <Check className="w-3.5 h-3.5" />
+                {t('paperlessAudit.review.approveSelected')}
+              </button>
+              <button
+                onClick={() => onSkip([...selectedIds])}
+                className="btn-secondary text-sm flex items-center gap-1"
+              >
+                <X className="w-3.5 h-3.5" />
+                {t('paperlessAudit.review.skipSelected')}
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
+      {loading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader className="w-6 h-6 animate-spin text-gray-400" />
+        </div>
+      ) : results.length === 0 ? (
+        <div className="card p-8 text-center">
+          <ClipboardList className="w-12 h-12 text-gray-400 dark:text-gray-500 mx-auto mb-4" />
+          <p className="text-gray-500 dark:text-gray-400">{search ? t('paperlessAudit.review.noSearchResults') : t('paperlessAudit.review.noResults')}</p>
+        </div>
+      ) : (
+      <>
       {/* Results Table */}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-gray-700">
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400 w-8"></th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.docId')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.currentTitle')} / {t('paperlessAudit.review.suggestedTitle')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.correspondent')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.type')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.date')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.language')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.storagePath')}</th>
+              <SortHeader column="paperless_doc_id">{t('paperlessAudit.review.docId')}</SortHeader>
+              <SortHeader column="current_title">{t('paperlessAudit.review.currentTitle')} / {t('paperlessAudit.review.suggestedTitle')}</SortHeader>
+              <SortHeader column="current_correspondent">{t('paperlessAudit.review.correspondent')}</SortHeader>
+              <SortHeader column="current_document_type">{t('paperlessAudit.review.type')}</SortHeader>
+              <SortHeader column="current_date">{t('paperlessAudit.review.date')}</SortHeader>
+              <SortHeader column="detected_language">{t('paperlessAudit.review.language')}</SortHeader>
+              <SortHeader column="current_storage_path">{t('paperlessAudit.review.storagePath')}</SortHeader>
               <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.missing')}</th>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.confidence')}</th>
+              <SortHeader column="confidence">{t('paperlessAudit.review.confidence')}</SortHeader>
               <th className="text-right py-3 px-2 font-medium text-gray-500 dark:text-gray-400"></th>
             </tr>
           </thead>
@@ -810,6 +865,8 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
       {/* Pagination */}
       {totalPages > 1 && (
         <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      )}
+      </>
       )}
     </div>
   );
