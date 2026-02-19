@@ -3,13 +3,17 @@ Tests for Paperless Document Audit Service.
 
 Tests:
 - OCR quality heuristics (static method, pure functions)
+- Missing fields heuristic
+- Content completeness heuristic
 - LLM response parsing
 - MCP result parsing
-- Result-to-dict conversion
+- Result-to-dict conversion (V1 + V2 fields)
 - Service start/stop behavior
 - Integration-style tests with mocked MCP + DB
 - Audit run logic
-- Apply/skip/reprocess operations
+- Apply/skip/reprocess operations (V1 + V2 fields)
+- Duplicate detection
+- Correspondent normalization
 - API route handler behavior
 """
 
@@ -315,10 +319,23 @@ class TestResultToDict:
         mock_result.current_correspondent = "Company A"
         mock_result.current_document_type = "Invoice"
         mock_result.current_tags = ["finance", "2024"]
+        mock_result.current_date = "2024-01-15"
+        mock_result.current_storage_path = "invoices/2024"
+        mock_result.current_custom_fields = [{"field": 1, "value": "100"}]
         mock_result.suggested_title = "New Title"
         mock_result.suggested_correspondent = "Company B"
         mock_result.suggested_document_type = "Receipt"
         mock_result.suggested_tags = ["finance", "receipt"]
+        mock_result.suggested_date = "2024-01-20"
+        mock_result.suggested_storage_path = "receipts/2024"
+        mock_result.suggested_custom_fields = {"Amount": "100"}
+        mock_result.detected_language = "de"
+        mock_result.missing_fields = ["tags"]
+        mock_result.duplicate_group_id = "abc123"
+        mock_result.duplicate_score = 0.95
+        mock_result.content_completeness = 4
+        mock_result.completeness_issues = "OK"
+        mock_result.content_hash = "abc123def456"
         mock_result.ocr_quality = 4
         mock_result.ocr_issues = "OK"
         mock_result.confidence = 0.92
@@ -335,6 +352,19 @@ class TestResultToDict:
         assert d["paperless_doc_id"] == 100
         assert d["current_title"] == "Old Title"
         assert d["suggested_title"] == "New Title"
+        assert d["current_date"] == "2024-01-15"
+        assert d["suggested_date"] == "2024-01-20"
+        assert d["current_storage_path"] == "invoices/2024"
+        assert d["suggested_storage_path"] == "receipts/2024"
+        assert d["current_custom_fields"] == [{"field": 1, "value": "100"}]
+        assert d["suggested_custom_fields"] == {"Amount": "100"}
+        assert d["detected_language"] == "de"
+        assert d["missing_fields"] == ["tags"]
+        assert d["duplicate_group_id"] == "abc123"
+        assert d["duplicate_score"] == 0.95
+        assert d["content_completeness"] == 4
+        assert d["completeness_issues"] == "OK"
+        assert d["content_hash"] == "abc123def456"
         assert d["ocr_quality"] == 4
         assert d["confidence"] == 0.92
         assert d["changes_needed"] is True
@@ -353,10 +383,23 @@ class TestResultToDict:
         mock_result.current_correspondent = None
         mock_result.current_document_type = None
         mock_result.current_tags = None
+        mock_result.current_date = None
+        mock_result.current_storage_path = None
+        mock_result.current_custom_fields = None
         mock_result.suggested_title = None
         mock_result.suggested_correspondent = None
         mock_result.suggested_document_type = None
         mock_result.suggested_tags = None
+        mock_result.suggested_date = None
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
+        mock_result.detected_language = None
+        mock_result.missing_fields = None
+        mock_result.duplicate_group_id = None
+        mock_result.duplicate_score = None
+        mock_result.content_completeness = None
+        mock_result.completeness_issues = None
+        mock_result.content_hash = None
         mock_result.ocr_quality = None
         mock_result.ocr_issues = None
         mock_result.confidence = None
@@ -370,6 +413,8 @@ class TestResultToDict:
         d = PaperlessAuditService._result_to_dict(mock_result)
         assert d["audited_at"] is None
         assert d["applied_at"] is None
+        assert d["current_date"] is None
+        assert d["detected_language"] is None
 
 
 # ============================================================================
@@ -643,14 +688,49 @@ class TestFetchAvailableMetadata:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_fetches_storage_paths_and_custom_fields(self, service, mock_mcp_manager):
+        """Should also fetch storage paths and custom field definitions."""
+        search_response = {
+            "success": True,
+            "message": json.dumps({
+                "results": [{"document_type": "Invoice", "correspondent": "A", "tags": ["x"]}],
+                "summary": {},
+            }),
+        }
+        sp_response = {
+            "success": True,
+            "message": json.dumps({"paths": [{"id": 1, "path": "invoices/"}]}),
+        }
+        cf_response = {
+            "success": True,
+            "message": json.dumps({"fields": [{"id": 1, "name": "Amount", "data_type": "monetary"}]}),
+        }
+        mock_mcp_manager.execute_tool.side_effect = [search_response, sp_response, cf_response]
+
+        meta = await service._fetch_available_metadata()
+        assert "invoices/" in meta["storage_paths"]
+        assert len(meta["custom_fields"]) == 1
+        assert meta["custom_fields"][0]["name"] == "Amount"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_empty_results(self, service, mock_mcp_manager):
         """Should return empty lists when no metadata found."""
-        mock_mcp_manager.execute_tool.return_value = {
+        search_response = {
             "success": True,
             "message": json.dumps({"results": []}),
         }
+        # Storage paths and custom fields also return empty
+        sp_response = {"success": True, "message": json.dumps({"paths": []})}
+        cf_response = {"success": True, "message": json.dumps({"fields": []})}
+        mock_mcp_manager.execute_tool.side_effect = [search_response, sp_response, cf_response]
+
         meta = await service._fetch_available_metadata()
-        assert meta == {"types": [], "correspondents": [], "tags": []}
+        assert meta["types"] == []
+        assert meta["correspondents"] == []
+        assert meta["tags"] == []
+        assert meta["storage_paths"] == []
+        assert meta["custom_fields"] == []
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -661,7 +741,11 @@ class TestFetchAvailableMetadata:
             "message": "not json",
         }
         meta = await service._fetch_available_metadata()
-        assert meta == {"types": [], "correspondents": [], "tags": []}
+        assert meta["types"] == []
+        assert meta["correspondents"] == []
+        assert meta["tags"] == []
+        assert meta["storage_paths"] == []
+        assert meta["custom_fields"] == []
 
 
 # ============================================================================
@@ -687,6 +771,11 @@ class TestApplyFix:
         mock_result.suggested_document_type = "Invoice"  # same — no change
         mock_result.current_tags = ["tag1"]
         mock_result.suggested_tags = ["tag1"]  # same — no change
+        mock_result.current_date = "2024-01-15"
+        mock_result.suggested_date = "2024-01-15"  # same — no change
+        mock_result.current_storage_path = None
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
 
         mock_mcp_manager.execute_tool.return_value = {"success": True}
 
@@ -708,6 +797,43 @@ class TestApplyFix:
         assert params["correspondent"] == "B"
         assert "document_type" not in params  # unchanged
         assert "tags" not in params  # unchanged
+        assert "created_date" not in params  # unchanged
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_apply_fix_with_v2_fields(self, service, mock_mcp_manager, mock_db_factory):
+        """Should include date, storage_path, custom_fields in MCP call."""
+        mock_result = MagicMock()
+        mock_result.id = 1
+        mock_result.paperless_doc_id = 42
+        mock_result.current_title = "Same"
+        mock_result.suggested_title = "Same"
+        mock_result.current_correspondent = None
+        mock_result.suggested_correspondent = None
+        mock_result.current_document_type = None
+        mock_result.suggested_document_type = None
+        mock_result.current_tags = None
+        mock_result.suggested_tags = None
+        mock_result.current_date = "2024-01-15"
+        mock_result.suggested_date = "2024-02-20"  # changed
+        mock_result.current_storage_path = None
+        mock_result.suggested_storage_path = "invoices/2024"  # new
+        mock_result.suggested_custom_fields = {"Amount": "99.50"}  # new
+
+        mock_mcp_manager.execute_tool.return_value = {"success": True}
+
+        mock_session = mock_db_factory._mock_session
+        mock_db_result = MagicMock()
+        mock_scalar = MagicMock(return_value=mock_db_result)
+        mock_session.execute.return_value = MagicMock(scalar_one_or_none=mock_scalar)
+
+        success = await service._apply_fix(mock_result)
+
+        assert success is True
+        params = mock_mcp_manager.execute_tool.call_args[0][1]
+        assert params["created_date"] == "2024-02-20"
+        assert params["storage_path"] == "invoices/2024"
+        assert params["custom_fields"] == {"Amount": "99.50"}
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -724,6 +850,11 @@ class TestApplyFix:
         mock_result.suggested_document_type = "Same"
         mock_result.current_tags = ["a"]
         mock_result.suggested_tags = ["a"]
+        mock_result.current_date = "2024-01-15"
+        mock_result.suggested_date = "2024-01-15"
+        mock_result.current_storage_path = "path/a"
+        mock_result.suggested_storage_path = "path/a"
+        mock_result.suggested_custom_fields = None
 
         result = await service._apply_fix(mock_result)
 
@@ -745,6 +876,11 @@ class TestApplyFix:
         mock_result.suggested_document_type = None
         mock_result.current_tags = ["a"]
         mock_result.suggested_tags = None
+        mock_result.current_date = "2024-01-15"
+        mock_result.suggested_date = None
+        mock_result.current_storage_path = "path"
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
 
         result = await service._apply_fix(mock_result)
 
@@ -766,6 +902,11 @@ class TestApplyFix:
         mock_result.suggested_document_type = None
         mock_result.current_tags = None
         mock_result.suggested_tags = None
+        mock_result.current_date = None
+        mock_result.suggested_date = None
+        mock_result.current_storage_path = None
+        mock_result.suggested_storage_path = None
+        mock_result.suggested_custom_fields = None
 
         mock_mcp_manager.execute_tool.return_value = {
             "success": False,
@@ -1093,6 +1234,196 @@ class TestReprocessDocuments:
         result = await service.reprocess_documents([1])
         assert result["triggered"] == 0
         assert result["failed"] == 1
+
+
+# ============================================================================
+# Missing Fields Heuristic
+# ============================================================================
+
+
+class TestCheckMissingFields:
+    """Test _check_missing_fields static method."""
+
+    @pytest.mark.unit
+    def test_all_present(self):
+        """No fields missing when all metadata is present."""
+        doc = {
+            "correspondent": "Company A",
+            "document_type": "Invoice",
+            "tags": ["finance"],
+            "storage_path": "invoices/",
+        }
+        missing = PaperlessAuditService._check_missing_fields(doc)
+        assert missing == []
+
+    @pytest.mark.unit
+    def test_all_missing(self):
+        """All four fields reported when all are empty."""
+        doc = {}
+        missing = PaperlessAuditService._check_missing_fields(doc)
+        assert "correspondent" in missing
+        assert "document_type" in missing
+        assert "tags" in missing
+        assert "storage_path" in missing
+        assert len(missing) == 4
+
+    @pytest.mark.unit
+    def test_partial_missing(self):
+        """Only missing fields are reported."""
+        doc = {
+            "correspondent": "Company A",
+            "document_type": None,
+            "tags": [],
+            "storage_path": "path/",
+        }
+        missing = PaperlessAuditService._check_missing_fields(doc)
+        assert "correspondent" not in missing
+        assert "document_type" in missing
+        assert "tags" in missing  # empty list is falsy
+        assert "storage_path" not in missing
+
+    @pytest.mark.unit
+    def test_none_values_are_missing(self):
+        """None values should be treated as missing."""
+        doc = {
+            "correspondent": None,
+            "document_type": "Invoice",
+            "tags": ["a"],
+            "storage_path": None,
+        }
+        missing = PaperlessAuditService._check_missing_fields(doc)
+        assert "correspondent" in missing
+        assert "storage_path" in missing
+        assert "document_type" not in missing
+        assert "tags" not in missing
+
+
+# ============================================================================
+# Content Completeness Heuristic
+# ============================================================================
+
+
+class TestCheckContentCompleteness:
+    """Test _check_content_completeness static method."""
+
+    @pytest.mark.unit
+    def test_good_content(self):
+        """Normal content should get score 5."""
+        content = "A" * 2000  # enough content
+        score, issues = PaperlessAuditService._check_content_completeness(content, 2)
+        assert score == 5
+        assert issues == "OK"
+
+    @pytest.mark.unit
+    def test_empty_content(self):
+        """Empty content should get score 1."""
+        score, issues = PaperlessAuditService._check_content_completeness("", 1)
+        assert score == 1
+
+    @pytest.mark.unit
+    def test_very_low_chars_per_page(self):
+        """Very low content per page should be flagged."""
+        content = "Short text"  # ~10 chars for 5 pages
+        score, issues = PaperlessAuditService._check_content_completeness(content, 5)
+        assert score < 5
+        assert "chars/page" in issues.lower() or "content per page" in issues.lower()
+
+    @pytest.mark.unit
+    def test_incomplete_multi_page(self):
+        """Very short content on multi-page document should be flagged."""
+        # Must be >10 chars to pass early return, but <50 chars for the multi-page check
+        content = "Just some short text."  # ~21 chars, 10 pages
+        score, issues = PaperlessAuditService._check_content_completeness(content, 10)
+        assert score < 5
+        assert "incomplete" in issues.lower() or "content per page" in issues.lower()
+
+    @pytest.mark.unit
+    def test_no_page_count(self):
+        """Should work without page_count."""
+        content = "Some reasonable content that is long enough to not be minimal." * 5
+        score, issues = PaperlessAuditService._check_content_completeness(content, None)
+        assert score == 5
+
+    @pytest.mark.unit
+    def test_page_marker_gaps(self):
+        """Missing page markers should be flagged."""
+        content = "Seite 1 text here. Seite 3 more text here."
+        score, issues = PaperlessAuditService._check_content_completeness(content, 3)
+        assert "missing pages" in issues.lower()
+
+    @pytest.mark.unit
+    def test_consecutive_page_markers_ok(self):
+        """Consecutive page markers should not be flagged."""
+        content = "Page 1 here. Page 2 here. Page 3 here."
+        score, issues = PaperlessAuditService._check_content_completeness(content, 3)
+        assert "missing pages" not in issues.lower()
+
+
+# ============================================================================
+# Correspondent Normalization
+# ============================================================================
+
+
+class TestCorrespondentNormalization:
+    """Test run_correspondent_normalization method."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_finds_similar_names(self, service):
+        """Should find clusters of similar correspondent names."""
+        with patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta:
+            mock_meta.return_value = {
+                "types": [], "tags": [], "storage_paths": [], "custom_fields": [],
+                "correspondents": ["Telekom Deutschland", "Telekom Deutschland GmbH", "Vodafone"],
+            }
+            result = await service.run_correspondent_normalization(threshold=0.8)
+
+        assert result["total_correspondents"] == 3
+        assert len(result["clusters"]) >= 1
+        # Telekom variants should cluster
+        cluster = result["clusters"][0]
+        assert "Telekom" in cluster["canonical"] or any("Telekom" in v["name"] for v in cluster["variants"])
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_clusters_when_distinct(self, service):
+        """Should return empty clusters when all names are distinct."""
+        with patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta:
+            mock_meta.return_value = {
+                "types": [], "tags": [], "storage_paths": [], "custom_fields": [],
+                "correspondents": ["Apple Inc", "Microsoft Corp", "Google LLC"],
+            }
+            result = await service.run_correspondent_normalization(threshold=0.82)
+
+        assert result["clusters"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_correspondents(self, service):
+        """Should handle empty correspondent list."""
+        with patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta:
+            mock_meta.return_value = {
+                "types": [], "tags": [], "storage_paths": [], "custom_fields": [],
+                "correspondents": [],
+            }
+            result = await service.run_correspondent_normalization()
+
+        assert result["total_correspondents"] == 0
+        assert result["clusters"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_strips_legal_suffixes(self, service):
+        """GmbH/AG/etc should be stripped before comparison."""
+        with patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta:
+            mock_meta.return_value = {
+                "types": [], "tags": [], "storage_paths": [], "custom_fields": [],
+                "correspondents": ["ACME GmbH", "ACME AG"],
+            }
+            result = await service.run_correspondent_normalization(threshold=0.8)
+
+        # Should cluster because "ACME" == "ACME" after stripping
+        assert len(result["clusters"]) == 1
 
 
 # ============================================================================

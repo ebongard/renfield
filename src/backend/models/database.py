@@ -1098,6 +1098,35 @@ class PaperlessAuditResult(Base):
     suggested_document_type = Column(String, nullable=True)
     suggested_tags = Column(JSON, nullable=True)
 
+    # Document date
+    current_date = Column(String, nullable=True)          # Paperless 'created' (YYYY-MM-DD)
+    suggested_date = Column(String, nullable=True)        # LLM-extracted date
+
+    # Missing metadata detection
+    missing_fields = Column(JSON, nullable=True)          # ["correspondent", "document_type", ...]
+
+    # Duplicate detection
+    duplicate_group_id = Column(String, nullable=True, index=True)
+    duplicate_score = Column(Float, nullable=True)        # 0.0-1.0
+
+    # Custom fields
+    current_custom_fields = Column(JSON, nullable=True)
+    suggested_custom_fields = Column(JSON, nullable=True)
+
+    # Language detection
+    detected_language = Column(String(10), nullable=True) # "de", "en", etc.
+
+    # Storage path
+    current_storage_path = Column(String, nullable=True)
+    suggested_storage_path = Column(String, nullable=True)
+
+    # Content completeness
+    content_completeness = Column(Integer, nullable=True) # 1-5
+    completeness_issues = Column(String, nullable=True)
+
+    # Content hash for duplicate detection
+    content_hash = Column(String(32), nullable=True)      # MD5 of first 1000 chars
+
     # Assessment
     ocr_quality = Column(Integer, nullable=True)          # 1-5
     ocr_issues = Column(String, nullable=True)

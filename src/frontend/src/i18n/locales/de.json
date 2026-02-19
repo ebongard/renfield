@@ -895,6 +895,9 @@
       "control": "Audit-Steuerung",
       "review": "Prüf-Warteschlange",
       "ocr": "OCR-Probleme",
+      "completeness": "Vollständigkeit",
+      "duplicates": "Duplikate",
+      "correspondents": "Ansprechpartner",
       "stats": "Statistiken"
     },
     "control": {
@@ -918,6 +921,10 @@
       "correspondent": "Ansprechpartner",
       "type": "Dokumenttyp",
       "tags": "Tags",
+      "date": "Datum",
+      "language": "Sprache",
+      "storagePath": "Ablageort",
+      "missing": "Fehlende Felder",
       "confidence": "Konfidenz",
       "reasoning": "Begründung",
       "approve": "Übernehmen",
@@ -932,6 +939,21 @@
       "reocr": "Neu verarbeiten",
       "noIssues": "Keine OCR-Probleme gefunden"
     },
+    "completeness": {
+      "score": "Vollständigkeit",
+      "issues": "Probleme",
+      "noIssues": "Keine Vollständigkeits-Probleme gefunden"
+    },
+    "duplicates": {
+      "detect": "Duplikate erkennen",
+      "group": "Gruppe",
+      "noGroups": "Keine Duplikat-Gruppen gefunden"
+    },
+    "correspondents": {
+      "threshold": "Ähnlichkeits-Schwellwert",
+      "scan": "Scannen",
+      "noClusters": "Keine ähnlichen Ansprechpartner gefunden"
+    },
     "stats": {
       "totalAudited": "Geprüft",
       "changesNeeded": "Änderungen nötig",
@@ -939,8 +961,12 @@
       "skipped": "Übersprungen",
       "pending": "Ausstehend",
       "failed": "Fehlgeschlagen",
+      "missingMetadata": "Fehlende Metadaten",
+      "duplicateGroups": "Duplikat-Gruppen",
       "avgConfidence": "Durchschnittl. Konfidenz",
-      "ocrDistribution": "OCR-Qualitätsverteilung"
+      "ocrDistribution": "OCR-Qualitätsverteilung",
+      "languageDistribution": "Sprach-Verteilung",
+      "completenessDistribution": "Vollständigkeits-Verteilung"
     },
     "notConfigured": "Paperless Audit ist nicht konfiguriert. Aktiviere PAPERLESS_AUDIT_ENABLED=true und stelle sicher, dass der Paperless MCP-Server verbunden ist.",
     "error": "Fehler beim Laden der Audit-Daten"
