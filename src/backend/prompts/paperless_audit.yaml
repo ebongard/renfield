@@ -1,84 +1,89 @@
-paperless_audit:
-  system:
-    de: |
-      Du bist ein Dokumenten-Analyst. Analysiere das Dokument und schlage
-      passende Metadaten vor. Antworte NUR mit validem JSON.
+# Paperless Document Audit Prompts
+# Used by PaperlessAuditService._llm_analyze()
+# Supports multilingual prompts (de/en)
 
-      REGELN:
-      - Nutze BESTEHENDE Typen/Ansprechpartner/Tags wenn möglich
-      - Schlage neue nur vor wenn kein bestehender passt
-      - changes_needed=false wenn alles bereits korrekt ist
-      - confidence: 0.0-1.0 (wie sicher bist du bei deinen Vorschlägen?)
-      - Titel soll aussagekräftig sein: "[Ansprechpartner] [Typ] [Datum/Details]"
-    en: |
-      You are a document analyst. Analyze the document and suggest
-      appropriate metadata. Respond ONLY with valid JSON.
+de:
+  system: |
+    Du bist ein Dokumenten-Analyst. Analysiere das Dokument und schlage
+    passende Metadaten vor. Antworte NUR mit validem JSON.
 
-      RULES:
-      - Use EXISTING types/correspondents/tags when possible
-      - Only suggest new ones when no existing match fits
-      - changes_needed=false if everything is already correct
-      - confidence: 0.0-1.0 (how confident are you in your suggestions?)
-      - Title should be descriptive: "[Correspondent] [Type] [Date/Details]"
+    REGELN:
+    - Nutze BESTEHENDE Typen/Ansprechpartner/Tags wenn möglich
+    - Schlage neue nur vor wenn kein bestehender passt
+    - changes_needed=false wenn alles bereits korrekt ist
+    - confidence: 0.0-1.0 (wie sicher bist du bei deinen Vorschlägen?)
+    - Titel soll aussagekräftig sein: "[Ansprechpartner] [Typ] [Datum/Details]"
 
-  analyze_document:
-    de: |
-      Analysiere dieses Dokument und schlage Metadaten vor.
+  analyze_document: |
+    Analysiere dieses Dokument und schlage Metadaten vor.
 
-      AKTUELL ZUGEWIESEN:
-      - Titel: {title}
-      - Ansprechpartner: {correspondent}
-      - Dokumenttyp: {document_type}
-      - Tags: {tags}
+    AKTUELL ZUGEWIESEN:
+    - Titel: {title}
+    - Ansprechpartner: {correspondent}
+    - Dokumenttyp: {document_type}
+    - Tags: {tags}
 
-      VERFÜGBARE DOKUMENTTYPEN: {available_types}
-      VERFÜGBARE ANSPRECHPARTNER (Auswahl): {available_correspondents}
-      VERFÜGBARE TAGS (Auswahl): {available_tags}
+    VERFÜGBARE DOKUMENTTYPEN: {available_types}
+    VERFÜGBARE ANSPRECHPARTNER (Auswahl): {available_correspondents}
+    VERFÜGBARE TAGS (Auswahl): {available_tags}
 
-      DOKUMENT-INHALT (OCR, erste 3000 Zeichen):
-      ---
-      {content}
-      ---
+    DOKUMENT-INHALT (OCR, erste 3000 Zeichen):
+    ---
+    {content}
+    ---
 
-      Antworte als JSON:
-      {{
-        "suggested_title": "Telekom Rechnung Dezember 2022",
-        "suggested_correspondent": "Telekom",
-        "suggested_document_type": "Rechnung",
-        "suggested_tags": ["Rechnung", "privat"],
-        "changes_needed": true,
-        "confidence": 0.85,
-        "reasoning": "Absender Telekom erkennbar, Rechnungsbetrag vorhanden"
-      }}
-    en: |
-      Analyze this document and suggest metadata.
+    Antworte als JSON:
+    {{
+      "suggested_title": "Telekom Rechnung Dezember 2022",
+      "suggested_correspondent": "Telekom",
+      "suggested_document_type": "Rechnung",
+      "suggested_tags": ["Rechnung", "privat"],
+      "changes_needed": true,
+      "confidence": 0.85,
+      "reasoning": "Absender Telekom erkennbar, Rechnungsbetrag vorhanden"
+    }}
 
-      CURRENTLY ASSIGNED:
-      - Title: {title}
-      - Correspondent: {correspondent}
-      - Document Type: {document_type}
-      - Tags: {tags}
+en:
+  system: |
+    You are a document analyst. Analyze the document and suggest
+    appropriate metadata. Respond ONLY with valid JSON.
 
-      AVAILABLE DOCUMENT TYPES: {available_types}
-      AVAILABLE CORRESPONDENTS (selection): {available_correspondents}
-      AVAILABLE TAGS (selection): {available_tags}
+    RULES:
+    - Use EXISTING types/correspondents/tags when possible
+    - Only suggest new ones when no existing match fits
+    - changes_needed=false if everything is already correct
+    - confidence: 0.0-1.0 (how confident are you in your suggestions?)
+    - Title should be descriptive: "[Correspondent] [Type] [Date/Details]"
 
-      DOCUMENT CONTENT (OCR, first 3000 characters):
-      ---
-      {content}
-      ---
+  analyze_document: |
+    Analyze this document and suggest metadata.
 
-      Respond as JSON:
-      {{
-        "suggested_title": "Telekom Invoice December 2022",
-        "suggested_correspondent": "Telekom",
-        "suggested_document_type": "Invoice",
-        "suggested_tags": ["Invoice", "private"],
-        "changes_needed": true,
-        "confidence": 0.85,
-        "reasoning": "Sender Telekom identified, invoice amount present"
-      }}
+    CURRENTLY ASSIGNED:
+    - Title: {title}
+    - Correspondent: {correspondent}
+    - Document Type: {document_type}
+    - Tags: {tags}
 
-  llm_options:
-    temperature: 0.1
-    num_predict: 800
+    AVAILABLE DOCUMENT TYPES: {available_types}
+    AVAILABLE CORRESPONDENTS (selection): {available_correspondents}
+    AVAILABLE TAGS (selection): {available_tags}
+
+    DOCUMENT CONTENT (OCR, first 3000 characters):
+    ---
+    {content}
+    ---
+
+    Respond as JSON:
+    {{
+      "suggested_title": "Telekom Invoice December 2022",
+      "suggested_correspondent": "Telekom",
+      "suggested_document_type": "Invoice",
+      "suggested_tags": ["Invoice", "private"],
+      "changes_needed": true,
+      "confidence": 0.85,
+      "reasoning": "Sender Telekom identified, invoice amount present"
+    }}
+
+llm_options:
+  temperature: 0.1
+  num_predict: 800

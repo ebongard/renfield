@@ -277,6 +277,23 @@ class TestParseMcpResult:
         """None message should return None."""
         result = {"success": True, "message": None}
         parsed = PaperlessAuditService._parse_mcp_result(result)
+
+    @pytest.mark.unit
+    def test_truncated_response_with_suffix(self):
+        """Truncated JSON with appended text suffix should be recovered."""
+        inner_json = json.dumps({"results": [{"id": 1}, {"id": 2}]})
+        truncated = inner_json + '\n[... Showing 2 of 500 results]'
+        result = {"success": True, "message": truncated}
+        parsed = PaperlessAuditService._parse_mcp_result(result)
+        assert parsed is not None
+        assert len(parsed["results"]) == 2
+
+    @pytest.mark.unit
+    def test_truncated_response_unrecoverable(self):
+        """Badly truncated JSON that can't be recovered should return None."""
+        result = {"success": True, "message": '{"results": [{"id": 1}, {"id"'}
+        parsed = PaperlessAuditService._parse_mcp_result(result)
+        assert parsed is None
         assert parsed is None
 
 
@@ -450,20 +467,56 @@ class TestGetStatus:
 
 
 class TestFetchAllDocIds:
-    """Test _fetch_all_doc_ids method."""
+    """Test _fetch_all_doc_ids method with date-based pagination."""
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_successful_fetch(self, service, mock_mcp_manager):
-        """Should extract IDs from MCP search result."""
+    async def test_single_page_fetch(self, service, mock_mcp_manager):
+        """Should extract IDs when all fit in one page."""
         mock_mcp_manager.execute_tool.return_value = {
             "success": True,
             "message": json.dumps({
-                "results": [{"id": 1}, {"id": 2}, {"id": 3}]
+                "summary": {"total_matching": 3},
+                "results": [
+                    {"id": 1, "created": "2024-01-03"},
+                    {"id": 2, "created": "2024-01-02"},
+                    {"id": 3, "created": "2024-01-01"},
+                ],
             }),
         }
         ids = await service._fetch_all_doc_ids()
         assert ids == [1, 2, 3]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_multi_page_pagination(self, service, mock_mcp_manager):
+        """Should paginate using created_before when results span multiple pages."""
+        page1 = {
+            "success": True,
+            "message": json.dumps({
+                "summary": {"total_matching": 4},
+                "results": [
+                    {"id": 1, "created": "2024-01-04"},
+                    {"id": 2, "created": "2024-01-03"},
+                ],
+            }),
+        }
+        page2 = {
+            "success": True,
+            "message": json.dumps({
+                "summary": {"total_matching": 4},
+                "results": [
+                    {"id": 3, "created": "2024-01-02"},
+                    {"id": 4, "created": "2024-01-01"},
+                ],
+            }),
+        }
+        mock_mcp_manager.execute_tool.side_effect = [page1, page2]
+        ids = await service._fetch_all_doc_ids()
+        assert ids == [1, 2, 3, 4]
+        # Second call should include created_before from oldest date of page1
+        call_args = mock_mcp_manager.execute_tool.call_args_list
+        assert call_args[1][0][1]["created_before"] == "2024-01-03"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -482,7 +535,7 @@ class TestFetchAllDocIds:
         """Should return empty list when no documents found."""
         mock_mcp_manager.execute_tool.return_value = {
             "success": True,
-            "message": json.dumps({"results": []}),
+            "message": json.dumps({"summary": {"total_matching": 0}, "results": []}),
         }
         ids = await service._fetch_all_doc_ids()
         assert ids == []
@@ -494,7 +547,12 @@ class TestFetchAllDocIds:
         mock_mcp_manager.execute_tool.return_value = {
             "success": True,
             "message": json.dumps({
-                "results": [{"id": 1}, {"title": "no-id"}, {"id": 3}]
+                "summary": {"total_matching": 3},
+                "results": [
+                    {"id": 1, "created": "2024-01-03"},
+                    {"title": "no-id", "created": "2024-01-02"},
+                    {"id": 3, "created": "2024-01-01"},
+                ],
             }),
         }
         ids = await service._fetch_all_doc_ids()
@@ -510,6 +568,35 @@ class TestFetchAllDocIds:
         }
         ids = await service._fetch_all_doc_ids()
         assert ids == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_deduplication(self, service, mock_mcp_manager):
+        """Should deduplicate IDs across pages."""
+        page1 = {
+            "success": True,
+            "message": json.dumps({
+                "summary": {"total_matching": 3},
+                "results": [
+                    {"id": 1, "created": "2024-01-03"},
+                    {"id": 2, "created": "2024-01-02"},
+                ],
+            }),
+        }
+        # Page 2 overlaps with page 1 (id=2 appears again)
+        page2 = {
+            "success": True,
+            "message": json.dumps({
+                "summary": {"total_matching": 3},
+                "results": [
+                    {"id": 2, "created": "2024-01-02"},
+                    {"id": 3, "created": "2024-01-01"},
+                ],
+            }),
+        }
+        mock_mcp_manager.execute_tool.side_effect = [page1, page2]
+        ids = await service._fetch_all_doc_ids()
+        assert ids == [1, 2, 3]
 
 
 # ============================================================================
