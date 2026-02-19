@@ -59,18 +59,15 @@ async def start_audit(body: AuditStartRequest, request: Request):
     if service.get_status()["running"]:
         raise HTTPException(status_code=409, detail="Audit already running")
 
-    # Run in background
-    result = await service.run_audit(
+    # Run in background — returns immediately so Nginx doesn't timeout
+    run_id = await service.run_audit_background(
         mode=body.mode,
         fix_mode=body.fix_mode,
         confidence_threshold=body.confidence_threshold,
         document_ids=body.document_ids,
     )
 
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
-
-    return result
+    return {"run_id": run_id, "status": "started"}
 
 
 @router.get("/status")

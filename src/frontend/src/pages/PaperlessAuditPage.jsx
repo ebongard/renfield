@@ -408,7 +408,8 @@ export default function PaperlessAuditPage() {
 // --- Control Tab Component ---
 function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confidenceThreshold, setConfidenceThreshold, starting, stopping, onStart, onStop }) {
   const running = auditStatus?.running;
-  const progress = auditStatus?.progress;
+  const current = auditStatus?.progress ?? 0;
+  const total = auditStatus?.total ?? 0;
 
   return (
     <div className="card p-6 space-y-6">
@@ -470,22 +471,19 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
       )}
 
       {/* Progress */}
-      {running && progress && (
+      {running && (
         <div className="space-y-2">
           <div className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
             <Loader className="w-4 h-4 animate-spin" />
             <span>{t('paperlessAudit.control.running')}</span>
             <span className="ml-auto">
-              {t('paperlessAudit.control.progress', {
-                current: progress.current || 0,
-                total: progress.total || 0,
-              })}
+              {t('paperlessAudit.control.progress', { current, total })}
             </span>
           </div>
           <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
             <div
               className="bg-primary-600 h-2.5 rounded-full transition-all duration-300"
-              style={{ width: `${progress.total ? (progress.current / progress.total) * 100 : 0}%` }}
+              style={{ width: `${total ? (current / total) * 100 : 0}%` }}
             />
           </div>
         </div>

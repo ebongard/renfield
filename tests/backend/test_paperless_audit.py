@@ -794,11 +794,10 @@ class TestRunAudit:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_already_running(self, service):
-        """Should return error when audit is already running."""
+        """run_audit_background should return 'already_running' when audit is in progress."""
         service._running = True
-        result = await service.run_audit()
-        assert "error" in result
-        assert "already running" in result["error"].lower()
+        result = await service.run_audit_background()
+        assert result == "already_running"
 
     @pytest.mark.unit
     @pytest.mark.asyncio

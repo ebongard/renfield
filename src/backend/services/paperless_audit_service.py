@@ -97,13 +97,12 @@ class PaperlessAuditService:
         Returns:
             {"run_id": str, "total": int, "processed": int, "changes_found": int}
         """
-        if self._running:
-            return {"error": "Audit already running"}
-
         fix_mode = fix_mode or settings.paperless_audit_fix_mode
         confidence_threshold = confidence_threshold or settings.paperless_audit_confidence_threshold
         run_id = str(uuid4())
 
+        # State is set by run_audit_background() when called via API.
+        # Set here too for direct calls (e.g. tests).
         self._running = True
         self._cancel_requested = False
         self._progress = {"current": 0, "total": 0, "current_doc_id": None}
@@ -174,14 +173,22 @@ class PaperlessAuditService:
             self._progress["current_doc_id"] = None
 
     async def run_audit_background(self, **kwargs) -> str:
-        """Start audit as background task. Returns run_id."""
-        run_id = str(uuid4())
+        """Start audit as background task. Returns immediately."""
+        if self._running:
+            return "already_running"
+
+        self._running = True
+        self._cancel_requested = False
+        self._progress = {"current": 0, "total": 0, "current_doc_id": None}
 
         async def _run():
-            await self.run_audit(**kwargs)
+            try:
+                await self.run_audit(**kwargs)
+            except Exception as e:
+                logger.error(f"Background audit failed: {e}")
 
-        self._task = asyncio.create_task(_run(), name=f"paperless-audit-{run_id}")
-        return run_id
+        self._task = asyncio.create_task(_run(), name="paperless-audit")
+        return "started"
 
     async def _fetch_all_doc_ids(self) -> list[int]:
         """Fetch all document IDs from Paperless via MCP.
