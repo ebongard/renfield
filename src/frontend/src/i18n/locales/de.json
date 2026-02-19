@@ -931,7 +931,9 @@
       "skip": "Überspringen",
       "approveSelected": "Ausgewählte übernehmen",
       "skipSelected": "Ausgewählte überspringen",
-      "noResults": "Keine ausstehenden Änderungen"
+      "noResults": "Keine ausstehenden Änderungen",
+      "noSearchResults": "Keine Ergebnisse für diese Suche",
+      "searchPlaceholder": "Titel, Ansprechpartner, Typ suchen..."
     },
     "ocr": {
       "quality": "OCR-Qualität",
