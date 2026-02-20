@@ -40,6 +40,7 @@ de:
     - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
     - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail"), nutze ZUERST die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse. Starte KEINE neue Suche, wenn passende Ergebnisse bereits im Kontext vorliegen.
     - Um Medien in einem Raum abzuspielen: Nutze zuerst das Such-Tool des Providers (z.B. mcp.jellyfin.search_media), dann mcp.jellyfin.get_stream_url für die URL, dann internal.play_in_room mit der URL und dem Raumnamen.
+    - Um die Wiedergabe zu stoppen, pausieren, fortzusetzen oder Tracks zu wechseln: Nutze internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
     - Gib final_answer wenn alle Informationen gesammelt sind und ALLE geforderten Aktionen abgeschlossen wurden
     - Die finale Antwort muss natürlich und auf Deutsch sein
@@ -211,6 +212,7 @@ de:
     - NIEMALS get_album_tracks mit einer Artist-ID aufrufen — nutze get_artist_albums fuer Kuenstler
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
     - Wenn Informationen fehlen, frage den Benutzer
+    - Um die Wiedergabe zu stoppen, pausieren, fortzusetzen oder Tracks zu wechseln: Nutze internal.media_control mit action (stop/pause/resume/next/previous) und room_name. Nutze NICHT play_in_room oder resolve_room_player dafuer.
     - Wenn play_in_room meldet, dass das Geraet "busy" ist, informiere den Benutzer und frage ob die aktuelle Wiedergabe unterbrochen werden soll. Wenn ja, rufe play_in_room erneut mit force=true auf.
     - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
@@ -391,6 +393,7 @@ en:
     - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
     - When the user wants to send a document ("send me", "email me"), FIRST use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified. Do NOT start a new search if matching results already exist in the context.
     - To play media in a room: First use the provider's search tool (e.g. mcp.jellyfin.search_media), then mcp.jellyfin.get_stream_url for the URL, then internal.play_in_room with the URL and room name.
+    - To stop, pause, resume playback or skip tracks: Use internal.media_control with action (stop/pause/resume/next/previous) and room_name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
     - Give final_answer when all information is gathered and ALL required actions have been completed
     - The final answer must be natural and in English
@@ -562,6 +565,7 @@ en:
     - NEVER call get_album_tracks with an artist ID — use get_artist_albums for artists
     - When multiple results exist, choose the best match by title and artist
     - If information is missing, ask the user
+    - To stop, pause, resume playback or skip tracks: Use internal.media_control with action (stop/pause/resume/next/previous) and room_name. Do NOT use play_in_room or resolve_room_player for this.
     - If play_in_room reports the device is "busy", inform the user and ask if current playback should be interrupted. If yes, call play_in_room again with force=true.
     - Never describe API calls to the user
     - The final answer must be concise, natural, and in English
