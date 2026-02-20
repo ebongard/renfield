@@ -33,6 +33,8 @@ class InternalToolService:
                 "room_name": "Target room name (required)",
                 "media_type": "Content type: music, video, playlist (default: music)",
                 "force": "Set to 'true' to interrupt current playback (default: false)",
+                "title": "Display title for the media player (optional)",
+                "thumb": "Thumbnail/album art URL for the media player (optional)",
             },
         },
         "internal.get_user_location": {
@@ -204,6 +206,8 @@ class InternalToolService:
         room_name = params.get("room_name", "").strip()
         media_type = params.get("media_type", "music").strip()
         force = str(params.get("force", "false")).lower() in ("true", "1", "yes")
+        title = (params.get("title") or "").strip() or None
+        thumb = (params.get("thumb") or "").strip() or None
 
         # Pass media_type directly as HA media_content_type.
         ha_content_type = media_type
@@ -251,6 +255,19 @@ class InternalToolService:
 
             ha_client = HomeAssistantClient()
 
+            # Build service_data with optional metadata for HA media player UI.
+            service_data = {
+                "media_content_id": media_url,
+                "media_content_type": ha_content_type,
+            }
+            if title or thumb:
+                extra = {}
+                if title:
+                    extra["title"] = title
+                if thumb:
+                    extra["thumb"] = thumb
+                service_data["extra"] = extra
+
             # Fire the play_media command.  Some HA integrations (HomePod,
             # Apple TV) return HTTP 500 or timeout even though the action
             # succeeds.  We therefore ignore the call_service result and
@@ -260,10 +277,7 @@ class InternalToolService:
                     domain="media_player",
                     service="play_media",
                     entity_id=entity_id,
-                    service_data={
-                        "media_content_id": media_url,
-                        "media_content_type": ha_content_type,
-                    },
+                    service_data=service_data,
                     timeout=15.0,
                 )
             except Exception as exc:
@@ -302,15 +316,24 @@ class InternalToolService:
                 logger.info(
                     f"Playback idle with static URL — retrying with transcode: {entity_id}"
                 )
+                transcode_service_data = {
+                    "media_content_id": transcode_url,
+                    "media_content_type": ha_content_type,
+                }
+                if title or thumb:
+                    transcode_extra = {}
+                    if title:
+                        transcode_extra["title"] = title
+                    if thumb:
+                        transcode_extra["thumb"] = thumb
+                    transcode_service_data["extra"] = transcode_extra
+
                 try:
                     await ha_client.call_service(
                         domain="media_player",
                         service="play_media",
                         entity_id=entity_id,
-                        service_data={
-                            "media_content_id": transcode_url,
-                            "media_content_type": ha_content_type,
-                        },
+                        service_data=transcode_service_data,
                         timeout=15.0,
                     )
                 except Exception:
