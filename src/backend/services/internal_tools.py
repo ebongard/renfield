@@ -263,8 +263,9 @@ class InternalToolService:
                 # dispatched.  Log and continue to state check.
                 logger.info(f"HA play_media raised {type(exc).__name__} for {entity_id} — checking player state")
 
-            # Give the player a moment to start, then verify
-            await _asyncio.sleep(3)
+            # Give the player time to start — AirPlay/HomePod needs
+            # up to ~6s to set up the RTSP stream from a network URL.
+            await _asyncio.sleep(6)
             state = await ha_client.get_state(entity_id)
             player_state = (state or {}).get("state", "unknown")
 
