@@ -545,6 +545,71 @@ class TestPlayInRoom:
         assert retry_call.kwargs["service_data"]["media_content_id"] == expected_transcode_url
 
     @pytest.mark.unit
+    async def test_play_in_room_with_metadata(self, internal_tools):
+        """Title and thumb are forwarded as extra dict in HA service_data."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/abc123/stream?static=true&api_key=k",
+                "room_name": "Arbeitszimmer",
+                "title": "Cold as Ice",
+                "thumb": "http://jellyfin:8096/Items/abc123/Images/Primary?api_key=k",
+            })
+
+        assert result["success"] is True
+        call_kwargs = mock_ha_client.call_service.call_args
+        service_data = call_kwargs.kwargs["service_data"]
+        assert service_data["extra"]["title"] == "Cold as Ice"
+        assert service_data["extra"]["thumb"] == "http://jellyfin:8096/Items/abc123/Images/Primary?api_key=k"
+
+    @pytest.mark.unit
+    async def test_play_in_room_without_metadata_no_extra(self, internal_tools):
+        """Without title/thumb, service_data has no extra key."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/abc123/stream?static=true&api_key=k",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        call_kwargs = mock_ha_client.call_service.call_args
+        service_data = call_kwargs.kwargs["service_data"]
+        assert "extra" not in service_data
+
+    @pytest.mark.unit
     async def test_play_in_room_no_transcode_for_non_static(self, internal_tools):
         """Non-static URL that stays idle does NOT trigger transcode retry."""
         resolve_result = {

@@ -39,7 +39,7 @@ de:
     - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, die zur aktuellen AUFGABE passen, nutze diese Ergebnisse (IDs, Titel) direkt weiter, anstatt eine neue Suche zu starten.
     - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
     - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail"), nutze ZUERST die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse. Starte KEINE neue Suche, wenn passende Ergebnisse bereits im Kontext vorliegen.
-    - Um Medien in einem Raum abzuspielen: Nutze zuerst das Such-Tool des Providers (z.B. mcp.jellyfin.search_media), dann mcp.jellyfin.get_stream_url für die URL, dann internal.play_in_room mit der URL und dem Raumnamen.
+    - Um Medien in einem Raum abzuspielen: Nutze zuerst das Such-Tool des Providers (z.B. mcp.jellyfin.search_media), dann mcp.jellyfin.get_stream_url für die URL, dann internal.play_in_room mit der URL und dem Raumnamen. Uebergib dabei title (Trackname) und thumb (image_url) an play_in_room, damit der Media Player Titel und Cover anzeigt.
     - Um die Wiedergabe zu stoppen, pausieren, fortzusetzen oder Tracks zu wechseln: Nutze internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
     - Gib final_answer wenn alle Informationen gesammelt sind und ALLE geforderten Aktionen abgeschlossen wurden
@@ -205,9 +205,9 @@ de:
     - Erfinde NIEMALS Medien, IDs oder Wiedergabe-Status
     - Rufe pro Antwort GENAU EIN Tool auf
     - IMMER zuerst suchen, dann abspielen
-    - Kuenstler abspielen: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room mit api_stream URL
-    - Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL aus Schritt 1
-    - Album abspielen: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room mit api_stream URL
+    - Kuenstler abspielen: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room mit api_stream URL. Uebergib title (Trackname) und thumb (image_url) aus den Suchergebnissen.
+    - Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL aus Schritt 1. Uebergib title (name) und thumb (image_url) aus den Suchergebnissen.
+    - Album abspielen: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room mit api_stream URL. Uebergib title (Trackname) und thumb (image_url) aus den Suchergebnissen.
     - search_media und get_album_tracks liefern api_stream URLs direkt mit — kein extra get_stream_url noetig
     - NIEMALS get_album_tracks mit einer Artist-ID aufrufen — nutze get_artist_albums fuer Kuenstler
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
@@ -392,7 +392,7 @@ en:
     - If the CONVERSATION CONTEXT already contains search results relevant to the current TASK, use those results (IDs, titles) directly instead of running a new search.
     - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
     - When the user wants to send a document ("send me", "email me"), FIRST use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified. Do NOT start a new search if matching results already exist in the context.
-    - To play media in a room: First use the provider's search tool (e.g. mcp.jellyfin.search_media), then mcp.jellyfin.get_stream_url for the URL, then internal.play_in_room with the URL and room name.
+    - To play media in a room: First use the provider's search tool (e.g. mcp.jellyfin.search_media), then mcp.jellyfin.get_stream_url for the URL, then internal.play_in_room with the URL and room name. Pass title (track name) and thumb (image_url) to play_in_room so the media player shows title and cover art.
     - To stop, pause, resume playback or skip tracks: Use internal.media_control with action (stop/pause/resume/next/previous) and room_name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
     - Give final_answer when all information is gathered and ALL required actions have been completed
@@ -558,9 +558,9 @@ en:
     - Do NOT invent media, IDs, or playback states
     - Call EXACTLY ONE tool per response
     - ALWAYS search before play
-    - Play an artist: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room with api_stream URL
-    - Play a song: (1) search_media(type="Audio"), (2) internal.play_in_room with api_stream URL from step 1
-    - Play an album: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room with api_stream URL
+    - Play an artist: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room with api_stream URL. Pass title (track name) and thumb (image_url) from the search results.
+    - Play a song: (1) search_media(type="Audio"), (2) internal.play_in_room with api_stream URL from step 1. Pass title (name) and thumb (image_url) from the search results.
+    - Play an album: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room with api_stream URL. Pass title (track name) and thumb (image_url) from the search results.
     - search_media and get_album_tracks return api_stream URLs inline — no extra get_stream_url needed
     - NEVER call get_album_tracks with an artist ID — use get_artist_albums for artists
     - When multiple results exist, choose the best match by title and artist
