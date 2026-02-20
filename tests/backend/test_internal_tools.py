@@ -640,153 +640,6 @@ class TestPlayInRoom:
         # Only one call_service — no transcode retry
         mock_ha_client.call_service.assert_called_once()
 
-    @pytest.mark.unit
-    async def test_play_in_room_with_queue(self, internal_tools):
-        """Queue parameter enqueues additional tracks after the first."""
-        import json as _json
-
-        resolve_result = {
-            "success": True,
-            "message": "Found",
-            "action_taken": True,
-            "data": {
-                "entity_id": "media_player.arbeitszimmer_speaker",
-                "room_name": "Arbeitszimmer",
-                "device_name": "Arbeitszimmer Speaker",
-            },
-        }
-
-        mock_ha_client = MagicMock()
-        mock_ha_client.call_service = AsyncMock(return_value=True)
-        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
-
-        queue_json = _json.dumps([
-            {"url": "http://jellyfin:8096/Audio/track2/universal", "title": "Track 2", "thumb": "http://jellyfin:8096/Items/track2/Images/Primary"},
-            {"url": "http://jellyfin:8096/Audio/track3/universal", "title": "Track 3", "thumb": "http://jellyfin:8096/Items/track3/Images/Primary"},
-        ])
-
-        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
-             patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await internal_tools._play_in_room({
-                "media_url": "http://jellyfin:8096/Audio/track1/universal",
-                "room_name": "Arbeitszimmer",
-                "title": "Track 1",
-                "thumb": "http://jellyfin:8096/Items/track1/Images/Primary",
-                "queue": queue_json,
-            })
-
-        assert result["success"] is True
-        assert "3 track(s)" in result["message"]
-
-        # 1 call for main track + 2 calls for queued tracks
-        assert mock_ha_client.call_service.call_count == 3
-
-        # First call: main track with enqueue: "play"
-        first_call = mock_ha_client.call_service.call_args_list[0]
-        assert first_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track1/universal"
-        assert first_call.kwargs["service_data"]["extra"]["enqueue"] == "play"
-        assert first_call.kwargs["service_data"]["extra"]["title"] == "Track 1"
-
-        # Second call: queue track 2 with enqueue: "add"
-        second_call = mock_ha_client.call_service.call_args_list[1]
-        assert second_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track2/universal"
-        assert second_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
-        assert second_call.kwargs["service_data"]["extra"]["title"] == "Track 2"
-
-        # Third call: queue track 3 with enqueue: "add"
-        third_call = mock_ha_client.call_service.call_args_list[2]
-        assert third_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track3/universal"
-        assert third_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
-        assert third_call.kwargs["service_data"]["extra"]["title"] == "Track 3"
-
-    @pytest.mark.unit
-    async def test_play_in_room_queue_with_transcode(self, internal_tools):
-        """When first track needs transcoding, queued track URLs are also transcoded."""
-        import json as _json
-
-        resolve_result = {
-            "success": True,
-            "message": "Found",
-            "action_taken": True,
-            "data": {
-                "entity_id": "media_player.arbeitszimmer_speaker",
-                "room_name": "Arbeitszimmer",
-                "device_name": "Arbeitszimmer Speaker",
-            },
-        }
-
-        mock_ha_client = MagicMock()
-        mock_ha_client.call_service = AsyncMock(return_value=True)
-        # First get_state → idle (static URL failed), second → playing (transcoded)
-        mock_ha_client.get_state = AsyncMock(side_effect=[
-            {"state": "idle"},
-            {"state": "playing"},
-        ])
-
-        queue_json = _json.dumps([
-            {"url": "http://jellyfin:8096/Audio/track2/universal?api_key=k&static=true", "title": "Track 2"},
-        ])
-
-        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
-             patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await internal_tools._play_in_room({
-                "media_url": "http://jellyfin:8096/Audio/track1/universal?api_key=k&static=true",
-                "room_name": "Arbeitszimmer",
-                "queue": queue_json,
-            })
-
-        assert result["success"] is True
-        assert "transcoded" in result["message"]
-        assert "2 track(s)" in result["message"]
-
-        # 3 calls: original static (failed), transcode retry (success), queue track (transcoded)
-        assert mock_ha_client.call_service.call_count == 3
-
-        # Queue track URL should be transcoded too
-        queue_call = mock_ha_client.call_service.call_args_list[2]
-        assert "static=true" not in queue_call.kwargs["service_data"]["media_content_id"]
-        assert "audioCodec=mp3" in queue_call.kwargs["service_data"]["media_content_id"]
-        assert queue_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
-
-    @pytest.mark.unit
-    async def test_play_in_room_queue_ignored_on_failure(self, internal_tools):
-        """Queue is NOT processed when first track fails to play."""
-        import json as _json
-
-        resolve_result = {
-            "success": True,
-            "message": "Found",
-            "action_taken": True,
-            "data": {
-                "entity_id": "media_player.arbeitszimmer_speaker",
-                "room_name": "Arbeitszimmer",
-                "device_name": "Arbeitszimmer Speaker",
-            },
-        }
-
-        mock_ha_client = MagicMock()
-        mock_ha_client.call_service = AsyncMock(return_value=True)
-        mock_ha_client.get_state = AsyncMock(return_value={"state": "idle"})
-
-        queue_json = _json.dumps([
-            {"url": "http://jellyfin:8096/Audio/track2/universal", "title": "Track 2"},
-        ])
-
-        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
-             patch("asyncio.sleep", new_callable=AsyncMock):
-            result = await internal_tools._play_in_room({
-                "media_url": "http://example.com/audio.mp3",
-                "room_name": "Arbeitszimmer",
-                "queue": queue_json,
-            })
-
-        assert result["success"] is False
-        # Only 1 call_service — queue was NOT processed
-        assert mock_ha_client.call_service.call_count == 1
-
 
 # ============================================================================
 # Test execute() routing
@@ -1376,6 +1229,144 @@ class TestMediaControl:
 
         assert result["success"] is False
         assert "Error executing media stop" in result["message"]
+
+
+
+# ============================================================================
+# Test play_album_on_dlna
+# ============================================================================
+
+class TestPlayAlbumOnDlna:
+    """Test internal.play_album_on_dlna tool."""
+
+    @staticmethod
+    def _patch_main_app(mock_mcp_manager):
+        """Patch main.app without importing the real main module."""
+        mock_app = MagicMock()
+        mock_app.state.mcp_manager = mock_mcp_manager
+
+        # Inject fake main module to avoid asyncpg import
+        fake_main = ModuleType("main")
+        fake_main.app = mock_app  # type: ignore
+
+        return patch.dict(sys.modules, {"main": fake_main})
+
+    @pytest.mark.unit
+    async def test_play_album_success(self, internal_tools):
+        """Album played successfully via Jellyfin + DLNA MCP calls."""
+        mock_mcp_manager = MagicMock()
+
+        import json
+        tracks_response = json.dumps({
+            "album": "The Very Best Of Foreigner",
+            "artist": "Foreigner",
+            "track_count": 2,
+            "items": [
+                {"name": "Feels Like The First Time", "artist": "Foreigner", "album": "The Very Best Of Foreigner",
+                 "api_stream": "http://jellyfin:8096/Audio/abc123/stream?static=true&api_key=k"},
+                {"name": "Cold As Ice", "artist": "Foreigner", "album": "The Very Best Of Foreigner",
+                 "api_stream": "http://jellyfin:8096/Audio/def456/stream?static=true&api_key=k"},
+            ],
+        })
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": tracks_response, "data": [{"type": "text", "text": tracks_response}]},
+            {"success": True, "message": "Playing 2 tracks on HiFiBerry Arbeitszimmer"},
+        ])
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "50ffb172",
+                "renderer_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["track_count"] == 2
+        assert result["data"]["album"] == "The Very Best Of Foreigner"
+        assert result["data"]["renderer"] == "Arbeitszimmer"
+
+        calls = mock_mcp_manager.execute_tool.call_args_list
+        assert calls[0].args[0] == "mcp.jellyfin.get_album_tracks"
+        assert calls[0].args[1] == {"album_id": "50ffb172"}
+        assert calls[1].args[0] == "mcp.dlna.play_tracks"
+        assert calls[1].args[1]["renderer_name"] == "Arbeitszimmer"
+
+    @pytest.mark.unit
+    async def test_play_album_missing_album_id(self, internal_tools):
+        """Missing album_id returns error."""
+        result = await internal_tools._play_album_on_dlna({"renderer_name": "Arbeitszimmer"})
+        assert result["success"] is False
+        assert "album_id" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_missing_renderer_name(self, internal_tools):
+        """Missing renderer_name returns error."""
+        result = await internal_tools._play_album_on_dlna({"album_id": "abc123"})
+        assert result["success"] is False
+        assert "renderer_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_jellyfin_fails(self, internal_tools):
+        """Jellyfin get_album_tracks failure returns error."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": False, "message": "Album not found",
+        })
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "invalid",
+                "renderer_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "Failed to get album tracks" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_dlna_fails(self, internal_tools):
+        """DLNA play_tracks failure returns error."""
+        import json
+        tracks_response = json.dumps({
+            "items": [
+                {"name": "Track 1", "artist": "Artist", "album": "Album",
+                 "api_stream": "http://jellyfin:8096/Audio/abc/stream"},
+            ],
+        })
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": tracks_response, "data": [{"type": "text", "text": tracks_response}]},
+            {"success": False, "message": "Renderer not found"},
+        ])
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "abc123",
+                "renderer_name": "Narnia",
+            })
+
+        assert result["success"] is False
+        assert "DLNA playback failed" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_no_mcp_manager(self, internal_tools):
+        """Missing MCP manager returns error."""
+        with self._patch_main_app(None):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "abc123",
+                "renderer_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "MCP manager not available" in result["message"]
+
+    @pytest.mark.unit
+    async def test_execute_routes_to_play_album_on_dlna(self, internal_tools):
+        """execute() routes internal.play_album_on_dlna correctly."""
+        with patch.object(internal_tools, "_play_album_on_dlna", new_callable=AsyncMock) as mock:
+            mock.return_value = {"success": True}
+            params = {"album_id": "abc", "renderer_name": "Test"}
+            result = await internal_tools.execute("internal.play_album_on_dlna", params)
+            mock.assert_called_once_with(params)
+            assert result["success"] is True
 
 
 class TestFormatLastSeen:
