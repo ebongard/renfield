@@ -44,8 +44,8 @@ roles:
     description:
       de: "Medien: Musik, Filme, Serien suchen und abspielen (auch in bestimmten Raeumen)"
       en: "Media: search and play music, movies, series (also in specific rooms)"
-    mcp_servers: [jellyfin]
-    internal_tools: [internal.resolve_room_player, internal.play_in_room]
+    mcp_servers: [jellyfin, dlna]
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.play_album_on_dlna, internal.media_control]
     max_steps: 6
     prompt_key: agent_prompt_media
     model: "qwen3:14b"
