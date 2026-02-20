@@ -52,6 +52,13 @@ class InternalToolService:
                 "top_k": "Maximum number of results to return (optional, default: from server config)",
             },
         },
+        "internal.media_control": {
+            "description": "Control media playback in a room: stop, pause, resume, next track, previous track.",
+            "parameters": {
+                "action": "Control action: stop, pause, resume, next, previous (required)",
+                "room_name": "Target room name (required)",
+            },
+        },
     }
 
     _HANDLERS = {
@@ -60,6 +67,7 @@ class InternalToolService:
         "internal.get_user_location": "_get_user_location",
         "internal.get_all_presence": "_get_all_presence",
         "internal.knowledge_search": "_knowledge_search",
+        "internal.media_control": "_media_control",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -294,6 +302,94 @@ class InternalToolService:
             return {
                 "success": False,
                 "message": f"Error playing media: {e!s}",
+                "action_taken": False,
+            }
+
+    _MEDIA_ACTION_MAP = {
+        "stop": "media_stop",
+        "pause": "media_pause",
+        "resume": "media_play",
+        "next": "media_next_track",
+        "previous": "media_previous_track",
+    }
+
+    async def _media_control(self, params: dict) -> dict:
+        """
+        Control media playback in a room (stop, pause, resume, next, previous).
+
+        1. Validate action + room_name
+        2. Resolve room → entity_id (accepts busy devices — we want to control them)
+        3. Map action → HA media_player service
+        4. Call HA service
+        """
+        action = (params.get("action") or "").strip().lower()
+        room_name = (params.get("room_name") or "").strip()
+
+        if not action:
+            return {
+                "success": False,
+                "message": "Parameter 'action' is required",
+                "action_taken": False,
+            }
+
+        if action not in self._MEDIA_ACTION_MAP:
+            return {
+                "success": False,
+                "message": f"Invalid action '{action}'. Must be one of: {', '.join(self._MEDIA_ACTION_MAP)}",
+                "action_taken": False,
+            }
+
+        if not room_name:
+            return {
+                "success": False,
+                "message": "Parameter 'room_name' is required",
+                "action_taken": False,
+            }
+
+        # Resolve room → entity_id.  For media control we *want* to target a
+        # busy device (it's playing and we want to stop/pause/skip it), so if
+        # _resolve_room_player returns "busy" we use that entity_id.
+        resolve_result = await self._resolve_room_player({"room_name": room_name})
+
+        if resolve_result.get("success"):
+            entity_id = resolve_result["data"]["entity_id"]
+            resolved_room_name = resolve_result["data"]["room_name"]
+        elif resolve_result.get("data", {}).get("status") == "busy":
+            entity_id = resolve_result["data"].get("entity_id")
+            if not entity_id:
+                return resolve_result
+            resolved_room_name = resolve_result["data"]["room_name"]
+        else:
+            return resolve_result
+
+        ha_service = self._MEDIA_ACTION_MAP[action]
+
+        try:
+            from integrations.homeassistant import HomeAssistantClient
+
+            ha_client = HomeAssistantClient()
+            await ha_client.call_service(
+                domain="media_player",
+                service=ha_service,
+                entity_id=entity_id,
+            )
+
+            return {
+                "success": True,
+                "message": f"Media {action} executed on {resolved_room_name}",
+                "action_taken": True,
+                "data": {
+                    "entity_id": entity_id,
+                    "room_name": resolved_room_name,
+                    "action": action,
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error executing media {action} in '{room_name}': {e}")
+            return {
+                "success": False,
+                "message": f"Error executing media {action}: {e!s}",
                 "action_taken": False,
             }
 

@@ -842,6 +842,254 @@ class TestKnowledgeSearch:
         assert "error" in result["message"].lower()
 
 
+# ============================================================================
+# Test media_control
+# ============================================================================
+
+class TestMediaControl:
+    """Test internal.media_control tool."""
+
+    @pytest.mark.unit
+    async def test_media_control_stop(self, internal_tools):
+        """Stop action calls HA media_player.media_stop."""
+        resolve_result = {
+            "success": False,
+            "message": "Device busy",
+            "action_taken": False,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+                "status": "busy",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["action_taken"] is True
+        assert result["data"]["action"] == "stop"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="media_stop",
+            entity_id="media_player.arbeitszimmer",
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_pause(self, internal_tools):
+        """Pause action calls HA media_player.media_pause."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.wohnzimmer",
+                "room_name": "Wohnzimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "pause",
+                "room_name": "Wohnzimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "pause"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="media_pause",
+            entity_id="media_player.wohnzimmer",
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_resume(self, internal_tools):
+        """Resume action calls HA media_player.media_play."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.kueche",
+                "room_name": "Küche",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "resume",
+                "room_name": "Küche",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "resume"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="media_play",
+            entity_id="media_player.kueche",
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_next(self, internal_tools):
+        """Next action calls HA media_player.media_next_track."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "next",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "next"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="media_next_track",
+            entity_id="media_player.arbeitszimmer",
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_previous(self, internal_tools):
+        """Previous action calls HA media_player.media_previous_track."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "previous",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "previous"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="media_previous_track",
+            entity_id="media_player.arbeitszimmer",
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_invalid_action(self, internal_tools):
+        """Invalid action returns error without calling HA."""
+        result = await internal_tools._media_control({
+            "action": "rewind",
+            "room_name": "Arbeitszimmer",
+        })
+
+        assert result["success"] is False
+        assert "Invalid action" in result["message"]
+        assert "rewind" in result["message"]
+
+    @pytest.mark.unit
+    async def test_media_control_missing_room(self, internal_tools):
+        """Missing room_name returns error."""
+        result = await internal_tools._media_control({"action": "stop"})
+        assert result["success"] is False
+        assert "room_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_media_control_missing_action(self, internal_tools):
+        """Missing action returns error."""
+        result = await internal_tools._media_control({"room_name": "Arbeitszimmer"})
+        assert result["success"] is False
+        assert "action" in result["message"]
+
+    @pytest.mark.unit
+    async def test_media_control_room_not_found(self, internal_tools):
+        """Unknown room returns error from resolve."""
+        resolve_result = {
+            "success": False,
+            "message": "Room 'Narnia' not found",
+            "action_taken": False,
+        }
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Narnia",
+            })
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+
+    @pytest.mark.unit
+    async def test_media_control_ha_exception(self, internal_tools):
+        """HA connection error returns clean error."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(side_effect=ConnectionError("HA unreachable"))
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "Error executing media stop" in result["message"]
+
+
 class TestFormatLastSeen:
     """Test relative time formatting."""
 
