@@ -499,6 +499,82 @@ class TestPlayInRoom:
         call_kwargs = mock_ha_client.call_service.call_args
         assert call_kwargs.kwargs["service_data"]["media_content_type"] == "playlist"
 
+    @pytest.mark.unit
+    async def test_play_in_room_transcode_fallback(self, internal_tools):
+        """Static Jellyfin URL that stays idle triggers transcode retry."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        # First get_state → idle (original static URL failed),
+        # second get_state → playing (transcoded URL works).
+        mock_ha_client.get_state = AsyncMock(side_effect=[
+            {"state": "idle"},
+            {"state": "playing"},
+        ])
+
+        static_url = "http://jellyfin:8096/Audio/abc123/universal?api_key=k&static=true"
+        expected_transcode_url = static_url.replace(
+            "static=true", "audioCodec=mp3&audioBitRate=320000"
+        )
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": static_url,
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert "transcoded" in result["message"]
+        assert result["data"]["media_url"] == expected_transcode_url
+
+        # call_service called twice: original + transcode retry
+        assert mock_ha_client.call_service.call_count == 2
+        retry_call = mock_ha_client.call_service.call_args_list[1]
+        assert retry_call.kwargs["service_data"]["media_content_id"] == expected_transcode_url
+
+    @pytest.mark.unit
+    async def test_play_in_room_no_transcode_for_non_static(self, internal_tools):
+        """Non-static URL that stays idle does NOT trigger transcode retry."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "idle"})
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://example.com/audio.mp3",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "failed" in result["message"].lower()
+        # Only one call_service — no transcode retry
+        mock_ha_client.call_service.assert_called_once()
+
 
 # ============================================================================
 # Test execute() routing
