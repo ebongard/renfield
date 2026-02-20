@@ -11,7 +11,6 @@ This keeps playback logic provider-agnostic: Jellyfin, Spotify, or any
 future provider just needs to supply a stream URL. The internal tools
 handle routing it to the correct room device.
 """
-import json
 import time
 
 from loguru import logger
@@ -36,7 +35,7 @@ class InternalToolService:
                 "force": "Set to 'true' to interrupt current playback (default: false)",
                 "title": "Display title for the media player (optional)",
                 "thumb": "Thumbnail/album art URL for the media player (optional)",
-                "queue": "JSON array of additional tracks to enqueue after the main track. Each object: {\"url\": \"...\", \"title\": \"...\", \"thumb\": \"...\"}. Optional.",
+                # "queue" parameter reserved for future multi-track support.
             },
         },
         "internal.get_user_location": {
@@ -63,6 +62,14 @@ class InternalToolService:
                 "room_name": "Target room name (required)",
             },
         },
+        "internal.play_album_on_dlna": {
+            "description": "Play a Jellyfin album on a DLNA renderer with gapless queue. Fetches tracks from Jellyfin and sends them all to the DLNA renderer in one step.",
+            "parameters": {
+                "album_id": "Jellyfin album ID from search_media results (required)",
+                "renderer_name": "Room name for the DLNA renderer, e.g. 'Arbeitszimmer' (required)",
+                "album_name": "Album title for display metadata (optional, from search_media results)",
+            },
+        },
     }
 
     _HANDLERS = {
@@ -72,6 +79,7 @@ class InternalToolService:
         "internal.get_all_presence": "_get_all_presence",
         "internal.knowledge_search": "_knowledge_search",
         "internal.media_control": "_media_control",
+        "internal.play_album_on_dlna": "_play_album_on_dlna",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -211,21 +219,6 @@ class InternalToolService:
         title = (params.get("title") or "").strip() or None
         thumb = (params.get("thumb") or "").strip() or None
 
-        # Parse queue parameter (JSON array of additional tracks to enqueue)
-        queue_tracks: list[dict] = []
-        queue_raw = params.get("queue")
-        if queue_raw:
-            if isinstance(queue_raw, list):
-                queue_tracks = queue_raw
-            elif isinstance(queue_raw, str):
-                try:
-                    parsed = json.loads(queue_raw.strip())
-                    if isinstance(parsed, list):
-                        queue_tracks = parsed
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(f"Invalid queue JSON, ignoring: {str(queue_raw)[:200]}")
-        has_queue = len(queue_tracks) > 0
-
         # Pass media_type directly as HA media_content_type.
         ha_content_type = media_type
 
@@ -277,14 +270,12 @@ class InternalToolService:
                 "media_content_id": media_url,
                 "media_content_type": ha_content_type,
             }
-            extra = {}
-            if title:
-                extra["title"] = title
-            if thumb:
-                extra["thumb"] = thumb
-            if has_queue:
-                extra["enqueue"] = "play"
-            if extra:
+            if title or thumb:
+                extra = {}
+                if title:
+                    extra["title"] = title
+                if thumb:
+                    extra["thumb"] = thumb
                 service_data["extra"] = extra
 
             # Fire the play_media command.  Some HA integrations (HomePod,
@@ -311,21 +302,9 @@ class InternalToolService:
             player_state = (state or {}).get("state", "unknown")
 
             if player_state in ("playing", "buffering", "paused"):
-                # Enqueue remaining tracks if queue was provided
-                queued = 0
-                if queue_tracks:
-                    queued = await self._enqueue_tracks(
-                        ha_client, entity_id, ha_content_type, queue_tracks,
-                    )
-                total = 1 + queued
-                msg = (
-                    f"Playing {total} track(s) on {device_name} in {resolved_room_name}"
-                    if queued
-                    else f"Playing on {device_name} in {resolved_room_name}"
-                )
                 return {
                     "success": True,
-                    "message": msg,
+                    "message": f"Playing on {device_name} in {resolved_room_name}",
                     "action_taken": True,
                     "data": {
                         "entity_id": entity_id,
@@ -356,8 +335,6 @@ class InternalToolService:
                     transcode_extra["title"] = title
                 if thumb:
                     transcode_extra["thumb"] = thumb
-                if has_queue:
-                    transcode_extra["enqueue"] = "play"
                 if transcode_extra:
                     transcode_service_data["extra"] = transcode_extra
 
@@ -377,22 +354,9 @@ class InternalToolService:
                 player_state = (state or {}).get("state", "unknown")
 
                 if player_state in ("playing", "buffering", "paused"):
-                    # Enqueue remaining tracks with transcode transformation
-                    queued = 0
-                    if queue_tracks:
-                        queued = await self._enqueue_tracks(
-                            ha_client, entity_id, ha_content_type,
-                            queue_tracks, transcode=True,
-                        )
-                    total = 1 + queued
-                    msg = (
-                        f"Playing {total} track(s) (transcoded) on {device_name} in {resolved_room_name}"
-                        if queued
-                        else f"Playing (transcoded) on {device_name} in {resolved_room_name}"
-                    )
                     return {
                         "success": True,
-                        "message": msg,
+                        "message": f"Playing (transcoded) on {device_name} in {resolved_room_name}",
                         "action_taken": True,
                         "data": {
                             "entity_id": entity_id,
@@ -416,53 +380,6 @@ class InternalToolService:
                 "message": f"Error playing media: {e!s}",
                 "action_taken": False,
             }
-
-    async def _enqueue_tracks(
-        self,
-        ha_client,
-        entity_id: str,
-        content_type: str,
-        tracks: list[dict],
-        transcode: bool = False,
-    ) -> int:
-        """Enqueue additional tracks on an already-playing media player."""
-        enqueued = 0
-        for track in tracks:
-            url = (track.get("url") or "").strip()
-            if not url:
-                continue
-            if transcode and "static=true" in url:
-                url = url.replace(
-                    "static=true",
-                    "audioCodec=mp3&audioBitRate=320000",
-                )
-
-            extra: dict = {"enqueue": "add"}
-            t_title = (track.get("title") or "").strip()
-            t_thumb = (track.get("thumb") or "").strip()
-            if t_title:
-                extra["title"] = t_title
-            if t_thumb:
-                extra["thumb"] = t_thumb
-
-            try:
-                await ha_client.call_service(
-                    domain="media_player",
-                    service="play_media",
-                    entity_id=entity_id,
-                    service_data={
-                        "media_content_id": url,
-                        "media_content_type": content_type,
-                        "extra": extra,
-                    },
-                    timeout=10.0,
-                )
-                enqueued += 1
-            except Exception as exc:
-                logger.warning(
-                    f"Failed to enqueue track '{t_title or url}': {exc}"
-                )
-        return enqueued
 
     _MEDIA_ACTION_MAP = {
         "stop": "media_stop",
@@ -549,6 +466,131 @@ class InternalToolService:
             return {
                 "success": False,
                 "message": f"Error executing media {action}: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _play_album_on_dlna(self, params: dict) -> dict:
+        """
+        Play a Jellyfin album on a DLNA renderer.
+
+        Combines get_album_tracks + dlna.play_tracks into one server-side step
+        so the LLM doesn't have to generate the massive tracks JSON (which
+        exceeds num_predict token limits for albums with many tracks).
+        """
+        album_id = (params.get("album_id") or "").strip()
+        renderer_name = (params.get("renderer_name") or "").strip()
+        album_name_param = (params.get("album_name") or "").strip()
+
+        if not album_id:
+            return {
+                "success": False,
+                "message": "Parameter 'album_id' is required",
+                "action_taken": False,
+            }
+        if not renderer_name:
+            return {
+                "success": False,
+                "message": "Parameter 'renderer_name' is required",
+                "action_taken": False,
+            }
+
+        try:
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return {
+                    "success": False,
+                    "message": "MCP manager not available",
+                    "action_taken": False,
+                }
+
+            # Step 1: Get album tracks from Jellyfin
+            tracks_result = await mcp_manager.execute_tool(
+                "mcp.jellyfin.get_album_tracks",
+                {"album_id": album_id},
+            )
+            if not tracks_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"Failed to get album tracks: {tracks_result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            # Parse tracks from the Jellyfin MCP response
+            import json as _json
+            tracks_data = tracks_result.get("data", [])
+            # MCP returns data as list of content blocks
+            raw_text = ""
+            if isinstance(tracks_data, list):
+                for item in tracks_data:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        raw_text = item.get("text", "")
+                        break
+            if not raw_text:
+                raw_text = tracks_result.get("message", "")
+
+            try:
+                parsed = _json.loads(raw_text)
+            except (ValueError, TypeError):
+                parsed = {}
+
+            jellyfin_tracks = parsed.get("items", parsed.get("tracks", []))
+            if not jellyfin_tracks:
+                return {
+                    "success": False,
+                    "message": "No tracks found in album",
+                    "action_taken": False,
+                }
+
+            # Step 2: Format tracks for DLNA play_tracks
+            # Album name: param > top-level response > per-track > fallback
+            album_title = album_name_param or parsed.get("album", "")
+            dlna_tracks = []
+            for t in jellyfin_tracks:
+                dlna_tracks.append({
+                    "url": t.get("api_stream", ""),
+                    "title": t.get("name", ""),
+                    "artist": t.get("artist", ""),
+                    "album": t.get("album", album_title),
+                })
+
+            # Step 3: Call DLNA play_tracks
+            dlna_result = await mcp_manager.execute_tool(
+                "mcp.dlna.play_tracks",
+                {
+                    "renderer_name": renderer_name,
+                    "tracks": _json.dumps(dlna_tracks),
+                },
+            )
+
+            if not dlna_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"DLNA playback failed: {dlna_result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            album_name = album_title or (jellyfin_tracks[0].get("album", "Unknown Album") if jellyfin_tracks else "Unknown")
+            artist_name = jellyfin_tracks[0].get("artist", "Unknown Artist") if jellyfin_tracks else "Unknown"
+
+            return {
+                "success": True,
+                "message": f"Playing '{album_name}' by {artist_name} on {renderer_name} ({len(dlna_tracks)} tracks)",
+                "action_taken": True,
+                "data": {
+                    "album": album_name,
+                    "artist": artist_name,
+                    "renderer": renderer_name,
+                    "track_count": len(dlna_tracks),
+                    "first_track": dlna_tracks[0]["title"] if dlna_tracks else None,
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error playing album on DLNA: {e}")
+            return {
+                "success": False,
+                "message": f"Error playing album on DLNA: {e!s}",
                 "action_taken": False,
             }
 
