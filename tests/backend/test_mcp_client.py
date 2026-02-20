@@ -21,6 +21,7 @@ from services.mcp_client import (
     TokenBucketRateLimiter,
     _coerce_arguments,
     _resolve_value,
+    _sanitize_credentials,
     _substitute_env_vars,
     _truncate_response,
     _validate_tool_input,
@@ -1033,6 +1034,69 @@ class TestResponseTruncation:
         assert len(result.encode('utf-8')) <= MAX_RESPONSE_SIZE
         # Should be valid UTF-8
         result.encode('utf-8').decode('utf-8')
+
+
+# ============================================================================
+# Credential Sanitization
+# ============================================================================
+
+class TestCredentialSanitization:
+    """Test credential redaction from MCP responses."""
+
+    @pytest.mark.unit
+    def test_api_key_in_url_redacted(self):
+        """API key in query string should be redacted."""
+        text = 'http://jellyfin:8096/Audio/123/stream?api_key=ABCDEF123&format=mp3'
+        result = _sanitize_credentials(text)
+        assert 'ABCDEF123' not in result
+        assert '***REDACTED***' in result
+        assert '&format=mp3' in result
+
+    @pytest.mark.unit
+    def test_token_in_url_redacted(self):
+        """Token parameter should be redacted."""
+        text = 'http://example.com?token=secret123&other=foo'
+        result = _sanitize_credentials(text)
+        assert 'secret123' not in result
+        assert '&other=foo' in result
+
+    @pytest.mark.unit
+    def test_access_token_redacted(self):
+        """access_token parameter should be redacted."""
+        text = 'http://example.com?access_token=mytoken123'
+        result = _sanitize_credentials(text)
+        assert 'mytoken123' not in result
+
+    @pytest.mark.unit
+    def test_no_credentials_unchanged(self):
+        """Text without credentials should be unchanged."""
+        text = 'Hello, this is a normal response with no secrets.'
+        assert _sanitize_credentials(text) == text
+
+    @pytest.mark.unit
+    def test_json_with_embedded_url(self):
+        """API key in a JSON-embedded URL should be redacted."""
+        text = '{"url": "http://host:8096/Audio/1/stream?api_key=SECRET"}'
+        result = _sanitize_credentials(text)
+        assert 'SECRET' not in result
+        assert '***REDACTED***' in result
+
+    @pytest.mark.unit
+    def test_multiple_credentials_redacted(self):
+        """Multiple credential parameters should all be redacted."""
+        text = 'http://example.com?api_key=key1&token=tok2&password=pw3'
+        result = _sanitize_credentials(text)
+        assert 'key1' not in result
+        assert 'tok2' not in result
+        assert 'pw3' not in result
+
+    @pytest.mark.unit
+    def test_case_insensitive(self):
+        """Credential matching should be case-insensitive."""
+        text = 'http://example.com?API_KEY=abc&Token=def'
+        result = _sanitize_credentials(text)
+        assert 'abc' not in result
+        assert 'def' not in result
 
 
 # ============================================================================

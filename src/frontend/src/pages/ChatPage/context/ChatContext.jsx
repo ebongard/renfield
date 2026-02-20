@@ -362,6 +362,41 @@ export function ChatProvider({ children }) {
     }
   }, []);
 
+  // Handle agent steps (tool calls and results shown inline)
+  const handleAgentThinking = useCallback((data) => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
+        const steps = [...(lastMsg.agentSteps || []), { type: 'thinking', step: data.step, content: data.content }];
+        return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
+      }
+      // No streaming message yet — create one with just agent steps
+      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [{ type: 'thinking', step: data.step, content: data.content }] }];
+    });
+  }, []);
+
+  const handleAgentToolCall = useCallback((data) => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
+        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_call', step: data.step, tool: data.tool, parameters: data.parameters, reason: data.reason }];
+        return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
+      }
+      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [{ type: 'tool_call', step: data.step, tool: data.tool, parameters: data.parameters, reason: data.reason }] }];
+    });
+  }, []);
+
+  const handleAgentToolResult = useCallback((data) => {
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
+        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_result', step: data.step, tool: data.tool, success: data.success, message: data.message }];
+        return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
+      }
+      return prev;
+    });
+  }, []);
+
   // Handle document processing notifications from backend
   const handleDocumentProcessing = useCallback((data) => {
     setMessages(prev => prev.map(msg => {
@@ -407,6 +442,9 @@ export function ChatProvider({ children }) {
     onDocumentProcessing: handleDocumentProcessing,
     onDocumentReady: handleDocumentReady,
     onDocumentError: handleDocumentError,
+    onAgentThinking: handleAgentThinking,
+    onAgentToolCall: handleAgentToolCall,
+    onAgentToolResult: handleAgentToolResult,
   });
 
   // Handle transcription from audio recording
