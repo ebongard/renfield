@@ -148,7 +148,10 @@
     "emailSuccess": "Sent via Email",
     "emailFailed": "Failed to send email",
     "documentIndexing": "Indexing to KB...",
-    "documentIndexed": "Indexed to KB"
+    "documentIndexed": "Indexed to KB",
+    "agentThinking": "Thinking...",
+    "agentStepsCount": "{{count}} step completed",
+    "agentStepsCount_other": "{{count}} steps completed"
   },
   "voice": {
     "startRecording": "Start voice recording",

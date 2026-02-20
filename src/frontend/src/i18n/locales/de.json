@@ -148,7 +148,10 @@
     "emailSuccess": "Per E-Mail gesendet",
     "emailFailed": "E-Mail-Versand fehlgeschlagen",
     "documentIndexing": "Wird indexiert...",
-    "documentIndexed": "In Wissensdatenbank indexiert"
+    "documentIndexed": "In Wissensdatenbank indexiert",
+    "agentThinking": "Denkt nach...",
+    "agentStepsCount": "{{count}} Schritt ausgeführt",
+    "agentStepsCount_other": "{{count}} Schritte ausgeführt"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",
