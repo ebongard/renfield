@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Volume2, Loader, FileText, AlertCircle, CheckCircle } from 'lucide-react';
+import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle } from 'lucide-react';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
@@ -61,6 +61,39 @@ export default function ChatMessages() {
                 : 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
             }`}
           >
+            {/* Agent Steps (tool calls / results) */}
+            {message.agentSteps && message.agentSteps.length > 0 && (
+              <div className="mb-2 space-y-1.5">
+                {message.agentSteps.map((step, stepIdx) => (
+                  <div key={stepIdx} className="flex items-start gap-1.5 text-xs">
+                    {step.type === 'tool_call' && (
+                      <>
+                        <Search className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-blue-500 dark:text-blue-400" aria-hidden="true" />
+                        <span className="text-gray-600 dark:text-gray-300">
+                          <span className="font-medium">{step.tool?.split('.').pop()}</span>
+                          {step.reason && <span className="ml-1 text-gray-400 dark:text-gray-500">— {step.reason}</span>}
+                        </span>
+                        {!message.agentSteps.find(s => s.type === 'tool_result' && s.step === step.step) && (
+                          <Loader className="w-3 h-3 mt-0.5 animate-spin text-blue-400" aria-hidden="true" />
+                        )}
+                      </>
+                    )}
+                    {step.type === 'tool_result' && (
+                      <>
+                        {step.success
+                          ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
+                          : <XCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+                        }
+                        <span className={`${step.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                          {step.tool?.split('.').pop()}{step.success ? '' : ` — ${step.message || 'failed'}`}
+                        </span>
+                      </>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
             <p className="whitespace-pre-wrap">{message.content}</p>
 
             {/* Attachment chips */}

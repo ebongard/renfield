@@ -536,6 +536,25 @@ def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
     return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
 
 
+# Regex pattern to detect and redact credentials in MCP responses.
+# Matches common query-string patterns like api_key=..., token=..., apikey=..., etc.
+_CREDENTIAL_PATTERN = re.compile(
+    r'([?&](?:api[_-]?key|token|secret|password|auth|access[_-]?token|bearer)'
+    r'=)([^&"\s\]},]+)',
+    re.IGNORECASE,
+)
+
+
+def _sanitize_credentials(text: str) -> str:
+    """
+    Redact credential values from MCP tool response text.
+
+    Replaces values in URL query parameters like api_key=XXXX with api_key=***REDACTED***.
+    This prevents API keys from leaking to the frontend/LLM.
+    """
+    return _CREDENTIAL_PATTERN.sub(r'\1***REDACTED***', text)
+
+
 def _detect_inner_error(message: str) -> bool:
     """
     Detect application-level errors inside MCP response text.
@@ -1131,6 +1150,9 @@ class MCPManager:
 
             # Truncate final message if still too large
             message = _truncate_response(message)
+
+            # Redact credentials (API keys, tokens) from response text
+            message = _sanitize_credentials(message)
 
             # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
             # JSON envelope: {"success": false, "error": "..."}. The MCP-level
