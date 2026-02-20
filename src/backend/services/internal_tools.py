@@ -290,12 +290,55 @@ class InternalToolService:
                         "media_type": media_type,
                     },
                 }
-            else:
-                return {
-                    "success": False,
-                    "message": f"Playback failed — player state is '{player_state}'",
-                    "action_taken": False,
-                }
+
+            # --- Transcode fallback for incompatible audio formats ---
+            # If the player stayed idle and the URL is a Jellyfin static stream,
+            # retry once with server-side transcoding to MP3 (AirPlay-compatible).
+            if player_state == "idle" and "static=true" in media_url:
+                transcode_url = media_url.replace(
+                    "static=true",
+                    "audioCodec=mp3&audioBitRate=320000",
+                )
+                logger.info(
+                    f"Playback idle with static URL — retrying with transcode: {entity_id}"
+                )
+                try:
+                    await ha_client.call_service(
+                        domain="media_player",
+                        service="play_media",
+                        entity_id=entity_id,
+                        service_data={
+                            "media_content_id": transcode_url,
+                            "media_content_type": ha_content_type,
+                        },
+                        timeout=15.0,
+                    )
+                except Exception:
+                    pass  # Check state regardless
+
+                await _asyncio.sleep(8)
+                state = await ha_client.get_state(entity_id)
+                player_state = (state or {}).get("state", "unknown")
+
+                if player_state in ("playing", "buffering", "paused"):
+                    return {
+                        "success": True,
+                        "message": f"Playing (transcoded) on {device_name} in {resolved_room_name}",
+                        "action_taken": True,
+                        "data": {
+                            "entity_id": entity_id,
+                            "room_name": resolved_room_name,
+                            "device_name": device_name,
+                            "media_url": transcode_url,
+                            "media_type": media_type,
+                        },
+                    }
+
+            return {
+                "success": False,
+                "message": f"Playback failed — player state is '{player_state}'",
+                "action_taken": False,
+            }
 
         except Exception as e:
             logger.error(f"Error playing media in '{room_name}': {e}")
