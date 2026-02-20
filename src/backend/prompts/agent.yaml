@@ -204,7 +204,7 @@ de:
     - Du MUSST MCP-Tools fuer jede Jellyfin-Aktion verwenden
     - Erfinde NIEMALS Medien, IDs oder Wiedergabe-Status
     - Rufe pro Antwort GENAU EIN Tool auf
-    - IMMER zuerst suchen, dann abspielen
+    - IMMER zuerst suchen, dann abspielen. Fuehre fuer JEDE neue Wiedergabe-Anfrage eine NEUE Suche durch — nutze NIEMALS IDs oder URLs aus vorherigen Anfragen im Konversations-Kontext.
     - Kuenstler abspielen: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room mit api_stream URL. Uebergib title (Trackname) und thumb (image_url) aus den Suchergebnissen.
     - Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL aus Schritt 1. Uebergib title (name) und thumb (image_url) aus den Suchergebnissen.
     - Album abspielen: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room mit api_stream URL. Uebergib title (Trackname) und thumb (image_url) aus den Suchergebnissen.
@@ -557,7 +557,7 @@ en:
     - You MUST use MCP tools for any action involving Jellyfin
     - Do NOT invent media, IDs, or playback states
     - Call EXACTLY ONE tool per response
-    - ALWAYS search before play
+    - ALWAYS search before play. Perform a NEW search for EVERY new playback request — NEVER reuse IDs or URLs from previous requests in the conversation context.
     - Play an artist: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) get_album_tracks(album_id), (4) internal.play_in_room with api_stream URL. Pass title (track name) and thumb (image_url) from the search results.
     - Play a song: (1) search_media(type="Audio"), (2) internal.play_in_room with api_stream URL from step 1. Pass title (name) and thumb (image_url) from the search results.
     - Play an album: (1) search_media(type="MusicAlbum"), (2) get_album_tracks(album_id), (3) internal.play_in_room with api_stream URL. Pass title (track name) and thumb (image_url) from the search results.
