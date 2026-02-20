@@ -22,6 +22,9 @@ export function useChatWebSocket({
   onDocumentProcessing,
   onDocumentReady,
   onDocumentError,
+  onAgentThinking,
+  onAgentToolCall,
+  onAgentToolResult,
 } = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
@@ -72,6 +75,15 @@ export function useChatWebSocket({
       } else if (data.type === 'document_error') {
         debug.log('Document error:', data.filename, data.error);
         onDocumentError?.(data);
+      } else if (data.type === 'agent_thinking') {
+        debug.log('Agent thinking:', data.content?.substring(0, 80));
+        onAgentThinking?.(data);
+      } else if (data.type === 'agent_tool_call') {
+        debug.log('Agent tool call:', data.tool, data.reason);
+        onAgentToolCall?.(data);
+      } else if (data.type === 'agent_tool_result') {
+        debug.log('Agent tool result:', data.tool, data.success ? 'success' : 'failed');
+        onAgentToolResult?.(data);
       }
     };
 
@@ -87,7 +99,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onAgentThinking, onAgentToolCall, onAgentToolResult]);
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {
