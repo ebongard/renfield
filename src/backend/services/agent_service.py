@@ -1037,7 +1037,14 @@ def _recover_send_email(response_text: str, context: AgentContext) -> dict | Non
 
 
 def step_to_ws_message(step: AgentStep) -> dict:
-    """Convert an AgentStep to a WebSocket message dict."""
+    """Convert an AgentStep to a WebSocket message dict.
+
+    Credential sanitization is applied here (not in execute_tool) so
+    the agent loop keeps real API keys for inter-tool chaining while
+    the frontend only sees redacted values.
+    """
+    from services.mcp_client import _sanitize_credentials
+
     if step.step_type == "thinking":
         return {
             "type": "agent_thinking",
@@ -1045,11 +1052,17 @@ def step_to_ws_message(step: AgentStep) -> dict:
             "content": step.content,
         }
     elif step.step_type == "tool_call":
+        # Sanitize parameters that may contain credentials
+        params = step.parameters or {}
+        sanitized_params = {
+            k: _sanitize_credentials(v) if isinstance(v, str) else v
+            for k, v in params.items()
+        }
         return {
             "type": "agent_tool_call",
             "step": step.step_number,
             "tool": step.tool,
-            "parameters": step.parameters or {},
+            "parameters": sanitized_params,
             "reason": step.reason or "",
         }
     elif step.step_type == "tool_result":
@@ -1058,8 +1071,8 @@ def step_to_ws_message(step: AgentStep) -> dict:
             "step": step.step_number,
             "tool": step.tool,
             "success": step.success,
-            "message": step.content,
-            "data": step.data,
+            "message": _sanitize_credentials(step.content) if step.content else step.content,
+            "data": _sanitize_credentials(json.dumps(step.data)) if step.data else step.data,
         }
     elif step.step_type == "final_answer":
         return {
@@ -1072,7 +1085,7 @@ def step_to_ws_message(step: AgentStep) -> dict:
             "step": step.step_number,
             "tool": step.tool,
             "success": False,
-            "message": step.content,
+            "message": _sanitize_credentials(step.content) if step.content else step.content,
         }
     else:
         return {

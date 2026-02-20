@@ -268,7 +268,7 @@ class InternalToolService:
             state = await ha_client.get_state(entity_id)
             player_state = (state or {}).get("state", "unknown")
 
-            if player_state in ("playing", "buffering", "paused", "idle"):
+            if player_state in ("playing", "buffering", "paused"):
                 return {
                     "success": True,
                     "message": f"Playing on {device_name} in {resolved_room_name}",

@@ -1151,8 +1151,10 @@ class MCPManager:
             # Truncate final message if still too large
             message = _truncate_response(message)
 
-            # Redact credentials (API keys, tokens) from response text
-            message = _sanitize_credentials(message)
+            # NOTE: Credential sanitization is NOT done here — the agent loop
+            # needs real API keys in tool results (e.g. Jellyfin stream URLs
+            # passed to play_in_room). Sanitization happens in
+            # step_to_ws_message() before sending to the frontend.
 
             # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
             # JSON envelope: {"success": false, "error": "..."}. The MCP-level

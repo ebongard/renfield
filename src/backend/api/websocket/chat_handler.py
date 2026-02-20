@@ -718,10 +718,16 @@ async def websocket_endpoint(
 
                         session_state.update_action_context(intent, action_result)
 
+                        # Sanitize credentials before sending to frontend
+                        from services.mcp_client import _sanitize_credentials
+                        sanitized_result = dict(action_result)
+                        if isinstance(sanitized_result.get("message"), str):
+                            sanitized_result["message"] = _sanitize_credentials(sanitized_result["message"])
+
                         await websocket.send_json({
                             "type": "action",
                             "intent": intent,
-                            "result": action_result
+                            "result": sanitized_result
                         })
                         break
 
@@ -735,12 +741,13 @@ async def websocket_endpoint(
                 # Generate response for legacy path
                 if not agent_used:
                     if action_result and action_result.get("success"):
-                        result_info = action_result.get('message', '')
+                        from services.mcp_client import _sanitize_credentials
+                        result_info = _sanitize_credentials(action_result.get('message', ''))
 
                         if action_result.get('data'):
                             import json
                             data_str = json.dumps(action_result['data'], ensure_ascii=False, indent=2)
-                            result_info = f"{result_info}\n\nDaten:\n{data_str}"
+                            result_info = f"{result_info}\n\nDaten:\n{_sanitize_credentials(data_str)}"
 
                         enhanced_prompt = f"""Der Nutzer hat gefragt: "{content}"
 
