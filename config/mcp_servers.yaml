@@ -128,6 +128,28 @@ servers:
         - "What movies do I have?"
         - "Show my series"
 
+  # --- DLNA Media Renderer MCP Server ---
+  # Custom Python MCP server for DLNA renderer queue playback.
+  # Controls DLNA renderers directly (gapless queue via SetNextAVTransportURI).
+  # Uses Jellyfin's built-in DLNA server for media serving.
+  - name: dlna
+    transport: stdio
+    command: python
+    args: ["-m", "renfield_mcp_dlna"]
+    enabled: "${DLNA_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.dlna.play_tracks
+    prompt_tools:
+      - list_renderers
+      - play_tracks
+    examples:
+      de:
+        - "Spiel das Album im Arbeitszimmer"
+        - "Stoppe die Musik auf dem Samsung TV"
+      en:
+        - "Play the album in the study"
+        - "Stop music on the Samsung TV"
+
   # --- n8n MCP Server (Workflow Builder + Node Catalog) ---
   # npm: n8n-mcp (czlonkowski/n8n-mcp)
   # Provides: Workflow CRUD, node catalog (1,084+ nodes),
