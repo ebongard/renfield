@@ -11,6 +11,7 @@ This keeps playback logic provider-agnostic: Jellyfin, Spotify, or any
 future provider just needs to supply a stream URL. The internal tools
 handle routing it to the correct room device.
 """
+import json
 import time
 
 from loguru import logger
@@ -35,6 +36,7 @@ class InternalToolService:
                 "force": "Set to 'true' to interrupt current playback (default: false)",
                 "title": "Display title for the media player (optional)",
                 "thumb": "Thumbnail/album art URL for the media player (optional)",
+                "queue": "JSON array of additional tracks to enqueue after the main track. Each object: {\"url\": \"...\", \"title\": \"...\", \"thumb\": \"...\"}. Optional.",
             },
         },
         "internal.get_user_location": {
@@ -209,6 +211,21 @@ class InternalToolService:
         title = (params.get("title") or "").strip() or None
         thumb = (params.get("thumb") or "").strip() or None
 
+        # Parse queue parameter (JSON array of additional tracks to enqueue)
+        queue_tracks: list[dict] = []
+        queue_raw = params.get("queue")
+        if queue_raw:
+            if isinstance(queue_raw, list):
+                queue_tracks = queue_raw
+            elif isinstance(queue_raw, str):
+                try:
+                    parsed = json.loads(queue_raw.strip())
+                    if isinstance(parsed, list):
+                        queue_tracks = parsed
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"Invalid queue JSON, ignoring: {str(queue_raw)[:200]}")
+        has_queue = len(queue_tracks) > 0
+
         # Pass media_type directly as HA media_content_type.
         ha_content_type = media_type
 
@@ -260,12 +277,14 @@ class InternalToolService:
                 "media_content_id": media_url,
                 "media_content_type": ha_content_type,
             }
-            if title or thumb:
-                extra = {}
-                if title:
-                    extra["title"] = title
-                if thumb:
-                    extra["thumb"] = thumb
+            extra = {}
+            if title:
+                extra["title"] = title
+            if thumb:
+                extra["thumb"] = thumb
+            if has_queue:
+                extra["enqueue"] = "play"
+            if extra:
                 service_data["extra"] = extra
 
             # Fire the play_media command.  Some HA integrations (HomePod,
@@ -292,9 +311,21 @@ class InternalToolService:
             player_state = (state or {}).get("state", "unknown")
 
             if player_state in ("playing", "buffering", "paused"):
+                # Enqueue remaining tracks if queue was provided
+                queued = 0
+                if queue_tracks:
+                    queued = await self._enqueue_tracks(
+                        ha_client, entity_id, ha_content_type, queue_tracks,
+                    )
+                total = 1 + queued
+                msg = (
+                    f"Playing {total} track(s) on {device_name} in {resolved_room_name}"
+                    if queued
+                    else f"Playing on {device_name} in {resolved_room_name}"
+                )
                 return {
                     "success": True,
-                    "message": f"Playing on {device_name} in {resolved_room_name}",
+                    "message": msg,
                     "action_taken": True,
                     "data": {
                         "entity_id": entity_id,
@@ -320,12 +351,14 @@ class InternalToolService:
                     "media_content_id": transcode_url,
                     "media_content_type": ha_content_type,
                 }
-                if title or thumb:
-                    transcode_extra = {}
-                    if title:
-                        transcode_extra["title"] = title
-                    if thumb:
-                        transcode_extra["thumb"] = thumb
+                transcode_extra = {}
+                if title:
+                    transcode_extra["title"] = title
+                if thumb:
+                    transcode_extra["thumb"] = thumb
+                if has_queue:
+                    transcode_extra["enqueue"] = "play"
+                if transcode_extra:
                     transcode_service_data["extra"] = transcode_extra
 
                 try:
@@ -344,9 +377,22 @@ class InternalToolService:
                 player_state = (state or {}).get("state", "unknown")
 
                 if player_state in ("playing", "buffering", "paused"):
+                    # Enqueue remaining tracks with transcode transformation
+                    queued = 0
+                    if queue_tracks:
+                        queued = await self._enqueue_tracks(
+                            ha_client, entity_id, ha_content_type,
+                            queue_tracks, transcode=True,
+                        )
+                    total = 1 + queued
+                    msg = (
+                        f"Playing {total} track(s) (transcoded) on {device_name} in {resolved_room_name}"
+                        if queued
+                        else f"Playing (transcoded) on {device_name} in {resolved_room_name}"
+                    )
                     return {
                         "success": True,
-                        "message": f"Playing (transcoded) on {device_name} in {resolved_room_name}",
+                        "message": msg,
                         "action_taken": True,
                         "data": {
                             "entity_id": entity_id,
@@ -370,6 +416,53 @@ class InternalToolService:
                 "message": f"Error playing media: {e!s}",
                 "action_taken": False,
             }
+
+    async def _enqueue_tracks(
+        self,
+        ha_client,
+        entity_id: str,
+        content_type: str,
+        tracks: list[dict],
+        transcode: bool = False,
+    ) -> int:
+        """Enqueue additional tracks on an already-playing media player."""
+        enqueued = 0
+        for track in tracks:
+            url = (track.get("url") or "").strip()
+            if not url:
+                continue
+            if transcode and "static=true" in url:
+                url = url.replace(
+                    "static=true",
+                    "audioCodec=mp3&audioBitRate=320000",
+                )
+
+            extra: dict = {"enqueue": "add"}
+            t_title = (track.get("title") or "").strip()
+            t_thumb = (track.get("thumb") or "").strip()
+            if t_title:
+                extra["title"] = t_title
+            if t_thumb:
+                extra["thumb"] = t_thumb
+
+            try:
+                await ha_client.call_service(
+                    domain="media_player",
+                    service="play_media",
+                    entity_id=entity_id,
+                    service_data={
+                        "media_content_id": url,
+                        "media_content_type": content_type,
+                        "extra": extra,
+                    },
+                    timeout=10.0,
+                )
+                enqueued += 1
+            except Exception as exc:
+                logger.warning(
+                    f"Failed to enqueue track '{t_title or url}': {exc}"
+                )
+        return enqueued
 
     _MEDIA_ACTION_MAP = {
         "stop": "media_stop",

@@ -640,6 +640,153 @@ class TestPlayInRoom:
         # Only one call_service — no transcode retry
         mock_ha_client.call_service.assert_called_once()
 
+    @pytest.mark.unit
+    async def test_play_in_room_with_queue(self, internal_tools):
+        """Queue parameter enqueues additional tracks after the first."""
+        import json as _json
+
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
+
+        queue_json = _json.dumps([
+            {"url": "http://jellyfin:8096/Audio/track2/universal", "title": "Track 2", "thumb": "http://jellyfin:8096/Items/track2/Images/Primary"},
+            {"url": "http://jellyfin:8096/Audio/track3/universal", "title": "Track 3", "thumb": "http://jellyfin:8096/Items/track3/Images/Primary"},
+        ])
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/track1/universal",
+                "room_name": "Arbeitszimmer",
+                "title": "Track 1",
+                "thumb": "http://jellyfin:8096/Items/track1/Images/Primary",
+                "queue": queue_json,
+            })
+
+        assert result["success"] is True
+        assert "3 track(s)" in result["message"]
+
+        # 1 call for main track + 2 calls for queued tracks
+        assert mock_ha_client.call_service.call_count == 3
+
+        # First call: main track with enqueue: "play"
+        first_call = mock_ha_client.call_service.call_args_list[0]
+        assert first_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track1/universal"
+        assert first_call.kwargs["service_data"]["extra"]["enqueue"] == "play"
+        assert first_call.kwargs["service_data"]["extra"]["title"] == "Track 1"
+
+        # Second call: queue track 2 with enqueue: "add"
+        second_call = mock_ha_client.call_service.call_args_list[1]
+        assert second_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track2/universal"
+        assert second_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
+        assert second_call.kwargs["service_data"]["extra"]["title"] == "Track 2"
+
+        # Third call: queue track 3 with enqueue: "add"
+        third_call = mock_ha_client.call_service.call_args_list[2]
+        assert third_call.kwargs["service_data"]["media_content_id"] == "http://jellyfin:8096/Audio/track3/universal"
+        assert third_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
+        assert third_call.kwargs["service_data"]["extra"]["title"] == "Track 3"
+
+    @pytest.mark.unit
+    async def test_play_in_room_queue_with_transcode(self, internal_tools):
+        """When first track needs transcoding, queued track URLs are also transcoded."""
+        import json as _json
+
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        # First get_state → idle (static URL failed), second → playing (transcoded)
+        mock_ha_client.get_state = AsyncMock(side_effect=[
+            {"state": "idle"},
+            {"state": "playing"},
+        ])
+
+        queue_json = _json.dumps([
+            {"url": "http://jellyfin:8096/Audio/track2/universal?api_key=k&static=true", "title": "Track 2"},
+        ])
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://jellyfin:8096/Audio/track1/universal?api_key=k&static=true",
+                "room_name": "Arbeitszimmer",
+                "queue": queue_json,
+            })
+
+        assert result["success"] is True
+        assert "transcoded" in result["message"]
+        assert "2 track(s)" in result["message"]
+
+        # 3 calls: original static (failed), transcode retry (success), queue track (transcoded)
+        assert mock_ha_client.call_service.call_count == 3
+
+        # Queue track URL should be transcoded too
+        queue_call = mock_ha_client.call_service.call_args_list[2]
+        assert "static=true" not in queue_call.kwargs["service_data"]["media_content_id"]
+        assert "audioCodec=mp3" in queue_call.kwargs["service_data"]["media_content_id"]
+        assert queue_call.kwargs["service_data"]["extra"]["enqueue"] == "add"
+
+    @pytest.mark.unit
+    async def test_play_in_room_queue_ignored_on_failure(self, internal_tools):
+        """Queue is NOT processed when first track fails to play."""
+        import json as _json
+
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer_speaker",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Arbeitszimmer Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "idle"})
+
+        queue_json = _json.dumps([
+            {"url": "http://jellyfin:8096/Audio/track2/universal", "title": "Track 2"},
+        ])
+
+        with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
+            result = await internal_tools._play_in_room({
+                "media_url": "http://example.com/audio.mp3",
+                "room_name": "Arbeitszimmer",
+                "queue": queue_json,
+            })
+
+        assert result["success"] is False
+        # Only 1 call_service — queue was NOT processed
+        assert mock_ha_client.call_service.call_count == 1
+
 
 # ============================================================================
 # Test execute() routing
