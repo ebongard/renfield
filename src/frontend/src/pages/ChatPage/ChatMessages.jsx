@@ -38,8 +38,9 @@ export default function ChatMessages() {
 
       {/* Empty State */}
       {!historyLoading && messages.length === 0 && (
-        <div className="text-center py-12">
-          <p className="text-gray-500 dark:text-gray-400 mb-4">{t('chat.startConversation')}</p>
+        <div className="text-center py-16">
+          <img src="/logo-icon.svg" alt="" className="w-16 h-16 mx-auto mb-6 opacity-30" aria-hidden="true" />
+          <h2 className="font-display text-xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
           <p className="text-sm text-gray-400 dark:text-gray-500">
             {t('chat.useTextOrMic')}
           </p>
@@ -197,8 +198,10 @@ export default function ChatMessages() {
       {/* Loading Indicator */}
       {loading && (
         <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
-          <div className="bg-gray-200 dark:bg-gray-700 px-4 py-2 rounded-lg">
-            <Loader className="w-5 h-5 animate-spin text-gray-500 dark:text-gray-400" aria-hidden="true" />
+          <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 rounded-lg flex items-center space-x-1.5">
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
             <span className="sr-only">{t('chat.thinkingStatus')}</span>
           </div>
         </div>

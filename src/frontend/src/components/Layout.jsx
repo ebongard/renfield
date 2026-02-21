@@ -24,7 +24,8 @@ import {
   Brain,
   MapPin,
   Wrench,
-  FileSearch
+  FileSearch,
+  Share2
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -37,6 +38,7 @@ const mainNavigationConfig = [
   { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
+  { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2 },
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
@@ -52,7 +54,6 @@ const adminNavigationConfig = [
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'], feature: 'satellites' },
   { nameKey: 'nav.presence', href: '/admin/presence', icon: MapPin, permission: ['admin'] },
-  { nameKey: 'nav.knowledgeGraph', href: '/admin/knowledge-graph', icon: Brain, permission: ['admin'] },
   { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
@@ -182,21 +183,24 @@ export default function Layout({ children }) {
       <Link
         to={item.href}
         onClick={onClick}
-        className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+        className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors relative ${
           isActive
-            ? 'bg-primary-600/20 text-primary-600 dark:text-primary-400 border-l-2 border-primary-500 dark:border-primary-400'
+            ? 'bg-primary-600/20 text-primary-600 dark:text-primary-400'
             : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
         }`}
         aria-current={isActive ? 'page' : undefined}
       >
+        {isActive && (
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary-600 rounded-r" />
+        )}
         <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span>{item.name}</span>
+        <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{item.name}</span>
       </Link>
     );
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 transition-colors">
+    <div className="min-h-screen transition-colors">
       {/* Skip Link for Accessibility */}
       <a
         href="#main-content"
@@ -206,13 +210,13 @@ export default function Layout({ children }) {
       </a>
 
       {/* Fixed Header */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors">
+      <header className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors lg:pl-16">
         <div className="h-full px-4 flex items-center justify-between">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors"
+              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors active:scale-95 lg:hidden"
               aria-label={t('nav.openMenu')}
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -258,44 +262,58 @@ export default function Layout({ children }) {
         </div>
       </header>
 
-      {/* Backdrop */}
+      {/* Backdrop (mobile only) */}
       <div
-        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs z-40 transition-opacity duration-300 ${
+        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs z-40 transition-opacity duration-300 lg:hidden ${
           sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         aria-hidden="true"
         onClick={() => setSidebarOpen(false)}
       />
 
-      {/* Sidebar */}
+      {/* Sidebar — mobile: slide overlay; desktop: persistent rail with hover expand */}
       <aside
         ref={sidebarRef}
         id="sidebar"
-        className={`fixed top-0 left-0 h-full w-72 flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-transform duration-300 ease-out ${
-          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
+        className={`group/sidebar fixed top-0 left-0 h-full flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-all duration-300 ease-out
+          w-72 lg:w-16 lg:hover:w-72 lg:translate-x-0
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+        `}
         aria-label={t('nav.mainNavigation')}
         role="dialog"
         aria-modal="true"
       >
         {/* Sidebar Header */}
-        <div className="flex items-center justify-between h-16 px-4 border-b border-gray-200 dark:border-gray-700">
-          <Link to="/" onClick={handleNavClick} className="flex items-center">
-            <img src="/renfield-logo-header.svg" alt="Renfield" className="h-11 w-auto" />
-          </Link>
+        <div className="relative flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700">
+          {/* Rail state: hamburger icon centered (desktop only, hidden on hover) */}
+          <div className="hidden lg:flex lg:group-hover/sidebar:hidden items-center justify-center absolute inset-0">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors active:scale-95"
+              aria-label={t('nav.openMenu')}
+            >
+              <Menu className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
 
-          <button
-            ref={firstFocusableRef}
-            onClick={() => setSidebarOpen(false)}
-            className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors"
-            aria-label={t('nav.closeMenu')}
-          >
-            <X className="w-5 h-5" aria-hidden="true" />
-          </button>
+          {/* Full logo + close — shown on mobile + desktop hover */}
+          <div className="flex items-center justify-between w-full lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
+            <Link to="/" onClick={handleNavClick} className="flex items-center overflow-hidden">
+              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-11 w-auto" />
+            </Link>
+            <button
+              ref={firstFocusableRef}
+              onClick={() => setSidebarOpen(false)}
+              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors lg:hidden"
+              aria-label={t('nav.closeMenu')}
+            >
+              <X className="w-5 h-5" aria-hidden="true" />
+            </button>
+          </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 px-3 py-4 space-y-1 overflow-y-auto overflow-x-hidden">
           {/* Main Navigation */}
           {visibleMainNav.map((item) => (
             <NavLink key={item.href} item={item} onClick={handleNavClick} />
@@ -319,21 +337,23 @@ export default function Layout({ children }) {
               >
                 <div className="flex items-center space-x-3">
                   <Settings className="w-5 h-5 shrink-0" aria-hidden="true" />
-                  <span>{t('nav.admin')}</span>
+                  <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('nav.admin')}</span>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 transition-transform duration-200 ${
+                  className={`w-4 h-4 transition-transform duration-200 lg:opacity-0 lg:group-hover/sidebar:opacity-100 ${
                     adminExpanded ? 'rotate-180' : ''
                   }`}
                   aria-hidden="true"
                 />
               </button>
 
-              {/* Admin Submenu */}
+              {/* Admin Submenu — hidden in rail, shown on hover when expanded */}
               <div
                 id="admin-menu"
                 className={`overflow-hidden transition-all duration-200 ease-in-out ${
-                  adminExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0'
+                  adminExpanded
+                    ? 'max-h-[600px] opacity-100 lg:max-h-0 lg:opacity-0 lg:group-hover/sidebar:max-h-[600px] lg:group-hover/sidebar:opacity-100'
+                    : 'max-h-0 opacity-0'
                 }`}
               >
                 <div className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-1 py-1">
@@ -355,10 +375,10 @@ export default function Layout({ children }) {
                   {/* User Info */}
                   <div className="px-3 py-2 rounded-lg bg-gray-100 dark:bg-gray-700/30">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 rounded-full bg-primary-600/30 flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-full bg-primary-600/30 flex items-center justify-center shrink-0">
                         <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                       </div>
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
                         <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user?.username}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.role}</p>
                       </div>
@@ -371,7 +391,7 @@ export default function Layout({ children }) {
                     className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <LogOut className="w-5 h-5 shrink-0" aria-hidden="true" />
-                    <span>{t('auth.logout')}</span>
+                    <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.logout')}</span>
                   </button>
                 </div>
               ) : (
@@ -381,7 +401,7 @@ export default function Layout({ children }) {
                   className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
                   <LogIn className="w-5 h-5 shrink-0" aria-hidden="true" />
-                  <span>{t('auth.login')}</span>
+                  <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.login')}</span>
                 </Link>
               )}
             </>
@@ -389,7 +409,7 @@ export default function Layout({ children }) {
         </nav>
 
         {/* Sidebar Footer - Device Status */}
-        <div className="shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+        <div className="shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
           <DeviceStatus />
         </div>
       </aside>
@@ -400,11 +420,13 @@ export default function Layout({ children }) {
       {/* Main Content */}
       <main
         id="main-content"
-        className="pt-16 min-h-screen"
+        className="pt-16 min-h-screen lg:pl-16"
         tabIndex={-1}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {children}
+          <div key={location.pathname} className="animate-fade-slide-in">
+            {children}
+          </div>
         </div>
       </main>
     </div>

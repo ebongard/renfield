@@ -91,8 +91,15 @@ export default function HomeAssistantPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('homeassistant.title')}</h1>
-        <p className="text-gray-500 dark:text-gray-400">{t('homeassistant.subtitle')}</p>
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+            <Lightbulb className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('homeassistant.title')}</h1>
+            <p className="text-gray-500 dark:text-gray-400">{t('homeassistant.subtitle')}</p>
+          </div>
+        </div>
       </div>
 
       {/* Search */}

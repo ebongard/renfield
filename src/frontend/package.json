@@ -13,6 +13,8 @@
     "postinstall": "mkdir -p public/ort && cp node_modules/onnxruntime-web/dist/ort-wasm*.wasm node_modules/onnxruntime-web/dist/ort-wasm*.mjs public/ort/ 2>/dev/null || true"
   },
   "dependencies": {
+    "@fontsource-variable/cormorant": "^5.2.8",
+    "@fontsource-variable/dm-sans": "^5.2.8",
     "axios": "^1.6.5",
     "i18next": "^23.16.8",
     "i18next-browser-languagedetector": "^7.2.2",

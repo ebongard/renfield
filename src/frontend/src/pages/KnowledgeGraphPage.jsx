@@ -375,16 +375,16 @@ export default function KnowledgeGraphPage() {
       {ConfirmDialogComponent}
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-lg">
-            <Brain className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
+      <div className="card mb-6">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+            <Brain className="w-6 h-6 text-primary-600 dark:text-primary-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
+            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
               {t('knowledgeGraph.title')}
             </h1>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-gray-500 dark:text-gray-400">
               {t('knowledgeGraph.subtitle')}
             </p>
           </div>

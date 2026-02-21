@@ -38,9 +38,9 @@ const DEVICE_ICONS = {
 // State colors
 const STATE_COLORS = {
   [DEVICE_STATES.IDLE]: 'bg-gray-500',
-  [DEVICE_STATES.LISTENING]: 'bg-green-500 animate-pulse',
-  [DEVICE_STATES.PROCESSING]: 'bg-yellow-500 animate-pulse',
-  [DEVICE_STATES.SPEAKING]: 'bg-blue-500 animate-pulse',
+  [DEVICE_STATES.LISTENING]: 'bg-green-500 animate-gentle-pulse',
+  [DEVICE_STATES.PROCESSING]: 'bg-yellow-500 animate-gentle-pulse',
+  [DEVICE_STATES.SPEAKING]: 'bg-blue-500 animate-gentle-pulse',
   [DEVICE_STATES.ERROR]: 'bg-red-500',
 };
 

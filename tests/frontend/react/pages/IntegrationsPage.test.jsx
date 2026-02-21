@@ -55,7 +55,7 @@ describe('IntegrationsPage', () => {
       });
 
       expect(screen.getByText('Integrationen')).toBeInTheDocument();
-      expect(screen.getByText('Verwalte MCP-Server und Plugin-Verbindungen')).toBeInTheDocument();
+      expect(screen.getByText('Verwalte MCP-Server-Verbindungen')).toBeInTheDocument();
     });
 
     it('shows loading state initially', () => {

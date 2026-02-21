@@ -76,6 +76,7 @@ function AppRoutes() {
               </ProtectedRoute>
             } />
             <Route path="/memory" element={<MemoryPage />} />
+            <Route path="/knowledge-graph" element={<KnowledgeGraphPage />} />
             {/* Redirect old /plugins route to new integrations page */}
             <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
             {/* Admin routes */}
@@ -116,11 +117,8 @@ function AppRoutes() {
                 <PresencePage />
               </AdminRoute>
             } />
-            <Route path="/admin/knowledge-graph" element={
-              <AdminRoute>
-                <KnowledgeGraphPage />
-              </AdminRoute>
-            } />
+            {/* Redirect old admin route */}
+            <Route path="/admin/knowledge-graph" element={<Navigate to="/knowledge-graph" replace />} />
             <Route path="/admin/maintenance" element={
               <AdminRoute>
                 <MaintenancePage />
