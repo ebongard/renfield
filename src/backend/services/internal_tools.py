@@ -63,10 +63,11 @@ class InternalToolService:
             },
         },
         "internal.play_album_on_dlna": {
-            "description": "Play a Jellyfin album on a DLNA renderer with gapless queue. Fetches tracks from Jellyfin and sends them all to the DLNA renderer in one step.",
+            "description": "Play a Jellyfin album on a DLNA renderer with gapless queue. Fetches tracks from Jellyfin and sends them all to the DLNA renderer in one step. Provide either renderer_name (direct) or room_name (resolves via room configuration).",
             "parameters": {
                 "album_id": "Jellyfin album ID from search_media results (required)",
-                "renderer_name": "Room name for the DLNA renderer, e.g. 'Arbeitszimmer' (required)",
+                "renderer_name": "DLNA renderer name, e.g. 'Arbeitszimmer' (optional if room_name is given)",
+                "room_name": "Room name to resolve the DLNA renderer from room config (optional if renderer_name is given)",
                 "album_name": "Album title for display metadata (optional, from search_media results)",
             },
         },
@@ -177,6 +178,20 @@ class InternalToolService:
                         "action_taken": False,
                     }
 
+                # DLNA renderer — return target_type + renderer name
+                if decision.target_type == "dlna":
+                    return {
+                        "success": True,
+                        "message": f"Found DLNA renderer for {room.name}: {decision.output_device.dlna_renderer_name}",
+                        "action_taken": True,
+                        "data": {
+                            "target_type": "dlna",
+                            "dlna_renderer_name": decision.output_device.dlna_renderer_name,
+                            "room_name": room.name,
+                            "device_name": decision.output_device.device_name or decision.output_device.dlna_renderer_name,
+                        },
+                    }
+
                 # We need an HA entity for media playback
                 entity_id = decision.output_device.ha_entity_id
                 if not entity_id:
@@ -192,6 +207,7 @@ class InternalToolService:
                     "action_taken": True,
                     "data": {
                         "entity_id": entity_id,
+                        "target_type": "homeassistant",
                         "room_name": room.name,
                         "device_name": decision.output_device.device_name or entity_id,
                     },
@@ -476,9 +492,12 @@ class InternalToolService:
         Combines get_album_tracks + dlna.play_tracks into one server-side step
         so the LLM doesn't have to generate the massive tracks JSON (which
         exceeds num_predict token limits for albums with many tracks).
+
+        Accepts either renderer_name (direct) or room_name (resolved via room config).
         """
         album_id = (params.get("album_id") or "").strip()
         renderer_name = (params.get("renderer_name") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
         album_name_param = (params.get("album_name") or "").strip()
 
         if not album_id:
@@ -487,10 +506,25 @@ class InternalToolService:
                 "message": "Parameter 'album_id' is required",
                 "action_taken": False,
             }
+
+        # Resolve renderer_name from room config if not provided directly
+        if not renderer_name and room_name:
+            resolve_result = await self._resolve_room_player({"room_name": room_name})
+            if not resolve_result.get("success"):
+                return resolve_result
+            data = resolve_result.get("data", {})
+            if data.get("target_type") != "dlna":
+                return {
+                    "success": False,
+                    "message": f"Room '{room_name}' has no DLNA renderer configured (found {data.get('target_type', 'unknown')} device instead)",
+                    "action_taken": False,
+                }
+            renderer_name = data.get("dlna_renderer_name", "")
+
         if not renderer_name:
             return {
                 "success": False,
-                "message": "Parameter 'renderer_name' is required",
+                "message": "Either 'renderer_name' or 'room_name' is required",
                 "action_taken": False,
             }
 

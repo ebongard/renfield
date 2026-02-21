@@ -263,6 +263,38 @@ class TestResolveRoomPlayer:
         assert result["data"]["entity_id"] == "media_player.arbeitszimmer"
 
     @pytest.mark.unit
+    async def test_resolve_room_player_dlna_device(self, internal_tools):
+        """Room with DLNA renderer returns target_type='dlna' + renderer name."""
+        mock_room = MagicMock()
+        mock_room.id = 7
+        mock_room.name = "Garten"
+
+        mock_output_device = MagicMock()
+        mock_output_device.ha_entity_id = None
+        mock_output_device.dlna_renderer_name = "HiFiBerry Garten"
+        mock_output_device.device_name = "HiFiBerry Garten"
+
+        mock_decision = MagicMock()
+        mock_decision.output_device = mock_output_device
+        mock_decision.target_type = "dlna"
+        mock_decision.reason = "device_available"
+
+        mock_room_service = MagicMock()
+        mock_room_service.get_room_by_name = AsyncMock(return_value=mock_room)
+        mock_room_service.get_room_by_alias = AsyncMock(return_value=None)
+
+        mock_routing_service = MagicMock()
+        mock_routing_service.get_audio_output_for_room = AsyncMock(return_value=mock_decision)
+
+        with _patch_resolve_deps(mock_room_service, mock_routing_service):
+            result = await internal_tools._resolve_room_player({"room_name": "Garten"})
+
+        assert result["success"] is True
+        assert result["data"]["target_type"] == "dlna"
+        assert result["data"]["dlna_renderer_name"] == "HiFiBerry Garten"
+        assert result["data"]["room_name"] == "Garten"
+
+    @pytest.mark.unit
     async def test_resolve_room_player_missing_param(self, internal_tools):
         """Missing room_name returns error."""
         result = await internal_tools._resolve_room_player({})
@@ -1298,11 +1330,127 @@ class TestPlayAlbumOnDlna:
         assert "album_id" in result["message"]
 
     @pytest.mark.unit
-    async def test_play_album_missing_renderer_name(self, internal_tools):
-        """Missing renderer_name returns error."""
+    async def test_play_album_missing_renderer_and_room(self, internal_tools):
+        """Missing both renderer_name and room_name returns error."""
         result = await internal_tools._play_album_on_dlna({"album_id": "abc123"})
         assert result["success"] is False
-        assert "renderer_name" in result["message"]
+        assert "renderer_name" in result["message"] or "room_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_via_room_name(self, internal_tools):
+        """room_name resolves DLNA renderer from room config."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Garten",
+                "room_name": "Garten",
+                "device_name": "HiFiBerry Garten",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+
+        import json
+        tracks_response = json.dumps({
+            "album": "OK Computer",
+            "items": [
+                {"name": "Airbag", "artist": "Radiohead", "album": "OK Computer",
+                 "api_stream": "http://jellyfin:8096/Audio/a1/stream"},
+            ],
+        })
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": tracks_response, "data": [{"type": "text", "text": tracks_response}]},
+            {"success": True, "message": "Playing 1 track"},
+        ])
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "50ffb172",
+                "room_name": "Garten",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["renderer"] == "HiFiBerry Garten"
+
+        # Verify DLNA play_tracks was called with the resolved renderer_name
+        dlna_call = mock_mcp_manager.execute_tool.call_args_list[1]
+        assert dlna_call.args[1]["renderer_name"] == "HiFiBerry Garten"
+
+    @pytest.mark.unit
+    async def test_play_album_room_has_no_dlna(self, internal_tools):
+        """room_name resolving to non-DLNA device returns error."""
+        resolve_result = {
+            "success": True,
+            "message": "Found HA player",
+            "action_taken": True,
+            "data": {
+                "target_type": "homeassistant",
+                "entity_id": "media_player.garten",
+                "room_name": "Garten",
+                "device_name": "HomePod Garten",
+            },
+        }
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "abc123",
+                "room_name": "Garten",
+            })
+
+        assert result["success"] is False
+        assert "no DLNA renderer configured" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_room_not_found(self, internal_tools):
+        """room_name not found returns error from resolve."""
+        resolve_result = {
+            "success": False,
+            "message": "Room 'Narnia' not found",
+            "action_taken": False,
+        }
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "abc123",
+                "room_name": "Narnia",
+            })
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_album_renderer_name_takes_precedence(self, internal_tools):
+        """When both renderer_name and room_name are given, renderer_name wins."""
+        mock_mcp_manager = MagicMock()
+
+        import json
+        tracks_response = json.dumps({
+            "items": [
+                {"name": "Track", "artist": "Artist", "album": "Album",
+                 "api_stream": "http://jellyfin:8096/Audio/a1/stream"},
+            ],
+        })
+        mock_mcp_manager.execute_tool = AsyncMock(side_effect=[
+            {"success": True, "message": tracks_response, "data": [{"type": "text", "text": tracks_response}]},
+            {"success": True, "message": "Playing"},
+        ])
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_album_on_dlna({
+                "album_id": "abc123",
+                "renderer_name": "DirectRenderer",
+                "room_name": "ShouldBeIgnored",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["renderer"] == "DirectRenderer"
 
     @pytest.mark.unit
     async def test_play_album_jellyfin_fails(self, internal_tools):

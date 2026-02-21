@@ -136,6 +136,7 @@ class OutputDeviceCreate(BaseModel):
     output_type: str = "audio"  # "audio" or "visual"
     renfield_device_id: str | None = None
     ha_entity_id: str | None = None
+    dlna_renderer_name: str | None = None
     priority: int = 1
     allow_interruption: bool = False
     tts_volume: float | None = 0.5
@@ -158,6 +159,7 @@ class OutputDeviceResponse(BaseModel):
     output_type: str
     renfield_device_id: str | None
     ha_entity_id: str | None
+    dlna_renderer_name: str | None = None
     priority: int
     allow_interruption: bool
     tts_volume: float | None
@@ -176,6 +178,7 @@ class OutputDeviceReorderRequest(BaseModel):
 
 
 class AvailableOutputResponse(BaseModel):
-    """Response model for available output devices (HA + Renfield)"""
+    """Response model for available output devices (HA + Renfield + DLNA)"""
     renfield_devices: list[dict]
     ha_media_players: list[dict]
+    dlna_renderers: list[dict] = []

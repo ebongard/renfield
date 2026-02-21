@@ -320,16 +320,17 @@ class RoomOutputDevice(Base):
     Defines which devices should be used for TTS audio output
     in a room, with priority ordering and interruption settings.
 
-    Either renfield_device_id OR ha_entity_id must be set (not both).
+    Exactly one of renfield_device_id, ha_entity_id, or dlna_renderer_name must be set.
     """
     __tablename__ = "room_output_devices"
 
     id = Column(Integer, primary_key=True, index=True)
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
 
-    # Device source: either Renfield device OR Home Assistant entity
+    # Device source: exactly one of Renfield device, HA entity, or DLNA renderer
     renfield_device_id = Column(String(100), ForeignKey("room_devices.device_id"), nullable=True)
     ha_entity_id = Column(String(255), nullable=True)  # e.g. "media_player.linn_dsm"
+    dlna_renderer_name = Column(String(255), nullable=True)  # e.g. "Arbeitszimmer"
 
     # Output type
     output_type = Column(String(20), nullable=False, default=OUTPUT_TYPE_AUDIO)
@@ -368,9 +369,25 @@ class RoomOutputDevice(Base):
         return self.ha_entity_id is not None
 
     @property
+    def is_dlna_device(self) -> bool:
+        """Check if this output uses a DLNA renderer"""
+        return self.dlna_renderer_name is not None
+
+    @property
     def target_id(self) -> str:
         """Get the target device/entity ID"""
-        return self.renfield_device_id or self.ha_entity_id or ""
+        return self.renfield_device_id or self.ha_entity_id or self.dlna_renderer_name or ""
+
+    @property
+    def target_type(self) -> str:
+        """Get the device type string"""
+        if self.renfield_device_id:
+            return "renfield"
+        if self.ha_entity_id:
+            return "homeassistant"
+        if self.dlna_renderer_name:
+            return "dlna"
+        return "renfield"
 
 
 # Legacy alias for backward compatibility
