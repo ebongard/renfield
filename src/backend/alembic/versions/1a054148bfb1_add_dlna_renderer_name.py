@@ -1,6 +1,6 @@
 """Add dlna_renderer_name column to room_output_devices.
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 1a054148bfb1
 Revises: q2r3s4t5u6v7
 Create Date: 2026-02-21
 
@@ -13,7 +13,7 @@ from alembic import op
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'a1b2c3d4e5f6'
+revision: str = '1a054148bfb1'
 down_revision: Union[str, None] = 'q2r3s4t5u6v7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
