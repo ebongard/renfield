@@ -9,7 +9,8 @@ Renfield unterstützt intelligentes Routing von TTS-Ausgaben an das beste verfü
 - **Unterbrechungs-Präferenzen** pro Gerät
 - **TTS-Lautstärke** pro Gerät konfigurierbar
 - **Automatischer Fallback** auf Eingabegerät bei Nichtverfügbarkeit
-- **Unterstützt Renfield-Geräte** (Satellites, Web Panels) und **Home Assistant Media Player**
+- **Unterstützt Renfield-Geräte** (Satellites, Web Panels), **Home Assistant Media Player** und **DLNA Renderer**
+- **DLNA Renderer Discovery** via SSDP-Multicast (automatische Erkennung im Netzwerk)
 
 ## Voraussetzungen
 
@@ -33,6 +34,7 @@ Der Wert muss eine Adresse sein, die Home Assistant erreichen kann (nicht `local
 4. Wähle den Gerätetyp:
    - **HA Media Player**: Home Assistant Media Player Entitäten (z.B. Sonos, Chromecast, HiFi-Systeme)
    - **Renfield Gerät**: Renfield Satellites oder Web Panels mit Lautsprechern
+   - **DLNA Renderer**: DLNA-fähige Geräte im Netzwerk (z.B. Linn, Samsung TV, HiFiBerry). Werden per SSDP automatisch erkannt.
 5. Konfiguriere die Einstellungen:
    - **TTS Lautstärke**: Lautstärke für TTS-Ausgabe (0-100%)
    - **Unterbrechung erlauben**: Wenn aktiviert, wird laufende Wiedergabe unterbrochen
@@ -64,6 +66,8 @@ Geräte werden in der konfigurierten Reihenfolge geprüft. Verwende die Pfeil-Bu
 | `BUSY` | Spielt gerade (playing, buffering) | Nur wenn `allow_interruption=True` |
 | `OFF` | Ausgeschaltet | Wird übersprungen |
 | `UNAVAILABLE` | Nicht erreichbar | Wird übersprungen |
+
+**Hinweis:** DLNA-Renderer gelten immer als `AVAILABLE` — SSDP-Probing zur Laufzeit wäre zu teuer für Routing-Entscheidungen. Die tatsächliche Verfügbarkeit wird erst beim Abspielen geprüft.
 
 ## API Endpoints
 
@@ -101,7 +105,7 @@ POST /api/rooms/{room_id}/output-devices/reorder?output_type=audio
   "device_ids": [3, 1, 2]
 }
 
-# Verfügbare Ausgabegeräte abrufen (Renfield + HA)
+# Verfügbare Ausgabegeräte abrufen (Renfield + HA + DLNA)
 GET /api/rooms/{room_id}/available-outputs
 ```
 
@@ -120,6 +124,7 @@ CREATE TABLE room_output_devices (
     room_id INTEGER NOT NULL REFERENCES rooms(id),
     renfield_device_id VARCHAR(100) REFERENCES room_devices(device_id),
     ha_entity_id VARCHAR(255),
+    dlna_renderer_name VARCHAR(255),
     output_type VARCHAR(20) NOT NULL DEFAULT 'audio',
     priority INTEGER NOT NULL DEFAULT 1,
     allow_interruption BOOLEAN DEFAULT FALSE,
@@ -131,7 +136,63 @@ CREATE TABLE room_output_devices (
 );
 ```
 
-**Hinweis:** Entweder `renfield_device_id` ODER `ha_entity_id` muss gesetzt sein (nicht beides).
+**Hinweis:** Genau eines von `renfield_device_id`, `ha_entity_id` oder `dlna_renderer_name` muss gesetzt sein.
+
+### Gerätetypen
+
+| Typ | Identifikator | Discovery | Verfügbarkeitsprüfung |
+|-----|---------------|-----------|----------------------|
+| Renfield | `renfield_device_id` | DeviceManager (WebSocket) | Echtzeit (online/offline) |
+| Home Assistant | `ha_entity_id` | HA API (`media_player.*`) | HA State API (idle/playing/off) |
+| DLNA | `dlna_renderer_name` | SSDP-Multicast via MCP | Immer `AVAILABLE` (kein Probing) |
+
+## DLNA Renderer
+
+DLNA-Renderer werden über den **DLNA MCP Server** erkannt. Dieser läuft als eigenständiger Host-Service (nicht im Docker-Container), da SSDP-Multicast (`239.255.255.250:1900`) LAN-Zugang benötigt.
+
+### Architektur
+
+```
+DLNA Renderer (LAN)     DLNA MCP Server (Host)     Backend (Docker)
+    ↑                        ↑                          ↑
+    │ SSDP Multicast         │ streamable-http          │
+    └────────────────────────┘                          │
+                             └──────────────────────────┘
+                              http://host.docker.internal:9091/mcp
+```
+
+### Setup
+
+1. **DLNA MCP installieren** (auf dem Host, nicht im Container):
+   ```bash
+   pip install /opt/renfield-mcp-dlna/
+   ```
+
+2. **Systemd-Service** (`/etc/systemd/system/renfield-mcp-dlna.service`):
+   ```ini
+   [Service]
+   Environment=MCP_TRANSPORT=streamable-http
+   Environment=MCP_PORT=9091
+   ExecStart=/home/user/.local/bin/renfield-mcp-dlna
+   ```
+
+3. **Backend-Konfiguration** (`mcp_servers.yaml`):
+   ```yaml
+   - name: dlna
+     transport: streamable_http
+     url: "${DLNA_MCP_URL:-http://host.docker.internal:9091/mcp}"
+     enabled: "${DLNA_MCP_ENABLED:-false}"
+   ```
+
+4. **Environment** (`.env`):
+   ```bash
+   DLNA_MCP_ENABLED=true
+   # DLNA_MCP_URL=http://host.docker.internal:9091/mcp  # Default
+   ```
+
+### Screenshot
+
+<p align="center"><img src="screenshots/output-dlna-dark.png" width="800" alt="DLNA Output Device Modal"></p>
 
 ## Beispiel-Szenario
 
