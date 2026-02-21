@@ -20,7 +20,7 @@
 ## Why Renfield?
 
 - **Voice-first with physical satellites** — Raspberry Pi Zero 2 W + ReSpeaker HAT in every room (~$30/satellite). Wake word, STT, TTS — fully local.
-- **9 MCP servers, 100+ tools, Agent Loop** — Weather, search, news, calendar, smart home, media, documents, email, workflows. ReAct agent chains tools autonomously for complex queries.
+- **10 MCP servers, 100+ tools, Agent Loop** — Weather, search, news, calendar, smart home, media, DLNA, documents, email, workflows. ReAct agent chains tools autonomously for complex queries.
 - **Fully offline, self-hosted, GDPR-friendly** — Runs entirely on your hardware. No cloud dependencies. Your data never leaves your network.
 
 ## Screenshots
@@ -36,13 +36,18 @@
 </details>
 
 <details>
-<summary><b>Integrations</b> — 9 MCP servers, 100+ tools</summary>
+<summary><b>Integrations</b> — 10 MCP servers, 100+ tools</summary>
 <p align="center"><img src="docs/screenshots/integrations-dark.png" width="800" alt="Integrations"></p>
 </details>
 
 <details>
-<summary><b>Room Management</b> — 17 rooms synced with Home Assistant</summary>
+<summary><b>Room Management</b> — 17 rooms synced with Home Assistant, DLNA renderer assignment</summary>
 <p align="center"><img src="docs/screenshots/rooms-dark.png" width="800" alt="Room Management"></p>
+</details>
+
+<details>
+<summary><b>DLNA Output Device</b> — Assign DLNA renderers to rooms for album playback</summary>
+<p align="center"><img src="docs/screenshots/output-dlna-dark.png" width="800" alt="DLNA Output Device"></p>
 </details>
 
 <details>
@@ -68,7 +73,7 @@
 - **Proactive notifications** — webhook-based alerts from Home Assistant/n8n + generic MCP notification polling
 - **Hook/Plugin system** — async extension API for custom integrations without modifying core
 
-### Integrations (9 MCP Servers)
+### Integrations (10 MCP Servers)
 
 | Server | Description | Transport |
 |--------|-------------|-----------|
@@ -77,6 +82,7 @@
 | News | NewsAPI headlines | stdio |
 | Calendar | Exchange, Google, CalDAV (multi-account) | stdio |
 | Jellyfin | Media server queries | stdio |
+| DLNA | Media renderer control with gapless queue | streamable_http |
 | n8n | Workflow automation | stdio |
 | Home Assistant | Smart home control | streamable_http |
 | Paperless | Document management | stdio |
@@ -98,7 +104,7 @@
 | **Total per room** | **~$58** |
 
 - Local wake word detection (OpenWakeWord)
-- Audio output routing to best device per room
+- Audio output routing to best device per room (Renfield, HA, DLNA)
 - IP-based room context detection
 
 ### Presence Detection

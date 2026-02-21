@@ -2,7 +2,7 @@
 
 # Renfield - Persönlicher KI-Assistent
 
-Ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Multi-Channel-Steuerung in einer Oberfläche bündelt. Renfield dient mehreren Nutzern parallel im Haushalt, mit abfragbarer Wissensbasis (RAG), gebündeltem Tool-Zugriff über 9 MCP-Server und Smart-Home-Steuerung.
+Ein vollständig offline-fähiger, selbst-gehosteter **digitaler Assistent** — ein persönlicher AI Hub, der Wissen, Informationsabfragen und Multi-Channel-Steuerung in einer Oberfläche bündelt. Renfield dient mehreren Nutzern parallel im Haushalt, mit abfragbarer Wissensbasis (RAG), gebündeltem Tool-Zugriff über 10 MCP-Server und Smart-Home-Steuerung.
 
 **Tech Stack:** Python 3.11 · FastAPI · React 18 · TypeScript · PostgreSQL 16 · Redis 7 · Ollama · Docker Compose
 
@@ -27,7 +27,7 @@ Unterstützung oder Billigung durch solche Dritte.
 - **Proaktive Benachrichtigungen** — Webhook-basierte Alerts von Home Assistant/n8n + generisches MCP Notification Polling
 - **Hook/Plugin-System** — Asynchrone Extension-API für eigene Integrationen ohne Core-Änderungen
 
-### Integrationen (9 MCP-Server)
+### Integrationen (10 MCP-Server)
 | Server | Beschreibung | Transport | Aktivierung |
 |--------|-------------|-----------|-------------|
 | Weather | OpenWeatherMap | stdio | `WEATHER_ENABLED=true` |
@@ -35,6 +35,7 @@ Unterstützung oder Billigung durch solche Dritte.
 | News | NewsAPI | stdio | `NEWS_ENABLED=true` |
 | Calendar | Exchange, Google, CalDAV (Multi-Account) | stdio | `CALENDAR_ENABLED=true` |
 | Jellyfin | Media Server | stdio | `JELLYFIN_ENABLED=true` |
+| DLNA | Media Renderer Control (Gapless Queue) | streamable_http | `DLNA_MCP_ENABLED=true` |
 | n8n | Workflow Automation | stdio | `N8N_MCP_ENABLED=true` |
 | Home Assistant | Smart Home | streamable_http | `HA_MCP_ENABLED=true` |
 | Paperless | Dokumenten-Management | stdio | `PAPERLESS_ENABLED=true` |
@@ -55,7 +56,7 @@ Unterstützung oder Billigung durch solche Dritte.
 ### Multi-Room Device System
 - **Raspberry Pi Satellites** — Pi Zero 2 W + ReSpeaker 2-Mics HAT (~63€ pro Einheit)
 - **Wake-Word-Erkennung** — Lokales OpenWakeWord, zentrale Verwaltung
-- **Audio-Output-Routing** — TTS-Ausgabe auf optimales Gerät im Raum
+- **Audio-Output-Routing** — TTS-Ausgabe auf optimales Gerät im Raum (Renfield, HA, DLNA)
 - **IP-basierte Raumerkennung** — Automatischer Raum-Kontext für Befehle
 
 ### Präsenzerkennung
@@ -136,11 +137,11 @@ Raumbasierte Präsenzerkennung aus drei Quellen:
 │  │  │ Ollama │ │Home    │ │Frigate │ │  n8n   │ │Weather │ │Search  │  │   │
 │  │  │ (LLM)  │ │Assist. │ │ (NVR)  │ │  MCP   │ │  MCP   │ │  MCP   │  │   │
 │  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘ └────────┘  │   │
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐                        │   │
-│  │  │ News   │ │Jellyfin│ │Paper-  │ │Calendar│                        │   │
-│  │  │  MCP   │ │  MCP   │ │less/   │ │  MCP   │                        │   │
-│  │  │        │ │        │ │Email   │ │        │                        │   │
-│  │  └────────┘ └────────┘ └────────┘ └────────┘                        │   │
+│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐             │   │
+│  │  │ News   │ │Jellyfin│ │ DLNA   │ │Paper-  │ │Calendar│             │   │
+│  │  │  MCP   │ │  MCP   │ │  MCP   │ │less/   │ │  MCP   │             │   │
+│  │  │        │ │        │ │ (Host) │ │Email   │ │        │             │   │
+│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘             │   │
 │  └───────────────────────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -248,6 +249,7 @@ WEATHER_ENABLED=true              # + OPENWEATHER_API_KEY
 SEARCH_ENABLED=true               # + SEARXNG_API_URL
 NEWS_ENABLED=true                 # + NEWSAPI_KEY
 JELLYFIN_ENABLED=true             # + JELLYFIN_URL, JELLYFIN_API_KEY
+DLNA_MCP_ENABLED=true             # + DLNA_MCP_URL (Host-Service)
 N8N_MCP_ENABLED=true              # + N8N_BASE_URL, N8N_API_KEY
 HA_MCP_ENABLED=true               # + HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN
 PAPERLESS_ENABLED=true            # + PAPERLESS_API_URL, PAPERLESS_API_TOKEN
