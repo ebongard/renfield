@@ -40,7 +40,7 @@ class OutputDecision:
     """Result of output routing decision"""
     output_device: RoomOutputDevice | None
     target_id: str
-    target_type: str  # "renfield" or "homeassistant"
+    target_type: str  # "renfield", "homeassistant", or "dlna"
     availability: DeviceAvailability
     fallback_to_input: bool
     reason: str
@@ -134,7 +134,7 @@ class OutputRoutingService:
                 return OutputDecision(
                     output_device=device,
                     target_id=device.target_id,
-                    target_type="renfield" if device.is_renfield_device else "homeassistant",
+                    target_type=device.target_type,
                     availability=availability,
                     fallback_to_input=False,
                     reason="device_available"
@@ -146,7 +146,7 @@ class OutputRoutingService:
                     return OutputDecision(
                         output_device=device,
                         target_id=device.target_id,
-                        target_type="renfield" if device.is_renfield_device else "homeassistant",
+                        target_type=device.target_type,
                         availability=availability,
                         fallback_to_input=False,
                         reason="device_busy_allowing_interruption"
@@ -195,6 +195,10 @@ class OutputRoutingService:
         """
         if output_device.is_renfield_device:
             return await self._check_renfield_device_availability(output_device.renfield_device_id)
+        elif output_device.is_dlna_device:
+            # DLNA availability via SSDP probing is too expensive for routing checks.
+            # Assume available — playback will fail gracefully if renderer is off.
+            return DeviceAvailability.AVAILABLE
         else:
             return await self._check_ha_device_availability(output_device.ha_entity_id)
 
@@ -277,6 +281,7 @@ class OutputRoutingService:
         output_type: str,
         renfield_device_id: str | None = None,
         ha_entity_id: str | None = None,
+        dlna_renderer_name: str | None = None,
         priority: int = 1,
         allow_interruption: bool = False,
         tts_volume: float | None = 0.5,
@@ -285,18 +290,21 @@ class OutputRoutingService:
         """
         Add a new output device to a room.
 
-        Either renfield_device_id or ha_entity_id must be provided.
+        Exactly one of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided.
         """
-        if not renfield_device_id and not ha_entity_id:
-            raise ValueError("Either renfield_device_id or ha_entity_id must be provided")
-
-        if renfield_device_id and ha_entity_id:
-            raise ValueError("Only one of renfield_device_id or ha_entity_id can be provided")
+        identifiers = [renfield_device_id, ha_entity_id, dlna_renderer_name]
+        set_count = sum(1 for v in identifiers if v)
+        if set_count == 0:
+            raise ValueError("One of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided")
+        if set_count > 1:
+            raise ValueError("Only one of renfield_device_id, ha_entity_id, or dlna_renderer_name can be provided")
 
         # Auto-generate device name if not provided
         if not device_name:
             if renfield_device_id:
                 device_name = renfield_device_id
+            elif dlna_renderer_name:
+                device_name = dlna_renderer_name
             else:
                 # Try to get friendly name from HA
                 try:
@@ -310,6 +318,7 @@ class OutputRoutingService:
             output_type=output_type,
             renfield_device_id=renfield_device_id,
             ha_entity_id=ha_entity_id,
+            dlna_renderer_name=dlna_renderer_name,
             priority=priority,
             allow_interruption=allow_interruption,
             tts_volume=tts_volume,
@@ -430,3 +439,51 @@ class OutputRoutingService:
 
         # Filter to devices with speaker capability
         return [d for d in devices if d.capabilities and d.capabilities.get("has_speaker", False)]
+
+    async def get_available_dlna_renderers(self) -> list[dict]:
+        """
+        Get all available DLNA renderers via the DLNA MCP server.
+
+        Returns list of dicts with name, friendly_name.
+        """
+        try:
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return []
+
+            result = await mcp_manager.execute_tool("mcp.dlna.list_renderers", {})
+            if not result.get("success"):
+                logger.debug(f"DLNA list_renderers failed: {result.get('message')}")
+                return []
+
+            import json
+            raw_text = ""
+            data = result.get("data", [])
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        raw_text = item.get("text", "")
+                        break
+            if not raw_text:
+                raw_text = result.get("message", "")
+
+            try:
+                parsed = json.loads(raw_text)
+            except (ValueError, TypeError):
+                return []
+
+            renderers = parsed if isinstance(parsed, list) else parsed.get("renderers", [])
+            return [
+                {
+                    "name": r.get("name", r.get("friendly_name", "")),
+                    "friendly_name": r.get("friendly_name", r.get("name", "")),
+                    "location": r.get("location", ""),
+                }
+                for r in renderers
+                if r.get("name") or r.get("friendly_name")
+            ]
+
+        except Exception as e:
+            logger.error(f"Failed to get DLNA renderers: {e}")
+            return []

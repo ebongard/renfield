@@ -2,24 +2,18 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Volume2, Plus, Trash2, Loader, ChevronDown, ChevronUp,
-  GripVertical, Power, PowerOff, Speaker, Radio, Monitor
+  GripVertical, Power, PowerOff, Speaker, Radio, Monitor, Wifi
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useConfirmDialog } from './ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
-
-// Output device type icons
-const OUTPUT_TYPE_ICONS = {
-  renfield: Radio,
-  homeassistant: Speaker,
-};
 
 /**
  * RoomOutputSettings - Manage audio output devices for a room
  *
  * Features:
  * - List configured output devices with priority order
- * - Add new output devices (Renfield devices or HA media players)
+ * - Add new output devices (Renfield devices, HA media players, or DLNA renderers)
  * - Edit device settings (priority, interruption, volume)
  * - Delete output devices
  * - Drag-and-drop reordering (simplified: up/down buttons)
@@ -32,14 +26,14 @@ export default function RoomOutputSettings({ roomId, roomName }) {
   // State
   const [expanded, setExpanded] = useState(false);
   const [outputDevices, setOutputDevices] = useState([]);
-  const [availableOutputs, setAvailableOutputs] = useState({ renfield_devices: [], ha_media_players: [] });
+  const [availableOutputs, setAvailableOutputs] = useState({ renfield_devices: [], ha_media_players: [], dlna_renderers: [] });
   const [loading, setLoading] = useState(false);
   const [loadingAvailable, setLoadingAvailable] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [error, setError] = useState(null);
 
   // Add form state
-  const [selectedType, setSelectedType] = useState(showHA ? 'homeassistant' : 'renfield'); // 'renfield' or 'homeassistant'
+  const [selectedType, setSelectedType] = useState(showHA ? 'homeassistant' : 'renfield');
   const [selectedDevice, setSelectedDevice] = useState('');
   const [allowInterruption, setAllowInterruption] = useState(false);
   const [ttsVolume, setTtsVolume] = useState(50);
@@ -77,9 +71,14 @@ export default function RoomOutputSettings({ roomId, roomName }) {
     }
   };
 
+  const getDefaultType = () => {
+    if (showHA) return 'homeassistant';
+    return 'renfield';
+  };
+
   const openAddModal = () => {
     loadAvailableOutputs();
-    setSelectedType(showHA ? 'homeassistant' : 'renfield');
+    setSelectedType(getDefaultType());
     setSelectedDevice('');
     setAllowInterruption(false);
     setTtsVolume(50);
@@ -104,6 +103,8 @@ export default function RoomOutputSettings({ roomId, roomName }) {
 
       if (selectedType === 'renfield') {
         payload.renfield_device_id = selectedDevice;
+      } else if (selectedType === 'dlna') {
+        payload.dlna_renderer_name = selectedDevice;
       } else {
         payload.ha_entity_id = selectedDevice;
       }
@@ -170,6 +171,9 @@ export default function RoomOutputSettings({ roomId, roomName }) {
   };
 
   const getDeviceIcon = (device) => {
+    if (device.dlna_renderer_name) {
+      return <Wifi className="w-4 h-4 text-purple-400" />;
+    }
     if (device.renfield_device_id) {
       return <Radio className="w-4 h-4 text-green-400" />;
     }
@@ -184,10 +188,17 @@ export default function RoomOutputSettings({ roomId, roomName }) {
     const configuredHAIds = new Set(
       outputDevices.filter(d => d.ha_entity_id).map(d => d.ha_entity_id)
     );
+    const configuredDLNANames = new Set(
+      outputDevices.filter(d => d.dlna_renderer_name).map(d => d.dlna_renderer_name)
+    );
 
     if (selectedType === 'renfield') {
       return availableOutputs.renfield_devices.filter(
         d => !configuredRenfieldIds.has(d.device_id)
+      );
+    } else if (selectedType === 'dlna') {
+      return (availableOutputs.dlna_renderers || []).filter(
+        d => !configuredDLNANames.has(d.name)
       );
     } else if (showHA) {
       return availableOutputs.ha_media_players.filter(
@@ -195,6 +206,24 @@ export default function RoomOutputSettings({ roomId, roomName }) {
       );
     }
     return [];
+  };
+
+  const getDeviceKey = (device) => {
+    if (selectedType === 'renfield') return device.device_id;
+    if (selectedType === 'dlna') return device.name;
+    return device.entity_id;
+  };
+
+  const getDeviceValue = (device) => {
+    if (selectedType === 'renfield') return device.device_id;
+    if (selectedType === 'dlna') return device.name;
+    return device.entity_id;
+  };
+
+  const getDeviceLabel = (device) => {
+    if (selectedType === 'renfield') return device.device_name || device.device_id;
+    if (selectedType === 'dlna') return device.friendly_name || device.name;
+    return device.friendly_name || device.entity_id;
   };
 
   return (
@@ -262,7 +291,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
 
                   {/* Device Name */}
                   <span className="flex-1 text-sm text-gray-300 truncate">
-                    {device.device_name || device.ha_entity_id || device.renfield_device_id}
+                    {device.device_name || device.dlna_renderer_name || device.ha_entity_id || device.renfield_device_id}
                   </span>
 
                   {/* Volume Badge */}
@@ -374,6 +403,20 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                     <Radio className="w-5 h-5 mx-auto mb-1 text-green-400" />
                     <span className="text-sm text-gray-300">Renfield Geraet</span>
                   </button>
+                  <button
+                    onClick={() => {
+                      setSelectedType('dlna');
+                      setSelectedDevice('');
+                    }}
+                    className={`flex-1 p-3 rounded-lg border ${
+                      selectedType === 'dlna'
+                        ? 'border-purple-500 bg-purple-500/20'
+                        : 'border-gray-700 bg-gray-800'
+                    }`}
+                  >
+                    <Wifi className="w-5 h-5 mx-auto mb-1 text-purple-400" />
+                    <span className="text-sm text-gray-300">{t('rooms.dlnaRenderer')}</span>
+                  </button>
                 </div>
               </div>
 
@@ -393,12 +436,10 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                     <option value="">-- Geraet auswaehlen --</option>
                     {getAvailableDevices().map((device) => (
                       <option
-                        key={selectedType === 'renfield' ? device.device_id : device.entity_id}
-                        value={selectedType === 'renfield' ? device.device_id : device.entity_id}
+                        key={getDeviceKey(device)}
+                        value={getDeviceValue(device)}
                       >
-                        {selectedType === 'renfield'
-                          ? device.device_name || device.device_id
-                          : device.friendly_name || device.entity_id}
+                        {getDeviceLabel(device)}
                       </option>
                     ))}
                   </select>
@@ -406,6 +447,11 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                 {getAvailableDevices().length === 0 && !loadingAvailable && (
                   <p className="text-yellow-400 text-xs mt-2">
                     Keine verfuegbaren Geraete gefunden
+                  </p>
+                )}
+                {selectedType === 'dlna' && !loadingAvailable && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {t('rooms.dlnaRendererDesc')}
                   </p>
                 )}
               </div>

@@ -249,7 +249,9 @@
     "deleteDevice": "Delete device?",
     "deleteDeviceConfirm": "Do you really want to remove \"{{name}}\"?",
     "removeOutputDevice": "Remove output device",
-    "removeOutputDeviceConfirm": "Really remove this output device?"
+    "removeOutputDeviceConfirm": "Really remove this output device?",
+    "dlnaRenderer": "DLNA Renderer",
+    "dlnaRendererDesc": "DLNA renderers are discovered via SSDP on the network. Availability is checked at playback time."
   },
   "speakers": {
     "title": "Speaker Recognition",

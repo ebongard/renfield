@@ -31,6 +31,7 @@ def _make_output_device(
     *,
     renfield_device_id=None,
     ha_entity_id=None,
+    dlna_renderer_name=None,
     priority=1,
     allow_interruption=False,
     is_enabled=True,
@@ -42,6 +43,7 @@ def _make_output_device(
     dev = MagicMock()
     dev.renfield_device_id = renfield_device_id
     dev.ha_entity_id = ha_entity_id
+    dev.dlna_renderer_name = dlna_renderer_name
     dev.priority = priority
     dev.allow_interruption = allow_interruption
     dev.is_enabled = is_enabled
@@ -49,7 +51,14 @@ def _make_output_device(
     dev.output_type = output_type
     dev.tts_volume = tts_volume
     dev.is_renfield_device = renfield_device_id is not None
-    dev.target_id = renfield_device_id or ha_entity_id or ""
+    dev.is_dlna_device = dlna_renderer_name is not None
+    dev.target_id = renfield_device_id or ha_entity_id or dlna_renderer_name or ""
+    dev.target_type = (
+        "renfield" if renfield_device_id
+        else "dlna" if dlna_renderer_name
+        else "homeassistant" if ha_entity_id
+        else "renfield"
+    )
     return dev
 
 
@@ -215,6 +224,19 @@ class TestOutputRoutingDecisions:
         service._check_device_availability.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_dlna_device_selected(self, service):
+        """DLNA renderer device gets target_type='dlna'."""
+        dev = _make_output_device(dlna_renderer_name="HiFiBerry Garten", priority=1)
+        service._get_output_devices = AsyncMock(return_value=[dev])
+        service._check_device_availability = AsyncMock(return_value=DeviceAvailability.AVAILABLE)
+
+        result = await service.get_audio_output_for_room(room_id=1)
+
+        assert result.target_type == "dlna"
+        assert result.target_id == "HiFiBerry Garten"
+        assert result.reason == "device_available"
+
+    @pytest.mark.asyncio
     async def test_visual_output_uses_correct_type(self, service):
         """get_visual_output_for_room passes correct output_type."""
         service._get_output_devices = AsyncMock(return_value=[])
@@ -367,6 +389,15 @@ class TestDeviceAvailabilityChecks:
         assert result == DeviceAvailability.BUSY
         service._check_ha_device_availability.assert_called_once_with("media_player.test")
 
+    @pytest.mark.asyncio
+    async def test_dlna_device_always_available(self, service):
+        """DLNA devices are assumed available (no SSDP probing)."""
+        dev = _make_output_device(dlna_renderer_name="HiFiBerry Garten")
+
+        result = await service._check_device_availability(dev)
+
+        assert result == DeviceAvailability.AVAILABLE
+
 
 # ============================================================================
 # CRUD Operation Tests
@@ -377,19 +408,30 @@ class TestCRUDOperations:
     """Tests for add/update/delete output device operations."""
 
     @pytest.mark.asyncio
-    async def test_add_device_requires_either_renfield_or_ha(self, service):
-        """Must provide either renfield_device_id or ha_entity_id."""
-        with pytest.raises(ValueError, match="Either renfield_device_id or ha_entity_id"):
+    async def test_add_device_requires_one_identifier(self, service):
+        """Must provide exactly one device identifier."""
+        with pytest.raises(ValueError, match="One of"):
             await service.add_output_device(room_id=1, output_type="audio")
 
     @pytest.mark.asyncio
-    async def test_add_device_rejects_both_renfield_and_ha(self, service):
-        """Cannot provide both renfield_device_id and ha_entity_id."""
+    async def test_add_device_rejects_multiple_identifiers(self, service):
+        """Cannot provide more than one device identifier."""
         with pytest.raises(ValueError, match="Only one of"):
             await service.add_output_device(
                 room_id=1,
                 output_type="audio",
                 renfield_device_id="sat-1",
+                ha_entity_id="media_player.test",
+            )
+
+    @pytest.mark.asyncio
+    async def test_add_device_rejects_dlna_and_ha(self, service):
+        """Cannot provide both dlna_renderer_name and ha_entity_id."""
+        with pytest.raises(ValueError, match="Only one of"):
+            await service.add_output_device(
+                room_id=1,
+                output_type="audio",
+                dlna_renderer_name="HiFiBerry",
                 ha_entity_id="media_player.test",
             )
 

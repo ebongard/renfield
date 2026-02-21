@@ -249,7 +249,9 @@
     "deleteDevice": "Gerät entfernen?",
     "deleteDeviceConfirm": "Möchtest du \"{{name}}\" wirklich entfernen?",
     "removeOutputDevice": "Ausgabegerät entfernen",
-    "removeOutputDeviceConfirm": "Ausgabegerät wirklich entfernen?"
+    "removeOutputDeviceConfirm": "Ausgabegerät wirklich entfernen?",
+    "dlnaRenderer": "DLNA Renderer",
+    "dlnaRendererDesc": "DLNA-Renderer werden per SSDP im Netzwerk erkannt. Die Verfügbarkeit wird erst bei Wiedergabe geprüft."
   },
   "speakers": {
     "title": "Sprechererkennung",

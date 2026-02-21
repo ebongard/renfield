@@ -672,6 +672,7 @@ def _output_device_to_response(device) -> OutputDeviceResponse:
         output_type=device.output_type,
         renfield_device_id=device.renfield_device_id,
         ha_entity_id=device.ha_entity_id,
+        dlna_renderer_name=device.dlna_renderer_name,
         priority=device.priority,
         allow_interruption=device.allow_interruption,
         tts_volume=device.tts_volume,
@@ -715,17 +716,18 @@ async def add_output_device(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
-    # Validate that either renfield_device_id or ha_entity_id is provided
-    if not request.renfield_device_id and not request.ha_entity_id:
+    # Validate that exactly one device identifier is provided
+    identifiers = [request.renfield_device_id, request.ha_entity_id, request.dlna_renderer_name]
+    set_count = sum(1 for v in identifiers if v)
+    if set_count == 0:
         raise HTTPException(
             status_code=400,
-            detail="Either renfield_device_id or ha_entity_id must be provided"
+            detail="One of renfield_device_id, ha_entity_id, or dlna_renderer_name must be provided"
         )
-
-    if request.renfield_device_id and request.ha_entity_id:
+    if set_count > 1:
         raise HTTPException(
             status_code=400,
-            detail="Only one of renfield_device_id or ha_entity_id can be provided"
+            detail="Only one of renfield_device_id, ha_entity_id, or dlna_renderer_name can be provided"
         )
 
     # Validate output_type
@@ -744,6 +746,7 @@ async def add_output_device(
             output_type=request.output_type,
             renfield_device_id=request.renfield_device_id,
             ha_entity_id=request.ha_entity_id,
+            dlna_renderer_name=request.dlna_renderer_name,
             priority=request.priority,
             allow_interruption=request.allow_interruption,
             tts_volume=request.tts_volume,
@@ -869,7 +872,11 @@ async def get_available_outputs(
     # Get HA media players
     ha_media_players = await routing_service.get_available_ha_media_players()
 
+    # Get DLNA renderers
+    dlna_renderers = await routing_service.get_available_dlna_renderers()
+
     return AvailableOutputResponse(
         renfield_devices=renfield_list,
-        ha_media_players=ha_media_players
+        ha_media_players=ha_media_players,
+        dlna_renderers=dlna_renderers
     )
