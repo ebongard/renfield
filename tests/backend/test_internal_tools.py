@@ -1031,6 +1031,7 @@ class TestMediaControl:
             "action_taken": False,
             "data": {
                 "entity_id": "media_player.arbeitszimmer",
+                "target_type": "homeassistant",
                 "room_name": "Arbeitszimmer",
                 "device_name": "Speaker",
                 "status": "busy",
@@ -1262,6 +1263,383 @@ class TestMediaControl:
         assert result["success"] is False
         assert "Error executing media stop" in result["message"]
 
+    # --- DLNA media control tests ---
+
+    @staticmethod
+    def _patch_main_app(mock_mcp_manager):
+        """Patch main.app for DLNA MCP tests."""
+        mock_app = MagicMock()
+        mock_app.state.mcp_manager = mock_mcp_manager
+        fake_main = ModuleType("main")
+        fake_main.app = mock_app
+        return patch.dict(sys.modules, {"main": fake_main})
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_stop(self, internal_tools):
+        """Stop on DLNA room calls mcp.dlna.stop."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Stopped",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "stop"
+        assert result["data"]["target_type"] == "dlna"
+        assert result["data"]["renderer_name"] == "HiFiBerry Arbeitszimmer"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.stop", {"renderer_name": "HiFiBerry Arbeitszimmer"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_pause(self, internal_tools):
+        """Pause on DLNA room calls mcp.dlna.pause."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Garten",
+                "room_name": "Garten",
+                "device_name": "HiFiBerry Garten",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Paused",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "pause",
+                "room_name": "Garten",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "pause"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.pause", {"renderer_name": "HiFiBerry Garten"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_resume(self, internal_tools):
+        """Resume on DLNA room calls mcp.dlna.resume."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Garten",
+                "room_name": "Garten",
+                "device_name": "HiFiBerry Garten",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Resumed",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "resume",
+                "room_name": "Garten",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "resume"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.resume", {"renderer_name": "HiFiBerry Garten"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_next(self, internal_tools):
+        """Next on DLNA room calls mcp.dlna.next_track."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Skipped",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "next",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "next"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.next_track", {"renderer_name": "HiFiBerry Arbeitszimmer"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_previous(self, internal_tools):
+        """Previous on DLNA room calls mcp.dlna.previous_track."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Previous",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "previous",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "previous"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.previous_track", {"renderer_name": "HiFiBerry Arbeitszimmer"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_volume(self, internal_tools):
+        """Volume on DLNA room calls mcp.dlna.set_volume."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Volume set",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Arbeitszimmer",
+                "volume": "75",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "volume"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.set_volume", {"renderer_name": "HiFiBerry Arbeitszimmer", "volume": 75},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_ha_volume(self, internal_tools):
+        """Volume on HA room calls media_player.volume_set with 0.0-1.0 scale."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.wohnzimmer",
+                "target_type": "homeassistant",
+                "room_name": "Wohnzimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Wohnzimmer",
+                "volume": "50",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "volume"
+        mock_ha_client.call_service.assert_called_once_with(
+            domain="media_player",
+            service="volume_set",
+            entity_id="media_player.wohnzimmer",
+            service_data={"volume_level": 0.5},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_volume_missing_param(self, internal_tools):
+        """Volume action without volume param returns error."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.wohnzimmer",
+                "target_type": "homeassistant",
+                "room_name": "Wohnzimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Wohnzimmer",
+            })
+
+        assert result["success"] is False
+        assert "volume" in result["message"].lower()
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_mcp_failure(self, internal_tools):
+        """DLNA MCP tool failure returns clean error."""
+        resolve_result = {
+            "success": True,
+            "message": "Found DLNA renderer",
+            "action_taken": True,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": False, "message": "No active playback on 'HiFiBerry Arbeitszimmer'",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "DLNA stop failed" in result["message"]
+
+    @pytest.mark.unit
+    async def test_media_control_dlna_busy_device(self, internal_tools):
+        """Busy DLNA device is still controlled (we want to stop/pause it)."""
+        resolve_result = {
+            "success": False,
+            "message": "Device busy",
+            "action_taken": False,
+            "data": {
+                "target_type": "dlna",
+                "dlna_renderer_name": "HiFiBerry Arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "HiFiBerry Arbeitszimmer",
+                "status": "busy",
+            },
+        }
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True, "message": "Stopped",
+        })
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._media_control({
+                "action": "stop",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is True
+        assert result["data"]["action"] == "stop"
+        assert result["data"]["target_type"] == "dlna"
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.dlna.stop", {"renderer_name": "HiFiBerry Arbeitszimmer"},
+        )
+
+    @pytest.mark.unit
+    async def test_media_control_volume_clamps_range(self, internal_tools):
+        """Volume values are clamped to 0-100."""
+        resolve_result = {
+            "success": True,
+            "message": "Found",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.wohnzimmer",
+                "target_type": "homeassistant",
+                "room_name": "Wohnzimmer",
+                "device_name": "Speaker",
+            },
+        }
+
+        mock_ha_client = MagicMock()
+        mock_ha_client.call_service = AsyncMock(return_value=True)
+
+        with patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
+             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+            result = await internal_tools._media_control({
+                "action": "volume",
+                "room_name": "Wohnzimmer",
+                "volume": "150",
+            })
+
+        assert result["success"] is True
+        # Volume should be clamped to 1.0
+        call_kwargs = mock_ha_client.call_service.call_args
+        assert call_kwargs.kwargs["service_data"]["volume_level"] == 1.0
 
 
 # ============================================================================

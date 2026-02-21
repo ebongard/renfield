@@ -56,10 +56,11 @@ class InternalToolService:
             },
         },
         "internal.media_control": {
-            "description": "Control media playback in a room: stop, pause, resume, next track, previous track.",
+            "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume. Works with both Home Assistant media players and DLNA renderers.",
             "parameters": {
-                "action": "Control action: stop, pause, resume, next, previous (required)",
+                "action": "Control action: stop, pause, resume, next, previous, volume (required)",
                 "room_name": "Target room name (required)",
+                "volume": "Volume level 0-100 (required when action is 'volume')",
             },
         },
         "internal.play_album_on_dlna": {
@@ -159,16 +160,22 @@ class InternalToolService:
                     result = await db.execute(stmt)
                     busy_device = result.scalar_one_or_none()
                     device_name = busy_device.device_name if busy_device else "unknown"
+                    data = {
+                        "room_name": room.name,
+                        "device_name": device_name,
+                        "status": "busy",
+                    }
+                    if busy_device and busy_device.dlna_renderer_name:
+                        data["target_type"] = "dlna"
+                        data["dlna_renderer_name"] = busy_device.dlna_renderer_name
+                    else:
+                        data["target_type"] = "homeassistant"
+                        data["entity_id"] = busy_device.ha_entity_id if busy_device else None
                     return {
                         "success": False,
                         "message": f"The audio device '{device_name}' in room '{room.name}' is currently busy (playing). Ask the user if they want to interrupt the current playback.",
                         "action_taken": False,
-                        "data": {
-                            "entity_id": busy_device.ha_entity_id if busy_device else None,
-                            "room_name": room.name,
-                            "device_name": device_name,
-                            "status": "busy",
-                        },
+                        "data": data,
                     }
 
                 if not decision.output_device:
@@ -405,14 +412,19 @@ class InternalToolService:
         "previous": "media_previous_track",
     }
 
+    _DLNA_ACTION_MAP = {
+        "stop": "mcp.dlna.stop",
+        "pause": "mcp.dlna.pause",
+        "resume": "mcp.dlna.resume",
+        "next": "mcp.dlna.next_track",
+        "previous": "mcp.dlna.previous_track",
+    }
+
     async def _media_control(self, params: dict) -> dict:
         """
-        Control media playback in a room (stop, pause, resume, next, previous).
+        Control media playback in a room (stop, pause, resume, next, previous, volume).
 
-        1. Validate action + room_name
-        2. Resolve room → entity_id (accepts busy devices — we want to control them)
-        3. Map action → HA media_player service
-        4. Call HA service
+        Supports both HA media players and DLNA renderers — branches by target_type.
         """
         action = (params.get("action") or "").strip().lower()
         room_name = (params.get("room_name") or "").strip()
@@ -424,10 +436,11 @@ class InternalToolService:
                 "action_taken": False,
             }
 
-        if action not in self._MEDIA_ACTION_MAP:
+        valid_actions = set(self._MEDIA_ACTION_MAP) | {"volume"}
+        if action not in valid_actions:
             return {
                 "success": False,
-                "message": f"Invalid action '{action}'. Must be one of: {', '.join(self._MEDIA_ACTION_MAP)}",
+                "message": f"Invalid action '{action}'. Must be one of: {', '.join(sorted(valid_actions))}",
                 "action_taken": False,
             }
 
@@ -438,41 +451,156 @@ class InternalToolService:
                 "action_taken": False,
             }
 
-        # Resolve room → entity_id.  For media control we *want* to target a
-        # busy device (it's playing and we want to stop/pause/skip it), so if
-        # _resolve_room_player returns "busy" we use that entity_id.
+        # Resolve room → device.  For media control we *want* to target a
+        # busy device (it's playing and we want to stop/pause/skip it).
         resolve_result = await self._resolve_room_player({"room_name": room_name})
 
         if resolve_result.get("success"):
-            entity_id = resolve_result["data"]["entity_id"]
-            resolved_room_name = resolve_result["data"]["room_name"]
+            device_data = resolve_result["data"]
+            resolved_room_name = device_data["room_name"]
         elif resolve_result.get("data", {}).get("status") == "busy":
-            entity_id = resolve_result["data"].get("entity_id")
-            if not entity_id:
-                return resolve_result
-            resolved_room_name = resolve_result["data"]["room_name"]
+            device_data = resolve_result.get("data", {})
+            resolved_room_name = device_data.get("room_name", room_name)
         else:
             return resolve_result
 
-        ha_service = self._MEDIA_ACTION_MAP[action]
+        target_type = device_data.get("target_type", "homeassistant")
+
+        if target_type == "dlna":
+            return await self._media_control_dlna(action, device_data, resolved_room_name, params)
+        return await self._media_control_ha(action, device_data, resolved_room_name, params)
+
+    async def _media_control_dlna(self, action: str, device_data: dict, room_name: str, params: dict) -> dict:
+        """Execute media control action on a DLNA renderer via MCP."""
+        renderer_name = device_data.get("dlna_renderer_name")
+        if not renderer_name:
+            return {
+                "success": False,
+                "message": f"No DLNA renderer name for room '{room_name}'",
+                "action_taken": False,
+            }
+
+        try:
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return {
+                    "success": False,
+                    "message": "MCP manager not available",
+                    "action_taken": False,
+                }
+
+            if action == "volume":
+                volume = params.get("volume")
+                if volume is None:
+                    return {
+                        "success": False,
+                        "message": "Parameter 'volume' is required for volume action",
+                        "action_taken": False,
+                    }
+                try:
+                    volume = int(volume)
+                except (ValueError, TypeError):
+                    return {
+                        "success": False,
+                        "message": f"Invalid volume value: {params.get('volume')}",
+                        "action_taken": False,
+                    }
+                volume = max(0, min(100, volume))
+                tool_name = "mcp.dlna.set_volume"
+                tool_params = {"renderer_name": renderer_name, "volume": volume}
+            else:
+                tool_name = self._DLNA_ACTION_MAP.get(action)
+                if not tool_name:
+                    return {
+                        "success": False,
+                        "message": f"Action '{action}' not supported for DLNA",
+                        "action_taken": False,
+                    }
+                tool_params = {"renderer_name": renderer_name}
+
+            result = await mcp_manager.execute_tool(tool_name, tool_params)
+
+            if not result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"DLNA {action} failed: {result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            return {
+                "success": True,
+                "message": f"Media {action} executed on {room_name} (DLNA: {renderer_name})",
+                "action_taken": True,
+                "data": {
+                    "renderer_name": renderer_name,
+                    "room_name": room_name,
+                    "action": action,
+                    "target_type": "dlna",
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error executing DLNA media {action} in '{room_name}': {e}")
+            return {
+                "success": False,
+                "message": f"Error executing media {action}: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _media_control_ha(self, action: str, device_data: dict, room_name: str, params: dict) -> dict:
+        """Execute media control action on an HA media player."""
+        entity_id = device_data.get("entity_id")
+        if not entity_id:
+            return {
+                "success": False,
+                "message": f"No Home Assistant entity_id for room '{room_name}'",
+                "action_taken": False,
+            }
 
         try:
             from integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
-            await ha_client.call_service(
-                domain="media_player",
-                service=ha_service,
-                entity_id=entity_id,
-            )
+
+            if action == "volume":
+                volume = params.get("volume")
+                if volume is None:
+                    return {
+                        "success": False,
+                        "message": "Parameter 'volume' is required for volume action",
+                        "action_taken": False,
+                    }
+                try:
+                    volume = int(volume)
+                except (ValueError, TypeError):
+                    return {
+                        "success": False,
+                        "message": f"Invalid volume value: {params.get('volume')}",
+                        "action_taken": False,
+                    }
+                volume_level = max(0.0, min(1.0, volume / 100.0))
+                await ha_client.call_service(
+                    domain="media_player",
+                    service="volume_set",
+                    entity_id=entity_id,
+                    service_data={"volume_level": volume_level},
+                )
+            else:
+                ha_service = self._MEDIA_ACTION_MAP[action]
+                await ha_client.call_service(
+                    domain="media_player",
+                    service=ha_service,
+                    entity_id=entity_id,
+                )
 
             return {
                 "success": True,
-                "message": f"Media {action} executed on {resolved_room_name}",
+                "message": f"Media {action} executed on {room_name}",
                 "action_taken": True,
                 "data": {
                     "entity_id": entity_id,
-                    "room_name": resolved_room_name,
+                    "room_name": room_name,
                     "action": action,
                 },
             }
