@@ -139,14 +139,15 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             messages.append({"role": "user", "content": message})
 
+            classification_kwargs = get_classification_chat_kwargs(self.chat_model)
             response = await self.client.chat(
-                model=self.model,
+                model=self.chat_model,
                 messages=messages,
-                options={"num_ctx": settings.ollama_num_ctx}
+                options={"num_ctx": settings.ollama_num_ctx},
+                **classification_kwargs,
             )
-            # ollama>=0.4.0 uses Pydantic models
             await llm_circuit_breaker.record_success()
-            return response.message.content
+            return extract_response_content(response) or ""
         except Exception as e:
             await llm_circuit_breaker.record_failure()
             logger.error(f"Chat Fehler: {e}")
@@ -183,11 +184,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             messages.append({"role": "user", "content": message})
 
+            classification_kwargs = get_classification_chat_kwargs(self.chat_model)
             async for chunk in await self.client.chat(
-                model=self.model,
+                model=self.chat_model,
                 messages=messages,
                 stream=True,
-                options={"num_ctx": settings.ollama_num_ctx}
+                options={"num_ctx": settings.ollama_num_ctx},
+                **classification_kwargs,
             ):
                 # ollama>=0.4.0 uses Pydantic models
                 if chunk.message and chunk.message.content:
@@ -921,13 +924,14 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             messages.append({"role": "user", "content": message})
 
+            classification_kwargs = get_classification_chat_kwargs(model)
             response = await self.client.chat(
                 model=model,
                 messages=messages,
-                options={"num_ctx": settings.ollama_num_ctx}
+                options={"num_ctx": settings.ollama_num_ctx},
+                **classification_kwargs,
             )
-            # ollama>=0.4.0 uses Pydantic models
-            return response.message.content
+            return extract_response_content(response) or ""
 
         except Exception as e:
             logger.error(f"RAG Chat Fehler: {e}")
@@ -975,11 +979,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 
             logger.debug(f"RAG Stream: model={model}, context_len={len(rag_context) if rag_context else 0}")
 
+            classification_kwargs = get_classification_chat_kwargs(model)
             async for chunk in await self.client.chat(
                 model=model,
                 messages=messages,
                 stream=True,
-                options={"num_ctx": settings.ollama_num_ctx}
+                options={"num_ctx": settings.ollama_num_ctx},
+                **classification_kwargs,
             ):
                 # ollama>=0.4.0 uses Pydantic models
                 if chunk.message and chunk.message.content:
