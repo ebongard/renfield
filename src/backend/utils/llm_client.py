@@ -148,6 +148,12 @@ class _FallbackLLMClient:
     async def embeddings(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
         return await self._call("embeddings", *args, **kwargs)
 
+    async def list(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        return await self._call("list", *args, **kwargs)
+
+    async def generate(self, *args: Any, **kwargs: Any) -> Any:  # noqa: D102
+        return await self._call("generate", *args, **kwargs)
+
 
 def _make_client_with_fallback(primary_url: str) -> LLMClient:
     """Return a client for *primary_url*, wrapped with fallback if configured."""
