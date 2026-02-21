@@ -126,33 +126,33 @@ export default function IntentsPage() {
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Zap className="w-8 h-8 text-yellow-500" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {t('intents.title')}
-            </h1>
-            <p className="text-gray-500 dark:text-gray-400">
-              {t('intents.subtitle')}
-            </p>
+      <div className="card mb-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+              <Zap className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('intents.title')}</h1>
+              <p className="text-gray-500 dark:text-gray-400">{t('intents.subtitle')}</p>
+            </div>
           </div>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={loadPrompt}
-            className="btn btn-secondary flex items-center gap-2"
-          >
-            <Code className="w-4 h-4" />
-            {t('intents.viewPrompt')}
-          </button>
-          <button
-            onClick={loadStatus}
-            className="btn btn-secondary flex items-center gap-2"
-          >
-            <RefreshCw className="w-4 h-4" />
-            {t('common.refresh')}
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={loadPrompt}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              <Code className="w-4 h-4" />
+              {t('intents.viewPrompt')}
+            </button>
+            <button
+              onClick={loadStatus}
+              className="btn btn-secondary flex items-center gap-2"
+            >
+              <RefreshCw className="w-4 h-4" />
+              {t('common.refresh')}
+            </button>
+          </div>
         </div>
       </div>
 

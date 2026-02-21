@@ -41,8 +41,8 @@ export default defineConfig({
         name: 'Renfield AI Assistant',
         short_name: 'Renfield',
         description: 'Persönlicher KI-Assistent für Smart Home',
-        theme_color: '#1f2937',
-        background_color: '#111827',
+        theme_color: '#0f1117',
+        background_color: '#0f1117',
         display: 'standalone',
         orientation: 'portrait',
         icons: [

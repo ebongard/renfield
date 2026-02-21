@@ -407,11 +407,17 @@ export default function PaperlessAuditPage() {
   if (notConfigured) {
     return (
       <div className="space-y-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-            <FileSearch className="w-7 h-7" />
-            {t('paperlessAudit.title')}
-          </h1>
+        <div className="card">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+              <FileSearch className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
+                {t('paperlessAudit.title')}
+              </h1>
+            </div>
+          </div>
         </div>
         <div className="card p-8 text-center">
           <AlertCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
@@ -434,11 +440,17 @@ export default function PaperlessAuditPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
-          <FileSearch className="w-7 h-7" />
-          {t('paperlessAudit.title')}
-        </h1>
+      <div className="card">
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+            <FileSearch className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
+              {t('paperlessAudit.title')}
+            </h1>
+          </div>
+        </div>
       </div>
 
       {/* Error */}

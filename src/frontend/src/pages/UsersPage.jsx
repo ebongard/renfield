@@ -10,7 +10,7 @@ import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
-  Users, UserPlus, Pencil, Trash2, Loader, AlertCircle, CheckCircle,
+  Users, UserPlus, UserCog, Pencil, Trash2, Loader, AlertCircle, CheckCircle,
   Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw
 } from 'lucide-react';
 
@@ -252,8 +252,15 @@ export default function UsersPage() {
     return (
       <div className="space-y-6">
         <div className="card">
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('users.title')}</h1>
-          <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+              <UserCog className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('users.title')}</h1>
+              <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
+            </div>
+          </div>
         </div>
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
@@ -267,8 +274,15 @@ export default function UsersPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="card">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{t('users.title')}</h1>
-        <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
+        <div className="flex items-center gap-4">
+          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+            <UserCog className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('users.title')}</h1>
+            <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
+          </div>
+        </div>
       </div>
 
       {/* Alerts */}

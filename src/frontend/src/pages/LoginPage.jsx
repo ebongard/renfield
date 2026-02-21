@@ -62,29 +62,38 @@ export default function LoginPage() {
   // Show loading while checking auth status
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+      <div className="min-h-screen bg-[#0f1117] flex items-center justify-center">
         <Loader className="w-8 h-8 animate-spin text-primary-500" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
-      <div className="max-w-md w-full">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,_rgba(0,255,208,0.08)_0%,_#0f1117_70%)] flex items-center justify-center px-4 relative">
+      {/* Noise overlay */}
+      <div
+        className="absolute inset-0 opacity-[0.03] pointer-events-none"
+        style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
+        }}
+      />
+
+      <div className="max-w-md w-full relative z-10">
         {/* Logo/Title */}
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Renfield</h1>
-          <p className="text-gray-500 dark:text-gray-400 mt-2">{t('auth.signInToAccount')}</p>
+          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
+          <h1 className="text-4xl font-bold font-display text-cream">Renfield</h1>
+          <p className="text-gray-400 mt-2">{t('auth.signInToAccount')}</p>
         </div>
 
         {/* Login Card */}
-        <div className="card">
+        <div className="card-primary bg-gray-900 border-gray-700">
           {/* Error Alert */}
           {error && (
-            <div className="bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 rounded-lg p-4 mb-6">
+            <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 mb-6">
               <div className="flex items-center space-x-3">
                 <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-                <p className="text-red-700 dark:text-red-400">{error}</p>
+                <p className="text-red-400">{error}</p>
               </div>
             </div>
           )}
@@ -92,7 +101,7 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Username */}
             <div>
-              <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label htmlFor="username" className="block text-sm font-medium text-gray-300 mb-2">
                 {t('auth.username')}
               </label>
               <input
@@ -101,7 +110,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder={t('auth.enterUsername')}
-                className="input w-full"
+                className="input w-full bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500"
                 autoComplete="username"
                 autoFocus
                 disabled={loading}
@@ -110,7 +119,7 @@ export default function LoginPage() {
 
             {/* Password */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label htmlFor="password" className="block text-sm font-medium text-gray-300 mb-2">
                 {t('auth.password')}
               </label>
               <div className="relative">
@@ -120,14 +129,14 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder={t('auth.enterPassword')}
-                  className="input w-full pr-10"
+                  className="input w-full pr-10 bg-gray-800 border-gray-600 text-gray-100 placeholder-gray-500"
                   autoComplete="current-password"
                   disabled={loading}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-300"
                   tabIndex={-1}
                 >
                   {showPassword ? (
@@ -158,12 +167,12 @@ export default function LoginPage() {
 
           {/* Registration Link */}
           {allowRegistration && (
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700 text-center">
-              <p className="text-gray-600 dark:text-gray-400">
+            <div className="mt-6 pt-6 border-t border-gray-700 text-center">
+              <p className="text-gray-400">
                 {t('auth.dontHaveAccount')}{' '}
                 <Link
                   to="/register"
-                  className="text-primary-600 hover:text-primary-500 dark:text-primary-500 dark:hover:text-primary-400 font-medium"
+                  className="text-primary-500 hover:text-primary-400 font-medium"
                 >
                   {t('auth.createOne')}
                 </Link>

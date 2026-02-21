@@ -165,13 +165,17 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <Settings className="w-8 h-8 text-blue-500" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {t('settings.title')}
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">{t('settings.subtitle')}</p>
+        <div className="card mb-6">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+              <Settings className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
+                {t('settings.title')}
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-center p-12">
@@ -185,23 +189,27 @@ export default function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Settings className="w-8 h-8 text-blue-500" />
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
-              {t('settings.title')}
-            </h1>
-            <p className="text-gray-600 dark:text-gray-400">{t('settings.subtitle')}</p>
+      <div className="card mb-6">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
+              <Settings className="w-6 h-6 text-primary-600 dark:text-primary-400" />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
+                {t('settings.title')}
+              </h1>
+              <p className="text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
+            </div>
           </div>
+          <button
+            onClick={loadSettings}
+            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            title={t('common.refresh')}
+          >
+            <RefreshCw className="w-5 h-5" />
+          </button>
         </div>
-        <button
-          onClick={loadSettings}
-          className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-          title={t('common.refresh')}
-        >
-          <RefreshCw className="w-5 h-5" />
-        </button>
       </div>
 
       {/* Error/Success Messages */}

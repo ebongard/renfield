@@ -243,7 +243,7 @@ export default function ChatInput() {
         <button
           onClick={() => fileInputRef.current?.click()}
           disabled={loading || recording || uploading}
-          className="p-3 rounded-lg transition-colors bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 disabled:opacity-50"
+          className="p-3 rounded-lg transition-colors bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300 disabled:opacity-50 active:scale-95"
           aria-label={t('chat.attachFile')}
         >
           {uploading
@@ -258,7 +258,7 @@ export default function ChatInput() {
             recording
               ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
               : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
-          }`}
+          } active:scale-95`}
           disabled={loading}
           aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
           aria-pressed={recording}

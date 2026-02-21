@@ -26,7 +26,7 @@ export default function ChatHeader() {
     <div className="card mb-4 mx-4 mt-4 md:mx-0 md:mt-0">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">{t('chat.title')}</h1>
+          <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('chat.title')}</h1>
           <p className="text-gray-500 dark:text-gray-400">{t('chat.subtitle')}</p>
         </div>
         <div className="flex items-center space-x-4">
@@ -72,7 +72,7 @@ export default function ChatHeader() {
 
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
-            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-gentle-pulse' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-500 dark:text-gray-400">
               {wsConnected ? t('common.connected') : t('common.disconnected')}
             </span>

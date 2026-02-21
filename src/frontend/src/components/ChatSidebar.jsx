@@ -68,7 +68,7 @@ export default function ChatSidebar({
 
           <button
             onClick={onNewChat}
-            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-colors font-medium"
+            className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-primary-600 hover:bg-primary-700 text-white rounded-lg transition-all font-medium active:scale-95"
             aria-label={t('chat.newChat')}
           >
             <Plus className="w-4 h-4" aria-hidden="true" />
