@@ -132,10 +132,10 @@ servers:
   # Custom Python MCP server for DLNA renderer queue playback.
   # Controls DLNA renderers directly (gapless queue via SetNextAVTransportURI).
   # Uses Jellyfin's built-in DLNA server for media serving.
+  # Runs as standalone host service (not in Docker) — SSDP multicast needs LAN access.
   - name: dlna
-    transport: stdio
-    command: python
-    args: ["-m", "renfield_mcp_dlna"]
+    transport: streamable_http
+    url: "${DLNA_MCP_URL:-http://host.docker.internal:9091/mcp}"
     enabled: "${DLNA_MCP_ENABLED:-false}"
     refresh_interval: 300
     example_intent: mcp.dlna.play_tracks

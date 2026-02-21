@@ -13,7 +13,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 - Frontend: React 18 + TypeScript + Vite + Tailwind CSS + PWA
 - Infrastructure: Docker Compose, PostgreSQL 16, Redis 7, Ollama
 - LLM: Local models via Ollama (multi-model: chat, intent, RAG, agent, embeddings)
-- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search), Paperless, Email (IMAP/SMTP)
+- Integrations: Home Assistant, Frigate (camera NVR), n8n (workflows), SearXNG (web search), Jellyfin (media), DLNA (renderer control), Paperless, Email (IMAP/SMTP)
 - Satellites: Raspberry Pi Zero 2 W + ReSpeaker 2-Mics Pi HAT + OpenWakeWord
 
 ## KRITISCHE REGELN - IMMER BEACHTEN
@@ -378,7 +378,7 @@ room_context = await room_service.get_room_context_by_ip(ip_address)
 
 ### Audio Output Routing
 
-Intelligent TTS routing to best available output device per room (priority-ordered, availability-checked). Supports Renfield devices and HA Media Players. `done` message includes `tts_handled` flag. **Documentation:** See `OUTPUT_ROUTING.md`.
+Intelligent TTS routing to best available output device per room (priority-ordered, availability-checked). Supports three device types: Renfield devices, HA Media Players, and DLNA renderers. `done` message includes `tts_handled` flag. DLNA renderers are discovered via SSDP multicast through the DLNA MCP server (runs on host, not in Docker — requires LAN access for multicast). **Documentation:** See `OUTPUT_ROUTING.md`.
 
 ### Authentication & Authorization (RPBAC)
 
@@ -471,7 +471,7 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `RAG_HYBRID_ENABLED` — Enable Hybrid Search: Dense + BM25 via RRF (default: `true`)
 - `RAG_CONTEXT_WINDOW` — Adjacent chunks per direction for context expansion (default: `1`)
 - `MCP_ENABLED` — Master switch for MCP server integration (default: `false`)
-- Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`, `CALENDAR_ENABLED`
+- Per-server toggles: `WEATHER_ENABLED`, `SEARCH_ENABLED`, `NEWS_ENABLED`, `JELLYFIN_ENABLED`, `DLNA_MCP_ENABLED`, `N8N_MCP_ENABLED`, `HA_MCP_ENABLED`, `PAPERLESS_ENABLED`, `EMAIL_MCP_ENABLED`, `CALENDAR_ENABLED`
 - `MEMORY_CONTRADICTION_RESOLUTION` — LLM-based contradiction detection for memories (default: `false`, opt-in)
 - `NOTIFICATION_POLLER_ENABLED` — Generic MCP notification polling for proactive alerts (default: `false`, opt-in)
 - `PRESENCE_ENABLED` — BLE-based room-level presence detection (default: `false`, opt-in)

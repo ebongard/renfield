@@ -841,6 +841,9 @@ NEWS_ENABLED=true
 # Jellyfin (Media Server)
 JELLYFIN_ENABLED=true
 
+# DLNA (Media Renderer Control)
+DLNA_MCP_ENABLED=true
+
 # n8n (Workflow Automation)
 N8N_MCP_ENABLED=true
 
@@ -886,6 +889,10 @@ CALENDAR_ENABLED=true
 ```bash
 # Home Assistant URL
 HOME_ASSISTANT_URL=http://homeassistant.local:8123
+
+# DLNA MCP Server URL (läuft als Host-Service, nicht im Docker)
+# Default: http://host.docker.internal:9091/mcp
+DLNA_MCP_URL=http://host.docker.internal:9091/mcp
 
 # n8n Base URL
 N8N_BASE_URL=http://192.168.1.78:5678
@@ -1140,12 +1147,14 @@ WEATHER_ENABLED=true
 SEARCH_ENABLED=true
 NEWS_ENABLED=true
 JELLYFIN_ENABLED=true
+DLNA_MCP_ENABLED=true
 N8N_MCP_ENABLED=true
 HA_MCP_ENABLED=true
 PAPERLESS_ENABLED=true
 EMAIL_MCP_ENABLED=true
 
 # MCP-Server URLs (nicht-sensitiv)
+# DLNA_MCP_URL=http://host.docker.internal:9091/mcp  # Default
 N8N_BASE_URL=http://192.168.1.78:5678
 SEARXNG_API_URL=http://cuda.local:3002
 PAPERLESS_API_URL=http://paperless.local:8000
