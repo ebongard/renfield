@@ -22,7 +22,7 @@ from services.agent_tools import AgentToolRegistry
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
-from utils.llm_client import get_agent_client
+from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
 from utils.token_counter import token_counter
 
 if TYPE_CHECKING:
@@ -572,6 +572,7 @@ class AgentService:
 
             # Call LLM with per-step timeout
             try:
+                classification_kwargs = get_classification_chat_kwargs(agent_model)
                 raw_response = await asyncio.wait_for(
                     agent_client.chat(
                         model=agent_model,
@@ -580,10 +581,11 @@ class AgentService:
                             {"role": "user", "content": prompt},
                         ],
                         options=llm_options,
+                        **classification_kwargs,
                     ),
                     timeout=self.step_timeout,
                 )
-                response_text = raw_response.message.content or ""
+                response_text = extract_response_content(raw_response) or ""
                 await agent_circuit_breaker.record_success()
 
                 # Track token usage
@@ -634,10 +636,11 @@ class AgentService:
                                 {"role": "user", "content": nudge},
                             ],
                             options=llm_options_retry,
+                            **classification_kwargs,
                         ),
                         timeout=self.step_timeout,
                     )
-                    response_text = retry_response.message.content or ""
+                    response_text = extract_response_content(retry_response) or ""
                     context.track_tokens(nudge, response_text)
                     logger.info(f"🔄 Agent step {step_num} retry ({len(response_text)} chars): {response_text[:200]}")
                     parsed = _parse_agent_json(response_text)
@@ -895,6 +898,7 @@ class AgentService:
 
         client = agent_client or ollama.client
         try:
+            classification_kwargs = get_classification_chat_kwargs(agent_model)
             raw_response = await asyncio.wait_for(
                 client.chat(
                     model=agent_model,
@@ -903,10 +907,11 @@ class AgentService:
                         {"role": "user", "content": summary_prompt_text},
                     ],
                     options=llm_options_summary,
+                    **classification_kwargs,
                 ),
                 timeout=self.step_timeout,
             )
-            summary = (raw_response.message.content or "").strip()
+            summary = (extract_response_content(raw_response) or "").strip()
 
             # Track tokens for summary call
             context.track_tokens(summary_prompt_text, summary)
