@@ -10,6 +10,7 @@ This module handles:
 """
 
 import asyncio
+import re
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 from loguru import logger
@@ -30,6 +31,60 @@ from .shared import (
 )
 
 router = APIRouter()
+
+# ---------------------------------------------------------------------------
+# Media transport shortcut — regex-based, zero LLM calls
+# ---------------------------------------------------------------------------
+
+_MEDIA_TRANSPORT_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # stop
+    (re.compile(
+        r'^(?:stopp?(?:\s+die\s+musik)?|halt|beende\s+die\s+musik|musik\s+aus)(?:\s|$)',
+        re.I | re.UNICODE,
+    ), "stop"),
+    # pause
+    (re.compile(
+        r'^(?:pause|pausiere?)(?:\s|$)',
+        re.I | re.UNICODE,
+    ), "pause"),
+    # resume  (anchor "weiter" only as full word or with "abspielen/spielen")
+    (re.compile(
+        r'^(?:weiter\s*(?:abspielen|spielen)|fortsetzen|resume|play)(?:\s|$)',
+        re.I | re.UNICODE,
+    ), "resume"),
+    # next
+    (re.compile(
+        r'^(?:(?:nächste[rs]?|next)\s+(?:track|lied|song|titel)|skip|überspring(?:en|e)?)(?:\s|$)',
+        re.I | re.UNICODE,
+    ), "next"),
+    # previous
+    (re.compile(
+        r'^(?:(?:vorherige[rs]?|previous)\s+(?:track|lied|song|titel)|zurück)(?:\s|$)',
+        re.I | re.UNICODE,
+    ), "previous"),
+]
+
+_ROOM_PATTERN = re.compile(
+    r'\b(?:im|in\s+(?:der|dem|die|das)?)\s+(\w+)', re.I | re.UNICODE,
+)
+
+
+def _detect_media_transport(message: str) -> tuple[str, str | None] | None:
+    """Detect simple media transport commands (stop/pause/resume/next/previous).
+
+    Returns ``(action, explicit_room_name)`` or ``None`` if the message is not
+    a simple transport command.  ``explicit_room_name`` is ``None`` when no room
+    was mentioned in the message.
+    """
+    text = message.strip()
+    for pattern, action in _MEDIA_TRANSPORT_PATTERNS:
+        if pattern.search(text):
+            # Try to extract an explicit room from the message
+            room_match = _ROOM_PATTERN.search(text)
+            room_name = room_match.group(1) if room_match else None
+            return action, room_name
+    return None
+
 
 # Prevent background tasks from being garbage-collected
 _background_tasks: set[asyncio.Task] = set()
@@ -636,47 +691,75 @@ async def websocket_endpoint(
                     )
 
                 else:
-                    # Specialized agent loop (smart_home, documents, media, research, workflow, general)
-                    agent_used = True
-                    tool_registry = AgentToolRegistry(
-                        mcp_manager=mcp_manager,
-                        server_filter=role.mcp_servers,
-                        internal_filter=role.internal_tools,
-                    )
-                    agent = AgentService(tool_registry, role=role)
-                    executor = ActionExecutor(mcp_manager=mcp_manager)
+                    # === Media Transport Shortcut ===
+                    # Simple stop/pause/resume/next/previous bypass the agent loop entirely.
+                    media_shortcut_handled = False
+                    if role.name == "media":
+                        transport = _detect_media_transport(content)
+                        if transport:
+                            action_name, explicit_room = transport
+                            room = explicit_room or (room_context.get("room_name") if room_context else None)
+                            if room:
+                                from services.internal_tools import InternalToolService
+                                tool_svc = InternalToolService()
+                                result = await tool_svc.execute(
+                                    "internal.media_control",
+                                    {"action": action_name, "room_name": room},
+                                )
+                                intent = {
+                                    "intent": "internal.media_control",
+                                    "parameters": {"action": action_name, "room_name": room},
+                                    "confidence": 1.0,
+                                }
+                                action_result = result
+                                await websocket.send_json({"type": "action", "intent": intent, "result": result})
+                                full_response = result.get("message", "")
+                                await websocket.send_json({"type": "stream", "content": full_response})
+                                logger.info(f"⚡ Media transport shortcut: {action_name} in {room}")
+                                media_shortcut_handled = True
 
-                    agent_tool_results = []
-                    async for step in agent.run(
-                        message=content,
-                        ollama=ollama,
-                        executor=executor,
-                        conversation_history=session_state.conversation_history if session_state.conversation_history else None,
-                        room_context=room_context,
-                        memory_context=memory_context,
-                        document_context=document_context,
-                        user_permissions=user_permissions,
-                        user_id=user_id,
-                    ):
-                        ws_msg = step_to_ws_message(step)
-                        await websocket.send_json(ws_msg)
+                    if not media_shortcut_handled:
+                        # Specialized agent loop (smart_home, documents, media, research, workflow, general)
+                        agent_used = True
+                        tool_registry = AgentToolRegistry(
+                            mcp_manager=mcp_manager,
+                            server_filter=role.mcp_servers,
+                            internal_filter=role.internal_tools,
+                        )
+                        agent = AgentService(tool_registry, role=role)
+                        executor = ActionExecutor(mcp_manager=mcp_manager)
 
-                        if step.step_type == "final_answer":
-                            full_response = step.content
-                        if step.step_type == "tool_result" and step.success and step.data:
-                            agent_tool_results.append((step.tool, step.data))
-                        if step.step_type in ("tool_call", "tool_result"):
-                            agent_steps_count += 1
+                        agent_tool_results = []
+                        async for step in agent.run(
+                            message=content,
+                            ollama=ollama,
+                            executor=executor,
+                            conversation_history=session_state.conversation_history if session_state.conversation_history else None,
+                            room_context=room_context,
+                            memory_context=memory_context,
+                            document_context=document_context,
+                            user_permissions=user_permissions,
+                            user_id=user_id,
+                        ):
+                            ws_msg = step_to_ws_message(step)
+                            await websocket.send_json(ws_msg)
 
-                    # Build action summary from agent tool results for conversation history
-                    if agent_tool_results:
-                        action_result = _build_agent_action_result(agent_tool_results)
+                            if step.step_type == "final_answer":
+                                full_response = step.content
+                            if step.step_type == "tool_result" and step.success and step.data:
+                                agent_tool_results.append((step.tool, step.data))
+                            if step.step_type in ("tool_call", "tool_result"):
+                                agent_steps_count += 1
 
-                    logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
+                        # Build action summary from agent tool results for conversation history
+                        if agent_tool_results:
+                            action_result = _build_agent_action_result(agent_tool_results)
 
-                    # Set intent info so frontend can show correction button
-                    if not intent:
-                        intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
+                        logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
+
+                        # Set intent info so frontend can show correction button
+                        if not intent:
+                            intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
 
             else:
                 # === Legacy Ranked Intent Path (agent_enabled=false or no router) ===
