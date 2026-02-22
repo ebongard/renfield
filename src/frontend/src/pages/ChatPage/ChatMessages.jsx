@@ -6,18 +6,33 @@ import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
 import { useChatContext } from './context/ChatContext';
 
+const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
+
+function isImageUrl(url) {
+  return IMAGE_URL_RE.test(url);
+}
+
 function renderMessageContent(text) {
-  const imageUrlPattern = /https?:\/\/[^\s]+?\/Items\/[^\s]+?\/Images\/[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?/gi;
+  // Combined pattern: markdown links [text](url), image URLs, or plain URLs
+  const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?|https?:\/\/[^\s)]+/gi;
 
   const parts = [];
   let lastIndex = 0;
   let match;
 
-  while ((match = imageUrlPattern.exec(text)) !== null) {
+  while ((match = pattern.exec(text)) !== null) {
     if (match.index > lastIndex) {
       parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
     }
-    parts.push({ type: 'image', url: match[0] });
+    if (match[1] && match[2]) {
+      // Markdown link [text](url)
+      parts.push({ type: 'link', label: match[1], url: match[2] });
+    } else if (isImageUrl(match[0])) {
+      parts.push({ type: 'image', url: match[0] });
+    } else {
+      // Plain URL
+      parts.push({ type: 'link', label: match[0], url: match[0] });
+    }
     lastIndex = match.index + match[0].length;
   }
 
@@ -41,6 +56,14 @@ function renderMessageContent(text) {
             loading="lazy"
             onError={(e) => { e.target.style.display = 'none'; }}
           />
+        ) : part.type === 'link' ? (
+          <a
+            key={i}
+            href={part.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-primary-600 dark:text-primary-400 underline hover:text-primary-800 dark:hover:text-primary-300"
+          >{part.label}</a>
         ) : (
           <span key={i}>{part.content}</span>
         )
