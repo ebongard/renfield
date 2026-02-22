@@ -16,15 +16,16 @@ Unterstützung oder Billigung durch solche Dritte.
 ## Features
 
 ### Kernfunktionen
-- **Chat-Interface** — Text- und sprachbasierte Kommunikation mit Streaming-Antworten
+- **Chat-Interface** — Streaming-Antworten, Inline-Album-Art, einklappbare Agent-Schritte, Credential-Redaction
 - **Konversations-Historie** — Sidebar mit Chatverläufen, Datumsgruppierung, Session-Persistenz, Follow-up-Fragen
-- **Agent System (ReAct)** — Mehrstufige Anfragen mit Tool-Verkettung, Agent Router mit spezialisierten Rollen
-- **Knowledge Graph** — Entity-Relation-Tripel aus Konversationen und Dokumenten, semantische Entity-Auflösung via pgvector
+- **Agent System (ReAct)** — Mehrstufige Anfragen mit Tool-Verkettung, Agent Router mit spezialisierten Rollen, Media Transport Shortcuts
+- **Knowledge Graph** — Entity-Relation-Tripel mit Post-Extraction-Validierung, String-Similarity-Dedup und Bulk Cleanup API
 - **Konversations-Gedächtnis** — Langzeit-Erinnerungen (Präferenzen, Fakten, Anweisungen) mit Widerspruchserkennung
 - **Intent Feedback Learning** — Lernt aus Korrekturen und verbessert Intent-Erkennung über semantisches Matching (3 Scopes: Intent, Tool, Komplexität)
 - **Spracheingabe & -ausgabe** — Whisper STT und Piper TTS, Sprechererkennung mit SpeechBrain
 - **Präsenzerkennung** — BLE-Scanning, Sprechererkennung und Web-Auth verfolgen, wer sich in welchem Raum befindet
 - **Proaktive Benachrichtigungen** — Webhook-basierte Alerts von Home Assistant/n8n + generisches MCP Notification Polling
+- **Paperless Audit** — Automatisierte LLM-basierte Metadaten-Prüfung mit Review Queue, OCR-Qualitätsbewertung und Auto-Fix
 - **Hook/Plugin-System** — Asynchrone Extension-API für eigene Integrationen ohne Core-Änderungen
 
 ### Integrationen (10 MCP-Server)
@@ -42,10 +43,11 @@ Unterstützung oder Billigung durch solche Dritte.
 | Email | IMAP/SMTP E-Mail | stdio | `EMAIL_MCP_ENABLED=true` |
 
 ### Wissensspeicher (RAG)
-- **Hybrid Search** — Dense Embeddings (pgvector) + BM25 Full-Text-Search, kombiniert via RRF
-- **Unterstützte Formate** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT
+- **Hybrid Search** — Dense Embeddings (pgvector) + BM25 Full-Text-Search (German FTS, OR-Matching), kombiniert via RRF
+- **Unterstützte Formate** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT (EasyOCR Fallback für unleserliche PDFs)
 - **Knowledge Bases** — Thematische Sammlungen mit Sharing und Zugriffssteuerung
-- **Knowledge Graph** — Entity-Relation-Tripel aus Dokumenten und Konversationen, semantische Entity-Auflösung, Admin-Dashboard
+- **Agent Tool** — `knowledge_search` für kombinierte RAG- + Paperless-Suche im Agent Loop
+- **Knowledge Graph** — Entity-Relation-Tripel mit Post-Extraction-Validierung, String-Similarity-Dedup, Bulk Cleanup API, Admin-Dashboard
 - **Context Window** — Benachbarte Chunks werden automatisch zum Treffer hinzugefügt
 
 ### Proaktive Benachrichtigungen & Erinnerungen

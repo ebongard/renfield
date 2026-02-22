@@ -194,6 +194,29 @@ DLNA Renderer (LAN)     DLNA MCP Server (Host)     Backend (Docker)
 
 <p align="center"><img src="screenshots/output-dlna-dark.png" width="800" alt="DLNA Output Device Modal"></p>
 
+## DLNA Album Playback
+
+Neben TTS-Routing unterstützt das DLNA-System lückenlose Album-Wiedergabe:
+
+### Ablauf
+
+```
+User: "Spiele Afterburner von ZZ Top im Arbeitszimmer"
+
+1. Agent sucht Album in Jellyfin → findet Album + Tracks + Album Art URL
+2. internal.play_album_on_dlna: Tracks werden an DLNA MCP Server übergeben
+3. DLNA MCP Server queued Tracks gapless auf dem Renderer im Zielraum
+4. Album Art wird als Inline-Bild in der Chat-Antwort gerendert
+5. Metadaten (Titel, Artist, Cover) werden an den Player weitergegeben
+```
+
+### Features
+
+- **Gapless Queue** — Tracks werden lückenlos nacheinander abgespielt
+- **Album Art im Chat** — Jellyfin-Bild-URLs werden als `<img>` direkt in der Chat-Nachricht angezeigt
+- **Transcode Fallback** — Inkompatible Audio-Formate (FLAC → WAV) werden automatisch transkodiert
+- **Transport Shortcuts** — `stop`, `pause`, `play`, `skip` umgehen den Agent Loop für sofortige Reaktion
+
 ## Beispiel-Szenario
 
 **Küche Setup:**
