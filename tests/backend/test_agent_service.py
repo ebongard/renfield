@@ -14,6 +14,7 @@ from services.agent_service import (
     AgentStep,
     _auto_attach_blobs,
     _extract_blobs,
+    _is_empty_result,
     _parse_agent_json,
     _recover_send_email,
     _resolve_blobs,
@@ -1476,3 +1477,161 @@ class TestExtractBlobsMeta:
         data = {"content_base64": "A" * 600}
         result = _extract_blobs(data, 2, blob_store)
         assert "$blob:step2_content_base64" in blob_store
+
+
+# ============================================================================
+# Test _is_empty_result
+# ============================================================================
+
+class TestIsEmptyResult:
+    """Test empty-result detection for various API response formats."""
+
+    @pytest.mark.unit
+    def test_empty_message(self):
+        assert _is_empty_result({"message": ""}) is True
+
+    @pytest.mark.unit
+    def test_no_message_key(self):
+        assert _is_empty_result({"success": True}) is True
+
+    @pytest.mark.unit
+    def test_kein_ergebnis(self):
+        assert _is_empty_result({"message": "Kein Ergebnis"}) is True
+
+    @pytest.mark.unit
+    def test_no_result(self):
+        assert _is_empty_result({"message": "No result"}) is True
+
+    @pytest.mark.unit
+    def test_jellyfin_total_record_count_zero(self):
+        """Jellyfin returns TotalRecordCount:0 for empty searches."""
+        assert _is_empty_result({"message": '{"Items":[],"TotalRecordCount":0}'}) is True
+
+    @pytest.mark.unit
+    def test_jellyfin_total_record_count_zero_spaced(self):
+        assert _is_empty_result({"message": '{"Items": [], "TotalRecordCount": 0}'}) is True
+
+    @pytest.mark.unit
+    def test_generic_items_empty(self):
+        assert _is_empty_result({"message": '{"items":[],"total":0}'}) is True
+
+    @pytest.mark.unit
+    def test_non_empty_result(self):
+        assert _is_empty_result({"message": '{"Items":[{"Id":"abc"}],"TotalRecordCount":1}'}) is False
+
+    @pytest.mark.unit
+    def test_normal_message(self):
+        assert _is_empty_result({"message": "Licht eingeschaltet"}) is False
+
+    @pytest.mark.unit
+    def test_result_with_data(self):
+        assert _is_empty_result({"message": "Found 3 results", "data": [1, 2, 3]}) is False
+
+
+# ============================================================================
+# Test AgentContext Empty Results Tracking
+# ============================================================================
+
+class TestAgentContextEmptyResultsTracking:
+    """Test the empty_results_per_tool counter in AgentContext."""
+
+    @pytest.mark.unit
+    def test_initial_state(self):
+        ctx = AgentContext(original_message="test")
+        assert ctx.empty_results_per_tool == {}
+        assert ctx.has_repeated_empty("search_media") is False
+
+    @pytest.mark.unit
+    def test_record_and_check(self):
+        ctx = AgentContext(original_message="test")
+        ctx.record_empty_result("search_media")
+        assert ctx.empty_results_per_tool["search_media"] == 1
+        assert ctx.has_repeated_empty("search_media", threshold=2) is False
+
+        ctx.record_empty_result("search_media")
+        assert ctx.empty_results_per_tool["search_media"] == 2
+        assert ctx.has_repeated_empty("search_media", threshold=2) is True
+
+    @pytest.mark.unit
+    def test_different_tools_tracked_separately(self):
+        ctx = AgentContext(original_message="test")
+        ctx.record_empty_result("search_media")
+        ctx.record_empty_result("search_media")
+        ctx.record_empty_result("search_documents")
+
+        assert ctx.has_repeated_empty("search_media", threshold=2) is True
+        assert ctx.has_repeated_empty("search_documents", threshold=2) is False
+
+    @pytest.mark.unit
+    def test_custom_threshold(self):
+        ctx = AgentContext(original_message="test")
+        ctx.record_empty_result("tool_a")
+        ctx.record_empty_result("tool_a")
+        ctx.record_empty_result("tool_a")
+
+        assert ctx.has_repeated_empty("tool_a", threshold=3) is True
+        assert ctx.has_repeated_empty("tool_a", threshold=4) is False
+
+
+# ============================================================================
+# Test Agent Breaks After Repeated Empty Results
+# ============================================================================
+
+class TestAgentBreaksOnRepeatedEmptyResults:
+    """Test that the agent loop breaks after repeated empty results."""
+
+    def _make_registry(self):
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+
+    @pytest.mark.unit
+    async def test_agent_breaks_after_repeated_empty_results(self):
+        """Agent should break out when the same tool returns empty results 2+ times."""
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            # Check if this is the summary call
+            messages = kwargs.get("messages", [])
+            user_content = messages[-1].get("content", "") if messages else ""
+            if "Fasse die Ergebnisse" in user_content:
+                resp.message.content = "Leider keine Ergebnisse gefunden."
+                return resp
+            # LLM keeps calling search_media with different params (not identical = no loop detection)
+            if call_count == 1:
+                resp.message.content = '{"action": "mcp.weather.get_current", "parameters": {"entity_id": "Afterburner ZZ Top"}, "reason": "Search"}'
+            else:
+                resp.message.content = '{"action": "mcp.weather.get_current", "parameters": {"entity_id": "Afterburner"}, "reason": "Retry search"}'
+            return resp
+
+        ollama.client.chat = mock_chat
+
+        executor = AsyncMock()
+        # Both calls return empty results (TotalRecordCount: 0)
+        executor.execute = AsyncMock(return_value={
+            "success": True,
+            "message": '{"Items":[],"TotalRecordCount":0}',
+            "action_taken": True,
+        })
+
+        agent = AgentService(registry, max_steps=10)
+        steps = await collect_steps(
+            agent, message="Spiele Afterburner von ZZ Top",
+            ollama=ollama, executor=executor
+        )
+
+        # Should have broken out after 2 empty results
+        step_types = [s.step_type for s in steps]
+        assert "error" in step_types
+        error_steps = [s for s in steps if s.step_type == "error"]
+        assert any("leere Ergebnisse" in s.content or "empty results" in s.content.lower() for s in error_steps)
+        assert steps[-1].step_type == "final_answer"
+        # Should not have used many steps
+        tool_calls = [s for s in steps if s.step_type == "tool_call"]
+        assert len(tool_calls) == 2
