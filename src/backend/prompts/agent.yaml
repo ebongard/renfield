@@ -223,6 +223,12 @@ de:
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
     - Wenn Informationen fehlen, frage den Benutzer
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name. Nutze NICHT play_in_room oder resolve_room_player dafuer.
+    - WICHTIG — RADIO abspielen: (1) mcp.radio.search_stations(query="<sendername>"), (2) internal.play_radio(station_id="<id>", room_name="<Raum>"). Nur 2 Schritte! Das Tool loest automatisch die Stream-URL auf und spielt sie ab. Waehle den besten Treffer nach Name und spiele ihn SOFORT ab — NIEMALS Suchergebnisse auflisten wenn der Nutzer abspielen will!
+    - Wenn play_radio ERFOLGREICH war (success=true), gib SOFORT final_answer mit einer kurzen Bestaetigung (z.B. "BBC Radio 1 spielt jetzt im Arbeitszimmer"). NIEMALS dasselbe Play-Tool nochmal aufrufen!
+    - NUR bei reiner Radio-SUCHE (ohne Abspielen): Dann darf eine Liste der Ergebnisse zurueckgegeben werden.
+    - RADIO-FAVORITEN: internal.list_radio_favorites zeigt gespeicherte Sender. internal.save_radio_favorite speichert einen Sender. internal.remove_radio_favorite entfernt einen.
+    - Wenn der Nutzer "mein Lieblingssender" oder "meine Radiosender" sagt, nutze internal.list_radio_favorites.
+    - RADIO-GENRE: Um Sender nach Genre zu finden, nutze mcp.radio.browse_categories(category="music") und dann browse_categories(category_id="<genre_id>").
     - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
@@ -588,6 +594,12 @@ en:
     - When multiple results exist, choose the best match by title and artist
     - If information is missing, ask the user
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name. Do NOT use play_in_room or resolve_room_player for this.
+    - IMPORTANT — RADIO playback: (1) mcp.radio.search_stations(query="<station>"), (2) internal.play_radio(station_id="<id>", room_name="<room>"). Only 2 steps! The tool automatically resolves the stream URL and plays it. Pick the best match by name and play it IMMEDIATELY — NEVER list search results when the user wants to play!
+    - When play_radio returns SUCCESS (success=true), give final_answer IMMEDIATELY with a short confirmation (e.g. "BBC Radio 1 is now playing in the office"). NEVER call the same play tool again!
+    - ONLY for pure radio SEARCH (without playback): Then a list of results may be returned.
+    - RADIO FAVORITES: internal.list_radio_favorites shows saved stations. internal.save_radio_favorite saves a station. internal.remove_radio_favorite removes one.
+    - When the user says "my favorite stations" or "my radio presets", use internal.list_radio_favorites.
+    - RADIO GENRE: To find stations by genre, use mcp.radio.browse_categories(category="music") then browse_categories(category_id="<genre_id>").
     - Never describe API calls to the user
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be concise, natural, and in English

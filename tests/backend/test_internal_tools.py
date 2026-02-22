@@ -1926,3 +1926,390 @@ class TestFormatLastSeen:
         import time
         result = internal_tools._format_last_seen(time.time() - 172800)
         assert "2 days ago" == result
+
+
+# ============================================================================
+# Test play_radio
+# ============================================================================
+
+class TestPlayRadio:
+    """Test internal.play_radio tool."""
+
+    @staticmethod
+    def _patch_main_app(mock_mcp_manager):
+        """Patch main.app without importing the real main module."""
+        mock_app = MagicMock()
+        mock_app.state.mcp_manager = mock_mcp_manager
+        fake_main = ModuleType("main")
+        fake_main.app = mock_app
+        return patch.dict(sys.modules, {"main": fake_main})
+
+    @pytest.mark.unit
+    async def test_play_radio_success(self, internal_tools):
+        """Station ID + room → stream URL resolved → play_in_room called."""
+        import json
+
+        stream_response = json.dumps({
+            "station_id": "s12345",
+            "stream_url": "http://stream.example.com/radio.mp3",
+            "media_type": "audio/mpeg",
+        })
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": stream_response,
+            "data": [{"type": "text", "text": stream_response}],
+        })
+
+        play_result = {
+            "success": True,
+            "message": "Playing on Speaker in Arbeitszimmer",
+            "action_taken": True,
+            "data": {
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+                "media_url": "http://stream.example.com/radio.mp3",
+                "media_type": "music",
+            },
+        }
+
+        with self._patch_main_app(mock_mcp_manager), \
+             patch.object(internal_tools, "_play_in_room",
+                          new_callable=AsyncMock, return_value=play_result):
+            result = await internal_tools._play_radio({
+                "station_id": "s12345",
+                "room_name": "Arbeitszimmer",
+                "station_name": "BBC Radio 1",
+            })
+
+        assert result["success"] is True
+        assert "BBC Radio 1" in result["message"]
+
+        # Verify MCP was called to resolve stream URL
+        mock_mcp_manager.execute_tool.assert_called_once_with(
+            "mcp.radio.get_stream_url",
+            {"station_id": "s12345"},
+        )
+
+    @pytest.mark.unit
+    async def test_play_radio_stream_resolve_fails(self, internal_tools):
+        """Failed stream URL resolution returns error."""
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": False,
+            "message": "Station not found",
+        })
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_radio({
+                "station_id": "s99999",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "Failed to resolve stream URL" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_radio_empty_stream_url(self, internal_tools):
+        """Stream response without stream_url returns error."""
+        import json
+
+        stream_response = json.dumps({"station_id": "s12345"})
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": stream_response,
+            "data": [{"type": "text", "text": stream_response}],
+        })
+
+        with self._patch_main_app(mock_mcp_manager):
+            result = await internal_tools._play_radio({
+                "station_id": "s12345",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "Could not resolve stream URL" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_radio_missing_station_id(self, internal_tools):
+        """Missing station_id returns error."""
+        result = await internal_tools._play_radio({
+            "room_name": "Arbeitszimmer",
+        })
+        assert result["success"] is False
+        assert "station_id" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_radio_missing_room_name(self, internal_tools):
+        """Missing room_name returns error."""
+        result = await internal_tools._play_radio({
+            "station_id": "s12345",
+        })
+        assert result["success"] is False
+        assert "room_name" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_radio_no_mcp_manager(self, internal_tools):
+        """Missing MCP manager returns error."""
+        with self._patch_main_app(None):
+            result = await internal_tools._play_radio({
+                "station_id": "s12345",
+                "room_name": "Arbeitszimmer",
+            })
+
+        assert result["success"] is False
+        assert "MCP manager not available" in result["message"]
+
+    @pytest.mark.unit
+    async def test_play_radio_passes_metadata(self, internal_tools):
+        """Station name and image are passed to play_in_room as title/thumb."""
+        import json
+
+        stream_response = json.dumps({
+            "stream_url": "http://stream.example.com/radio.mp3",
+        })
+
+        mock_mcp_manager = MagicMock()
+        mock_mcp_manager.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": stream_response,
+            "data": [{"type": "text", "text": stream_response}],
+        })
+
+        play_result = {
+            "success": True,
+            "message": "Playing",
+            "action_taken": True,
+            "data": {},
+        }
+
+        with self._patch_main_app(mock_mcp_manager), \
+             patch.object(internal_tools, "_play_in_room",
+                          new_callable=AsyncMock, return_value=play_result) as mock_play:
+            await internal_tools._play_radio({
+                "station_id": "s12345",
+                "room_name": "Wohnzimmer",
+                "station_name": "Jazz FM",
+                "station_image": "http://example.com/logo.png",
+            })
+
+        play_params = mock_play.call_args.args[0]
+        assert play_params["title"] == "Jazz FM"
+        assert play_params["thumb"] == "http://example.com/logo.png"
+        assert play_params["media_url"] == "http://stream.example.com/radio.mp3"
+
+    @pytest.mark.unit
+    async def test_execute_routes_to_play_radio(self, internal_tools):
+        """execute() routes internal.play_radio correctly."""
+        with patch.object(internal_tools, "_play_radio", new_callable=AsyncMock) as mock:
+            mock.return_value = {"success": True}
+            params = {"station_id": "s12345", "room_name": "Test"}
+            result = await internal_tools.execute("internal.play_radio", params)
+            mock.assert_called_once_with(params)
+            assert result["success"] is True
+
+
+# ============================================================================
+# Test radio favorites (save/list/remove)
+# ============================================================================
+
+def _patch_db_deps():
+    """Context manager that patches DB imports for favorite tools."""
+    mock_db = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_session():
+        yield mock_db
+
+    _ensure_module = []
+    for mod_name in ["services.database", "models.database"]:
+        if mod_name not in sys.modules:
+            fake = ModuleType(mod_name)
+            sys.modules[mod_name] = fake
+            _ensure_module.append(mod_name)
+
+    patches = [
+        patch("services.database.AsyncSessionLocal", mock_session, create=True),
+    ]
+
+    class combined:
+        db = mock_db
+
+        def __enter__(self_):
+            for p in patches:
+                p.__enter__()
+            return self_
+
+        def __exit__(self_, *args):
+            for p in reversed(patches):
+                p.__exit__(*args)
+            for mod_name in _ensure_module:
+                sys.modules.pop(mod_name, None)
+
+    return combined()
+
+
+class TestSaveRadioFavorite:
+    """Test internal.save_radio_favorite tool."""
+
+    @pytest.mark.unit
+    async def test_save_favorite_success(self, internal_tools):
+        """Save new favorite station to DB."""
+        with _patch_db_deps() as ctx:
+            # Mock: no existing favorite found
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = None
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+            ctx.db.commit = AsyncMock()
+            ctx.db.add = MagicMock()
+
+            result = await internal_tools._save_radio_favorite({
+                "station_id": "s12345",
+                "station_name": "BBC Radio 1",
+                "genre": "Pop",
+                "user_id": 1,
+            })
+
+        assert result["success"] is True
+        assert result["action_taken"] is True
+        assert "BBC Radio 1" in result["message"]
+        ctx.db.add.assert_called_once()
+        ctx.db.commit.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_save_favorite_already_exists(self, internal_tools):
+        """Saving same station twice is idempotent (no error)."""
+        with _patch_db_deps() as ctx:
+            existing = MagicMock()
+            existing.station_id = "s12345"
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = existing
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+
+            result = await internal_tools._save_radio_favorite({
+                "station_id": "s12345",
+                "station_name": "BBC Radio 1",
+                "user_id": 1,
+            })
+
+        assert result["success"] is True
+        assert result["action_taken"] is False
+        assert "already" in result["message"]
+
+    @pytest.mark.unit
+    async def test_save_favorite_missing_station_id(self, internal_tools):
+        """Missing station_id returns error."""
+        result = await internal_tools._save_radio_favorite({
+            "station_name": "BBC Radio 1",
+        })
+        assert result["success"] is False
+        assert "station_id" in result["message"]
+
+    @pytest.mark.unit
+    async def test_save_favorite_missing_station_name(self, internal_tools):
+        """Missing station_name returns error."""
+        result = await internal_tools._save_radio_favorite({
+            "station_id": "s12345",
+        })
+        assert result["success"] is False
+        assert "station_name" in result["message"]
+
+
+class TestListRadioFavorites:
+    """Test internal.list_radio_favorites tool."""
+
+    @pytest.mark.unit
+    async def test_list_favorites_with_results(self, internal_tools):
+        """Returns user's saved stations."""
+        with _patch_db_deps() as ctx:
+            fav1 = MagicMock()
+            fav1.station_id = "s12345"
+            fav1.station_name = "BBC Radio 1"
+            fav1.station_image = "http://example.com/bbc.png"
+            fav1.genre = "Pop"
+
+            fav2 = MagicMock()
+            fav2.station_id = "s67890"
+            fav2.station_name = "Jazz FM"
+            fav2.station_image = None
+            fav2.genre = "Jazz"
+
+            mock_result = MagicMock()
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = [fav1, fav2]
+            mock_result.scalars.return_value = mock_scalars
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+
+            result = await internal_tools._list_radio_favorites({"user_id": 1})
+
+        assert result["success"] is True
+        assert len(result["data"]["favorites"]) == 2
+        assert result["data"]["favorites"][0]["station_name"] == "BBC Radio 1"
+        assert result["data"]["favorites"][1]["genre"] == "Jazz"
+
+    @pytest.mark.unit
+    async def test_list_favorites_empty(self, internal_tools):
+        """No favorites returns empty list with empty_result flag."""
+        with _patch_db_deps() as ctx:
+            mock_result = MagicMock()
+            mock_scalars = MagicMock()
+            mock_scalars.all.return_value = []
+            mock_result.scalars.return_value = mock_scalars
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+
+            result = await internal_tools._list_radio_favorites({"user_id": 1})
+
+        assert result["success"] is True
+        assert result.get("empty_result") is True
+        assert result["data"]["favorites"] == []
+
+
+class TestRemoveRadioFavorite:
+    """Test internal.remove_radio_favorite tool."""
+
+    @pytest.mark.unit
+    async def test_remove_favorite_success(self, internal_tools):
+        """Remove existing favorite."""
+        with _patch_db_deps() as ctx:
+            mock_result = MagicMock()
+            mock_result.rowcount = 1
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+            ctx.db.commit = AsyncMock()
+
+            result = await internal_tools._remove_radio_favorite({
+                "station_id": "s12345",
+                "user_id": 1,
+            })
+
+        assert result["success"] is True
+        assert result["action_taken"] is True
+
+    @pytest.mark.unit
+    async def test_remove_favorite_not_found(self, internal_tools):
+        """Removing non-existent station returns error."""
+        with _patch_db_deps() as ctx:
+            mock_result = MagicMock()
+            mock_result.rowcount = 0
+            ctx.db.execute = AsyncMock(return_value=mock_result)
+            ctx.db.commit = AsyncMock()
+
+            result = await internal_tools._remove_radio_favorite({
+                "station_id": "s99999",
+                "user_id": 1,
+            })
+
+        assert result["success"] is False
+        assert "not found" in result["message"]
+
+    @pytest.mark.unit
+    async def test_remove_favorite_missing_station_id(self, internal_tools):
+        """Missing station_id returns error."""
+        result = await internal_tools._remove_radio_favorite({
+            "user_id": 1,
+        })
+        assert result["success"] is False
+        assert "station_id" in result["message"]

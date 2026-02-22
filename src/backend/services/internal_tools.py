@@ -72,6 +72,35 @@ class InternalToolService:
                 "album_name": "Album title for display metadata (optional, from search_media results)",
             },
         },
+        "internal.play_radio": {
+            "description": "Play a radio station in a room. Resolves the stream URL from a station ID and plays it on the room's audio device. Use after mcp.radio.search_stations to get a station_id.",
+            "parameters": {
+                "station_id": "TuneIn station ID, e.g. 's12345' (required)",
+                "room_name": "Target room name (required)",
+                "station_name": "Station display name for the media player UI (optional)",
+                "station_image": "Station logo URL for the media player UI (optional)",
+                "force": "Set to 'true' to interrupt current playback (default: false)",
+            },
+        },
+        "internal.save_radio_favorite": {
+            "description": "Save a radio station as a favorite for the current user. Idempotent — saving the same station twice is a no-op.",
+            "parameters": {
+                "station_id": "TuneIn station ID (required)",
+                "station_name": "Station name (required)",
+                "station_image": "Station logo URL (optional)",
+                "genre": "Genre name (optional)",
+            },
+        },
+        "internal.list_radio_favorites": {
+            "description": "List the current user's saved radio station favorites.",
+            "parameters": {},
+        },
+        "internal.remove_radio_favorite": {
+            "description": "Remove a radio station from the current user's favorites.",
+            "parameters": {
+                "station_id": "TuneIn station ID to remove (required)",
+            },
+        },
     }
 
     _HANDLERS = {
@@ -82,6 +111,10 @@ class InternalToolService:
         "internal.knowledge_search": "_knowledge_search",
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
+        "internal.play_radio": "_play_radio",
+        "internal.save_radio_favorite": "_save_radio_favorite",
+        "internal.list_radio_favorites": "_list_radio_favorites",
+        "internal.remove_radio_favorite": "_remove_radio_favorite",
     }
 
     async def execute(self, intent: str, parameters: dict) -> dict:
@@ -917,5 +950,314 @@ class InternalToolService:
             return {
                 "success": False,
                 "message": f"Knowledge base search error: {e!s}",
+                "action_taken": False,
+            }
+
+    # ── Radio tools ──────────────────────────────────────────────────────────
+
+    async def _play_radio(self, params: dict) -> dict:
+        """
+        Play a radio station in a room.
+
+        1. Resolve station_id → stream URL via mcp.radio.get_stream_url
+        2. Play the stream URL via _play_in_room
+        """
+        station_id = (params.get("station_id") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
+        station_name = (params.get("station_name") or "").strip() or None
+        station_image = (params.get("station_image") or "").strip() or None
+        force = str(params.get("force", "false")).lower() in ("true", "1", "yes")
+
+        if not station_id:
+            return {
+                "success": False,
+                "message": "Parameter 'station_id' is required",
+                "action_taken": False,
+            }
+        if not room_name:
+            return {
+                "success": False,
+                "message": "Parameter 'room_name' is required",
+                "action_taken": False,
+            }
+
+        try:
+            import json as _json
+
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return {
+                    "success": False,
+                    "message": "MCP manager not available",
+                    "action_taken": False,
+                }
+
+            # Step 1: Resolve stream URL via radio MCP
+            stream_result = await mcp_manager.execute_tool(
+                "mcp.radio.get_stream_url",
+                {"station_id": station_id},
+            )
+            if not stream_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"Failed to resolve stream URL: {stream_result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            # Parse MCP response to extract stream_url
+            raw_text = ""
+            data = stream_result.get("data", [])
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        raw_text = item.get("text", "")
+                        break
+            if not raw_text:
+                raw_text = stream_result.get("message", "")
+
+            try:
+                parsed = _json.loads(raw_text)
+            except (ValueError, TypeError):
+                parsed = {}
+
+            stream_url = parsed.get("stream_url", "")
+            if not stream_url:
+                return {
+                    "success": False,
+                    "message": "Could not resolve stream URL for this station",
+                    "action_taken": False,
+                }
+
+            # Step 2: Resolve room → device (DLNA or HA)
+            resolve_result = await self._resolve_room_player({"room_name": room_name})
+
+            if not resolve_result.get("success"):
+                # Force-play on busy device
+                if force and resolve_result.get("data", {}).get("status") == "busy":
+                    resolve_result = {"success": True, "data": resolve_result["data"]}
+                else:
+                    return resolve_result
+
+            target_type = resolve_result["data"].get("target_type", "homeassistant")
+            display_name = station_name or station_id
+            resolved_room = resolve_result["data"].get("room_name", room_name)
+
+            if target_type == "dlna":
+                # Play radio stream via DLNA renderer
+                renderer_name = resolve_result["data"].get("dlna_renderer_name", "")
+                dlna_tracks = [{"url": stream_url, "title": display_name}]
+                dlna_result = await mcp_manager.execute_tool(
+                    "mcp.dlna.play_tracks",
+                    {
+                        "renderer_name": renderer_name,
+                        "tracks": _json.dumps(dlna_tracks),
+                    },
+                )
+                if not dlna_result.get("success"):
+                    return {
+                        "success": False,
+                        "message": f"DLNA playback failed: {dlna_result.get('message', 'unknown error')}",
+                        "action_taken": False,
+                    }
+                return {
+                    "success": True,
+                    "message": f"Playing '{display_name}' in {resolved_room}",
+                    "action_taken": True,
+                    "data": {"room_name": resolved_room, "station": display_name, "stream_url": stream_url},
+                }
+            else:
+                # Play via Home Assistant media player
+                play_params = {
+                    "media_url": stream_url,
+                    "room_name": room_name,
+                    "media_type": "music",
+                    "force": str(force).lower(),
+                }
+                if station_name:
+                    play_params["title"] = station_name
+                if station_image:
+                    play_params["thumb"] = station_image
+
+                result = await self._play_in_room(play_params)
+
+                if result.get("success") and station_name:
+                    result["message"] = f"Playing '{station_name}' in {resolved_room}"
+
+                return result
+
+        except Exception as e:
+            logger.error(f"Error playing radio station '{station_id}' in '{room_name}': {e}")
+            return {
+                "success": False,
+                "message": f"Error playing radio: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _save_radio_favorite(self, params: dict) -> dict:
+        """Save a radio station as a user favorite. Idempotent (upsert)."""
+        station_id = (params.get("station_id") or "").strip()
+        station_name = (params.get("station_name") or "").strip()
+        station_image = (params.get("station_image") or "").strip() or None
+        genre = (params.get("genre") or "").strip() or None
+        user_id = params.get("user_id")
+
+        if not station_id:
+            return {
+                "success": False,
+                "message": "Parameter 'station_id' is required",
+                "action_taken": False,
+            }
+        if not station_name:
+            return {
+                "success": False,
+                "message": "Parameter 'station_name' is required",
+                "action_taken": False,
+            }
+
+        try:
+            from sqlalchemy import select as sa_select
+
+            from models.database import RadioFavorite
+            from services.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                # Check if already saved (idempotent)
+                stmt = sa_select(RadioFavorite).where(
+                    RadioFavorite.user_id == user_id,
+                    RadioFavorite.station_id == station_id,
+                )
+                result = await db.execute(stmt)
+                existing = result.scalar_one_or_none()
+
+                if existing:
+                    return {
+                        "success": True,
+                        "message": f"'{station_name}' is already in your favorites",
+                        "action_taken": False,
+                    }
+
+                fav = RadioFavorite(
+                    user_id=user_id,
+                    station_id=station_id,
+                    station_name=station_name,
+                    station_image=station_image,
+                    genre=genre,
+                )
+                db.add(fav)
+                await db.commit()
+
+                return {
+                    "success": True,
+                    "message": f"Saved '{station_name}' to your radio favorites",
+                    "action_taken": True,
+                }
+
+        except Exception as e:
+            logger.error(f"Error saving radio favorite: {e}")
+            return {
+                "success": False,
+                "message": f"Error saving favorite: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _list_radio_favorites(self, params: dict) -> dict:
+        """List the current user's radio station favorites."""
+        user_id = params.get("user_id")
+
+        try:
+            from sqlalchemy import select as sa_select
+
+            from models.database import RadioFavorite
+            from services.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                stmt = (
+                    sa_select(RadioFavorite)
+                    .where(RadioFavorite.user_id == user_id)
+                    .order_by(RadioFavorite.created_at.desc())
+                )
+                result = await db.execute(stmt)
+                favorites = result.scalars().all()
+
+                if not favorites:
+                    return {
+                        "success": True,
+                        "message": "No radio favorites saved yet",
+                        "action_taken": True,
+                        "empty_result": True,
+                        "data": {"favorites": []},
+                    }
+
+                items = [
+                    {
+                        "station_id": f.station_id,
+                        "station_name": f.station_name,
+                        "station_image": f.station_image,
+                        "genre": f.genre,
+                    }
+                    for f in favorites
+                ]
+
+                return {
+                    "success": True,
+                    "message": f"{len(items)} radio favorite(s) found",
+                    "action_taken": True,
+                    "data": {"favorites": items},
+                }
+
+        except Exception as e:
+            logger.error(f"Error listing radio favorites: {e}")
+            return {
+                "success": False,
+                "message": f"Error listing favorites: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _remove_radio_favorite(self, params: dict) -> dict:
+        """Remove a radio station from user's favorites."""
+        station_id = (params.get("station_id") or "").strip()
+        user_id = params.get("user_id")
+
+        if not station_id:
+            return {
+                "success": False,
+                "message": "Parameter 'station_id' is required",
+                "action_taken": False,
+            }
+
+        try:
+            from sqlalchemy import delete as sa_delete
+
+            from models.database import RadioFavorite
+            from services.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                stmt = (
+                    sa_delete(RadioFavorite)
+                    .where(RadioFavorite.user_id == user_id)
+                    .where(RadioFavorite.station_id == station_id)
+                )
+                result = await db.execute(stmt)
+                await db.commit()
+
+                if result.rowcount == 0:
+                    return {
+                        "success": False,
+                        "message": f"Station '{station_id}' not found in your favorites",
+                        "action_taken": False,
+                    }
+
+                return {
+                    "success": True,
+                    "message": f"Removed station from your favorites",
+                    "action_taken": True,
+                }
+
+        except Exception as e:
+            logger.error(f"Error removing radio favorite: {e}")
+            return {
+                "success": False,
+                "message": f"Error removing favorite: {e!s}",
                 "action_taken": False,
             }

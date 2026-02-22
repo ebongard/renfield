@@ -42,10 +42,10 @@ roles:
 
   media:
     description:
-      de: "Medien: Musik, Filme, Serien suchen und abspielen (auch in bestimmten Raeumen)"
-      en: "Media: search and play music, movies, series (also in specific rooms)"
-    mcp_servers: [jellyfin, dlna]
-    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.play_album_on_dlna, internal.media_control]
+      de: "Medien: Musik, Filme, Serien, Radio suchen und abspielen (auch in bestimmten Raeumen)"
+      en: "Media: search and play music, movies, series, radio (also in specific rooms)"
+    mcp_servers: [jellyfin, dlna, radio]
+    internal_tools: [internal.resolve_room_player, internal.play_in_room, internal.play_album_on_dlna, internal.media_control, internal.play_radio, internal.save_radio_favorite, internal.list_radio_favorites, internal.remove_radio_favorite]
     max_steps: 6
     prompt_key: agent_prompt_media
     model: "qwen3:14b"
