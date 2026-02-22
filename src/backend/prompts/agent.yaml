@@ -43,6 +43,7 @@ de:
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Gib final_answer wenn alle Informationen gesammelt sind und ALLE geforderten Aktionen abgeschlossen wurden
     - Die finale Antwort muss natürlich und auf Deutsch sein
     - Antworte NUR mit JSON, kein anderer Text
@@ -87,6 +88,7 @@ de:
     - Fuer Helligkeiten/Farben: Nutze HassLightSet mit "area"+"domain" oder "name"
     - Fuer Sensorwerte: Nutze GetLiveContext mit "name" und optional "area"
     - Uebergib NIEMALS "device_class"
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -125,6 +127,7 @@ de:
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
     - Fasse Ergebnisse praezise zusammen mit konkreten Zahlen und Fakten
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -168,6 +171,7 @@ de:
     - Heruntergeladene Dokumente werden AUTOMATISCH als Anhaenge eingefuegt
     - Uebergib bei send_email KEINE attachments
     - Beende NICHT mit final_answer wenn noch Schritte offen sind
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -206,6 +210,7 @@ de:
     - Erfinde NIEMALS Medien, IDs oder Wiedergabe-Status
     - Rufe pro Antwort GENAU EIN Tool auf
     - IMMER zuerst suchen, dann abspielen. Wenn die Anfrage einen konkreten Titel, Kuenstler oder Album NENNT, fuehre IMMER eine neue Suche durch. Wenn der Nutzer sich auf vorherige Suchergebnisse bezieht ("spiel den ab", "den ersten Track", "davon das dritte"), nutze die IDs aus dem Konversations-Kontext.
+    - SUCHTIPP: Jellyfin findet "Album Artist" oft NICHT zusammen. Suche zuerst NUR nach dem Album-/Songnamen (z.B. query="Afterburner"). Pruefe dann im Ergebnis den Kuenstler.
     - WICHTIG — Album abspielen: (1) search_media(type="MusicAlbum"), (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Nur 2 Schritte! Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab.
     - Kuenstler abspielen: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) internal.play_album_on_dlna(album_id="<album_id>", renderer_name="<Raum>") fuer jedes Album.
     - Song abspielen (einzelner Track): (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
@@ -216,6 +221,7 @@ de:
     - Wenn Informationen fehlen, frage den Benutzer
     - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name. Nutze NICHT play_in_room oder resolve_room_player dafuer.
     - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -306,6 +312,7 @@ de:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
     - Erfinde NIEMALS IDs — hole sie ueber list/get Tools
+    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -344,6 +351,7 @@ de:
 
   # Error messages
   error_loop_detected: "Loop erkannt: Tool '{tool}' wurde mehrfach identisch aufgerufen."
+  error_empty_results: "Wiederholte leere Ergebnisse fuer Tool '{tool}' — Suche abgebrochen."
   error_circuit_open: "LLM-Service vorübergehend nicht verfügbar (Circuit Breaker aktiv)."
   error_timeout: "Schritt {step} hat zu lange gedauert (Timeout)."
   error_llm_failed: "LLM-Fehler: {error}"
@@ -397,6 +405,7 @@ en:
     - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - Give final_answer when all information is gathered and ALL required actions have been completed
     - The final answer must be natural and in English
     - Reply ONLY with JSON, no other text
@@ -441,6 +450,7 @@ en:
     - For brightness/colors: Use HassLightSet with "area"+"domain" or "name"
     - For sensor values: Use GetLiveContext with "name" and optionally "area"
     - NEVER pass "device_class"
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 
@@ -479,6 +489,7 @@ en:
     - For web search: Use web_search/searxng_web_search
     - For news: Use search_articles or get_top_headlines
     - Summarize results precisely with concrete numbers and facts
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 
@@ -522,6 +533,7 @@ en:
     - Downloaded documents are AUTOMATICALLY attached
     - Do NOT pass attachments to send_email
     - Do NOT give final_answer if steps are still open
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 
@@ -560,6 +572,7 @@ en:
     - Do NOT invent media, IDs, or playback states
     - Call EXACTLY ONE tool per response
     - ALWAYS search before play. When the request names a specific title, artist, or album, ALWAYS perform a new search. When the user refers to previous search results ("play that", "the first track", "the third one"), use the IDs from the conversation context.
+    - SEARCH TIP: Jellyfin often does NOT find "Album Artist" together. Search for the album/song name ONLY first (e.g. query="Afterburner"). Then verify the artist in the results.
     - IMPORTANT — Play an album: (1) search_media(type="MusicAlbum"), (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). Only 2 steps! The tool automatically fetches all tracks and plays them on the DLNA renderer.
     - Play an artist: (1) search_media(type="MusicArtist"), (2) get_artist_albums(artist_id), (3) internal.play_album_on_dlna(album_id="<album_id>", renderer_name="<room>") for each album.
     - Play a song (single track): (1) search_media(type="Audio"), (2) internal.play_in_room with api_stream URL.
@@ -570,6 +583,7 @@ en:
     - If information is missing, ask the user
     - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name. Do NOT use play_in_room or resolve_room_player for this.
     - Never describe API calls to the user
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be concise, natural, and in English
     - Reply ONLY with JSON
 
@@ -660,6 +674,7 @@ en:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
     - NEVER invent IDs — fetch them via list/get tools
+    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English
     - Reply ONLY with JSON
 
@@ -698,6 +713,7 @@ en:
 
   # Error messages
   error_loop_detected: "Loop detected: Tool '{tool}' was called identically multiple times."
+  error_empty_results: "Repeated empty results for tool '{tool}' — search aborted."
   error_circuit_open: "LLM service temporarily unavailable (Circuit Breaker active)."
   error_timeout: "Step {step} took too long (Timeout)."
   error_llm_failed: "LLM error: {error}"

@@ -108,6 +108,9 @@ class AgentContext:
     # E.g. {2: {"filename": "invoice.pdf", "mime_type": "application/pdf"}}
     blob_meta: dict[int, dict[str, str]] = field(default_factory=dict)
 
+    # Track tools that return empty results (for empty-result loop detection)
+    empty_results_per_tool: dict[str, int] = field(default_factory=dict)
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -175,6 +178,14 @@ class AgentContext:
 
         return "\n".join(lines)
 
+    def record_empty_result(self, tool: str) -> None:
+        """Record that a tool returned an empty result."""
+        self.empty_results_per_tool[tool] = self.empty_results_per_tool.get(tool, 0) + 1
+
+    def has_repeated_empty(self, tool: str, threshold: int = 2) -> bool:
+        """Check if a tool has returned empty results repeatedly."""
+        return self.empty_results_per_tool.get(tool, 0) >= threshold
+
     def detect_infinite_loop(self, min_repetitions: int = 3) -> bool:
         """
         Detect if the agent is stuck in an infinite loop.
@@ -200,6 +211,27 @@ class AgentContext:
         # Check if last N calls are identical
         recent = tool_calls[-min_repetitions:]
         return len(set(recent)) == 1
+
+
+def _is_empty_result(result: dict) -> bool:
+    """Detect if a tool result is effectively empty (0 results).
+
+    Checks the result message for common empty-list patterns from
+    Jellyfin, Paperless, and other search APIs.
+    """
+    msg = result.get("message", "")
+    if not msg or msg in ("Kein Ergebnis", "No result"):
+        return True
+    # Check for common empty-list patterns in JSON responses
+    for pattern in (
+        '"TotalRecordCount":0', '"TotalRecordCount": 0',
+        '"total":0', '"total": 0',
+        '"items":[]', '"items": []',
+        '"Items":[]', '"Items": []',
+    ):
+        if pattern in msg:
+            return True
+    return False
 
 
 def _truncate(text: str, max_length: int = settings.agent_response_truncation) -> str:
@@ -834,6 +866,21 @@ class AgentService:
             context.steps.append(tool_result_step)
             context.tool_results.append(result)
             yield tool_result_step
+
+            # Check for repeated empty results from the same tool
+            if _is_empty_result(result):
+                context.record_empty_result(action)
+                if context.has_repeated_empty(action, threshold=2):
+                    logger.warning(f"🔄 Agent repeated empty results for '{action}' at step {step_num}")
+                    yield AgentStep(
+                        step_number=step_num,
+                        step_type="error",
+                        content=prompt_manager.get("agent", "error_empty_results", lang=lang, tool=action),
+                        tool=action,
+                    )
+                    summary_step = await self._build_summary_answer(context, step_num, message, ollama, agent_model, lang=lang, agent_client=agent_client)
+                    yield summary_step
+                    return
 
             # Check for infinite loop (same tool called repeatedly)
             if context.detect_infinite_loop(min_repetitions=3):
