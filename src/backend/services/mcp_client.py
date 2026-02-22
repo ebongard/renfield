@@ -1046,10 +1046,23 @@ class MCPManager:
         """
         tool_info = self._tool_index.get(namespaced_name)
         if not tool_info:
-            # Fuzzy fallback: LLM may hallucinate tool names (e.g. "get_current_weather"
-            # when the actual tool is "weather_forecast"). Try matching by server prefix.
+            # Exact match in all_discovered_tools (not just prompt-filtered ones).
+            # Internal tools (e.g. play_radio) may call MCP tools that are discovered
+            # but filtered out of the LLM prompt by prompt_tools config.
             parts = namespaced_name.split(".")
             if len(parts) >= 3 and parts[0] == "mcp":
+                server_name = parts[1]
+                tool_base = ".".join(parts[2:])
+                server_state = self._servers.get(server_name)
+                if server_state:
+                    for discovered in server_state.all_discovered_tools:
+                        if discovered.original_name == tool_base:
+                            tool_info = discovered
+                            break
+
+            # Fuzzy fallback: LLM may hallucinate tool names (e.g. "get_current_weather"
+            # when the actual tool is "weather_forecast"). Try matching by server prefix.
+            if not tool_info and len(parts) >= 3 and parts[0] == "mcp":
                 server_name = parts[1]
                 # Find the first prompt_tools entry for this server, or any tool
                 fallback = None

@@ -1029,25 +1029,62 @@ class InternalToolService:
                     "action_taken": False,
                 }
 
-            # Step 2: Play via _play_in_room
-            play_params = {
-                "media_url": stream_url,
-                "room_name": room_name,
-                "media_type": "music",
-                "force": str(force).lower(),
-            }
-            if station_name:
-                play_params["title"] = station_name
-            if station_image:
-                play_params["thumb"] = station_image
+            # Step 2: Resolve room → device (DLNA or HA)
+            resolve_result = await self._resolve_room_player({"room_name": room_name})
 
-            result = await self._play_in_room(play_params)
+            if not resolve_result.get("success"):
+                # Force-play on busy device
+                if force and resolve_result.get("data", {}).get("status") == "busy":
+                    resolve_result = {"success": True, "data": resolve_result["data"]}
+                else:
+                    return resolve_result
 
-            # Enrich success message with station info
-            if result.get("success") and station_name:
-                result["message"] = f"Playing '{station_name}' in {room_name}"
+            target_type = resolve_result["data"].get("target_type", "homeassistant")
+            display_name = station_name or station_id
+            resolved_room = resolve_result["data"].get("room_name", room_name)
 
-            return result
+            if target_type == "dlna":
+                # Play radio stream via DLNA renderer
+                renderer_name = resolve_result["data"].get("dlna_renderer_name", "")
+                dlna_tracks = [{"url": stream_url, "title": display_name}]
+                dlna_result = await mcp_manager.execute_tool(
+                    "mcp.dlna.play_tracks",
+                    {
+                        "renderer_name": renderer_name,
+                        "tracks": _json.dumps(dlna_tracks),
+                    },
+                )
+                if not dlna_result.get("success"):
+                    return {
+                        "success": False,
+                        "message": f"DLNA playback failed: {dlna_result.get('message', 'unknown error')}",
+                        "action_taken": False,
+                    }
+                return {
+                    "success": True,
+                    "message": f"Playing '{display_name}' in {resolved_room}",
+                    "action_taken": True,
+                    "data": {"room_name": resolved_room, "station": display_name, "stream_url": stream_url},
+                }
+            else:
+                # Play via Home Assistant media player
+                play_params = {
+                    "media_url": stream_url,
+                    "room_name": room_name,
+                    "media_type": "music",
+                    "force": str(force).lower(),
+                }
+                if station_name:
+                    play_params["title"] = station_name
+                if station_image:
+                    play_params["thumb"] = station_image
+
+                result = await self._play_in_room(play_params)
+
+                if result.get("success") and station_name:
+                    result["message"] = f"Playing '{station_name}' in {resolved_room}"
+
+                return result
 
         except Exception as e:
             logger.error(f"Error playing radio station '{station_id}' in '{room_name}': {e}")
