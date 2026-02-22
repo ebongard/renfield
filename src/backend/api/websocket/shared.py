@@ -48,6 +48,9 @@ class ConversationSessionState:
     last_action_result: dict | None = None
     last_entities: list[str] = field(default_factory=list)
 
+    # Last room used for media playback (for follow-up transport commands)
+    last_media_room: str | None = None
+
     # Configuration
     CONTEXT_TIMEOUT_SECONDS: int = 300  # 5 minutes
     MAX_HISTORY_MESSAGES: int = 10  # Keep last 10 messages in memory
@@ -99,6 +102,7 @@ class ConversationSessionState:
         self.last_intent = None
         self.last_action_result = None
         self.last_entities = []
+        self.last_media_room = None
 
 
 # Alias for backwards compatibility
