@@ -542,6 +542,17 @@ async def lifespan(app: "FastAPI"):
             for room in rooms:
                 presence_svc.set_room_name(room.id, room.name)
 
+    # Media Follow Me hooks (requires both presence and media_follow enabled)
+    if settings.media_follow_enabled and settings.presence_enabled:
+        from services.media_follow_service import get_media_follow_service
+        from utils.hooks import register_hook
+
+        mf_service = get_media_follow_service()
+        register_hook("presence_leave_room", mf_service.on_user_leave_room)
+        register_hook("presence_enter_room", mf_service.on_user_enter_room)
+        register_hook("presence_last_left", mf_service.on_last_left)
+        logger.info("✅ Media Follow Me hooks registered")
+
     # Knowledge Graph hooks
     if settings.knowledge_graph_enabled:
         from services.knowledge_graph_service import (

@@ -333,6 +333,11 @@ class Settings(BaseSettings):
     presence_webhook_secret: str = ""                        # Shared secret for webhook auth (X-Webhook-Secret header)
     presence_analytics_retention_days: int = 90              # Days to keep presence events for analytics
 
+    # Media Follow Me (playback follows user between rooms)
+    media_follow_enabled: bool = False                         # Master switch (requires presence_enabled)
+    media_follow_suspend_timeout: float = 600.0                # Seconds before suspended session expires
+    media_follow_resume_delay: float = 2.0                     # Delay before resuming in new room
+
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling
     notification_poller_startup_delay: int = 30         # Delay before first poll (seconds)

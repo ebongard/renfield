@@ -368,6 +368,23 @@ ble:
 
 ---
 
+### Media Follow Me
+
+```bash
+# Playback folgt dem User zwischen Räumen (erfordert PRESENCE_ENABLED=true)
+MEDIA_FOLLOW_ENABLED=false
+MEDIA_FOLLOW_SUSPEND_TIMEOUT=600.0       # Sekunden bis suspendierte Session verfällt
+MEDIA_FOLLOW_RESUME_DELAY=2.0            # Verzögerung vor Resume im neuen Raum (Sekunden)
+```
+
+**Funktionsweise:** Wenn ein User Radio im Arbeitszimmer abspielt und ins Wohnzimmer geht, stoppt die Musik im Arbeitszimmer und wird im Wohnzimmer fortgesetzt. Bei Konflikten (anderer User spielt bereits): Room-Owner > Rollen-Priorität (Admin > Familie > Gast) > First-Come.
+
+**Per-User Opt-out:** Jeder User hat ein `media_follow_enabled` Flag (default: true). Kann in der Admin-UI deaktiviert werden.
+
+**Room Owner:** `PATCH /api/rooms/{id}/owner` setzt den Raum-Besitzer (für Konflikt-Priorisierung).
+
+---
+
 ### RAG (Wissensspeicher)
 
 ```bash
