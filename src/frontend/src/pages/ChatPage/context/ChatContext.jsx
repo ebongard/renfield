@@ -390,7 +390,7 @@ export function ChatProvider({ children }) {
     setMessages(prev => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
-        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_result', step: data.step, tool: data.tool, success: data.success, message: data.message }];
+        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_result', step: data.step, tool: data.tool, success: data.success, message: data.message, data: data.data }];
         return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
       }
       return prev;

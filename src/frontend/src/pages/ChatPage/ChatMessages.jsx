@@ -6,6 +6,49 @@ import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
 import { useChatContext } from './context/ChatContext';
 
+function renderMessageContent(text) {
+  const imageUrlPattern = /https?:\/\/[^\s]+?\/Items\/[^\s]+?\/Images\/[^\s]+|https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s]*)?/gi;
+
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = imageUrlPattern.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ type: 'text', content: text.slice(lastIndex, match.index) });
+    }
+    parts.push({ type: 'image', url: match[0] });
+    lastIndex = match.index + match[0].length;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ type: 'text', content: text.slice(lastIndex) });
+  }
+
+  if (parts.length === 1 && parts[0].type === 'text') {
+    return <p className="whitespace-pre-wrap">{text}</p>;
+  }
+
+  return (
+    <div className="whitespace-pre-wrap">
+      {parts.map((part, i) =>
+        part.type === 'image' ? (
+          <img
+            key={i}
+            src={part.url}
+            alt="Album Art"
+            className="rounded-lg max-w-[200px] max-h-[200px] my-2 shadow-md"
+            loading="lazy"
+            onError={(e) => { e.target.style.display = 'none'; }}
+          />
+        ) : (
+          <span key={i}>{part.content}</span>
+        )
+      )}
+    </div>
+  );
+}
+
 export default function ChatMessages() {
   const { t } = useTranslation();
   const {
@@ -123,7 +166,7 @@ export default function ChatMessages() {
               );
             })()}
 
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            {message.role === 'assistant' ? renderMessageContent(message.content) : <p className="whitespace-pre-wrap">{message.content}</p>}
 
             {/* Attachment chips */}
             {message.attachments && message.attachments.length > 0 && (
