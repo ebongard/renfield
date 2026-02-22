@@ -1161,3 +1161,24 @@ class PaperlessAuditResult(Base):
     audited_at = Column(DateTime, default=_utcnow)
     applied_at = Column(DateTime, nullable=True)
     audit_run_id = Column(String, nullable=True, index=True)
+
+
+# ==========================================================================
+# Radio Favorites
+# ==========================================================================
+
+class RadioFavorite(Base):
+    """User's favorite radio stations (provider-agnostic, currently TuneIn)."""
+    __tablename__ = "radio_favorites"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    station_id = Column(String(50), nullable=False)
+    station_name = Column(String(255), nullable=False)
+    station_image = Column(String(512), nullable=True)
+    genre = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index('ix_radio_favorites_user_station', 'user_id', 'station_id', unique=True),
+    )

@@ -223,6 +223,10 @@ class Settings(BaseSettings):
     n8n_api_key: SecretStr | None = None
     n8n_mcp_enabled: bool = False
 
+    # Radio (TuneIn)
+    radio_enabled: bool = False
+    tunein_partner_id: str = ""
+
     # Home Assistant MCP
     ha_mcp_enabled: bool = False
 

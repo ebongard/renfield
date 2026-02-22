@@ -841,6 +841,10 @@ NEWS_ENABLED=true
 # Jellyfin (Media Server)
 JELLYFIN_ENABLED=true
 
+# Radio (TuneIn)
+RADIO_ENABLED=true
+TUNEIN_PARTNER_ID=                     # Optional: TuneIn Partner ID für höhere Rate Limits
+
 # DLNA (Media Renderer Control)
 DLNA_MCP_ENABLED=true
 
@@ -1147,6 +1151,7 @@ WEATHER_ENABLED=true
 SEARCH_ENABLED=true
 NEWS_ENABLED=true
 JELLYFIN_ENABLED=true
+RADIO_ENABLED=true
 DLNA_MCP_ENABLED=true
 N8N_MCP_ENABLED=true
 HA_MCP_ENABLED=true
