@@ -626,29 +626,61 @@ async def websocket_endpoint(
                 except Exception as e:
                     logger.warning(f"⚠️ Auth presence update failed: {e}")
 
-            # Retrieve memory context (long-term user knowledge)
-            memory_context = await _retrieve_memory_context(
-                content, user_id=user_id, lang=ollama.default_lang
-            )
-
-            # Retrieve document context from uploaded attachments
-            document_context = ""
-            if attachment_ids:
-                document_context = await _fetch_document_context(
-                    attachment_ids, lang=ollama.default_lang
-                )
-
-            # === Unified Router / Legacy Dual-Path ===
+            # === Media Transport Shortcut (pre-memory, pre-router) ===
+            # Detect simple stop/pause/resume/next/previous BEFORE memory retrieval
+            # and router LLM call.  Skips everything: memory, router, agent loop.
             agent_used = False
             full_response = ""
             intent = None
             action_result = None
             agent_steps_count = 0
+            media_shortcut_handled = False
+
+            if settings.agent_enabled:
+                transport = _detect_media_transport(content)
+                if transport:
+                    action_name, explicit_room = transport
+                    room = (
+                        explicit_room
+                        or (room_context.get("room_name") if room_context else None)
+                        or session_state.last_media_room
+                    )
+                    if room:
+                        from services.internal_tools import InternalToolService
+                        tool_svc = InternalToolService()
+                        result = await tool_svc.execute(
+                            "internal.media_control",
+                            {"action": action_name, "room_name": room},
+                        )
+                        intent = {
+                            "intent": "internal.media_control",
+                            "parameters": {"action": action_name, "room_name": room},
+                            "confidence": 1.0,
+                        }
+                        action_result = result
+                        await websocket.send_json({"type": "action", "intent": intent, "result": result})
+                        full_response = result.get("message", "")
+                        await websocket.send_json({"type": "stream", "content": full_response})
+                        logger.info(f"⚡ Media transport shortcut: {action_name} in {room}")
+                        session_state.last_media_room = room
+                        media_shortcut_handled = True
+
+            # Retrieve memory + document context (skipped for transport shortcuts)
+            memory_context = ""
+            document_context = ""
+            if not media_shortcut_handled:
+                memory_context = await _retrieve_memory_context(
+                    content, user_id=user_id, lang=ollama.default_lang
+                )
+                if attachment_ids:
+                    document_context = await _fetch_document_context(
+                        attachment_ids, lang=ollama.default_lang
+                    )
 
             # Get router from app state (initialized at startup if agent_enabled)
             agent_router = getattr(app.state, 'agent_router', None)
 
-            if settings.agent_enabled and agent_router:
+            if not media_shortcut_handled and settings.agent_enabled and agent_router:
                 # === Unified Router Path ===
                 # Every message goes through router → specialized agent
                 from services.action_executor import ActionExecutor
@@ -691,77 +723,56 @@ async def websocket_endpoint(
                     )
 
                 else:
-                    # === Media Transport Shortcut ===
-                    # Simple stop/pause/resume/next/previous bypass the agent loop entirely.
-                    media_shortcut_handled = False
-                    if role.name == "media":
-                        transport = _detect_media_transport(content)
-                        if transport:
-                            action_name, explicit_room = transport
-                            room = explicit_room or (room_context.get("room_name") if room_context else None)
-                            if room:
-                                from services.internal_tools import InternalToolService
-                                tool_svc = InternalToolService()
-                                result = await tool_svc.execute(
-                                    "internal.media_control",
-                                    {"action": action_name, "room_name": room},
-                                )
-                                intent = {
-                                    "intent": "internal.media_control",
-                                    "parameters": {"action": action_name, "room_name": room},
-                                    "confidence": 1.0,
-                                }
-                                action_result = result
-                                await websocket.send_json({"type": "action", "intent": intent, "result": result})
-                                full_response = result.get("message", "")
-                                await websocket.send_json({"type": "stream", "content": full_response})
-                                logger.info(f"⚡ Media transport shortcut: {action_name} in {room}")
-                                media_shortcut_handled = True
+                    # Specialized agent loop (smart_home, documents, media, research, workflow, general)
+                    agent_used = True
+                    tool_registry = AgentToolRegistry(
+                        mcp_manager=mcp_manager,
+                        server_filter=role.mcp_servers,
+                        internal_filter=role.internal_tools,
+                    )
+                    agent = AgentService(tool_registry, role=role)
+                    executor = ActionExecutor(mcp_manager=mcp_manager)
 
-                    if not media_shortcut_handled:
-                        # Specialized agent loop (smart_home, documents, media, research, workflow, general)
-                        agent_used = True
-                        tool_registry = AgentToolRegistry(
-                            mcp_manager=mcp_manager,
-                            server_filter=role.mcp_servers,
-                            internal_filter=role.internal_tools,
-                        )
-                        agent = AgentService(tool_registry, role=role)
-                        executor = ActionExecutor(mcp_manager=mcp_manager)
+                    agent_tool_results = []
+                    async for step in agent.run(
+                        message=content,
+                        ollama=ollama,
+                        executor=executor,
+                        conversation_history=session_state.conversation_history if session_state.conversation_history else None,
+                        room_context=room_context,
+                        memory_context=memory_context,
+                        document_context=document_context,
+                        user_permissions=user_permissions,
+                        user_id=user_id,
+                    ):
+                        ws_msg = step_to_ws_message(step)
+                        await websocket.send_json(ws_msg)
 
-                        agent_tool_results = []
-                        async for step in agent.run(
-                            message=content,
-                            ollama=ollama,
-                            executor=executor,
-                            conversation_history=session_state.conversation_history if session_state.conversation_history else None,
-                            room_context=room_context,
-                            memory_context=memory_context,
-                            document_context=document_context,
-                            user_permissions=user_permissions,
-                            user_id=user_id,
-                        ):
-                            ws_msg = step_to_ws_message(step)
-                            await websocket.send_json(ws_msg)
+                        if step.step_type == "final_answer":
+                            full_response = step.content
+                        if step.step_type == "tool_result" and step.success and step.data:
+                            agent_tool_results.append((step.tool, step.data))
+                        if step.step_type in ("tool_call", "tool_result"):
+                            agent_steps_count += 1
+                        # Track last media room from agent tool call parameters
+                        if (role.name == "media"
+                                and step.step_type == "tool_call"
+                                and step.parameters):
+                            _room = step.parameters.get("room_name") or step.parameters.get("renderer_name")
+                            if _room:
+                                session_state.last_media_room = _room
 
-                            if step.step_type == "final_answer":
-                                full_response = step.content
-                            if step.step_type == "tool_result" and step.success and step.data:
-                                agent_tool_results.append((step.tool, step.data))
-                            if step.step_type in ("tool_call", "tool_result"):
-                                agent_steps_count += 1
+                    # Build action summary from agent tool results for conversation history
+                    if agent_tool_results:
+                        action_result = _build_agent_action_result(agent_tool_results)
 
-                        # Build action summary from agent tool results for conversation history
-                        if agent_tool_results:
-                            action_result = _build_agent_action_result(agent_tool_results)
+                    logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
 
-                        logger.info(f"🤖 Agent [{role.name}] abgeschlossen: {agent_steps_count} Steps")
+                    # Set intent info so frontend can show correction button
+                    if not intent:
+                        intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
 
-                        # Set intent info so frontend can show correction button
-                        if not intent:
-                            intent = {"intent": f"agent.{role.name}", "confidence": 1.0, "parameters": {}}
-
-            else:
+            elif not media_shortcut_handled:
                 # === Legacy Ranked Intent Path (agent_enabled=false or no router) ===
                 logger.info("🔍 Extrahiere Ranked Intents...")
                 ranked_intents = await ollama.extract_ranked_intents(
