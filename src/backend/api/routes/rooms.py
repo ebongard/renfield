@@ -118,6 +118,29 @@ async def update_room(
     return service.room_to_dict(room)
 
 
+@router.patch("/{room_id}/owner")
+async def set_room_owner(
+    room_id: int,
+    owner_id: int | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or clear the owner of a room (for Media Follow Me conflict resolution)."""
+    from models.database import Room, User
+
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    if owner_id is not None:
+        user = await db.get(User, owner_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    room.owner_id = owner_id
+    await db.commit()
+    return {"room_id": room_id, "owner_id": owner_id}
+
+
 @router.delete("/{room_id}")
 async def delete_room(
     room_id: int,

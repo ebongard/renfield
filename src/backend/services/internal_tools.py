@@ -261,6 +261,51 @@ class InternalToolService:
                 "action_taken": False,
             }
 
+    async def _get_room_id(self, room_name: str) -> int | None:
+        """Resolve room_name → room_id via RoomService."""
+        try:
+            from services.database import AsyncSessionLocal
+            from services.room_service import RoomService
+
+            async with AsyncSessionLocal() as db:
+                rs = RoomService(db)
+                room = await rs.get_room_by_name(room_name)
+                if not room:
+                    room = await rs.get_room_by_alias(room_name)
+                return room.id if room else None
+        except Exception:
+            return None
+
+    async def _register_media_follow(
+        self, params: dict, room_name: str, media_type, **kwargs
+    ) -> None:
+        """Register playback with MediaFollowService if enabled (async version)."""
+        from utils.config import settings as _settings
+
+        if not _settings.media_follow_enabled:
+            return
+        user_id = params.get("user_id")
+        if not user_id:
+            return
+        try:
+            from services.media_follow_service import MediaType, get_media_follow_service
+
+            mf = get_media_follow_service()
+            # Convert string to enum if needed
+            if isinstance(media_type, str):
+                media_type = MediaType(media_type)
+            rid = await self._get_room_id(room_name)
+            if rid is not None:
+                mf.register_playback(
+                    user_id=int(user_id),
+                    room_id=rid,
+                    room_name=room_name,
+                    media_type=media_type,
+                    **kwargs,
+                )
+        except Exception as e:
+            logger.debug(f"Media follow registration failed: {e}")
+
     async def _play_in_room(self, params: dict) -> dict:
         """
         Play a media URL on the audio device in a room.
@@ -358,6 +403,10 @@ class InternalToolService:
             player_state = (state or {}).get("state", "unknown")
 
             if player_state in ("playing", "buffering", "paused"):
+                await self._register_media_follow(
+                    params, resolved_room_name, "single_url",
+                    media_url=media_url, title=title, thumb=thumb,
+                )
                 return {
                     "success": True,
                     "message": f"Playing on {device_name} in {resolved_room_name}",
@@ -410,6 +459,10 @@ class InternalToolService:
                 player_state = (state or {}).get("state", "unknown")
 
                 if player_state in ("playing", "buffering", "paused"):
+                    await self._register_media_follow(
+                        params, resolved_room_name, "single_url",
+                        media_url=transcode_url, title=title, thumb=thumb,
+                    )
                     return {
                         "success": True,
                         "message": f"Playing (transcoded) on {device_name} in {resolved_room_name}",
@@ -500,8 +553,24 @@ class InternalToolService:
         target_type = device_data.get("target_type", "homeassistant")
 
         if target_type == "dlna":
-            return await self._media_control_dlna(action, device_data, resolved_room_name, params)
-        return await self._media_control_ha(action, device_data, resolved_room_name, params)
+            result = await self._media_control_dlna(action, device_data, resolved_room_name, params)
+        else:
+            result = await self._media_control_ha(action, device_data, resolved_room_name, params)
+
+        # Clear media follow session on explicit stop
+        if action == "stop" and result.get("success"):
+            from utils.config import settings as _settings
+            if _settings.media_follow_enabled:
+                try:
+                    from services.media_follow_service import get_media_follow_service
+                    mf = get_media_follow_service()
+                    room_id = await self._get_room_id(resolved_room_name)
+                    if room_id is not None:
+                        mf.clear_session_by_room(room_id)
+                except Exception:
+                    pass
+
+        return result
 
     async def _media_control_dlna(self, action: str, device_data: dict, room_name: str, params: dict) -> dict:
         """Execute media control action on a DLNA renderer via MCP."""
@@ -767,6 +836,16 @@ class InternalToolService:
 
             album_name = album_title or (jellyfin_tracks[0].get("album", "Unknown Album") if jellyfin_tracks else "Unknown")
             artist_name = jellyfin_tracks[0].get("artist", "Unknown Artist") if jellyfin_tracks else "Unknown"
+
+            # Resolve the room name for media follow (might come from renderer_name or room_name param)
+            follow_room = room_name or renderer_name
+            await self._register_media_follow(
+                params, follow_room, "dlna_album",
+                album_id=album_id, album_name=album_name,
+                renderer_name=renderer_name,
+                total_tracks=len(dlna_tracks),
+                title=f"{album_name} - {artist_name}",
+            )
 
             return {
                 "success": True,
@@ -1060,6 +1139,11 @@ class InternalToolService:
                         "message": f"DLNA playback failed: {dlna_result.get('message', 'unknown error')}",
                         "action_taken": False,
                     }
+                await self._register_media_follow(
+                    params, resolved_room, "radio",
+                    media_url=stream_url, station_id=station_id,
+                    station_name=station_name,
+                )
                 return {
                     "success": True,
                     "message": f"Playing '{display_name}' in {resolved_room}",
@@ -1073,6 +1157,7 @@ class InternalToolService:
                     "room_name": room_name,
                     "media_type": "music",
                     "force": str(force).lower(),
+                    "user_id": params.get("user_id"),
                 }
                 if station_name:
                     play_params["title"] = station_name
@@ -1081,8 +1166,15 @@ class InternalToolService:
 
                 result = await self._play_in_room(play_params)
 
-                if result.get("success") and station_name:
-                    result["message"] = f"Playing '{station_name}' in {resolved_room}"
+                if result.get("success"):
+                    # Re-register as radio (not single_url) with station metadata
+                    await self._register_media_follow(
+                        params, resolved_room, "radio",
+                        media_url=stream_url, station_id=station_id,
+                        station_name=station_name,
+                    )
+                    if station_name:
+                        result["message"] = f"Playing '{station_name}' in {resolved_room}"
 
                 return result
 

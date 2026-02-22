@@ -147,6 +147,10 @@ class Room(Base):
     ha_area_id = Column(String(100), nullable=True, unique=True, index=True)
     source = Column(String(20), default="renfield")  # renfield/homeassistant/satellite/device
 
+    # Room owner (for Media Follow Me conflict resolution)
+    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    owner = relationship("User", foreign_keys="Room.owner_id")
+
     # Metadata
     icon = Column(String(50), nullable=True)  # "mdi:sofa"
 
@@ -589,6 +593,10 @@ class Role(Base):
     # System roles cannot be deleted
     is_system = Column(Boolean, default=False, nullable=False)
 
+    # Priority for conflict resolution (lower = higher priority)
+    # Admin=10, Familie=50, Gast=90, new roles=100
+    priority = Column(Integer, default=100, nullable=False, server_default="100")
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
@@ -632,6 +640,7 @@ class User(Base):
 
     # User preferences
     preferred_language = Column(String(10), default="de", nullable=False)
+    media_follow_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
 
     # Optional link to Speaker for voice authentication
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)

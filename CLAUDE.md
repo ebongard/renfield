@@ -368,6 +368,27 @@ Voice/auth presence bypasses BLE hysteresis — a single interaction moves the u
 
 When `PRESENCE_ENABLED=false`, only `public` notifications get TTS. Web notifications are always delivered regardless of privacy level. Calendar MCP derives privacy from `visibility: owner` → `confidential`, `visibility: shared` → `personal`.
 
+### Media Follow Me
+
+Opt-in feature (`MEDIA_FOLLOW_ENABLED=true`, requires `PRESENCE_ENABLED=true`) that makes media playback follow users between rooms. When a user leaves a room with active playback, the music suspends and resumes in the new room after a configurable delay.
+
+- **Session Tracking:** In-memory `MediaFollowService` singleton tracks `MediaSession` per user (type, URL, station, album, room)
+- **Media Types:** `single_url` (HA play_media), `dlna_album` (DLNA queue), `radio` (TuneIn stream)
+- **Conflict Resolution:** Room owner > Role priority (`Role.priority`, lower=higher) > First-come
+- **Per-User Opt-out:** `User.media_follow_enabled` (default: true)
+- **Room Owner:** `Room.owner_id` (nullable FK → users) — set via `PATCH /api/rooms/{id}/owner`
+- **Hooks:** `presence_leave_room` (suspend), `presence_enter_room` (resume), `presence_last_left` (safety stop)
+- **Playback Registration:** `InternalToolService._play_in_room`, `_play_radio`, `_play_album_on_dlna` register sessions; `_media_control(stop)` clears them.
+
+**Key files:** `services/media_follow_service.py`, `services/internal_tools.py` (registration), `api/lifecycle.py` (hook setup), `api/routes/rooms.py` (owner endpoint)
+
+**Configuration:**
+```bash
+MEDIA_FOLLOW_ENABLED=false               # Master switch (requires PRESENCE_ENABLED=true)
+MEDIA_FOLLOW_SUSPEND_TIMEOUT=600.0       # Seconds before suspended session expires
+MEDIA_FOLLOW_RESUME_DELAY=2.0            # Delay before resuming in new room
+```
+
 ### Device Management
 
 Multiple device types (satellite, web_panel, web_tablet, web_browser, web_kiosk) connect via `/ws/device`. IP-based room detection for stationary devices provides automatic room context:
@@ -481,6 +502,9 @@ All configuration via `.env`, loaded by `src/backend/utils/config.py` (Pydantic 
 - `PRESENCE_HOUSEHOLD_ROLES` — Comma-separated role names considered household members for privacy TTS (default: `"Admin,Familie"`)
 - `PRESENCE_WEBHOOK_URL` — URL to POST presence events to (empty = disabled). Supports n8n webhook triggers (default: `""`)
 - `PRESENCE_WEBHOOK_SECRET` — Shared secret sent as X-Webhook-Secret header for webhook authentication (default: `""`)
+- `MEDIA_FOLLOW_ENABLED` — Media playback follows user between rooms (default: `false`, opt-in). Requires `PRESENCE_ENABLED=true`.
+- `MEDIA_FOLLOW_SUSPEND_TIMEOUT` — Seconds before suspended media session expires (default: `600.0`)
+- `MEDIA_FOLLOW_RESUME_DELAY` — Delay before resuming playback in new room (default: `2.0`)
 - `PAPERLESS_AUDIT_ENABLED` — Automated document metadata audit using local LLMs (default: `false`, opt-in). Requires `PAPERLESS_ENABLED=true`.
 - `KNOWLEDGE_GRAPH_ENABLED` — Entity-relation triples extracted from conversations via LLM (default: `false`, opt-in)
 - `METRICS_ENABLED` — Prometheus `/metrics` endpoint (default: `false`, opt-in)
