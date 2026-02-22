@@ -63,14 +63,15 @@
 ## Features
 
 ### Core
-- **Chat interface** with streaming responses, conversation history, follow-up questions
-- **ReAct Agent System** with specialized roles and multi-step tool chaining
-- **Knowledge Graph** — entity-relation triples extracted from conversations and documents, semantic entity resolution via pgvector
+- **Chat interface** with streaming responses, conversation history, inline album art, collapsible agent steps
+- **ReAct Agent System** with specialized roles, multi-step tool chaining, and media transport shortcuts
+- **Knowledge Graph** — entity-relation triples with post-extraction validation, string-similarity dedup, and bulk cleanup API
 - **Conversational memory** — long-term recall of preferences, facts, and instructions with contradiction detection
 - **Intent feedback learning** — learns from corrections via semantic matching (3-scope: intent, tool, complexity)
 - **Voice I/O** — Whisper STT + Piper TTS + SpeechBrain speaker recognition
 - **Presence detection** — BLE scanning, voice recognition, and web auth track who's in which room
 - **Proactive notifications** — webhook-based alerts from Home Assistant/n8n + generic MCP notification polling
+- **Paperless audit** — automated LLM-based metadata validation with review queue, OCR quality scoring, and auto-fix
 - **Hook/Plugin system** — async extension API for custom integrations without modifying core
 
 ### Integrations (10 MCP Servers)
@@ -89,10 +90,11 @@
 | Email | IMAP/SMTP | stdio |
 
 ### Knowledge Base (RAG)
-- **Hybrid search** — dense embeddings (pgvector) + BM25 full-text, combined via RRF
-- **Formats** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT
+- **Hybrid search** — dense embeddings (pgvector) + BM25 full-text (German FTS, OR matching), combined via RRF
+- **Formats** — PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT (with EasyOCR fallback for garbled PDFs)
 - **Knowledge bases** — thematic collections with sharing and access control
-- **Knowledge Graph** — entity-relation triples extracted from documents and conversations, semantic entity resolution, admin dashboard
+- **Agent tool** — `knowledge_search` for combined RAG + Paperless search within the agent loop
+- **Knowledge Graph** — entity-relation triples with post-extraction validation, string-similarity dedup, bulk cleanup API, admin dashboard
 
 ### Multi-Room Voice Satellites
 

@@ -16,6 +16,11 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 - **Session-Persistenz**: `session_id` im WebSocket für Konversations-Kontext
 - **Fallback auf HTTP**: REST API (`POST /api/chat/send`) als Alternative
 
+### Rich Content in Chat-Nachrichten
+- **Album Art**: Jellyfin-Bild-URLs und gängige Bildformate (`.jpg`, `.png`, `.gif`, `.webp`) werden als Inline-Bilder gerendert statt als Klartext
+- **Collapsible Agent Steps**: Agent-Schritte (Tool-Calls + Ergebnisse) sind einklappbar — offen während der Verarbeitung, eingeklappt nach Abschluss
+- **Credential Sanitization**: API-Keys und Tokens in MCP-Antworten werden automatisch aus der Chat-Anzeige redacted
+
 ### Chat-Historie
 - **Session Management**: Getrennte Gespräche mit Datumsgruppierung (Heute, Gestern, Letzte 7 Tage, Älter)
 - **Persistente Speicherung**: Alle Nachrichten in PostgreSQL
@@ -103,7 +108,7 @@ Jede Nachricht wird vom Router in genau eine Rolle klassifiziert:
 | `smart_home` | homeassistant | 4 | Licht, Schalter, Sensoren, Klima |
 | `research` | search, news, weather | 6 | Web-Suche, Nachrichten, Wetter |
 | `documents` | paperless, email | 8 | Dokument-Suche, E-Mail |
-| `media` | jellyfin | 6 | Musik, Filme, Serien |
+| `media` | jellyfin, dlna | 6 | Musik, Filme, Serien, DLNA-Wiedergabe |
 | `workflow` | n8n | 10 | Workflow-Automation |
 | `knowledge` | *(RAG-Pfad)* | — | Wissensbasis-Suche (kein Agent Loop) |
 | `general` | alle Server | 12 | Komplexe domänenübergreifende Anfragen |
@@ -146,6 +151,14 @@ User → ComplexityDetector → einfach? → Single-Intent (schneller Pfad)
 | `agent_tool_result` | Ergebnis (Erfolg/Fehler, Daten) |
 | `stream` | Finale Antwort (Token-für-Token) |
 | `done` | Abschluss mit `agent_steps` Count |
+
+### Media Transport Shortcuts
+
+Einfache Medien-Befehle (`stop`, `pause`, `play`, `skip`, `weiter`, `leiser`, `lauter`) umgehen den Agent Loop und werden direkt als MCP-Tool-Call ausgeführt — für sofortige Reaktion ohne LLM-Overhead.
+
+### Loop-Schutz
+
+Der Agent bricht automatisch ab, wenn wiederholte Suchen (z.B. Jellyfin-Suche) keine neuen Ergebnisse liefern. Verhindert Endlos-Schleifen bei nicht-vorhandenen Medien.
 
 ### Konfiguration
 
@@ -199,6 +212,7 @@ Alle externen Integrationen laufen als MCP-Server. Tools werden automatisch als 
 | **search** | stdio (npx) | SearXNG Metasearch | 1 |
 | **news** | stdio (npx) | NewsAPI | 2 (Suche, Top Headlines) |
 | **jellyfin** | stdio (Python) | Media Server | 13 (Musik, Filme, Serien) |
+| **dlna** | streamable_http | DLNA Renderer (Gapless Queue Playback) | 7 (Play, Stop, Queue, Transport) |
 | **n8n** | stdio (npx) | Workflow Automation | 12 (Workflow CRUD, Templates) |
 | **paperless** | stdio (Python) | Dokumenten-Management | 1+ |
 | **email** | stdio (Python) | Multi-Account IMAP/SMTP | 4 (List, Search, Read, Send) |
@@ -326,6 +340,9 @@ PDF, DOCX, PPTX, XLSX, HTML, Markdown, TXT — verarbeitet mit IBM Docling.
 - **Follow-up-Fragen** — RAG-Kontext bleibt für Nachfragen erhalten
 - **Quellen-Zitation** — Antworten verweisen auf Quelldokumente
 - **Re-Embedding** — `POST /admin/reembed` nach Modellwechsel
+- **knowledge_search Agent Tool** — Internes Tool im Agent Loop für kombinierte Suche über RAG-Dokumente und MCP-Quellen (Paperless)
+- **EasyOCR Fallback** — Garbled PDFs werden automatisch mit EasyOCR nachverarbeitet für bessere Text-Extraktion
+- **Separate Embedding-Instanz** — `OLLAMA_EMBED_URL` für dedizierten Embedding-Server (entlastet die Haupt-Ollama-Instanz)
 
 ### Konfiguration
 
@@ -340,7 +357,7 @@ RAG_SIMILARITY_THRESHOLD=0.4      # Mindest-Ähnlichkeit
 RAG_HYBRID_ENABLED=true           # Dense + BM25
 RAG_HYBRID_BM25_WEIGHT=0.3
 RAG_HYBRID_DENSE_WEIGHT=0.7
-RAG_HYBRID_FTS_CONFIG=simple      # simple/german/english
+RAG_HYBRID_FTS_CONFIG=german       # simple/german/english (german für BM25 mit OR-Matching)
 
 # Context Window
 RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
@@ -360,7 +377,9 @@ RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
 
 ### Raspberry Pi Satellites
 - **Pi Zero 2 W** — Kostengünstige (~63€) Satellite-Einheiten
-- **ReSpeaker 2-Mics HAT** — Mikrofonerfassung mit 3m Reichweite
+- **ReSpeaker 2-Mics HAT** (V1 + V2) — Mikrofonerfassung mit 3m Reichweite
+- **ReSpeaker 4-Mic Array** — 4-Kanal-Erfassung mit arecord-Isolation (siehe [AUDIO_CAPTURE_4MIC.md](AUDIO_CAPTURE_4MIC.md))
+- **Ansible Provisioning** — Automatisierte Einrichtung via Playbook (`src/satellite/provisioning/`)
 - **Lokale Wake-Word-Erkennung** — OpenWakeWord mit ONNX Runtime (~20% CPU)
 - **LED-Feedback** — Visuelles Feedback: Idle (Blau), Listening (Grün), Processing (Gelb), Speaking (Cyan), Error (Rot)
 - **Hardware-Button** — Manuelle Aktivierung
@@ -375,7 +394,10 @@ RAG_CONTEXT_WINDOW=1              # Benachbarte Chunks (0=deaktiviert)
 Siehe [WAKEWORD_CONFIGURATION.md](WAKEWORD_CONFIGURATION.md) für Details.
 
 ### Audio-Output-Routing
-Intelligentes TTS-Routing zum optimalen Ausgabegerät pro Raum (prioritätsbasiert, mit Verfügbarkeitsprüfung). Unterstützt Renfield-Geräte und HA Media Players.
+Intelligentes TTS-Routing zum optimalen Ausgabegerät pro Raum (prioritätsbasiert, mit Verfügbarkeitsprüfung). Unterstützt Renfield-Geräte, HA Media Players und DLNA Renderer.
+
+### DLNA Gapless Album Playback
+DLNA-Renderer ermöglichen lückenlose Album-Wiedergabe: Jellyfin liefert die Tracks, der DLNA MCP Server queued sie gapless auf dem Renderer. Album-Art und Metadaten werden an den Player und als Inline-Bild in den Chat weitergegeben. Siehe `internal.play_album_on_dlna` Tool.
 
 Siehe [OUTPUT_ROUTING.md](OUTPUT_ROUTING.md) für Details.
 
@@ -440,6 +462,55 @@ Steuerung erfolgt über den Home Assistant MCP-Server (`HA_MCP_ENABLED=true`) od
 FRIGATE_URL=http://frigate.local:5000
 FRIGATE_TIMEOUT=10.0
 ```
+
+## Paperless Audit
+
+Automatisierte Metadaten-Prüfung für Paperless-NGX Dokumente via LLM. Opt-in via `PAPERLESS_AUDIT_ENABLED=true`.
+
+### Funktionsweise
+
+1. **Scan** — Alle Paperless-Dokumente werden per MCP abgerufen
+2. **OCR-Qualitätsprüfung** — Heuristische Bewertung (1-5) ohne LLM: erkennt Zeichensalat, wiederholte Zeichen, hohe Sonderzeichen-Dichte
+3. **LLM-Analyse** — 8 Validierungsfelder: Titel, Korrespondent, Dokumenttyp, Tags, Speicherpfad, Datum, Sprache, Archivstatus
+4. **Fix-Modi**: `review` (manuelle Freigabe im Admin UI), `auto_threshold` (ab Konfidenz ≥ Schwellwert), `auto_all`
+
+### Admin UI (`/admin/paperless-audit`)
+
+4 Tabs: Audit Control (Start/Status), Review Queue (Sortierung, Suche, Freigabe), OCR Issues (Re-OCR-Angebot), Statistics.
+
+### Konfiguration
+
+```env
+PAPERLESS_AUDIT_ENABLED=false
+PAPERLESS_AUDIT_MODEL=                     # leer = Default-Modell
+PAPERLESS_AUDIT_SCHEDULE=02:00             # Täglicher Lauf (HH:MM)
+PAPERLESS_AUDIT_FIX_MODE=review            # review | auto_threshold | auto_all
+PAPERLESS_AUDIT_CONFIDENCE_THRESHOLD=0.9
+PAPERLESS_AUDIT_OCR_THRESHOLD=2            # OCR-Score ≤ 2 → Re-OCR anbieten
+PAPERLESS_AUDIT_BATCH_DELAY=2.0            # Pause zwischen Dokumenten (Sekunden)
+```
+
+## Knowledge Graph — Qualitäts-Features
+
+Ergänzend zur Basis-Extraktion (siehe Hook System):
+
+### Entity-Validierung
+
+Post-Extraction-Filter `_is_valid_entity()` entfernt OCR-Artefakte, URLs, E-Mails, IDs, Datumsangaben, Telefonnummern, IBANs, generische Rollen und Zeichen mit Leerzeichen. Kompilierte Regex-Patterns für Performance.
+
+### Duplikat-Erkennung
+
+String-Similarity (difflib SequenceMatcher) statt Embedding-Similarity für zuverlässigere Ergebnisse. Name-Normalisierung entfernt Titel (Herr/Frau/Dr.) und Org-Suffixe (GmbH/AG). Default-Threshold: 0.82.
+
+### Bulk Cleanup API
+
+- `POST /api/knowledge-graph/cleanup/invalid` — Scan + Soft-Delete invalider Entities (`dry_run=true` default)
+- `GET /api/knowledge-graph/cleanup/duplicates` — Duplikat-Cluster per String-Similarity finden
+- `POST /api/knowledge-graph/cleanup/merge-duplicates` — Auto-Merge (Threshold 0.93+ empfohlen für sicheres Auto-Merge)
+
+## Admin Maintenance Page
+
+Zentrale Wartungsseite unter `/admin/maintenance` mit Re-Embedding, Keyword-Refresh, MCP-Status und weiteren Admin-Operationen.
 
 ## Zugriffskontrolle (RPBAC)
 
@@ -616,6 +687,14 @@ Siehe [LLM_MODEL_GUIDE.md](LLM_MODEL_GUIDE.md) für Modell-Empfehlungen und Benc
 ### LLM Client Factory
 
 Alle Services nutzen eine zentrale Factory (`utils/llm_client.py`) mit URL-basiertem Caching (gleiche URL → gleiche Client-Instanz) und einem `LLMClient` Protocol.
+
+### Ollama Fallback
+
+Connect-Timeout (10s) verhindert Hänger bei unerreichbaren Hosts. Bei `ConnectError`/`ConnectTimeout` wird automatisch auf `OLLAMA_FALLBACK_URL` umgeschwenkt — nützlich wenn der GPU-Server (z.B. cuda.local) offline ist und die Host-Ollama-Instanz einspringen soll.
+
+```env
+OLLAMA_FALLBACK_URL=http://host.docker.internal:11434
+```
 
 ## Presence Detection
 
