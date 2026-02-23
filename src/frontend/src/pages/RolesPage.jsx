@@ -8,10 +8,13 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
-  Shield, Plus, Pencil, Trash2, Loader, AlertCircle, CheckCircle,
-  Lock, RefreshCw, ChevronDown, ChevronRight, Info
+  Shield, Plus, Pencil, Trash2, Loader,
+  Lock, RefreshCw, ChevronDown, ChevronRight
 } from 'lucide-react';
 
 // Permission categories for better organization
@@ -275,17 +278,7 @@ export default function RolesPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="card">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Shield className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('roles.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('roles.subtitle')}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeader icon={Shield} title={t('roles.title')} subtitle={t('roles.subtitle')} />
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
           <p className="text-gray-500 dark:text-gray-400">{t('roles.loading')}</p>
@@ -297,36 +290,11 @@ export default function RolesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <Shield className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('roles.title')}</h1>
-            <p className="text-gray-500 dark:text-gray-400">{t('roles.subtitle')}</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={Shield} title={t('roles.title')} subtitle={t('roles.subtitle')} />
 
       {/* Alerts */}
-      {error && (
-        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
-          <div className="flex items-center space-x-3">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-700 dark:text-red-400">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {success && (
-        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
-          <div className="flex items-center space-x-3">
-            <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-700 dark:text-green-400">{success}</p>
-          </div>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
@@ -370,10 +338,7 @@ export default function RolesPage() {
                     <div className="flex items-center space-x-2">
                       <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{role.name}</h3>
                       {role.is_system && (
-                        <span className="flex items-center space-x-1 text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm">
-                          <Lock className="w-3 h-3" />
-                          <span>{t('roles.system')}</span>
-                        </span>
+                        <Badge color="gray" icon={Lock}>{t('roles.system')}</Badge>
                       )}
                     </div>
                     {role.description && (
@@ -381,18 +346,14 @@ export default function RolesPage() {
                     )}
                     <div className="flex flex-wrap gap-1 mt-2">
                       {role.permissions.slice(0, 5).map((perm) => (
-                        <span
-                          key={perm}
-                          className="text-xs bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300 px-2 py-0.5 rounded-sm"
-                          title={PERMISSION_DESCRIPTIONS[perm]}
-                        >
-                          {perm}
+                        <span key={perm} title={PERMISSION_DESCRIPTIONS[perm]}>
+                          <Badge color="gray">{perm}</Badge>
                         </span>
                       ))}
                       {role.permissions.length > 5 && (
-                        <span className="text-xs bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-400 px-2 py-0.5 rounded-sm">
+                        <Badge color="gray">
                           {t('roles.more', { count: role.permissions.length - 5 })}
-                        </span>
+                        </Badge>
                       )}
                     </div>
                   </div>
@@ -402,7 +363,7 @@ export default function RolesPage() {
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={() => handleEdit(role)}
-                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    className="btn-icon btn-icon-ghost"
                     title={t('roles.editRole')}
                   >
                     <Pencil className="w-5 h-5" />
@@ -410,7 +371,7 @@ export default function RolesPage() {
                   {!role.is_system && (
                     <button
                       onClick={() => handleDelete(role)}
-                      className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="btn-icon btn-icon-danger"
                       title={t('roles.deleteRole')}
                     >
                       <Trash2 className="w-5 h-5" />
@@ -559,15 +520,11 @@ export default function RolesPage() {
 
           {/* Info for system roles */}
           {editingRole?.is_system && (
-            <div className="flex items-start space-x-3 p-3 bg-yellow-100 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700 rounded-lg">
-              <Info className="w-5 h-5 text-yellow-500 shrink-0 mt-0.5" />
-              <div>
-                <p className="text-yellow-700 dark:text-yellow-400 font-medium">{t('roles.systemRole')}</p>
-                <p className="text-yellow-600 dark:text-yellow-400/70 text-sm">
-                  {t('roles.systemRoleInfo')}
-                </p>
-              </div>
-            </div>
+            <Alert variant="warning">
+              <span className="font-medium">{t('roles.systemRole')}</span>
+              {' '}
+              <span className="text-sm opacity-80">{t('roles.systemRoleInfo')}</span>
+            </Alert>
           )}
 
           {/* Actions */}

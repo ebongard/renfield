@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
 import apiClient from '../utils/axios';
+import PageHeader from '../components/PageHeader';
 
 export default function CameraPage() {
   const { t, i18n } = useTranslation();
@@ -54,27 +55,15 @@ export default function CameraPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Camera className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('cameras.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('cameras.subtitle')}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => { loadCameras(); loadEvents(); }}
-            className="btn btn-secondary"
-            aria-label={t('cameras.refreshCameras')}
-          >
-            <RefreshCw className="w-5 h-5" aria-hidden="true" />
-          </button>
-        </div>
-      </div>
+      <PageHeader icon={Camera} title={t('cameras.title')} subtitle={t('cameras.subtitle')}>
+        <button
+          onClick={() => { loadCameras(); loadEvents(); }}
+          className="btn btn-secondary"
+          aria-label={t('cameras.refreshCameras')}
+        >
+          <RefreshCw className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </PageHeader>
 
       {/* Cameras Overview */}
       <div className="card">

@@ -6,17 +6,20 @@ import {
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 
 const ENTITY_TYPES = ['person', 'place', 'organization', 'thing', 'event', 'concept'];
 
-const TYPE_COLORS = {
-  person: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  place: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
-  organization: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  thing: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  event: 'bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-300',
-  concept: 'bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300',
+const TYPE_BADGE_COLORS = {
+  person: 'blue',
+  place: 'green',
+  organization: 'purple',
+  thing: 'amber',
+  event: 'pink',
+  concept: 'teal',
 };
 
 const TABS = ['entities', 'relations', 'stats'];
@@ -371,37 +374,15 @@ export default function KnowledgeGraphPage() {
   const totalRelationsPages = Math.ceil(relationsTotal / PAGE_SIZE);
 
   return (
-    <div>
+    <div className="space-y-6">
       {ConfirmDialogComponent}
 
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <Brain className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-              {t('knowledgeGraph.title')}
-            </h1>
-            <p className="text-gray-500 dark:text-gray-400">
-              {t('knowledgeGraph.subtitle')}
-            </p>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={Brain} title={t('knowledgeGraph.title')} subtitle={t('knowledgeGraph.subtitle')} />
 
       {/* Messages */}
-      {error && (
-        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-lg">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="mb-4 p-3 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-lg">
-          {success}
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
@@ -550,13 +531,13 @@ export default function KnowledgeGraphPage() {
                         </td>
                         <td className="py-3 px-3">
                           <div className="flex items-center gap-2">
-                            <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${TYPE_COLORS[entity.entity_type] || TYPE_COLORS.thing}`}>
+                            <Badge color={TYPE_BADGE_COLORS[entity.entity_type] || 'amber'}>
                               {t(`knowledgeGraph.${entity.entity_type}`)}
-                            </span>
+                            </Badge>
                             {entity.scope && entity.scope !== 'personal' && (
-                              <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">
+                              <Badge color="green">
                                 {availableScopes.find(s => s.name === entity.scope)?.label || entity.scope}
-                              </span>
+                              </Badge>
                             )}
                           </div>
                         </td>
@@ -573,10 +554,10 @@ export default function KnowledgeGraphPage() {
                                     e.stopPropagation();
                                     setScopeMenuEntity(scopeMenuEntity?.id === entity.id ? null : entity);
                                   }}
-                                  className={`p-1.5 rounded ${
-                                    entity.scope === 'personal' ? 'text-gray-400' :
-                                    'text-green-600 dark:text-green-400'
-                                  } hover:bg-gray-100 dark:hover:bg-gray-800`}
+                                  className={`btn-icon ${
+                                    entity.scope === 'personal' ? 'btn-icon-ghost' :
+                                    'text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg'
+                                  }`}
                                   title={t('knowledgeGraph.changeScope')}
                                 >
                                   {entity.scope === 'personal' ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
@@ -601,21 +582,21 @@ export default function KnowledgeGraphPage() {
                               </div>
                               <button
                                 onClick={() => showRelationsForEntity(entity.id)}
-                                className="p-1.5 rounded text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                className="btn-icon btn-icon-ghost"
                                 title={t('knowledgeGraph.showRelations')}
                               >
                                 <Link2 className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => openEditModal(entity)}
-                                className="p-1.5 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                className="btn-icon btn-icon-ghost"
                                 title={t('common.edit')}
                               >
                                 <Edit3 className="w-4 h-4" />
                               </button>
                               <button
                                 onClick={() => handleDeleteEntity(entity)}
-                                className="p-1.5 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                                className="btn-icon btn-icon-danger"
                                 title={t('common.delete')}
                               >
                                 <Trash2 className="w-4 h-4" />
@@ -718,14 +699,14 @@ export default function KnowledgeGraphPage() {
                   <span className="ml-auto text-xs text-gray-400">{Math.round((rel.confidence || 0) * 100)}%</span>
                   <button
                     onClick={() => openRelationEditModal(rel)}
-                    className="p-1.5 rounded text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="btn-icon btn-icon-ghost"
                     title={t('common.edit')}
                   >
                     <Edit3 className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => handleDeleteRelation(rel)}
-                    className="p-1.5 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-800"
+                    className="btn-icon btn-icon-danger"
                     title={t('common.delete')}
                   >
                     <Trash2 className="w-4 h-4" />
@@ -809,9 +790,9 @@ export default function KnowledgeGraphPage() {
                 <div className="space-y-3">
                   {Object.entries(stats.entity_types || {}).sort((a, b) => b[1] - a[1]).map(([type, count]) => (
                     <div key={type} className="flex items-center gap-3">
-                      <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium min-w-[100px] justify-center ${TYPE_COLORS[type] || TYPE_COLORS.thing}`}>
+                      <Badge color={TYPE_BADGE_COLORS[type] || 'amber'} className="min-w-[100px] justify-center">
                         {t(`knowledgeGraph.${type}`)}
-                      </span>
+                      </Badge>
                       <div className="flex-1 h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
                         <div
                           className="h-full bg-indigo-500 rounded-full transition-all"
@@ -926,9 +907,9 @@ export default function KnowledgeGraphPage() {
                           }}
                           className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                         >
-                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs ${TYPE_COLORS[e.entity_type] || TYPE_COLORS.thing}`}>
+                          <Badge color={TYPE_BADGE_COLORS[e.entity_type] || 'amber'}>
                             {e.entity_type}
-                          </span>
+                          </Badge>
                           {e.name}
                         </button>
                       ))}
@@ -990,9 +971,9 @@ export default function KnowledgeGraphPage() {
                           }}
                           className="w-full px-3 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
                         >
-                          <span className={`inline-flex px-1.5 py-0.5 rounded text-xs ${TYPE_COLORS[e.entity_type] || TYPE_COLORS.thing}`}>
+                          <Badge color={TYPE_BADGE_COLORS[e.entity_type] || 'amber'}>
                             {e.entity_type}
-                          </span>
+                          </Badge>
                           {e.name}
                         </button>
                       ))}

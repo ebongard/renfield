@@ -7,6 +7,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import apiClient from '../utils/axios';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import {
   Satellite, Wifi, WifiOff, Mic, Volume2, Cpu, Thermometer,
   Activity, Clock, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
@@ -43,21 +46,19 @@ function StateBadge({ state }) {
   const { t } = useTranslation();
 
   const stateConfig = {
-    idle: { color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300', icon: Radio },
-    listening: { color: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400', icon: Mic },
-    processing: { color: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400', icon: Zap },
-    speaking: { color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400', icon: Volume2 },
-    error: { color: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400', icon: AlertCircle },
+    idle: { color: 'gray', icon: Radio },
+    listening: { color: 'green', icon: Mic },
+    processing: { color: 'yellow', icon: Zap },
+    speaking: { color: 'blue', icon: Volume2 },
+    error: { color: 'red', icon: AlertCircle },
   };
 
   const config = stateConfig[state] || stateConfig.idle;
-  const Icon = config.icon;
 
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${config.color}`}>
-      <Icon className="w-3 h-3" />
+    <Badge color={config.color} icon={config.icon}>
       {t(`satellites.states.${state}`, state.toUpperCase())}
-    </span>
+    </Badge>
   );
 }
 
@@ -128,24 +129,20 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
 
         <div className="flex items-center gap-3">
           {/* Version badge */}
-          <span className="text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400 px-2 py-1 rounded-sm">
-            v{satellite.version || 'unknown'}
-          </span>
+          <Badge color="gray">v{satellite.version || 'unknown'}</Badge>
 
           {/* Update available indicator */}
           {hasUpdate && !isUpdating && (
-            <span className="inline-flex items-center gap-1 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-400 px-2 py-1 rounded-sm">
-              <ArrowUpCircle className="w-3 h-3" />
+            <Badge color="yellow" icon={ArrowUpCircle}>
               {t('satellites.updateAvailable', 'Update')}
-            </span>
+            </Badge>
           )}
 
           {/* Updating indicator */}
           {isUpdating && (
-            <span className="inline-flex items-center gap-1 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-400 px-2 py-1 rounded-sm">
-              <Loader2 className="w-3 h-3 animate-spin" />
+            <Badge color="blue" icon={Loader2} className="[&_svg]:animate-spin">
               {t('satellites.updating', 'Updating...')}
-            </span>
+            </Badge>
           )}
 
           <StateBadge state={satellite.state} />
@@ -287,21 +284,15 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
           )}
 
           {/* Capabilities */}
-          <div className="flex flex-wrap gap-2 text-xs">
+          <div className="flex flex-wrap gap-2">
             {satellite.capabilities?.local_wakeword && (
-              <span className="px-2 py-1 bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 rounded-sm">
-                Wake Word
-              </span>
+              <Badge color="blue">Wake Word</Badge>
             )}
             {satellite.capabilities?.speaker && (
-              <span className="px-2 py-1 bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-400 rounded-sm">
-                Speaker
-              </span>
+              <Badge color="purple">Speaker</Badge>
             )}
             {satellite.capabilities?.led_count > 0 && (
-              <span className="px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400 rounded-sm">
-                {satellite.capabilities.led_count} LEDs
-              </span>
+              <Badge color="amber">{satellite.capabilities.led_count} LEDs</Badge>
             )}
           </div>
 
@@ -456,15 +447,8 @@ export default function SatellitesPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="card mb-6">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Satellite className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('satellites.title', 'Satellite Monitor')}</h1>
-            </div>
-          </div>
+        <div className="mb-6">
+          <PageHeader icon={Satellite} title={t('satellites.title', 'Satellite Monitor')} />
         </div>
         <div className="flex items-center justify-center p-12">
           <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
@@ -476,39 +460,31 @@ export default function SatellitesPage() {
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Satellite className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('satellites.title', 'Satellite Monitor')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('satellites.subtitle', 'Live status of connected satellites')}</p>
-            </div>
-          </div>
+      <div className="mb-6">
+        <PageHeader
+          icon={Satellite}
+          title={t('satellites.title', 'Satellite Monitor')}
+          subtitle={t('satellites.subtitle', 'Live status of connected satellites')}
+        >
+          {/* Auto-refresh toggle */}
+          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={autoRefresh}
+              onChange={(e) => setAutoRefresh(e.target.checked)}
+              className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            {t('satellites.autoRefresh', 'Auto-refresh')}
+          </label>
 
-          <div className="flex items-center gap-4">
-            {/* Auto-refresh toggle */}
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoRefresh}
-                onChange={(e) => setAutoRefresh(e.target.checked)}
-                className="rounded-sm border-gray-300 text-blue-600 focus:ring-blue-500"
-              />
-              {t('satellites.autoRefresh', 'Auto-refresh')}
-            </label>
-
-            <button
-              onClick={loadSatellites}
-              className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-              title={t('common.refresh')}
-            >
-              <RefreshCw className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
+          <button
+            onClick={loadSatellites}
+            className="btn-icon btn-icon-ghost"
+            title={t('common.refresh')}
+          >
+            <RefreshCw className="w-5 h-5" />
+          </button>
+        </PageHeader>
       </div>
 
       {/* Stats */}
@@ -540,10 +516,7 @@ export default function SatellitesPage() {
 
       {/* Error message */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-700 dark:text-red-400">
-          <AlertCircle className="w-5 h-5" />
-          {error}
-        </div>
+        <Alert variant="error" className="mb-4">{error}</Alert>
       )}
 
       {/* Satellite list */}
