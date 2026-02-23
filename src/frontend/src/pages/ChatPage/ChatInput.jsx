@@ -78,7 +78,7 @@ export default function ChatInput() {
 
   return (
     <div
-      className={`card mx-4 mb-4 md:mx-0 md:mb-0 ${isDragOver ? 'ring-2 ring-primary-500' : ''}`}
+      className={`card border-t-2 border-t-primary-600/30 dark:border-t-primary-500/20 mx-4 mb-4 md:mx-0 md:mb-0 ${isDragOver ? 'ring-2 ring-primary-500' : ''}`}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}

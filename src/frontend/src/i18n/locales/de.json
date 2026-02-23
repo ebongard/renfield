@@ -151,7 +151,10 @@
     "documentIndexed": "In Wissensdatenbank indexiert",
     "agentThinking": "Denkt nach...",
     "agentStepsCount": "{{count}} Schritt ausgeführt",
-    "agentStepsCount_other": "{{count}} Schritte ausgeführt"
+    "agentStepsCount_other": "{{count}} Schritte ausgeführt",
+    "exampleWeather": "Wie wird das Wetter?",
+    "exampleLight": "Schalte das Licht im Wohnzimmer ein",
+    "exampleMusic": "Spiel Jazz Musik"
   },
   "voice": {
     "startRecording": "Sprachaufnahme starten",
