@@ -16,6 +16,7 @@ cpSync(resolve(repoRoot, 'src/frontend/public/logo.svg'), resolve(pub, 'logo.svg
 
 // Docs assets
 cpSync(resolve(repoRoot, 'docs/assets/architecture.svg'), resolve(pub, 'architecture.svg'));
+cpSync(resolve(repoRoot, 'docs/assets/architecture-light.svg'), resolve(pub, 'architecture-light.svg'));
 cpSync(resolve(repoRoot, 'docs/assets/social-preview.svg'), resolve(pub, 'social-preview.svg'));
 
 // Screenshots
