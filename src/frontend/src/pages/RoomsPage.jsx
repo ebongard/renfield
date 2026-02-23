@@ -4,7 +4,7 @@ import {
   Home, Plus, Edit3, Trash2, Loader, CheckCircle, XCircle,
   AlertCircle, RefreshCw, Link as LinkIcon, Unlink, Radio,
   ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
-  Monitor, Tablet, Smartphone, Tv
+  Monitor, Tablet, Smartphone, Tv, User
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import RoomOutputSettings from '../components/RoomOutputSettings';
@@ -44,6 +44,8 @@ export default function RoomsPage() {
   const [newRoomIcon, setNewRoomIcon] = useState('');
   const [editRoomName, setEditRoomName] = useState('');
   const [editRoomIcon, setEditRoomIcon] = useState('');
+  const [editRoomOwnerId, setEditRoomOwnerId] = useState('');
+  const [users, setUsers] = useState([]);
   const [updating, setUpdating] = useState(false);
   const [selectedHAArea, setSelectedHAArea] = useState('');
   const [conflictResolution, setConflictResolution] = useState('link');
@@ -74,6 +76,16 @@ export default function RoomsPage() {
       setError(t('rooms.couldNotLoad'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadUsers = async () => {
+    try {
+      const response = await apiClient.get('/api/users');
+      const data = response.data;
+      setUsers(Array.isArray(data) ? data : data?.users || []);
+    } catch (err) {
+      console.error('Failed to load users:', err);
     }
   };
 
@@ -125,6 +137,14 @@ export default function RoomsPage() {
         name: editRoomName,
         icon: editRoomIcon || null
       });
+
+      // Update owner separately via dedicated endpoint
+      const newOwnerId = editRoomOwnerId === '' ? null : parseInt(editRoomOwnerId, 10);
+      if (newOwnerId !== (selectedRoom.owner_id || null)) {
+        await apiClient.patch(`/api/rooms/${selectedRoom.id}/owner`, null, {
+          params: { owner_id: newOwnerId }
+        });
+      }
 
       setSuccess(t('rooms.roomUpdated', { name: editRoomName }));
       setShowEditModal(false);
@@ -279,6 +299,8 @@ export default function RoomsPage() {
     setSelectedRoom(room);
     setEditRoomName(room.name);
     setEditRoomIcon(room.icon || '');
+    setEditRoomOwnerId(room.owner_id != null ? String(room.owner_id) : '');
+    loadUsers();
     setShowEditModal(true);
   };
 
@@ -420,6 +442,17 @@ export default function RoomsPage() {
                     <span className="text-gray-500">{t('rooms.haNotLinked')}</span>
                   )}
                 </div>
+
+                {/* Owner */}
+                {room.owner_name && (
+                  <div className="flex items-center justify-between text-sm mb-2">
+                    <span className="text-gray-500 dark:text-gray-400">{t('rooms.owner')}:</span>
+                    <span className="text-gray-600 dark:text-gray-300 flex items-center space-x-1">
+                      <User className="w-3 h-3" />
+                      <span>{room.owner_name}</span>
+                    </span>
+                  </div>
+                )}
 
                 {/* Devices Summary */}
                 <div className="flex items-center justify-between text-sm mb-2">
@@ -591,6 +624,23 @@ export default function RoomsPage() {
                   placeholder="mdi:sofa"
                   className="input w-full"
                 />
+              </div>
+
+              <div>
+                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.owner')}</label>
+                <select
+                  value={editRoomOwnerId}
+                  onChange={(e) => setEditRoomOwnerId(e.target.value)}
+                  className="input w-full"
+                >
+                  <option value="">{t('rooms.noOwner')}</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.first_name || u.username}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-1">{t('rooms.ownerHint')}</p>
               </div>
 
               <div className="text-sm text-gray-500">

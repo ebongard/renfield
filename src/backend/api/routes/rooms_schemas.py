@@ -29,6 +29,9 @@ class RoomResponse(BaseModel):
     created_at: str | None
     updated_at: str | None
     last_synced_at: str | None
+    # Owner (Media Follow Me conflict resolution)
+    owner_id: int | None = None
+    owner_name: str | None = None
     # Device counts
     device_count: int = 0
     satellite_count: int = 0

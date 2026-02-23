@@ -16,7 +16,7 @@ from typing import Any
 from loguru import logger
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from models.database import (
     DEFAULT_CAPABILITIES,
@@ -143,13 +143,13 @@ class RoomService:
         return await self.get_room(room.id)
 
     async def get_room(self, room_id: int) -> Room | None:
-        """Get room by ID with devices loaded"""
+        """Get room by ID with devices and owner loaded"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.devices))
+            .options(selectinload(Room.devices), joinedload(Room.owner))
             .where(Room.id == room_id)
         )
-        return result.scalar_one_or_none()
+        return result.unique().scalar_one_or_none()
 
     async def get_room_by_name(self, name: str) -> Room | None:
         """Get room by exact name"""
@@ -180,13 +180,13 @@ class RoomService:
         return result.scalar_one_or_none()
 
     async def get_all_rooms(self) -> list[Room]:
-        """Get all rooms with devices loaded"""
+        """Get all rooms with devices and owner loaded"""
         result = await self.db.execute(
             select(Room)
-            .options(selectinload(Room.devices))
+            .options(selectinload(Room.devices), joinedload(Room.owner))
             .order_by(Room.name)
         )
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def update_room(
         self,
@@ -731,6 +731,8 @@ class RoomService:
             "ha_area_id": room.ha_area_id,
             "source": room.source,
             "icon": room.icon,
+            "owner_id": room.owner_id,
+            "owner_name": (room.owner.first_name or room.owner.username) if room.owner else None,
             "created_at": room.created_at.isoformat() if room.created_at else None,
             "updated_at": room.updated_at.isoformat() if room.updated_at else None,
             "last_synced_at": room.last_synced_at.isoformat() if room.last_synced_at else None,
