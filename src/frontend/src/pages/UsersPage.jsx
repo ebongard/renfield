@@ -8,9 +8,12 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
-  Users, UserPlus, UserCog, Pencil, Trash2, Loader, AlertCircle, CheckCircle,
+  Users, UserPlus, UserCog, Pencil, Trash2, Loader,
   Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw
 } from 'lucide-react';
 
@@ -251,17 +254,7 @@ export default function UsersPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="card">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <UserCog className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('users.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeader icon={UserCog} title={t('users.title')} subtitle={t('users.subtitle')} />
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
           <p className="text-gray-500 dark:text-gray-400">{t('users.loading')}</p>
@@ -273,36 +266,11 @@ export default function UsersPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <UserCog className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('users.title')}</h1>
-            <p className="text-gray-500 dark:text-gray-400">{t('users.subtitle')}</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={UserCog} title={t('users.title')} subtitle={t('users.subtitle')} />
 
       {/* Alerts */}
-      {error && (
-        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
-          <div className="flex items-center space-x-3">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-700 dark:text-red-400">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {success && (
-        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
-          <div className="flex items-center space-x-3">
-            <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-700 dark:text-green-400">{success}</p>
-          </div>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
@@ -353,20 +321,20 @@ export default function UsersPage() {
                         <span className="text-sm text-gray-500 dark:text-gray-400">({user.username})</span>
                       )}
                       {user.id === currentUser?.id && (
-                        <span className="text-xs bg-primary-600 text-white px-2 py-0.5 rounded-sm">{t('users.you')}</span>
+                        <Badge color="accent">{t('users.you')}</Badge>
                       )}
                       {!user.is_active && (
-                        <span className="text-xs bg-red-600 text-white px-2 py-0.5 rounded-sm">{t('users.inactive')}</span>
+                        <Badge color="red">{t('users.inactive')}</Badge>
                       )}
                     </div>
                     <div className="flex items-center space-x-3 text-sm text-gray-500 dark:text-gray-400">
-                      <span className={`px-2 py-0.5 rounded ${
-                        user.role_name === 'Admin' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                        user.role_name === 'Familie' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
-                        'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
-                      }`}>
+                      <Badge color={
+                        user.role_name === 'Admin' ? 'red' :
+                        user.role_name === 'Familie' ? 'blue' :
+                        'gray'
+                      }>
                         {user.role_name}
-                      </span>
+                      </Badge>
                       {user.email && <span>{user.email}</span>}
                       {user.speaker_id && (
                         <span className="flex items-center space-x-1 text-green-600 dark:text-green-400">
@@ -383,7 +351,7 @@ export default function UsersPage() {
                   {user.speaker_id ? (
                     <button
                       onClick={() => handleUnlinkSpeaker(user.id)}
-                      className="p-2 text-gray-500 hover:text-yellow-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-yellow-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="btn-icon btn-icon-ghost"
                       title={t('users.unlinkSpeaker')}
                     >
                       <Unlink className="w-5 h-5" />
@@ -391,7 +359,7 @@ export default function UsersPage() {
                   ) : (
                     <button
                       onClick={() => handleLinkSpeaker(user.id)}
-                      className="p-2 text-gray-500 hover:text-green-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-green-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="btn-icon btn-icon-ghost"
                       title={t('users.linkSpeaker')}
                       disabled={availableSpeakers.length === 0}
                     >
@@ -400,14 +368,14 @@ export default function UsersPage() {
                   )}
                   <button
                     onClick={() => handleEdit(user)}
-                    className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    className="btn-icon btn-icon-ghost"
                     title={t('users.editUser')}
                   >
                     <Pencil className="w-5 h-5" />
                   </button>
                   <button
                     onClick={() => handleDelete(user)}
-                    className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                    className="btn-icon btn-icon-danger"
                     title={t('users.deleteUser')}
                     disabled={user.id === currentUser?.id}
                   >

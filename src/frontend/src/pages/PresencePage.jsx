@@ -12,8 +12,11 @@ import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   MapPin, Users, Wifi, Smartphone, Plus, Trash2, RefreshCw,
-  AlertCircle, Clock, Watch, Radio, BarChart3, Bluetooth, Info,
+  Clock, Watch, Radio, BarChart3, Bluetooth, Info,
 } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import AnalyticsTab from '../components/presence/AnalyticsTab';
 
 
@@ -167,12 +170,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={t('presence.addDevice')}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400 flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0" />
-            {error}
-          </div>
-        )}
+        {error && <Alert variant="error">{error}</Alert>}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -378,16 +376,7 @@ export default function PresencePage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="card mb-6">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <MapPin className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('presence.title')}</h1>
-            </div>
-          </div>
-        </div>
+        <PageHeader icon={MapPin} title={t('presence.title')} />
         <div className="flex items-center justify-center p-12">
           <RefreshCw className="w-8 h-8 animate-spin text-blue-500" />
         </div>
@@ -398,20 +387,10 @@ export default function PresencePage() {
   return (
     <div className="p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <MapPin className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('presence.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('presence.subtitle')}</p>
-            </div>
-          </div>
-
+      <div className="mb-6">
+        <PageHeader icon={MapPin} title={t('presence.title')} subtitle={t('presence.subtitle')}>
           {activeTab === 'live' && (
-            <div className="flex items-center gap-4">
+            <>
               <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400 cursor-pointer">
                 <input
                   type="checkbox"
@@ -424,14 +403,14 @@ export default function PresencePage() {
 
               <button
                 onClick={loadPresence}
-                className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                className="btn-icon btn-icon-ghost"
                 title={t('common.refresh')}
               >
                 <RefreshCw className="w-5 h-5" />
               </button>
-            </div>
+            </>
           )}
-        </div>
+        </PageHeader>
       </div>
 
       {/* Tabs */}
@@ -496,12 +475,7 @@ export default function PresencePage() {
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-700 dark:text-red-400">
-          <AlertCircle className="w-5 h-5" />
-          {error}
-        </div>
-      )}
+      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
 
       {/* Room Occupancy Section */}
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
@@ -599,18 +573,14 @@ export default function PresencePage() {
                         </button>
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
-                          device.is_enabled
-                            ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
-                            : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400'
-                        }`}>
+                        <Badge color={device.is_enabled ? 'green' : 'gray'}>
                           {device.is_enabled ? t('presence.enabled') : t('common.offline')}
-                        </span>
+                        </Badge>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <button
                           onClick={() => handleDeleteDevice(device)}
-                          className="p-1.5 text-gray-400 hover:text-red-600 dark:hover:text-red-400 rounded-lg hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          className="btn-icon btn-icon-danger"
                           title={t('presence.deleteDevice')}
                         >
                           <Trash2 className="w-4 h-4" />

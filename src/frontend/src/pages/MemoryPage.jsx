@@ -7,19 +7,21 @@ import {
   Edit3,
   Eye,
   Calendar,
-  X
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 
 const CATEGORIES = ['preference', 'fact', 'instruction', 'context'];
 
-const CATEGORY_COLORS = {
-  preference: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300',
-  fact: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300',
-  instruction: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300',
-  context: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300',
+const CATEGORY_BADGE_COLORS = {
+  preference: 'purple',
+  fact: 'blue',
+  instruction: 'amber',
+  context: 'green',
 };
 
 export default function MemoryPage() {
@@ -166,44 +168,19 @@ export default function MemoryPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Brain className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-                {t('memory.title')}
-              </h1>
-              <p className="text-gray-500 dark:text-gray-400">
-                {t('memory.subtitle')}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <span className="text-sm text-gray-500 dark:text-gray-400">
-              {t('memory.count', { count: total })}
-            </span>
-            <button onClick={openCreateModal} className="btn-primary flex items-center space-x-2">
-              <Plus className="w-4 h-4" />
-              <span className="hidden sm:inline">{t('memory.addMemory')}</span>
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={Brain} title={t('memory.title')} subtitle={t('memory.subtitle')}>
+        <span className="text-sm text-gray-500 dark:text-gray-400">
+          {t('memory.count', { count: total })}
+        </span>
+        <button onClick={openCreateModal} className="btn-primary flex items-center space-x-2">
+          <Plus className="w-4 h-4" />
+          <span className="hidden sm:inline">{t('memory.addMemory')}</span>
+        </button>
+      </PageHeader>
 
       {/* Status messages */}
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-300">
-          {error}
-        </div>
-      )}
-      {success && (
-        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-300">
-          {success}
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Category filter */}
       <div className="flex flex-wrap gap-2">
@@ -251,20 +228,20 @@ export default function MemoryPage() {
             >
               {/* Category badge + actions */}
               <div className="flex items-start justify-between mb-2">
-                <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${CATEGORY_COLORS[memory.category] || 'bg-gray-100 text-gray-700'}`}>
+                <Badge color={CATEGORY_BADGE_COLORS[memory.category] || 'gray'}>
                   {t(`memory.categories.${memory.category}`)}
-                </span>
+                </Badge>
                 <div className="flex items-center space-x-1">
                   <button
                     onClick={() => openEditModal(memory)}
-                    className="p-1 rounded text-gray-400 hover:text-primary-600 dark:hover:text-primary-400 transition-colors"
+                    className="btn-icon btn-icon-ghost"
                     title={t('common.edit')}
                   >
                     <Edit3 className="w-3.5 h-3.5" />
                   </button>
                   <button
                     onClick={() => handleDelete(memory)}
-                    className="p-1 rounded text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    className="btn-icon btn-icon-danger"
                     title={t('common.delete')}
                   >
                     <Trash2 className="w-3.5 h-3.5" />

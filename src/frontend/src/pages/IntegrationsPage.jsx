@@ -7,18 +7,19 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import {
   Server,
   RefreshCw,
   AlertCircle,
-  CheckCircle,
   Loader,
   Wrench,
   Wifi,
   WifiOff,
   ChevronDown,
   ChevronRight,
-  Info,
 } from 'lucide-react';
 
 export default function IntegrationsPage() {
@@ -173,13 +174,9 @@ export default function IntegrationsPage() {
     }
   };
 
-  const getTransportBadge = (transport) => {
-    const colors = {
-      stdio: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
-      streamable_http: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
-      sse: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
-    };
-    return colors[transport] || 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
+  const transportBadgeColor = (transport) => {
+    const map = { stdio: 'blue', streamable_http: 'purple', sse: 'amber' };
+    return map[transport] || 'gray';
   };
 
   // Calculate stats
@@ -191,17 +188,7 @@ export default function IntegrationsPage() {
   if (loading) {
     return (
       <div className="space-y-6">
-        <div className="card">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Server className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('integrations.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('integrations.subtitle')}</p>
-            </div>
-          </div>
-        </div>
+        <PageHeader icon={Server} title={t('integrations.title')} subtitle={t('integrations.subtitle')} />
         <div className="card text-center py-12">
           <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
           <p className="text-gray-500 dark:text-gray-400">{t('integrations.loading')}</p>
@@ -213,46 +200,20 @@ export default function IntegrationsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Server className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('integrations.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('integrations.subtitle')}</p>
-            </div>
-          </div>
-          <button
-            onClick={handleRefresh}
-            disabled={refreshing}
-            className="btn btn-secondary flex items-center space-x-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-            <span>{t('integrations.refresh')}</span>
-          </button>
-        </div>
-      </div>
+      <PageHeader icon={Server} title={t('integrations.title')} subtitle={t('integrations.subtitle')}>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing}
+          className="btn btn-secondary flex items-center space-x-2"
+        >
+          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          <span>{t('integrations.refresh')}</span>
+        </button>
+      </PageHeader>
 
       {/* Alerts */}
-      {error && (
-        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
-          <div className="flex items-center space-x-3">
-            <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-            <p className="text-red-700 dark:text-red-400">{error}</p>
-          </div>
-        </div>
-      )}
-
-      {success && (
-        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
-          <div className="flex items-center space-x-3">
-            <CheckCircle className="w-5 h-5 text-green-500 flex-shrink-0" />
-            <p className="text-green-700 dark:text-green-400">{success}</p>
-          </div>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Overall Stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
@@ -277,15 +238,9 @@ export default function IntegrationsPage() {
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
             {t('integrations.mcpServers')}
           </h2>
-          {mcpStatus?.enabled ? (
-            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-              {t('integrations.enabled')}
-            </span>
-          ) : (
-            <span className="px-2 py-0.5 text-xs font-medium rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
-              {t('integrations.disabled')}
-            </span>
-          )}
+          <Badge color={mcpStatus?.enabled ? 'green' : 'gray'}>
+            {mcpStatus?.enabled ? t('integrations.enabled') : t('integrations.disabled')}
+          </Badge>
         </div>
 
         {/* Server List */}
@@ -319,23 +274,17 @@ export default function IntegrationsPage() {
                       <span className="font-medium text-gray-900 dark:text-white">
                         {server.name}
                       </span>
-                      <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${getTransportBadge(server.transport)}`}>
+                      <Badge color={transportBadgeColor(server.transport)}>
                         {server.transport}
-                      </span>
+                      </Badge>
                     </div>
                     <div className="flex items-center space-x-4">
                       <span className="text-sm text-gray-500 dark:text-gray-400">
                         {server.tool_count}/{server.total_tool_count || server.tool_count} {t('integrations.tools')}
                       </span>
-                      {server.connected ? (
-                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300">
-                          {t('integrations.online')}
-                        </span>
-                      ) : (
-                        <span className="px-2 py-1 text-xs font-medium rounded-full bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300">
-                          {t('integrations.offline')}
-                        </span>
-                      )}
+                      <Badge color={server.connected ? 'green' : 'red'}>
+                        {server.connected ? t('integrations.online') : t('integrations.offline')}
+                      </Badge>
                     </div>
                   </div>
 

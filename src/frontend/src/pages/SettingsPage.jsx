@@ -8,9 +8,11 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import {
-  Settings, Mic, Loader, AlertCircle, CheckCircle, RefreshCw, Save,
+  Settings, Mic, Loader, CheckCircle, RefreshCw, Save,
   Satellite, Monitor, XCircle, Clock
 } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -165,18 +167,8 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <div className="p-6">
-        <div className="card mb-6">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Settings className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-                {t('settings.title')}
-              </h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
-            </div>
-          </div>
+        <div className="mb-6">
+          <PageHeader icon={Settings} title={t('settings.title')} subtitle={t('settings.subtitle')} />
         </div>
         <div className="flex items-center justify-center p-12">
           <Loader className="w-8 h-8 animate-spin text-blue-500" />
@@ -189,42 +181,25 @@ export default function SettingsPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Settings className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-                {t('settings.title')}
-              </h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('settings.subtitle')}</p>
-            </div>
-          </div>
+      <div className="mb-6">
+        <PageHeader icon={Settings} title={t('settings.title')} subtitle={t('settings.subtitle')}>
           <button
             onClick={loadSettings}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            className="btn-icon btn-icon-ghost"
             title={t('common.refresh')}
           >
             <RefreshCw className="w-5 h-5" />
           </button>
-        </div>
+        </PageHeader>
       </div>
 
       {/* Error/Success Messages */}
       {error && (
-        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2 text-red-700 dark:text-red-400">
-          <AlertCircle className="w-5 h-5" />
-          {error}
-        </div>
+        <Alert variant="error" className="mb-4">{error}</Alert>
       )}
 
       {success && (
-        <div className="mb-4 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-center gap-2 text-green-700 dark:text-green-400">
-          <CheckCircle className="w-5 h-5" />
-          {success}
-        </div>
+        <Alert variant="success" className="mb-4">{success}</Alert>
       )}
 
       {/* Wake Word Settings Card */}

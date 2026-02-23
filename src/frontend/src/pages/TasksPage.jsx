@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
 import apiClient from '../utils/axios';
+import PageHeader from '../components/PageHeader';
+import Badge from '../components/Badge';
 
 export default function TasksPage() {
   const { t } = useTranslation();
@@ -45,17 +47,11 @@ export default function TasksPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <CheckSquare className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('tasks.title')}</h1>
-            <p className="text-gray-500 dark:text-gray-400">{t('tasks.subtitle')}</p>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon={CheckSquare}
+        title={t('tasks.title')}
+        subtitle={t('tasks.subtitle')}
+      />
 
       {/* Filters */}
       <div className="flex space-x-2 overflow-x-auto">
@@ -107,14 +103,13 @@ export default function TasksPage() {
                     </p>
                   )}
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  task.status === 'completed' ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300' :
-                  task.status === 'failed' ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300' :
-                  task.status === 'running' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300' :
-                  'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
-                }`}>
+                <Badge color={
+                  task.status === 'completed' ? 'green' :
+                  task.status === 'failed' ? 'red' :
+                  task.status === 'running' ? 'blue' : 'yellow'
+                }>
                   {t(`tasks.${task.status}`)}
-                </span>
+                </Badge>
               </div>
             </div>
           ))

@@ -9,10 +9,13 @@ import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import {
-  FileSearch, Play, Square, Loader, AlertCircle, Check, X,
+  FileSearch, Play, Square, Loader, Check, X,
   RotateCcw, BarChart3, ClipboardList, Eye, ChevronLeft, ChevronRight,
-  Copy, Users, FileText, Languages
+  Copy, Users, FileText,
 } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 
 const TABS = ['control', 'review', 'ocr', 'completeness', 'duplicates', 'correspondents', 'stats'];
 const PAGE_SIZE = 20;
@@ -407,22 +410,8 @@ export default function PaperlessAuditPage() {
   if (notConfigured) {
     return (
       <div className="space-y-6">
-        <div className="card">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <FileSearch className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-                {t('paperlessAudit.title')}
-              </h1>
-            </div>
-          </div>
-        </div>
-        <div className="card p-8 text-center">
-          <AlertCircle className="w-12 h-12 text-yellow-500 mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-300">{t('paperlessAudit.notConfigured')}</p>
-        </div>
+        <PageHeader icon={FileSearch} title={t('paperlessAudit.title')} />
+        <Alert variant="warning">{t('paperlessAudit.notConfigured')}</Alert>
       </div>
     );
   }
@@ -440,26 +429,10 @@ export default function PaperlessAuditPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <FileSearch className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-              {t('paperlessAudit.title')}
-            </h1>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={FileSearch} title={t('paperlessAudit.title')} />
 
       {/* Error */}
-      {error && (
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500 shrink-0" />
-          <p className="text-red-700 dark:text-red-300">{error}</p>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">
@@ -681,7 +654,7 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
           <button
             onClick={onStop}
             disabled={stopping}
-            className="btn-secondary flex items-center gap-2 text-red-600 dark:text-red-400 border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+            className="btn btn-danger flex items-center gap-2"
           >
             {stopping ? <Loader className="w-4 h-4 animate-spin" /> : <Square className="w-4 h-4" />}
             {t('paperlessAudit.control.stop')}
@@ -807,9 +780,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                     {r.suggested_tags && r.suggested_tags.length > 0 && (
                       <div className="mt-1 flex flex-wrap gap-1">
                         {r.suggested_tags.map((tag, i) => (
-                          <span key={i} className="inline-block px-1.5 py-0.5 text-xs bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 rounded">
-                            {tag}
-                          </span>
+                          <Badge key={i} color="accent">{tag}</Badge>
                         ))}
                       </div>
                     )}
@@ -825,9 +796,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                   </td>
                   <td className="py-3 px-2">
                     {r.detected_language && (
-                      <span className="inline-block px-1.5 py-0.5 text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded font-mono">
-                        {r.detected_language}
-                      </span>
+                      <Badge color="blue" className="font-mono">{r.detected_language}</Badge>
                     )}
                   </td>
                   <td className="py-3 px-2">
@@ -837,9 +806,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                     {r.missing_fields && r.missing_fields.length > 0 && (
                       <div className="flex flex-wrap gap-1">
                         {r.missing_fields.map((f, i) => (
-                          <span key={i} className="inline-block px-1.5 py-0.5 text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded">
-                            {f}
-                          </span>
+                          <Badge key={i} color="yellow">{f}</Badge>
                         ))}
                       </div>
                     )}
@@ -852,7 +819,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                       <button
                         onClick={() => onApprove([r.id])}
                         disabled={isLoading}
-                        className="p-1.5 rounded text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                        className="btn-icon text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20"
                         title={t('paperlessAudit.review.approve')}
                       >
                         {isLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
@@ -860,7 +827,7 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
                       <button
                         onClick={() => onSkip([r.id])}
                         disabled={isLoading}
-                        className="p-1.5 rounded text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                        className="btn-icon btn-icon-ghost"
                         title={t('paperlessAudit.review.skip')}
                       >
                         <X className="w-4 h-4" />
@@ -1046,10 +1013,9 @@ function StatsTab({ t, stats, loading }) {
             {Object.entries(stats.language_distribution)
               .sort(([, a], [, b]) => b - a)
               .map(([lang, count]) => (
-                <div key={lang} className="flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 rounded">
-                  <span className="font-mono text-sm font-medium text-blue-700 dark:text-blue-300">{lang}</span>
-                  <span className="text-sm text-gray-600 dark:text-gray-400">{count}</span>
-                </div>
+                <Badge key={lang} color="blue" className="font-mono text-sm px-3 py-2">
+                  {lang} <span className="text-gray-600 dark:text-gray-400 ml-1">{count}</span>
+                </Badge>
               ))}
           </div>
         </div>
@@ -1187,9 +1153,7 @@ function DuplicatesTab({ t, groups, loading, detecting, onDetect }) {
                     <span className="text-sm text-gray-900 dark:text-gray-100 flex-1 truncate">{doc.current_title || '-'}</span>
                     <span className="text-xs text-gray-500 dark:text-gray-400">{doc.current_correspondent}</span>
                     {doc.duplicate_score != null && (
-                      <span className="text-xs font-mono text-orange-600 dark:text-orange-400">
-                        {(doc.duplicate_score * 100).toFixed(0)}%
-                      </span>
+                      <Badge color="amber" className="font-mono">{(doc.duplicate_score * 100).toFixed(0)}%</Badge>
                     )}
                   </div>
                 ))}
@@ -1247,10 +1211,10 @@ function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onSc
               <div className="font-medium text-gray-900 dark:text-white mb-2">{cluster.canonical}</div>
               <div className="flex flex-wrap gap-2">
                 {cluster.variants.map((v, j) => (
-                  <span key={j} className="inline-flex items-center gap-1.5 px-2 py-1 bg-orange-50 dark:bg-orange-900/20 text-orange-700 dark:text-orange-300 rounded text-sm">
+                  <Badge key={j} color="amber">
                     {v.name}
-                    <span className="text-xs font-mono opacity-70">{(v.similarity * 100).toFixed(0)}%</span>
-                  </span>
+                    <span className="text-xs font-mono opacity-70 ml-1">{(v.similarity * 100).toFixed(0)}%</span>
+                  </Badge>
                 ))}
               </div>
             </div>
@@ -1289,9 +1253,9 @@ function Pagination({ page, totalPages, onPageChange }) {
       <button
         onClick={() => onPageChange(Math.max(0, page - 1))}
         disabled={page === 0}
-        className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+        className="btn-icon btn-icon-ghost disabled:opacity-30"
       >
-        <ChevronLeft className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+        <ChevronLeft className="w-4 h-4" />
       </button>
       <span className="text-sm text-gray-600 dark:text-gray-400">
         {page + 1} / {totalPages}
@@ -1299,9 +1263,9 @@ function Pagination({ page, totalPages, onPageChange }) {
       <button
         onClick={() => onPageChange(Math.min(totalPages - 1, page + 1))}
         disabled={page >= totalPages - 1}
-        className="p-1.5 rounded hover:bg-gray-100 dark:hover:bg-gray-700 disabled:opacity-30 transition-colors"
+        className="btn-icon btn-icon-ghost disabled:opacity-30"
       >
-        <ChevronRight className="w-4 h-4 text-gray-600 dark:text-gray-300" />
+        <ChevronRight className="w-4 h-4" />
       </button>
     </div>
   );

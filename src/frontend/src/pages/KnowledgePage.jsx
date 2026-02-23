@@ -21,6 +21,9 @@ import {
 } from 'lucide-react';
 import apiClient from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 
 export default function KnowledgePage() {
   const { t } = useTranslation();
@@ -323,26 +326,15 @@ export default function KnowledgePage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <BookOpen className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('knowledge.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('knowledge.subtitle')}</p>
-            </div>
-          </div>
-          <button
-            onClick={() => setShowNewKbModal(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus className="w-4 h-4" />
-            {t('knowledge.newKnowledgeBase')}
-          </button>
-        </div>
-      </div>
+      <PageHeader icon={BookOpen} title={t('knowledge.title')} subtitle={t('knowledge.subtitle')}>
+        <button
+          onClick={() => setShowNewKbModal(true)}
+          className="btn-primary flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
+          {t('knowledge.newKnowledgeBase')}
+        </button>
+      </PageHeader>
 
       {/* Statistics */}
       {stats && (
@@ -469,15 +461,16 @@ export default function KnowledgePage() {
           </label>
         </div>
         {uploadProgress && (
-          <div className={`mt-4 p-3 rounded-lg ${
-            uploadProgress.includes('Fehler')
-              ? 'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
-              : uploadProgress.includes('Erfolgreich')
-              ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300'
-              : 'bg-blue-100 text-blue-700 dark:bg-blue-900/50 dark:text-blue-300'
-          }`}>
+          <Alert
+            variant={
+              uploadProgress.includes('Fehler') ? 'error'
+              : uploadProgress.includes('Erfolgreich') ? 'success'
+              : 'info'
+            }
+            className="mt-4"
+          >
             {uploadProgress}
-          </div>
+          </Alert>
         )}
       </div>
 
@@ -531,9 +524,9 @@ export default function KnowledgePage() {
                       </span>
                     )}
                   </div>
-                  <span className="text-xs px-2 py-1 bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300 rounded-sm">
+                  <Badge color="accent">
                     {t('knowledge.relevance', { percent: Math.round(result.similarity * 100) })}
-                  </span>
+                  </Badge>
                 </div>
                 <p className="text-gray-700 dark:text-gray-300 text-sm line-clamp-3">
                   {result.chunk.content}
@@ -661,25 +654,20 @@ export default function KnowledgePage() {
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-2">
                       {getStatusIcon(doc.status)}
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-medium ${
-                          doc.status === 'completed'
-                            ? 'bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300'
-                            : doc.status === 'failed'
-                            ? 'bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-300'
-                            : doc.status === 'processing'
-                            ? 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'
-                            : 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-300'
-                        }`}
-                      >
+                      <Badge color={
+                        doc.status === 'completed' ? 'green'
+                        : doc.status === 'failed' ? 'red'
+                        : doc.status === 'processing' ? 'blue'
+                        : 'yellow'
+                      }>
                         {doc.status}
-                      </span>
+                      </Badge>
                     </div>
                     {knowledgeBases.length > 0 && (
                       <div className="relative">
                         <button
                           onClick={() => setShowMoveDropdown(showMoveDropdown === doc.id ? null : doc.id)}
-                          className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                          className="btn-icon btn-icon-ghost"
                           title={t('knowledge.moveDocument')}
                         >
                           <ArrowRightLeft className="w-4 h-4" />
@@ -694,14 +682,14 @@ export default function KnowledgePage() {
                     )}
                     <button
                       onClick={() => handleReindexDocument(doc.id)}
-                      className="p-2 text-gray-500 hover:text-primary-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-primary-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="btn-icon btn-icon-ghost"
                       title={t('knowledge.reindex')}
                     >
                       <RefreshCw className="w-4 h-4" />
                     </button>
                     <button
                       onClick={() => handleDeleteDocument(doc.id, doc.filename)}
-                      className="p-2 text-gray-500 hover:text-red-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-red-400 dark:hover:bg-gray-700 rounded-lg transition-colors"
+                      className="btn-icon btn-icon-danger"
                       title={t('common.delete')}
                     >
                       <Trash2 className="w-4 h-4" />

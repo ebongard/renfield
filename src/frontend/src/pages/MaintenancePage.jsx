@@ -13,6 +13,8 @@ import apiClient from '../utils/axios';
 import {
   Wrench, Search, Database, Bug, Loader, AlertCircle, CheckCircle
 } from 'lucide-react';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
 
 function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAction, variant }) {
   return (
@@ -161,18 +163,8 @@ export default function MaintenancePage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center gap-4">
-          <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-            <Wrench className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-          </div>
-          <div>
-            <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">
-              {t('maintenance.title')}
-            </h1>
-            <p className="text-gray-500 dark:text-gray-400">{t('maintenance.subtitle')}</p>
-          </div>
-        </div>
+      <div className="mb-6">
+        <PageHeader icon={Wrench} title={t('maintenance.title')} subtitle={t('maintenance.subtitle')} />
       </div>
 
       {/* Section 1: Search & Indexing */}
@@ -243,9 +235,9 @@ export default function MaintenancePage() {
         </p>
 
         {/* Warning */}
-        <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg text-sm text-amber-700 dark:text-amber-400">
+        <Alert variant="warning" className="mb-4">
           {t('maintenance.embeddings.reembedWarning')}
-        </div>
+        </Alert>
 
         <ActionRow
           title={t('maintenance.embeddings.reembedAll')}

@@ -8,8 +8,11 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 import {
-  Zap, Loader, AlertCircle, RefreshCw, CheckCircle, XCircle,
+  Zap, Loader, RefreshCw, CheckCircle, XCircle,
   ChevronDown, ChevronRight, Home, Brain, Camera, Workflow,
   MessageSquare, Puzzle, Server, Code
 } from 'lucide-react';
@@ -109,16 +112,17 @@ export default function IntentsPage() {
   if (error) {
     return (
       <div className="p-4">
-        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-red-500" />
-          <span className="text-red-700 dark:text-red-300">{error}</span>
-          <button
-            onClick={loadStatus}
-            className="ml-auto text-red-600 hover:text-red-800 dark:text-red-400"
-          >
-            <RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
+        <Alert variant="error">
+          <span className="flex items-center gap-3">
+            <span className="flex-1">{error}</span>
+            <button
+              onClick={loadStatus}
+              className="btn-icon btn-icon-ghost ml-auto"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </button>
+          </span>
+        </Alert>
       </div>
     );
   }
@@ -126,34 +130,23 @@ export default function IntentsPage() {
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
       {/* Header */}
-      <div className="card mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Zap className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('intents.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('intents.subtitle')}</p>
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={loadPrompt}
-              className="btn btn-secondary flex items-center gap-2"
-            >
-              <Code className="w-4 h-4" />
-              {t('intents.viewPrompt')}
-            </button>
-            <button
-              onClick={loadStatus}
-              className="btn btn-secondary flex items-center gap-2"
-            >
-              <RefreshCw className="w-4 h-4" />
-              {t('common.refresh')}
-            </button>
-          </div>
-        </div>
+      <div className="mb-6">
+        <PageHeader icon={Zap} title={t('intents.title')} subtitle={t('intents.subtitle')}>
+          <button
+            onClick={loadPrompt}
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <Code className="w-4 h-4" />
+            {t('intents.viewPrompt')}
+          </button>
+          <button
+            onClick={loadStatus}
+            className="btn btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            {t('common.refresh')}
+          </button>
+        </PageHeader>
       </div>
 
       {/* Summary Cards */}
@@ -280,17 +273,12 @@ export default function IntentsPage() {
                             {intent.parameters.length > 0 ? (
                               <div className="flex flex-wrap gap-1">
                                 {intent.parameters.map((param) => (
-                                  <span
+                                  <Badge
                                     key={param.name}
-                                    className={`px-2 py-0.5 rounded text-xs ${
-                                      param.required
-                                        ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300'
-                                        : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'
-                                    }`}
-                                    title={param.description}
+                                    color={param.required ? 'red' : 'gray'}
                                   >
                                     {param.name}{param.required && '*'}
-                                  </span>
+                                  </Badge>
                                 ))}
                               </div>
                             ) : (
