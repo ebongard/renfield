@@ -33,9 +33,9 @@ const features = [
     description: 'Learns preferences and facts over time with contradiction detection and semantic recall.',
   },
   {
-    icon: '\u{1F3E0}',
-    title: 'Smart Home',
-    description: 'Control Home Assistant devices with natural language. Dynamic keyword matching for accurate intent.',
+    icon: '\u{1F3B5}',
+    title: 'Media Follow Me',
+    description: 'Music follows you between rooms via DLNA and TuneIn. Room owner priority and per-user opt-out.',
   },
   {
     icon: '\u{1F512}',
@@ -47,14 +47,16 @@ const features = [
 
 <section class="py-20 sm:py-28">
   <div class="max-w-6xl mx-auto px-4 sm:px-6">
-    <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
-      Features
-    </h2>
-    <p class="text-center text-gray-600 dark:text-gray-400 mb-12 max-w-2xl mx-auto">
-      Everything you need for a private, self-hosted AI assistant.
-    </p>
+    <div class="reveal">
+      <h2 class="font-serif text-3xl sm:text-4xl font-bold text-center text-gray-900 dark:text-white mb-4">
+        Features
+      </h2>
+      <p class="text-center text-gray-600 dark:text-gray-400 mb-12 max-w-2xl mx-auto">
+        Everything you need for a private, self-hosted AI assistant.
+      </p>
+    </div>
 
-    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 reveal-stagger">
       {features.map((f) => (
         <FeatureCard icon={f.icon} title={f.title} description={f.description} />
       ))}

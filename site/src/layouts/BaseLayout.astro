@@ -21,6 +21,11 @@ const description = 'Self-hosted AI assistant with voice satellites, 100+ tool i
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>{title}</title>
 
+    <!-- Brand Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
+
     <!-- Analytics -->
     <script defer src="https://analytics.renfield.de/script.js" data-website-id="74193c41-37b0-4423-b59e-5715b7ef5206"></script>
 
@@ -37,5 +42,15 @@ const description = 'Self-hosted AI assistant with voice satellites, 100+ tool i
   </head>
   <body class="min-h-screen">
     <slot />
+
+    <!-- Scroll-triggered reveal animations -->
+    <script is:inline>
+      const observer = new IntersectionObserver(function(entries) {
+        entries.forEach(function(e) {
+          if (e.isIntersecting) e.target.classList.add('visible');
+        });
+      }, { threshold: 0.1, rootMargin: '0px 0px -40px 0px' });
+      document.querySelectorAll('.reveal').forEach(function(el) { observer.observe(el); });
+    </script>
   </body>
 </html>

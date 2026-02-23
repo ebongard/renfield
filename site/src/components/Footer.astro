@@ -1,24 +1,47 @@
 ---
 ---
 
-<footer class="py-10 border-t border-gray-200 dark:border-gray-800">
-  <div class="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4 text-sm text-gray-500 dark:text-gray-400">
-    <div class="flex items-center gap-2">
-      <img src="/logo-icon.svg" alt="Renfield" class="h-5 w-auto" />
-      <span>Renfield</span>
-    </div>
+<footer class="py-10 border-t border-transparent bg-gradient-to-t from-gray-100 dark:from-gray-900/50 to-transparent">
+  <!-- Gradient top border -->
+  <div class="h-px bg-gradient-to-r from-transparent via-brand-red/30 to-transparent mb-8"></div>
 
-    <div class="flex items-center gap-4">
-      <a
-        href="https://github.com/ebongard/renfield"
-        target="_blank"
-        rel="noopener noreferrer"
-        class="hover:text-gray-900 dark:hover:text-white transition-colors"
-      >
-        GitHub
-      </a>
-      <span>&middot;</span>
-      <span>MIT License</span>
+  <div class="max-w-6xl mx-auto px-4 sm:px-6">
+    <div class="flex flex-col items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
+      <!-- Logo + Name -->
+      <div class="flex items-center gap-2">
+        <img src="/logo-icon.svg" alt="Renfield" class="h-6 w-auto" />
+        <span class="font-serif font-semibold text-gray-700 dark:text-gray-200 tracking-wide">RENFIELD</span>
+      </div>
+
+      <!-- Tagline -->
+      <p class="text-xs tracking-wide">Made with local LLMs — no cloud required</p>
+
+      <!-- Links + Badge -->
+      <div class="flex items-center gap-4">
+        <a
+          href="https://github.com/ebongard/renfield"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="hover:text-gray-900 dark:hover:text-white transition-colors"
+        >
+          GitHub
+        </a>
+        <span>&middot;</span>
+        <span>MIT License</span>
+        <span>&middot;</span>
+        <a
+          href="https://github.com/ebongard/renfield"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <img
+            src="https://img.shields.io/github/stars/ebongard/renfield?style=flat&color=C41E3A&labelColor=1f2937"
+            alt="GitHub Stars"
+            class="h-5"
+            loading="lazy"
+          />
+        </a>
+      </div>
     </div>
   </div>
 </footer>
