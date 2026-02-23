@@ -479,6 +479,7 @@ export default function RoomsPage() {
 
                 {/* Output Device Settings */}
                 <RoomOutputSettings roomId={room.id} roomName={room.name} />
+                <RoomOutputSettings roomId={room.id} roomName={room.name} outputType="visual" />
 
                 {/* Actions */}
                 <div className="flex space-x-2">

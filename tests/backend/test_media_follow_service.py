@@ -475,7 +475,48 @@ class TestMediaType:
         assert MediaType.SINGLE_URL == "single_url"
         assert MediaType.DLNA_ALBUM == "dlna_album"
         assert MediaType.RADIO == "radio"
+        assert MediaType.DLNA_VIDEO == "dlna_video"
 
     def test_from_string(self):
         assert MediaType("single_url") == MediaType.SINGLE_URL
         assert MediaType("radio") == MediaType.RADIO
+        assert MediaType("dlna_video") == MediaType.DLNA_VIDEO
+
+
+# =============================================================================
+# DLNA Video Resume
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestResumeVideoPlayback:
+    async def test_dlna_video_resume(self, service):
+        """DLNA_VIDEO session resumed correctly via _play_video_on_dlna."""
+        service.register_playback(
+            user_id=1,
+            room_id=10,
+            room_name="Wohnzimmer",
+            media_type=MediaType.DLNA_VIDEO,
+            album_id="movie1",  # reused as item_id
+            title="Interstellar",
+            media_url="http://jellyfin/Videos/movie1/stream",
+            renderer_name="Samsung TV",
+        )
+        session = service.get_session(1)
+        session.state = SessionState.SUSPENDED
+        session.suspended_at = time.time()
+
+        mock_result = {"success": True, "message": "Playing"}
+        with patch("services.media_follow_service.settings") as mock_settings, \
+             patch("services.internal_tools.InternalToolService._play_video_on_dlna",
+                   new_callable=AsyncMock, return_value=mock_result) as mock_play:
+            mock_settings.media_follow_resume_delay = 0
+            await service._resume_playback(session, 20, "Schlafzimmer")
+            mock_play.assert_called_once()
+            call_params = mock_play.call_args.args[0]
+            assert call_params["item_id"] == "movie1"
+            assert call_params["room_name"] == "Schlafzimmer"
+
+        assert session.state == SessionState.PLAYING
+        assert session.room_id == 20
+        assert session.room_name == "Schlafzimmer"

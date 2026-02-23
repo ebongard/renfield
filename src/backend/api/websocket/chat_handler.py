@@ -383,16 +383,18 @@ async def _retrieve_memory_context(content: str, user_id: int | None, lang: str)
         from services.conversation_memory_service import ConversationMemoryService
         from services.prompt_manager import prompt_manager
 
-        try:
-            async with AsyncSessionLocal() as db:
-                service = ConversationMemoryService(db)
-                memories = await service.retrieve(content, user_id=user_id)
-                if memories:
-                    lines = []
-                    for m in memories:
-                        cat_label = m["category"].upper()
-                        lines.append(f"- [{cat_label}] {m['content']}")
-                    memories_str = "\n".join(lines)
+    try:
+        async with AsyncSessionLocal() as db:
+            service = ConversationMemoryService(db)
+            memories = await service.retrieve(content, user_id=user_id)
+            if not memories:
+                return ""
+
+            lines = []
+            for m in memories:
+                cat_label = m["category"].upper()
+                lines.append(f"- [{cat_label}] {m['content']}")
+            memories_str = "\n".join(lines)
 
                     sections.append(prompt_manager.get(
                         "chat", "memory_context_section", lang=lang,

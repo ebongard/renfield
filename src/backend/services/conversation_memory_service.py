@@ -388,6 +388,72 @@ class ConversationMemoryService:
 
         return memories
 
+    async def retrieve_essential(
+        self,
+        user_id: int | None = None,
+        limit: int | None = None,
+    ) -> list[dict]:
+        """
+        Retrieve high-importance memories regardless of query similarity.
+
+        Essential memories (importance >= threshold, category != 'context')
+        are always injected into the LLM context so the assistant knows
+        the user's name, location, preferences, etc.
+
+        Returns:
+            List of dicts with id, content, category, importance, similarity=1.0
+        """
+        threshold = settings.memory_essential_threshold
+        limit = limit or settings.memory_retrieval_limit
+
+        user_filter = "AND user_id = :user_id" if user_id is not None else ""
+
+        sql = text(f"""
+            SELECT id, content, category, importance, access_count, created_at
+            FROM conversation_memories
+            WHERE is_active = true
+              AND importance >= :threshold
+              AND category != 'context'
+              {user_filter}
+            ORDER BY importance DESC
+            LIMIT :limit
+        """)
+
+        params: dict = {"threshold": threshold, "limit": limit}
+        if user_id is not None:
+            params["user_id"] = user_id
+
+        result = await self.db.execute(sql, params)
+        rows = result.fetchall()
+
+        memories = []
+        memory_ids = []
+        for row in rows:
+            memories.append({
+                "id": row.id,
+                "content": row.content,
+                "category": row.category,
+                "importance": row.importance,
+                "access_count": row.access_count,
+                "created_at": row.created_at.isoformat() if row.created_at else None,
+                "similarity": 1.0,
+            })
+            memory_ids.append(row.id)
+
+        # Update access tracking
+        if memory_ids:
+            await self.db.execute(
+                update(ConversationMemory)
+                .where(ConversationMemory.id.in_(memory_ids))
+                .values(
+                    access_count=ConversationMemory.access_count + 1,
+                    last_accessed_at=datetime.now(UTC).replace(tzinfo=None),
+                )
+            )
+            await self.db.commit()
+
+        return memories
+
     # =========================================================================
     # Cleanup
     # =========================================================================

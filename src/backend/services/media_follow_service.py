@@ -22,6 +22,10 @@ class MediaType(str, Enum):
     SINGLE_URL = "single_url"      # HA media_player.play_media
     DLNA_ALBUM = "dlna_album"      # DLNA play_tracks (album queue)
     RADIO = "radio"                # Radio stream (TuneIn)
+<<<<<<< HEAD
+=======
+    DLNA_VIDEO = "dlna_video"      # DLNA video playback (Jellyfin movie/episode)
+>>>>>>> upstream/main
 
 
 class SessionState(str, Enum):
@@ -274,6 +278,17 @@ class MediaFollowService:
                         "album_name": session.album_name or "",
                     })
 
+<<<<<<< HEAD
+=======
+            elif session.media_type == MediaType.DLNA_VIDEO:
+                if session.album_id:  # album_id reused as item_id for videos
+                    result = await svc._play_video_on_dlna({
+                        "item_id": session.album_id,
+                        "room_name": new_room_name,
+                        "title": session.title or "",
+                    })
+
+>>>>>>> upstream/main
             if result.get("success"):
                 session.room_id = new_room_id
                 session.room_name = new_room_name

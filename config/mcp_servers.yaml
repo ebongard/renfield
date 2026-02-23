@@ -115,6 +115,9 @@ servers:
       - list_artists
       - list_movies
       - list_series
+      - get_series_seasons
+      - get_season_episodes
+      - get_next_up
       - library_stats
     examples:
       de:
@@ -122,11 +125,69 @@ servers:
         - "Zeige meine Alben"
         - "Welche Filme habe ich?"
         - "Zeige meine Serien"
+        - "Spiel den Film Interstellar"
+        - "Naechste Folge Breaking Bad"
       en:
         - "Search music by Queen"
         - "Show my albums"
         - "What movies do I have?"
         - "Show my series"
+        - "Play the movie Interstellar"
+        - "Next episode of Breaking Bad"
+
+  # --- TuneIn Radio MCP Server ---
+  # Custom Python MCP server for TuneIn radio station search and streaming.
+  # Uses free public TuneIn API (opml.radiotime.com), no API key required.
+  # Optional: TUNEIN_PARTNER_ID for higher rate limits.
+  - name: radio
+    transport: stdio
+    command: python
+    args: ["-m", "renfield_mcp_tunein"]
+    enabled: "${RADIO_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.radio.search_stations
+    env:
+      TUNEIN_PARTNER_ID: "${TUNEIN_PARTNER_ID:-}"
+    prompt_tools:
+      - search_stations
+      - browse_categories
+    examples:
+      de:
+        - "Suche nach BBC Radio"
+        - "Zeige Jazz-Radiosender"
+        - "Spiel Radio im Wohnzimmer"
+      en:
+        - "Search for BBC Radio"
+        - "Show jazz radio stations"
+        - "Play radio in the living room"
+
+  # --- DLNA Media Renderer MCP Server ---
+  # Custom Python MCP server for DLNA renderer queue playback.
+  # Controls DLNA renderers directly (gapless queue via SetNextAVTransportURI).
+  # Uses Jellyfin's built-in DLNA server for media serving.
+  # Runs as standalone host service (not in Docker) — SSDP multicast needs LAN access.
+  - name: dlna
+    transport: streamable_http
+    url: "${DLNA_MCP_URL:-http://host.docker.internal:9091/mcp}"
+    enabled: "${DLNA_MCP_ENABLED:-false}"
+    refresh_interval: 300
+    example_intent: mcp.dlna.play_tracks
+    prompt_tools:
+      - list_renderers
+      - play_tracks
+      - stop
+      - pause
+      - resume
+      - next_track
+      - previous_track
+      - set_volume
+    examples:
+      de:
+        - "Spiel das Album im Arbeitszimmer"
+        - "Stoppe die Musik auf dem Samsung TV"
+      en:
+        - "Play the album in the study"
+        - "Stop music on the Samsung TV"
 
   # --- TuneIn Radio MCP Server ---
   # Custom Python MCP server for TuneIn radio station search and streaming.

@@ -564,12 +564,18 @@ def _detect_inner_error(message: str) -> bool:
     ``isError`` flag stays False.  This function parses the message to detect
     such inner failures.
 
+    Also detects ``{"error": "..."}`` without a ``success`` field — a common
+    pattern in simple MCP servers (e.g. DLNA).
+
     Returns True if the inner response indicates an error, False otherwise.
     """
     try:
         data = json.loads(message)
-        if isinstance(data, dict) and "success" in data:
-            return data["success"] is False
+        if isinstance(data, dict):
+            if "success" in data:
+                return data["success"] is False
+            if "error" in data and isinstance(data["error"], str):
+                return True
     except (json.JSONDecodeError, TypeError, ValueError):
         pass
     return False

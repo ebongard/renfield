@@ -19,10 +19,6 @@ import { useAuth } from '../context/AuthContext';
  * - Drag-and-drop reordering (simplified: up/down buttons)
  */
 export default function RoomOutputSettings({ roomId, roomName }) {
-  const { t } = useTranslation();
-  const { confirm, ConfirmDialogComponent } = useConfirmDialog();
-  const { isFeatureEnabled } = useAuth();
-  const showHA = isFeatureEnabled('smart_home');
   // State
   const [expanded, setExpanded] = useState(false);
   const [outputDevices, setOutputDevices] = useState([]);
@@ -50,7 +46,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
     try {
       setLoading(true);
       const response = await apiClient.get(`/api/rooms/${roomId}/output-devices`);
-      setOutputDevices(response.data);
+      setOutputDevices(response.data.filter(d => d.output_type === outputType));
     } catch (err) {
       console.error('Failed to load output devices:', err);
       setError('Ausgabegeraete konnten nicht geladen werden');
@@ -95,7 +91,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
       setAdding(true);
 
       const payload = {
-        output_type: 'audio',
+        output_type: outputType,
         allow_interruption: allowInterruption,
         tts_volume: ttsVolume / 100,
         priority: outputDevices.length + 1,
@@ -160,7 +156,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
     const deviceIds = newDevices.map(d => d.id);
 
     try {
-      await apiClient.post(`/api/rooms/${roomId}/output-devices/reorder?output_type=audio`, {
+      await apiClient.post(`/api/rooms/${roomId}/output-devices/reorder?output_type=${outputType}`, {
         device_ids: deviceIds
       });
       loadOutputDevices();
@@ -234,8 +230,12 @@ export default function RoomOutputSettings({ roomId, roomName }) {
         className="w-full flex items-center justify-between text-left hover:bg-gray-800 rounded-lg p-2 -m-2"
       >
         <div className="flex items-center space-x-2">
-          <Volume2 className="w-4 h-4 text-gray-400" />
-          <span className="text-sm text-gray-300">Audio-Ausgabe</span>
+          {isVisual ? (
+            <Monitor className="w-4 h-4 text-gray-400" />
+          ) : (
+            <Volume2 className="w-4 h-4 text-gray-400" />
+          )}
+          <span className="text-sm text-gray-300">{isVisual ? 'Visuelle Ausgabe' : 'Audio-Ausgabe'}</span>
           {outputDevices.length > 0 && (
             <span className="text-xs text-gray-500">({outputDevices.length})</span>
           )}
@@ -267,9 +267,15 @@ export default function RoomOutputSettings({ roomId, roomName }) {
             </div>
           ) : outputDevices.length === 0 ? (
             <p className="text-gray-500 text-xs text-center py-2">
-              Keine Ausgabegeraete konfiguriert.
-              <br />
-              TTS wird auf dem Eingabegeraet abgespielt.
+              {isVisual ? (
+                'Kein visuelles Ausgabegeraet konfiguriert.'
+              ) : (
+                <>
+                  Keine Ausgabegeraete konfiguriert.
+                  <br />
+                  TTS wird auf dem Eingabegeraet abgespielt.
+                </>
+              )}
             </p>
           ) : (
             /* Output Devices List */
@@ -365,7 +371,7 @@ export default function RoomOutputSettings({ roomId, roomName }) {
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">Ausgabegeraet hinzufuegen</h2>
+            <h2 className="text-xl font-bold text-white mb-4">{isVisual ? 'Visuelles Ausgabegeraet hinzufuegen' : 'Audio-Ausgabegeraet hinzufuegen'}</h2>
             <p className="text-gray-400 text-sm mb-4">Raum: {roomName}</p>
 
             <div className="space-y-4">
@@ -456,23 +462,25 @@ export default function RoomOutputSettings({ roomId, roomName }) {
                 )}
               </div>
 
-              {/* TTS Volume */}
-              <div>
-                <label className="block text-sm text-gray-400 mb-2">
-                  TTS Lautstaerke: {ttsVolume}%
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={ttsVolume}
-                  onChange={(e) => setTtsVolume(parseInt(e.target.value))}
-                  className="w-full"
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  Lautstaerke fuer TTS-Ausgabe (0 = keine Aenderung)
-                </p>
-              </div>
+              {/* TTS Volume (audio only) */}
+              {!isVisual && (
+                <div>
+                  <label className="block text-sm text-gray-400 mb-2">
+                    TTS Lautstaerke: {ttsVolume}%
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    value={ttsVolume}
+                    onChange={(e) => setTtsVolume(parseInt(e.target.value))}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Lautstaerke fuer TTS-Ausgabe (0 = keine Aenderung)
+                  </p>
+                </div>
+              )}
 
               {/* Allow Interruption */}
               <div className="flex items-center space-x-3">

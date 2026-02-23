@@ -39,10 +39,7 @@ de:
     - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, die zur aktuellen AUFGABE passen, nutze diese Ergebnisse (IDs, Titel) direkt weiter, anstatt eine neue Suche zu starten.
     - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
     - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail"), nutze ZUERST die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse. Starte KEINE neue Suche, wenn passende Ergebnisse bereits im Kontext vorliegen.
-    - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
-    - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
-    - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
-    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name.
+    - Um Medien in einem Raum abzuspielen: Nutze zuerst das Such-Tool des Providers (z.B. mcp.jellyfin.search_media), dann mcp.jellyfin.get_stream_url für die URL, dann internal.play_in_room mit der URL und dem Raumnamen.
     - Beende NICHT mit final_answer, wenn noch offene Schritte aus der AUFGABE übrig sind. "Schick mir X zu Y" erfordert ALLE Schritte: (1) ggf. search, (2) download_document, (3) send_email. Erst NACH dem letzten Schritt darfst du final_answer geben.
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Gib final_answer wenn alle Informationen gesammelt sind und ALLE geforderten Aktionen abgeschlossen wurden
@@ -124,7 +121,7 @@ de:
     REGELN:
     - Nutze NUR Tools aus der Liste oben
     - Rufe pro Antwort GENAU EIN Tool auf
-    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}
+    - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}. Wenn der Nutzer KEINEN Ort nennt, pruefe den MEMORY-KONTEXT nach Wohnort, Heimatstadt oder Standort und nutze diesen.
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
     - Fasse Ergebnisse praezise zusammen mit konkreten Zahlen und Fakten
@@ -222,15 +219,8 @@ de:
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
     - Bei mehreren Treffern: waehle den besten Match nach Titel und Kuenstler
     - Wenn Informationen fehlen, frage den Benutzer
-    - Um die Wiedergabe zu stoppen oder Tracks zu wechseln: Nutze mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track wenn eine DLNA-Session aktiv ist. Alternativ: internal.media_control mit action (stop/pause/resume/next/previous) und room_name. Nutze NICHT play_in_room oder resolve_room_player dafuer.
-    - WICHTIG — RADIO abspielen: (1) mcp.radio.search_stations(query="<sendername>"), (2) internal.play_radio(station_id="<id>", room_name="<Raum>"). Nur 2 Schritte! Das Tool loest automatisch die Stream-URL auf und spielt sie ab. Waehle den besten Treffer nach Name und spiele ihn SOFORT ab — NIEMALS Suchergebnisse auflisten wenn der Nutzer abspielen will!
-    - Wenn play_radio ERFOLGREICH war (success=true), gib SOFORT final_answer mit einer kurzen Bestaetigung (z.B. "BBC Radio 1 spielt jetzt im Arbeitszimmer"). NIEMALS dasselbe Play-Tool nochmal aufrufen!
-    - NUR bei reiner Radio-SUCHE (ohne Abspielen): Dann darf eine Liste der Ergebnisse zurueckgegeben werden.
-    - RADIO-FAVORITEN: internal.list_radio_favorites zeigt gespeicherte Sender. internal.save_radio_favorite speichert einen Sender. internal.remove_radio_favorite entfernt einen.
-    - Wenn der Nutzer "mein Lieblingssender" oder "meine Radiosender" sagt, nutze internal.list_radio_favorites.
-    - RADIO-GENRE: Um Sender nach Genre zu finden, nutze mcp.radio.browse_categories(category="music") und dann browse_categories(category_id="<genre_id>").
+    - Wenn play_in_room meldet, dass das Geraet "busy" ist, informiere den Benutzer und frage ob die aktuelle Wiedergabe unterbrochen werden soll. Wenn ja, rufe play_in_room erneut mit force=true auf.
     - Beschreibe NIEMALS API-Aufrufe gegenueber dem Benutzer
-    - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff (nur Titel, ohne Kuenstler/Autor), (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss kurz, natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
@@ -331,7 +321,7 @@ de:
   room_context_template: |
     RAUM-KONTEXT: Der Benutzer befindet sich im Raum "{room_name}".
     Alle Aktionen ohne explizite Raumangabe beziehen sich auf diesen Raum.
-    Nutze "area": "{room_name}" fuer alle HA-Tool-Aufrufe, es sei denn der Benutzer nennt einen anderen Raum.
+    WICHTIG: Wenn der Benutzer einen ANDEREN Raum explizit nennt (z.B. "in der Kueche", "im Wohnzimmer"), nutze IMMER den genannten Raum, NICHT den Raum-Kontext. Der Raum-Kontext ist nur der Fallback wenn KEIN Raum genannt wird.
 
   # Conversation context template
   conv_context_template: |
@@ -410,10 +400,7 @@ en:
     - If the CONVERSATION CONTEXT already contains search results relevant to the current TASK, use those results (IDs, titles) directly instead of running a new search.
     - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
     - When the user wants to send a document ("send me", "email me"), FIRST use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified. Do NOT start a new search if matching results already exist in the context.
-    - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
-    - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
-    - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
-    - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name.
+    - To play media in a room: First use the provider's search tool (e.g. mcp.jellyfin.search_media), then mcp.jellyfin.get_stream_url for the URL, then internal.play_in_room with the URL and room name.
     - Do NOT give final_answer if there are still open steps from the TASK. "Send me X to Y" requires ALL steps: (1) optionally search, (2) download_document, (3) send_email. Only give final_answer AFTER the last step is completed.
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - Give final_answer when all information is gathered and ALL required actions have been completed
@@ -495,7 +482,7 @@ en:
     RULES:
     - Use ONLY tools from the list above
     - Call EXACTLY ONE tool per response
-    - For weather: Use get_weather with {{"location": "CityName"}}
+    - For weather: Use get_weather with {{"location": "CityName"}}. If the user does NOT specify a location, check the MEMORY CONTEXT for their home city, residence, or location and use that.
     - For web search: Use web_search/searxng_web_search
     - For news: Use search_articles or get_top_headlines
     - Summarize results precisely with concrete numbers and facts
@@ -593,15 +580,8 @@ en:
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!
     - When multiple results exist, choose the best match by title and artist
     - If information is missing, ask the user
-    - To stop playback or skip tracks: Use mcp.dlna.stop/mcp.dlna.next_track/mcp.dlna.previous_track if a DLNA session is active. Alternatively: internal.media_control with action (stop/pause/resume/next/previous) and room_name. Do NOT use play_in_room or resolve_room_player for this.
-    - IMPORTANT — RADIO playback: (1) mcp.radio.search_stations(query="<station>"), (2) internal.play_radio(station_id="<id>", room_name="<room>"). Only 2 steps! The tool automatically resolves the stream URL and plays it. Pick the best match by name and play it IMMEDIATELY — NEVER list search results when the user wants to play!
-    - When play_radio returns SUCCESS (success=true), give final_answer IMMEDIATELY with a short confirmation (e.g. "BBC Radio 1 is now playing in the office"). NEVER call the same play tool again!
-    - ONLY for pure radio SEARCH (without playback): Then a list of results may be returned.
-    - RADIO FAVORITES: internal.list_radio_favorites shows saved stations. internal.save_radio_favorite saves a station. internal.remove_radio_favorite removes one.
-    - When the user says "my favorite stations" or "my radio presets", use internal.list_radio_favorites.
-    - RADIO GENRE: To find stations by genre, use mcp.radio.browse_categories(category="music") then browse_categories(category_id="<genre_id>").
+    - If play_in_room reports the device is "busy", inform the user and ask if current playback should be interrupted. If yes, call play_in_room again with force=true.
     - Never describe API calls to the user
-    - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query (title only, without artist/author), (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be concise, natural, and in English
     - Reply ONLY with JSON
 
@@ -702,7 +682,7 @@ en:
   room_context_template: |
     ROOM CONTEXT: The user is in room "{room_name}".
     All actions without an explicit room reference apply to this room.
-    Use "area": "{room_name}" for all HA tool calls, unless the user names a different room.
+    IMPORTANT: When the user explicitly names a DIFFERENT room (e.g. "in the kitchen", "in the living room"), ALWAYS use the named room, NOT the room context. The room context is only a fallback when NO room is mentioned.
 
   # Conversation context template
   conv_context_template: |

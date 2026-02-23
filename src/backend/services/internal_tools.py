@@ -72,6 +72,19 @@ class InternalToolService:
                 "album_name": "Album title for display metadata (optional, from search_media results)",
             },
         },
+<<<<<<< HEAD
+=======
+        "internal.play_video_on_dlna": {
+            "description": "Play a Jellyfin movie or episode on a DLNA renderer (Smart TV). Fetches the video stream URL from Jellyfin and plays it with video DIDL metadata. Provide either renderer_name (direct) or room_name (resolves via visual output config).",
+            "parameters": {
+                "item_id": "Jellyfin item ID for the movie or episode (required)",
+                "renderer_name": "DLNA renderer name (optional if room_name given)",
+                "room_name": "Room name to resolve visual DLNA renderer (optional if renderer_name given)",
+                "title": "Display title (optional)",
+                "image_url": "Thumbnail URL (optional)",
+            },
+        },
+>>>>>>> upstream/main
         "internal.play_radio": {
             "description": "Play a radio station in a room. Resolves the stream URL from a station ID and plays it on the room's audio device. Use after mcp.radio.search_stations to get a station_id.",
             "parameters": {
@@ -111,6 +124,10 @@ class InternalToolService:
         "internal.knowledge_search": "_knowledge_search",
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
+<<<<<<< HEAD
+=======
+        "internal.play_video_on_dlna": "_play_video_on_dlna",
+>>>>>>> upstream/main
         "internal.play_radio": "_play_radio",
         "internal.save_radio_favorite": "_save_radio_favorite",
         "internal.list_radio_favorites": "_list_radio_favorites",
@@ -868,6 +885,226 @@ class InternalToolService:
                 "action_taken": False,
             }
 
+<<<<<<< HEAD
+=======
+    async def _resolve_room_visual_player(self, params: dict) -> dict:
+        """
+        Resolve room_name → visual DLNA renderer (Smart TV).
+
+        Analogous to _resolve_room_player but uses get_visual_output_for_room
+        instead of get_audio_output_for_room.
+        """
+        room_name = params.get("room_name", "").strip()
+        if not room_name:
+            return {
+                "success": False,
+                "message": "Parameter 'room_name' is required",
+                "action_taken": False,
+            }
+
+        try:
+            from services.database import AsyncSessionLocal
+            from services.output_routing_service import OutputRoutingService
+            from services.room_service import RoomService
+
+            async with AsyncSessionLocal() as db:
+                room_service = RoomService(db)
+                room = await room_service.get_room_by_name(room_name)
+                if not room:
+                    room = await room_service.get_room_by_alias(room_name)
+
+                if not room:
+                    return {
+                        "success": False,
+                        "message": f"Room '{room_name}' not found",
+                        "action_taken": False,
+                    }
+
+                routing_service = OutputRoutingService(db)
+                decision = await routing_service.get_visual_output_for_room(room.id)
+
+                if decision.reason == "no_output_devices_configured":
+                    return {
+                        "success": False,
+                        "message": f"No visual output device (Smart TV) configured for room '{room.name}'",
+                        "action_taken": False,
+                    }
+
+                if not decision.output_device:
+                    return {
+                        "success": False,
+                        "message": f"No visual output device available for room '{room.name}'",
+                        "action_taken": False,
+                    }
+
+                if decision.target_type == "dlna":
+                    return {
+                        "success": True,
+                        "message": f"Found visual DLNA renderer for {room.name}: {decision.output_device.dlna_renderer_name}",
+                        "action_taken": True,
+                        "data": {
+                            "target_type": "dlna",
+                            "dlna_renderer_name": decision.output_device.dlna_renderer_name,
+                            "room_name": room.name,
+                            "device_name": decision.output_device.device_name or decision.output_device.dlna_renderer_name,
+                        },
+                    }
+
+                return {
+                    "success": False,
+                    "message": f"Visual output device in room '{room.name}' is not a DLNA renderer",
+                    "action_taken": False,
+                }
+
+        except Exception as e:
+            logger.error(f"Error resolving visual player for '{room_name}': {e}")
+            return {
+                "success": False,
+                "message": f"Error resolving visual player: {e!s}",
+                "action_taken": False,
+            }
+
+    async def _play_video_on_dlna(self, params: dict) -> dict:
+        """
+        Play a Jellyfin movie or episode on a DLNA renderer (Smart TV).
+
+        1. Resolve renderer: room_name → visual output → DLNA renderer
+        2. Get video stream URL from Jellyfin via get_stream_url
+        3. Send to DLNA with media_type="video" for Movie DIDL metadata
+        """
+        item_id = (params.get("item_id") or "").strip()
+        renderer_name = (params.get("renderer_name") or "").strip()
+        room_name = (params.get("room_name") or "").strip()
+        title = (params.get("title") or "").strip()
+        image_url = (params.get("image_url") or "").strip()
+
+        if not item_id:
+            return {
+                "success": False,
+                "message": "Parameter 'item_id' is required",
+                "action_taken": False,
+            }
+
+        # Resolve renderer_name from room config (visual output) if not provided
+        if not renderer_name and room_name:
+            resolve_result = await self._resolve_room_visual_player({"room_name": room_name})
+            if not resolve_result.get("success"):
+                return resolve_result
+            data = resolve_result.get("data", {})
+            renderer_name = data.get("dlna_renderer_name", "")
+
+        if not renderer_name:
+            return {
+                "success": False,
+                "message": "Either 'renderer_name' or 'room_name' is required",
+                "action_taken": False,
+            }
+
+        try:
+            import json as _json
+
+            from main import app
+            mcp_manager = getattr(app.state, "mcp_manager", None)
+            if not mcp_manager:
+                return {
+                    "success": False,
+                    "message": "MCP manager not available",
+                    "action_taken": False,
+                }
+
+            # Step 1: Get video stream URL from Jellyfin
+            stream_result = await mcp_manager.execute_tool(
+                "mcp.jellyfin.get_stream_url",
+                {"item_id": item_id},
+            )
+            if not stream_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"Failed to get stream URL: {stream_result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            # Parse MCP response to extract video_stream URL
+            raw_text = ""
+            stream_data = stream_result.get("data", [])
+            if isinstance(stream_data, list):
+                for item in stream_data:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        raw_text = item.get("text", "")
+                        break
+            if not raw_text:
+                raw_text = stream_result.get("message", "")
+
+            try:
+                parsed = _json.loads(raw_text)
+            except (ValueError, TypeError):
+                parsed = {}
+
+            video_url = parsed.get("video_stream", "")
+            if not video_url:
+                return {
+                    "success": False,
+                    "message": "No video stream URL found for this item",
+                    "action_taken": False,
+                }
+
+            display_title = title or parsed.get("name", "Video")
+
+            # Step 2: Play via DLNA with video media_type
+            dlna_tracks = [{
+                "url": video_url,
+                "title": display_title,
+                "media_type": "video",
+            }]
+            if image_url:
+                dlna_tracks[0]["art_url"] = image_url
+
+            dlna_result = await mcp_manager.execute_tool(
+                "mcp.dlna.play_tracks",
+                {
+                    "renderer_name": renderer_name,
+                    "tracks": _json.dumps(dlna_tracks),
+                },
+            )
+
+            if not dlna_result.get("success"):
+                return {
+                    "success": False,
+                    "message": f"DLNA video playback failed: {dlna_result.get('message', 'unknown error')}",
+                    "action_taken": False,
+                }
+
+            # Register with Media Follow (reuse album_id field for item_id)
+            follow_room = room_name or renderer_name
+            await self._register_media_follow(
+                params, follow_room, "dlna_video",
+                album_id=item_id,
+                renderer_name=renderer_name,
+                title=display_title,
+                media_url=video_url,
+            )
+
+            return {
+                "success": True,
+                "message": f"Playing '{display_title}' on {renderer_name}",
+                "action_taken": True,
+                "data": {
+                    "title": display_title,
+                    "renderer": renderer_name,
+                    "item_id": item_id,
+                    "video_url": video_url,
+                },
+            }
+
+        except Exception as e:
+            logger.error(f"Error playing video on DLNA: {e}")
+            return {
+                "success": False,
+                "message": f"Error playing video on DLNA: {e!s}",
+                "action_taken": False,
+            }
+
+>>>>>>> upstream/main
     @staticmethod
     def _format_last_seen(last_seen: float) -> str:
         """Format a timestamp as human-readable relative time."""
