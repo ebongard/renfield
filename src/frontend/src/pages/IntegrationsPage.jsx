@@ -1,7 +1,3 @@
-/**
- * Integrations Page
- * Admin page for managing MCP server integrations
- */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -321,7 +317,7 @@ export default function IntegrationsPage() {
                                 resetServerTools(server.name);
                               }}
                               disabled={togglingTools[server.name]}
-                              className="text-xs text-gray-500 hover:text-primary-500 dark:text-gray-400 dark:hover:text-primary-400 transition-colors"
+                              className="text-xs text-primary-600 hover:text-primary-700 dark:text-primary-400 dark:hover:text-primary-300 transition-colors"
                             >
                               {togglingTools[server.name] ? (
                                 <Loader className="w-3 h-3 animate-spin inline mr-1" />
@@ -336,11 +332,10 @@ export default function IntegrationsPage() {
                               return (
                                 <div
                                   key={tool.name}
-                                  className={`flex items-center p-2 rounded-lg transition-colors ${
-                                    tool.active
+                                  className={`flex items-center p-2 rounded-lg transition-colors ${tool.active
                                       ? 'bg-gray-50 dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-750'
                                       : 'bg-gray-50/50 dark:bg-gray-800/50 opacity-50'
-                                  }`}
+                                    }`}
                                 >
                                   <button
                                     onClick={(e) => {
@@ -348,15 +343,13 @@ export default function IntegrationsPage() {
                                       toggleTool(server.name, tool.original_name, tool.active);
                                     }}
                                     disabled={isToggling}
-                                    className={`mr-2 relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                                      tool.active ? 'bg-indigo-500' : 'bg-gray-300 dark:bg-gray-600'
-                                    }`}
+                                    className={`mr-2 relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${tool.active ? 'bg-indigo-500' : 'bg-gray-300 dark:bg-gray-600'
+                                      }`}
                                     title={tool.active ? t('integrations.toolActive') : t('integrations.toolInactive')}
                                   >
                                     <span
-                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                                        tool.active ? 'translate-x-4' : 'translate-x-0'
-                                      }`}
+                                      className={`pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${tool.active ? 'translate-x-4' : 'translate-x-0'
+                                        }`}
                                     />
                                   </button>
                                   <button
@@ -366,14 +359,12 @@ export default function IntegrationsPage() {
                                     }}
                                     className="flex items-center space-x-2 text-left flex-1 min-w-0"
                                   >
-                                    <Wrench className={`w-4 h-4 flex-shrink-0 ${
-                                      tool.active ? 'text-indigo-500' : 'text-gray-400 dark:text-gray-600'
-                                    }`} />
-                                    <span className={`text-sm truncate ${
-                                      tool.active
+                                    <Wrench className={`w-4 h-4 flex-shrink-0 ${tool.active ? 'text-indigo-500' : 'text-gray-400 dark:text-gray-600'
+                                      }`} />
+                                    <span className={`text-sm truncate ${tool.active
                                         ? 'text-gray-700 dark:text-gray-300'
                                         : 'text-gray-400 dark:text-gray-500'
-                                    }`}>
+                                      }`}>
                                       {tool.original_name}
                                     </span>
                                   </button>

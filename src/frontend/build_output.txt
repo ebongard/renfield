@@ -1,0 +1,66 @@
+
+> renfield-frontend@1.0.0 build
+> vite build
+
+[36mvite v7.3.1 [32mbuilding client environment for production...[36m[39m
+transforming...
+[32m✓[39m 2502 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mregisterSW.js                                             [39m[1m[2m     0.13 kB[22m[1m[22m
+[2mdist/[22m[32mmanifest.webmanifest                                      [39m[1m[2m     0.39 kB[22m[1m[22m
+[2mdist/[22m[32mindex.html                                                [39m[1m[2m     1.30 kB[22m[1m[22m[2m │ gzip:     0.66 kB[22m
+[2mdist/[22m[32massets/cormorant-vietnamese-wght-normal-D6rXIIam.woff2    [39m[1m[2m     9.31 kB[22m[1m[22m
+[2mdist/[22m[32massets/dm-sans-latin-ext-wght-normal-BOFOeGcA.woff2       [39m[1m[2m    18.23 kB[22m[1m[22m
+[2mdist/[22m[32massets/cormorant-cyrillic-wght-normal-C1_dtFTU.woff2      [39m[1m[2m    22.05 kB[22m[1m[22m
+[2mdist/[22m[32massets/cormorant-cyrillic-ext-wght-normal-Bbszbot-.woff2  [39m[1m[2m    23.10 kB[22m[1m[22m
+[2mdist/[22m[32massets/cormorant-latin-ext-wght-normal-Bzx46pNl.woff2     [39m[1m[2m    30.34 kB[22m[1m[22m
+[2mdist/[22m[32massets/cormorant-latin-wght-normal-D7itQ8IL.woff2         [39m[1m[2m    35.34 kB[22m[1m[22m
+[2mdist/[22m[32massets/dm-sans-latin-wght-normal-Xz1IZZA0.woff2           [39m[1m[2m    36.93 kB[22m[1m[22m
+[2mdist/[22m[32massets/ort-wasm-simd-threaded-CxTQ5xH-.wasm               [39m[1m[2m11,905.54 kB[22m[1m[22m[2m │ gzip: 3,109.27 kB[22m
+[2mdist/[22m[35massets/index-fKq0K73U.css                                 [39m[1m[2m    96.51 kB[22m[1m[22m[2m │ gzip:    14.68 kB[22m
+[2mdist/[22m[36massets/chevron-up-CmIvwJ11.js                             [39m[1m[2m     0.13 kB[22m[1m[22m[2m │ gzip:     0.14 kB[22m
+[2mdist/[22m[36massets/chevron-left-BfuQd1QQ.js                           [39m[1m[2m     0.13 kB[22m[1m[22m[2m │ gzip:     0.14 kB[22m
+[2mdist/[22m[36massets/thermometer-CDb8_vdC.js                            [39m[1m[2m     0.16 kB[22m[1m[22m[2m │ gzip:     0.16 kB[22m
+[2mdist/[22m[36massets/clock-BCmkw16S.js                                  [39m[1m[2m     0.17 kB[22m[1m[22m[2m │ gzip:     0.16 kB[22m
+[2mdist/[22m[36massets/power-cqmxz28w.js                                  [39m[1m[2m     0.17 kB[22m[1m[22m[2m │ gzip:     0.17 kB[22m
+[2mdist/[22m[36massets/lock-C1IiZUHn.js                                   [39m[1m[2m     0.20 kB[22m[1m[22m[2m │ gzip:     0.19 kB[22m
+[2mdist/[22m[36massets/link-2-CkqdFgBi.js                                 [39m[1m[2m     0.24 kB[22m[1m[22m[2m │ gzip:     0.20 kB[22m
+[2mdist/[22m[36massets/database-Dly824BR.js                               [39m[1m[2m     0.24 kB[22m[1m[22m[2m │ gzip:     0.20 kB[22m
+[2mdist/[22m[36massets/chart-column-Bkr3xdpW.js                           [39m[1m[2m     0.25 kB[22m[1m[22m[2m │ gzip:     0.19 kB[22m
+[2mdist/[22m[36massets/pencil-DSaK7uzj.js                                 [39m[1m[2m     0.28 kB[22m[1m[22m[2m │ gzip:     0.22 kB[22m
+[2mdist/[22m[36massets/pen-line-AC3IjxXT.js                               [39m[1m[2m     0.28 kB[22m[1m[22m[2m │ gzip:     0.23 kB[22m
+[2mdist/[22m[36massets/house-CAcWkfqP.js                                  [39m[1m[2m     0.28 kB[22m[1m[22m[2m │ gzip:     0.22 kB[22m
+[2mdist/[22m[36massets/server-CM7tZeTx.js                                 [39m[1m[2m     0.34 kB[22m[1m[22m[2m │ gzip:     0.21 kB[22m
+[2mdist/[22m[36massets/radio-BGV8lo9f.js                                  [39m[1m[2m     0.38 kB[22m[1m[22m[2m │ gzip:     0.25 kB[22m
+[2mdist/[22m[36massets/unlink-CN4MWk4n.js                                 [39m[1m[2m     0.53 kB[22m[1m[22m[2m │ gzip:     0.30 kB[22m
+[2mdist/[22m[36massets/Badge-CiPH9JV4.js                                  [39m[1m[2m     1.09 kB[22m[1m[22m[2m │ gzip:     0.48 kB[22m
+[2mdist/[22m[36massets/Alert-Brhkz5LP.js                                  [39m[1m[2m     1.79 kB[22m[1m[22m[2m │ gzip:     0.67 kB[22m
+[2mdist/[22m[36massets/TasksPage-C9sS71qO.js                              [39m[1m[2m     2.80 kB[22m[1m[22m[2m │ gzip:     1.12 kB[22m
+[2mdist/[22m[36massets/CameraPage-B-5k2Vmp.js                             [39m[1m[2m     4.65 kB[22m[1m[22m[2m │ gzip:     1.85 kB[22m
+[2mdist/[22m[36massets/HomeAssistantPage-BIlpJZxO.js                      [39m[1m[2m     5.29 kB[22m[1m[22m[2m │ gzip:     1.87 kB[22m
+[2mdist/[22m[36massets/MemoryPage-BYD3-PlE.js                             [39m[1m[2m     6.44 kB[22m[1m[22m[2m │ gzip:     2.22 kB[22m
+[2mdist/[22m[36massets/SettingsPage-C2MYhSTm.js                           [39m[1m[2m     7.77 kB[22m[1m[22m[2m │ gzip:     2.39 kB[22m
+[2mdist/[22m[36massets/MaintenancePage-x7Jm5I93.js                        [39m[1m[2m     8.28 kB[22m[1m[22m[2m │ gzip:     2.38 kB[22m
+[2mdist/[22m[36massets/index-DGPKwApF.js                                  [39m[1m[2m     9.40 kB[22m[1m[22m[2m │ gzip:     3.36 kB[22m
+[2mdist/[22m[36massets/IntegrationsPage-lZ8ugEGe.js                       [39m[1m[2m    10.37 kB[22m[1m[22m[2m │ gzip:     2.92 kB[22m
+[2mdist/[22m[36massets/IntentsPage-DUyS3x1E.js                            [39m[1m[2m    10.57 kB[22m[1m[22m[2m │ gzip:     2.57 kB[22m
+[2mdist/[22m[36massets/RolesPage-C40fk_V-.js                              [39m[1m[2m    11.48 kB[22m[1m[22m[2m │ gzip:     3.40 kB[22m
+[2mdist/[22m[36massets/UsersPage-BvSOan8t.js                              [39m[1m[2m    12.50 kB[22m[1m[22m[2m │ gzip:     3.32 kB[22m
+[2mdist/[22m[36massets/SatellitesPage-du6ckmn1.js                         [39m[1m[2m    15.95 kB[22m[1m[22m[2m │ gzip:     4.37 kB[22m
+[2mdist/[22m[36massets/KnowledgePage-B8IHGpne.js                          [39m[1m[2m    18.71 kB[22m[1m[22m[2m │ gzip:     4.94 kB[22m
+[2mdist/[22m[36massets/SpeakersPage-C4Vh3j62.js                           [39m[1m[2m    21.52 kB[22m[1m[22m[2m │ gzip:     4.92 kB[22m
+[2mdist/[22m[36massets/KnowledgeGraphPage-CCswkI2i.js                     [39m[1m[2m    22.38 kB[22m[1m[22m[2m │ gzip:     5.15 kB[22m
+[2mdist/[22m[36massets/RoomsPage-kfgJEuSf.js                              [39m[1m[2m    27.82 kB[22m[1m[22m[2m │ gzip:     6.64 kB[22m
+[2mdist/[22m[36massets/PaperlessAuditPage-BOfkH-YI.js                     [39m[1m[2m    30.40 kB[22m[1m[22m[2m │ gzip:     6.67 kB[22m
+[2mdist/[22m[36massets/ort.wasm.bundle.min-Ca087MSD.js                    [39m[1m[2m    67.42 kB[22m[1m[22m[2m │ gzip:    23.11 kB[22m
+[2mdist/[22m[36massets/PresencePage-DfkJFAIW.js                           [39m[1m[2m   375.76 kB[22m[1m[22m[2m │ gzip:   111.49 kB[22m
+[2mdist/[22m[36massets/index-Cw75gj62.js                                  [39m[1m[33m   549.86 kB[39m[22m[2m │ gzip:   169.61 kB[22m
+[32m✓ built in 17.18s[39m
+
+PWA v1.2.0
+mode      generateSW
+precache  52 entries (1476.43 KiB)
+files generated
+  dist/sw.js
+  dist/workbox-b51dd497.js

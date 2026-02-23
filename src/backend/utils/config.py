@@ -17,10 +17,10 @@ class Settings(BaseSettings):
     feature_satellites: bool | None = None   # None = use edition default
 
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
-    database_url: str | None = None
+    database_url: str | None = "postgresql://renfield:renfield@localhost:5432/renfield"
     postgres_user: str = "renfield"
-    postgres_password: SecretStr = "changeme"
-    postgres_host: str = "postgres"
+    postgres_password: SecretStr = "renfield"
+    postgres_host: str = "localhost"
     postgres_port: int = Field(default=5432, ge=1, le=65535)
     postgres_db: str = "renfield"
     db_pool_size: int = Field(default=10, ge=1, le=100)
@@ -28,10 +28,10 @@ class Settings(BaseSettings):
     db_pool_recycle: int = Field(default=3600, ge=60, le=86400)
 
     # Redis
-    redis_url: str = "redis://redis:6379"
+    redis_url: str = "redis://localhost:6379"
 
     # Ollama - Multi-Modell Konfiguration
-    ollama_url: str = "http://ollama:11434"
+    ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2:3b"  # Legacy fallback; recommended: qwen3:14b (see docs/LLM_MODEL_GUIDE.md)
     ollama_chat_model: str = "llama3.2:3b"      # Default for dev; recommended: qwen3:14b
     ollama_rag_model: str = "llama3.2:latest"   # Default for dev; recommended: qwen3:14b

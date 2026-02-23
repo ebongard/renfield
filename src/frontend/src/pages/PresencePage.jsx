@@ -417,11 +417,10 @@ export default function PresencePage() {
       <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
         <button
           onClick={() => setActiveTab('live')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'live'
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'live'
               ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
               : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-          }`}
+            }`}
         >
           <span className="flex items-center gap-2">
             <Radio className="w-4 h-4" />
@@ -430,11 +429,10 @@ export default function PresencePage() {
         </button>
         <button
           onClick={() => setActiveTab('analytics')}
-          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'analytics'
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === 'analytics'
               ? 'border-blue-600 text-blue-600 dark:text-blue-400 dark:border-blue-400'
               : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-          }`}
+            }`}
         >
           <span className="flex items-center gap-2">
             <BarChart3 className="w-4 h-4" />
@@ -446,164 +444,163 @@ export default function PresencePage() {
       {activeTab === 'analytics' ? (
         <AnalyticsTab users={users} />
       ) : (
-      <>
-      {/* Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="card p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
-              <Users className="w-5 h-5 text-green-600 dark:text-green-400" />
+        <>
+          {/* Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <div className="card p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-green-100 dark:bg-green-900/30 rounded-lg">
+                  <Users className="w-5 h-5 text-green-600 dark:text-green-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">{totalUsers}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t('presence.trackedUsers')}</p>
+                </div>
+              </div>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{totalUsers}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{t('presence.trackedUsers')}</p>
+
+            <div className="card p-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
+                  <MapPin className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold text-gray-900 dark:text-white">{occupiedRooms}</p>
+                  <p className="text-sm text-gray-500 dark:text-gray-400">{t('presence.occupiedRooms')}</p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="card p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-              <MapPin className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+          {/* Error */}
+          {error && <Alert variant="error" className="mb-4">{error}</Alert>}
+
+          {/* Room Occupancy Section */}
+          <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
+            {t('presence.roomOccupancy')}
+          </h2>
+
+          {rooms.length === 0 ? (
+            <div className="card p-12 text-center mb-8">
+              <Wifi className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                {t('presence.noData')}
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                {presenceEnabled === false
+                  ? t('presence.presenceDisabled')
+                  : t('presence.noOccupants')}
+              </p>
             </div>
-            <div>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">{occupiedRooms}</p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">{t('presence.occupiedRooms')}</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+              {rooms.map((room) => (
+                <RoomCard key={room.room_id} room={room} formatAgo={formatAgo} />
+              ))}
             </div>
+          )}
+
+          {/* BLE Device Management Section */}
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+              {t('presence.devices')}
+            </h2>
+            <button
+              onClick={() => setShowAddDevice(true)}
+              className="btn btn-primary inline-flex items-center gap-2 text-sm"
+            >
+              <Plus className="w-4 h-4" />
+              {t('presence.addDevice')}
+            </button>
           </div>
-        </div>
-      </div>
 
-      {/* Error */}
-      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
-
-      {/* Room Occupancy Section */}
-      <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
-        {t('presence.roomOccupancy')}
-      </h2>
-
-      {rooms.length === 0 ? (
-        <div className="card p-12 text-center mb-8">
-          <Wifi className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            {t('presence.noData')}
-          </h3>
-          <p className="text-gray-500 dark:text-gray-400">
-            {presenceEnabled === false
-              ? t('presence.presenceDisabled')
-              : t('presence.noOccupants')}
-          </p>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-          {rooms.map((room) => (
-            <RoomCard key={room.room_id} room={room} formatAgo={formatAgo} />
-          ))}
-        </div>
-      )}
-
-      {/* BLE Device Management Section */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-          {t('presence.devices')}
-        </h2>
-        <button
-          onClick={() => setShowAddDevice(true)}
-          className="btn btn-primary inline-flex items-center gap-2 text-sm"
-        >
-          <Plus className="w-4 h-4" />
-          {t('presence.addDevice')}
-        </button>
-      </div>
-
-      {devices.length === 0 ? (
-        <div className="card p-12 text-center">
-          <Smartphone className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
-            {t('presence.noDevices')}
-          </h3>
-          <p className="text-gray-500 dark:text-gray-400">
-            {t('presence.noDevicesDesc')}
-          </p>
-        </div>
-      ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceName')}</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.macAddress')}</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.user')}</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceType')}</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.detectionMethod')}</th>
-                  <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.enabled')}</th>
-                  <th className="text-right py-3 px-4"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {devices.map((device) => {
-                  const user = users.find(u => u.id === device.user_id);
-                  return (
-                    <tr key={device.id} className="border-b border-gray-100 dark:border-gray-800 last:border-0">
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-2">
-                          <DeviceTypeIcon type={device.device_type} className="w-4 h-4 text-gray-400" />
-                          <span className="text-gray-900 dark:text-white">{device.device_name}</span>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 font-mono text-gray-600 dark:text-gray-400">{device.mac_address}</td>
-                      <td className="py-3 px-4 text-gray-900 dark:text-white">{user?.username || `User ${device.user_id}`}</td>
-                      <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{t(`presence.${device.device_type}`)}</td>
-                      <td className="py-3 px-4">
-                        <button
-                          onClick={() => handleToggleDetectionMethod(device)}
-                          title={t('presence.toggleDetectionMethod')}
-                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${
-                            device.detection_method === 'classic_bt'
-                              ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50'
-                              : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
-                          }`}
-                        >
-                          {device.detection_method === 'classic_bt' ? (
-                            <><Bluetooth className="w-3 h-3" /> Classic</>
-                          ) : (
-                            <>BLE</>
-                          )}
-                        </button>
-                      </td>
-                      <td className="py-3 px-4">
-                        <Badge color={device.is_enabled ? 'green' : 'gray'}>
-                          {device.is_enabled ? t('presence.enabled') : t('common.offline')}
-                        </Badge>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          onClick={() => handleDeleteDevice(device)}
-                          className="btn-icon btn-icon-danger"
-                          title={t('presence.deleteDevice')}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
+          {devices.length === 0 ? (
+            <div className="card p-12 text-center">
+              <Smartphone className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+                {t('presence.noDevices')}
+              </h3>
+              <p className="text-gray-500 dark:text-gray-400">
+                {t('presence.noDevicesDesc')}
+              </p>
+            </div>
+          ) : (
+            <div className="card overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-200 dark:border-gray-700">
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceName')}</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.macAddress')}</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.user')}</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.deviceType')}</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.detectionMethod')}</th>
+                      <th className="text-left py-3 px-4 font-medium text-gray-600 dark:text-gray-400">{t('presence.enabled')}</th>
+                      <th className="text-right py-3 px-4"></th>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                  </thead>
+                  <tbody>
+                    {devices.map((device) => {
+                      const user = users.find(u => u.id === device.user_id);
+                      return (
+                        <tr key={device.id} className="border-b border-gray-100 dark:border-gray-800 last:border-0">
+                          <td className="py-3 px-4">
+                            <div className="flex items-center gap-2">
+                              <DeviceTypeIcon type={device.device_type} className="w-4 h-4 text-gray-400" />
+                              <span className="text-gray-900 dark:text-white">{device.device_name}</span>
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 font-mono text-gray-600 dark:text-gray-400">{device.mac_address}</td>
+                          <td className="py-3 px-4 text-gray-900 dark:text-white">{user?.username || `User ${device.user_id}`}</td>
+                          <td className="py-3 px-4 text-gray-600 dark:text-gray-400">{t(`presence.${device.device_type}`)}</td>
+                          <td className="py-3 px-4">
+                            <button
+                              onClick={() => handleToggleDetectionMethod(device)}
+                              title={t('presence.toggleDetectionMethod')}
+                              className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium cursor-pointer transition-colors ${device.detection_method === 'classic_bt'
+                                  ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50'
+                                  : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-600'
+                                }`}
+                            >
+                              {device.detection_method === 'classic_bt' ? (
+                                <><Bluetooth className="w-3 h-3" /> Classic</>
+                              ) : (
+                                <>BLE</>
+                              )}
+                            </button>
+                          </td>
+                          <td className="py-3 px-4">
+                            <Badge color={device.is_enabled ? 'green' : 'gray'}>
+                              {device.is_enabled ? t('presence.enabled') : t('common.offline')}
+                            </Badge>
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              onClick={() => handleDeleteDevice(device)}
+                              className="btn-icon btn-icon-danger"
+                              title={t('presence.deleteDevice')}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
 
-      {/* Modals */}
-      <AddDeviceModal
-        isOpen={showAddDevice}
-        onClose={() => setShowAddDevice(false)}
-        onSave={handleAddDevice}
-        users={users}
-      />
-      {ConfirmDialogComponent}
-      </>
+          {/* Modals */}
+          <AddDeviceModal
+            isOpen={showAddDevice}
+            onClose={() => setShowAddDevice(false)}
+            onSave={handleAddDevice}
+            users={users}
+          />
+          {ConfirmDialogComponent}
+        </>
       )}
     </div>
   );

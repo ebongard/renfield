@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
+import Badge from '../components/Badge';
+import Alert from '../components/Alert';
 
 export default function CameraPage() {
   const { t, i18n } = useTranslation();
@@ -10,6 +12,7 @@ export default function CameraPage() {
   const [events, setEvents] = useState([]);
   const [selectedLabel, setSelectedLabel] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadCameras();
@@ -20,8 +23,10 @@ export default function CameraPage() {
     try {
       const response = await apiClient.get('/api/camera/cameras');
       setCameras(response.data.cameras);
-    } catch (error) {
-      console.error('Fehler beim Laden der Kameras:', error);
+      setError('');
+    } catch (err) {
+      console.error('Fehler beim Laden der Kameras:', err);
+      setError(t('cameras.loadError') || 'Error loading cameras');
     }
   };
 
@@ -30,8 +35,11 @@ export default function CameraPage() {
       const params = selectedLabel !== 'all' ? { label: selectedLabel } : {};
       const response = await apiClient.get('/api/camera/events', { params });
       setEvents(response.data.events);
-    } catch (error) {
-      console.error('Fehler beim Laden der Events:', error);
+      setError('');
+    } catch (err) {
+      console.error('Fehler beim Laden der Events:', err);
+      // Only set error if not already set by loadCameras
+      if (!error) setError(t('cameras.loadEventsError') || 'Error loading events');
     } finally {
       setLoading(false);
     }
@@ -58,12 +66,14 @@ export default function CameraPage() {
       <PageHeader icon={Camera} title={t('cameras.title')} subtitle={t('cameras.subtitle')}>
         <button
           onClick={() => { loadCameras(); loadEvents(); }}
-          className="btn btn-secondary"
+          className="btn-icon btn-icon-ghost"
           aria-label={t('cameras.refreshCameras')}
         >
           <RefreshCw className="w-5 h-5" aria-hidden="true" />
         </button>
       </PageHeader>
+
+      {error && <Alert variant="error">{error}</Alert>}
 
       {/* Cameras Overview */}
       <div className="card">
@@ -87,11 +97,10 @@ export default function CameraPage() {
           <button
             key={label}
             onClick={() => setSelectedLabel(label)}
-            className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors flex items-center space-x-2 ${
-              selectedLabel === label
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
+            className={`btn ${selectedLabel === label
+              ? 'btn-primary'
+              : 'btn-ghost bg-gray-200 dark:bg-gray-800'
+              } capitalize flex items-center space-x-2`}
           >
             {label !== 'all' && getLabelIcon(label)}
             <span>{label === 'all' ? t('common.all') : t(`cameras.${label}`)}</span>
@@ -124,13 +133,13 @@ export default function CameraPage() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
+                  <p className="text-sm text-gray-500 dark:text-gray-400 mb-1">
                     {new Date(event.start_time * 1000).toLocaleString(i18n.language === 'de' ? 'de-DE' : 'en-US')}
                   </p>
                   {event.score && (
-                    <p className="text-xs text-gray-400 dark:text-gray-500">
+                    <Badge color={event.score > 0.8 ? 'green' : 'amber'}>
                       {t('cameras.confidence')}: {Math.round(event.score * 100)}%
-                    </p>
+                    </Badge>
                   )}
                 </div>
               </div>

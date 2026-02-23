@@ -4,12 +4,14 @@ import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Badge from '../components/Badge';
+import Alert from '../components/Alert';
 
 export default function TasksPage() {
   const { t } = useTranslation();
   const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('all');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     loadTasks();
@@ -20,8 +22,10 @@ export default function TasksPage() {
       const params = filter !== 'all' ? { status: filter } : {};
       const response = await apiClient.get('/api/tasks/list', { params });
       setTasks(response.data.tasks);
-    } catch (error) {
-      console.error('Fehler beim Laden der Tasks:', error);
+      setError('');
+    } catch (err) {
+      console.error('Fehler beim Laden der Tasks:', err);
+      setError(t('tasks.loadError') || 'Error loading tasks');
     } finally {
       setLoading(false);
     }
@@ -59,16 +63,17 @@ export default function TasksPage() {
           <button
             key={f}
             onClick={() => setFilter(f)}
-            className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${
-              filter === f
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
+            className={`btn ${filter === f
+                ? 'btn-primary'
+                : 'btn-ghost bg-gray-200 dark:bg-gray-800'
+              } capitalize whitespace-nowrap`}
           >
             {f === 'all' ? t('common.all') : t(`tasks.${f}`)}
           </button>
         ))}
       </div>
+
+      {error && <Alert variant="error">{error}</Alert>}
 
       {/* Tasks List */}
       <div className="space-y-4">
@@ -105,8 +110,8 @@ export default function TasksPage() {
                 </div>
                 <Badge color={
                   task.status === 'completed' ? 'green' :
-                  task.status === 'failed' ? 'red' :
-                  task.status === 'running' ? 'blue' : 'yellow'
+                    task.status === 'failed' ? 'red' :
+                      task.status === 'running' ? 'blue' : 'yellow'
                 }>
                   {t(`tasks.${task.status}`)}
                 </Badge>

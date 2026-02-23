@@ -138,11 +138,10 @@ export default function ChatMessages() {
           aria-label={message.role === 'user' ? t('chat.yourMessage') : t('chat.assistantResponse')}
         >
           <div
-            className={`max-w-[70%] px-4 py-2 rounded-lg ${
-              message.role === 'user'
-                ? 'bg-primary-600 text-white'
-                : 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
-            }`}
+            className={`max-w-[70%] px-4 py-2 rounded-lg ${message.role === 'user'
+              ? 'bg-primary-600 text-white'
+              : 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+              }`}
           >
             {/* Agent Steps (collapsible) */}
             {message.agentSteps && message.agentSteps.length > 0 && (() => {
@@ -154,7 +153,7 @@ export default function ChatMessages() {
               );
 
               return (
-                <details className="mb-2 group" open={isStillRunning || undefined}>
+                <details className="mb-2 group open={isStillRunning || undefined}">
                   <summary className="flex items-center gap-1.5 text-sm cursor-pointer select-none list-none text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
                     <ChevronRight className="w-4 h-4 flex-shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
                     {isStillRunning ? (
@@ -213,11 +212,10 @@ export default function ChatMessages() {
                 {message.attachments.map(att => (
                   <div
                     key={att.id}
-                    className={`flex items-center space-x-1 px-2 py-1 rounded text-xs ${
-                      att.status === 'completed'
-                        ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
-                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
-                    }`}
+                    className={`flex items-center space-x-1 px-2 py-1 rounded text-xs ${att.status === 'completed'
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
+                      : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
+                      }`}
                   >
                     <FileText className="w-3 h-3 flex-shrink-0" aria-hidden="true" />
                     <span className="truncate max-w-[140px]">{att.filename}</span>
@@ -275,53 +273,59 @@ export default function ChatMessages() {
             )}
           </div>
         </div>
-      ))}
+      ))
+      }
 
       {/* Loading Indicator */}
-      {loading && (
-        <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
-          <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 rounded-lg flex items-center space-x-1.5">
-            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
-            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
-            <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
-            <span className="sr-only">{t('chat.thinkingStatus')}</span>
+      {
+        loading && (
+          <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
+            <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 rounded-lg flex items-center space-x-1.5">
+              <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+              <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+              <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
+              <span className="sr-only">{t('chat.thinkingStatus')}</span>
+            </div>
           </div>
-        </div>
-      )}
+        )
+      }
 
       {/* Quick action result toast */}
-      {actionResult && (
-        <div
-          className={`mx-auto px-3 py-1.5 rounded text-xs font-medium ${
-            actionResult.success
+      {
+        actionResult && (
+          <div
+            className={`mx-auto px-3 py-1.5 rounded text-xs font-medium ${actionResult.success
               ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300'
               : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300'
-          }`}
-          role="status"
-        >
-          {actionResult.success
-            ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
-              : actionResult.type === 'email' ? t('chat.emailSuccess')
-              : t('chat.paperlessSuccess'))
-            : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
-              : actionResult.type === 'email' ? t('chat.emailFailed')
-              : t('chat.paperlessFailed'))
-          }
-        </div>
-      )}
+              }`}
+            role="status"
+          >
+            {actionResult.success
+              ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
+                : actionResult.type === 'email' ? t('chat.emailSuccess')
+                  : t('chat.paperlessSuccess'))
+              : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
+                : actionResult.type === 'email' ? t('chat.emailFailed')
+                  : t('chat.paperlessFailed'))
+            }
+          </div>
+        )
+      }
 
       {/* Email Forward Dialog */}
-      {emailDialog && (
-        <EmailForwardDialog
-          open={!!emailDialog}
-          filename={emailDialog.filename}
-          onConfirm={confirmSendViaEmail}
-          onCancel={cancelEmailDialog}
-        />
-      )}
+      {
+        emailDialog && (
+          <EmailForwardDialog
+            open={!!emailDialog}
+            filename={emailDialog.filename}
+            onConfirm={confirmSendViaEmail}
+            onCancel={cancelEmailDialog}
+          />
+        )
+      }
 
       {/* Scroll anchor */}
       <div ref={messagesEndRef} />
-    </div>
+    </div >
   );
 }

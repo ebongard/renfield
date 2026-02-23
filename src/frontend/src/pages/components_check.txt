@@ -1,0 +1,15 @@
+CameraPage.jsx: Missing ['Alert']
+HomeAssistantPage.jsx: Missing ['Alert']
+IntegrationsPage.jsx: All components present
+IntentsPage.jsx: All components present
+KnowledgeGraphPage.jsx: All components present
+KnowledgePage.jsx: All components present
+MaintenancePage.jsx: Missing ['Badge']
+MemoryPage.jsx: All components present
+PaperlessAuditPage.jsx: All components present
+PresencePage.jsx: All components present
+RolesPage.jsx: All components present
+SatellitesPage.jsx: All components present
+SettingsPage.jsx: Missing ['Badge']
+TasksPage.jsx: Missing ['Alert', 'btn-']
+UsersPage.jsx: All components present

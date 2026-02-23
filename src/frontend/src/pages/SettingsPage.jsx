@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
@@ -115,8 +116,8 @@ export default function SettingsPage() {
   useEffect(() => {
     if (settings) {
       const changed = keyword !== settings.keyword ||
-                      threshold !== settings.threshold ||
-                      cooldownMs !== settings.cooldown_ms;
+        threshold !== settings.threshold ||
+        cooldownMs !== settings.cooldown_ms;
       setHasChanges(changed);
     }
   }, [keyword, threshold, cooldownMs, settings]);
@@ -312,11 +313,10 @@ export default function SettingsPage() {
               {syncStatus.devices.map((device) => (
                 <div
                   key={device.device_id}
-                  className={`flex items-center justify-between p-2 rounded ${
-                    device.synced
+                  className={`flex items-center justify-between p-2 rounded ${device.synced
                       ? 'bg-green-50 dark:bg-green-900/20'
                       : 'bg-amber-50 dark:bg-amber-900/20'
-                  }`}
+                    }`}
                 >
                   <div className="flex items-center gap-2">
                     {device.device_type === 'satellite' ? (
@@ -330,20 +330,17 @@ export default function SettingsPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     {device.synced ? (
-                      <span className="flex items-center gap-1 text-sm text-green-600 dark:text-green-400">
-                        <CheckCircle className="w-4 h-4" />
+                      <Badge color="green" icon={CheckCircle}>
                         {device.active_keywords?.join(', ')}
-                      </span>
+                      </Badge>
                     ) : device.error ? (
-                      <span className="flex items-center gap-1 text-sm text-red-600 dark:text-red-400">
-                        <XCircle className="w-4 h-4" />
+                      <Badge color="red" icon={XCircle}>
                         {device.error}
-                      </span>
+                      </Badge>
                     ) : (
-                      <span className="flex items-center gap-1 text-sm text-amber-600 dark:text-amber-400">
-                        <Clock className="w-4 h-4" />
+                      <Badge color="amber" icon={Clock}>
                         {t('settings.wakeword.pending')}
-                      </span>
+                      </Badge>
                     )}
                   </div>
                 </div>
@@ -368,9 +365,8 @@ export default function SettingsPage() {
           <button
             onClick={handleSave}
             disabled={!hasChanges || saving}
-            className={`btn btn-primary flex items-center gap-2 ${
-              !hasChanges ? 'opacity-50 cursor-not-allowed' : ''
-            }`}
+            className={`btn btn-primary flex items-center gap-2 ${!hasChanges ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
           >
             {saving ? (
               <Loader className="w-4 h-4 animate-spin" />

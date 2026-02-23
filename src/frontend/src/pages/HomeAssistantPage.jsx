@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next';
 import { Lightbulb, Power, Search, Loader, Sun, Thermometer } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
+import Badge from '../components/Badge';
+import Alert from '../components/Alert';
 
 export default function HomeAssistantPage() {
   const { t } = useTranslation();
@@ -11,6 +13,7 @@ export default function HomeAssistantPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomain, setSelectedDomain] = useState('all');
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const domains = [
     { key: 'all', nameKey: 'common.all', icon: Power },
@@ -32,8 +35,10 @@ export default function HomeAssistantPage() {
     try {
       const response = await apiClient.get('/api/homeassistant/states');
       setEntities(response.data.states);
-    } catch (error) {
-      console.error('Fehler beim Laden der Entities:', error);
+      setError('');
+    } catch (err) {
+      console.error('Fehler beim Laden der Entities:', err);
+      setError(t('homeassistant.loadError') || 'Error loading entities');
     } finally {
       setLoading(false);
     }
@@ -65,8 +70,10 @@ export default function HomeAssistantPage() {
       await apiClient.post(`/api/homeassistant/toggle/${entityId}`);
       // Reload entities to get updated state
       await loadEntities();
-    } catch (error) {
-      console.error('Fehler beim Umschalten:', error);
+      setError('');
+    } catch (err) {
+      console.error('Fehler beim Umschalten:', err);
+      setError(t('homeassistant.toggleError') || 'Error toggling entity');
     }
   };
 
@@ -92,6 +99,8 @@ export default function HomeAssistantPage() {
     <div className="space-y-6">
       <PageHeader icon={Lightbulb} title={t('homeassistant.title')} subtitle={t('homeassistant.subtitle')} />
 
+      {error && <Alert variant="error">{error}</Alert>}
+
       {/* Search */}
       <div className="card">
         <div className="relative">
@@ -116,11 +125,10 @@ export default function HomeAssistantPage() {
             <button
               key={domain.key}
               onClick={() => setSelectedDomain(domain.key)}
-              className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors flex items-center space-x-2 ${
-                selectedDomain === domain.key
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-              }`}
+              className={`btn ${selectedDomain === domain.key
+                ? 'btn-primary'
+                : 'btn-ghost bg-gray-200 dark:bg-gray-800'
+                } whitespace-nowrap flex items-center space-x-2`}
             >
               <Icon className="w-4 h-4" />
               <span>{t(domain.nameKey)}</span>
@@ -152,9 +160,8 @@ export default function HomeAssistantPage() {
               <button
                 key={entity.entity_id}
                 type="button"
-                className={`card text-left cursor-pointer transition-all hover:scale-105 w-full ${
-                  isEntityOn(entity) ? 'bg-primary-100 border-2 border-primary-600 dark:bg-primary-900/30' : ''
-                }`}
+                className={`card text-left cursor-pointer transition-all hover:scale-105 w-full ${isEntityOn(entity) ? 'bg-primary-100 border-2 border-primary-600 dark:bg-primary-900/30' : ''
+                  }`}
                 onClick={() => toggleEntity(entity.entity_id)}
                 aria-pressed={isEntityOn(entity)}
                 aria-label={`${entity.attributes?.friendly_name || entity.entity_id} ${isEntityOn(entity) ? t('homeassistant.on') : t('homeassistant.off')}`}
@@ -162,9 +169,8 @@ export default function HomeAssistantPage() {
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center space-x-3">
-                    <div className={`p-2 rounded-lg ${
-                      isEntityOn(entity) ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
-                    }`} aria-hidden="true">
+                    <div className={`p-2 rounded-lg ${isEntityOn(entity) ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-700'
+                      }`} aria-hidden="true">
                       {getEntityIcon(entity)}
                     </div>
                     <div>
@@ -175,9 +181,8 @@ export default function HomeAssistantPage() {
                     </div>
                   </div>
                   <div
-                    className={`w-3 h-3 rounded-full ${
-                      isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
-                    }`}
+                    className={`w-3 h-3 rounded-full ${isEntityOn(entity) ? 'bg-green-500' : 'bg-gray-400 dark:bg-gray-600'
+                      }`}
                     aria-hidden="true"
                   />
                 </div>

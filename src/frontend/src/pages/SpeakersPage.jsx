@@ -481,10 +481,9 @@ export default function SpeakersPage() {
 
                 <div className="flex items-center justify-between text-sm mb-4">
                   <span className="text-gray-500 dark:text-gray-400">{t('speakers.voiceSamples')}:</span>
-                  <span className={`font-medium ${
-                    speaker.embedding_count >= 3 ? 'text-green-600 dark:text-green-400' :
+                  <span className={`font-medium ${speaker.embedding_count >= 3 ? 'text-green-600 dark:text-green-400' :
                     speaker.embedding_count > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
-                  }`}>
+                    }`}>
                     {speaker.embedding_count} {speaker.embedding_count >= 3 ? t('speakers.voiceSamplesGood') : speaker.embedding_count > 0 ? t('speakers.voiceSamplesMore') : t('speakers.voiceSamplesNone')}
                   </span>
                 </div>
@@ -606,15 +605,15 @@ export default function SpeakersPage() {
                     const baseHeight = Math.max(10, audioLevel) * variation;
                     const height = Math.min(100, baseHeight);
                     const colorClass = audioLevel > 50 ? 'bg-green-500' :
-                                       audioLevel > 10 ? 'bg-primary-500' :
-                                       'bg-gray-400 dark:bg-gray-600';
+                      audioLevel > 10 ? 'bg-primary-500' :
+                        'bg-gray-400 dark:bg-gray-600';
 
                     return (
                       <div
                         key={i}
                         className={`w-2 rounded-full transition-all duration-150 ease-out ${colorClass}`}
                         style={{
-                          height: `${height}%`,
+                          height: `${height}% `,
                           opacity: audioLevel > 5 ? 1 : 0.3
                         }}
                       />
@@ -714,8 +713,8 @@ export default function SpeakersPage() {
                     const baseHeight = Math.max(10, audioLevel) * variation;
                     const height = Math.min(100, baseHeight);
                     const colorClass = audioLevel > 50 ? 'bg-green-500' :
-                                       audioLevel > 10 ? 'bg-purple-500' :
-                                       'bg-gray-400 dark:bg-gray-600';
+                      audioLevel > 10 ? 'bg-purple-500' :
+                        'bg-gray-400 dark:bg-gray-600';
 
                     return (
                       <div

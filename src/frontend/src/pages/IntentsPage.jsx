@@ -1,9 +1,3 @@
-/**
- * Intents Overview Page
- *
- * Admin page showing all available intents and integration status.
- * Useful for debugging and understanding system capabilities.
- */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
@@ -198,9 +192,8 @@ export default function IntentsPage() {
           return (
             <div
               key={integration.name}
-              className={`card overflow-hidden ${
-                !integration.enabled ? 'opacity-60' : ''
-              }`}
+              className={`card overflow-hidden ${!integration.enabled ? 'opacity-60' : ''
+                }`}
             >
               {/* Integration Header */}
               <button
@@ -208,9 +201,8 @@ export default function IntentsPage() {
                 className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-5 h-5 ${
-                    integration.enabled ? 'text-blue-500' : 'text-gray-400'
-                  }`} />
+                  <Icon className={`w-5 h-5 ${integration.enabled ? 'text-blue-500' : 'text-gray-400'
+                    }`} />
                   <div className="text-left">
                     <div className="font-medium text-gray-900 dark:text-white">
                       {integration.title}
@@ -396,7 +388,7 @@ export default function IntentsPage() {
               </h3>
               <button
                 onClick={() => setShowPrompt(false)}
-                className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                className="btn-icon btn-icon-ghost"
               >
                 <XCircle className="w-5 h-5" />
               </button>

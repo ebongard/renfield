@@ -35,13 +35,12 @@ export default function ChatHeader() {
             <button
               onClick={toggleWakeWord}
               disabled={wakeWordLoading || recording}
-              className={`p-2 rounded-lg transition-all ${
-                wakeWordEnabled
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : wakeWordError
-                    ? 'bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-900/50 dark:hover:bg-red-800/50 dark:text-red-300'
-                    : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
-              } ${wakeWordLoading ? 'opacity-50 cursor-wait' : ''}`}
+              className={`p-2 rounded-lg transition-all ${wakeWordEnabled
+                ? 'bg-green-600 hover:bg-green-700 text-white'
+                : wakeWordError
+                  ? 'bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-900/50 dark:hover:bg-red-800/50 dark:text-red-300'
+                  : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
+                } ${wakeWordLoading ? 'opacity-50 cursor-wait' : ''}`}
               title={wakeWordError
                 ? `${t('wakeword.notAvailable')}: ${wakeWordError.message}`
                 : wakeWordEnabled

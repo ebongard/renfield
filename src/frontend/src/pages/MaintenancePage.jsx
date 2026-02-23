@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 
 function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAction, variant }) {
   return (
@@ -26,9 +27,8 @@ function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAct
       <button
         onClick={onAction}
         disabled={loading}
-        className={`btn flex items-center gap-2 shrink-0 ${
-          variant === 'warning' ? 'btn-secondary' : 'btn-primary'
-        }`}
+        className={`btn flex items-center gap-2 shrink-0 ${variant === 'warning' ? 'btn-secondary' : 'btn-primary'
+          }`}
       >
         {loading ? (
           <Loader className="w-4 h-4 animate-spin" />
@@ -44,11 +44,10 @@ function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAct
 function ResultBox({ success, children }) {
   if (!children) return null;
   return (
-    <div className={`mt-2 p-3 rounded-lg flex items-start gap-2 text-sm ${
-      success
-        ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
-        : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
-    }`}>
+    <div className={`mt-2 p-3 rounded-lg flex items-start gap-2 text-sm ${success
+      ? 'bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-400'
+      : 'bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+      }`}>
       {success ? (
         <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
       ) : (
@@ -190,7 +189,7 @@ export default function MaintenancePage() {
         {ftsResult && (
           <ResultBox success>
             <p className="font-medium">{t('maintenance.searchIndexing.reindexFtsSuccess')}</p>
-            <p>{t('maintenance.searchIndexing.updatedCount')}: {ftsResult.updated_count ?? ftsResult.updated ?? '—'}</p>
+            <p className="flex items-center gap-2">{t('maintenance.searchIndexing.updatedCount')}: <Badge color="blue">{ftsResult.updated_count ?? ftsResult.updated ?? '—'}</Badge></p>
             {ftsResult.fts_config && (
               <p>{t('maintenance.searchIndexing.ftsConfig')}: {ftsResult.fts_config}</p>
             )}
@@ -211,7 +210,7 @@ export default function MaintenancePage() {
         {kwResult && (
           <ResultBox success>
             <p className="font-medium">{t('maintenance.searchIndexing.refreshKeywordsSuccess')}</p>
-            <p>{t('maintenance.searchIndexing.keywordsCount')}: {kwResult.keywords_count ?? kwResult.count ?? '—'}</p>
+            <p className="flex items-center gap-2">{t('maintenance.searchIndexing.keywordsCount')}: <Badge color="green">{kwResult.keywords_count ?? kwResult.count ?? '—'}</Badge></p>
             {kwResult.sample && (
               <p>{t('maintenance.searchIndexing.sampleKeywords')}: {
                 Array.isArray(kwResult.sample) ? kwResult.sample.join(', ') : String(kwResult.sample)

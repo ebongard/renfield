@@ -87,7 +87,7 @@ export default function AttachmentQuickActions({
   if (isDisabled && !isLoading) return null;
 
   return (
-    <div className="relative inline-flex" ref={menuRef}>
+    <div className="relative inline-flex ref={menuRef}">
       {isLoading ? (
         <Loader className="w-3 h-3 animate-spin" aria-hidden="true" />
       ) : (

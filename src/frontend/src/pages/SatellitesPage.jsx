@@ -68,7 +68,7 @@ function UpdateProgressBar({ progress, className = '' }) {
     <div className={`w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden ${className}`}>
       <div
         className="h-full bg-blue-500 transition-all duration-300"
-        style={{ width: `${progress}%` }}
+        style={{ width: `${progress}% ` }}
       />
     </div>
   );
@@ -80,9 +80,9 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
   const [updating, setUpdating] = useState(false);
 
   const formatDuration = (seconds) => {
-    if (seconds < 60) return `${Math.round(seconds)}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
-    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+    if (seconds < 60) return `${Math.round(seconds)} s`;
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} m`;
+    return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)} m`;
   };
 
   const formatAgo = (seconds) => {
@@ -186,7 +186,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
           </div>
 
           {/* Audio levels */}
-          <div className="space-y-2">
+          < div className="space-y-2" >
             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
               <Mic className="w-4 h-4" />
               {t('satellites.audioLevels', 'Audio Levels')}
@@ -212,76 +212,82 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
                 <span className="text-gray-400">{t('satellites.silence', 'Silence')}</span>
               )}
             </div>
-          </div>
+          </div >
 
           {/* System metrics */}
-          {(metrics.cpu_percent != null || metrics.temperature != null) && (
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
-                <Cpu className="w-4 h-4" />
-                {t('satellites.system', 'System')}
-              </h4>
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                {metrics.cpu_percent != null && (
-                  <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-gray-400" />
-                    <span className={metrics.cpu_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
-                      {metrics.cpu_percent.toFixed(1)}%
-                    </span>
-                  </div>
-                )}
-                {metrics.memory_percent != null && (
-                  <div className="flex items-center gap-2">
-                    <MemoryStick className="w-4 h-4 text-gray-400" />
-                    <span className={metrics.memory_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
-                      {metrics.memory_percent.toFixed(1)}%
-                    </span>
-                  </div>
-                )}
-                {metrics.temperature != null && (
-                  <div className="flex items-center gap-2">
-                    <Thermometer className="w-4 h-4 text-gray-400" />
-                    <span className={metrics.temperature > 70 ? 'text-red-600' : metrics.temperature > 60 ? 'text-yellow-600' : 'text-gray-900 dark:text-white'}>
-                      {metrics.temperature.toFixed(1)}°C
-                    </span>
-                  </div>
-                )}
+          {
+            (metrics.cpu_percent != null || metrics.temperature != null) && (
+              <div className="space-y-2">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                  <Cpu className="w-4 h-4" />
+                  {t('satellites.system', 'System')}
+                </h4>
+                <div className="grid grid-cols-3 gap-4 text-sm">
+                  {metrics.cpu_percent != null && (
+                    <div className="flex items-center gap-2">
+                      <Cpu className="w-4 h-4 text-gray-400" />
+                      <span className={metrics.cpu_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
+                        {metrics.cpu_percent.toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {metrics.memory_percent != null && (
+                    <div className="flex items-center gap-2">
+                      <MemoryStick className="w-4 h-4 text-gray-400" />
+                      <span className={metrics.memory_percent > 80 ? 'text-red-600' : 'text-gray-900 dark:text-white'}>
+                        {metrics.memory_percent.toFixed(1)}%
+                      </span>
+                    </div>
+                  )}
+                  {metrics.temperature != null && (
+                    <div className="flex items-center gap-2">
+                      <Thermometer className="w-4 h-4 text-gray-400" />
+                      <span className={metrics.temperature > 70 ? 'text-red-600' : metrics.temperature > 60 ? 'text-yellow-600' : 'text-gray-900 dark:text-white'}>
+                        {metrics.temperature.toFixed(1)}°C
+                      </span>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          }
 
           {/* Last wake word */}
-          {metrics.last_wakeword && (
-            <div className="space-y-1">
-              <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                {t('satellites.lastWakeword', 'Last Wake Word')}
-              </h4>
-              <div className="text-sm text-gray-600 dark:text-gray-400">
-                <span className="font-medium text-gray-900 dark:text-white">
-                  {metrics.last_wakeword.keyword}
-                </span>
-                {' '}({(metrics.last_wakeword.confidence * 100).toFixed(0)}%)
-                {' '}{formatAgo(Date.now() / 1000 - metrics.last_wakeword.timestamp)}
+          {
+            metrics.last_wakeword && (
+              <div className="space-y-1">
+                <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                  {t('satellites.lastWakeword', 'Last Wake Word')}
+                </h4>
+                <div className="text-sm text-gray-600 dark:text-gray-400">
+                  <span className="font-medium text-gray-900 dark:text-white">
+                    {metrics.last_wakeword.keyword}
+                  </span>
+                  {' '}({(metrics.last_wakeword.confidence * 100).toFixed(0)}%)
+                  {' '}{formatAgo(Date.now() / 1000 - metrics.last_wakeword.timestamp)}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          }
 
           {/* Active session */}
-          {satellite.current_session && (
-            <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
-              <h4 className="text-sm font-medium text-green-800 dark:text-green-400 flex items-center gap-2">
-                <Activity className="w-4 h-4" />
-                {t('satellites.activeSession', 'Active Session')}
-              </h4>
-              <div className="mt-2 text-sm text-green-700 dark:text-green-300">
-                <p>{t('satellites.duration', 'Duration')}: {formatDuration(satellite.current_session.duration_seconds)}</p>
-                <p>{t('satellites.audioChunks', 'Audio chunks')}: {satellite.current_session.audio_chunks_count}</p>
-                {satellite.current_session.transcription && (
-                  <p className="mt-1 italic">"{satellite.current_session.transcription}"</p>
-                )}
+          {
+            satellite.current_session && (
+              <div className="p-3 bg-green-50 dark:bg-green-900/20 rounded-lg">
+                <h4 className="text-sm font-medium text-green-800 dark:text-green-400 flex items-center gap-2">
+                  <Activity className="w-4 h-4" />
+                  {t('satellites.activeSession', 'Active Session')}
+                </h4>
+                <div className="mt-2 text-sm text-green-700 dark:text-green-300">
+                  <p>{t('satellites.duration', 'Duration')}: {formatDuration(satellite.current_session.duration_seconds)}</p>
+                  <p>{t('satellites.audioChunks', 'Audio chunks')}: {satellite.current_session.audio_chunks_count}</p>
+                  {satellite.current_session.transcription && (
+                    <p className="mt-1 italic">"{satellite.current_session.transcription}"</p>
+                  )}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          }
 
           {/* Capabilities */}
           <div className="flex flex-wrap gap-2">
@@ -353,7 +359,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
                 <button
                   onClick={handleUpdate}
                   disabled={updating}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                  className="btn btn-primary inline-flex items-center gap-2 text-sm disabled:opacity-50"
                 >
                   {updating ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -370,9 +376,10 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
               )}
             </div>
           </div>
-        </div>
-      )}
-    </div>
+        </div >
+      )
+      }
+    </div >
   );
 }
 

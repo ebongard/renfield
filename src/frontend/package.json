@@ -10,7 +10,7 @@
     "lint": "eslint src",
     "format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
     "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,css,json}\"",
-    "postinstall": "mkdir -p public/ort && cp node_modules/onnxruntime-web/dist/ort-wasm*.wasm node_modules/onnxruntime-web/dist/ort-wasm*.mjs public/ort/ 2>/dev/null || true"
+    "postinstall": "node -e \"const fs=require('fs'); const path=require('path'); const dest=path.join('public', 'ort'); if(!fs.existsSync(dest)) fs.mkdirSync(dest, {recursive:true}); const src=path.join('node_modules', 'onnxruntime-web', 'dist'); fs.readdirSync(src).forEach(f => { if(f.startsWith('ort-wasm')) fs.copyFileSync(path.join(src, f), path.join(dest, f)); })\""
   },
   "dependencies": {
     "@fontsource-variable/cormorant": "^5.2.8",

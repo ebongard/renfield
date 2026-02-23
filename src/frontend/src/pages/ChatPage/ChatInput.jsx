@@ -88,11 +88,10 @@ export default function ChatInput() {
         <div className="flex items-center space-x-3">
           <button
             onClick={toggleRag}
-            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${
-              useRag
+            className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg text-sm transition-colors ${useRag
                 ? 'bg-primary-100 text-primary-700 border border-primary-300 dark:bg-primary-600/30 dark:text-primary-300 dark:border-primary-500/50'
                 : 'bg-gray-200 text-gray-600 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
-            }`}
+              }`}
             title={useRag ? t('rag.disableKnowledge') : t('rag.enableKnowledge')}
           >
             <BookOpen className="w-4 h-4" />
@@ -118,11 +117,10 @@ export default function ChatInput() {
                   <div className="p-2">
                     <button
                       onClick={() => handleSelectKb(null)}
-                      className={`w-full text-left px-3 py-2 rounded text-sm ${
-                        selectedKnowledgeBase === null
+                      className={`w-full text-left px-3 py-2 rounded text-sm ${selectedKnowledgeBase === null
                           ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
                           : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-                      }`}
+                        }`}
                     >
                       {t('rag.allDocuments')}
                     </button>
@@ -130,11 +128,10 @@ export default function ChatInput() {
                       <button
                         key={kb.id}
                         onClick={() => handleSelectKb(kb.id)}
-                        className={`w-full text-left px-3 py-2 rounded text-sm ${
-                          selectedKnowledgeBase === kb.id
+                        className={`w-full text-left px-3 py-2 rounded text-sm ${selectedKnowledgeBase === kb.id
                             ? 'bg-primary-100 text-primary-700 dark:bg-primary-600/30 dark:text-primary-300'
                             : 'text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-700'
-                        }`}
+                          }`}
                       >
                         {kb.name}
                       </button>
@@ -254,11 +251,10 @@ export default function ChatInput() {
 
         <button
           onClick={toggleRecording}
-          className={`p-3 rounded-lg transition-colors ${
-            recording
+          className={`p-3 rounded-lg transition-colors ${recording
               ? 'bg-red-600 hover:bg-red-700 text-white animate-pulse'
               : 'bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300'
-          } active:scale-95`}
+            } active:scale-95`}
           disabled={loading}
           aria-label={recording ? t('voice.stopRecording') : t('voice.startRecording')}
           aria-pressed={recording}
