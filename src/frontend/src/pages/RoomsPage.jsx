@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Home, Plus, Edit3, Trash2, Loader, CheckCircle, XCircle,
-  AlertCircle, RefreshCw, Link as LinkIcon, Unlink, Radio,
+  Home, Plus, Edit3, Trash2, Loader,
+  RefreshCw, Link as LinkIcon, Unlink, Radio,
   ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
   Monitor, Tablet, Smartphone, Tv, User
 } from 'lucide-react';
@@ -10,6 +10,9 @@ import apiClient from '../utils/axios';
 import RoomOutputSettings from '../components/RoomOutputSettings';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
+import PageHeader from '../components/PageHeader';
+import Alert from '../components/Alert';
+import Badge from '../components/Badge';
 
 // Device type icons and labels
 const DEVICE_TYPE_CONFIG = {
@@ -319,58 +322,27 @@ export default function RoomsPage() {
   const getSourceBadge = (source) => {
     switch (source) {
       case 'homeassistant':
-        return <span className="px-2 py-1 bg-blue-100 text-blue-600 dark:bg-blue-600/20 dark:text-blue-400 text-xs rounded-sm">HA</span>;
+        return <Badge color="blue">HA</Badge>;
       case 'satellite':
-        return <span className="px-2 py-1 bg-green-100 text-green-600 dark:bg-green-600/20 dark:text-green-400 text-xs rounded-sm">Satellite</span>;
+        return <Badge color="green">Satellite</Badge>;
       default:
-        return <span className="px-2 py-1 bg-gray-200 text-gray-600 dark:bg-gray-600/20 dark:text-gray-400 text-xs rounded-sm">Renfield</span>;
+        return <Badge color="gray">Renfield</Badge>;
     }
   };
 
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="card">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <div className="p-3 bg-primary-100 dark:bg-primary-900/30 rounded-xl">
-              <Home className="w-6 h-6 text-primary-600 dark:text-primary-400" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('rooms.title')}</h1>
-              <p className="text-gray-500 dark:text-gray-400">{t('rooms.subtitle')}</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={loadRooms}
-              className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
-              aria-label={t('rooms.refreshRooms')}
-            >
-              <RefreshCw className="w-5 h-5" aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader icon={Home} title={t('rooms.title')} subtitle={t('rooms.subtitle')}>
+        <button onClick={loadRooms} className="btn-icon btn-icon-ghost" aria-label={t('rooms.refreshRooms')}>
+          <RefreshCw className="w-5 h-5" aria-hidden="true" />
+        </button>
+      </PageHeader>
 
       {/* Alerts */}
-      {error && (
-        <div className="card bg-red-100 dark:bg-red-900/20 border-red-300 dark:border-red-700">
-          <div className="flex items-center space-x-3">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-700 dark:text-red-400">{error}</p>
-          </div>
-        </div>
-      )}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {success && (
-        <div className="card bg-green-100 dark:bg-green-900/20 border-green-300 dark:border-green-700">
-          <div className="flex items-center space-x-3">
-            <CheckCircle className="w-5 h-5 text-green-500" />
-            <p className="text-green-700 dark:text-green-400">{success}</p>
-          </div>
-        </div>
-      )}
+      {success && <Alert variant="success">{success}</Alert>}
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
@@ -384,7 +356,7 @@ export default function RoomsPage() {
 
         <button
           onClick={openSyncPanel}
-          className="btn bg-blue-600 hover:bg-blue-700 text-white flex items-center space-x-2"
+          className="btn btn-secondary flex items-center space-x-2"
         >
           <ArrowLeftRight className="w-4 h-4" />
           <span>HA Sync</span>
@@ -529,14 +501,14 @@ export default function RoomsPage() {
                   )}
                   <button
                     onClick={() => openEditModal(room)}
-                    className="p-2 rounded-lg bg-gray-200 hover:bg-gray-300 text-gray-600 dark:bg-gray-700 dark:hover:bg-gray-600 dark:text-gray-300"
+                    className="btn-icon btn-icon-ghost"
                     aria-label={`${room.name} ${t('common.edit').toLowerCase()}`}
                   >
                     <Edit3 className="w-4 h-4" aria-hidden="true" />
                   </button>
                   <button
                     onClick={() => deleteRoom(room)}
-                    className="p-2 rounded-lg bg-red-100 hover:bg-red-200 text-red-600 dark:bg-red-600/20 dark:hover:bg-red-600/40 dark:text-red-400"
+                    className="btn-icon btn-icon-danger"
                     aria-label={`${room.name} ${t('common.delete').toLowerCase()}`}
                   >
                     <Trash2 className="w-4 h-4" aria-hidden="true" />
@@ -549,295 +521,276 @@ export default function RoomsPage() {
       </div>
 
       {/* Create Room Modal */}
-      {showCreateModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.createRoom')}</h2>
+      <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title={t('rooms.createRoom')}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
+            <input
+              type="text"
+              value={newRoomName}
+              onChange={(e) => setNewRoomName(e.target.value)}
+              placeholder="Wohnzimmer"
+              className="input w-full"
+            />
+          </div>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
-                <input
-                  type="text"
-                  value={newRoomName}
-                  onChange={(e) => setNewRoomName(e.target.value)}
-                  placeholder="Wohnzimmer"
-                  className="input w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
-                <input
-                  type="text"
-                  value={newRoomIcon}
-                  onChange={(e) => setNewRoomIcon(e.target.value)}
-                  placeholder="mdi:sofa"
-                  className="input w-full"
-                />
-                <p className="text-xs text-gray-500 mt-1">{t('rooms.iconHint')}</p>
-              </div>
-            </div>
-
-            <div className="flex space-x-3 mt-6">
-              <button
-                onClick={() => setShowCreateModal(false)}
-                className="flex-1 btn btn-secondary"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={createRoom}
-                className="flex-1 btn btn-primary"
-              >
-                {t('common.create')}
-              </button>
-            </div>
+          <div>
+            <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
+            <input
+              type="text"
+              value={newRoomIcon}
+              onChange={(e) => setNewRoomIcon(e.target.value)}
+              placeholder="mdi:sofa"
+              className="input w-full"
+            />
+            <p className="text-xs text-gray-500 mt-1">{t('rooms.iconHint')}</p>
           </div>
         </div>
-      )}
+
+        <div className="flex space-x-3 mt-6">
+          <button
+            onClick={() => setShowCreateModal(false)}
+            className="flex-1 btn btn-secondary"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={createRoom}
+            className="flex-1 btn btn-primary"
+          >
+            {t('common.create')}
+          </button>
+        </div>
+      </Modal>
 
       {/* Edit Room Modal */}
-      {showEditModal && selectedRoom && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.editRoom')}</h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
-                <input
-                  type="text"
-                  value={editRoomName}
-                  onChange={(e) => setEditRoomName(e.target.value)}
-                  placeholder="Wohnzimmer"
-                  className="input w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
-                <input
-                  type="text"
-                  value={editRoomIcon}
-                  onChange={(e) => setEditRoomIcon(e.target.value)}
-                  placeholder="mdi:sofa"
-                  className="input w-full"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.owner')}</label>
-                <select
-                  value={editRoomOwnerId}
-                  onChange={(e) => setEditRoomOwnerId(e.target.value)}
-                  className="input w-full"
-                >
-                  <option value="">{t('rooms.noOwner')}</option>
-                  {users.map(u => (
-                    <option key={u.id} value={u.id}>
-                      {u.first_name || u.username}
-                    </option>
-                  ))}
-                </select>
-                <p className="text-xs text-gray-500 mt-1">{t('rooms.ownerHint')}</p>
-              </div>
-
-              <div className="text-sm text-gray-500">
-                {t('rooms.alias')}: @{selectedRoom.alias}
-              </div>
-            </div>
-
-            <div className="flex space-x-3 mt-6">
-              <button
-                onClick={() => setShowEditModal(false)}
-                className="flex-1 btn btn-secondary"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={updateRoom}
-                disabled={updating}
-                className="flex-1 btn btn-primary disabled:opacity-50"
-              >
-                {updating ? (
-                  <Loader className="w-4 h-4 animate-spin mx-auto" />
-                ) : (
-                  t('common.save')
-                )}
-              </button>
-            </div>
+      <Modal isOpen={showEditModal && !!selectedRoom} onClose={() => setShowEditModal(false)} title={t('rooms.editRoom')}>
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('common.name')}</label>
+            <input
+              type="text"
+              value={editRoomName}
+              onChange={(e) => setEditRoomName(e.target.value)}
+              placeholder="Wohnzimmer"
+              className="input w-full"
+            />
           </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.icon')}</label>
+            <input
+              type="text"
+              value={editRoomIcon}
+              onChange={(e) => setEditRoomIcon(e.target.value)}
+              placeholder="mdi:sofa"
+              className="input w-full"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm text-gray-500 dark:text-gray-400 mb-1">{t('rooms.owner')}</label>
+            <select
+              value={editRoomOwnerId}
+              onChange={(e) => setEditRoomOwnerId(e.target.value)}
+              className="input w-full"
+            >
+              <option value="">{t('rooms.noOwner')}</option>
+              {users.map(u => (
+                <option key={u.id} value={u.id}>
+                  {u.first_name || u.username}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-500 mt-1">{t('rooms.ownerHint')}</p>
+          </div>
+
+          {selectedRoom && (
+            <div className="text-sm text-gray-500">
+              {t('rooms.alias')}: @{selectedRoom.alias}
+            </div>
+          )}
         </div>
-      )}
+
+        <div className="flex space-x-3 mt-6">
+          <button
+            onClick={() => setShowEditModal(false)}
+            className="flex-1 btn btn-secondary"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={updateRoom}
+            disabled={updating}
+            className="flex-1 btn btn-primary disabled:opacity-50"
+          >
+            {updating ? (
+              <Loader className="w-4 h-4 animate-spin mx-auto" />
+            ) : (
+              t('common.save')
+            )}
+          </button>
+        </div>
+      </Modal>
 
       {/* Link to HA Area Modal */}
-      {showLinkModal && selectedRoom && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-2">{t('rooms.linkToHAArea')}</h2>
-            <p className="text-gray-500 dark:text-gray-400 mb-4">{t('device.room')}: {selectedRoom.name}</p>
+      <Modal isOpen={showLinkModal && !!selectedRoom} onClose={() => setShowLinkModal(false)} title={t('rooms.linkToHAArea')}>
+        {selectedRoom && (
+          <p className="text-gray-500 dark:text-gray-400 mb-4">{t('device.room')}: {selectedRoom.name}</p>
+        )}
 
-            <div className="space-y-4">
-              {loadingAreas ? (
-                <div className="text-center py-4">
-                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
-                </div>
-              ) : haAreas.length === 0 ? (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-4">
-                  {t('rooms.noHAAreas')}
-                </p>
-              ) : (
-                <div>
-                  <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.selectArea')}:</label>
-                  <select
-                    value={selectedHAArea}
-                    onChange={(e) => setSelectedHAArea(e.target.value)}
-                    className="input w-full"
-                  >
-                    <option value="">{t('rooms.selectAreaPlaceholder')}</option>
-                    {haAreas
-                      .filter(a => !a.is_linked)
-                      .map(area => (
-                        <option key={area.area_id} value={area.area_id}>
-                          {area.name}
-                        </option>
-                      ))
-                    }
-                  </select>
-                  {haAreas.filter(a => !a.is_linked).length === 0 && (
-                    <p className="text-yellow-600 dark:text-yellow-400 text-sm mt-2">
-                      {t('rooms.allAreasLinked')}
-                    </p>
-                  )}
-                </div>
-              )}
+        <div className="space-y-4">
+          {loadingAreas ? (
+            <div className="text-center py-4">
+              <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
             </div>
-
-            <div className="flex space-x-3 mt-6">
-              <button
-                onClick={() => setShowLinkModal(false)}
-                className="flex-1 btn btn-secondary"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={linkToHAArea}
-                disabled={!selectedHAArea || updating}
-                className="flex-1 btn btn-primary disabled:opacity-50"
-              >
-                {updating ? (
-                  <Loader className="w-4 h-4 animate-spin mx-auto" />
-                ) : (
-                  t('rooms.linkToHA')
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* HA Sync Panel Modal */}
-      {showSyncPanel && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="card max-w-lg w-full max-h-[90vh] overflow-y-auto">
-            <h2 className="text-xl font-bold text-gray-900 dark:text-white mb-4">{t('rooms.haSyncTitle')}</h2>
-
-            {/* Conflict Resolution */}
-            <div className="mb-6">
-              <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.conflictResolution')}:</label>
+          ) : haAreas.length === 0 ? (
+            <p className="text-gray-500 dark:text-gray-400 text-center py-4">
+              {t('rooms.noHAAreas')}
+            </p>
+          ) : (
+            <div>
+              <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.selectArea')}:</label>
               <select
-                value={conflictResolution}
-                onChange={(e) => setConflictResolution(e.target.value)}
+                value={selectedHAArea}
+                onChange={(e) => setSelectedHAArea(e.target.value)}
                 className="input w-full"
               >
-                <option value="skip">{t('rooms.conflictSkip')}</option>
-                <option value="link">{t('rooms.conflictLink')}</option>
-                <option value="overwrite">{t('rooms.conflictOverwrite')}</option>
+                <option value="">{t('rooms.selectAreaPlaceholder')}</option>
+                {haAreas
+                  .filter(a => !a.is_linked)
+                  .map(area => (
+                    <option key={area.area_id} value={area.area_id}>
+                      {area.name}
+                    </option>
+                  ))
+                }
               </select>
-            </div>
-
-            {/* Sync Actions */}
-            <div className="grid grid-cols-3 gap-3 mb-6">
-              <button
-                onClick={importFromHA}
-                disabled={syncing}
-                className="btn bg-green-600 hover:bg-green-700 text-white flex flex-col items-center py-4"
-              >
-                <ArrowDownToLine className="w-6 h-6 mb-2" />
-                <span className="text-sm">{t('rooms.import')}</span>
-              </button>
-              <button
-                onClick={exportToHA}
-                disabled={syncing}
-                className="btn bg-blue-600 hover:bg-blue-700 text-white flex flex-col items-center py-4"
-              >
-                <ArrowUpFromLine className="w-6 h-6 mb-2" />
-                <span className="text-sm">{t('rooms.export')}</span>
-              </button>
-              <button
-                onClick={syncWithHA}
-                disabled={syncing}
-                className="btn bg-purple-600 hover:bg-purple-700 text-white flex flex-col items-center py-4"
-              >
-                {syncing ? (
-                  <Loader className="w-6 h-6 mb-2 animate-spin" />
-                ) : (
-                  <ArrowLeftRight className="w-6 h-6 mb-2" />
-                )}
-                <span className="text-sm">{t('rooms.sync')}</span>
-              </button>
-            </div>
-
-            {/* HA Areas List */}
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
-                {t('rooms.haAreasCount', { count: haAreas.length })}
-              </h3>
-              {loadingAreas ? (
-                <div className="text-center py-4">
-                  <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
-                </div>
-              ) : haAreas.length === 0 ? (
-                <p className="text-gray-500 dark:text-gray-400 text-center py-4">
-                  {t('rooms.haNotConnected')}
+              {haAreas.filter(a => !a.is_linked).length === 0 && (
+                <p className="text-yellow-600 dark:text-yellow-400 text-sm mt-2">
+                  {t('rooms.allAreasLinked')}
                 </p>
-              ) : (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  {haAreas.map(area => (
-                    <div
-                      key={area.area_id}
-                      className="flex items-center justify-between p-3 bg-gray-100 dark:bg-gray-800 rounded-lg"
-                    >
-                      <div>
-                        <p className="text-gray-900 dark:text-white">{area.name}</p>
-                        <p className="text-xs text-gray-500">{area.area_id}</p>
-                      </div>
-                      {area.is_linked ? (
-                        <span className="text-green-600 dark:text-green-400 text-sm flex items-center space-x-1">
-                          <LinkIcon className="w-3 h-3" />
-                          <span>{area.linked_room_name}</span>
-                        </span>
-                      ) : (
-                        <span className="text-gray-500 text-sm">{t('rooms.haNotLinked')}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
               )}
             </div>
-
-            <div className="flex space-x-3 mt-6">
-              <button
-                onClick={() => setShowSyncPanel(false)}
-                className="flex-1 btn btn-secondary"
-              >
-                {t('common.close')}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-      )}
+
+        <div className="flex space-x-3 mt-6">
+          <button
+            onClick={() => setShowLinkModal(false)}
+            className="flex-1 btn btn-secondary"
+          >
+            {t('common.cancel')}
+          </button>
+          <button
+            onClick={linkToHAArea}
+            disabled={!selectedHAArea || updating}
+            className="flex-1 btn btn-primary disabled:opacity-50"
+          >
+            {updating ? (
+              <Loader className="w-4 h-4 animate-spin mx-auto" />
+            ) : (
+              t('rooms.linkToHA')
+            )}
+          </button>
+        </div>
+      </Modal>
+
+      {/* HA Sync Panel Modal */}
+      <Modal isOpen={showSyncPanel} onClose={() => setShowSyncPanel(false)} title={t('rooms.haSyncTitle')} maxWidth="max-w-lg">
+        {/* Conflict Resolution */}
+        <div className="mb-6">
+          <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.conflictResolution')}:</label>
+          <select
+            value={conflictResolution}
+            onChange={(e) => setConflictResolution(e.target.value)}
+            className="input w-full"
+          >
+            <option value="skip">{t('rooms.conflictSkip')}</option>
+            <option value="link">{t('rooms.conflictLink')}</option>
+            <option value="overwrite">{t('rooms.conflictOverwrite')}</option>
+          </select>
+        </div>
+
+        {/* Sync Actions */}
+        <div className="grid grid-cols-3 gap-3 mb-6">
+          <button
+            onClick={importFromHA}
+            disabled={syncing}
+            className="btn bg-green-600 hover:bg-green-700 text-white flex flex-col items-center py-4"
+          >
+            <ArrowDownToLine className="w-6 h-6 mb-2" />
+            <span className="text-sm">{t('rooms.import')}</span>
+          </button>
+          <button
+            onClick={exportToHA}
+            disabled={syncing}
+            className="btn bg-blue-600 hover:bg-blue-700 text-white flex flex-col items-center py-4"
+          >
+            <ArrowUpFromLine className="w-6 h-6 mb-2" />
+            <span className="text-sm">{t('rooms.export')}</span>
+          </button>
+          <button
+            onClick={syncWithHA}
+            disabled={syncing}
+            className="btn bg-purple-600 hover:bg-purple-700 text-white flex flex-col items-center py-4"
+          >
+            {syncing ? (
+              <Loader className="w-6 h-6 mb-2 animate-spin" />
+            ) : (
+              <ArrowLeftRight className="w-6 h-6 mb-2" />
+            )}
+            <span className="text-sm">{t('rooms.sync')}</span>
+          </button>
+        </div>
+
+        {/* HA Areas List */}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+            {t('rooms.haAreasCount', { count: haAreas.length })}
+          </h3>
+          {loadingAreas ? (
+            <div className="text-center py-4">
+              <Loader className="w-6 h-6 animate-spin mx-auto text-gray-500 dark:text-gray-400" />
+            </div>
+          ) : haAreas.length === 0 ? (
+            <p className="text-gray-500 dark:text-gray-400 text-center py-4">
+              {t('rooms.haNotConnected')}
+            </p>
+          ) : (
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {haAreas.map(area => (
+                <div
+                  key={area.area_id}
+                  className="flex items-center justify-between p-3 bg-gray-100 dark:bg-gray-800 rounded-lg"
+                >
+                  <div>
+                    <p className="text-gray-900 dark:text-white">{area.name}</p>
+                    <p className="text-xs text-gray-500">{area.area_id}</p>
+                  </div>
+                  {area.is_linked ? (
+                    <span className="text-green-600 dark:text-green-400 text-sm flex items-center space-x-1">
+                      <LinkIcon className="w-3 h-3" />
+                      <span>{area.linked_room_name}</span>
+                    </span>
+                  ) : (
+                    <span className="text-gray-500 text-sm">{t('rooms.haNotLinked')}</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex space-x-3 mt-6">
+          <button
+            onClick={() => setShowSyncPanel(false)}
+            className="flex-1 btn btn-secondary"
+          >
+            {t('common.close')}
+          </button>
+        </div>
+      </Modal>
 
       {/* Confirm Dialog */}
       {ConfirmDialogComponent}

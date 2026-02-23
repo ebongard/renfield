@@ -191,7 +191,7 @@ export default function Layout({ children }) {
         aria-current={isActive ? 'page' : undefined}
       >
         {isActive && (
-          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-primary-600 rounded-r" />
+          <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent-400 rounded-r" />
         )}
         <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{item.name}</span>

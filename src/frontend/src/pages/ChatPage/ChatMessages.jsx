@@ -78,6 +78,7 @@ export default function ChatMessages() {
     messages, loading, historyLoading, speakText, handleFeedbackSubmit,
     actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
+    sendMessage,
   } = useChatContext();
   const messagesEndRef = useRef(null);
 
@@ -105,11 +106,26 @@ export default function ChatMessages() {
       {/* Empty State */}
       {!historyLoading && messages.length === 0 && (
         <div className="text-center py-16">
-          <img src="/logo-icon.svg" alt="" className="w-16 h-16 mx-auto mb-6 opacity-30" aria-hidden="true" />
-          <h2 className="font-display text-xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
-          <p className="text-sm text-gray-400 dark:text-gray-500">
+          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-6 opacity-30" aria-hidden="true" />
+          <h2 className="font-display text-2xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
+          <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
             {t('chat.useTextOrMic')}
           </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {[
+              t('chat.exampleWeather'),
+              t('chat.exampleLight'),
+              t('chat.exampleMusic'),
+            ].map((example) => (
+              <button
+                key={example}
+                onClick={() => sendMessage?.(example, false)}
+                className="px-4 py-2 rounded-full text-sm border border-gray-300 dark:border-gray-600 text-gray-500 dark:text-gray-400 hover:border-accent-400 hover:text-accent-600 dark:hover:border-accent-500 dark:hover:text-accent-400 transition-colors"
+              >
+                {example}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 
@@ -125,7 +141,7 @@ export default function ChatMessages() {
             className={`max-w-[70%] px-4 py-2 rounded-lg ${
               message.role === 'user'
                 ? 'bg-primary-600 text-white'
-                : 'bg-gray-200 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
+                : 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-gray-100'
             }`}
           >
             {/* Agent Steps (collapsible) */}
@@ -139,43 +155,43 @@ export default function ChatMessages() {
 
               return (
                 <details className="mb-2 group" open={isStillRunning || undefined}>
-                  <summary className="flex items-center gap-1.5 text-xs cursor-pointer select-none list-none text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
-                    <ChevronRight className="w-3 h-3 flex-shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
+                  <summary className="flex items-center gap-1.5 text-sm cursor-pointer select-none list-none text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300">
+                    <ChevronRight className="w-4 h-4 flex-shrink-0 transition-transform group-open:rotate-90" aria-hidden="true" />
                     {isStillRunning ? (
                       <>
-                        <Loader className="w-3 h-3 animate-spin text-blue-400" aria-hidden="true" />
+                        <Loader className="w-4 h-4 animate-spin text-accent-500 dark:text-accent-400" aria-hidden="true" />
                         <span>{t('chat.agentThinking')}</span>
                       </>
                     ) : (
                       <>
                         {hasError
-                          ? <XCircle className="w-3 h-3 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
-                          : <CheckCircle2 className="w-3 h-3 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
+                          ? <XCircle className="w-4 h-4 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+                          : <CheckCircle2 className="w-4 h-4 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
                         }
                         <span>{t('chat.agentStepsCount', { count: toolCalls.length })}</span>
                       </>
                     )}
                   </summary>
-                  <div className="mt-1.5 ml-4.5 space-y-1 border-l-2 border-gray-300 dark:border-gray-600 pl-2.5">
+                  <div className="mt-1.5 ml-5 space-y-1 border-l-2 border-accent-400 dark:border-accent-600 pl-2.5 bg-gray-100/50 dark:bg-gray-800/50 rounded-lg p-2.5">
                     {message.agentSteps.map((step, stepIdx) => (
-                      <div key={stepIdx} className="flex items-start gap-1.5 text-xs">
+                      <div key={stepIdx} className="flex items-start gap-1.5 text-sm">
                         {step.type === 'tool_call' && (
                           <>
-                            <Search className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-blue-500 dark:text-blue-400" aria-hidden="true" />
+                            <Search className="w-4 h-4 mt-0.5 flex-shrink-0 text-accent-500 dark:text-accent-400" aria-hidden="true" />
                             <span className="text-gray-600 dark:text-gray-300">
                               <span className="font-medium">{step.tool?.split('.').pop()}</span>
                               {step.reason && <span className="ml-1 text-gray-400 dark:text-gray-500">— {step.reason}</span>}
                             </span>
                             {!message.agentSteps.find(s => s.type === 'tool_result' && s.step === step.step) && (
-                              <Loader className="w-3 h-3 mt-0.5 animate-spin text-blue-400" aria-hidden="true" />
+                              <Loader className="w-4 h-4 mt-0.5 animate-spin text-accent-500 dark:text-accent-400" aria-hidden="true" />
                             )}
                           </>
                         )}
                         {step.type === 'tool_result' && (
                           <>
                             {step.success
-                              ? <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
-                              : <XCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
+                              ? <CheckCircle2 className="w-4 h-4 mt-0.5 flex-shrink-0 text-green-500 dark:text-green-400" aria-hidden="true" />
+                              : <XCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-red-500 dark:text-red-400" aria-hidden="true" />
                             }
                             <span className={`${step.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                               {step.tool?.split('.').pop()}{step.success ? '' : ` — ${step.message || 'failed'}`}

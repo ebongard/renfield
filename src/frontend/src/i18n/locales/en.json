@@ -151,7 +151,10 @@
     "documentIndexed": "Indexed to KB",
     "agentThinking": "Thinking...",
     "agentStepsCount": "{{count}} step completed",
-    "agentStepsCount_other": "{{count}} steps completed"
+    "agentStepsCount_other": "{{count}} steps completed",
+    "exampleWeather": "How's the weather?",
+    "exampleLight": "Turn on the living room light",
+    "exampleMusic": "Play some jazz music"
   },
   "voice": {
     "startRecording": "Start voice recording",

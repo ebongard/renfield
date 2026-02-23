@@ -72,7 +72,7 @@ export default function ChatHeader() {
 
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
-            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-green-500 animate-gentle-pulse' : 'bg-red-500'}`} />
+            <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-accent-400 animate-gentle-pulse' : 'bg-red-500'}`} />
             <span className="text-sm text-gray-500 dark:text-gray-400">
               {wsConnected ? t('common.connected') : t('common.disconnected')}
             </span>
