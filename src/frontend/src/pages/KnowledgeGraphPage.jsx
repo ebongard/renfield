@@ -390,11 +390,10 @@ export default function KnowledgeGraphPage() {
           <button
             key={tab}
             onClick={() => { setActiveTab(tab); setMergeMode(false); setMergeSelection([]); }}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === tab
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === tab
                 ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400'
                 : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
-            }`}
+              }`}
           >
             {tab === 'entities' && <Brain className="w-4 h-4" />}
             {tab === 'relations' && <Link2 className="w-4 h-4" />}
@@ -465,11 +464,11 @@ export default function KnowledgeGraphPage() {
               </div>
               <div className="flex gap-2">
                 {mergeSelection.length === 2 && (
-                  <button onClick={handleMerge} className="btn-primary text-sm">
+                  <button onClick={handleMerge} className="btn btn-primary text-sm">
                     {t('knowledgeGraph.merge')}
                   </button>
                 )}
-                <button onClick={() => { setMergeMode(false); setMergeSelection([]); }} className="btn-secondary text-sm">
+                <button onClick={() => { setMergeMode(false); setMergeSelection([]); }} className="btn btn-secondary text-sm">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -505,9 +504,8 @@ export default function KnowledgeGraphPage() {
                     return (
                       <tr
                         key={entity.id}
-                        className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${
-                          isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
-                        }`}
+                        className={`hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors ${isSelected ? 'bg-indigo-50 dark:bg-indigo-900/20' : ''
+                          }`}
                         onClick={mergeMode ? () => toggleMergeSelection(entity) : undefined}
                         style={mergeMode ? { cursor: 'pointer' } : undefined}
                       >
@@ -554,10 +552,9 @@ export default function KnowledgeGraphPage() {
                                     e.stopPropagation();
                                     setScopeMenuEntity(scopeMenuEntity?.id === entity.id ? null : entity);
                                   }}
-                                  className={`btn-icon ${
-                                    entity.scope === 'personal' ? 'btn-icon-ghost' :
-                                    'text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg'
-                                  }`}
+                                  className={`btn-icon ${entity.scope === 'personal' ? 'btn-icon-ghost' :
+                                      'text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg'
+                                    }`}
                                   title={t('knowledgeGraph.changeScope')}
                                 >
                                   {entity.scope === 'personal' ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
@@ -569,9 +566,8 @@ export default function KnowledgeGraphPage() {
                                       <button
                                         key={scopeInfo.name}
                                         onClick={() => handleUpdateScope(entity, scopeInfo.name)}
-                                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                                          entity.scope === scopeInfo.name ? 'font-semibold' : ''
-                                        }`}
+                                        className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${entity.scope === scopeInfo.name ? 'font-semibold' : ''
+                                          }`}
                                         title={scopeInfo.description}
                                       >
                                         {scopeInfo.label}
@@ -622,7 +618,7 @@ export default function KnowledgeGraphPage() {
                 <button
                   onClick={() => setEntitiesPage(p => Math.max(1, p - 1))}
                   disabled={entitiesPage <= 1}
-                  className="btn-secondary p-2 disabled:opacity-50"
+                  className="btn btn-secondary p-2 disabled:opacity-50"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -632,7 +628,7 @@ export default function KnowledgeGraphPage() {
                 <button
                   onClick={() => setEntitiesPage(p => Math.min(totalEntitiesPages, p + 1))}
                   disabled={entitiesPage >= totalEntitiesPages}
-                  className="btn-secondary p-2 disabled:opacity-50"
+                  className="btn btn-secondary p-2 disabled:opacity-50"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -649,7 +645,7 @@ export default function KnowledgeGraphPage() {
           <div className="flex items-center justify-end mb-4">
             <button
               onClick={openRelationCreateModal}
-              className="btn-primary flex items-center gap-2 text-sm"
+              className="btn btn-primary flex items-center gap-2 text-sm"
             >
               <Plus className="w-4 h-4" />
               {t('knowledgeGraph.createRelation')}
@@ -664,7 +660,7 @@ export default function KnowledgeGraphPage() {
               </span>
               <button
                 onClick={() => { setEntityFilter(''); setRelationsPage(1); }}
-                className="btn-secondary text-sm flex items-center gap-1"
+                className="btn btn-secondary text-sm flex items-center gap-1"
               >
                 <X className="w-3 h-3" /> {t('knowledgeGraph.clearFilter')}
               </button>
@@ -726,7 +722,7 @@ export default function KnowledgeGraphPage() {
                 <button
                   onClick={() => setRelationsPage(p => Math.max(1, p - 1))}
                   disabled={relationsPage <= 1}
-                  className="btn-secondary p-2 disabled:opacity-50"
+                  className="btn btn-secondary p-2 disabled:opacity-50"
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
@@ -736,7 +732,7 @@ export default function KnowledgeGraphPage() {
                 <button
                   onClick={() => setRelationsPage(p => Math.min(totalRelationsPages, p + 1))}
                   disabled={relationsPage >= totalRelationsPages}
-                  className="btn-secondary p-2 disabled:opacity-50"
+                  className="btn btn-secondary p-2 disabled:opacity-50"
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -850,10 +846,10 @@ export default function KnowledgeGraphPage() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setShowEditModal(false)} className="btn-secondary">
+              <button onClick={() => setShowEditModal(false)} className="btn btn-secondary">
                 {t('common.cancel')}
               </button>
-              <button onClick={handleSaveEntity} className="btn-primary" disabled={!formName.trim()}>
+              <button onClick={handleSaveEntity} className="btn btn-primary" disabled={!formName.trim()}>
                 {t('common.save')}
               </button>
             </div>
@@ -1000,12 +996,12 @@ export default function KnowledgeGraphPage() {
             </div>
 
             <div className="flex justify-end gap-2 pt-2">
-              <button onClick={() => setShowRelationModal(false)} className="btn-secondary">
+              <button onClick={() => setShowRelationModal(false)} className="btn btn-secondary">
                 {t('common.cancel')}
               </button>
               <button
                 onClick={handleSaveRelation}
-                className="btn-primary"
+                className="btn btn-primary"
                 disabled={!relFormPredicate.trim() || !relFormSubjectId || !relFormObjectId}
               >
                 {t('common.save')}

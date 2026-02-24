@@ -154,11 +154,10 @@ export default function MemoryPage() {
         {[1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
-            className={`w-1.5 h-1.5 rounded-full ${
-              i <= filled
+            className={`w-1.5 h-1.5 rounded-full ${i <= filled
                 ? 'bg-primary-500 dark:bg-primary-400'
                 : 'bg-gray-200 dark:bg-gray-600'
-            }`}
+              }`}
           />
         ))}
       </div>
@@ -172,7 +171,7 @@ export default function MemoryPage() {
         <span className="text-sm text-gray-500 dark:text-gray-400">
           {t('memory.count', { count: total })}
         </span>
-        <button onClick={openCreateModal} className="btn-primary flex items-center space-x-2">
+        <button onClick={openCreateModal} className="btn btn-primary flex items-center space-x-2">
           <Plus className="w-4 h-4" />
           <span className="hidden sm:inline">{t('memory.addMemory')}</span>
         </button>
@@ -186,11 +185,10 @@ export default function MemoryPage() {
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setActiveCategory(null)}
-          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-            !activeCategory
+          className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${!activeCategory
               ? 'bg-primary-600 text-white'
               : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-          }`}
+            }`}
         >
           {t('memory.categories.all')}
         </button>
@@ -198,11 +196,10 @@ export default function MemoryPage() {
           <button
             key={cat}
             onClick={() => setActiveCategory(activeCategory === cat ? null : cat)}
-            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-              activeCategory === cat
+            className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${activeCategory === cat
                 ? 'bg-primary-600 text-white'
                 : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-            }`}
+              }`}
           >
             {t(`memory.categories.${cat}`)}
           </button>
@@ -332,14 +329,14 @@ export default function MemoryPage() {
           <div className="flex justify-end space-x-3 pt-2">
             <button
               onClick={() => setShowModal(false)}
-              className="btn-secondary"
+              className="btn btn-secondary"
             >
               {t('common.cancel')}
             </button>
             <button
               onClick={handleSave}
               disabled={!formContent.trim()}
-              className="btn-primary disabled:opacity-50"
+              className="btn btn-primary disabled:opacity-50"
             >
               {t('common.save')}
             </button>

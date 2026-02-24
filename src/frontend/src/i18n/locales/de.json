@@ -383,7 +383,9 @@
     "moveDocuments": "Verschieben ({{count}})",
     "selectTargetKb": "Ziel-Knowledge-Base wählen",
     "documentsMovedSuccess": "{{count}} Dokument(e) verschoben",
-    "alreadyInTargetKb": "Alle Dokumente sind bereits in der Ziel-KB"
+    "alreadyInTargetKb": "Alle Dokumente sind bereits in der Ziel-KB",
+    "createdLabel": "Erstellt:",
+    "descriptionPlaceholder": "Optionale Beschreibung..."
   },
   "memory": {
     "title": "Erinnerungen",

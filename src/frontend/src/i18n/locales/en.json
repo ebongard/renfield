@@ -383,7 +383,9 @@
     "moveDocuments": "Move ({{count}})",
     "selectTargetKb": "Select target knowledge base",
     "documentsMovedSuccess": "{{count}} document(s) moved",
-    "alreadyInTargetKb": "All documents are already in the target KB"
+    "alreadyInTargetKb": "All documents are already in the target KB",
+    "createdLabel": "Created:",
+    "descriptionPlaceholder": "Optional description..."
   },
   "memory": {
     "title": "Memories",

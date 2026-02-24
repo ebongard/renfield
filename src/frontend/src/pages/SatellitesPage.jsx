@@ -353,7 +353,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
                 <button
                   onClick={handleUpdate}
                   disabled={updating}
-                  className="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg disabled:opacity-50"
+                  className="btn btn-primary text-sm disabled:opacity-50 inline-flex items-center gap-2"
                 >
                   {updating ? (
                     <Loader2 className="w-4 h-4 animate-spin" />

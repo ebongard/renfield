@@ -445,11 +445,10 @@ export default function PaperlessAuditPage() {
                 role="tab"
                 aria-selected={activeTab === tab}
                 onClick={() => setActiveTab(tab)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === tab
+                className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${activeTab === tab
                     ? 'border-primary-500 text-primary-600 dark:text-primary-400'
                     : 'border-transparent text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:border-gray-300'
-                }`}
+                  }`}
               >
                 <Icon className="w-4 h-4" />
                 {t(`paperlessAudit.tabs.${tab}`)}
@@ -645,7 +644,7 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
           <button
             onClick={onStart}
             disabled={starting}
-            className="btn-primary flex items-center gap-2"
+            className="btn btn-primary flex items-center gap-2"
           >
             {starting ? <Loader className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
             {t('paperlessAudit.control.start')}
@@ -715,14 +714,14 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
             <>
               <button
                 onClick={() => onApprove([...selectedIds])}
-                className="btn-primary text-sm flex items-center gap-1"
+                className="btn btn-primary text-sm flex items-center gap-1"
               >
                 <Check className="w-3.5 h-3.5" />
                 {t('paperlessAudit.review.approveSelected')}
               </button>
               <button
                 onClick={() => onSkip([...selectedIds])}
-                className="btn-secondary text-sm flex items-center gap-1"
+                className="btn btn-secondary text-sm flex items-center gap-1"
               >
                 <X className="w-3.5 h-3.5" />
                 {t('paperlessAudit.review.skipSelected')}
@@ -742,110 +741,110 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
           <p className="text-gray-500 dark:text-gray-400">{search ? t('paperlessAudit.review.noSearchResults') : t('paperlessAudit.review.noResults')}</p>
         </div>
       ) : (
-      <>
-      {/* Results Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-200 dark:border-gray-700">
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400 w-8"></th>
-              <SortHeader column="paperless_doc_id">{t('paperlessAudit.review.docId')}</SortHeader>
-              <SortHeader column="current_title">{t('paperlessAudit.review.currentTitle')} / {t('paperlessAudit.review.suggestedTitle')}</SortHeader>
-              <SortHeader column="current_correspondent">{t('paperlessAudit.review.correspondent')}</SortHeader>
-              <SortHeader column="current_document_type">{t('paperlessAudit.review.type')}</SortHeader>
-              <SortHeader column="current_date">{t('paperlessAudit.review.date')}</SortHeader>
-              <SortHeader column="detected_language">{t('paperlessAudit.review.language')}</SortHeader>
-              <SortHeader column="current_storage_path">{t('paperlessAudit.review.storagePath')}</SortHeader>
-              <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.missing')}</th>
-              <SortHeader column="confidence">{t('paperlessAudit.review.confidence')}</SortHeader>
-              <th className="text-right py-3 px-2 font-medium text-gray-500 dark:text-gray-400"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((r) => {
-              const isLoading = actionLoading.has(r.id);
-              return (
-                <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                  <td className="py-3 px-2">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.has(r.id)}
-                      onChange={() => onToggleSelected(r.id)}
-                      className="rounded border-gray-300 dark:border-gray-600"
-                    />
-                  </td>
-                  <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
-                  <td className="py-3 px-2 max-w-xs">
-                    <DiffValue current={r.current_title} suggested={r.suggested_title} />
-                    {r.suggested_tags && r.suggested_tags.length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {r.suggested_tags.map((tag, i) => (
-                          <Badge key={i} color="accent">{tag}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_correspondent} suggested={r.suggested_correspondent} />
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_document_type} suggested={r.suggested_document_type} />
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_date} suggested={r.suggested_date} />
-                  </td>
-                  <td className="py-3 px-2">
-                    {r.detected_language && (
-                      <Badge color="blue" className="font-mono">{r.detected_language}</Badge>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <DiffValue current={r.current_storage_path} suggested={r.suggested_storage_path} />
-                  </td>
-                  <td className="py-3 px-2">
-                    {r.missing_fields && r.missing_fields.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {r.missing_fields.map((f, i) => (
-                          <Badge key={i} color="yellow">{f}</Badge>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td className="py-3 px-2">
-                    <ConfidenceBadge value={r.confidence} />
-                  </td>
-                  <td className="py-3 px-2 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <button
-                        onClick={() => onApprove([r.id])}
-                        disabled={isLoading}
-                        className="btn-icon text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20"
-                        title={t('paperlessAudit.review.approve')}
-                      >
-                        {isLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                      </button>
-                      <button
-                        onClick={() => onSkip([r.id])}
-                        disabled={isLoading}
-                        className="btn-icon btn-icon-ghost"
-                        title={t('paperlessAudit.review.skip')}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
+        <>
+          {/* Results Table */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 dark:border-gray-700">
+                  <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400 w-8"></th>
+                  <SortHeader column="paperless_doc_id">{t('paperlessAudit.review.docId')}</SortHeader>
+                  <SortHeader column="current_title">{t('paperlessAudit.review.currentTitle')} / {t('paperlessAudit.review.suggestedTitle')}</SortHeader>
+                  <SortHeader column="current_correspondent">{t('paperlessAudit.review.correspondent')}</SortHeader>
+                  <SortHeader column="current_document_type">{t('paperlessAudit.review.type')}</SortHeader>
+                  <SortHeader column="current_date">{t('paperlessAudit.review.date')}</SortHeader>
+                  <SortHeader column="detected_language">{t('paperlessAudit.review.language')}</SortHeader>
+                  <SortHeader column="current_storage_path">{t('paperlessAudit.review.storagePath')}</SortHeader>
+                  <th className="text-left py-3 px-2 font-medium text-gray-500 dark:text-gray-400">{t('paperlessAudit.review.missing')}</th>
+                  <SortHeader column="confidence">{t('paperlessAudit.review.confidence')}</SortHeader>
+                  <th className="text-right py-3 px-2 font-medium text-gray-500 dark:text-gray-400"></th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+              </thead>
+              <tbody>
+                {results.map((r) => {
+                  const isLoading = actionLoading.has(r.id);
+                  return (
+                    <tr key={r.id} className="border-b border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="py-3 px-2">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(r.id)}
+                          onChange={() => onToggleSelected(r.id)}
+                          className="rounded border-gray-300 dark:border-gray-600"
+                        />
+                      </td>
+                      <td className="py-3 px-2 text-gray-900 dark:text-gray-100 font-mono text-xs">{r.paperless_doc_id}</td>
+                      <td className="py-3 px-2 max-w-xs">
+                        <DiffValue current={r.current_title} suggested={r.suggested_title} />
+                        {r.suggested_tags && r.suggested_tags.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {r.suggested_tags.map((tag, i) => (
+                              <Badge key={i} color="accent">{tag}</Badge>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        <DiffValue current={r.current_correspondent} suggested={r.suggested_correspondent} />
+                      </td>
+                      <td className="py-3 px-2">
+                        <DiffValue current={r.current_document_type} suggested={r.suggested_document_type} />
+                      </td>
+                      <td className="py-3 px-2">
+                        <DiffValue current={r.current_date} suggested={r.suggested_date} />
+                      </td>
+                      <td className="py-3 px-2">
+                        {r.detected_language && (
+                          <Badge color="blue" className="font-mono">{r.detected_language}</Badge>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        <DiffValue current={r.current_storage_path} suggested={r.suggested_storage_path} />
+                      </td>
+                      <td className="py-3 px-2">
+                        {r.missing_fields && r.missing_fields.length > 0 && (
+                          <div className="flex flex-wrap gap-1">
+                            {r.missing_fields.map((f, i) => (
+                              <Badge key={i} color="yellow">{f}</Badge>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-2">
+                        <ConfidenceBadge value={r.confidence} />
+                      </td>
+                      <td className="py-3 px-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => onApprove([r.id])}
+                            disabled={isLoading}
+                            className="btn-icon text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20"
+                            title={t('paperlessAudit.review.approve')}
+                          >
+                            {isLoading ? <Loader className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                          </button>
+                          <button
+                            onClick={() => onSkip([r.id])}
+                            disabled={isLoading}
+                            className="btn-icon btn-icon-ghost"
+                            title={t('paperlessAudit.review.skip')}
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
 
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
-      )}
-      </>
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+          )}
+        </>
       )}
     </div>
   );
@@ -906,7 +905,7 @@ function OcrTab({ t, results, loading, total, page, setPage, actionLoading, onRe
                     <button
                       onClick={() => onReOcr([r.id])}
                       disabled={isLoading}
-                      className="btn-secondary text-xs flex items-center gap-1 ml-auto"
+                      className="btn btn-secondary text-xs flex items-center gap-1 ml-auto"
                       title={t('paperlessAudit.ocr.reocr')}
                     >
                       {isLoading ? <Loader className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
@@ -1123,7 +1122,7 @@ function DuplicatesTab({ t, groups, loading, detecting, onDetect }) {
         <button
           onClick={onDetect}
           disabled={detecting}
-          className="btn-primary flex items-center gap-2"
+          className="btn btn-primary flex items-center gap-2"
         >
           {detecting ? <Loader className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
           {t('paperlessAudit.duplicates.detect')}
@@ -1188,7 +1187,7 @@ function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onSc
         <button
           onClick={onScan}
           disabled={loading}
-          className="btn-primary flex items-center gap-2"
+          className="btn btn-primary flex items-center gap-2"
         >
           {loading ? <Loader className="w-4 h-4 animate-spin" /> : <Users className="w-4 h-4" />}
           {t('paperlessAudit.correspondents.scan')}

@@ -329,7 +329,7 @@ export default function KnowledgePage() {
       <PageHeader icon={BookOpen} title={t('knowledge.title')} subtitle={t('knowledge.subtitle')}>
         <button
           onClick={() => setShowNewKbModal(true)}
-          className="btn-primary flex items-center gap-2"
+          className="btn btn-primary flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
           {t('knowledge.newKnowledgeBase')}
@@ -379,7 +379,7 @@ export default function KnowledgePage() {
               </div>
               <div>
                 <div className="text-2xl font-bold text-gray-900 dark:text-white">{stats.knowledge_base_count}</div>
-                <div className="text-sm text-gray-500 dark:text-gray-400">Knowledge Bases</div>
+                <div className="text-sm text-gray-500 dark:text-gray-400">{t('knowledge.knowledgeBases')}</div>
               </div>
             </div>
           </div>
@@ -391,16 +391,15 @@ export default function KnowledgePage() {
         <div className="card">
           <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-primary-400" />
-            Knowledge Bases
+            {t('knowledge.knowledgeBases')}
           </h2>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={() => setSelectedKnowledgeBase(null)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                selectedKnowledgeBase === null
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${selectedKnowledgeBase === null
                   ? 'bg-primary-600 text-white'
                   : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-              }`}
+                }`}
             >
               {t('common.all')}
             </button>
@@ -408,11 +407,10 @@ export default function KnowledgePage() {
               <div key={kb.id} className="flex items-center gap-1">
                 <button
                   onClick={() => setSelectedKnowledgeBase(kb.id)}
-                  className={`px-4 py-2 rounded-l-lg text-sm font-medium transition-colors ${
-                    selectedKnowledgeBase === kb.id
+                  className={`px-4 py-2 rounded-l-lg text-sm font-medium transition-colors ${selectedKnowledgeBase === kb.id
                       ? 'bg-primary-600 text-white'
                       : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
-                  }`}
+                    }`}
                 >
                   {kb.name}
                   <span className="ml-2 text-xs opacity-70">
@@ -464,8 +462,8 @@ export default function KnowledgePage() {
           <Alert
             variant={
               uploadProgress.includes('Fehler') ? 'error'
-              : uploadProgress.includes('Erfolgreich') ? 'success'
-              : 'info'
+                : uploadProgress.includes('Erfolgreich') ? 'success'
+                  : 'info'
             }
             className="mt-4"
           >
@@ -492,7 +490,7 @@ export default function KnowledgePage() {
           <button
             onClick={handleSearch}
             disabled={searching || !searchQuery.trim()}
-            className="btn-primary flex items-center gap-2"
+            className="btn btn-primary flex items-center gap-2"
           >
             {searching ? (
               <Loader className="w-4 h-4 animate-spin" />
@@ -548,11 +546,10 @@ export default function KnowledgePage() {
           <button
             key={f}
             onClick={() => setStatusFilter(f)}
-            className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${
-              statusFilter === f
+            className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${statusFilter === f
                 ? 'bg-primary-600 text-white'
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
-            }`}
+              }`}
           >
             {f === 'all' ? t('common.all') : f}
           </button>
@@ -569,7 +566,7 @@ export default function KnowledgePage() {
             <div className="relative">
               <button
                 onClick={() => setShowMoveDropdown(showMoveDropdown === 'bulk' ? null : 'bulk')}
-                className="btn-primary flex items-center gap-2 text-sm"
+                className="btn btn-primary flex items-center gap-2 text-sm"
               >
                 <ArrowRightLeft className="w-4 h-4" />
                 {t('knowledge.moveDocuments', { count: selectedDocs.size })}
@@ -643,7 +640,7 @@ export default function KnowledgePage() {
                       )}
                     </div>
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                      Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
+                      {t('knowledge.createdLabel')} {new Date(doc.created_at).toLocaleString()}
                     </p>
                     {doc.error_message && (
                       <p className="text-xs text-red-600 dark:text-red-400 mt-1">
@@ -656,9 +653,9 @@ export default function KnowledgePage() {
                       {getStatusIcon(doc.status)}
                       <Badge color={
                         doc.status === 'completed' ? 'green'
-                        : doc.status === 'failed' ? 'red'
-                        : doc.status === 'processing' ? 'blue'
-                        : 'yellow'
+                          : doc.status === 'failed' ? 'red'
+                            : doc.status === 'processing' ? 'blue'
+                              : 'yellow'
                       }>
                         {doc.status}
                       </Badge>
@@ -731,7 +728,7 @@ export default function KnowledgePage() {
                 <textarea
                   value={newKbDescription}
                   onChange={(e) => setNewKbDescription(e.target.value)}
-                  placeholder="Optionale Beschreibung..."
+                  placeholder={t('knowledge.descriptionPlaceholder')}
                   rows={3}
                   className="input w-full resize-none"
                 />
@@ -751,7 +748,7 @@ export default function KnowledgePage() {
               <button
                 onClick={handleCreateKnowledgeBase}
                 disabled={!newKbName.trim()}
-                className="btn-primary"
+                className="btn btn-primary"
               >
                 {t('common.create')}
               </button>
