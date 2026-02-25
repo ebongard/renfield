@@ -32,4 +32,18 @@ apiClient.interceptors.response.use(
   }
 );
 
+/**
+ * Extract a displayable error message from an Axios error.
+ * Handles both simple string details and Pydantic 422 validation arrays.
+ */
+export function extractApiError(err: unknown, fallback: string): string {
+  const detail = (err as AxiosError<{ detail?: unknown }>)?.response?.data?.detail;
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((d: { msg?: string }) => d.msg || JSON.stringify(d)).join(', ');
+  }
+  return fallback;
+}
+
 export default apiClient;

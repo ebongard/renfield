@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, useLocation, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { LogIn, UserPlus, Loader, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { extractApiError } from '../utils/axios';
 
 export default function LoginPage() {
   const { t } = useTranslation();
@@ -53,7 +54,7 @@ export default function LoginPage() {
       await login(username, password);
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err.response?.data?.detail || t('auth.loginFailed'));
+      setError(extractApiError(err, t('auth.loginFailed')));
     } finally {
       setLoading(false);
     }

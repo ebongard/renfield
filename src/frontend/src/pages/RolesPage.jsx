@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
+import apiClient, { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -113,7 +113,7 @@ export default function RolesPage() {
       setRoles(Array.isArray(rolesRes.data) ? rolesRes.data : []);
       setAllPermissions(Array.isArray(permsRes.data) ? permsRes.data : []);
     } catch (err) {
-      setError(err.response?.data?.detail || t('roles.failedToLoad'));
+      setError(extractApiError(err, t('roles.failedToLoad')));
     } finally {
       setLoading(false);
     }
@@ -235,7 +235,7 @@ export default function RolesPage() {
       setShowModal(false);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('roles.failedToSave'));
+      setError(extractApiError(err, t('roles.failedToSave')));
     } finally {
       setFormLoading(false);
     }
@@ -265,7 +265,7 @@ export default function RolesPage() {
       setSuccess(t('roles.roleDeleted'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('roles.failedToDelete'));
+      setError(extractApiError(err, t('roles.failedToDelete')));
     }
   };
 

@@ -8,6 +8,7 @@ import { useTranslation } from 'react-i18next';
 import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { UserPlus, Loader, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
+import { extractApiError } from '../utils/axios';
 
 export default function RegisterPage() {
   const { t } = useTranslation();
@@ -77,7 +78,7 @@ export default function RegisterPage() {
         navigate('/login', { replace: true });
       }, 2000);
     } catch (err) {
-      setError(err.response?.data?.detail || t('auth.registrationFailed'));
+      setError(extractApiError(err, t('auth.registrationFailed')));
     } finally {
       setLoading(false);
     }

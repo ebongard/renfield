@@ -6,7 +6,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
+import apiClient, { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -69,7 +69,7 @@ export default function UsersPage() {
       setRoles(rolesRes.data.roles || rolesRes.data || []);
       setSpeakers(speakersRes.data || []);
     } catch (err) {
-      setError(err.response?.data?.detail || t('users.failedToLoad'));
+      setError(extractApiError(err, t('users.failedToLoad')));
     } finally {
       setLoading(false);
     }
@@ -99,7 +99,7 @@ export default function UsersPage() {
       last_name: '',
       email: '',
       password: '',
-      role_id: roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || '',
+      role_id: String(roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || ''),
       is_active: true,
       personality_style: 'freundlich',
       personality_prompt: ''
@@ -117,7 +117,7 @@ export default function UsersPage() {
       last_name: user.last_name || '',
       email: user.email || '',
       password: '',
-      role_id: user.role_id,
+      role_id: String(user.role_id),
       is_active: user.is_active,
       personality_style: user.personality_style || 'freundlich',
       personality_prompt: user.personality_prompt || ''
@@ -177,7 +177,7 @@ export default function UsersPage() {
       setShowModal(false);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('users.failedToSave'));
+      setError(extractApiError(err, t('users.failedToSave')));
     } finally {
       setFormLoading(false);
     }
@@ -207,7 +207,7 @@ export default function UsersPage() {
       setSuccess(t('users.userDeleted'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('users.failedToDelete'));
+      setError(extractApiError(err, t('users.failedToDelete')));
     }
   };
 
@@ -229,7 +229,7 @@ export default function UsersPage() {
       setLinkingUserId(null);
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('users.failedToLink'));
+      setError(extractApiError(err, t('users.failedToLink')));
     }
   };
 
@@ -252,7 +252,7 @@ export default function UsersPage() {
       setSuccess(t('users.speakerUnlinked'));
       loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('users.failedToUnlink'));
+      setError(extractApiError(err, t('users.failedToUnlink')));
     }
   };
 
@@ -517,7 +517,7 @@ export default function UsersPage() {
             >
               <option value="">{t('users.selectRole')}</option>
               {roles.map((role) => (
-                <option key={role.id} value={role.id}>
+                <option key={role.id} value={String(role.id)}>
                   {role.name} - {role.description}
                 </option>
               ))}
