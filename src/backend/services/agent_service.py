@@ -855,9 +855,9 @@ class AgentService:
             elif result_data_for_llm:
                 data_label = "Data" if lang == "en" else "Daten"
                 data_str = json.dumps(result_data_for_llm, ensure_ascii=False)
-                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=4000)
+                result_summary = _truncate(f"{result_message} | {data_label}: {data_str}", max_length=settings.agent_response_truncation)
             else:
-                result_summary = _truncate(result_message, max_length=4000)
+                result_summary = _truncate(result_message, max_length=settings.agent_response_truncation)
 
             # Yield tool_result step
             tool_result_step = AgentStep(
