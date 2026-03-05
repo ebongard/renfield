@@ -314,6 +314,44 @@ def _resolve_blobs(params: any, blob_store: dict[str, str]) -> any:
     return params
 
 
+def _fix_json_control_chars(raw: str) -> str:
+    """Escape literal control characters inside JSON string values.
+
+    Some LLMs (e.g. Qwen3) emit literal newlines/tabs inside JSON strings
+    instead of the required \\n / \\t escapes, causing json.loads to fail.
+    This walks the string tracking in-string state and replaces only control
+    chars that appear inside quoted strings.
+    """
+    out: list[str] = []
+    in_string = False
+    escape = False
+    for ch in raw:
+        if escape:
+            out.append(ch)
+            escape = False
+            continue
+        if ch == '\\' and in_string:
+            out.append(ch)
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            out.append(ch)
+            continue
+        if in_string and ord(ch) < 0x20:
+            if ch == '\n':
+                out.append('\\n')
+            elif ch == '\r':
+                out.append('\\r')
+            elif ch == '\t':
+                out.append('\\t')
+            else:
+                out.append(f'\\u{ord(ch):04x}')
+            continue
+        out.append(ch)
+    return ''.join(out)
+
+
 def _parse_agent_json(raw: str) -> dict | None:
     """
     Robustly parse JSON from LLM output.
@@ -335,6 +373,16 @@ def _parse_agent_json(raw: str) -> dict | None:
             return result
     except json.JSONDecodeError:
         pass
+
+    # Method 1.5: Fix unescaped control characters in string values
+    fixed = _fix_json_control_chars(raw)
+    if fixed != raw:
+        try:
+            result = json.loads(fixed)
+            if isinstance(result, dict):
+                return result
+        except json.JSONDecodeError:
+            pass
 
     # Method 2: Markdown code block
     if "```" in raw:

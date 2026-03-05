@@ -115,6 +115,35 @@ class TestParseAgentJson:
         assert result["parameters"]["attachments"][0]["filename"] == "invoice1.pdf"
 
     @pytest.mark.unit
+    def test_literal_newlines_in_string_value(self):
+        """Qwen3 emits literal newlines inside JSON strings — these must be escaped."""
+        raw = '{"action": "final_answer", "answer": "Line 1\nLine 2"}'
+        result = _parse_agent_json(raw)
+        assert result is not None
+        assert result["action"] == "final_answer"
+        assert result["answer"] == "Line 1\nLine 2"
+
+    @pytest.mark.unit
+    def test_literal_tabs_in_string_value(self):
+        """Literal tabs inside JSON strings should be escaped."""
+        raw = '{"action": "final_answer", "answer": "Col1\tCol2"}'
+        result = _parse_agent_json(raw)
+        assert result is not None
+        assert result["answer"] == "Col1\tCol2"
+
+    @pytest.mark.unit
+    def test_multiline_release_list(self):
+        """Realistic scenario: 21-entry release list with literal newlines between entries."""
+        entries = [f"[{i}] Release {i} | FAILED | 2026-02-{i:02d} | ID: Applications/Release{i}" for i in range(1, 22)]
+        answer = "\n".join(entries)
+        raw = '{"action": "final_answer", "answer": "' + answer + '"}'
+        result = _parse_agent_json(raw)
+        assert result is not None
+        assert result["action"] == "final_answer"
+        assert "[21]" in result["answer"]
+        assert result["answer"].count("\n") == 20
+
+    @pytest.mark.unit
     def test_deeply_nested_json_with_surrounding_text(self):
         """Deeply nested JSON embedded in text should still be parsed."""
         inner = json.dumps({
