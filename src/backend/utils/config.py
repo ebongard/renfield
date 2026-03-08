@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     agent_total_timeout: float = Field(default=120.0, ge=5.0, le=600.0)
     agent_model: str | None = None     # Optional: separate model for agent (default: ollama_model)
     agent_ollama_url: str | None = None # Optional: separate Ollama instance for agent (default: ollama_url)
-    agent_conv_context_messages: int = 6  # Number of conversation history messages in agent loop
+    agent_conv_context_messages: int = 12  # Number of conversation history messages in agent loop
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
     agent_router_timeout: float = 30.0    # Timeout for router classification LLM call (seconds)
 

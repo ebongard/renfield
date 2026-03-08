@@ -114,6 +114,18 @@ class ConversationService:
             Gespeicherte Message
         """
         try:
+            # Let plugins modify content/metadata before saving
+            from utils.hooks import run_hooks
+            hook_results = await run_hooks(
+                "pre_save_message",
+                role=role, content=content,
+                metadata=metadata or {}, session_id=session_id,
+            )
+            if hook_results:
+                result = hook_results[0]
+                content = result.get("content", content)
+                metadata = result.get("metadata", metadata)
+
             # Finde oder erstelle Conversation
             result = await self.db.execute(
                 select(Conversation).where(Conversation.session_id == session_id)

@@ -496,7 +496,14 @@ class AgentService:
         # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
         conv_context = ""
         if conversation_history:
-            recent = conversation_history[-settings.agent_conv_context_messages:]
+            n = settings.agent_conv_context_messages
+            recent = conversation_history[-n:]
+            # Never split tool call / tool result pairs — if the first message
+            # is a tool result, include the preceding tool call too.
+            if (recent
+                    and recent[0].get("role") == "tool"
+                    and len(conversation_history) > n):
+                recent = conversation_history[-(n + 1):]
             history_lines = []
             for msg in recent:
                 role = "User" if msg.get("role") == "user" else "Assistant"

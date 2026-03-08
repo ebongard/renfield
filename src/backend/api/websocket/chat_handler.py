@@ -599,7 +599,7 @@ async def websocket_endpoint(
                     try:
                         async with AsyncSessionLocal() as db_session:
                             db_history = await ollama.load_conversation_context(
-                                msg_session_id, db_session, max_messages=10
+                                msg_session_id, db_session, max_messages=settings.agent_conv_context_messages
                             )
                             if db_history:
                                 session_state.conversation_history = db_history
@@ -721,6 +721,17 @@ async def websocket_endpoint(
                     lang=ollama.default_lang,
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
+
+                # Let plugins modify conversation history before the agent sees it
+                from utils.hooks import run_hooks
+                hook_results = await run_hooks(
+                    "pre_agent_context",
+                    history=session_state.conversation_history or [],
+                    session_id=msg_session_id or "",
+                    lang=ollama.default_lang,
+                )
+                if hook_results:
+                    session_state.conversation_history = hook_results[0]
 
                 if role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop

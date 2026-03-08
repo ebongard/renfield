@@ -21,6 +21,8 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "post_message",
     "post_document_ingest",
     "retrieve_context",
+    "pre_agent_context",
+    "pre_save_message",
     "presence_enter_room",
     "presence_leave_room",
     "presence_first_arrived",
