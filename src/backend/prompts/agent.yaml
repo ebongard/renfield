@@ -46,9 +46,9 @@ de:
     - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
     - Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool
     - Wenn du Dokument-IDs brauchst, nutze zuerst search_documents
-    - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, die zur aktuellen AUFGABE passen, nutze diese Ergebnisse (IDs, Titel) direkt weiter, anstatt eine neue Suche zu starten.
+    - Nutze Suchergebnisse aus dem KONVERSATIONS-KONTEXT NUR dann weiter, wenn die aktuelle AUFGABE ein expliziter Follow-up ist (z.B. "Details zu [3]", "schick mir das", "und die QA-Tickets?"). Wenn die aktuelle AUFGABE eine eigenständige Datenanfrage ist (z.B. "Zeige mir meine Releases", "Suche nach X"), MUSST du IMMER einen frischen Tool-Aufruf machen.
     - Um Dokumente per E-Mail zu versenden, MUSST du sie ZUERST mit download_document herunterladen. Heruntergeladene Dokumente werden dann AUTOMATISCH als Anhänge eingefügt. Übergib bei send_email KEINE attachments.
-    - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail"), nutze ZUERST die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse. Starte KEINE neue Suche, wenn passende Ergebnisse bereits im Kontext vorliegen.
+    - Wenn der Nutzer ein Dokument versenden will ("schick mir", "sende mir", "per mail") und sich auf ein kürzlich gezeigtes Dokument bezieht, nutze die Paperless-Suchergebnisse aus dem KONVERSATIONS-KONTEXT (IDs, Titel), dann download_document, dann send_email an die vom Nutzer genannte Adresse.
     - WICHTIG — Album/Kuenstler abspielen: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<Raum>"). Das Tool holt automatisch alle Tracks und spielt sie auf dem DLNA-Renderer ab. NIEMALS mcp.dlna.play_tracks direkt aufrufen!
     - Einzelnen Song abspielen: (1) search_media(type="Audio"), (2) internal.play_in_room mit api_stream URL.
     - Wenn play_album_on_dlna oder play_in_room ERFOLGREICH war (success=true), gib SOFORT final_answer. NIEMALS dasselbe Play-Tool nochmal aufrufen!
@@ -612,9 +612,9 @@ en:
     - Use results from previous steps for decisions
     - NEVER invent IDs or values — always fetch them via a search tool first
     - If you need document IDs, use search_documents first
-    - If the CONVERSATION CONTEXT already contains search results relevant to the current TASK, use those results (IDs, titles) directly instead of running a new search.
+    - Reuse search results from the CONVERSATION CONTEXT ONLY when the current TASK is an explicit follow-up (e.g. "details for [3]", "send me that", "and the QA tickets?"). When the current TASK is a standalone data query (e.g. "Show me my releases", "Search for X"), you MUST always make a fresh tool call.
     - To send documents by email, you MUST first download them with download_document. Downloaded documents are then AUTOMATICALLY attached. Do NOT pass attachments to send_email.
-    - When the user wants to send a document ("send me", "email me"), FIRST use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified. Do NOT start a new search if matching results already exist in the context.
+    - When the user wants to send a document ("send me", "email me") and refers to a recently shown document, use the Paperless search results from the CONVERSATION CONTEXT (IDs, titles), then download_document, then send_email to the address the user specified.
     - IMPORTANT — Playing albums/artists: (1) search_media, (2) internal.play_album_on_dlna(album_id="<id>", renderer_name="<room>"). The tool automatically fetches all tracks and plays them on the DLNA renderer. NEVER call mcp.dlna.play_tracks directly!
     - Playing a single song: (1) search_media(type="Audio"), (2) internal.play_in_room with the api_stream URL.
     - When play_album_on_dlna or play_in_room returns SUCCESS (success=true), give final_answer IMMEDIATELY. NEVER call the same play tool again!

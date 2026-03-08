@@ -230,6 +230,16 @@ def _coerce_arguments(arguments: dict, input_schema: dict) -> dict:
 
     coerced = dict(arguments)
 
+    # Unwrap LLM "request" wrapper: {"request": {...}} → {...}
+    # Many LLMs wrap all parameters in a "request" key that doesn't exist in the schema.
+    if (
+        list(coerced.keys()) == ["request"]
+        and isinstance(coerced["request"], dict)
+        and "request" not in properties
+    ):
+        logger.info(f"🔄 Unwrapping 'request' wrapper: {list(coerced['request'].keys())}")
+        coerced = coerced["request"]
+
     # Strip invalid values: null for non-nullable fields, wrong types
     required = set(input_schema.get("required", []))
     _type_map = {"string": str, "integer": (int,), "number": (int, float), "boolean": (bool,),
