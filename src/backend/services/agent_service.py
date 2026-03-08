@@ -479,6 +479,8 @@ class AgentService:
         memory_context: str = "",
         document_context: str = "",
         personality_context: str = "",
+        context_vars_text: str = "",
+        summary_text: str = "",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
         tools_prompt = self.tool_registry.build_tools_prompt()
@@ -491,6 +493,13 @@ class AgentService:
                 "agent", "room_context_template", lang=lang,
                 room_name=room_context["room_name"]
             )
+
+        # Conversation context prefix: context vars + summary before raw history
+        conv_prefix = ""
+        if context_vars_text:
+            conv_prefix += f"## Conversation Context\n{context_vars_text}\n\n"
+        if summary_text:
+            conv_prefix += f"## Earlier in this conversation\n{summary_text}\n\n"
 
         # With 32k context, include conversation history for follow-up references
         # like "Schick die gleiche Rechnung nochmal" or "Und wie ist es morgen?"
@@ -513,6 +522,10 @@ class AgentService:
                 "agent", "conv_context_template", lang=lang,
                 history_lines="\n".join(history_lines)
             )
+
+        # Prepend context vars and summary before raw history
+        if conv_prefix:
+            conv_context = conv_prefix + conv_context
 
         # Determine step directive based on whether we have history
         if context.steps:
@@ -583,6 +596,8 @@ class AgentService:
         personality_context: str = "",
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
+        context_vars_text: str = "",
+        summary_text: str = "",
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -647,7 +662,7 @@ class AgentService:
                 return
 
             # Build prompt with all available tools (32k context fits all tools)
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context)
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text)
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call

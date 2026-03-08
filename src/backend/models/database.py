@@ -38,6 +38,10 @@ class Conversation(Base):
     # Ownership (nullable for anonymous/legacy conversations)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
+    # Conversation state (survives history truncation)
+    context_vars = Column(JSON, nullable=True)   # Pinned structured state (entities, focus)
+    summary = Column(Text, nullable=True)         # LLM-generated summary of older messages
+
     # Beziehungen
     messages = relationship("Message", back_populates="conversation", cascade="all, delete-orphan")
     user = relationship("User", back_populates="conversations", foreign_keys=[user_id])

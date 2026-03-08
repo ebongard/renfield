@@ -733,6 +733,23 @@ async def websocket_endpoint(
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
 
+                # Load conversation context vars and summary for agent prompt
+                _context_vars_text = ""
+                _summary_text = ""
+                if msg_session_id:
+                    try:
+                        from services.conversation_service import ConversationService
+                        async with AsyncSessionLocal() as _cv_db:
+                            _cv_svc = ConversationService(_cv_db)
+                            _ctx_vars = await _cv_svc.load_context_vars(msg_session_id)
+                            if _ctx_vars:
+                                _context_vars_text = "\n".join(
+                                    f"{k}: {v}" for k, v in _ctx_vars.items()
+                                )
+                            _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
+                    except Exception as _e:
+                        logger.warning(f"Failed to load context vars/summary: {_e}")
+
                 if role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop
                     intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
@@ -786,6 +803,8 @@ async def websocket_endpoint(
                         personality_context=personality_context,
                         user_permissions=user_permissions,
                         user_id=user_id,
+                        context_vars_text=_context_vars_text,
+                        summary_text=_summary_text,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)
@@ -960,6 +979,17 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             metadata=assistant_metadata
                         )
                         logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}")
+
+                        # Trigger summary generation if conversation is long enough
+                        if settings.conversation_summary_threshold > 0:
+                            from services.conversation_service import ConversationService
+                            _sum_svc = ConversationService(db_session)
+                            await _sum_svc.update_summary(
+                                msg_session_id,
+                                llm_client=ollama.client,
+                                model=settings.ollama_chat_model or settings.ollama_model,
+                                threshold=settings.conversation_summary_threshold,
+                            )
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to save messages to DB: {e}")
 

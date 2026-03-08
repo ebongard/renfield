@@ -160,6 +160,141 @@ class ConversationService:
             await self.db.rollback()
             raise
 
+    async def save_context_vars(
+        self,
+        session_id: str,
+        vars_dict: dict,
+    ) -> None:
+        """Merge-update conversation context variables (pinned state).
+
+        Existing keys are preserved; new keys are added; keys set to None are removed.
+        """
+        try:
+            result = await self.db.execute(
+                select(Conversation).where(Conversation.session_id == session_id)
+            )
+            conversation = result.scalar_one_or_none()
+            if not conversation:
+                return
+
+            current = dict(conversation.context_vars or {})
+            for k, v in vars_dict.items():
+                if v is None:
+                    current.pop(k, None)
+                else:
+                    current[k] = v
+            conversation.context_vars = current
+            await self.db.commit()
+            logger.debug(f"Context vars updated for {session_id}: {list(current.keys())}")
+        except Exception as e:
+            logger.warning(f"Failed to save context vars: {e}")
+            await self.db.rollback()
+
+    async def load_context_vars(self, session_id: str) -> dict:
+        """Load conversation context variables. Returns empty dict if none."""
+        try:
+            result = await self.db.execute(
+                select(Conversation.context_vars).where(
+                    Conversation.session_id == session_id
+                )
+            )
+            row = result.scalar_one_or_none()
+            return dict(row) if row else {}
+        except Exception as e:
+            logger.warning(f"Failed to load context vars: {e}")
+            return {}
+
+    async def update_summary(
+        self,
+        session_id: str,
+        llm_client,
+        model: str,
+        threshold: int = 10,
+        keep_recent: int = 4,
+    ) -> str | None:
+        """Generate an LLM summary of older messages when conversation grows.
+
+        Triggers only when message count exceeds *threshold*. Summarizes all
+        messages except the most recent *keep_recent* ones. Stores the result
+        in ``conversations.summary``.
+
+        Returns the summary text, or None if not triggered / failed.
+        """
+        try:
+            result = await self.db.execute(
+                select(Conversation).where(Conversation.session_id == session_id)
+            )
+            conversation = result.scalar_one_or_none()
+            if not conversation:
+                return None
+
+            # Count messages
+            result = await self.db.execute(
+                select(func.count(Message.id)).where(
+                    Message.conversation_id == conversation.id
+                )
+            )
+            msg_count = result.scalar() or 0
+            if msg_count < threshold:
+                return conversation.summary  # return existing summary if any
+
+            # Load oldest messages (all except keep_recent)
+            result = await self.db.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation.id)
+                .order_by(Message.timestamp.asc())
+                .limit(msg_count - keep_recent)
+            )
+            old_messages = result.scalars().all()
+            if not old_messages:
+                return conversation.summary
+
+            # Build text to summarize
+            lines = []
+            for msg in old_messages:
+                role = "User" if msg.role == "user" else "Assistant"
+                content = msg.content[:300] if msg.content else ""
+                lines.append(f"{role}: {content}")
+            conversation_text = "\n".join(lines)
+
+            # LLM summarization
+            from utils.llm_client import extract_response_content
+            response = await llm_client.chat(
+                model=model,
+                messages=[
+                    {"role": "system", "content": (
+                        "Summarize this conversation in 3-5 sentences. "
+                        "Preserve key decisions, entity names/IDs, and open questions. "
+                        "Write in the same language as the conversation."
+                    )},
+                    {"role": "user", "content": conversation_text},
+                ],
+            )
+            summary = extract_response_content(response)
+
+            conversation.summary = summary
+            await self.db.commit()
+            logger.info(f"Conversation summary updated for {session_id} ({len(summary)} chars)")
+            return summary
+
+        except Exception as e:
+            logger.warning(f"Failed to update summary: {e}")
+            await self.db.rollback()
+            return None
+
+    async def load_summary(self, session_id: str) -> str | None:
+        """Load the conversation summary. Returns None if none exists."""
+        try:
+            result = await self.db.execute(
+                select(Conversation.summary).where(
+                    Conversation.session_id == session_id
+                )
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.warning(f"Failed to load summary: {e}")
+            return None
+
     async def get_summary(
         self,
         session_id: str
