@@ -85,6 +85,12 @@ satellite_python_packages:
   - bleak
   - Pillow
 
+# XVF3800 LED control
+xvf_host_path: "/opt/renfield-satellite/bin/xvf_host"
+
+# Enviro pHAT
+enviro_phat_enabled: false
+
 # BLE Presence Detection
 ble_enabled: true
 ble_scan_interval: 30

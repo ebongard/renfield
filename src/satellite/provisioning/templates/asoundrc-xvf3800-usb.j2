@@ -1,0 +1,35 @@
+# Renfield Satellite — ALSA Configuration for ReSpeaker XVF3800 USB
+# Managed by Ansible — do not edit manually
+
+defaults.pcm.rate_converter "samplerate"
+
+pcm.!default {
+    type asym
+    playback.pcm "xvf_play"
+    capture.pcm "xvf_cap"
+}
+
+pcm.xvf_play {
+    type plug
+    slave.pcm "dmixed"
+}
+
+pcm.xvf_cap {
+    type plug
+    slave.pcm "dsnooped"
+}
+
+pcm.dmixed {
+    type dmix
+    slave.pcm "hw:Array"
+    ipc_key 555555
+}
+
+pcm.dsnooped {
+    type dsnoop
+    slave {
+        pcm "hw:Array"
+        channels 1
+    }
+    ipc_key 666666
+}

@@ -9,6 +9,7 @@ Supports both 2-Mics Pi HAT (3 LEDs, SPI 0:0) and
 import asyncio
 import colorsys
 import math
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -537,6 +538,80 @@ class GPIOLEDController:
     @property
     def current_pattern(self) -> LEDPattern:
         return self._pattern
+
+
+class XVF3800LEDController:
+    """
+    Controls WS2812B LEDs on the ReSpeaker XVF3800 board via xvf_host USB commands.
+
+    The XMOS chip renders LED effects in hardware — no animation thread needed.
+    Each state change is a single subprocess call.
+    """
+
+    # Pattern → (LED_EFFECT, LED_COLOR or None)
+    _PATTERN_MAP = {
+        LEDPattern.OFF: (0, None),
+        LEDPattern.IDLE: (4, None),           # DoA direction indicator
+        LEDPattern.LISTENING: (3, 0x00ff00),  # Solid green
+        LEDPattern.PROCESSING: (1, 0xffff00), # Breath yellow
+        LEDPattern.SPEAKING: (1, 0x00ffff),   # Breath cyan
+        LEDPattern.ERROR: (3, 0xff0000),      # Solid red
+        LEDPattern.SUCCESS: (3, 0x00ff00),    # Solid green
+        LEDPattern.BOOT: (2, None),           # Rainbow
+    }
+
+    def __init__(
+        self,
+        xvf_host_path: str = "/opt/renfield-satellite/bin/xvf_host",
+        brightness: int = 20,
+        idle_color: Optional[str] = None,
+    ):
+        self._xvf_host_path = xvf_host_path
+        self.brightness = brightness
+        self.idle_color = idle_color
+        self._pattern: LEDPattern = LEDPattern.OFF
+
+    def open(self) -> bool:
+        if not os.path.isfile(self._xvf_host_path):
+            print(f"xvf_host not found at {self._xvf_host_path}")
+            return False
+        if not os.access(self._xvf_host_path, os.X_OK):
+            print(f"xvf_host not executable: {self._xvf_host_path}")
+            return False
+        # Set initial brightness
+        self._run("LED_BRIGHTNESS", str(self.brightness))
+        print(f"XVF3800 LED controller opened via {self._xvf_host_path}")
+        return True
+
+    def close(self):
+        self._run("LED_EFFECT", "0")
+        self._pattern = LEDPattern.OFF
+
+    def set_pattern(self, pattern: LEDPattern):
+        if pattern == self._pattern:
+            return
+        effect, color = self._PATTERN_MAP.get(pattern, (0, None))
+        if color is not None:
+            self._run("LED_COLOR", f"0x{color:06x}")
+        self._run("LED_EFFECT", str(effect))
+        self._pattern = pattern
+
+    def stop_animation(self):
+        pass  # XMOS handles animations in hardware
+
+    @property
+    def current_pattern(self) -> LEDPattern:
+        return self._pattern
+
+    def _run(self, *args: str):
+        try:
+            import subprocess
+            subprocess.run(
+                [self._xvf_host_path, *args],
+                capture_output=True, timeout=5,
+            )
+        except Exception as e:
+            print(f"xvf_host error: {e}")
 
 
 class LEDControllerAsync:

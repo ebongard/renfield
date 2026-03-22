@@ -22,7 +22,8 @@ from .audio.playback import AudioPlayback, AudioPlaybackAsync
 from .audio.preprocessor import AudioPreprocessor
 from .audio.vad import VoiceActivityDetector, VADBackend
 from .wakeword.detector import WakeWordDetector, Detection
-from .hardware.led import LEDController, GPIOLEDController, LEDPattern
+from .hardware.led import LEDController, GPIOLEDController, XVF3800LEDController, LEDPattern
+from .hardware.enviro import EnviroSensor
 from .hardware.button import ButtonHandler
 from .hardware.camera import CameraController
 from .hardware.display import DisplayController
@@ -157,6 +158,12 @@ class Satellite:
                 brightness=self.config.led.brightness,
                 idle_color=self.config.led.idle_color,
             )
+        elif self.config.led.type == "xvf3800":
+            self.leds = XVF3800LEDController(
+                xvf_host_path=self.config.led.xvf_host_path or "/opt/renfield-satellite/bin/xvf_host",
+                brightness=self.config.led.brightness,
+                idle_color=self.config.led.idle_color,
+            )
         else:
             self.leds = LEDController(
                 num_leds=self.config.led.num_leds,
@@ -183,6 +190,11 @@ class Satellite:
                 resolution=self.config.camera.resolution,
                 quality=self.config.camera.quality,
             )
+
+        # Enviro pHAT sensor (optional)
+        self.enviro: Optional[EnviroSensor] = None
+        if self.config.enviro.enabled:
+            self.enviro = EnviroSensor()
 
         # Button handler
         self.button = ButtonHandler(
@@ -280,6 +292,10 @@ class Satellite:
             print("Warning: Camera not available")
             self.camera = None
 
+        if self.enviro and not self.enviro.open():
+            print("Warning: Enviro pHAT not available")
+            self.enviro = None
+
         if not self.button.setup():
             print("Warning: Button control not available")
 
@@ -351,6 +367,9 @@ class Satellite:
 
         if self.camera:
             self.camera.close()
+
+        if self.enviro:
+            self.enviro.close()
 
         if self.display:
             self.display.close()
@@ -843,6 +862,15 @@ class Satellite:
         # Session counters (track in instance variables)
         metrics["session_count_1h"] = getattr(self, "_session_count_1h", 0)
         metrics["error_count_1h"] = getattr(self, "_error_count_1h", 0)
+
+        # Environment sensors (Enviro pHAT)
+        if self.enviro and self.enviro.available:
+            try:
+                env_data = self.enviro.read()
+                if env_data:
+                    metrics["environment"] = env_data
+            except Exception:
+                pass
 
         return metrics
 

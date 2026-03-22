@@ -48,7 +48,9 @@ led:
   gpio_red: {{ led_gpio_red }}
   gpio_green: {{ led_gpio_green }}
   gpio_blue: {{ led_gpio_blue }}
-{% else %}
+{% elif led_type | default('apa102') == 'xvf3800' %}
+  xvf_host_path: "{{ xvf_host_path | default('/opt/renfield-satellite/bin/xvf_host') }}"
+{% elif led_type | default('apa102') != 'none' %}
   num_leds: {{ led_num }}
   spi_bus: 0
   spi_device: {{ led_spi_device }}
@@ -74,3 +76,9 @@ ble:
   scan_interval: {{ ble_scan_interval }}
   scan_duration: {{ ble_scan_duration }}
   rssi_threshold: {{ ble_rssi_threshold }}
+{% if enviro_phat_enabled | default(false) %}
+
+enviro:
+  enabled: true
+  read_interval: 30
+{% endif %}

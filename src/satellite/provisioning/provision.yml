@@ -210,6 +210,37 @@
         state: present
       notify: reboot after driver install
 
+    # --- XVF3800 USB: xvf_host binary + udev rule ---
+
+    - name: Create bin directory for xvf_host
+      tags: [driver]
+      when: hat_type == "xvf3800-usb"
+      ansible.builtin.file:
+        path: "{{ satellite_base_dir }}/bin"
+        state: directory
+        owner: "{{ ansible_user }}"
+        mode: "0755"
+
+    - name: Deploy xvf_host binary for XVF3800 LED control
+      tags: [driver]
+      when: hat_type == "xvf3800-usb"
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../hardware/xvf3800/xvf_host"
+        dest: "{{ satellite_base_dir }}/bin/xvf_host"
+        owner: "{{ ansible_user }}"
+        mode: "0755"
+
+    - name: Deploy XVF3800 udev rule
+      tags: [driver]
+      when: hat_type == "xvf3800-usb"
+      ansible.builtin.copy:
+        content: |
+          # ReSpeaker XVF3800 — allow non-root USB access, disable autosuspend
+          ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="2886", ATTR{idProduct}=="001a", \
+              MODE="0666", TEST=="power/autosuspend", ATTR{power/autosuspend}="-1"
+        dest: /etc/udev/rules.d/99-respeaker-xvf3800.rules
+        mode: "0644"
+
     # --- Flush handlers (reboot if driver was installed) ---
 
     - name: Reboot now if driver was installed
@@ -218,10 +249,21 @@
 
     - name: Wait for sound card after reboot
       tags: [driver]
+      when: hat_type in ["2mic", "2mic-v2", "4mic", "whisplay"]
       ansible.builtin.wait_for:
         path: /proc/asound/cards
         search_regex: "seeed|wm8960"
         timeout: 30
+      register: soundcard_check
+      ignore_errors: true
+
+    - name: Verify XVF3800 USB audio device
+      tags: [driver]
+      when: hat_type == "xvf3800-usb"
+      ansible.builtin.wait_for:
+        path: /proc/asound/cards
+        search_regex: "Array"
+        timeout: 10
       register: soundcard_check
       ignore_errors: true
 
@@ -269,6 +311,14 @@
         name: "{{ openwakeword_package }}"
         virtualenv: "{{ satellite_venv }}"
         extra_args: "--no-deps"
+
+    - name: Install envirophat package
+      tags: [python]
+      when: enviro_phat_enabled | default(false)
+      become_user: "{{ ansible_user }}"
+      ansible.builtin.pip:
+        name: envirophat
+        virtualenv: "{{ satellite_venv }}"
 
     # =========================================================================
     # APP — Deploy application code

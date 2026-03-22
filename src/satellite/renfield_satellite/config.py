@@ -84,7 +84,7 @@ class VADConfig:
 @dataclass
 class LEDConfig:
     """LED control settings"""
-    type: str = "apa102"  # "apa102" or "gpio_rgb"
+    type: str = "apa102"  # "apa102", "gpio_rgb", "xvf3800", or "none"
     brightness: int = 20  # 0-255
     spi_bus: int = 0
     spi_device: int = 0
@@ -95,6 +95,8 @@ class LEDConfig:
     gpio_red: Optional[int] = None
     gpio_green: Optional[int] = None
     gpio_blue: Optional[int] = None
+    # XVF3800 LED control
+    xvf_host_path: Optional[str] = None  # Path to xvf_host binary
 
 
 @dataclass
@@ -131,6 +133,13 @@ class BLEConfig:
 
 
 @dataclass
+class EnviroConfig:
+    """Enviro pHAT sensor settings"""
+    enabled: bool = False
+    read_interval: int = 30  # seconds between sensor reads
+
+
+@dataclass
 class Config:
     """Main configuration container"""
     satellite: SatelliteConfig = field(default_factory=SatelliteConfig)
@@ -143,6 +152,7 @@ class Config:
     display: DisplayConfig = field(default_factory=DisplayConfig)
     camera: CameraConfig = field(default_factory=CameraConfig)
     ble: BLEConfig = field(default_factory=BLEConfig)
+    enviro: EnviroConfig = field(default_factory=EnviroConfig)
 
 
 def load_config(config_path: Optional[str] = None) -> Config:
@@ -249,6 +259,7 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.led.gpio_red = led.get("gpio_red", config.led.gpio_red)
         config.led.gpio_green = led.get("gpio_green", config.led.gpio_green)
         config.led.gpio_blue = led.get("gpio_blue", config.led.gpio_blue)
+        config.led.xvf_host_path = led.get("xvf_host_path", config.led.xvf_host_path)
 
     if "button" in config_data:
         btn = config_data["button"]
@@ -274,6 +285,11 @@ def load_config(config_path: Optional[str] = None) -> Config:
         config.ble.rssi_threshold = ble.get("rssi_threshold", config.ble.rssi_threshold)
         if "known_devices" in ble:
             config.ble.known_devices = ble["known_devices"]
+
+    if "enviro" in config_data:
+        env = config_data["enviro"]
+        config.enviro.enabled = env.get("enabled", config.enviro.enabled)
+        config.enviro.read_interval = env.get("read_interval", config.enviro.read_interval)
 
     # Environment variable overrides
     if os.environ.get("RENFIELD_SATELLITE_ID"):

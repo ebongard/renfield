@@ -1,0 +1,24 @@
+---
+# ReSpeaker XVF3800 USB + Enviro pHAT + Pi Camera V3 (IMX708)
+
+hat_type: "xvf3800-usb"
+satellite_id: "sat-benszimmer"
+satellite_room: "BensZimmer"
+
+# Audio (XVF3800 delivers pre-processed mono via USB Audio Class 2.0)
+audio_device: "plughw:Array,0"
+audio_playback_device: "plughw:Array,0"
+audio_channels: 1
+beamforming_enabled: false
+
+# LEDs (XVF3800 12x WS2812B controlled via xvf_host over USB)
+led_type: "xvf3800"
+led_num: 12
+led_spi_device: null
+led_power_pin: null
+
+# Camera (Pi Camera V3 / IMX708 via rpicam-still)
+camera_enabled: true
+
+# Enviro pHAT (BMP280, TCS3472, LSM303D, ADS1015 via I2C)
+enviro_phat_enabled: true
