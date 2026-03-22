@@ -606,9 +606,11 @@ class XVF3800LEDController:
     def _run(self, *args: str):
         try:
             import subprocess
+            bin_dir = os.path.dirname(self._xvf_host_path)
             subprocess.run(
                 [self._xvf_host_path, *args],
                 capture_output=True, timeout=5,
+                cwd=bin_dir or None,
             )
         except Exception as e:
             print(f"xvf_host error: {e}")

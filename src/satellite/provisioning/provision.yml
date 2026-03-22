@@ -221,14 +221,14 @@
         owner: "{{ ansible_user }}"
         mode: "0755"
 
-    - name: Deploy xvf_host binary for XVF3800 LED control
+    - name: Deploy xvf_host binary and libraries for XVF3800 LED control
       tags: [driver]
       when: hat_type == "xvf3800-usb"
       ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../hardware/xvf3800/xvf_host"
-        dest: "{{ satellite_base_dir }}/bin/xvf_host"
+        src: "{{ playbook_dir }}/../hardware/xvf3800/"
+        dest: "{{ satellite_base_dir }}/bin/"
         owner: "{{ ansible_user }}"
-        mode: "0755"
+        mode: preserve
 
     - name: Deploy XVF3800 udev rule
       tags: [driver]
