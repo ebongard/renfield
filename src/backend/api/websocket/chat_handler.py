@@ -966,6 +966,16 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 if action_summary:
                     history_content = f"[Aktionsergebnis — Verwende diese Daten für Folgeanfragen (IDs, Titel, etc.):\n{action_summary}]\n\n{full_response}"
 
+            # Output guard: check for system prompt leakage and role confusion
+            if full_response:
+                from services.output_guard import check_output
+                guard_result = check_output(full_response)
+                if not guard_result.safe:
+                    logger.warning(
+                        f"Output guard violation in chat response: "
+                        f"{guard_result.violations}"
+                    )
+
             session_state.add_to_history("user", content)
             if full_response:
                 session_state.add_to_history("assistant", history_content)

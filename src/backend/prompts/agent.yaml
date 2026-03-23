@@ -457,9 +457,20 @@ de:
   error_llm_failed: "LLM-Fehler: {error}"
   error_incomplete: "Entschuldigung, ich konnte die Anfrage nicht vollständig bearbeiten."
   error_summary_failed: "Entschuldigung, ich konnte die Ergebnisse nicht zusammenfassen."
+  safe_fallback_response: "Entschuldigung, ich kann diese Anfrage nicht beantworten. Bitte formuliere sie anders."
 
   # Thinking step message
   thinking_message: "Analysiere Anfrage und plane Schritte..."
+
+  # Tool pre-selection prompt
+  tool_preselect_prompt: |
+    Welche 3-5 Tools sind fuer diese Aufgabe relevant?
+    Aufgabe: "{message}"
+
+    Verfuegbare Tools:
+    {tool_list}
+
+    Antworte NUR mit einem JSON-Array von Tool-Namen: ["tool1", "tool2", ...]
 
   # JSON system message
   json_system_message: "Antworte nur mit JSON."
@@ -919,9 +930,20 @@ en:
   error_llm_failed: "LLM error: {error}"
   error_incomplete: "Sorry, I could not fully process the request."
   error_summary_failed: "Sorry, I could not summarize the results."
+  safe_fallback_response: "Sorry, I cannot answer this request. Please rephrase it."
 
   # Thinking step message
   thinking_message: "Analyzing request and planning steps..."
+
+  # Tool pre-selection prompt
+  tool_preselect_prompt: |
+    Which 3-5 tools are relevant for this task?
+    Task: "{message}"
+
+    Available tools:
+    {tool_list}
+
+    Reply ONLY with a JSON array of tool names: ["tool1", "tool2", ...]
 
   # JSON system message
   json_system_message: "Reply with JSON only."

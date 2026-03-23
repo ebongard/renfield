@@ -178,6 +178,12 @@ class AgentContext:
 
         return "\n".join(lines)
 
+    def truncate_history_results(self, max_chars: int = 500) -> None:
+        """Truncate tool result content in history steps to save tokens."""
+        for step in self.steps:
+            if step.step_type == "tool_result" and step.content and len(step.content) > max_chars:
+                step.content = step.content[:max_chars] + "...[truncated]"
+
     def record_empty_result(self, tool: str) -> None:
         """Record that a tool returned an empty result."""
         self.empty_results_per_tool[tool] = self.empty_results_per_tool.get(tool, 0) + 1
@@ -468,6 +474,168 @@ class AgentService:
         self.step_timeout = step_timeout or settings.agent_step_timeout
         self.total_timeout = total_timeout or settings.agent_total_timeout
         self._prompt_key = (role.prompt_key if role else None) or "agent_prompt"
+        self._preselected_tools: dict | None = None
+
+    async def _preselect_tools(
+        self,
+        message: str,
+        agent_client,
+        agent_model: str,
+        lang: str = "de",
+    ) -> dict | None:
+        """Pre-select relevant tools via LLM when there are many available.
+
+        Returns filtered tools dict or None (use all tools).
+        Gracefully falls back to all tools on any error.
+        """
+        tool_names = self.tool_registry.get_tool_names()
+        if len(tool_names) <= 6:
+            return None
+
+        # Build compact tool list (name + description only, no parameters)
+        tool_lines = []
+        for name in tool_names:
+            tool = self.tool_registry._tools.get(name)
+            if tool:
+                desc = getattr(tool, 'description', '') or ''
+                tool_lines.append(f"- {name}: {desc[:80]}")
+
+        tool_list = "\n".join(tool_lines)
+        preselect_prompt = prompt_manager.get(
+            "agent", "tool_preselect_prompt", lang=lang,
+            message=message, tool_list=tool_list
+        )
+        if not preselect_prompt:
+            return None
+
+        try:
+            classification_kwargs = get_classification_chat_kwargs(agent_model)
+            raw_response = await asyncio.wait_for(
+                agent_client.chat(
+                    model=agent_model,
+                    messages=[{"role": "user", "content": preselect_prompt}],
+                    options={"temperature": 0, "num_predict": 120, "num_ctx": 4096},
+                    **classification_kwargs,
+                ),
+                timeout=10.0,
+            )
+            response_text = extract_response_content(raw_response) or ""
+
+            # Parse JSON array from response
+            selected = json.loads(response_text)
+            if not isinstance(selected, list) or not selected:
+                logger.warning(f"Tool pre-selection returned non-list: {response_text[:100]}")
+                return None
+
+            # Filter to valid tool names
+            filtered = {
+                name: self.tool_registry._tools[name]
+                for name in selected
+                if name in self.tool_registry._tools
+            }
+
+            if not filtered:
+                logger.warning("Tool pre-selection matched 0 valid tools — using all")
+                return None
+
+            logger.info(
+                f"Tool pre-selection: {len(filtered)}/{len(tool_names)} tools "
+                f"selected for: '{message[:60]}'"
+            )
+            return filtered
+
+        except (asyncio.TimeoutError, json.JSONDecodeError, Exception) as e:
+            logger.warning(f"Tool pre-selection failed (using all tools): {e}")
+            return None
+
+    async def _enforce_token_budget(
+        self,
+        prompt: str,
+        context: AgentContext,
+        message: str,
+        conversation_history: list[dict] | None,
+        memory_context: str,
+        document_context: str,
+        lang: str,
+        **build_kwargs,
+    ) -> tuple[str, str, str, list[dict] | None]:
+        """Enforce token budget via progressive prompt reduction.
+
+        Returns (prompt, memory_context, document_context, conversation_history)
+        — possibly reduced to fit within budget.
+        """
+        from utils.token_counter import token_counter
+
+        max_tokens = settings.ollama_num_ctx
+        reserved = settings.agent_default_num_predict
+        threshold = settings.agent_budget_threshold
+
+        prompt_tokens = token_counter.count(prompt)
+        utilization = (prompt_tokens + reserved) / max_tokens
+
+        if utilization <= threshold:
+            return prompt, memory_context, document_context, conversation_history
+
+        logger.warning(
+            f"Token budget over threshold: {utilization:.0%} "
+            f"({prompt_tokens} tokens + {reserved} reserved / {max_tokens} max)"
+        )
+
+        # Pass 1: Halve conversation history
+        if conversation_history and len(conversation_history) > 3:
+            conversation_history = conversation_history[-3:]
+            prompt = await self._build_agent_prompt(
+                message, context, conversation_history,
+                memory_context=memory_context,
+                document_context=document_context,
+                lang=lang, **build_kwargs,
+            )
+            prompt_tokens = token_counter.count(prompt)
+            utilization = (prompt_tokens + reserved) / max_tokens
+            logger.info(f"Budget pass 1 (halve history): {utilization:.0%}")
+            if utilization <= threshold:
+                return prompt, memory_context, document_context, conversation_history
+
+        # Pass 2: Drop memory context
+        if memory_context:
+            prompt = await self._build_agent_prompt(
+                message, context, conversation_history,
+                memory_context="",
+                document_context=document_context,
+                lang=lang, **build_kwargs,
+            )
+            prompt_tokens = token_counter.count(prompt)
+            utilization = (prompt_tokens + reserved) / max_tokens
+            logger.info(f"Budget pass 2 (drop memory): {utilization:.0%}")
+            if utilization <= threshold:
+                return prompt, "", document_context, conversation_history
+
+        # Pass 3: Drop document context
+        if document_context:
+            prompt = await self._build_agent_prompt(
+                message, context, conversation_history,
+                memory_context="",
+                document_context="",
+                lang=lang, **build_kwargs,
+            )
+            prompt_tokens = token_counter.count(prompt)
+            utilization = (prompt_tokens + reserved) / max_tokens
+            logger.info(f"Budget pass 3 (drop documents): {utilization:.0%}")
+            if utilization <= threshold:
+                return prompt, "", "", conversation_history
+
+        # Pass 4: Truncate history results
+        context.truncate_history_results(max_chars=500)
+        prompt = await self._build_agent_prompt(
+            message, context, conversation_history,
+            memory_context="",
+            document_context="",
+            lang=lang, **build_kwargs,
+        )
+        prompt_tokens = token_counter.count(prompt)
+        utilization = (prompt_tokens + reserved) / max_tokens
+        logger.info(f"Budget pass 4 (truncate results): {utilization:.0%}")
+        return prompt, "", "", conversation_history
 
     async def _build_agent_prompt(
         self,
@@ -483,7 +651,9 @@ class AgentService:
         summary_text: str = "",
     ) -> str:
         """Build the prompt for the Agent LLM call."""
-        tools_prompt = self.tool_registry.build_tools_prompt()
+        tools_prompt = self.tool_registry.build_tools_prompt(
+            tools=self._preselected_tools
+        )
         history_prompt = context.build_history_prompt(lang=lang)
 
         # Build room context string for the prompt
@@ -632,9 +802,14 @@ class AgentService:
         role_label = self.role.name if self.role else "default"
         logger.info(f"🤖 Agent [{role_label}] using Ollama: {resolved_url} / {agent_model}")
 
-        # With 32k context, all tools fit in the prompt (~5000 tokens for 109 tools).
-        # The LLM selects the right tool itself — eliminates keyword-filtering errors.
+        # Pre-select tools if many available (>6), otherwise use all
         total_tools = len(self.tool_registry.get_tool_names())
+        if total_tools > 6:
+            self._preselected_tools = await self._preselect_tools(
+                message, agent_client, agent_model, lang
+            )
+            if self._preselected_tools:
+                total_tools = len(self._preselected_tools)
 
         # Step 0: Thinking
         yield AgentStep(
@@ -661,8 +836,14 @@ class AgentService:
                 yield summary_step
                 return
 
-            # Build prompt with all available tools (32k context fits all tools)
+            # Build prompt and enforce token budget
             prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text)
+            prompt, memory_context, document_context, conversation_history = await self._enforce_token_budget(
+                prompt, context, message, conversation_history,
+                memory_context=memory_context, document_context=document_context, lang=lang,
+                room_context=room_context, personality_context=personality_context,
+                context_vars_text=context_vars_text, summary_text=summary_text,
+            )
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 
             # Check circuit breaker before LLM call
@@ -801,6 +982,14 @@ class AgentService:
             # Handle final_answer
             if action == "final_answer":
                 answer = parsed.get("answer", "")
+
+                # Output guard: check for leakage and role confusion
+                from services.output_guard import check_output
+                guard_result = check_output(answer, getattr(self, '_prompt_fragments', None))
+                if not guard_result.safe:
+                    logger.warning(f"Output guard violation in final_answer: {guard_result.violations}")
+                    answer = prompt_manager.get("agent", "safe_fallback_response", lang=lang) or answer
+
                 yield AgentStep(
                     step_number=step_num,
                     step_type="final_answer",
