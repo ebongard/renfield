@@ -1,0 +1,53 @@
+# Context Variable Extraction Rules
+# Extracts structured entities from MCP tool results for follow-up queries.
+# Each rule maps a JSON path to a context variable key.
+#
+# Syntax:
+#   server_name:
+#     tool_name:
+#       - key: "variable_name"         # Key stored in conversation context
+#         path: "[0].field"            # JSON path into the result
+#       - key: "list_variable"
+#         path: "[].field"             # Collects all values into a list
+
+homeassistant:
+  get_states:
+    - key: "queried_entities"
+      path: "[].entity_id"
+
+paperless:
+  search_documents:
+    - key: "last_document_id"
+      path: "[0].id"
+    - key: "last_document_title"
+      path: "[0].title"
+    - key: "last_document_correspondent"
+      path: "[0].correspondent"
+
+jellyfin:
+  search:
+    - key: "last_media_id"
+      path: "[0].Id"
+    - key: "last_media_name"
+      path: "[0].Name"
+    - key: "last_media_type"
+      path: "[0].Type"
+
+n8n:
+  n8n_get_workflow:
+    - key: "current_workflow_id"
+      path: "id"
+    - key: "current_workflow_name"
+      path: "name"
+  n8n_list_workflows:
+    - key: "workflow_count"
+      path: "__length__"
+
+email:
+  search_emails:
+    - key: "last_email_id"
+      path: "[0].id"
+    - key: "last_email_subject"
+      path: "[0].subject"
+    - key: "last_email_from"
+      path: "[0].from"

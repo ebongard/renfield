@@ -1,0 +1,25 @@
+# Backend i18n — German translations
+# For non-prompt system strings (errors, UI labels, API responses)
+
+error:
+  request_blocked: "Ich kann diese Anfrage nicht verarbeiten."
+  session_not_found: "Keine Konversation gefunden fuer Session: {session_id}"
+  tool_timeout: "Tool-Aufruf Timeout: {tool}"
+  tool_error: "Tool-Fehler: {error}"
+  rate_limited: "Zu viele Anfragen. Bitte warte einen Moment."
+  circuit_open: "Service voruebergehend nicht verfuegbar."
+
+agent:
+  action_result_prefix: "Aktionsergebnis"
+  thinking: "Analysiere Anfrage und plane Schritte..."
+  steps_completed: "{count} Schritte ausgefuehrt"
+  budget_reduced: "Prompt gekuerzt (Pass {pass_name})"
+
+guard:
+  injection_blocked: "Sicherheitspruefung: Anfrage blockiert."
+  output_violation: "Antwort wurde aus Sicherheitsgruenden angepasst."
+
+media:
+  now_playing: "Spiele jetzt: {title}"
+  volume_set: "Lautstaerke auf {level}%"
+  playback_stopped: "Wiedergabe gestoppt"

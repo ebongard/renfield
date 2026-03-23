@@ -141,6 +141,10 @@ def detect_injection(text: str) -> InjectionResult:
         logger.warning(
             f"Injection detected (score={score:.2f}): {matched}"
         )
+        from utils.metrics import record_injection_attempt
+        for pattern_id in matched:
+            category = pattern_id.split(":")[0]
+            record_injection_attempt(category)
 
     return InjectionResult(
         score=score,

@@ -33,6 +33,12 @@ _circuit_breaker_state = None
 _circuit_breaker_failures_total = None
 _memory_total = None
 _memory_cleanup_total = None
+_mcp_tool_duration_seconds = None
+_mcp_tool_errors_total = None
+_agent_outcome_total = None
+_injection_attempts_total = None
+_budget_reductions_total = None
+_output_guard_violations_total = None
 
 
 def _init_metrics():
@@ -43,6 +49,9 @@ def _init_metrics():
     global _llm_call_duration_seconds, _agent_steps_total
     global _circuit_breaker_state, _circuit_breaker_failures_total
     global _memory_total, _memory_cleanup_total
+    global _mcp_tool_duration_seconds, _mcp_tool_errors_total
+    global _agent_outcome_total, _injection_attempts_total
+    global _budget_reductions_total, _output_guard_violations_total
 
     if _metrics_initialized:
         return
@@ -103,6 +112,43 @@ def _init_metrics():
             "renfield_memory_cleanup_total",
             "Total memories cleaned up",
             ["reason"],
+        )
+
+        _mcp_tool_duration_seconds = Histogram(
+            "renfield_mcp_tool_duration_seconds",
+            "MCP tool call duration in seconds",
+            ["server", "tool"],
+            buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0),
+        )
+
+        _mcp_tool_errors_total = Counter(
+            "renfield_mcp_tool_errors_total",
+            "Total MCP tool call errors",
+            ["server", "tool"],
+        )
+
+        _agent_outcome_total = Counter(
+            "renfield_agent_outcome_total",
+            "Agent loop outcomes",
+            ["outcome"],
+        )
+
+        _injection_attempts_total = Counter(
+            "renfield_injection_attempts_total",
+            "Prompt injection attempts detected",
+            ["category"],
+        )
+
+        _budget_reductions_total = Counter(
+            "renfield_token_budget_reductions_total",
+            "Token budget reduction passes triggered",
+            ["pass_name"],
+        )
+
+        _output_guard_violations_total = Counter(
+            "renfield_output_guard_violations_total",
+            "Output guard violations detected",
+            ["violation"],
         )
 
         _metrics_initialized = True
@@ -180,6 +226,43 @@ def set_memory_total(count: int):
     if not _metrics_initialized:
         return
     _memory_total.set(count)
+
+
+def record_mcp_tool_call(server: str, tool: str, duration: float, success: bool):
+    """Record an MCP tool call with duration and success/failure."""
+    if not _metrics_initialized:
+        return
+    _mcp_tool_duration_seconds.labels(server=server, tool=tool).observe(duration)
+    if not success:
+        _mcp_tool_errors_total.labels(server=server, tool=tool).inc()
+
+
+def record_agent_outcome(outcome: str):
+    """Record an agent loop outcome (success/error/max_steps/timeout/loop_detected)."""
+    if not _metrics_initialized:
+        return
+    _agent_outcome_total.labels(outcome=outcome).inc()
+
+
+def record_injection_attempt(category: str):
+    """Record a prompt injection attempt detection."""
+    if not _metrics_initialized:
+        return
+    _injection_attempts_total.labels(category=category).inc()
+
+
+def record_budget_reduction(pass_name: str):
+    """Record a token budget reduction pass being triggered."""
+    if not _metrics_initialized:
+        return
+    _budget_reductions_total.labels(pass_name=pass_name).inc()
+
+
+def record_output_guard_violation(violation: str):
+    """Record an output guard violation."""
+    if not _metrics_initialized:
+        return
+    _output_guard_violations_total.labels(violation=violation).inc()
 
 
 # === Middleware & Endpoint Setup ===

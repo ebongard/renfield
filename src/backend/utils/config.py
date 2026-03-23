@@ -113,6 +113,7 @@ class Settings(BaseSettings):
     agent_router_timeout: float = 30.0    # Timeout for router classification LLM call (seconds)
     agent_router_model: str | None = None  # Dedicated router model (default: ollama_intent_model)
     agent_router_url: str | None = None    # Dedicated Ollama URL for router (default: agent_ollama_url)
+    agent_orchestrator_enabled: bool = False  # Enable cross-MCP query orchestration (opt-in)
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default

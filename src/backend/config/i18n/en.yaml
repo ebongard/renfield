@@ -1,0 +1,25 @@
+# Backend i18n — English translations
+# For non-prompt system strings (errors, UI labels, API responses)
+
+error:
+  request_blocked: "I cannot process this request."
+  session_not_found: "No conversation found for session: {session_id}"
+  tool_timeout: "Tool call timeout: {tool}"
+  tool_error: "Tool error: {error}"
+  rate_limited: "Too many requests. Please wait a moment."
+  circuit_open: "Service temporarily unavailable."
+
+agent:
+  action_result_prefix: "Action result"
+  thinking: "Analyzing request and planning steps..."
+  steps_completed: "{count} steps completed"
+  budget_reduced: "Prompt reduced (pass {pass_name})"
+
+guard:
+  injection_blocked: "Security check: request blocked."
+  output_violation: "Response was adjusted for security reasons."
+
+media:
+  now_playing: "Now playing: {title}"
+  volume_set: "Volume set to {level}%"
+  playback_stopped: "Playback stopped"

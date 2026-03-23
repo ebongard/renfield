@@ -141,6 +141,12 @@ def check_output(
             f"matched in response ({len(response)} chars)"
         )
 
+    # Record metrics
+    if violations:
+        from utils.metrics import record_output_guard_violation
+        for v in violations:
+            record_output_guard_violation(v)
+
     return OutputGuardResult(
         safe=len(violations) == 0,
         violations=violations,

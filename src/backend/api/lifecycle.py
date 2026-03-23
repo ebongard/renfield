@@ -582,9 +582,17 @@ async def lifespan(app: "FastAPI"):
         register_hook("post_document_ingest", kg_post_document_ingest_hook)
         logger.info("✅ Knowledge Graph hooks registered")
 
+    # Backend i18n
+    from utils.i18n import load_translations
+    load_translations()
+
     # MCP Response Compaction
     from services.mcp_compact import load_compact_config
     load_compact_config()
+
+    # Context Variable Extraction
+    from services.context_extractor import load_extraction_config
+    load_extraction_config()
 
     # Plugin / Hook System
     await _load_plugin_module()

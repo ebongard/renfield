@@ -472,6 +472,26 @@ de:
 
     Antworte NUR mit einem JSON-Array von Tool-Namen: ["tool1", "tool2", ...]
 
+  # Cross-MCP orchestrator prompts
+  orchestrator_detect_prompt: |
+    Benoetigt diese Anfrage mehrere unabhaengige Aktionen in verschiedenen Domaenen?
+    Anfrage: "{message}"
+
+    Verfuegbare Domaenen:
+    {role_descriptions}
+
+    Falls ja, antworte mit JSON: [{{"role": "...", "query": "..."}}, ...]
+    Falls nein (eine einzelne Domaene genuegt), antworte mit: null
+
+  orchestrator_synthesize_prompt: |
+    Kombiniere diese Teilergebnisse zu einer natuerlichen Antwort auf die urspruengliche Frage.
+    Originalfrage: "{message}"
+
+    Teilergebnisse:
+    {sub_results}
+
+    Antworte natuerlich und zusammenfassend.
+
   # JSON system message
   json_system_message: "Antworte nur mit JSON."
 
@@ -944,6 +964,26 @@ en:
     {tool_list}
 
     Reply ONLY with a JSON array of tool names: ["tool1", "tool2", ...]
+
+  # Cross-MCP orchestrator prompts
+  orchestrator_detect_prompt: |
+    Does this request require multiple independent actions across different domains?
+    Request: "{message}"
+
+    Available domains:
+    {role_descriptions}
+
+    If yes, reply with JSON: [{{"role": "...", "query": "..."}}, ...]
+    If no (a single domain suffices), reply with: null
+
+  orchestrator_synthesize_prompt: |
+    Combine these partial results into a natural answer to the original question.
+    Original question: "{message}"
+
+    Partial results:
+    {sub_results}
+
+    Reply naturally and summarize.
 
   # JSON system message
   json_system_message: "Reply with JSON only."

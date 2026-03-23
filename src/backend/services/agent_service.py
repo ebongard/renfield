@@ -14,7 +14,7 @@ import re
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 
@@ -110,6 +110,9 @@ class AgentContext:
 
     # Track tools that return empty results (for empty-result loop detection)
     empty_results_per_tool: dict[str, int] = field(default_factory=dict)
+
+    # Extracted context variables from tool results (for follow-up queries)
+    extracted_vars: dict[str, Any] = field(default_factory=dict)
 
     # Token tracking
     total_input_tokens: int = 0
@@ -580,6 +583,7 @@ class AgentService:
             f"Token budget over threshold: {utilization:.0%} "
             f"({prompt_tokens} tokens + {reserved} reserved / {max_tokens} max)"
         )
+        from utils.metrics import record_budget_reduction
 
         # Pass 1: Halve conversation history
         if conversation_history and len(conversation_history) > 3:
@@ -592,6 +596,7 @@ class AgentService:
             )
             prompt_tokens = token_counter.count(prompt)
             utilization = (prompt_tokens + reserved) / max_tokens
+            record_budget_reduction("halve_history")
             logger.info(f"Budget pass 1 (halve history): {utilization:.0%}")
             if utilization <= threshold:
                 return prompt, memory_context, document_context, conversation_history
@@ -606,6 +611,7 @@ class AgentService:
             )
             prompt_tokens = token_counter.count(prompt)
             utilization = (prompt_tokens + reserved) / max_tokens
+            record_budget_reduction("drop_memory")
             logger.info(f"Budget pass 2 (drop memory): {utilization:.0%}")
             if utilization <= threshold:
                 return prompt, "", document_context, conversation_history
@@ -620,6 +626,7 @@ class AgentService:
             )
             prompt_tokens = token_counter.count(prompt)
             utilization = (prompt_tokens + reserved) / max_tokens
+            record_budget_reduction("drop_documents")
             logger.info(f"Budget pass 3 (drop documents): {utilization:.0%}")
             if utilization <= threshold:
                 return prompt, "", "", conversation_history
@@ -634,6 +641,7 @@ class AgentService:
         )
         prompt_tokens = token_counter.count(prompt)
         utilization = (prompt_tokens + reserved) / max_tokens
+        record_budget_reduction("truncate_results")
         logger.info(f"Budget pass 4 (truncate results): {utilization:.0%}")
         return prompt, "", "", conversation_history
 
@@ -1075,6 +1083,12 @@ class AgentService:
             # Apply MCP response compaction (field-level filtering)
             from services.mcp_compact import compact_mcp_result as _compact
             result = _compact(action, result)
+
+            # Extract context variables from tool results (for follow-up queries)
+            from services.context_extractor import extract_context_vars
+            extracted = extract_context_vars(action, result)
+            if extracted:
+                context.extracted_vars.update(extracted)
 
             # Extract large binary blobs before building LLM summary
             result_data = result.get("data")
