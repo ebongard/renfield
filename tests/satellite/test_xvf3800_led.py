@@ -91,21 +91,20 @@ class TestXVF3800LEDControllerPatterns:
 
         mock_run.assert_called_once_with(
             ["/bin/xvf_host", "LED_EFFECT", "2"],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=5, cwd="/bin",
         )
 
     @pytest.mark.satellite
     @patch("subprocess.run")
-    def test_set_pattern_idle_doa(self, mock_run):
+    def test_set_pattern_idle_dim_blue_breath(self, mock_run):
         from renfield_satellite.hardware.led import XVF3800LEDController, LEDPattern
 
         ctrl = XVF3800LEDController(xvf_host_path="/bin/xvf_host")
         ctrl.set_pattern(LEDPattern.IDLE)
 
-        mock_run.assert_called_once_with(
-            ["/bin/xvf_host", "LED_EFFECT", "4"],
-            capture_output=True, timeout=5,
-        )
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["/bin/xvf_host", "LED_COLOR", "0x000044"] in calls
+        assert ["/bin/xvf_host", "LED_EFFECT", "1"] in calls
 
     @pytest.mark.satellite
     @patch("subprocess.run")
@@ -118,7 +117,7 @@ class TestXVF3800LEDControllerPatterns:
 
         mock_run.assert_called_once_with(
             ["/bin/xvf_host", "LED_EFFECT", "0"],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=5, cwd="/bin",
         )
 
     @pytest.mark.satellite
@@ -181,7 +180,7 @@ class TestXVF3800LEDControllerClose:
 
         mock_run.assert_called_once_with(
             ["/bin/xvf_host", "LED_EFFECT", "0"],
-            capture_output=True, timeout=5,
+            capture_output=True, timeout=5, cwd="/bin",
         )
         assert ctrl.current_pattern == LEDPattern.OFF
 

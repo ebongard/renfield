@@ -551,10 +551,10 @@ class XVF3800LEDController:
     # Pattern → (LED_EFFECT, LED_COLOR or None)
     _PATTERN_MAP = {
         LEDPattern.OFF: (0, None),
-        LEDPattern.IDLE: (4, None),           # DoA direction indicator
+        LEDPattern.IDLE: (3, 0x000033),       # Dim blue solid
         LEDPattern.LISTENING: (3, 0x00ff00),  # Solid green
-        LEDPattern.PROCESSING: (1, 0xffff00), # Breath yellow
-        LEDPattern.SPEAKING: (1, 0x00ffff),   # Breath cyan
+        LEDPattern.PROCESSING: (3, 0xffff00), # Solid yellow
+        LEDPattern.SPEAKING: (3, 0x00ffff),   # Solid cyan
         LEDPattern.ERROR: (3, 0xff0000),      # Solid red
         LEDPattern.SUCCESS: (3, 0x00ff00),    # Solid green
         LEDPattern.BOOT: (2, None),           # Rainbow
@@ -591,9 +591,9 @@ class XVF3800LEDController:
         if pattern == self._pattern:
             return
         effect, color = self._PATTERN_MAP.get(pattern, (0, None))
+        self._run("LED_EFFECT", str(effect))
         if color is not None:
             self._run("LED_COLOR", f"0x{color:06x}")
-        self._run("LED_EFFECT", str(effect))
         self._pattern = pattern
 
     def stop_animation(self):
@@ -607,11 +607,14 @@ class XVF3800LEDController:
         try:
             import subprocess
             bin_dir = os.path.dirname(self._xvf_host_path)
-            subprocess.run(
+            result = subprocess.run(
                 [self._xvf_host_path, *args],
                 capture_output=True, timeout=5,
                 cwd=bin_dir or None,
             )
+            if result.returncode != 0:
+                stderr = result.stderr.decode(errors="replace").strip()
+                print(f"xvf_host {' '.join(args)} failed (rc={result.returncode}): {stderr}")
         except Exception as e:
             print(f"xvf_host error: {e}")
 
