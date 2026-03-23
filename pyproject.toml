@@ -71,6 +71,7 @@ markers = [
     "backend: Backend-specific tests",
     "frontend: Frontend-specific tests",
     "satellite: Satellite-specific tests",
+    "eval: Evaluation tests (require running Ollama, slow)",
 ]
 
 # =============================================================================
