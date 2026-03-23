@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from models.websocket_messages import WSChatMessage, WSErrorCode
 from services.database import AsyncSessionLocal
+from services.input_guard import detect_injection
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
@@ -589,6 +590,23 @@ async def websocket_endpoint(
                 continue
 
             logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id})")
+
+            # Prompt injection check
+            injection_result = detect_injection(content)
+            if injection_result.blocked:
+                logger.warning(
+                    f"Blocked injection attempt from user_id={user_id}: "
+                    f"score={injection_result.score:.2f}, "
+                    f"patterns={injection_result.matched_patterns}"
+                )
+                blocked_msg = (
+                    "Ich kann diese Anfrage nicht verarbeiten."
+                    if ollama.default_lang == "de"
+                    else "I cannot process this request."
+                )
+                await websocket.send_json({"type": "stream", "content": blocked_msg})
+                await websocket.send_json({"type": "done"})
+                continue
 
             # Handle session_id for conversation persistence
             if msg_session_id:

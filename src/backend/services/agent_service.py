@@ -883,6 +883,10 @@ class AgentService:
 
             logger.info(f"🤖 Agent step {step_num} tool result: success={result.get('success')}, has_data={result.get('data') is not None}, message_len={len(result.get('message', ''))}")
 
+            # Apply MCP response compaction (field-level filtering)
+            from services.mcp_compact import compact_mcp_result as _compact
+            result = _compact(action, result)
+
             # Extract large binary blobs before building LLM summary
             result_data = result.get("data")
             blob_count_before = len(context.blob_store)

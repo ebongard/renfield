@@ -25,16 +25,7 @@ from utils.llm_client import (
     get_embed_client,
 )
 
-_MAX_USER_INPUT_LENGTH = 4000
-
-
-def _sanitize_user_input(text: str) -> str:
-    """Sanitize user input before embedding in LLM prompts."""
-    if len(text) > _MAX_USER_INPUT_LENGTH:
-        text = text[:_MAX_USER_INPUT_LENGTH] + "..."
-    text = re.sub(r'(?i)\b(system|assistant)\s*:', '', text)
-    text = text.replace('```', '')
-    return text.strip()
+from services.input_guard import sanitize_user_input as _sanitize_user_input
 
 
 _VALID_PERSONALITY_STYLES = {"freundlich", "direkt", "formell", "casual"}

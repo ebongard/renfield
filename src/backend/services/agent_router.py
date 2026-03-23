@@ -243,15 +243,14 @@ class AgentRouter:
             "temperature": 0.0, "top_p": 0.1, "num_predict": 128, "num_ctx": 4096
         }
 
-        # Choose model + client based on available Ollama instances.
-        # If a separate agent Ollama is configured, use its model (the intent
-        # model likely doesn't exist there). Otherwise use intent model on default.
-        if settings.agent_ollama_url:
-            client, _ = get_agent_client(fallback_url=settings.agent_ollama_url)
-            router_model = settings.agent_model or settings.ollama_model
+        # Choose model + client for router classification.
+        # Priority: agent_router_model/url > agent_model/url > intent_model > default
+        router_url = settings.agent_router_url or settings.agent_ollama_url
+        router_model = settings.agent_router_model or settings.ollama_intent_model or settings.ollama_model
+        if router_url:
+            client, _ = get_agent_client(fallback_url=router_url)
         else:
             client = ollama.client
-            router_model = settings.ollama_intent_model or settings.ollama_model
 
         try:
             logger.info(f"Router using model: {router_model}")

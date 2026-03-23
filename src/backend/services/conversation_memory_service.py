@@ -29,6 +29,36 @@ from models.database import (
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
+# ---------------------------------------------------------------------------
+# Memory Poisoning Defense — pattern lists for extraction gating
+# ---------------------------------------------------------------------------
+
+_MEMORY_INJECTION_PATTERNS = [
+    re.compile(r"ignore\s+(all\s+)?(?:previous\s+)?(?:instructions|rules)", re.I),
+    re.compile(r"vergiss\s+(alle\s+)?(?:deine\s+)?regeln", re.I),
+    re.compile(r"neue?\s+anweisungen?\s*:", re.I),
+    re.compile(r"new\s+instructions?\s*:", re.I),
+    re.compile(r"(?:ich\s+bin|i\s+am)\s+(?:der\s+|the\s+)?admin", re.I),
+    re.compile(r"bypass\s+(?:auth|security|privacy)", re.I),
+    re.compile(r"override\s+(?:system|security)", re.I),
+    re.compile(r"(?:datenschutz|dsgvo)\s+(?:ignorieren|umgehen|gilt\s+nicht)", re.I),
+]
+
+_MEMORABLE_PATTERNS = [
+    re.compile(r"\b(?:i\s+am|ich\s+bin|my\s+name\s+is|ich\s+hei(?:ss|ß)e)\b", re.I),
+    re.compile(r"\b(?:i\s+(?:like|prefer|love|hate)|ich\s+(?:mag|bevorzuge|liebe|hasse))\b", re.I),
+    re.compile(r"\b(?:remember\s+(?:that|this)|merk\s+dir|erinner(?:e|st)?\s+dich)\b", re.I),
+    re.compile(r"\b(?:always|never|immer|nie(?:mals)?)\b.*\b(?:should|soll|must|muss)\b", re.I),
+]
+
+_TRANSACTIONAL_PATTERNS = [
+    re.compile(r"^(?:show|list|search|find|get|display|zeig|such|find|hol|gib)\b", re.I),
+    re.compile(r"^(?:turn\s+(?:on|off)|schalt[e]?|mach)\b", re.I),
+    re.compile(r"^(?:play|stop|pause|next|skip|spiel|stopp)\b", re.I),
+    re.compile(r"^(?:what\s+is|wie\s+(?:ist|wird)|was\s+ist)\b", re.I),
+    re.compile(r"^(?:how\s+(?:many|much)|wieviel)\b", re.I),
+]
+
 
 class ConversationMemoryService:
     """
@@ -138,6 +168,47 @@ class ConversationMemoryService:
         return memory
 
     # =========================================================================
+    # Memory Poisoning Defense
+    # =========================================================================
+
+    @staticmethod
+    def should_extract_memories(user_msg: str, assistant_response: str) -> bool:
+        """Determine whether to run memory extraction on this exchange.
+
+        3-stage filter:
+        1. BLOCK: Injection patterns detected -> skip extraction
+        2. ALLOW: Memorable patterns present -> proceed to extraction
+        3. SKIP: Transactional queries -> skip extraction
+        4. DEFAULT: Proceed to LLM extraction (let the LLM decide)
+        """
+        # Stage 1: Block injection attempts
+        for pattern in _MEMORY_INJECTION_PATTERNS:
+            if pattern.search(user_msg):
+                logger.info(
+                    f"Memory extraction blocked: injection pattern in "
+                    f"'{user_msg[:60]}...'"
+                )
+                return False
+
+        # Stage 2: Allow memorable content
+        for pattern in _MEMORABLE_PATTERNS:
+            if pattern.search(user_msg):
+                return True
+
+        # Stage 3: Skip transactional queries
+        stripped = user_msg.strip()
+        for pattern in _TRANSACTIONAL_PATTERNS:
+            if pattern.search(stripped):
+                logger.debug(
+                    f"Memory extraction skipped: transactional query "
+                    f"'{user_msg[:60]}...'"
+                )
+                return False
+
+        # Stage 4: Default — let LLM extraction decide
+        return True
+
+    # =========================================================================
     # Extract
     # =========================================================================
 
@@ -156,6 +227,10 @@ class ConversationMemoryService:
 
         Returns list of saved/deduplicated memories.
         """
+        # Guard: Skip extraction for injection attempts and transactional queries
+        if not self.should_extract_memories(user_message, assistant_response):
+            return []
+
         from services.prompt_manager import prompt_manager
 
         # Build extraction prompt

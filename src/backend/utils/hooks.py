@@ -27,6 +27,7 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "presence_leave_room",
     "presence_first_arrived",
     "presence_last_left",
+    "compact_mcp_result",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

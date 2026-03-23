@@ -582,6 +582,10 @@ async def lifespan(app: "FastAPI"):
         register_hook("post_document_ingest", kg_post_document_ingest_hook)
         logger.info("✅ Knowledge Graph hooks registered")
 
+    # MCP Response Compaction
+    from services.mcp_compact import load_compact_config
+    load_compact_config()
+
     # Plugin / Hook System
     await _load_plugin_module()
     from utils.hooks import run_hooks

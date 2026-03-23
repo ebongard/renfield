@@ -15,6 +15,7 @@ from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user, require_permission
 from services.database import get_db
+from services.input_guard import detect_injection
 from services.ollama_service import OllamaService
 from utils.config import settings
 
@@ -41,6 +42,15 @@ async def send_message(
     """Nachricht senden und Antwort erhalten"""
     try:
         logger.info(f"📨 Neue Nachricht: '{chat_request.message[:100]}'")
+
+        # Prompt injection check
+        injection_result = detect_injection(chat_request.message)
+        if injection_result.blocked:
+            logger.warning(
+                f"Blocked injection attempt: score={injection_result.score:.2f}, "
+                f"patterns={injection_result.matched_patterns}"
+            )
+            raise HTTPException(status_code=400, detail="Request blocked by input guard.")
 
         # Session ID generieren falls nicht vorhanden
         session_id = chat_request.session_id or str(uuid.uuid4())

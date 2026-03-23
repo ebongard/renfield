@@ -111,6 +111,8 @@ class Settings(BaseSettings):
     conversation_summary_threshold: int = 10  # Trigger LLM summary when message count exceeds this
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
     agent_router_timeout: float = 30.0    # Timeout for router classification LLM call (seconds)
+    agent_router_model: str | None = None  # Dedicated router model (default: ollama_intent_model)
+    agent_router_url: str | None = None    # Dedicated Ollama URL for router (default: agent_ollama_url)
 
     # MCP Client (Model Context Protocol)
     mcp_enabled: bool = False             # Opt-in, disabled by default

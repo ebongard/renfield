@@ -1022,3 +1022,76 @@ class TestSubIntentParsing:
             role = await router.classify("Zeige alle Releases", ollama)
             assert role.name == "release"
             assert role.sub_intent is None
+
+
+# ============================================================================
+# Dedicated router model/URL settings
+# ============================================================================
+
+class TestRouterModelSettings:
+    """Tests for agent_router_model and agent_router_url config fields."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_router_uses_dedicated_model(self):
+        """agent_router_model takes priority over ollama_intent_model."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        ollama = make_mock_ollama('{"role": "conversation"}')
+
+        with patch("services.agent_router.settings") as s, \
+             patch("services.agent_router.get_agent_client") as gac:
+            s.agent_router_model = "qwen3:1.7b"
+            s.agent_router_url = None
+            s.agent_ollama_url = None
+            s.ollama_intent_model = "qwen3:8b"
+            s.ollama_model = "llama3.2:3b"
+
+            await router.classify("Hallo", ollama)
+            # Should NOT use get_agent_client (no router_url set)
+            gac.assert_not_called()
+            # Model used should be agent_router_model
+            call_kwargs = ollama.client.chat.call_args
+            assert call_kwargs.kwargs["model"] == "qwen3:1.7b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_router_falls_back_to_intent_model(self):
+        """Without agent_router_model, falls back to ollama_intent_model."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        ollama = make_mock_ollama('{"role": "conversation"}')
+
+        with patch("services.agent_router.settings") as s:
+            s.agent_router_model = None
+            s.agent_router_url = None
+            s.agent_ollama_url = None
+            s.ollama_intent_model = "qwen3:8b"
+            s.ollama_model = "llama3.2:3b"
+
+            await router.classify("Hallo", ollama)
+            call_kwargs = ollama.client.chat.call_args
+            assert call_kwargs.kwargs["model"] == "qwen3:8b"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_router_uses_dedicated_url(self):
+        """agent_router_url routes to a separate Ollama instance."""
+        router = AgentRouter(SAMPLE_CONFIG)
+        mock_response = MagicMock()
+        mock_response.message.content = '{"role": "conversation"}'
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=mock_response)
+
+        ollama = make_mock_ollama('{"role": "conversation"}')
+
+        with patch("services.agent_router.settings") as s, \
+             patch("services.agent_router.get_agent_client", return_value=(mock_client, None)) as gac:
+            s.agent_router_model = "qwen3:1.7b"
+            s.agent_router_url = "http://fast-gpu:11434"
+            s.agent_ollama_url = "http://main-gpu:11434"
+            s.ollama_intent_model = "qwen3:8b"
+            s.ollama_model = "llama3.2:3b"
+
+            await router.classify("Hallo", ollama)
+            gac.assert_called_once_with(fallback_url="http://fast-gpu:11434")
+            call_kwargs = mock_client.chat.call_args
+            assert call_kwargs.kwargs["model"] == "qwen3:1.7b"

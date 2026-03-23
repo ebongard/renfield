@@ -1,0 +1,42 @@
+# MCP Response Compaction Rules
+# Whitelist of fields to keep per MCP server/tool combination.
+# Tools not listed here pass through uncompacted.
+#
+# Syntax:
+#   server_name:
+#     tool_name:
+#       - simple_field
+#       - nested.field
+#       - array[].field
+
+homeassistant:
+  get_states:
+    - entity_id
+    - state
+    - attributes.friendly_name
+    - attributes.unit_of_measurement
+    - last_changed
+
+paperless:
+  search_documents:
+    - id
+    - title
+    - correspondent
+    - tags[].name
+    - created_date
+    - added
+
+jellyfin:
+  search:
+    - Id
+    - Name
+    - Type
+    - ProductionYear
+    - Overview
+
+n8n:
+  n8n_list_workflows:
+    - id
+    - name
+    - active
+    - updatedAt
