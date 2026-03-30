@@ -622,7 +622,7 @@ export default function KnowledgePage() {
               </div>
             )}
             {documents.map((doc) => (
-              <div key={doc.id} className="card">
+              <div key={doc.id} className="group card">
                 <div className="flex items-start space-x-4">
                   {knowledgeBases.length > 0 && (
                     <div className="mt-2">
@@ -670,37 +670,39 @@ export default function KnowledgePage() {
                         {doc.status}
                       </Badge>
                     </div>
-                    {knowledgeBases.length > 0 && (
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowMoveDropdown(showMoveDropdown === doc.id ? null : doc.id)}
-                          className="btn-icon btn-icon-ghost"
-                          title={t('knowledge.moveDocument')}
-                        >
-                          <ArrowRightLeft className="w-4 h-4" />
-                        </button>
-                        {showMoveDropdown === doc.id && (
-                          <MoveKbDropdown
-                            docIds={[doc.id]}
-                            onClose={() => setShowMoveDropdown(null)}
-                          />
-                        )}
-                      </div>
-                    )}
-                    <button
-                      onClick={() => handleReindexDocument(doc.id)}
-                      className="btn-icon btn-icon-ghost"
-                      title={t('knowledge.reindex')}
-                    >
-                      <RefreshCw className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDeleteDocument(doc.id, doc.filename)}
-                      className="btn-icon btn-icon-danger"
-                      title={t('common.delete')}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                      {knowledgeBases.length > 0 && (
+                        <div className="relative">
+                          <button
+                            onClick={() => setShowMoveDropdown(showMoveDropdown === doc.id ? null : doc.id)}
+                            className="btn-icon btn-icon-ghost"
+                            title={t('knowledge.moveDocument')}
+                          >
+                            <ArrowRightLeft className="w-4 h-4" />
+                          </button>
+                          {showMoveDropdown === doc.id && (
+                            <MoveKbDropdown
+                              docIds={[doc.id]}
+                              onClose={() => setShowMoveDropdown(null)}
+                            />
+                          )}
+                        </div>
+                      )}
+                      <button
+                        onClick={() => handleReindexDocument(doc.id)}
+                        className="btn-icon btn-icon-ghost"
+                        title={t('knowledge.reindex')}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteDocument(doc.id, doc.filename)}
+                        className="btn-icon btn-icon-danger"
+                        title={t('common.delete')}
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>

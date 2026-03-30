@@ -224,14 +224,14 @@ export default function MemoryPage() {
           {memories.map((memory) => (
             <div
               key={memory.id}
-              className="card hover:shadow-md transition-shadow"
+              className="group card hover:shadow-md transition-shadow"
             >
               {/* Category badge + actions */}
               <div className="flex items-start justify-between mb-2">
                 <Badge color={CATEGORY_BADGE_COLORS[memory.category] || 'gray'}>
                   {t(`memory.categories.${memory.category}`)}
                 </Badge>
-                <div className="flex items-center space-x-1">
+                <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                   <button
                     onClick={() => openEditModal(memory)}
                     className="btn-icon btn-icon-ghost"
