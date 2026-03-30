@@ -183,7 +183,7 @@ export default function Layout({ children }) {
       <Link
         to={item.href}
         onClick={onClick}
-        className={`flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors relative ${
+        className={`flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium transition-colors relative ${
           isActive
             ? 'bg-primary-600/20 text-primary-600 dark:text-primary-400'
             : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
@@ -216,7 +216,7 @@ export default function Layout({ children }) {
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="w-10 h-10 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors active:scale-95 lg:hidden"
+              className="w-11 h-11 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors active:scale-95 lg:hidden"
               aria-label={t('nav.openMenu')}
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -289,7 +289,7 @@ export default function Layout({ children }) {
           <div className="hidden lg:flex lg:group-hover/sidebar:hidden items-center justify-center absolute inset-0">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors active:scale-95"
+              className="p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors active:scale-95"
               aria-label={t('nav.openMenu')}
             >
               <Menu className="w-5 h-5" aria-hidden="true" />
@@ -304,7 +304,7 @@ export default function Layout({ children }) {
             <button
               ref={firstFocusableRef}
               onClick={() => setSidebarOpen(false)}
-              className="p-2 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors lg:hidden"
+              className="p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors lg:hidden"
               aria-label={t('nav.closeMenu')}
             >
               <X className="w-5 h-5" aria-hidden="true" />
@@ -327,7 +327,7 @@ export default function Layout({ children }) {
             <>
               <button
                 onClick={toggleAdmin}
-                className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                className={`w-full flex items-center justify-between px-3 py-3 rounded-lg text-sm font-medium transition-colors ${
                   isAdminRoute
                     ? 'bg-gray-100 dark:bg-gray-700/50 text-primary-600 dark:text-primary-400'
                     : 'text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white'
@@ -388,7 +388,7 @@ export default function Layout({ children }) {
                   {/* Logout Button */}
                   <button
                     onClick={handleLogout}
-                    className="w-full flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
+                    className="w-full flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <LogOut className="w-5 h-5 shrink-0" aria-hidden="true" />
                     <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.logout')}</span>
@@ -398,7 +398,7 @@ export default function Layout({ children }) {
                 <Link
                   to="/login"
                   onClick={handleNavClick}
-                  className="flex items-center space-x-3 px-3 py-2.5 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
+                  className="flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
                   <LogIn className="w-5 h-5 shrink-0" aria-hidden="true" />
                   <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.login')}</span>

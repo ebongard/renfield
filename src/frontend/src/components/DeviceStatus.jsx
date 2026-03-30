@@ -65,7 +65,7 @@ export default function DeviceStatus({ compact = false }) {
       <>
         <button
           onClick={() => setShowSetup(true)}
-          className={`flex items-center space-x-2 px-3 py-1.5 rounded-lg transition-colors ${
+          className={`flex items-center space-x-2 px-3 py-2.5 rounded-lg transition-colors ${
             device.isConnected
               ? 'bg-green-100 dark:bg-green-900/30 hover:bg-green-200 dark:hover:bg-green-900/50 border border-green-300 dark:border-green-700/50'
               : device.isSetupComplete

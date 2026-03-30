@@ -91,7 +91,7 @@ export default function LanguageSwitcher({ compact = false }) {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-1.5 px-2 py-1.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+        className="flex items-center space-x-1.5 px-3 py-2.5 rounded-lg text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
         aria-expanded={isOpen}
         aria-haspopup="listbox"
         aria-label={t('language.label')}

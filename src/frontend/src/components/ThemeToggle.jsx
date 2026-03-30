@@ -47,7 +47,7 @@ export default function ThemeToggle() {
     <div className="relative" ref={dropdownRef}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="p-2 rounded-lg transition-colors
+        className="p-2.5 rounded-lg transition-colors
                    text-gray-600 hover:bg-gray-200
                    dark:text-gray-300 dark:hover:bg-gray-700"
         aria-label="Theme wechseln"
