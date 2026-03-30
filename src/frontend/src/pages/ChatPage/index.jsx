@@ -21,7 +21,7 @@ function ChatPageLayout() {
       {/* Mobile Sidebar Toggle Button */}
       <button
         onClick={() => setSidebarOpen(true)}
-        className="fixed bottom-24 left-4 z-10 md:hidden p-3 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg transition-colors"
+        className="fixed bottom-36 left-4 z-10 md:hidden p-3 bg-primary-600 hover:bg-primary-700 text-white rounded-full shadow-lg transition-colors"
         aria-label={t('chat.openConversations')}
       >
         <Menu className="w-5 h-5" aria-hidden="true" />

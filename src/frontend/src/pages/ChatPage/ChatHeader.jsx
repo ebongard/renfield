@@ -29,7 +29,7 @@ export default function ChatHeader() {
           <h1 className="text-2xl font-bold font-display text-gray-900 dark:text-white">{t('chat.title')}</h1>
           <p className="text-gray-500 dark:text-gray-400">{t('chat.subtitle')}</p>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-2 sm:space-x-4">
           {/* Wake Word Controls */}
           <div className="flex items-center space-x-2">
             <button
@@ -73,7 +73,7 @@ export default function ChatHeader() {
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
             <div className={`w-3 h-3 rounded-full ${wsConnected ? 'bg-accent-400 animate-gentle-pulse' : 'bg-red-500'}`} />
-            <span className="text-sm text-gray-500 dark:text-gray-400">
+            <span className="text-sm text-gray-500 dark:text-gray-400 hidden sm:inline">
               {wsConnected ? t('common.connected') : t('common.disconnected')}
             </span>
           </div>
