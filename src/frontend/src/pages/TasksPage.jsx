@@ -79,8 +79,9 @@ export default function TasksPage() {
           </div>
         ) : tasks.length === 0 ? (
           <div className="card text-center py-12">
-            <CheckSquare className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-2" />
-            <p className="text-gray-500 dark:text-gray-400">{t('tasks.noTasks')}</p>
+            <CheckSquare className="w-12 h-12 mx-auto text-gray-400 dark:text-gray-600 mb-3" />
+            <p className="font-medium text-gray-700 dark:text-gray-300">{t('tasks.noTasks')}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{t('tasks.noTasksDesc')}</p>
           </div>
         ) : (
           tasks.map((task) => (

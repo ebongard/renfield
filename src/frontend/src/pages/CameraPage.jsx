@@ -68,17 +68,21 @@ export default function CameraPage() {
       {/* Cameras Overview */}
       <div className="card">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{t('cameras.cameras')}</h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cameras.map((camera) => (
-            <div key={camera} className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
-              <div className="flex items-center space-x-2 mb-2">
-                <Camera className="w-5 h-5 text-primary-400" />
-                <span className="text-gray-900 dark:text-white font-medium">{camera}</span>
+        {cameras.length === 0 ? (
+          <p className="text-sm text-gray-500 dark:text-gray-400">{t('cameras.noCameras')}</p>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {cameras.map((camera) => (
+              <div key={camera} className="bg-gray-100 dark:bg-gray-700 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Camera className="w-5 h-5 text-primary-400" />
+                  <span className="text-gray-900 dark:text-white font-medium">{camera}</span>
+                </div>
+                <div className="w-3 h-3 rounded-full bg-green-500" />
               </div>
-              <div className="w-3 h-3 rounded-full bg-green-500" />
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Label Filters */}
