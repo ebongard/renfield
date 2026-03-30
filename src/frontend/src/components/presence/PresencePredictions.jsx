@@ -66,7 +66,7 @@ export default function PresencePredictions({ data }) {
 
   return (
     <div className="card p-4">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+      <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
         {t('presence.predictionsTitle')}
       </h3>
 

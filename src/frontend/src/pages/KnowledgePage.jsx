@@ -636,7 +636,7 @@ export default function KnowledgePage() {
                   )}
                   <div className="mt-1">{getFileIcon(doc.file_type)}</div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1 truncate">
+                    <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1 truncate">
                       {doc.title || doc.filename}
                     </h3>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400">

@@ -336,7 +336,7 @@ export default function RolesPage() {
                   {/* Info */}
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{role.name}</h3>
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">{role.name}</h3>
                       {role.is_system && (
                         <Badge color="gray" icon={Lock}>{t('roles.system')}</Badge>
                       )}
@@ -426,7 +426,7 @@ export default function RolesPage() {
           {/* Permissions */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="text-lg font-medium text-gray-900 dark:text-white">{t('roles.permissions')}</h3>
+              <h3 className="text-base font-medium text-gray-900 dark:text-white">{t('roles.permissions')}</h3>
               <span className="text-sm text-gray-500 dark:text-gray-400">
                 {t('roles.selected', { count: formData.permissions.length })}
               </span>

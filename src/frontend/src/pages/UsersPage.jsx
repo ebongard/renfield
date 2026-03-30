@@ -355,7 +355,7 @@ export default function UsersPage() {
                   {/* Info */}
                   <div>
                     <div className="flex items-center space-x-2">
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                      <h3 className="text-base font-semibold text-gray-900 dark:text-white">
                         {user.first_name || user.last_name
                           ? `${user.first_name || ''} ${user.last_name || ''}`.trim()
                           : user.username}

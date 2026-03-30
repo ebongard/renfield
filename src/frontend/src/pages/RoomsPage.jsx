@@ -747,7 +747,7 @@ export default function RoomsPage() {
 
         {/* HA Areas List */}
         <div>
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-3">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
             {t('rooms.haAreasCount', { count: haAreas.length })}
           </h3>
           {loadingAreas ? (

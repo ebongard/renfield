@@ -485,7 +485,7 @@ export default function PresencePage() {
       {rooms.length === 0 ? (
         <div className="card p-12 text-center mb-8">
           <Wifi className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+          <h3 className="text-base font-medium text-gray-900 dark:text-white mb-2">
             {t('presence.noData')}
           </h3>
           <p className="text-gray-500 dark:text-gray-400">
@@ -519,7 +519,7 @@ export default function PresencePage() {
       {devices.length === 0 ? (
         <div className="card p-12 text-center">
           <Smartphone className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+          <h3 className="text-base font-medium text-gray-900 dark:text-white mb-2">
             {t('presence.noDevices')}
           </h3>
           <p className="text-gray-500 dark:text-gray-400">

@@ -50,7 +50,7 @@ export default function PresenceHeatmap({ data }) {
 
   return (
     <div className="card overflow-hidden">
-      <h3 className="text-lg font-semibold text-gray-900 dark:text-white p-4 pb-2">
+      <h3 className="text-base font-semibold text-gray-900 dark:text-white p-4 pb-2">
         {t('presence.heatmapTitle')}
       </h3>
       <div className="overflow-x-auto p-4 pt-0">

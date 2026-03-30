@@ -523,7 +523,7 @@ export default function SatellitesPage() {
       {satellites.length === 0 ? (
         <div className="card p-12 text-center">
           <WifiOff className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">
+          <h3 className="text-base font-medium text-gray-900 dark:text-white mb-2">
             {t('satellites.noSatellites', 'No satellites connected')}
           </h3>
           <p className="text-gray-500 dark:text-gray-400">

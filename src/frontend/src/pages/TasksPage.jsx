@@ -89,7 +89,7 @@ export default function TasksPage() {
               <div className="flex items-start space-x-4">
                 <div className="mt-1">{getStatusIcon(task.status)}</div>
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-1">
+                  <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-1">
                     {task.title}
                   </h3>
                   <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
