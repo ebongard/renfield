@@ -322,6 +322,13 @@ export default function KnowledgePage() {
   };
 
   const statusFilters = ['all', 'completed', 'processing', 'pending', 'failed'];
+  const statusLabels = {
+    all: t('common.all'),
+    completed: t('knowledge.statusCompleted'),
+    processing: t('knowledge.statusProcessing'),
+    pending: t('knowledge.statusPending'),
+    failed: t('knowledge.statusFailed'),
+  };
 
   return (
     <div className="space-y-6">
@@ -548,13 +555,13 @@ export default function KnowledgePage() {
           <button
             key={f}
             onClick={() => setStatusFilter(f)}
-            className={`px-4 py-2 rounded-lg capitalize whitespace-nowrap transition-colors ${
+            className={`px-4 py-2 rounded-lg whitespace-nowrap transition-colors ${
               statusFilter === f
                 ? 'bg-primary-600 text-white'
                 : 'bg-gray-200 text-gray-700 hover:bg-gray-300 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700'
             }`}
           >
-            {f === 'all' ? t('common.all') : f}
+            {statusLabels[f] || f}
           </button>
         ))}
       </div>
