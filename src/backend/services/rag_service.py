@@ -98,6 +98,63 @@ class RAGService:
             raise
 
     # ==========================================================================
+    # Contextual Retrieval (LLM-generated context prefix per chunk)
+    # ==========================================================================
+
+    async def _generate_context_prefix(self, chunk_text: str, doc_summary: str) -> str | None:
+        """Generate a 1-2 sentence context prefix for a chunk using LLM.
+
+        The prefix describes what the chunk is about and where it comes from,
+        so the embedding captures document-level context (Anthropic's Contextual
+        Retrieval approach, ~49% fewer retrieval failures).
+        """
+        if not settings.rag_contextual_retrieval:
+            return None
+
+        prompt = (
+            "Beschreibe in 1-2 kurzen Sätzen, worum es in diesem Textabschnitt geht "
+            "und aus welchem Dokument er stammt. Nur die Beschreibung, keine Einleitung.\n\n"
+            f"Dokument: {doc_summary[:500]}\n\n"
+            f"Textabschnitt:\n{chunk_text[:800]}\n\n"
+            "Kontext:"
+        )
+        try:
+            from services.llm_client import get_chat_client
+            client = get_chat_client()
+            model = settings.rag_contextual_model or settings.ollama_chat_model
+            response = await asyncio.wait_for(
+                client.generate(model=model, prompt=prompt, options={"temperature": 0.1, "num_predict": 80}),
+                timeout=settings.rag_embedding_timeout,
+            )
+            prefix = response.response.strip()
+            return prefix if prefix else None
+        except Exception as e:
+            logger.warning(f"Context-Prefix-Generierung fehlgeschlagen: {e}")
+            return None
+
+    async def _contextualize_chunks(self, chunks: list[dict], doc_summary: str) -> list[dict]:
+        """Add contextual prefixes to chunks for better embedding quality."""
+        if not settings.rag_contextual_retrieval:
+            return chunks
+
+        sem = asyncio.Semaphore(3)  # Limit concurrent LLM calls
+
+        async def _add_prefix(chunk_data):
+            text = chunk_data.get("text", "")
+            if not text or not text.strip():
+                return chunk_data
+            async with sem:
+                prefix = await self._generate_context_prefix(text, doc_summary)
+            if prefix:
+                chunk_data.setdefault("metadata", {})["context_prefix"] = prefix
+                chunk_data["text_for_embedding"] = f"{prefix}\n---\n{text}"
+            else:
+                chunk_data["text_for_embedding"] = text
+            return chunk_data
+
+        return await asyncio.gather(*[_add_prefix(cd) for cd in chunks])
+
+    # ==========================================================================
     # Document Ingestion
     # ==========================================================================
 
@@ -162,8 +219,14 @@ class RAGService:
             doc.file_size = metadata.get("file_size")
             doc.page_count = metadata.get("page_count")
 
-            # 3. Chunks mit Embeddings erstellen (parallel, batch insert)
+            # 3. Contextual Retrieval: generate LLM context prefix per chunk
             chunks = result["chunks"]
+            doc_summary = f"{doc.title or actual_filename}"
+            if chunks:
+                doc_summary += f" — {chunks[0]['text'][:300]}" if chunks[0].get("text") else ""
+            chunks = await self._contextualize_chunks(chunks, doc_summary)
+
+            # 4. Chunks mit Embeddings erstellen (parallel, batch insert)
             sem = asyncio.Semaphore(5)
 
             if settings.rag_parent_child_enabled:
@@ -239,15 +302,17 @@ class RAGService:
             text_content = chunk_data["text"]
             if not text_content or not text_content.strip():
                 return None
+            # Use contextualized text for embedding if available
+            embed_text = chunk_data.get("text_for_embedding", text_content)
             async with sem:
                 try:
-                    embedding = await self.get_embedding(text_content)
+                    embedding = await self.get_embedding(embed_text)
                 except Exception as e:
                     logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
                     return None
             return DocumentChunk(
                 document_id=doc_id,
-                content=text_content,
+                content=text_content,  # Store original text for display
                 embedding=embedding,
                 chunk_index=chunk_data["chunk_index"],
                 page_number=chunk_data["metadata"].get("page_number"),
@@ -294,15 +359,16 @@ class RAGService:
                 text_content = chunk_data["text"]
                 if not text_content or not text_content.strip():
                     return None
+                embed_text = chunk_data.get("text_for_embedding", text_content)
                 async with sem:
                     try:
-                        embedding = await self.get_embedding(text_content)
+                        embedding = await self.get_embedding(embed_text)
                     except Exception as e:
                         logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
                         return None
                 return DocumentChunk(
                     document_id=doc_id,
-                    content=text_content,
+                    content=text_content,  # Store original text for display
                     embedding=embedding,
                     parent_chunk_id=parent_id,
                     chunk_index=chunk_data["chunk_index"],
