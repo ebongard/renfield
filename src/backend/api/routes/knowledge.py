@@ -875,6 +875,32 @@ async def reindex_fts(
     return result
 
 
+@router.post("/rag-eval")
+async def run_rag_evaluation(
+    db: AsyncSession = Depends(get_async_session),
+    user: User | None = Depends(get_optional_user),
+    test_file: str | None = None,
+):
+    """
+    Run RAG quality assessment pipeline with LLM-as-Judge scoring.
+
+    Returns context relevance, faithfulness, answer quality, and source accuracy.
+    Admin-only when auth is enabled.
+    """
+    if settings.auth_enabled:
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_perms = user.get_permissions()
+        if not has_permission(user_perms, Permission.KB_ALL):
+            raise HTTPException(status_code=403, detail="Admin permission required: kb.all")
+
+    from services.rag_eval_service import RAGEvalService
+    assessment_svc = RAGEvalService(db)
+    test_cases = assessment_svc.load_test_cases(test_file)
+    results = await assessment_svc.evaluate(test_cases)
+    return results
+
+
 @router.get("/models/status")
 async def get_model_status():
     """Prüft, ob die für RAG benötigten Modelle verfügbar sind"""

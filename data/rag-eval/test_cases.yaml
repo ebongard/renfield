@@ -1,0 +1,31 @@
+# RAG Evaluation Test Cases
+# Run: POST /admin/rag-eval or python3 -m pytest tests/eval/test_rag_eval.py
+#
+# Each case tests whether the RAG pipeline retrieves the right chunks
+# and generates a correct, grounded answer.
+
+test_cases:
+  # -- Versicherungen --
+  - query: "Wie hoch ist mein Kfz-Versicherungsbeitrag?"
+    expected_source: null  # Fill with actual filename after first doc upload
+    expected_answer_contains: []
+
+  # -- Verein --
+  - query: "Was steht im Finanzbericht des TV Angermund?"
+    expected_source: null
+    expected_answer_contains: []
+
+  # -- Allgemein --
+  - query: "Wer ist Erik van den Berg?"
+    expected_source: null
+    expected_answer_contains: ["Erik"]
+
+  # -- Negativ-Test (Antwort sollte 'nicht im Kontext' enthalten) --
+  - query: "Wie ist das Wetter auf dem Mars?"
+    expected_source: null
+    expected_answer_contains: []
+
+  # -- Breite Suche --
+  - query: "Welche Rechnungen habe ich erhalten?"
+    expected_source: null
+    expected_answer_contains: []
