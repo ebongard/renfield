@@ -124,10 +124,130 @@ class QueryOrchestrator:
         lang: str = "de",
         **agent_kwargs,
     ) -> AsyncGenerator["AgentStep", None]:
-        """Run sub-agents sequentially, then synthesize results.
+        """Run sub-agents and synthesize results.
+
+        When agent_orchestrator_parallel is True, sub-agents run in parallel
+        with isolated contexts. Otherwise falls back to sequential execution.
 
         Yields AgentStep objects for real-time feedback.
         """
+        if settings.agent_orchestrator_parallel:
+            async for step in self._run_parallel(sub_queries, message, ollama, executor, lang, **agent_kwargs):
+                yield step
+        else:
+            async for step in self._run_sequential(sub_queries, message, ollama, executor, lang, **agent_kwargs):
+                yield step
+
+    async def _run_sub_agent(
+        self,
+        sq: dict,
+        ollama: "OllamaService",
+        executor: "ActionExecutor",
+        lang: str,
+        **agent_kwargs,
+    ) -> dict:
+        """Run a single sub-agent to completion with isolated context.
+
+        Returns dict with role, query, answer, and collected steps.
+        """
+        from services.agent_service import AgentService
+        from services.agent_tools import AgentToolRegistry
+
+        role_name = sq["role"]
+        query = sq["query"]
+        role = self.router.roles.get(role_name)
+
+        if not role or not role.has_agent_loop:
+            logger.warning(f"Orchestrator: skipping invalid role '{role_name}'")
+            return {"role": role_name, "query": query, "answer": "", "steps": []}
+
+        logger.info(f"Orchestrator: launching sub-agent [{role_name}]: {query[:60]}")
+
+        # Each sub-agent gets its own tool registry (isolated context)
+        tool_registry = AgentToolRegistry(
+            mcp_manager=self.mcp_manager,
+            server_filter=role.mcp_servers,
+            internal_filter=role.internal_tools,
+        )
+        agent = AgentService(tool_registry, role=role)
+
+        steps = []
+        final_answer = None
+        async for step in agent.run(
+            message=query,
+            ollama=ollama,
+            executor=executor,
+            lang=lang,
+            **agent_kwargs,
+        ):
+            # Tag step with sub-agent role for frontend grouping
+            step.data = step.data or {}
+            step.data["sub_agent_role"] = role_name
+            steps.append(step)
+            if step.step_type == "final_answer":
+                final_answer = step.content
+
+        logger.info(f"Orchestrator: sub-agent [{role_name}] completed ({len(steps)} steps)")
+        return {"role": role_name, "query": query, "answer": final_answer or "", "steps": steps}
+
+    async def _run_parallel(
+        self,
+        sub_queries: list[dict],
+        message: str,
+        ollama: "OllamaService",
+        executor: "ActionExecutor",
+        lang: str = "de",
+        **agent_kwargs,
+    ) -> AsyncGenerator["AgentStep", None]:
+        """Run all sub-agents in parallel, then synthesize."""
+        from services.agent_service import AgentStep
+
+        logger.info(f"⚡ Orchestrator: parallel execution of {len(sub_queries)} sub-agents")
+
+        # Launch all sub-agents in parallel (isolated contexts)
+        tasks = [
+            self._run_sub_agent(sq, ollama, executor, lang, **agent_kwargs)
+            for sq in sub_queries
+        ]
+        raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Yield steps grouped by sub-agent + collect results for synthesis
+        sub_results: list[dict] = []
+        for sq, result in zip(sub_queries, raw_results):
+            if isinstance(result, Exception):
+                logger.error(f"Orchestrator: sub-agent [{sq['role']}] failed: {result}")
+                yield AgentStep(
+                    step_number=0,
+                    step_type="error",
+                    content=f"Sub-Agent [{sq['role']}] fehlgeschlagen: {result}",
+                )
+                sub_results.append({"role": sq["role"], "query": sq["query"], "answer": ""})
+                continue
+
+            for step in result["steps"]:
+                yield step
+            sub_results.append(result)
+
+        # Synthesize combined answer
+        if len([r for r in sub_results if r.get("answer")]) >= 2:
+            synthesized = await self._synthesize(message, sub_results, ollama, lang)
+            if synthesized:
+                yield AgentStep(
+                    step_number=99,
+                    step_type="final_answer",
+                    content=synthesized,
+                )
+
+    async def _run_sequential(
+        self,
+        sub_queries: list[dict],
+        message: str,
+        ollama: "OllamaService",
+        executor: "ActionExecutor",
+        lang: str = "de",
+        **agent_kwargs,
+    ) -> AsyncGenerator["AgentStep", None]:
+        """Run sub-agents sequentially (original behavior)."""
         from services.agent_service import AgentService, AgentStep
         from services.agent_tools import AgentToolRegistry
 
@@ -144,7 +264,6 @@ class QueryOrchestrator:
 
             logger.info(f"Orchestrator: running sub-agent {i+1}/{len(sub_queries)} [{role_name}]: {query[:60]}")
 
-            # Create filtered tool registry for this domain
             tool_registry = AgentToolRegistry(
                 mcp_manager=self.mcp_manager,
                 server_filter=role.mcp_servers,
@@ -152,7 +271,6 @@ class QueryOrchestrator:
             )
             agent = AgentService(tool_registry, role=role)
 
-            # Run sub-agent and collect results
             final_answer = None
             async for step in agent.run(
                 message=query,
@@ -161,7 +279,6 @@ class QueryOrchestrator:
                 lang=lang,
                 **agent_kwargs,
             ):
-                # Forward intermediate steps to the caller
                 yield step
                 if step.step_type == "final_answer":
                     final_answer = step.content
