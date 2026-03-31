@@ -1,6 +1,6 @@
 """Add parent_chunk_id for parent-child chunking
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: b2c3d4e5f6g7
 Revises: z9a0b1c2d3e4
 Create Date: 2026-03-31
 """
@@ -8,7 +8,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers
-revision = "a1b2c3d4e5f6"
+revision = "b2c3d4e5f6g7"
 down_revision = "z9a0b1c2d3e4"
 branch_labels = None
 depends_on = None
