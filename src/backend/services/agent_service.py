@@ -985,6 +985,83 @@ class AgentService:
                     )
                 return
 
+            # ==================================================================
+            # PARALLEL TOOL EXECUTION (multi-action in single step)
+            # ==================================================================
+            if settings.agent_parallel_tools and "actions" in parsed and isinstance(parsed.get("actions"), list):
+                actions_list = parsed["actions"]
+                parallel_reason = parsed.get("reason", "")
+                valid_actions = []
+                for act in actions_list:
+                    if not isinstance(act, dict) or "action" not in act:
+                        continue
+                    resolved_name = self.tool_registry.resolve_tool_name(act["action"])
+                    if resolved_name:
+                        act["action"] = resolved_name
+                        valid_actions.append(act)
+                    else:
+                        logger.warning(f"⚠️ Agent step {step_num}: Skipping invalid parallel tool '{act.get('action')}'")
+
+                if valid_actions:
+                    logger.info(f"⚡ Agent step {step_num}: Parallel execution of {len(valid_actions)} tools: {[a['action'] for a in valid_actions]}")
+
+                    # Yield tool_call for each action
+                    for act in valid_actions:
+                        call_step = AgentStep(
+                            step_number=step_num,
+                            step_type="tool_call",
+                            tool=act["action"],
+                            parameters=act.get("parameters", {}),
+                            reason=parallel_reason,
+                        )
+                        context.steps.append(call_step)
+                        yield call_step
+
+                    # Execute all tools in parallel
+                    async def _exec_parallel(act_data):
+                        intent_data = {
+                            "intent": act_data["action"],
+                            "parameters": act_data.get("parameters", {}),
+                            "confidence": 1.0,
+                        }
+                        return await executor.execute(intent_data, user_permissions=user_permissions, user_id=user_id)
+
+                    exec_results = await asyncio.gather(
+                        *[_exec_parallel(a) for a in valid_actions],
+                        return_exceptions=True,
+                    )
+
+                    # Yield results and add to context
+                    no_result = "No result" if lang == "en" else "Kein Ergebnis"
+                    for act, res in zip(valid_actions, exec_results):
+                        if isinstance(res, Exception):
+                            logger.error(f"❌ Parallel tool '{act['action']}' failed: {res}")
+                            res = {"success": False, "message": str(res), "action_taken": False}
+
+                        from services.mcp_compact import compact_mcp_result as _compact
+                        res = _compact(act["action"], res)
+
+                        result_msg = _truncate(
+                            res.get("message", no_result),
+                            max_length=settings.agent_response_truncation,
+                        )
+                        result_step = AgentStep(
+                            step_number=step_num,
+                            step_type="tool_result",
+                            content=result_msg,
+                            tool=act["action"],
+                            success=res.get("success", False),
+                            data=res.get("data"),
+                        )
+                        context.steps.append(result_step)
+                        context.tool_results.append(res)
+                        yield result_step
+
+                    continue  # Next iteration of ReAct loop
+
+            # ==================================================================
+            # SINGLE TOOL EXECUTION (standard path)
+            # ==================================================================
             action = parsed.get("action", "")
 
             # Handle final_answer

@@ -29,12 +29,15 @@ de:
     Wenn du ein Tool aufrufen willst:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum dieses Tool"}}
 
+    Wenn du mehrere UNABHAENGIGE Tools gleichzeitig aufrufen willst:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
+
     Wenn du die finale Antwort geben willst:
     {{"action": "final_answer", "answer": "Deine Antwort an den Nutzer", "reason": "Warum fertig"}}
 
     REGELN:
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Nutze die Ergebnisse vorheriger Schritte für Entscheidungen
     - Erfinde NIEMALS IDs oder Werte — hole sie IMMER zuerst über ein Such-Tool
     - Wenn du Dokument-IDs brauchst, nutze zuerst search_documents
@@ -79,12 +82,15 @@ de:
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
 
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
+
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
 
     REGELN:
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Du MUSST IMMER zuerst ein Tool aufrufen. Gib NIEMALS final_answer ohne vorher ein Tool probiert zu haben!
     - Nutze NIEMALS "name" fuer generische Begriffe wie "Licht", "Lampe", "Heizung"
     - "Licht aus" (mit Raum-Kontext) → HassTurnOff mit {{"area": "<aktueller_raum>", "domain": ["light"]}}
@@ -125,12 +131,15 @@ de:
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
 
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
+
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
 
     REGELN:
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Fuer Wetter: Nutze get_weather mit {{"location": "Ortsname"}}. Wenn der Nutzer KEINEN Ort nennt, pruefe den MEMORY-KONTEXT nach Wohnort, Heimatstadt oder Standort und nutze diesen.
     - Fuer Websuche: Nutze web_search/searxng_web_search
     - Fuer Nachrichten: Nutze search_articles oder get_top_headlines
@@ -166,12 +175,15 @@ de:
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
 
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
+
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
 
     REGELN:
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Erfinde NIEMALS IDs — hole sie IMMER zuerst ueber search_documents
     - Wenn im KONVERSATIONS-KONTEXT bereits Suchergebnisse vorliegen, nutze diese IDs direkt
     - Bei Dokumenten-Suchen: Durchsuche IMMER BEIDE Quellen: (1) internal.knowledge_search fuer die lokale Wissensdatenbank, (2) mcp.paperless.search_documents fuer Paperless
@@ -214,13 +226,16 @@ de:
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
 
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
+
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
 
     REGELN:
     - Du MUSST MCP-Tools fuer jede Jellyfin-Aktion verwenden
     - Erfinde NIEMALS Medien, IDs oder Wiedergabe-Status
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - IMMER zuerst suchen, dann abspielen. Wenn die Anfrage einen konkreten Titel, Kuenstler oder Album NENNT, fuehre IMMER eine neue Suche durch. Wenn der Nutzer sich auf vorherige Suchergebnisse bezieht ("spiel den ab", "den ersten Track", "davon das dritte"), nutze die IDs aus dem Konversations-Kontext.
     - SUCHTIPP: Jellyfin findet "Album Artist" oft NICHT zusammen. Suche zuerst NUR nach dem Album-/Songnamen (z.B. query="Afterburner"). Pruefe dann im Ergebnis den Kuenstler.
     - GENRE-SUCHE: Wenn der Nutzer nach einem Genre fragt (z.B. "Pop-Alben", "Rock-Musik"), nutze search_media(genre="Pop", type="MusicAlbum") oder list_albums(genre="Pop"). Der genre-Parameter filtert nach Jellyfin-Genre, query sucht im Titel.
@@ -279,6 +294,9 @@ de:
 
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
+
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
 
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
@@ -340,7 +358,7 @@ de:
 
     REGELN:
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Erfinde NIEMALS IDs — hole sie ueber list/get Tools
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
@@ -374,6 +392,9 @@ de:
 
     Tool aufrufen:
     {{"action": "<tool_name>", "parameters": {{...}}, "reason": "Warum"}}
+
+    Mehrere unabhaengige Tools parallel:
+    {{"actions": [{{"action": "<tool1>", "parameters": {{...}}}}, {{"action": "<tool2>", "parameters": {{...}}}}], "reason": "Warum parallel"}}
 
     Fertig:
     {{"action": "final_answer", "answer": "Deine Antwort", "reason": "Warum fertig"}}
@@ -412,7 +433,7 @@ de:
     - Nutze den MEMORY-KONTEXT fuer Praeferenzen (bevorzugte Temperatur, Musik, etc.)
     - ZEITCHECK: Wenn "Gute Nacht" morgens (vor 12 Uhr) oder "Guten Morgen" nachts (nach 22 Uhr) gesagt wird, weise freundlich darauf hin, fuehre die Routine aber trotzdem aus
     - Nutze NUR Tools aus der Liste oben
-    - Rufe pro Antwort GENAU EIN Tool auf
+    - Rufe pro Antwort EIN Tool auf (oder mehrere UNABHAENGIGE Tools gleichzeitig)
     - Die finale Antwort muss natuerlich und auf Deutsch sein
     - Antworte NUR mit JSON
 
