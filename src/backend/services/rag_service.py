@@ -73,16 +73,26 @@ class RAGService:
             text: Text für Embedding
 
         Returns:
-            Liste von Floats (768 Dimensionen für nomic-embed-text)
+            Liste von Floats (Dimensionen je nach Embedding-Modell)
+
+        Raises:
+            asyncio.TimeoutError: wenn Ollama nicht innerhalb rag_embedding_timeout antwortet
+            Exception: bei Verbindungsproblemen zu Ollama
         """
         try:
             client = await self._get_ollama_client()
-            response = await client.embeddings(
-                model=settings.ollama_embed_model,
-                prompt=text
+            response = await asyncio.wait_for(
+                client.embeddings(
+                    model=settings.ollama_embed_model,
+                    prompt=text
+                ),
+                timeout=settings.rag_embedding_timeout,
             )
             # ollama>=0.4.0 uses Pydantic models with .embedding attribute
             return response.embedding
+        except asyncio.TimeoutError:
+            logger.error(f"Embedding-Timeout nach {settings.rag_embedding_timeout}s")
+            raise
         except Exception as e:
             logger.error(f"Fehler beim Generieren des Embeddings: {e}")
             raise
@@ -267,15 +277,22 @@ class RAGService:
         top_k = top_k or settings.rag_top_k
         threshold = similarity_threshold or settings.rag_similarity_threshold
 
-        # Query-Embedding erstellen
+        # Query-Embedding erstellen (mit BM25-Fallback bei Fehler)
         try:
             query_embedding = await self.get_embedding(query)
         except Exception as e:
-            logger.error(f"Fehler beim Query-Embedding: {e}")
-            return []
+            logger.warning(f"Embedding fehlgeschlagen, Fallback auf BM25-only: {e}")
+            query_embedding = None
 
-        # Hybrid Search or Dense-only
-        if settings.rag_hybrid_enabled:
+        if query_embedding is None:
+            # BM25-only Fallback wenn Embedding-Modell nicht erreichbar
+            results = await self._search_bm25(query, top_k, knowledge_base_id)
+            logger.info(
+                f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
+                f"found={len(results)}"
+            )
+        elif settings.rag_hybrid_enabled:
+            # Hybrid Search (Dense + BM25 via RRF)
             candidate_k = top_k * 3  # Over-fetch for RRF fusion
             dense_results = await self._search_dense(
                 query_embedding, candidate_k, knowledge_base_id, threshold

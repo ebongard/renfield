@@ -39,6 +39,7 @@ de:
     Nutze den folgenden Kontext aus der Wissensdatenbank, um die Frage zu beantworten.
     Wenn du die Antwort nicht aus dem Kontext ableiten kannst, sage das ehrlich.
     Antworte immer auf Deutsch und in natürlicher Sprache.
+    Referenziere die Quellen in deiner Antwort mit [Quelle N].
     Nenne bei Bedarf die Quelle der Information.
 
   memory_context_section: |
@@ -113,6 +114,7 @@ en:
     Use the following context from the knowledge base to answer the question.
     If you cannot derive the answer from the context, say so honestly.
     Always respond in English and in natural language.
+    Reference the sources in your answer using [Source N].
     Cite the source of information when appropriate.
 
   memory_context_section: |

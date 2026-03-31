@@ -145,9 +145,26 @@ class Settings(BaseSettings):
     rag_hybrid_rrf_k: int = 60                # RRF constant k (standard: 60)
     rag_hybrid_fts_config: str = "german"     # PostgreSQL FTS config: simple/german/english
 
+    # Embedding
+    rag_embedding_timeout: float = 30.0       # Timeout in seconds for embedding calls
+
     # Context Window Retrieval
     rag_context_window: int = 1               # Adjacent chunks per direction (0=disabled)
     rag_context_window_max: int = 3           # Maximum allowed window size
+
+    # Contextual Retrieval (LLM-generated context prefix per chunk)
+    rag_contextual_retrieval: bool = True      # Generate context prefix during ingestion
+    rag_contextual_model: str | None = None    # LLM model for context generation (default: ollama_chat_model)
+
+    # Parent-Child Chunking
+    rag_parent_child_enabled: bool = True      # Small chunks for retrieval, large for context
+    rag_child_chunk_size: int = Field(default=256, ge=64, le=2048)
+    rag_parent_chunk_size: int = Field(default=1024, ge=256, le=4096)
+
+    # Reranking
+    rag_rerank_enabled: bool = True            # Rerank results with dedicated model
+    rag_rerank_model: str = "mxbai-rerank-base-v1"
+    rag_rerank_top_k: int = Field(default=5, ge=1, le=50)  # Final results after reranking
 
     # OCR Processing
     rag_force_ocr: bool = False               # Always force full-page OCR (ignores embedded text)
