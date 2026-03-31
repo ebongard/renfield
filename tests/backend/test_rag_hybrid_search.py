@@ -380,6 +380,8 @@ class TestHybridSearchIntegration:
             mock_settings.rag_similarity_threshold = 0.3
             mock_settings.rag_context_window = 1
             mock_settings.rag_context_window_max = 3
+            mock_settings.rag_parent_child_enabled = False
+            mock_settings.rag_rerank_enabled = False
 
             await rag_service.search("test query")
 
@@ -400,6 +402,8 @@ class TestHybridSearchIntegration:
             mock_settings.rag_similarity_threshold = 0.3
             mock_settings.rag_context_window = 10  # Exceeds max
             mock_settings.rag_context_window_max = 3
+            mock_settings.rag_parent_child_enabled = False
+            mock_settings.rag_rerank_enabled = False
 
             await rag_service.search("test query")
 
@@ -409,17 +413,25 @@ class TestHybridSearchIntegration:
         assert call_args[0][1] == 3  # window_size argument
 
     @pytest.mark.unit
-    async def test_search_embedding_error_returns_empty(self, rag_service):
-        """Embedding error returns empty results gracefully."""
+    async def test_search_embedding_error_falls_back_to_bm25(self, rag_service):
+        """Embedding error falls back to BM25-only search."""
+        bm25_results = [make_result(1)]
         with patch.object(rag_service, "get_embedding", side_effect=Exception("Connection refused")), \
+             patch.object(rag_service, "_search_bm25", return_value=bm25_results), \
+             patch.object(rag_service, "_rerank", side_effect=lambda q, r: r), \
+             patch.object(rag_service, "_resolve_parents", side_effect=lambda r: r), \
              patch("services.rag_service.settings") as mock_settings:
 
             mock_settings.rag_top_k = 5
             mock_settings.rag_similarity_threshold = 0.3
+            mock_settings.rag_parent_child_enabled = False
+            mock_settings.rag_rerank_enabled = False
+            mock_settings.rag_context_window = 0
+            mock_settings.rag_context_window_max = 3
 
             results = await rag_service.search("test query")
 
-        assert results == []
+        assert len(results) == 1  # BM25 fallback returned results
 
 
 # =============================================================================
