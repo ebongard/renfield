@@ -433,6 +433,65 @@ class RAGService:
 
         return resolved
 
+    # --------------------------------------------------------------------------
+    # Reranking (dedicated model scores query-chunk pairs)
+    # --------------------------------------------------------------------------
+
+    async def _rerank(self, query: str, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rerank results using a dedicated reranker model via Ollama embeddings.
+
+        Computes query and chunk embeddings with the reranker model, then scores
+        by cosine similarity. This provides a second-pass relevance check with
+        a different model than the storage embeddings.
+        """
+        rerank_top_k = settings.rag_rerank_top_k
+        if not settings.rag_rerank_enabled or not results:
+            return results[:rerank_top_k]
+
+        try:
+            client = await self._get_ollama_client()
+            model = settings.rag_rerank_model
+
+            # Get query embedding from reranker model
+            q_resp = await asyncio.wait_for(
+                client.embeddings(model=model, prompt=query),
+                timeout=settings.rag_embedding_timeout,
+            )
+            q_emb = q_resp.embedding
+
+            # Score each candidate chunk
+            scored = []
+            sem = asyncio.Semaphore(5)
+
+            async def _score(r):
+                content = r["chunk"]["content"][:1000]  # Cap for speed
+                async with sem:
+                    c_resp = await asyncio.wait_for(
+                        client.embeddings(model=model, prompt=content),
+                        timeout=settings.rag_embedding_timeout,
+                    )
+                # Cosine similarity
+                c_emb = c_resp.embedding
+                dot = sum(a * b for a, b in zip(q_emb, c_emb))
+                norm_q = sum(a * a for a in q_emb) ** 0.5
+                norm_c = sum(a * a for a in c_emb) ** 0.5
+                sim = dot / (norm_q * norm_c) if norm_q and norm_c else 0
+                return (sim, r)
+
+            scored = await asyncio.gather(*[_score(r) for r in results])
+            scored.sort(key=lambda x: x[0], reverse=True)
+
+            reranked = [r for _, r in scored[:rerank_top_k]]
+            logger.info(
+                f"📚 RAG Reranking: model={model}, input={len(results)}, "
+                f"output={len(reranked)}, top_score={scored[0][0]:.4f}"
+            )
+            return reranked
+
+        except Exception as e:
+            logger.warning(f"Reranking fehlgeschlagen, verwende Original-Reihenfolge: {e}")
+            return results[:rerank_top_k]
+
     # ==========================================================================
     # Similarity Search
     # ==========================================================================
@@ -495,6 +554,10 @@ class RAGService:
                 f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"threshold={threshold}, found={len(results)}"
             )
+
+        # Reranking (second-pass relevance scoring with dedicated model)
+        if results:
+            results = await self._rerank(query, results)
 
         # Parent-Child Resolution OR Context Window Expansion (mutually exclusive)
         if settings.rag_parent_child_enabled and results:
