@@ -492,11 +492,14 @@ class DocumentChunk(Base):
         nullable=True
     )
 
+    # Parent-Child Chunking (parent_chunk_id references larger parent chunk)
+    parent_chunk_id = Column(Integer, ForeignKey("document_chunks.id"), nullable=True, index=True)
+
     # Chunk Metadata
     chunk_index = Column(Integer)           # Position im Dokument (0-basiert)
     page_number = Column(Integer, nullable=True)
     section_title = Column(String(512), nullable=True)
-    chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, etc.
+    chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, parent
 
     # Full-text search vector (populated during ingestion via to_tsvector())
     search_vector = Column(TSVECTOR, nullable=True)
@@ -509,6 +512,7 @@ class DocumentChunk(Base):
 
     # Beziehungen
     document = relationship("Document", back_populates="chunks")
+    parent_chunk = relationship("DocumentChunk", remote_side=[id], foreign_keys=[parent_chunk_id])
 
     # Index für Vektor-Suche (wird bei Migration erstellt)
     # CREATE INDEX idx_document_chunks_embedding ON document_chunks

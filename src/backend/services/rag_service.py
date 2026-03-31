@@ -166,29 +166,10 @@ class RAGService:
             chunks = result["chunks"]
             sem = asyncio.Semaphore(5)
 
-            async def _embed_chunk(chunk_data):
-                text_content = chunk_data["text"]
-                if not text_content or not text_content.strip():
-                    return None
-                async with sem:
-                    try:
-                        embedding = await self.get_embedding(text_content)
-                    except Exception as e:
-                        logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
-                        return None
-                return DocumentChunk(
-                    document_id=doc.id,
-                    content=text_content,
-                    embedding=embedding,
-                    chunk_index=chunk_data["chunk_index"],
-                    page_number=chunk_data["metadata"].get("page_number"),
-                    section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
-                    chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
-                    chunk_metadata=chunk_data["metadata"]
-                )
-
-            embed_results = await asyncio.gather(*[_embed_chunk(cd) for cd in chunks])
-            chunk_objects = [r for r in embed_results if r is not None]
+            if settings.rag_parent_child_enabled:
+                chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
+            else:
+                chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
 
             chunk_count = len(chunk_objects)
             if chunk_objects:
@@ -246,6 +227,145 @@ class RAGService:
             await self.db.commit()
             logger.error(f"Fehler beim Indexieren: {e}")
             raise
+
+    # --------------------------------------------------------------------------
+    # Ingestion Strategies
+    # --------------------------------------------------------------------------
+
+    async def _ingest_flat(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
+        """Original flat chunking: each chunk gets an embedding."""
+
+        async def _embed_chunk(chunk_data):
+            text_content = chunk_data["text"]
+            if not text_content or not text_content.strip():
+                return None
+            async with sem:
+                try:
+                    embedding = await self.get_embedding(text_content)
+                except Exception as e:
+                    logger.warning(f"Embedding-Fehler für Chunk {chunk_data['chunk_index']}: {e}")
+                    return None
+            return DocumentChunk(
+                document_id=doc_id,
+                content=text_content,
+                embedding=embedding,
+                chunk_index=chunk_data["chunk_index"],
+                page_number=chunk_data["metadata"].get("page_number"),
+                section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
+                chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
+                chunk_metadata=chunk_data["metadata"],
+            )
+
+        results = await asyncio.gather(*[_embed_chunk(cd) for cd in chunks])
+        return [r for r in results if r is not None]
+
+    async def _ingest_parent_child(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
+        """Parent-child chunking: small embedded children reference larger context parents."""
+        # Group consecutive child chunks into parents
+        children_per_parent = max(1, settings.rag_parent_chunk_size // max(settings.rag_child_chunk_size, 1))
+        all_objects: list[DocumentChunk] = []
+
+        for group_start in range(0, len(chunks), children_per_parent):
+            group = chunks[group_start:group_start + children_per_parent]
+            if not group:
+                continue
+
+            # Create parent chunk (concatenated text, no embedding)
+            parent_text = "\n\n".join(c["text"] for c in group if c["text"] and c["text"].strip())
+            if not parent_text.strip():
+                continue
+
+            first_meta = group[0]["metadata"]
+            parent = DocumentChunk(
+                document_id=doc_id,
+                content=parent_text,
+                embedding=None,  # Parents are not embedded
+                chunk_index=group_start,
+                page_number=first_meta.get("page_number"),
+                section_title=", ".join(first_meta.get("headings", [])) or None,
+                chunk_type="parent",
+                chunk_metadata={"child_count": len(group)},
+            )
+            self.db.add(parent)
+            await self.db.flush()  # Get parent.id for children
+
+            # Create child chunks with embeddings
+            async def _embed_child(chunk_data, parent_id):
+                text_content = chunk_data["text"]
+                if not text_content or not text_content.strip():
+                    return None
+                async with sem:
+                    try:
+                        embedding = await self.get_embedding(text_content)
+                    except Exception as e:
+                        logger.warning(f"Embedding-Fehler für Child-Chunk {chunk_data['chunk_index']}: {e}")
+                        return None
+                return DocumentChunk(
+                    document_id=doc_id,
+                    content=text_content,
+                    embedding=embedding,
+                    parent_chunk_id=parent_id,
+                    chunk_index=chunk_data["chunk_index"],
+                    page_number=chunk_data["metadata"].get("page_number"),
+                    section_title=", ".join(chunk_data["metadata"].get("headings", [])) or None,
+                    chunk_type=chunk_data["metadata"].get("chunk_type", "paragraph"),
+                    chunk_metadata=chunk_data["metadata"],
+                )
+
+            child_results = await asyncio.gather(*[_embed_child(cd, parent.id) for cd in group])
+            children = [r for r in child_results if r is not None]
+
+            all_objects.append(parent)
+            all_objects.extend(children)
+
+        return all_objects
+
+    # --------------------------------------------------------------------------
+    # Parent Resolution (for parent-child search)
+    # --------------------------------------------------------------------------
+
+    async def _resolve_parents(self, results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Replace child chunk content with parent content, deduplicate by parent."""
+        if not results:
+            return results
+
+        # Collect parent IDs from child results
+        child_parent_map = {}
+        for r in results:
+            pid = r["chunk"].get("parent_chunk_id")
+            if pid:
+                child_parent_map.setdefault(pid, []).append(r)
+
+        if not child_parent_map:
+            return results  # No parent-child chunks, return as-is
+
+        # Fetch all parents in one query
+        parent_ids = list(child_parent_map.keys())
+        stmt = text("""
+            SELECT id, content, page_number, section_title
+            FROM document_chunks
+            WHERE id = ANY(:parent_ids)
+        """)
+        rows = (await self.db.execute(stmt, {"parent_ids": parent_ids})).fetchall()
+        parents = {row.id: row for row in rows}
+
+        # Deduplicate: keep highest-scoring child per parent
+        resolved = []
+        seen_parents = set()
+        for r in results:
+            pid = r["chunk"].get("parent_chunk_id")
+            if pid and pid in parents:
+                if pid in seen_parents:
+                    continue  # Skip duplicate parent
+                seen_parents.add(pid)
+                parent = parents[pid]
+                r["chunk"]["content"] = parent.content
+                r["chunk"]["page_number"] = parent.page_number
+                r["chunk"]["section_title"] = parent.section_title
+                r["chunk"]["chunk_type"] = "parent"
+            resolved.append(r)
+
+        return resolved
 
     # ==========================================================================
     # Similarity Search
@@ -310,10 +430,13 @@ class RAGService:
                 f"threshold={threshold}, found={len(results)}"
             )
 
-        # Context Window Expansion
-        window_size = min(settings.rag_context_window, settings.rag_context_window_max)
-        if window_size > 0 and results:
-            results = await self._expand_context_window(results, window_size)
+        # Parent-Child Resolution OR Context Window Expansion (mutually exclusive)
+        if settings.rag_parent_child_enabled and results:
+            results = await self._resolve_parents(results)
+        else:
+            window_size = min(settings.rag_context_window, settings.rag_context_window_max)
+            if window_size > 0 and results:
+                results = await self._expand_context_window(results, window_size)
 
         return results
 
@@ -353,6 +476,7 @@ class RAGService:
                 dc.section_title,
                 dc.chunk_type,
                 dc.chunk_metadata,
+                dc.parent_chunk_id,
                 d.filename,
                 d.title as doc_title,
                 1 - (dc.embedding <=> CAST(:embedding AS vector)) as similarity
@@ -387,6 +511,7 @@ class RAGService:
                     "page_number": row.page_number,
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
+                    "parent_chunk_id": getattr(row, "parent_chunk_id", None),
                 },
                 "document": {
                     "id": row.document_id,
@@ -439,6 +564,7 @@ class RAGService:
                 dc.section_title,
                 dc.chunk_type,
                 dc.chunk_metadata,
+                dc.parent_chunk_id,
                 d.filename,
                 d.title as doc_title,
                 ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
@@ -469,6 +595,7 @@ class RAGService:
                     "page_number": row.page_number,
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
+                    "parent_chunk_id": getattr(row, "parent_chunk_id", None),
                 },
                 "document": {
                     "id": row.document_id,
