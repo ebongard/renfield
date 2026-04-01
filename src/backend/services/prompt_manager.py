@@ -28,6 +28,7 @@ YAML Structure for multilingual prompts:
       temperature: 0.7
 """
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,7 @@ class PromptManager:
 
         self._default_lang = default_lang
         self._cache: dict[str, dict[str, Any]] = {}
+        self._hashes: dict[str, str] = {}
         self._load_all()
 
     def _load_all(self) -> None:
@@ -76,17 +78,19 @@ class PromptManager:
         for yaml_file in self._prompts_dir.glob("*.yaml"):
             self._load_file(yaml_file)
 
-        logger.info(f"Loaded {len(self._cache)} prompt file(s) from {self._prompts_dir}")
+        hash_summary = ", ".join(f"{k}:{v}" for k, v in sorted(self._hashes.items()))
+        logger.info(f"Loaded {len(self._cache)} prompt file(s) [{hash_summary}]")
 
     def _load_file(self, path: Path) -> None:
         """Load a single YAML file into the cache."""
         try:
-            with open(path, encoding="utf-8") as f:
-                data = yaml.safe_load(f)
+            raw = path.read_bytes()
+            data = yaml.safe_load(raw)
 
             if data:
                 name = path.stem  # filename without extension
                 self._cache[name] = data
+                self._hashes[name] = hashlib.sha256(raw).hexdigest()[:12]
                 logger.debug(f"Loaded prompts from {path.name}: {list(data.keys())}")
         except Exception as e:
             logger.error(f"Failed to load prompts from {path}: {e}")
@@ -94,6 +98,7 @@ class PromptManager:
     def reload(self) -> None:
         """Reload all prompts from disk."""
         self._cache.clear()
+        self._hashes.clear()
         self._load_all()
         logger.info("Prompts reloaded")
 
@@ -208,6 +213,11 @@ class PromptManager:
     def supported_languages(self) -> list[str]:
         """Get list of supported languages."""
         return SUPPORTED_LANGUAGES.copy()
+
+    @property
+    def prompt_hashes(self) -> dict[str, str]:
+        """Get SHA-256 hashes (12-char prefix) of loaded prompt files."""
+        return dict(self._hashes)
 
     def get_all(self, file: str) -> dict[str, Any]:
         """
