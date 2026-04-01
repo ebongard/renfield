@@ -9,6 +9,7 @@ Pattern follows IntentFeedbackService for embedding generation and
 cosine similarity search via raw SQL (pgvector).
 """
 import json
+import math
 import re
 from datetime import UTC, datetime, timedelta
 
@@ -23,6 +24,8 @@ from models.database import (
     MEMORY_CATEGORIES,
     MEMORY_CHANGED_BY_RESOLUTION,
     MEMORY_CHANGED_BY_SYSTEM,
+    MEMORY_SCOPE_USER,
+    MEMORY_SOURCE_LLM_INFERRED,
     ConversationMemory,
     MemoryHistory,
 )
@@ -98,6 +101,11 @@ class ConversationMemoryService:
         source_session_id: str | None = None,
         source_message_id: int | None = None,
         expires_at: datetime | None = None,
+        source: str | None = None,
+        scope: str | None = None,
+        team_id: str | None = None,
+        confidence: float = 1.0,
+        trigger_pattern: str | None = None,
     ) -> ConversationMemory | None:
         """
         Save a memory with deduplication.
@@ -145,6 +153,11 @@ class ConversationMemoryService:
             source_session_id=source_session_id,
             source_message_id=source_message_id,
             expires_at=expires_at,
+            source=source or MEMORY_SOURCE_LLM_INFERRED,
+            scope=scope or MEMORY_SCOPE_USER,
+            team_id=team_id,
+            confidence=confidence,
+            trigger_pattern=trigger_pattern,
         )
         self.db.add(memory)
         await self.db.flush()
@@ -529,6 +542,161 @@ class ConversationMemoryService:
             await self.db.commit()
 
         return memories
+
+    # =========================================================================
+    # Budget-aware retrieval for prompt injection
+    # =========================================================================
+
+    @staticmethod
+    def _recency_score(
+        created_at: datetime | None,
+        half_life_days: float = 14.0,
+    ) -> float:
+        """Exponential decay score based on age. Returns 0.0-1.0."""
+        if not created_at:
+            return 0.5
+        now = datetime.now(UTC).replace(tzinfo=None)
+        age_days = max((now - created_at).total_seconds() / 86400, 0)
+        return math.exp(-0.693 * age_days / half_life_days)
+
+    async def retrieve_for_prompt(
+        self,
+        query: str,
+        user_id: int | None = None,
+        team_ids: list[str] | None = None,
+        budget_chars: int | None = None,
+    ) -> dict[str, list[dict]]:
+        """
+        Budget-aware memory retrieval organized by section.
+
+        Returns memories partitioned into sections for structured prompt injection:
+        - essential: High-importance facts/preferences (always included)
+        - procedural: Behavioral rules
+        - semantic: Query-relevant memories
+        - episodic: Recent interaction episodes (if episodic memory enabled)
+
+        The total character count of all sections is capped at budget_chars.
+        """
+        budget = budget_chars or settings.memory_retrieval_budget_chars
+        sections: dict[str, list[dict]] = {
+            "essential": [],
+            "procedural": [],
+            "semantic": [],
+            "episodic": [],
+        }
+        used_chars = 0
+        seen_ids: set[int] = set()
+
+        # --- 1. Essential memories (always injected) ---
+        essential = await self.retrieve_essential(user_id=user_id)
+        for m in essential:
+            content_len = len(m["content"])
+            if used_chars + content_len > budget:
+                break
+            sections["essential"].append(m)
+            seen_ids.add(m["id"])
+            used_chars += content_len
+
+        # --- 2. Procedural memories (scope: user + team + global) ---
+        scope_filter = self._build_scope_filter(user_id, team_ids)
+        procedural_sql = text(f"""
+            SELECT id, content, category, importance, access_count, created_at, source, scope
+            FROM conversation_memories
+            WHERE is_active = true
+              AND category = 'procedural'
+              {scope_filter}
+            ORDER BY importance DESC
+            LIMIT 10
+        """)
+        params: dict = {}
+        if user_id is not None:
+            params["user_id"] = user_id
+        if team_ids:
+            params["team_ids"] = tuple(team_ids)
+
+        try:
+            result = await self.db.execute(procedural_sql, params)
+            for row in result.fetchall():
+                if row.id in seen_ids:
+                    continue
+                content_len = len(row.content)
+                if used_chars + content_len > budget:
+                    break
+                sections["procedural"].append({
+                    "id": row.id,
+                    "content": row.content,
+                    "category": row.category,
+                    "importance": row.importance,
+                    "source": getattr(row, "source", "llm_inferred"),
+                    "scope": getattr(row, "scope", "user"),
+                })
+                seen_ids.add(row.id)
+                used_chars += content_len
+        except Exception as e:
+            logger.warning(f"Procedural memory retrieval failed: {e}")
+
+        # --- 3. Semantic memories (query-relevant) ---
+        if used_chars < budget:
+            semantic = await self.retrieve(query, user_id=user_id)
+            for m in semantic:
+                if m["id"] in seen_ids:
+                    continue
+                content_len = len(m["content"])
+                if used_chars + content_len > budget:
+                    break
+                created = None
+                if m.get("created_at"):
+                    try:
+                        created = datetime.fromisoformat(m["created_at"])
+                    except (ValueError, TypeError):
+                        pass
+                m["recency_score"] = round(self._recency_score(created), 3)
+                sections["semantic"].append(m)
+                seen_ids.add(m["id"])
+                used_chars += content_len
+
+        # --- 4. Episodic memories (recent interactions) ---
+        if used_chars < budget and settings.memory_episodic_enabled:
+            try:
+                from services.episodic_memory_service import EpisodicMemoryService
+
+                ep_svc = EpisodicMemoryService(self.db)
+                episodes = await ep_svc.retrieve(
+                    query, user_id=user_id, limit=3, threshold=0.4
+                )
+                for ep in episodes:
+                    summary_len = len(ep["summary"])
+                    if used_chars + summary_len > budget:
+                        break
+                    sections["episodic"].append(ep)
+                    used_chars += summary_len
+            except Exception as e:
+                logger.warning(f"Episodic memory retrieval failed: {e}")
+
+        total = sum(len(v) for v in sections.values())
+        if total:
+            logger.debug(
+                f"Memory prompt: {total} items ({used_chars} chars) — "
+                f"essential={len(sections['essential'])}, "
+                f"procedural={len(sections['procedural'])}, "
+                f"semantic={len(sections['semantic'])}, "
+                f"episodic={len(sections['episodic'])}"
+            )
+
+        return sections
+
+    @staticmethod
+    def _build_scope_filter(
+        user_id: int | None,
+        team_ids: list[str] | None,
+    ) -> str:
+        """Build SQL scope filter clause for multi-scope retrieval."""
+        conditions = ["scope = 'global'"]
+        if user_id is not None:
+            conditions.append("(scope = 'user' AND user_id = :user_id)")
+        if team_ids:
+            conditions.append("(scope = 'team' AND team_id IN :team_ids)")
+        return "AND (" + " OR ".join(conditions) + ")"
 
     # =========================================================================
     # Cleanup
