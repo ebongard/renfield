@@ -114,6 +114,9 @@ class AgentContext:
     # Extracted context variables from tool results (for follow-up queries)
     extracted_vars: dict[str, Any] = field(default_factory=dict)
 
+    # Adaptive tool result budget (set by _enforce_token_budget, 0=unlimited)
+    tool_result_budget_chars: int = 0
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -173,9 +176,15 @@ class AgentContext:
                     f" mit {json.dumps(step.parameters, ensure_ascii=False)}"
                 )
             elif step.step_type == "tool_result":
-                # With 32k context window, tool results can be much more detailed
-                content = step.content[:8000] if step.content else no_result
+                if step.data is not None:
+                    budget = self.tool_result_budget_chars
+                    content = _serialize_for_prompt(step.data, budget_chars=budget)
+                else:
+                    content = step.content[:8000] if step.content else no_result
+                tool_name = step.tool or "unknown"
+                lines.append(f"  <tool_result tool=\"{tool_name}\">")
                 lines.append(f"  {result_label} {content}")
+                lines.append("  </tool_result>")
             elif step.step_type == "error":
                 lines.append(f"  {error_label} {step.content[:1500]}")
 
@@ -248,6 +257,79 @@ def _truncate(text: str, max_length: int = settings.agent_response_truncation) -
     if len(text) <= max_length:
         return text
     return text[:max_length] + "..."
+
+
+def _serialize_for_prompt(data: any, budget_chars: int = 0) -> str:
+    """Serialize structured tool result data for the LLM prompt.
+
+    Handles format normalization (MCP wrapper, local tool dicts, plain text),
+    array item limiting, and always produces valid JSON or text.
+
+    Args:
+        data: The structured data from step.data (dict, list, or MCP wrapper).
+        budget_chars: Maximum chars for the serialized output (0 = unlimited).
+
+    Returns:
+        A valid JSON string or plain text — never broken mid-field.
+    """
+    if data is None:
+        return ""
+
+    # Unwrap MCP format: [{"type": "text", "text": "{...json...}"}]
+    if isinstance(data, list) and data and isinstance(data[0], dict):
+        first = data[0]
+        if first.get("type") == "text" and "text" in first:
+            text_val = first["text"]
+            try:
+                data = json.loads(text_val)
+            except (json.JSONDecodeError, TypeError):
+                # Plain text MCP result
+                if not budget_chars or len(text_val) <= budget_chars:
+                    return text_val
+                return text_val[:budget_chars] + "\n...[truncated text]"
+
+    # Serialize to JSON
+    serialized = json.dumps(data, ensure_ascii=False)
+
+    # If within budget (or no budget), return as-is
+    if not budget_chars or len(serialized) <= budget_chars:
+        return serialized
+
+    # Over budget: reduce structurally
+    if isinstance(data, list) and len(data) > 1:
+        # Binary search for max items that fit
+        original_len = len(data)
+        lo, hi = 1, len(data)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            candidate = json.dumps(data[:mid], ensure_ascii=False)
+            if len(candidate) <= budget_chars - 60:
+                lo = mid
+            else:
+                hi = mid - 1
+        result = json.dumps(data[:lo], ensure_ascii=False)
+        return result + f"\n(showing {lo} of {original_len} items)"
+
+    if isinstance(data, dict):
+        # Remove largest fields until it fits (work on a copy)
+        reduced = dict(data)
+        by_size = sorted(
+            reduced.keys(),
+            key=lambda k: len(json.dumps(reduced[k], ensure_ascii=False)),
+            reverse=True,
+        )
+        removed = []
+        for key in by_size:
+            if not removed and len(json.dumps(reduced, ensure_ascii=False)) <= budget_chars:
+                break
+            removed.append(key)
+            del reduced[key]
+            if len(json.dumps(reduced, ensure_ascii=False)) <= budget_chars - 80:
+                break
+        return json.dumps(reduced, ensure_ascii=False) + f"\n(fields omitted: {', '.join(removed)})"
+
+    # Scalar or other — return as-is (already over budget but can't reduce structurally)
+    return serialized
 
 
 # Fields that contain large binary data (base64-encoded)
@@ -584,6 +666,39 @@ class AgentService:
             f"({prompt_tokens} tokens + {reserved} reserved / {max_tokens} max)"
         )
         from utils.metrics import record_budget_reduction
+
+        # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt
+        tool_result_steps = [
+            s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
+        ]
+        if tool_result_steps:
+            context.tool_result_budget_chars = 1  # minimal — just get the skeleton
+            prompt = await self._build_agent_prompt(
+                message, context, conversation_history,
+                memory_context=memory_context, document_context=document_context,
+                lang=lang, **build_kwargs,
+            )
+            skeleton_tokens = token_counter.count(prompt)
+            token_headroom = max(0, int(max_tokens * threshold) - reserved - skeleton_tokens)
+            total_chars_budget = int(token_headroom * 3.5)
+            n_results = len(tool_result_steps)
+            per_result_chars = max(200, total_chars_budget // max(1, n_results))
+            context.tool_result_budget_chars = per_result_chars
+            prompt = await self._build_agent_prompt(
+                message, context, conversation_history,
+                memory_context=memory_context, document_context=document_context,
+                lang=lang, **build_kwargs,
+            )
+            prompt_tokens = token_counter.count(prompt)
+            utilization = (prompt_tokens + reserved) / max_tokens
+            record_budget_reduction("adaptive_tool_budget")
+            logger.info(
+                f"Budget pass 0 (adaptive tool budget): {utilization:.0%} "
+                f"({per_result_chars} chars/result × {n_results} results)"
+            )
+            if utilization <= threshold:
+                return prompt, memory_context, document_context, conversation_history
+        context.tool_result_budget_chars = 0  # reset for fallback passes
 
         # Pass 1: Halve conversation history
         if conversation_history and len(conversation_history) > 3:
