@@ -14,8 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     MEMORY_CATEGORY_FACT,
-    MEMORY_SOURCE_SYSTEM,
-    ConversationMemory,
     EpisodicMemory,
 )
 from utils.config import settings

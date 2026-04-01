@@ -694,7 +694,7 @@ class AgentService:
             record_budget_reduction("adaptive_tool_budget")
             logger.info(
                 f"Budget pass 0 (adaptive tool budget): {utilization:.0%} "
-                f"({per_result_chars} chars/result × {n_results} results)"
+                f"({per_result_chars} chars/result x {n_results} results)"
             )
             if utilization <= threshold:
                 return prompt, memory_context, document_context, conversation_history

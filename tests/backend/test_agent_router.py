@@ -1095,3 +1095,135 @@ class TestRouterModelSettings:
             gac.assert_called_once_with(fallback_url="http://fast-gpu:11434")
             call_kwargs = mock_client.chat.call_args
             assert call_kwargs.kwargs["model"] == "qwen3:1.7b"
+
+
+# ============================================================================
+# Test AgentRole.utterances + SemanticRouter integration
+# ============================================================================
+
+
+class TestAgentRoleUtterances:
+    """Test utterances field on AgentRole."""
+
+    @pytest.mark.unit
+    def test_utterances_default_none(self):
+        from services.agent_router import AgentRole
+        role = AgentRole(name="test", description={"de": "Test"})
+        assert role.utterances is None
+
+    @pytest.mark.unit
+    def test_utterances_from_list(self):
+        from services.agent_router import AgentRole
+        role = AgentRole(
+            name="test",
+            description={"de": "Test"},
+            utterances=["hello", "world"],
+        )
+        assert role.utterances == ["hello", "world"]
+
+    @pytest.mark.unit
+    def test_utterances_parsed_from_config(self):
+        from services.agent_router import _parse_roles
+        config = {
+            "roles": {
+                "smart_home": {
+                    "description": {"de": "Smart Home"},
+                    "prompt_key": "agent_prompt_smart_home",
+                    "utterances": ["Licht an", "Temperatur"],
+                }
+            }
+        }
+        roles = _parse_roles(config)
+        assert roles["smart_home"].utterances == ["Licht an", "Temperatur"]
+
+    @pytest.mark.unit
+    def test_utterances_none_when_not_in_config(self):
+        from services.agent_router import _parse_roles
+        config = {
+            "roles": {
+                "general": {
+                    "description": {"de": "General"},
+                    "prompt_key": "agent_prompt",
+                }
+            }
+        }
+        roles = _parse_roles(config)
+        assert roles["general"].utterances is None
+
+
+class TestSetSemanticRouter:
+    """Test semantic router wiring on AgentRouter."""
+
+    @pytest.mark.unit
+    def test_set_semantic_router(self):
+        from services.agent_router import AgentRouter
+        router = AgentRouter({"roles": {}})
+        assert router._semantic_router is None
+
+        mock_sr = MagicMock()
+        router.set_semantic_router(mock_sr)
+        assert router._semantic_router is mock_sr
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_semantic_fast_path_used(self):
+        """When semantic router matches, LLM should not be called."""
+        from services.agent_router import AgentRouter
+        config = {
+            "roles": {
+                "smart_home": {
+                    "description": {"de": "Smart Home"},
+                    "prompt_key": "agent_prompt_smart_home",
+                }
+            }
+        }
+        router = AgentRouter(config)
+
+        mock_sr = AsyncMock()
+        mock_sr.classify.return_value = ("smart_home", 0.92)
+        router.set_semantic_router(mock_sr)
+
+        ollama = MagicMock()
+        role = await router.classify("Licht an", ollama)
+        assert role.name == "smart_home"
+        mock_sr.classify.assert_called_once_with("Licht an")
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_semantic_fallback_to_llm(self):
+        """When semantic router returns None, LLM classification path is attempted."""
+        from services.agent_router import AgentRouter
+
+        config = {
+            "roles": {
+                "general": {
+                    "description": {"de": "Allgemein"},
+                    "prompt_key": "agent_prompt",
+                }
+            }
+        }
+        router = AgentRouter(config)
+
+        mock_sr = AsyncMock()
+        mock_sr.classify.return_value = (None, 0.3)
+        router.set_semantic_router(mock_sr)
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock()
+        mock_response.message.content = '{"role": "general"}'
+        mock_client.chat.return_value = mock_response
+
+        ollama = MagicMock()
+
+        with patch("services.agent_router.settings") as s, \
+             patch("services.agent_router.get_agent_client", return_value=(mock_client, None)):
+            s.agent_router_model = ""
+            s.agent_router_url = ""
+            s.agent_ollama_url = ""
+            s.ollama_intent_model = ""
+            s.ollama_model = "llama3.2:3b"
+            role = await router.classify("something", ollama)
+            # Semantic router was called and returned None
+            mock_sr.classify.assert_called_once_with("something")
+            # LLM classification was attempted (get_agent_client was called)
+            assert role.name == "general"

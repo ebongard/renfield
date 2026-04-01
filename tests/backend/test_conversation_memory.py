@@ -22,9 +22,17 @@ from models.database import (
     MEMORY_CATEGORY_FACT,
     MEMORY_CATEGORY_INSTRUCTION,
     MEMORY_CATEGORY_PREFERENCE,
+    MEMORY_CATEGORY_PROCEDURAL,
     MEMORY_CHANGED_BY_RESOLUTION,
     MEMORY_CHANGED_BY_SYSTEM,
     MEMORY_CHANGED_BY_USER,
+    MEMORY_SCOPE_GLOBAL,
+    MEMORY_SCOPE_TEAM,
+    MEMORY_SCOPE_USER,
+    MEMORY_SOURCE_LLM_INFERRED,
+    MEMORY_SOURCE_SYSTEM,
+    MEMORY_SOURCE_USER_STATED,
+    MEMORY_SOURCES,
     ConversationMemory,
     MemoryHistory,
 )
@@ -1803,3 +1811,120 @@ class TestRetrieveEssential:
         assert len(results) == 3
         categories = {r["category"] for r in results}
         assert categories == {"fact", "preference", "instruction"}
+
+
+# ============================================================================
+# Test Reva compatibility features: constants, _build_scope_filter, _recency_score
+# ============================================================================
+
+
+class TestRevaMemoryConstants:
+    """Test restored memory constants for Reva compatibility."""
+
+    @pytest.mark.unit
+    def test_procedural_category_exists(self):
+        assert MEMORY_CATEGORY_PROCEDURAL == "procedural"
+        assert MEMORY_CATEGORY_PROCEDURAL in MEMORY_CATEGORIES
+
+    @pytest.mark.unit
+    def test_five_categories(self):
+        assert len(MEMORY_CATEGORIES) == 5
+
+    @pytest.mark.unit
+    def test_source_constants(self):
+        assert MEMORY_SOURCE_USER_STATED == "user_stated"
+        assert MEMORY_SOURCE_LLM_INFERRED == "llm_inferred"
+        assert MEMORY_SOURCE_SYSTEM == "system_confirmed"
+        assert len(MEMORY_SOURCES) == 3
+
+    @pytest.mark.unit
+    def test_scope_constants(self):
+        assert MEMORY_SCOPE_USER == "user"
+        assert MEMORY_SCOPE_TEAM == "team"
+        assert MEMORY_SCOPE_GLOBAL == "global"
+
+
+class TestBuildScopeFilter:
+    """Test _build_scope_filter() SQL clause builder."""
+
+    @pytest.mark.unit
+    def test_global_only(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        result = ConversationMemoryService._build_scope_filter(None, None)
+        assert "scope = 'global'" in result
+        assert "user_id" not in result
+        assert "team_id" not in result
+
+    @pytest.mark.unit
+    def test_user_scope(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        result = ConversationMemoryService._build_scope_filter(42, None)
+        assert "scope = 'global'" in result
+        assert "scope = 'user' AND user_id = :user_id" in result
+
+    @pytest.mark.unit
+    def test_team_scope(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        result = ConversationMemoryService._build_scope_filter(42, ["team-a", "team-b"])
+        assert "scope = 'global'" in result
+        assert "scope = 'user'" in result
+        assert "scope = 'team' AND team_id IN :team_ids" in result
+
+
+class TestRecencyScore:
+    """Test _recency_score() exponential decay."""
+
+    @pytest.mark.unit
+    def test_none_returns_half(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        assert ConversationMemoryService._recency_score(None) == 0.5
+
+    @pytest.mark.unit
+    def test_recent_near_one(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        from datetime import UTC
+        now = datetime.now(UTC).replace(tzinfo=None)
+        score = ConversationMemoryService._recency_score(now)
+        assert score > 0.99
+
+    @pytest.mark.unit
+    def test_old_decays(self):
+        from services.conversation_memory_service import ConversationMemoryService
+        from datetime import UTC
+        old = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=14)
+        score = ConversationMemoryService._recency_score(old, half_life_days=14.0)
+        assert 0.45 < score < 0.55  # approximately 0.5 at half-life
+
+
+class TestRetrieveForPromptContract:
+    """Test retrieve_for_prompt() returns the expected structure."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_returns_four_section_dict(self):
+        """retrieve_for_prompt() returns dict with essential/procedural/semantic/episodic keys."""
+        from services.conversation_memory_service import ConversationMemoryService
+        mock_db = AsyncMock()
+        svc = ConversationMemoryService(mock_db)
+
+        # Mock retrieve_essential and retrieve to return empty
+        svc.retrieve_essential = AsyncMock(return_value=[])
+        svc.retrieve = AsyncMock(return_value=[])
+
+        # Mock procedural query to return empty result
+        mock_result = MagicMock()
+        mock_result.fetchall.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        with patch('services.conversation_memory_service.settings') as mock_settings:
+            mock_settings.memory_retrieval_budget_chars = 2000
+            mock_settings.memory_episodic_enabled = False
+
+            result = await svc.retrieve_for_prompt("test query", user_id=1)
+
+        assert isinstance(result, dict)
+        assert "essential" in result
+        assert "procedural" in result
+        assert "semantic" in result
+        assert "episodic" in result
+        assert all(isinstance(v, list) for v in result.values())

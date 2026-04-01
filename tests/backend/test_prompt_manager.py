@@ -824,3 +824,60 @@ options:
         # Modifying the returned list should not affect internal state
         langs.append("fr")
         assert "fr" not in manager.supported_languages
+
+
+class TestPromptHashes:
+    """Test prompt_hashes property for deployment verification."""
+
+    @pytest.mark.unit
+    def test_prompt_hashes_returns_dict(self, tmp_path):
+        """prompt_hashes should return a dict of file name -> SHA-256 prefix."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("de:\n  hello: Hallo\n")
+        manager = PromptManager(str(prompts_dir))
+
+        hashes = manager.prompt_hashes
+        assert isinstance(hashes, dict)
+        assert "test" in hashes
+        assert len(hashes["test"]) == 12  # 12-char hex prefix
+
+    @pytest.mark.unit
+    def test_prompt_hashes_returns_copy(self, tmp_path):
+        """Modifying returned dict should not affect internal state."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("de:\n  hello: Hallo\n")
+        manager = PromptManager(str(prompts_dir))
+
+        hashes = manager.prompt_hashes
+        hashes["test"] = "tampered"
+        assert manager.prompt_hashes["test"] != "tampered"
+
+    @pytest.mark.unit
+    def test_prompt_hashes_change_on_content_change(self, tmp_path):
+        """Hash should change when file content changes."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        yaml_file = prompts_dir / "test.yaml"
+        yaml_file.write_text("de:\n  hello: Hallo\n")
+        manager = PromptManager(str(prompts_dir))
+        hash_before = manager.prompt_hashes["test"]
+
+        yaml_file.write_text("de:\n  hello: Hi\n")
+        manager.reload()
+        hash_after = manager.prompt_hashes["test"]
+
+        assert hash_before != hash_after
+
+    @pytest.mark.unit
+    def test_prompt_hashes_cleared_on_reload(self, tmp_path):
+        """reload() should recompute hashes."""
+        prompts_dir = tmp_path / "prompts"
+        prompts_dir.mkdir()
+        (prompts_dir / "test.yaml").write_text("de:\n  hello: Hallo\n")
+        manager = PromptManager(str(prompts_dir))
+        assert "test" in manager.prompt_hashes
+
+        manager.reload()
+        assert "test" in manager.prompt_hashes  # still present after reload

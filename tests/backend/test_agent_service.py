@@ -18,6 +18,7 @@ from services.agent_service import (
     _parse_agent_json,
     _recover_send_email,
     _resolve_blobs,
+    _serialize_for_prompt,
     _truncate,
     step_to_ws_message,
 )
@@ -185,6 +186,73 @@ class TestTruncate:
         result = _truncate(text, 2000)
         assert len(result) == 2003  # 2000 + "..."
         assert result.endswith("...")
+
+
+# ============================================================================
+# Test _serialize_for_prompt
+# ============================================================================
+
+class TestSerializeForPrompt:
+    """Test structured data serialization for LLM prompt."""
+
+    @pytest.mark.unit
+    def test_none_returns_empty(self):
+        assert _serialize_for_prompt(None) == ""
+
+    @pytest.mark.unit
+    def test_dict_to_json(self):
+        data = {"temperature": 12, "unit": "C"}
+        result = _serialize_for_prompt(data)
+        assert json.loads(result) == data
+
+    @pytest.mark.unit
+    def test_list_to_json(self):
+        data = [{"id": 1}, {"id": 2}]
+        result = _serialize_for_prompt(data)
+        assert json.loads(result) == data
+
+    @pytest.mark.unit
+    def test_mcp_wrapper_unwrap(self):
+        """MCP format [{"type": "text", "text": "..."}] is unwrapped."""
+        inner = {"result": "success", "count": 5}
+        data = [{"type": "text", "text": json.dumps(inner)}]
+        result = _serialize_for_prompt(data)
+        assert json.loads(result) == inner
+
+    @pytest.mark.unit
+    def test_mcp_wrapper_plain_text(self):
+        """MCP text that isn't JSON is returned as-is."""
+        data = [{"type": "text", "text": "Just a string result"}]
+        result = _serialize_for_prompt(data)
+        assert result == "Just a string result"
+
+    @pytest.mark.unit
+    def test_no_budget_returns_full(self):
+        data = {"key": "x" * 1000}
+        result = _serialize_for_prompt(data, budget_chars=0)
+        assert len(result) > 1000
+
+    @pytest.mark.unit
+    def test_list_budget_reduces_items(self):
+        """Lists over budget are reduced by item count."""
+        data = [{"id": i, "name": f"item_{i}"} for i in range(100)]
+        result = _serialize_for_prompt(data, budget_chars=200)
+        assert "showing" in result
+        assert len(result) < 300
+
+    @pytest.mark.unit
+    def test_dict_budget_removes_fields(self):
+        """Dicts over budget have largest fields removed."""
+        data = {"small": "x", "large": "y" * 5000}
+        result = _serialize_for_prompt(data, budget_chars=100)
+        assert "fields omitted" in result
+        assert "large" in result  # mentioned in omitted list
+
+    @pytest.mark.unit
+    def test_tool_result_budget_chars_on_context(self):
+        """AgentContext.tool_result_budget_chars defaults to 0."""
+        ctx = AgentContext(original_message="test")
+        assert ctx.tool_result_budget_chars == 0
 
 
 # ============================================================================
