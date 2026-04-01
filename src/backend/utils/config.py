@@ -186,6 +186,12 @@ class Settings(BaseSettings):
     memory_contradiction_resolution: bool = False                            # LLM-based contradiction resolution
     memory_contradiction_threshold: float = Field(default=0.6, ge=0.3, le=0.89)  # Similarity range lower bound
     memory_contradiction_top_k: int = Field(default=5, ge=1, le=10)         # Max similar memories to compare
+    memory_episodic_enabled: bool = False                                         # Opt-in for episodic memory
+    memory_episodic_max_per_user: int = Field(default=100, ge=10, le=1000)       # Max episodes per user
+    memory_episodic_decay_days: int = Field(default=90, ge=7, le=365)            # Days until episodes deactivate
+    memory_episodic_summarize_threshold: int = Field(default=50, ge=10, le=200)  # Episode count before summarization
+    memory_relevance_filter_enabled: bool = True                                  # Skip transactional queries
+    memory_retrieval_budget_chars: int = Field(default=2000, ge=500, le=10000)   # Max chars for memory prompt block
 
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in

@@ -917,13 +917,31 @@ MEMORY_CATEGORY_PREFERENCE = "preference"   # User preferences ("Ich mag Jazz")
 MEMORY_CATEGORY_FACT = "fact"               # Personal facts ("Mein Hund heißt Bello")
 MEMORY_CATEGORY_CONTEXT = "context"         # Ephemeral context (decays over time)
 MEMORY_CATEGORY_INSTRUCTION = "instruction" # Standing instructions ("Sprich mich mit Du an")
+MEMORY_CATEGORY_PROCEDURAL = "procedural"   # Behavioral rules ("Immer auf Deutsch antworten")
 
 MEMORY_CATEGORIES = [
     MEMORY_CATEGORY_PREFERENCE,
     MEMORY_CATEGORY_FACT,
     MEMORY_CATEGORY_CONTEXT,
     MEMORY_CATEGORY_INSTRUCTION,
+    MEMORY_CATEGORY_PROCEDURAL,
 ]
+
+# Memory Source Constants
+MEMORY_SOURCE_USER_STATED = "user_stated"       # Explicitly told by user
+MEMORY_SOURCE_LLM_INFERRED = "llm_inferred"     # Extracted by LLM from conversation
+MEMORY_SOURCE_SYSTEM = "system_confirmed"        # Confirmed by system (e.g. from tool data)
+
+MEMORY_SOURCES = [
+    MEMORY_SOURCE_USER_STATED,
+    MEMORY_SOURCE_LLM_INFERRED,
+    MEMORY_SOURCE_SYSTEM,
+]
+
+# Memory Scope Constants
+MEMORY_SCOPE_USER = "user"       # Visible only to the owning user
+MEMORY_SCOPE_TEAM = "team"       # Visible to team members
+MEMORY_SCOPE_GLOBAL = "global"   # Visible to all users
 
 
 class ConversationMemory(Base):
@@ -944,6 +962,15 @@ class ConversationMemory(Base):
     # Source tracking
     source_session_id = Column(String(255), nullable=True, index=True)
     source_message_id = Column(Integer, ForeignKey("messages.id"), nullable=True)
+    source = Column(String(20), nullable=False, default=MEMORY_SOURCE_LLM_INFERRED)  # user_stated / llm_inferred / system_confirmed
+
+    # Scoping
+    scope = Column(String(10), nullable=False, default=MEMORY_SCOPE_USER)  # user / team / global
+    team_id = Column(String(100), nullable=True)  # Team identifier for team-scoped memories
+
+    # Confidence and behavioral triggers
+    confidence = Column(Float, nullable=False, default=1.0)  # Decays for unaccessed llm_inferred
+    trigger_pattern = Column(String(255), nullable=True)  # Regex for procedural memory activation
 
     # Embedding for semantic search
     embedding = Column(
@@ -964,6 +991,50 @@ class ConversationMemory(Base):
     # Relationships
     user = relationship("User", foreign_keys=[user_id])
     source_message = relationship("Message", foreign_keys=[source_message_id])
+
+
+class EpisodicMemory(Base):
+    """
+    Episodic memory — records of past interactions (what happened, when, with what tools).
+
+    Created automatically after each agent interaction. Used for contextual recall
+    ("last time you asked about release X...") and batch-summarized into semantic
+    facts when episode count exceeds threshold.
+    """
+    __tablename__ = "episodic_memories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    session_id = Column(String(255), nullable=True, index=True)
+
+    # Episode content
+    summary = Column(Text, nullable=False)          # Human-readable summary of what happened
+    topic = Column(String(50), nullable=True, index=True)  # Domain topic (release_status, jira_search, etc.)
+    entities = Column(JSON, nullable=True)           # {release_id: "...", jira_key: "...", ...}
+    tools_used = Column(JSON, nullable=True)         # ["mcp.release.get_release", "mcp.jira.search"]
+    outcome = Column(String(20), nullable=True)      # "success" / "error" / "no_result"
+
+    # Embedding for semantic search
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True
+    )
+
+    # Importance and lifecycle
+    importance = Column(Float, default=0.5)
+    access_count = Column(Integer, default=0)
+    last_accessed_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, default=True, index=True)
+
+    # Timestamps
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index('ix_episodic_user_active', 'user_id', 'is_active'),
+        Index('ix_episodic_user_topic', 'user_id', 'topic'),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
 
 
 # Memory History — Audit trail for memory modifications
