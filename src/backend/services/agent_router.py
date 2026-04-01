@@ -31,6 +31,7 @@ from utils.llm_client import (
 if TYPE_CHECKING:
     from services.mcp_client import MCPManager
     from services.ollama_service import OllamaService
+    from services.semantic_router import SemanticRouter
 
 
 @dataclass
@@ -47,6 +48,7 @@ class AgentRole:
     ollama_url: str | None = None  # Per-role Ollama URL override
     sub_intent: str | None = None  # Set per-classification (on returned copy)
     sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
+    utterances: list[str] | None = None  # Example utterances for semantic fast-path
 
 
 # Pre-built fallback roles
@@ -101,6 +103,10 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
         else:
             sub_intent_definitions = None
 
+        # Parse utterances for semantic router fast-path
+        utterances_raw = role_data.get("utterances")
+        utterances = [str(u) for u in utterances_raw if u] if isinstance(utterances_raw, list) else None
+
         role = AgentRole(
             name=name,
             description=description,
@@ -112,6 +118,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             model=role_data.get("model"),
             ollama_url=role_data.get("ollama_url"),
             sub_intent_definitions=sub_intent_definitions,
+            utterances=utterances,
         )
         roles[name] = role
 
@@ -171,10 +178,15 @@ class AgentRouter:
             connected_servers = mcp_manager.get_connected_server_names()
 
         self.roles = _filter_available_roles(all_roles, connected_servers)
+        self._semantic_router = None
         logger.info(
             f"AgentRouter initialized: {len(self.roles)} roles available "
             f"({', '.join(sorted(self.roles.keys()))})"
         )
+
+    def set_semantic_router(self, router: "SemanticRouter") -> None:
+        """Attach a semantic router for embedding-based fast classification."""
+        self._semantic_router = router
 
     def get_role(self, name: str) -> AgentRole:
         """Get a role by name, falling back to general."""
@@ -213,6 +225,20 @@ class AgentRouter:
         Returns:
             The classified AgentRole
         """
+        # Semantic fast path: try embedding-based classification first
+        if self._semantic_router:
+            try:
+                sem_role, sem_sim = await self._semantic_router.classify(message)
+                if sem_role and sem_role in self.roles:
+                    role = self.roles[sem_role]
+                    logger.info(
+                        f"Router semantic fast-path: '{message[:60]}' -> "
+                        f"'{sem_role}' (sim={sem_sim:.3f})"
+                    )
+                    return replace(role, sub_intent=None)
+            except Exception as e:
+                logger.warning(f"Semantic router failed, falling back to LLM: {e}")
+
         # Build role descriptions for the prompt
         role_descriptions = self._build_role_descriptions(lang)
 
