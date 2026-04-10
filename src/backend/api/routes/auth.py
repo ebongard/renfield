@@ -115,7 +115,22 @@ async def login(
     Uses OAuth2 password flow (username + password in form data).
     Returns access token (short-lived) and refresh token (long-lived).
     """
-    user = await authenticate_user(db, form_data.username, form_data.password)
+    # Pluggable auth: check hooks first (e.g. LDAP, SAML, OAuth).
+    # If a hook returns a User object, skip the default DB-based auth.
+    # If all hooks return None, fall through to the default.
+    from utils.hooks import run_hooks
+
+    hook_results = await run_hooks(
+        "authenticate",
+        username=form_data.username,
+        password=form_data.password,
+        db=db,
+    )
+    user = next((r for r in hook_results if r is not None), None)
+
+    # Default: DB-based bcrypt authentication
+    if user is None:
+        user = await authenticate_user(db, form_data.username, form_data.password)
 
     if not user:
         raise HTTPException(
