@@ -36,9 +36,9 @@ import { useAuth } from '../context/AuthContext';
 // Navigation items with translation keys
 const mainNavigationConfig = [
   { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
-  { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
+  { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'], feature: 'knowledge' },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
-  { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2 },
+  { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2, feature: 'knowledge_graph' },
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
