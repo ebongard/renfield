@@ -31,6 +31,7 @@ from utils.llm_client import (
 if TYPE_CHECKING:
     from services.mcp_client import MCPManager
     from services.ollama_service import OllamaService
+    from services.reference_resolver import ResolvedMessage
     from services.semantic_router import SemanticRouter
 
 
@@ -49,6 +50,7 @@ class AgentRole:
     sub_intent: str | None = None  # Set per-classification (on returned copy)
     sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
     utterances: list[str] | None = None  # Example utterances for semantic fast-path
+    keyword_boost: list[str] | None = None  # Keywords that boost this role in semantic router
 
 
 # Pre-built fallback roles
@@ -107,6 +109,10 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
         utterances_raw = role_data.get("utterances")
         utterances = [str(u) for u in utterances_raw if u] if isinstance(utterances_raw, list) else None
 
+        # Parse keyword_boost for semantic router disambiguation
+        kb_raw = role_data.get("keyword_boost")
+        keyword_boost = [str(k) for k in kb_raw if k] if isinstance(kb_raw, list) else None
+
         role = AgentRole(
             name=name,
             description=description,
@@ -119,6 +125,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             ollama_url=role_data.get("ollama_url"),
             sub_intent_definitions=sub_intent_definitions,
             utterances=utterances,
+            keyword_boost=keyword_boost,
         )
         roles[name] = role
 
@@ -203,6 +210,69 @@ class AgentRouter:
                     si_text = si_desc.get(lang, si_desc.get("de", si_name))
                     lines.append(f"  > {name}/{si_name}: {si_text}")
         return "\n".join(lines)
+
+    async def classify_with_context(
+        self,
+        message: str,
+        resolved: "ResolvedMessage | None",
+        ollama: "OllamaService",
+        conversation_history: list[dict] | None = None,
+        context_vars: dict | None = None,
+        lang: str = "de",
+    ) -> AgentRole:
+        """Context-aware classification with entity pre-routing and continuity.
+
+        Multi-layer classification pipeline:
+        - Layer 1: Entity ID routing (from resolved.entity_matches, confidence 0.9)
+        - Layer 2: Continuity scoring (active domain + short message boost)
+        - Layer 3: Semantic router (embedding similarity)
+        - Layer 4: LLM fallback
+
+        Args:
+            message: The user's message
+            resolved: ResolvedMessage from reference_resolver (or None)
+            ollama: OllamaService for LLM calls
+            conversation_history: Recent conversation history
+            context_vars: Conversation state dict (may contain _active_domain)
+            lang: Language for prompts
+
+        Returns:
+            The classified AgentRole
+        """
+        # Layer 1: Entity ID routing — highest confidence, instant
+        if resolved and resolved.entity_matches and resolved.inferred_domain:
+            domain = resolved.inferred_domain
+            if domain in self.roles:
+                role = self.roles[domain]
+                ids = [m.id for m in resolved.entity_matches]
+                logger.info(
+                    f"Router entity-id: '{message[:60]}' -> "
+                    f"'{domain}' (entities={ids})"
+                )
+                return replace(role, sub_intent=None)
+
+        # Layer 2: Continuity scoring — boost active domain for short/anaphoric messages
+        if context_vars:
+            active_domain = context_vars.get("_active_domain")
+            if active_domain and active_domain in self.roles:
+                msg_lower = message.lower().strip()
+                is_short = len(msg_lower) < 30
+                is_anaphoric = any(
+                    w in msg_lower
+                    for w in ("ja", "nein", "und?", "mehr", "details", "weiter",
+                              "yes", "no", "more", "continue", "davon", "dazu",
+                              "darüber", "genau", "bitte")
+                )
+                if is_short or is_anaphoric:
+                    role = self.roles[active_domain]
+                    logger.info(
+                        f"Router continuity: '{message[:60]}' -> "
+                        f"'{active_domain}' (short={is_short}, anaphoric={is_anaphoric})"
+                    )
+                    return replace(role, sub_intent=None)
+
+        # Layers 3+4: delegate to existing classify()
+        return await self.classify(message, ollama, conversation_history, lang)
 
     async def classify(
         self,

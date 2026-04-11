@@ -730,12 +730,53 @@ async def websocket_endpoint(
 
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
 
-                role = await agent_router.classify(
-                    content, ollama,
+                # Load conversation context vars BEFORE routing (needed for continuity scoring)
+                _context_vars_text = ""
+                _summary_text = ""
+                _ctx_vars = {}
+                if msg_session_id:
+                    try:
+                        from services.conversation_service import ConversationService
+                        async with AsyncSessionLocal() as _cv_db:
+                            _cv_svc = ConversationService(_cv_db)
+                            _ctx_vars = await _cv_svc.load_context_vars(msg_session_id) or {}
+                            if _ctx_vars:
+                                _context_vars_text = "\n".join(
+                                    f"{k}: {v}" for k, v in _ctx_vars.items()
+                                    if not k.startswith("_")  # skip internal keys
+                                )
+                            _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
+                    except Exception as _e:
+                        logger.warning(f"Failed to load context vars/summary: {_e}")
+
+                # Entity ID recognition (pre-routing)
+                _resolved = None
+                try:
+                    from services.reference_resolver import resolve_references, _compiled
+                    if _compiled:
+                        _resolved = resolve_references(content)
+                except Exception as _e:
+                    logger.debug(f"Entity resolution skipped: {_e}")
+
+                # Context-aware classification (entity → continuity → semantic → LLM)
+                role = await agent_router.classify_with_context(
+                    content, _resolved, ollama,
                     conversation_history=session_state.conversation_history if session_state.conversation_history else None,
+                    context_vars=_ctx_vars,
                     lang=ollama.default_lang,
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
+
+                # Save active domain for continuity scoring on next message
+                if msg_session_id and role.name not in ("conversation", "general"):
+                    try:
+                        async with AsyncSessionLocal() as _ad_db:
+                            from services.conversation_service import ConversationService
+                            await ConversationService(_ad_db).save_context_vars(
+                                msg_session_id, {"_active_domain": role.name}
+                            )
+                    except Exception:
+                        pass  # Non-critical
 
                 # Let plugins modify conversation history before the agent sees it
                 from utils.hooks import run_hooks
@@ -747,23 +788,6 @@ async def websocket_endpoint(
                 )
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
-
-                # Load conversation context vars and summary for agent prompt
-                _context_vars_text = ""
-                _summary_text = ""
-                if msg_session_id:
-                    try:
-                        from services.conversation_service import ConversationService
-                        async with AsyncSessionLocal() as _cv_db:
-                            _cv_svc = ConversationService(_cv_db)
-                            _ctx_vars = await _cv_svc.load_context_vars(msg_session_id)
-                            if _ctx_vars:
-                                _context_vars_text = "\n".join(
-                                    f"{k}: {v}" for k, v in _ctx_vars.items()
-                                )
-                            _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
-                    except Exception as _e:
-                        logger.warning(f"Failed to load context vars/summary: {_e}")
 
                 if role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop

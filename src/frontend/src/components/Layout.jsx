@@ -39,14 +39,14 @@ const mainNavigationConfig = [
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'] },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
   { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2 },
-  { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare },
+  { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
 
 // Admin navigation with translation keys
 const adminNavigationConfig = [
-  { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'] },
-  { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'] },
+  { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'], feature: 'smart_home' },
+  { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'], feature: 'voice' },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
   { nameKey: 'nav.integrations', href: '/admin/integrations', icon: Blocks, permission: ['admin', 'plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.intents', href: '/admin/intents', icon: Zap, permission: ['admin'] },

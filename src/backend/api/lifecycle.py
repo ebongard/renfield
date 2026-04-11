@@ -333,6 +333,39 @@ async def _init_agent_router(app: "FastAPI"):
         app.state.agent_router = router
         app.state.agent_roles_config = roles_config
         logger.info(f"✅ Agent Router bereit: {len(router.roles)} Rollen")
+
+        # Initialize Semantic Router for fast classification
+        if settings.semantic_router_enabled if hasattr(settings, 'semantic_router_enabled') else True:
+            try:
+                from services.semantic_router import SemanticRouter
+                sr = SemanticRouter(
+                    threshold=getattr(settings, 'semantic_router_threshold', 0.75)
+                )
+                await sr.initialize(router.roles)
+                router.set_semantic_router(sr)
+            except Exception as e:
+                logger.warning(f"SemanticRouter init failed (non-fatal): {e}")
+
+        # Load entity patterns for context-aware routing
+        try:
+            from services.reference_resolver import compile_patterns, load_entity_patterns
+            from utils.hooks import run_hooks
+
+            base_patterns = load_entity_patterns()
+            # Let plugins extend patterns
+            hook_results = await run_hooks("load_entity_patterns")
+            for plugin_patterns in (hook_results or []):
+                if isinstance(plugin_patterns, dict):
+                    for domain, cfg in plugin_patterns.items():
+                        if domain in base_patterns:
+                            existing = base_patterns[domain].get("patterns", [])
+                            new = cfg.get("patterns", []) if isinstance(cfg, dict) else []
+                            base_patterns[domain]["patterns"] = existing + new
+                        else:
+                            base_patterns[domain] = cfg
+            compile_patterns(base_patterns)
+        except Exception as e:
+            logger.debug(f"Entity patterns not loaded (non-fatal): {e}")
     except Exception as e:
         logger.error(f"❌ Agent Router konnte nicht initialisiert werden: {e}")
         import traceback
