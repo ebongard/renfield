@@ -43,7 +43,11 @@ function AppRoutes() {
       <Route path="/*" element={
         <Layout>
           <Routes>
-            <Route path="/" element={<ChatPage />} />
+            <Route path="/" element={
+              <ProtectedRoute>
+                <ChatPage />
+              </ProtectedRoute>
+            } />
             <Route path="/chat" element={<Navigate to="/" replace />} />
             <Route path="/tasks" element={<TasksPage />} />
             {isFeatureEnabled('cameras') && (
