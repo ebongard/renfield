@@ -638,7 +638,7 @@ async def websocket_endpoint(
                     from models.database import User
                     async with AsyncSessionLocal() as db_session:
                         result = await db_session.execute(
-                            select(User).where(User.id == int(user_id))
+                            select(User).where(User.id == user_id)
                         )
                         user_obj = result.scalar_one_or_none()
                         if user_obj:

@@ -141,21 +141,32 @@ async def authenticate_websocket(
     if not token:
         return None
 
-    # Strategy 1: Try JWT validation (web chat users authenticated via login)
+    # Strategy 1: Try JWT validation (web chat users authenticated via login).
+    # Decode the token, then look up the User in the DB by username to get
+    # the verified integer id. The JWT sub claim is a string representation
+    # of the user id, but downstream consumers (memory, permissions) expect
+    # the authoritative integer from the database.
     try:
-        from services.auth_service import decode_token
+        from services.auth_service import decode_token, get_user_by_username
+        from services.database import AsyncSessionLocal
 
         payload = decode_token(token)
         if payload and payload.get("type") == "access":
-            user_id = payload.get("sub")
-            logger.debug(f"WebSocket authenticated via JWT: user_id={user_id}")
-            return {
-                "authenticated": True,
-                "user_id": int(user_id) if user_id else None,
-                "auth_method": "jwt",
-            }
-    except Exception:
-        pass  # Not a valid JWT, try device token
+            username = payload.get("username")
+            if username:
+                async with AsyncSessionLocal() as db:
+                    user = await get_user_by_username(db, username)
+                    if user:
+                        logger.debug(f"WebSocket authenticated via JWT: user={username}, id={user.id}")
+                        return {
+                            "authenticated": True,
+                            "user_id": user.id,
+                            "username": username,
+                            "auth_method": "jwt",
+                        }
+                    logger.warning(f"WebSocket JWT valid but user '{username}' not found in DB")
+    except Exception as e:
+        logger.debug(f"JWT WebSocket auth failed: {e}")  # Not a valid JWT, try device token
 
     # Strategy 2: Device token (satellites, devices)
     store = get_token_store()
