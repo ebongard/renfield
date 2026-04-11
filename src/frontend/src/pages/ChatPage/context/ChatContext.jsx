@@ -432,6 +432,22 @@ export function ChatProvider({ children }) {
     }));
   }, []);
 
+  // Handle card message from WebSocket (arrives after "done")
+  const handleCard = useCallback((data) => {
+    if (!data.card) return;
+    setMessages(prev => {
+      const updated = [...prev];
+      // Attach card to the most recent assistant message
+      for (let i = updated.length - 1; i >= 0; i--) {
+        if (updated[i].role === 'assistant') {
+          updated[i] = { ...updated[i], card: data.card };
+          break;
+        }
+      }
+      return updated;
+    });
+  }, []);
+
   // WebSocket hook
   const { wsConnected, sendMessage: wsSendMessage, isReady } = useChatWebSocket({
     onStreamChunk: handleStreamChunk,
@@ -445,6 +461,7 @@ export function ChatProvider({ children }) {
     onAgentThinking: handleAgentThinking,
     onAgentToolCall: handleAgentToolCall,
     onAgentToolResult: handleAgentToolResult,
+    onCard: handleCard,
   });
 
   // Handle transcription from audio recording

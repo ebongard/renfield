@@ -141,6 +141,23 @@ async def authenticate_websocket(
     if not token:
         return None
 
+    # Strategy 1: Try JWT validation (web chat users authenticated via login)
+    try:
+        from services.auth_service import decode_token
+
+        payload = decode_token(token)
+        if payload and payload.get("type") == "access":
+            user_id = payload.get("sub")
+            logger.debug(f"WebSocket authenticated via JWT: user_id={user_id}")
+            return {
+                "authenticated": True,
+                "user_id": user_id,
+                "auth_method": "jwt",
+            }
+    except Exception:
+        pass  # Not a valid JWT, try device token
+
+    # Strategy 2: Device token (satellites, devices)
     store = get_token_store()
     token_data = store.validate_token(token)
 

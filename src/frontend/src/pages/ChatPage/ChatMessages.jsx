@@ -1,6 +1,7 @@
 import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
+import AdaptiveCardRenderer from '../../components/AdaptiveCardRenderer';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
 import EmailForwardDialog from './EmailForwardDialog';
@@ -206,6 +207,13 @@ export default function ChatMessages() {
             })()}
 
             {message.role === 'assistant' ? renderMessageContent(message.content) : <p className="whitespace-pre-wrap">{message.content}</p>}
+
+            {/* Adaptive Card (from WebSocket card message) */}
+            {message.card && (
+              <div className="mt-2">
+                <AdaptiveCardRenderer card={message.card} />
+              </div>
+            )}
 
             {/* Attachment chips */}
             {message.attachments && message.attachments.length > 0 && (
