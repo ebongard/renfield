@@ -29,6 +29,7 @@ const PresencePage = lazy(() => import('./pages/PresencePage'));
 const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
 const MaintenancePage = lazy(() => import('./pages/MaintenancePage'));
 const PaperlessAuditPage = lazy(() => import('./pages/PaperlessAuditPage'));
+const RoutingDashboardPage = lazy(() => import('./pages/RoutingDashboardPage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -131,6 +132,11 @@ function AppRoutes() {
             <Route path="/admin/paperless-audit" element={
               <AdminRoute>
                 <PaperlessAuditPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/routing" element={
+              <AdminRoute>
+                <RoutingDashboardPage />
               </AdminRoute>
             } />
           </Routes>

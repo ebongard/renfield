@@ -778,6 +778,20 @@ async def websocket_endpoint(
                     except Exception:
                         pass  # Non-critical
 
+                # Fire post_routing hook (async, fire-and-forget) for trace persistence
+                from utils.hooks import run_hooks
+                import asyncio
+                _pr_task = asyncio.create_task(run_hooks(
+                    "post_routing",
+                    message=content,
+                    domain=role.name,
+                    session_id=msg_session_id,
+                    user_id=user_id,
+                    entity_matches=[{"id": m.id, "domain": m.domain, "type": m.entity_type} for m in (_resolved.entity_matches if _resolved else [])],
+                ))
+                _background_tasks.add(_pr_task)
+                _pr_task.add_done_callback(_background_tasks.discard)
+
                 # Let plugins modify conversation history before the agent sees it
                 from utils.hooks import run_hooks
                 hook_results = await run_hooks(
