@@ -343,8 +343,8 @@ class Settings(BaseSettings):
     def features(self) -> dict[str, bool]:
         """Resolve feature flags: explicit override > edition preset."""
         presets = {
-            "community": {"smart_home": True, "cameras": True, "satellites": True, "voice": True},
-            "pro": {"smart_home": False, "cameras": False, "satellites": False, "voice": False},
+            "community": {"smart_home": True, "cameras": True, "satellites": True, "voice": True, "tasks": True, "knowledge": True, "knowledge_graph": True},
+            "pro": {"smart_home": False, "cameras": False, "satellites": False, "voice": False, "tasks": False, "knowledge": False, "knowledge_graph": False},
         }
         defaults = presets.get(self.renfield_edition, presets["pro"])
         return {
@@ -352,6 +352,9 @@ class Settings(BaseSettings):
             "cameras": self.feature_cameras if self.feature_cameras is not None else defaults["cameras"],
             "satellites": self.feature_satellites if self.feature_satellites is not None else defaults["satellites"],
             "voice": self.feature_voice if self.feature_voice is not None else defaults["voice"],
+            "tasks": getattr(self, 'feature_tasks', None) if getattr(self, 'feature_tasks', None) is not None else defaults.get("tasks", True),
+            "knowledge": getattr(self, 'feature_knowledge', None) if getattr(self, 'feature_knowledge', None) is not None else defaults.get("knowledge", True),
+            "knowledge_graph": getattr(self, 'feature_knowledge_graph', None) if getattr(self, 'feature_knowledge_graph', None) is not None else defaults.get("knowledge_graph", True),
         }
 
     @property

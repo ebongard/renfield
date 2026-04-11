@@ -25,16 +25,28 @@ class TestEditionPresets:
             "cameras": True,
             "satellites": True,
             "voice": True,
+            "tasks": True,
+            "knowledge": True,
+            "knowledge_graph": True,
         }
 
     def test_pro_edition_disables_home_features(self):
-        """Pro (business) edition disables smart home features by default."""
+        """Pro (business) edition disables smart home + auxiliary features.
+
+        `tasks`, `knowledge`, `knowledge_graph` are also off in pro because
+        the frontend's `isFeatureEnabled()` returns true for `undefined`
+        — without explicit False values the nav items would render even on
+        pro deploys (Reva, X-IDRA enterprise).
+        """
         s = Settings(renfield_edition="pro", _env_file=None)
         assert s.features == {
             "smart_home": False,
             "cameras": False,
             "satellites": False,
             "voice": False,
+            "tasks": False,
+            "knowledge": False,
+            "knowledge_graph": False,
         }
 
     def test_unknown_edition_falls_back_to_pro(self):
@@ -45,6 +57,9 @@ class TestEditionPresets:
             "cameras": False,
             "satellites": False,
             "voice": False,
+            "tasks": False,
+            "knowledge": False,
+            "knowledge_graph": False,
         }
 
     def test_default_edition_is_community(self):
@@ -99,6 +114,9 @@ class TestFeatureOverrides:
             "cameras": True,
             "satellites": True,
             "voice": False,
+            "tasks": False,
+            "knowledge": False,
+            "knowledge_graph": False,
         }
 
     def test_none_means_use_default(self):
@@ -147,6 +165,9 @@ class TestAuthStatusFeatures:
             "cameras": True,
             "satellites": True,
             "voice": True,
+            "tasks": True,
+            "knowledge": True,
+            "knowledge_graph": True,
         }
 
     def test_pro_features_for_status(self):
@@ -158,6 +179,9 @@ class TestAuthStatusFeatures:
             "cameras": False,
             "satellites": False,
             "voice": False,
+            "tasks": False,
+            "knowledge": False,
+            "knowledge_graph": False,
         }
 
     def test_override_in_features_for_status(self):
@@ -209,10 +233,29 @@ class TestFeaturesPropertyConsistency:
     """Test that features property is always consistent."""
 
     def test_features_returns_all_keys(self):
-        """Features dict always contains all four keys."""
+        """Features dict always contains every known feature key.
+
+        The frontend's `isFeatureEnabled()` returns True for `undefined`,
+        so the API contract is "every feature is explicitly named in the
+        response". If a new feature is added, it must appear in the
+        response for ALL editions even if its value is False — otherwise
+        `undefined` lets it leak on into the UI.
+        """
+        expected_keys = {
+            "smart_home",
+            "cameras",
+            "satellites",
+            "voice",
+            "tasks",
+            "knowledge",
+            "knowledge_graph",
+        }
         for edition in ["community", "pro", "enterprise"]:
             s = Settings(renfield_edition=edition, _env_file=None)
-            assert set(s.features.keys()) == {"smart_home", "cameras", "satellites", "voice"}
+            assert set(s.features.keys()) == expected_keys, (
+                f"edition={edition!r}: features keys drift — got "
+                f"{set(s.features.keys()) ^ expected_keys}"
+            )
 
     def test_features_values_are_bool(self):
         """All feature values are booleans."""
