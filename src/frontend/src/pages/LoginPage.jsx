@@ -82,7 +82,7 @@ export default function LoginPage() {
       <div className="max-w-md w-full relative z-10">
         {/* Logo/Title */}
         <div className="text-center mb-8">
-          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
+          <img src={import.meta.env.VITE_APP_ICON_URL || '/logo-icon.svg'} alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
           <h1 className="text-4xl font-bold font-display text-cream">{import.meta.env.VITE_APP_NAME || 'Renfield'}</h1>
           <p className="text-gray-400 mt-2">{t('auth.signInToAccount')}</p>
         </div>

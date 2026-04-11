@@ -107,7 +107,7 @@ export default function ChatMessages() {
       {/* Empty State */}
       {!historyLoading && messages.length === 0 && (
         <div className="text-center py-16">
-          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-6 opacity-30" aria-hidden="true" />
+          <img src={import.meta.env.VITE_APP_ICON_URL || '/logo-icon.svg'} alt="" className="w-20 h-20 mx-auto mb-6 opacity-30" aria-hidden="true" />
           <h2 className="font-display text-2xl text-gray-400 dark:text-gray-500 mb-2">{t('chat.startConversation')}</h2>
           <p className="text-sm text-gray-400 dark:text-gray-500 mb-6">
             {t('chat.useTextOrMic')}
