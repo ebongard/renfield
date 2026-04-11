@@ -21,7 +21,10 @@ i18n
       lookupLocalStorage: 'renfield_language'
     },
     interpolation: {
-      escapeValue: false // React already escapes values
+      escapeValue: false, // React already escapes values
+      defaultVariables: {
+        appName: import.meta.env.VITE_APP_NAME || 'Renfield'
+      }
     }
   });
 

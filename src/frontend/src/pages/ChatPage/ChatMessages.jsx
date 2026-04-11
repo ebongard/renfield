@@ -287,7 +287,7 @@ export default function ChatMessages() {
 
       {/* Loading Indicator */}
       {loading && (
-        <div className="flex justify-start" role="status" aria-label="Renfield denkt nach">
+        <div className="flex justify-start" role="status" aria-label={t('chat.thinkingStatus')}>
           <div className="bg-gray-200 dark:bg-gray-700 px-4 py-3 rounded-lg flex items-center space-x-1.5">
             <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
             <span className="w-2 h-2 rounded-full bg-gray-400 dark:bg-gray-500 animate-typing-dot" />
