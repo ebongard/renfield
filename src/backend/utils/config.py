@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     feature_cameras: bool | None = None      # None = use edition default
     feature_satellites: bool | None = None   # None = use edition default
     feature_voice: bool | None = None       # None = use edition default
+    feature_tasks: bool | None = None       # None = use edition default
+    feature_knowledge: bool | None = None   # None = use edition default
+    feature_knowledge_graph: bool | None = None  # None = use edition default
 
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: str | None = None
@@ -394,9 +397,9 @@ class Settings(BaseSettings):
             "cameras": self.feature_cameras if self.feature_cameras is not None else defaults["cameras"],
             "satellites": self.feature_satellites if self.feature_satellites is not None else defaults["satellites"],
             "voice": self.feature_voice if self.feature_voice is not None else defaults["voice"],
-            "tasks": getattr(self, 'feature_tasks', None) if getattr(self, 'feature_tasks', None) is not None else defaults.get("tasks", True),
-            "knowledge": getattr(self, 'feature_knowledge', None) if getattr(self, 'feature_knowledge', None) is not None else defaults.get("knowledge", True),
-            "knowledge_graph": getattr(self, 'feature_knowledge_graph', None) if getattr(self, 'feature_knowledge_graph', None) is not None else defaults.get("knowledge_graph", True),
+            "tasks": self.feature_tasks if self.feature_tasks is not None else defaults.get("tasks", True),
+            "knowledge": self.feature_knowledge if self.feature_knowledge is not None else defaults.get("knowledge", True),
+            "knowledge_graph": self.feature_knowledge_graph if self.feature_knowledge_graph is not None else defaults.get("knowledge_graph", True),
         }
 
     @property
