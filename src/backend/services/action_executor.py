@@ -68,8 +68,8 @@ class ActionExecutor:
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
-            if user_id is not None:
-                parameters["user_id"] = user_id
+            # Note: user_id is passed as a kwarg to execute_tool, NOT as a
+            # tool parameter. MCP tools have strict schemas and reject unknown params.
             return await self.mcp_manager.execute_tool(
                 intent, parameters, user_permissions=user_permissions,
                 user_id=user_id,
