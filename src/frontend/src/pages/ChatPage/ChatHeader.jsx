@@ -1,11 +1,14 @@
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader, Ear, EarOff, Settings } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
 import { useChatContext } from './context/ChatContext';
 
 export default function ChatHeader() {
   const { t } = useTranslation();
+  const { isFeatureEnabled } = useAuth();
   const { wsConnected, wakeWord, recording } = useChatContext();
+  const voiceEnabled = isFeatureEnabled('voice');
   const [showWakeWordSettings, setShowWakeWordSettings] = useState(false);
 
   const {
@@ -30,8 +33,8 @@ export default function ChatHeader() {
           <p className="text-gray-500 dark:text-gray-400">{t('chat.subtitle')}</p>
         </div>
         <div className="flex items-center space-x-2 sm:space-x-4">
-          {/* Wake Word Controls */}
-          <div className="flex items-center space-x-2">
+          {/* Wake Word Controls (voice feature only) */}
+          {voiceEnabled && <div className="flex items-center space-x-2">
             <button
               onClick={toggleWakeWord}
               disabled={wakeWordLoading || recording}
@@ -68,7 +71,7 @@ export default function ChatHeader() {
                 <Settings className="w-4 h-4" />
               </button>
             )}
-          </div>
+          </div>}
 
           {/* Connection Status */}
           <div className="flex items-center space-x-2">
@@ -81,7 +84,7 @@ export default function ChatHeader() {
       </div>
 
       {/* Wake Word Error Message */}
-      {wakeWordError && !wakeWordEnabled && (
+      {voiceEnabled && wakeWordError && !wakeWordEnabled && (
         <div className="mt-3 flex items-center px-3 py-2 bg-red-100 dark:bg-red-900/30 rounded-lg border border-red-300 dark:border-red-700/50">
           <div className="flex items-center space-x-2">
             <div className="w-2 h-2 rounded-full bg-red-500" />
@@ -96,7 +99,7 @@ export default function ChatHeader() {
       )}
 
       {/* Wake Word Listening Indicator */}
-      {wakeWordEnabled && !recording && (
+      {voiceEnabled && wakeWordEnabled && !recording && (
         <div className="mt-3 flex items-center justify-between px-3 py-2 bg-green-100 dark:bg-green-900/30 rounded-lg border border-green-300 dark:border-green-700/50">
           <div className="flex items-center space-x-2">
             <div className={`w-2 h-2 rounded-full ${wakeWordListening ? 'bg-green-500 animate-pulse' : 'bg-yellow-500'}`} />
