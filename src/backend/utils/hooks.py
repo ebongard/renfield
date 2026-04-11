@@ -30,6 +30,7 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "compact_mcp_result",
     "authenticate",
     "load_entity_patterns",
+    "post_routing",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]
