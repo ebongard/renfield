@@ -151,7 +151,7 @@ async def authenticate_websocket(
             logger.debug(f"WebSocket authenticated via JWT: user_id={user_id}")
             return {
                 "authenticated": True,
-                "user_id": user_id,
+                "user_id": int(user_id) if user_id else None,
                 "auth_method": "jwt",
             }
     except Exception:
