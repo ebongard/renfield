@@ -18,6 +18,13 @@ from utils.llm_client import get_embed_client
 if TYPE_CHECKING:
     from services.agent_router import AgentRole
 
+# Domain keyword boosting: when the message contains one of these keywords
+# (case-insensitive), the corresponding role gets a similarity boost.
+# This fixes structural ambiguity where "Zeige mir alle Releases" matches
+# "Zeige mir alle Incidents" because the sentence structure is identical.
+_KEYWORD_BOOST: dict[str, list[str]] = {}
+_KEYWORD_BOOST_AMOUNT = 0.15
+
 
 class SemanticRouter:
     """Embedding-based fast classifier for agent routing."""
@@ -49,9 +56,21 @@ class SemanticRouter:
         self._ollama_client = client
         self._initialized = True
         total_utterances = sum(len(v) for v in self._role_embeddings.values())
+
+        # Build keyword boost map from role descriptions.
+        # If a role's description mentions domain-specific terms, those become
+        # keywords that boost the role when found in the user's message.
+        global _KEYWORD_BOOST
+        _KEYWORD_BOOST.clear()
+        for name, role in roles.items():
+            keywords = role.keyword_boost if hasattr(role, 'keyword_boost') and role.keyword_boost else []
+            if keywords:
+                _KEYWORD_BOOST[name] = [k.lower() for k in keywords]
+
         logger.info(
             f"SemanticRouter initialized: {len(self._role_embeddings)} roles, "
             f"{total_utterances} utterances"
+            + (f", {sum(len(v) for v in _KEYWORD_BOOST.values())} keyword boosts" if _KEYWORD_BOOST else "")
         )
 
     async def classify(self, message: str) -> tuple[str | None, float]:
@@ -89,6 +108,36 @@ class SemanticRouter:
                 if sim > best_sim:
                     best_sim = sim
                     best_role = role_name
+
+        # Apply keyword boosting: if the message contains domain-specific
+        # keywords, re-evaluate with boosted scores. This fixes cases where
+        # "Zeige mir alle Releases" matches "Zeige mir alle Incidents" because
+        # the sentence structure is identical but the domain keyword differs.
+        if _KEYWORD_BOOST:
+            msg_lower = message.lower()
+            boosted_role = None
+            boosted_sim = 0.0
+            for role_name, keywords in _KEYWORD_BOOST.items():
+                if role_name not in self._role_embeddings:
+                    continue
+                if any(kw in msg_lower for kw in keywords):
+                    # Find best sim for this specific role
+                    for emb in self._role_embeddings[role_name]:
+                        emb_arr = np.array(emb)
+                        emb_norm = np.linalg.norm(emb_arr)
+                        if emb_norm < 1e-10:
+                            continue
+                        sim = float(np.dot(query_emb, emb_arr) / (query_norm * emb_norm))
+                        sim += _KEYWORD_BOOST_AMOUNT  # boost
+                        if sim > boosted_sim:
+                            boosted_sim = sim
+                            boosted_role = role_name
+            if boosted_role and boosted_sim >= self.threshold and boosted_role != best_role:
+                logger.info(
+                    f"SemanticRouter keyword boost: '{best_role}' ({best_sim:.3f}) → "
+                    f"'{boosted_role}' ({boosted_sim:.3f})"
+                )
+                return boosted_role, boosted_sim
 
         if best_sim >= self.threshold:
             return best_role, best_sim
