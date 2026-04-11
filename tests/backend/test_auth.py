@@ -487,6 +487,29 @@ class TestAuthAPIDisabled:
         # Auth is disabled by default in tests
         assert "auth_enabled" in data
 
+    async def test_get_auth_status_returns_200_when_auth_enabled_no_token(self, async_client):
+        """Test GET /api/auth/status returns 200 even when auth is enabled and no token is provided.
+
+        This is the auth-first mode fix: the status endpoint must be publicly
+        accessible so the frontend can determine whether to show the login page.
+        Previously it used get_current_user which raised 401 when auth was enabled,
+        creating a circular dependency (can't check if auth is required without auth).
+        """
+        from utils.config import settings
+
+        original = settings.auth_enabled
+        settings.auth_enabled = True
+
+        try:
+            response = await async_client.get("/api/auth/status")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["auth_enabled"] is True
+            assert data["authenticated"] is False
+            assert data["user"] is None
+        finally:
+            settings.auth_enabled = original
+
     async def test_list_permissions(self, async_client):
         """Test GET /api/auth/permissions returns all permissions"""
         response = await async_client.get("/api/auth/permissions")
