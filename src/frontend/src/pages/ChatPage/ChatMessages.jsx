@@ -113,11 +113,13 @@ export default function ChatMessages() {
             {t('chat.useTextOrMic')}
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            {[
-              t('chat.exampleWeather'),
-              t('chat.exampleLight'),
-              t('chat.exampleMusic'),
-            ].map((example) => (
+            {(() => {
+              try {
+                const custom = import.meta.env.VITE_CHAT_STARTERS;
+                if (custom) return JSON.parse(custom);
+              } catch {}
+              return [t('chat.exampleWeather'), t('chat.exampleLight'), t('chat.exampleMusic')];
+            })().map((example) => (
               <button
                 key={example}
                 onClick={() => sendMessage?.(example, false)}
