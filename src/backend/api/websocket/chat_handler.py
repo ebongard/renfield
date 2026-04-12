@@ -744,9 +744,13 @@ async def websocket_endpoint(
                             _cv_svc = ConversationService(_cv_db)
                             _ctx_vars = await _cv_svc.load_context_vars(msg_session_id) or {}
                             if _ctx_vars:
+                                # Include _entry_mapping (numbered list → entity ID map)
+                                # so the LLM can resolve "the first one" / "Nr. 3" etc.
+                                # Skip other internal keys (_active_domain, _active_domain_turns).
+                                _EXPOSE_INTERNAL = {"_entry_mapping"}
                                 _context_vars_text = "\n".join(
                                     f"{k}: {v}" for k, v in _ctx_vars.items()
-                                    if not k.startswith("_")  # skip internal keys
+                                    if not k.startswith("_") or k in _EXPOSE_INTERNAL
                                 )
                             _summary_text = await _cv_svc.load_summary(msg_session_id) or ""
                     except Exception as _e:
@@ -770,16 +774,9 @@ async def websocket_endpoint(
                 )
                 logger.info(f"🎯 Router: '{content[:60]}...' → {role.name}")
 
-                # Save active domain for continuity scoring on next message
-                if msg_session_id and role.name not in ("conversation", "general"):
-                    try:
-                        async with AsyncSessionLocal() as _ad_db:
-                            from services.conversation_service import ConversationService
-                            await ConversationService(_ad_db).save_context_vars(
-                                msg_session_id, {"_active_domain": role.name}
-                            )
-                    except Exception:
-                        pass  # Non-critical
+                # NOTE: _active_domain is saved by the post_message hook (not here)
+                # to avoid a race condition with other context var writes.
+                # The domain is passed via the post_routing kwargs below.
 
                 # Fire post_routing hook (async, fire-and-forget) for trace persistence
                 from utils.hooks import run_hooks
@@ -806,7 +803,104 @@ async def websocket_endpoint(
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
 
-                if role.name == "conversation":
+                # --- Orchestration check (multi-role queries) ---
+                from services.orchestrator import detect_multi_role, run_orchestrated, get_orchestrator_roles
+
+                _orch_plan = None
+                _orch_message = getattr(_resolved, "resolved_text", None) or content
+
+                # Step 1: UNCONDITIONAL hook -- QueryPlan can fire for any role
+                _orch_hook = await run_hooks(
+                    "pre_orchestration", plan=None, message=_orch_message,
+                    role=role, user_id=user_id, session_id=msg_session_id,
+                )
+                for _hr in _orch_hook:
+                    if _hr:
+                        _orch_plan = _hr
+                        break
+
+                # Step 2: LLM planner (only for orchestrator-eligible roles)
+                if not _orch_plan and role:
+                    _orch_roles = await get_orchestrator_roles(agent_router)
+                    if role.name in _orch_roles:
+                        await websocket.send_json({"type": "typing"})
+                        _orch_plan = await detect_multi_role(
+                            _orch_message, role, agent_router.roles,
+                            msg_session_id or "ws", lang=ollama.default_lang,
+                        )
+
+                if _orch_plan:
+                    # Orchestrated multi-role execution
+                    agent_used = True
+                    intent = {"intent": "orchestrated", "confidence": 1.0, "parameters": {}}
+
+                    async def _orch_typing():
+                        await websocket.send_json({
+                            "type": "typing", "status": "orchestrating",
+                            "roles": [s["role"] for s in _orch_plan],
+                        })
+
+                    _orch_result = await run_orchestrated(
+                        plan=_orch_plan, original_message=_orch_message,
+                        mcp_manager=mcp_manager, roles=agent_router.roles,
+                        lang=ollama.default_lang, req_id=msg_session_id or "ws",
+                        history=session_state.conversation_history,
+                        memory_context=memory_context,
+                        context_vars_text=_context_vars_text,
+                        user_name=getattr(user_obj, "display_name", "") if user_obj else "",
+                        user_id=user_id, typing_callback=_orch_typing,
+                    )
+
+                    # Output validation (GDPR Layer 3 via plugin hook)
+                    _check = await run_hooks("check_output", content=_orch_result.synthesis)
+                    if _check:
+                        _orch_result.synthesis = _check[0]
+
+                    full_response = _orch_result.synthesis
+
+                    # Send as stream + done (same format as single-agent path)
+                    # so the frontend renders the response as a chat message.
+                    await websocket.send_json({"type": "stream", "content": full_response})
+                    _done_msg = {
+                        "type": "done",
+                        "metadata": {
+                            "orchestrated": True,
+                            "roles": [s["role"] for s in _orch_plan],
+                        },
+                    }
+                    if _orch_result.errors:
+                        _done_msg["metadata"]["errors"] = _orch_result.errors
+                    if _orch_result.plugin_data.get("card"):
+                        _done_msg["card"] = _orch_result.plugin_data["card"]
+                    await websocket.send_json(_done_msg)
+
+                    # In-memory history
+                    session_state.conversation_history.append({
+                        "role": "assistant", "content": full_response,
+                        "metadata": {"orchestrated": True, "roles": [s["role"] for s in _orch_plan]},
+                    })
+
+                    # Background: post_message hook (memory extraction, episodes)
+                    _pm_task = asyncio.create_task(run_hooks(
+                        "post_message", message=content, response=full_response,
+                        session_id=msg_session_id, user_id=user_id,
+                        tool_summaries=_orch_result.tool_summaries,
+                        metadata={"orchestrated": True, "roles": [s["role"] for s in _orch_plan]},
+                    ))
+                    _background_tasks.add(_pm_task)
+                    _pm_task.add_done_callback(_background_tasks.discard)
+
+                    # Background: extract context vars for follow-up queries
+                    if _orch_result.tool_summaries:
+                        _cv_task = asyncio.create_task(run_hooks(
+                            "extract_context_vars",
+                            tool_summaries=_orch_result.tool_summaries,
+                            session_id=msg_session_id,
+                        ))
+                        _background_tasks.add(_cv_task)
+                        _cv_task.add_done_callback(_background_tasks.discard)
+
+                elif role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop
                     intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
@@ -844,6 +938,10 @@ async def websocket_endpoint(
                         server_filter=role.mcp_servers,
                         internal_filter=role.internal_tools,
                     )
+                    # Wait for plugin-registered tools (e.g. Reva local tools)
+                    _hook_task = getattr(tool_registry, "_hook_task", None)
+                    if _hook_task:
+                        await _hook_task
                     agent = AgentService(tool_registry, role=role)
                     executor = ActionExecutor(mcp_manager=mcp_manager)
 
@@ -1114,13 +1212,17 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 task.add_done_callback(_background_tasks.discard)
 
             # Hook: post_message (fire-and-forget for plugins like renfield-twin)
+            # Includes domain for _active_domain persistence (avoids race with
+            # separate context var writes)
             from utils.hooks import run_hooks
+            _pm_domain = role.name if role and role.name not in ("conversation", "general") else None
             _pm_task = asyncio.create_task(run_hooks(
                 "post_message",
                 user_msg=content,
                 assistant_msg=full_response,
                 user_id=user_id,
                 session_id=msg_session_id,
+                domain=_pm_domain,
             ))
             _background_tasks.add(_pm_task)
             _pm_task.add_done_callback(_background_tasks.discard)

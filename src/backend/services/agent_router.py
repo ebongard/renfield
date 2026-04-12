@@ -251,25 +251,101 @@ class AgentRouter:
                 )
                 return replace(role, sub_intent=None)
 
-        # Layer 2: Continuity scoring — boost active domain for short/anaphoric messages
+        # Layer 2: Scored continuity — accumulate signals, penalize domain switches
+        # Ported from Reva's context_router.py::_layer_continuity (proven in production)
         if context_vars:
             active_domain = context_vars.get("_active_domain")
             if active_domain and active_domain in self.roles:
+                score = 0.0
+                signals = []
                 msg_lower = message.lower().strip()
-                is_short = len(msg_lower) < 30
-                is_anaphoric = any(
-                    w in msg_lower
-                    for w in ("ja", "nein", "und?", "mehr", "details", "weiter",
-                              "yes", "no", "more", "continue", "davon", "dazu",
-                              "darüber", "genau", "bitte")
+                words = set(msg_lower.split())
+
+                # Signal 1: Anaphoric reference resolved (entity from resolver)
+                if resolved and getattr(resolved, "context_hints", None) and resolved.inferred_domain:
+                    score += 0.5
+                    signals.append(f"anaphoric->{resolved.inferred_domain}")
+
+                # Signal 2: Short message (shorter = more likely a follow-up)
+                # Short alone is NOT enough — many new-topic queries are short
+                # ("Was kannst du?", "Hallo", "Gibt es Incidents?")
+                word_count = len(words)
+                if word_count <= 3:
+                    score += 0.2
+                    signals.append(f"very_short ({word_count}w)")
+                elif word_count <= 5:
+                    score += 0.1
+                    signals.append(f"short ({word_count}w)")
+
+                # Signal 3: Continuation pattern (word-level, not substring)
+                # These are strong follow-up indicators — boosted to 0.25
+                # Strong continuation (clearly a follow-up)
+                _STRONG_CONTINUATION = (
+                    "und ", "also ", "plus ", "auch ", "ja ", "nein ",
+                    "und?", "ja,", "nein,",
+                    "details ", "mehr ", "davon ", "dazu ",
+                    "darüber ", "genau ",
                 )
-                if is_short or is_anaphoric:
+                # Weak continuation (question about the same topic, likely follow-up)
+                _WEAK_CONTINUATION = (
+                    "wer ", "wie ", "was ", "welche ", "zeige ",
+                    "show ", "who ", "what ", "which ",
+                )
+                if any(msg_lower.startswith(p) for p in _STRONG_CONTINUATION):
+                    score += 0.25
+                    signals.append("strong_continuation")
+                elif any(msg_lower.startswith(p) for p in _WEAK_CONTINUATION):
+                    score += 0.15
+                    signals.append("weak_continuation")
+
+                # Signal 4: Recent domain turns (capped lower to prevent over-sticking)
+                domain_turns = int(context_vars.get("_active_domain_turns", "0") or "0")
+                if domain_turns >= 1:
+                    turn_boost = min(0.25, 0.10 + domain_turns * 0.05)
+                    score += turn_boost
+                    signals.append(f"domain_turns={domain_turns} (+{turn_boost:.2f})")
+
+                # Negative signal: Domain-switch keywords for OTHER domains
+                _DOMAIN_KEYWORDS: dict[str, set[str]] = {
+                    "release": {"release", "releases", "deployment", "phase", "gate", "pipeline"},
+                    "jira": {"jira", "issue", "issues", "bug", "bugs", "sprint", "backlog", "epic"},
+                    "itsm": {"incident", "incidents", "störung", "change", "changes", "rfc", "itsm"},
+                    "confluence": {"confluence", "wiki", "doku", "dokumentation", "page", "space"},
+                }
+                # Also include keyword_boost from role config
+                for r_name, r_obj in self.roles.items():
+                    kw_boost = getattr(r_obj, "keyword_boost", None)
+                    if kw_boost:
+                        _DOMAIN_KEYWORDS.setdefault(r_name, set()).update(
+                            k.lower() for k in kw_boost
+                        )
+
+                other_kws: set[str] = set()
+                current_kws: set[str] = set()
+                for domain, kws in _DOMAIN_KEYWORDS.items():
+                    if domain == active_domain:
+                        current_kws.update(kws)
+                    else:
+                        other_kws.update(kws)
+                switch_hits = words & (other_kws - current_kws)
+                if switch_hits:
+                    score -= 0.4
+                    signals.append(f"domain_switch: {', '.join(switch_hits)} (-0.40)")
+
+                score = max(0.0, min(1.0, score))
+
+                if score >= 0.6:
                     role = self.roles[active_domain]
                     logger.info(
                         f"Router continuity: '{message[:60]}' -> "
-                        f"'{active_domain}' (short={is_short}, anaphoric={is_anaphoric})"
+                        f"'{active_domain}' (score={score:.2f}: {', '.join(signals)})"
                     )
                     return replace(role, sub_intent=None)
+                elif signals:
+                    logger.debug(
+                        f"Router continuity below threshold: '{message[:60]}' "
+                        f"score={score:.2f} < 0.60: {', '.join(signals)}"
+                    )
 
         # Layers 3+4: delegate to existing classify()
         return await self.classify(message, ollama, conversation_history, lang)

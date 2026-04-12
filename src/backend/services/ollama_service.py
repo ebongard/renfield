@@ -127,7 +127,12 @@ WICHTIGE REGELN FÜR ANTWORTEN:
 4. Wenn eine Aktion ausgeführt wurde, bestätige dies einfach"""
 
     async def ensure_model_loaded(self) -> None:
-        """Stelle sicher, dass das Modell geladen ist"""
+        """Stelle sicher, dass das Modell geladen ist.
+
+        Skips gracefully when the client is not a native Ollama client
+        (e.g. OpenAICompatibleClient for llama-server / vLLM), since those
+        don't support the Ollama-specific list/pull API.
+        """
         try:
             models = await self.client.list()
             # ollama>=0.4.0 uses Pydantic models with .model attribute
@@ -139,9 +144,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                 logger.info(f"Modell {self.model} geladen")
             else:
                 logger.info(f"Modell {self.model} bereits vorhanden")
+        except AttributeError:
+            # Non-Ollama client (OpenAICompatibleClient) has no list/pull
+            logger.info(f"Model check skipped (non-Ollama client, model={self.model})")
         except Exception as e:
-            logger.error(f"Fehler beim Laden des Modells: {e}")
-            raise
+            # 404 from llama-server, connection errors, etc. — non-fatal
+            logger.warning(f"Model check failed (non-fatal): {e}")
+            logger.info("Continuing without model verification (client may be llama-server or vLLM)")
 
     async def chat(self, message: str, history: list[dict] = None, lang: str | None = None, memory_context: str | None = None) -> str:
         """
