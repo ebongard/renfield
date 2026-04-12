@@ -55,6 +55,10 @@ class Permission(str, Enum):
     RAG_USE = "rag.use"            # Use RAG in conversations
     RAG_MANAGE = "rag.manage"      # Upload/process documents
 
+    # === Knowledge Graph ===
+    KG_VIEW = "kg.view"            # View KG entities and relations
+    KG_MANAGE = "kg.manage"        # Create/edit/delete/merge KG data
+
     # === Admin ===
     ADMIN = "admin"               # Access to /admin/* and /debug/* endpoints
 
@@ -116,6 +120,10 @@ PERMISSION_HIERARCHY = {
     # RAG permissions (rag.manage > rag.use)
     Permission.RAG_MANAGE: {Permission.RAG_USE},
     Permission.RAG_USE: set(),
+
+    # KG permissions (kg.manage > kg.view)
+    Permission.KG_MANAGE: {Permission.KG_VIEW},
+    Permission.KG_VIEW: set(),
 
     # User permissions (users.manage > users.view)
     Permission.USERS_MANAGE: {Permission.USERS_VIEW},
@@ -292,6 +300,9 @@ def get_all_permissions() -> list[dict]:
         Permission.RAG_USE: "RAG in Gesprächen nutzen",
         Permission.RAG_MANAGE: "Dokumente hochladen und verarbeiten",
 
+        Permission.KG_VIEW: "Wissensgraph ansehen",
+        Permission.KG_MANAGE: "Wissensgraph verwalten (bearbeiten, löschen, zusammenführen)",
+
         Permission.ADMIN: "Admin-Funktionen",
 
         Permission.USERS_VIEW: "Benutzerliste ansehen",
@@ -371,6 +382,7 @@ DEFAULT_ROLES = [
             Permission.SPEAKERS_ALL.value,
             Permission.TASKS_MANAGE.value,
             Permission.RAG_MANAGE.value,
+            Permission.KG_MANAGE.value,
             Permission.USERS_MANAGE.value,
             Permission.ROLES_MANAGE.value,
             Permission.SETTINGS_MANAGE.value,
@@ -391,6 +403,7 @@ DEFAULT_ROLES = [
             Permission.SPEAKERS_OWN.value,
             Permission.TASKS_VIEW.value,
             Permission.RAG_USE.value,
+            Permission.KG_VIEW.value,
             Permission.NOTIFICATIONS_VIEW.value,
             "mcp.*",
         ],

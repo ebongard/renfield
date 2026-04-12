@@ -537,7 +537,10 @@ class KnowledgeGraphService:
         # Get user's role name if authenticated
         user_role = None
         if user_id is not None:
-            result = await self.db.execute(select(User).where(User.id == user_id))
+            from sqlalchemy.orm import selectinload
+            result = await self.db.execute(
+                select(User).options(selectinload(User.role)).where(User.id == user_id)
+            )
             user = result.scalar_one_or_none()
             if user and user.role:
                 user_role = user.role.name
@@ -686,7 +689,10 @@ class KnowledgeGraphService:
         # Get user's role name if authenticated
         user_role = None
         if user_id is not None:
-            result = await self.db.execute(select(User).where(User.id == user_id))
+            from sqlalchemy.orm import selectinload
+            result = await self.db.execute(
+                select(User).options(selectinload(User.role)).where(User.id == user_id)
+            )
             user = result.scalar_one_or_none()
             if user and user.role:
                 user_role = user.role.name
@@ -1345,12 +1351,14 @@ async def kg_retrieve_context_hook(
     try:
         from models.database import User
         from services.database import AsyncSessionLocal
+        from sqlalchemy.orm import selectinload
 
         async with AsyncSessionLocal() as db:
-            # Get user's role name if authenticated
             user_role = None
             if user_id is not None:
-                result = await db.execute(select(User).where(User.id == user_id))
+                result = await db.execute(
+                    select(User).options(selectinload(User.role)).where(User.id == user_id)
+                )
                 user = result.scalar_one_or_none()
                 if user and user.role:
                     user_role = user.role.name

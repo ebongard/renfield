@@ -401,6 +401,14 @@ async def ensure_default_roles(db: AsyncSession) -> list[Role]:
         existing = await get_role_by_name(db, role_config["name"])
 
         if existing:
+            # Merge new permissions into existing system roles (additive only)
+            if existing.is_system:
+                expected = set(role_config["permissions"])
+                current = set(existing.permissions or [])
+                missing = expected - current
+                if missing:
+                    existing.permissions = list(current | expected)
+                    logger.info(f"Updated system role {existing.name}: added {missing}")
             roles.append(existing)
         else:
             role = Role(

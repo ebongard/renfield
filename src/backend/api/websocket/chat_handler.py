@@ -589,7 +589,8 @@ async def websocket_endpoint(
                 await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
 
-            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id})")
+            _log_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+            logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
 
             # Prompt injection check
             injection_result = detect_injection(content)
@@ -636,9 +637,10 @@ async def websocket_endpoint(
                     from sqlalchemy import select
 
                     from models.database import User
+                    from sqlalchemy.orm import selectinload
                     async with AsyncSessionLocal() as db_session:
                         result = await db_session.execute(
-                            select(User).where(User.id == user_id)
+                            select(User).options(selectinload(User.role)).where(User.id == user_id)
                         )
                         user_obj = result.scalar_one_or_none()
                         if user_obj:
@@ -1128,7 +1130,8 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             user_metadata["attachment_ids"] = attachment_ids
                         await ollama.save_message(
                             msg_session_id, "user", content, db_session,
-                            metadata=user_metadata if user_metadata else None
+                            metadata=user_metadata if user_metadata else None,
+                            user_id=user_id,
                         )
                         # Save assistant response (clean content for UI display)
                         # action_summary stored in metadata for LLM context reconstruction
@@ -1140,9 +1143,10 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                             assistant_metadata["action_summary"] = action_summary
                         await ollama.save_message(
                             msg_session_id, "assistant", full_response, db_session,
-                            metadata=assistant_metadata
+                            metadata=assistant_metadata,
+                            user_id=user_id,
                         )
-                        logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}")
+                        logger.debug(f"💾 Messages saved to DB: session_id={msg_session_id}, user_id={user_id}")
 
                         # Trigger summary generation if conversation is long enough
                         if settings.conversation_summary_threshold > 0:
