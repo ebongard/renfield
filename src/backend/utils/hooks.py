@@ -31,6 +31,13 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "authenticate",
     "load_entity_patterns",
     "post_routing",
+    "pre_orchestration",
+    "post_orchestration",
+    "pre_sub_agent",
+    "post_sub_agent",
+    "extend_orchestrator_roles",
+    "check_output",
+    "extract_context_vars",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]
