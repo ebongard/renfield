@@ -49,7 +49,7 @@ class TestPermissionEnum:
                 prefixes.add(perm.value.split(".")[0])
             else:
                 prefixes.add(perm.value)  # Standalone permissions like "admin"
-        expected = {"kb", "ha", "cam", "chat", "rooms", "speakers", "tasks", "rag", "admin", "users", "roles", "settings", "plugins"}
+        expected = {"kb", "ha", "cam", "chat", "rooms", "speakers", "tasks", "rag", "kg", "admin", "users", "roles", "settings", "notifications"}
         assert expected.issubset(prefixes), f"Missing permission groups: {expected - prefixes}"
 
 

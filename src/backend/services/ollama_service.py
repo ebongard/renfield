@@ -800,12 +800,13 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         role: str,
         content: str,
         db: AsyncSession,
-        metadata: dict | None = None
+        metadata: dict | None = None,
+        user_id: int | None = None,
     ) -> "Message":
         """Speichere eine einzelne Nachricht (delegiert an ConversationService)"""
         from services.conversation_service import ConversationService
         service = ConversationService(db)
-        return await service.save_message(session_id, role, content, metadata)
+        return await service.save_message(session_id, role, content, metadata, user_id=user_id)
 
     async def get_conversation_summary(
         self,

@@ -99,7 +99,8 @@ class ConversationService:
         session_id: str,
         role: str,
         content: str,
-        metadata: dict | None = None
+        metadata: dict | None = None,
+        user_id: int | None = None,
     ) -> Message:
         """
         Speichere eine einzelne Nachricht.
@@ -133,8 +134,10 @@ class ConversationService:
             conversation = result.scalar_one_or_none()
 
             if not conversation:
-                conversation = Conversation(session_id=session_id)
+                conversation = Conversation(session_id=session_id, user_id=user_id)
                 self.db.add(conversation)
+            elif user_id and conversation.user_id is None:
+                conversation.user_id = user_id
                 await self.db.flush()
 
             # Erstelle Message

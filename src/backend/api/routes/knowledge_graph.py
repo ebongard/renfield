@@ -53,7 +53,7 @@ def _entity_to_response(entity) -> EntityResponse:
 async def list_scopes(
     request: Request,
     lang: str = Query("de"),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """List available KG scopes with labels and descriptions."""
     from services.kg_scope_loader import get_scope_loader
@@ -74,7 +74,7 @@ async def list_entities(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """List knowledge graph entities with optional filters."""
     try:
@@ -104,7 +104,7 @@ async def get_entity(
     request: Request,
     entity_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """Get a single entity by ID."""
     svc = KnowledgeGraphService(db)
@@ -121,7 +121,7 @@ async def update_entity(
     entity_id: int,
     body: EntityUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Update an entity's name, type, or description."""
     try:
@@ -149,9 +149,9 @@ async def update_entity_scope(
     entity_id: int,
     body: EntityScopeUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
-    """Update scope of an entity (admin only)."""
+    """Update scope of an entity."""
     try:
         svc = KnowledgeGraphService(db)
         entity = await svc.update_entity_scope(entity_id, body.scope)
@@ -173,7 +173,7 @@ async def delete_entity(
     request: Request,
     entity_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Soft-delete an entity and its relations."""
     svc = KnowledgeGraphService(db)
@@ -189,7 +189,7 @@ async def merge_entities(
     request: Request,
     body: MergeEntitiesRequest,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Merge source entity into target entity."""
     if body.source_id == body.target_id:
@@ -216,7 +216,7 @@ async def list_relations(
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """List knowledge graph relations."""
     try:
@@ -254,7 +254,7 @@ async def create_relation(
     request: Request,
     body: RelationCreate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Create a new relation between two entities."""
     if body.subject_id == body.object_id:
@@ -299,7 +299,7 @@ async def update_relation(
     relation_id: int,
     body: RelationUpdate,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Update a relation's predicate, confidence, or endpoints."""
     try:
@@ -340,7 +340,7 @@ async def delete_relation(
     request: Request,
     relation_id: int,
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Soft-delete a relation."""
     svc = KnowledgeGraphService(db)
@@ -356,7 +356,7 @@ async def get_stats(
     request: Request,
     user_id: int | None = Query(None),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """Get knowledge graph statistics."""
     try:
@@ -378,7 +378,7 @@ async def cleanup_invalid_entities(
     request: Request,
     dry_run: bool = Query(True, description="Preview mode — no deletions"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Scan and soft-delete entities failing validation rules. dry_run=true by default."""
     try:
@@ -400,7 +400,7 @@ async def find_duplicate_clusters(
     threshold: float | None = Query(None, ge=0.5, le=1.0, description="Similarity threshold"),
     limit: int = Query(50, ge=1, le=200, description="Max clusters to return"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
     """Find clusters of likely-duplicate entities via embedding similarity."""
     try:
@@ -429,7 +429,7 @@ async def merge_duplicate_clusters(
     threshold: float | None = Query(None, ge=0.5, le=1.0, description="Similarity threshold"),
     dry_run: bool = Query(True, description="Preview mode — no merges"),
     db: AsyncSession = Depends(get_db),
-    user: User = Depends(require_permission(Permission.ADMIN)),
+    user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
     """Auto-merge duplicate entity clusters. dry_run=true by default."""
     try:
