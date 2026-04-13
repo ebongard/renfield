@@ -1151,10 +1151,12 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         # Trigger summary generation if conversation is long enough
                         if settings.conversation_summary_threshold > 0:
                             from services.conversation_service import ConversationService
+                            from utils.llm_client import get_agent_client
                             _sum_svc = ConversationService(db_session)
+                            _sum_client, _ = get_agent_client()
                             await _sum_svc.update_summary(
                                 msg_session_id,
-                                llm_client=ollama.client,
+                                llm_client=_sum_client,
                                 model=settings.ollama_chat_model or settings.ollama_model,
                                 threshold=settings.conversation_summary_threshold,
                             )
