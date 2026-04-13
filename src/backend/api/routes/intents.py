@@ -9,7 +9,7 @@ from pydantic import BaseModel
 
 from models.database import User
 from models.permissions import Permission
-from services.auth_service import require_permission
+from services.auth_service import get_current_user, require_permission
 from services.intent_registry import CORE_INTEGRATIONS, intent_registry
 from utils.config import settings
 
@@ -75,7 +75,7 @@ class IntentPromptResponse(BaseModel):
 @router.get("/status", response_model=IntentRegistryStatusResponse)
 async def get_intent_status(
     lang: str = Query("de", description="Language for descriptions (de/en)"),
-    _user: User = Depends(require_permission(Permission.ADMIN)),
+    _user: User | None = Depends(get_current_user),
 ):
     """
     Get full status of the intent registry.
