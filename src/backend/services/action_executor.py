@@ -26,7 +26,7 @@ class ActionExecutor:
 
         Args:
             intent_data: {
-                "intent": "mcp.homeassistant.turn_on",
+                "intent": "mcp.<namespace>.<tool>",
                 "parameters": {...},
                 "confidence": 0.9
             }

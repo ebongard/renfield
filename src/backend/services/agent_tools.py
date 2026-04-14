@@ -150,9 +150,9 @@ class AgentToolRegistry:
     def resolve_tool_name(self, name: str) -> str | None:
         """Resolve a tool name, supporting short names without namespace prefix.
 
-        Small LLMs sometimes emit 'GetLiveContext' instead of
-        'mcp.homeassistant.GetLiveContext'. This tries exact match first,
-        then falls back to suffix match (must be unambiguous).
+        Small LLMs sometimes emit the bare tool name instead of the fully
+        qualified `mcp.<server>.<tool>` form. This tries exact match
+        first, then falls back to suffix match (must be unambiguous).
         """
         if name in self._tools:
             return name
