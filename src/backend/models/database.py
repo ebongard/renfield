@@ -79,32 +79,6 @@ class Task(Base):
     completed_at = Column(DateTime, nullable=True)
     created_by = Column(String, nullable=True)
 
-class CameraEvent(Base):
-    """Kamera-Events"""
-    __tablename__ = "camera_events"
-
-    id = Column(Integer, primary_key=True, index=True)
-    camera_name = Column(String)
-    event_type = Column(String)  # 'person', 'car', 'animal'
-    confidence = Column(Integer)
-    timestamp = Column(DateTime, default=_utcnow)
-    snapshot_path = Column(String, nullable=True)
-    event_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata'
-    notified = Column(Boolean, default=False)
-
-class HomeAssistantEntity(Base):
-    """Home Assistant Entities Cache"""
-    __tablename__ = "ha_entities"
-
-    id = Column(Integer, primary_key=True, index=True)
-    entity_id = Column(String, unique=True, index=True)
-    friendly_name = Column(String)
-    domain = Column(String)
-    state = Column(String, nullable=True)
-    attributes = Column(JSON, nullable=True)
-    last_updated = Column(DateTime, default=_utcnow)
-
-
 # --- Speaker Recognition Models ---
 
 class Speaker(Base):
@@ -139,269 +113,12 @@ class SpeakerEmbedding(Base):
     speaker = relationship("Speaker", back_populates="embeddings")
 
 
-# --- Room Management Models ---
-
-class Room(Base):
-    """Raum für Smart Home und Device-Zuordnung"""
-    __tablename__ = "rooms"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(100), nullable=False, unique=True)  # "Wohnzimmer"
-    alias = Column(String(50), index=True)  # "wohnzimmer" (für Sprachbefehle, normalisiert)
-
-    # Home Assistant Sync
-    ha_area_id = Column(String(100), nullable=True, unique=True, index=True)
-    source = Column(String(20), default="renfield")  # renfield/homeassistant/satellite/device
-
-    # Room owner (for Media Follow Me conflict resolution)
-    owner_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    owner = relationship("User", foreign_keys="Room.owner_id")
-
-    # Metadata
-    icon = Column(String(50), nullable=True)  # "mdi:sofa"
-
-    # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-    last_synced_at = Column(DateTime, nullable=True)
-
-    # Beziehungen
-    devices = relationship("RoomDevice", back_populates="room", cascade="all, delete-orphan")
-    output_devices = relationship(
-        "RoomOutputDevice",
-        back_populates="room",
-        cascade="all, delete-orphan",
-        order_by="RoomOutputDevice.priority"
-    )
-
-    @property
-    def satellites(self):
-        """Backward compatibility: Get only satellite-type devices"""
-        return [d for d in self.devices if d.device_type == "satellite"]
-
-    @property
-    def online_devices(self):
-        """Get all online devices in this room"""
-        return [d for d in self.devices if d.is_online]
-
-
-# Device Types
-DEVICE_TYPE_SATELLITE = "satellite"      # Physical Pi Zero + ReSpeaker
-DEVICE_TYPE_WEB_PANEL = "web_panel"      # Stationary web device (wall-mounted iPad)
-DEVICE_TYPE_WEB_TABLET = "web_tablet"    # Mobile web device (iPad, tablet)
-DEVICE_TYPE_WEB_BROWSER = "web_browser"  # Desktop browser
-DEVICE_TYPE_WEB_KIOSK = "web_kiosk"      # Touch kiosk terminal
-
-DEVICE_TYPES = [
-    DEVICE_TYPE_SATELLITE,
-    DEVICE_TYPE_WEB_PANEL,
-    DEVICE_TYPE_WEB_TABLET,
-    DEVICE_TYPE_WEB_BROWSER,
-    DEVICE_TYPE_WEB_KIOSK,
-]
-
-
-class RoomDevice(Base):
-    """
-    Unified Device Model for Room-based Input/Output Devices
-
-    Supports both physical satellites (Raspberry Pi) and web-based clients (iPad, Browser).
-    Capabilities are stored as JSON for flexibility.
-    """
-    __tablename__ = "room_devices"
-
-    id = Column(Integer, primary_key=True, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
-    device_id = Column(String(100), nullable=False, unique=True, index=True)
-
-    # Device Classification
-    device_type = Column(String(20), nullable=False, default=DEVICE_TYPE_WEB_BROWSER)
-    device_name = Column(String(100), nullable=True)  # User-friendly name: "iPad Wohnzimmer"
-
-    # Capabilities (JSON for flexibility)
-    # Example: {"has_microphone": true, "has_speaker": true, "has_display": true, ...}
-    capabilities = Column(JSON, nullable=False, default=dict)
-
-    # Status
-    is_online = Column(Boolean, default=False)
-    is_stationary = Column(Boolean, default=True)  # Stationary vs. mobile device
-    last_connected_at = Column(DateTime, nullable=True)
-
-    # Connection Info
-    user_agent = Column(String(500), nullable=True)  # Browser/client info
-    ip_address = Column(String(45), nullable=True)   # IPv4 or IPv6
-
-    # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-
-    # Beziehungen
-    room = relationship("Room", back_populates="devices")
-
-    def has_capability(self, capability: str) -> bool:
-        """Check if device has a specific capability"""
-        return self.capabilities.get(capability, False)
-
-    @property
-    def can_record_audio(self) -> bool:
-        return self.has_capability("has_microphone")
-
-    @property
-    def can_play_audio(self) -> bool:
-        return self.has_capability("has_speaker")
-
-    @property
-    def can_show_display(self) -> bool:
-        return self.has_capability("has_display")
-
-    @property
-    def has_wakeword(self) -> bool:
-        return self.has_capability("has_wakeword")
-
-
-# Default capabilities for different device types
-DEFAULT_CAPABILITIES = {
-    DEVICE_TYPE_SATELLITE: {
-        "has_microphone": True,
-        "has_speaker": True,
-        "has_wakeword": True,
-        "wakeword_method": "openwakeword",
-        "has_display": False,
-        "has_leds": True,
-        "led_count": 3,
-        "has_button": True,
-    },
-    DEVICE_TYPE_WEB_PANEL: {
-        "has_microphone": True,
-        "has_speaker": True,
-        "has_wakeword": True,
-        "wakeword_method": "browser_wasm",
-        "has_display": True,
-        "display_size": "large",
-        "supports_notifications": True,
-        "has_leds": False,
-        "has_button": False,
-    },
-    DEVICE_TYPE_WEB_TABLET: {
-        "has_microphone": True,
-        "has_speaker": True,
-        "has_wakeword": True,
-        "wakeword_method": "browser_wasm",
-        "has_display": True,
-        "display_size": "medium",
-        "supports_notifications": True,
-        "has_leds": False,
-        "has_button": False,
-    },
-    DEVICE_TYPE_WEB_BROWSER: {
-        "has_microphone": False,  # May need permission
-        "has_speaker": False,     # May need permission
-        "has_wakeword": False,
-        "has_display": True,
-        "display_size": "large",
-        "supports_notifications": True,
-        "has_leds": False,
-        "has_button": False,
-    },
-    DEVICE_TYPE_WEB_KIOSK: {
-        "has_microphone": True,
-        "has_speaker": True,
-        "has_wakeword": False,
-        "has_display": True,
-        "display_size": "large",
-        "supports_notifications": False,
-        "has_leds": False,
-        "has_button": False,
-    },
-}
-
-
-# Output Device Types
-OUTPUT_TYPE_AUDIO = "audio"
-OUTPUT_TYPE_VISUAL = "visual"
-
-OUTPUT_TYPES = [OUTPUT_TYPE_AUDIO, OUTPUT_TYPE_VISUAL]
-
-
-class RoomOutputDevice(Base):
-    """
-    Output device configuration for a room.
-
-    Defines which devices should be used for TTS audio output
-    in a room, with priority ordering and interruption settings.
-
-    Exactly one of renfield_device_id, ha_entity_id, or dlna_renderer_name must be set.
-    """
-    __tablename__ = "room_output_devices"
-
-    id = Column(Integer, primary_key=True, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
-
-    # Device source: exactly one of Renfield device, HA entity, or DLNA renderer
-    renfield_device_id = Column(String(100), ForeignKey("room_devices.device_id"), nullable=True)
-    ha_entity_id = Column(String(255), nullable=True)  # e.g. "media_player.linn_dsm"
-    dlna_renderer_name = Column(String(255), nullable=True)  # e.g. "Arbeitszimmer"
-
-    # Output type
-    output_type = Column(String(20), nullable=False, default=OUTPUT_TYPE_AUDIO)
-
-    # Priority (1 = highest)
-    priority = Column(Integer, nullable=False, default=1)
-
-    # Interruption setting
-    allow_interruption = Column(Boolean, default=False)
-
-    # Volume setting (0.0 - 1.0, None = no change)
-    tts_volume = Column(Float, nullable=True, default=0.5)
-
-    # Device name (cached for display)
-    device_name = Column(String(255), nullable=True)
-
-    # Status
-    is_enabled = Column(Boolean, default=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=_utcnow)
-    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
-
-    # Relationships
-    room = relationship("Room", back_populates="output_devices")
-    renfield_device = relationship("RoomDevice", foreign_keys=[renfield_device_id])
-
-    @property
-    def is_renfield_device(self) -> bool:
-        """Check if this output uses a Renfield device"""
-        return self.renfield_device_id is not None
-
-    @property
-    def is_ha_device(self) -> bool:
-        """Check if this output uses a Home Assistant entity"""
-        return self.ha_entity_id is not None
-
-    @property
-    def is_dlna_device(self) -> bool:
-        """Check if this output uses a DLNA renderer"""
-        return self.dlna_renderer_name is not None
-
-    @property
-    def target_id(self) -> str:
-        """Get the target device/entity ID"""
-        return self.renfield_device_id or self.ha_entity_id or self.dlna_renderer_name or ""
-
-    @property
-    def target_type(self) -> str:
-        """Get the device type string"""
-        if self.renfield_device_id:
-            return "renfield"
-        if self.ha_entity_id:
-            return "homeassistant"
-        if self.dlna_renderer_name:
-            return "dlna"
-        return "renfield"
-
-
-# Legacy alias for backward compatibility
-RoomSatellite = RoomDevice
+# --- Room management, device, and output-device models ---
+#
+# These moved to ha_glue/models/database.py as part of Phase 1 of the
+# Renfield open-source extraction. They are re-exported at the bottom of
+# this file for backwards compatibility during the Week 1-4 transition.
+# New code should import directly from ha_glue.models.database.
 
 
 # =============================================================================
@@ -824,7 +541,11 @@ class Notification(Base):
     title = Column(String(255), nullable=False)
     message = Column(Text, nullable=False)
     urgency = Column(String(20), default=URGENCY_INFO)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True, index=True)
+    # room_id is a loose reference to ha_glue.rooms.id — no ForeignKey constraint
+    # so that platform-only deployments (without the ha_glue schema) can still
+    # create this table. Ha-glue code that needs the Room object does a runtime
+    # lookup via the hook system instead of a SQLAlchemy relationship.
+    room_id = Column(Integer, nullable=True, index=True)
     room_name = Column(String(100), nullable=True)
     source = Column(String(50), default="ha_automation")
     source_data = Column(JSON, nullable=True)
@@ -851,8 +572,9 @@ class Notification(Base):
     privacy = Column(String(20), default="public")
     target_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
-    # Relationships
-    room = relationship("Room", foreign_keys=[room_id])
+    # Relationships — room relationship removed (layering rule: platform
+    # must not depend on ha_glue). Use the hook system to resolve room_id
+    # to a Room object when ha_glue is loaded.
     target_user = relationship("User", foreign_keys=[target_user_id])
 
 
@@ -894,7 +616,9 @@ class Reminder(Base):
     id = Column(Integer, primary_key=True, index=True)
     message = Column(Text, nullable=False)
     trigger_at = Column(DateTime, nullable=False, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    # room_id is a loose reference to ha_glue.rooms.id — see the Notification
+    # class for the rationale (no ForeignKey, no relationship).
+    room_id = Column(Integer, nullable=True)
     room_name = Column(String(100), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     session_id = Column(String(255), nullable=True)
@@ -903,7 +627,6 @@ class Reminder(Base):
     created_at = Column(DateTime, default=_utcnow)
     fired_at = Column(DateTime, nullable=True)
 
-    room = relationship("Room", foreign_keys=[room_id])
     user = relationship("User", foreign_keys=[user_id])
     notification = relationship("Notification", foreign_keys=[notification_id])
 
@@ -1134,40 +857,8 @@ class MemoryHistory(Base):
 
 
 # ==========================================================================
-# BLE Presence Detection
+# BLE Presence Detection (moved to ha_glue/models/database.py — re-exported below)
 # ==========================================================================
-
-class UserBleDevice(Base):
-    """Registered BLE device for room-level presence detection."""
-    __tablename__ = "user_ble_devices"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    mac_address = Column(String(17), unique=True, nullable=False, index=True)  # "AA:BB:CC:DD:EE:FF"
-    device_name = Column(String(100), nullable=False)   # "Emma's iPhone"
-    device_type = Column(String(50), default="phone")   # phone, watch, tracker
-    detection_method = Column(String(20), default="ble")  # "ble" | "classic_bt"
-    is_enabled = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=_utcnow)
-
-    user = relationship("User", backref="ble_devices")
-
-
-class PresenceEvent(Base):
-    """Persisted presence event for analytics (heatmap, predictions)."""
-    __tablename__ = "presence_events"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
-    event_type = Column(String(20), nullable=False)  # "enter" | "leave"
-    source = Column(String(20), default="ble")        # "ble" | "voice" | "web"
-    confidence = Column(Float, nullable=True)
-    created_at = Column(DateTime, default=_utcnow, index=True)
-
-    __table_args__ = (
-        Index('ix_presence_events_analytics', 'user_id', 'room_id', 'created_at'),
-    )
 
 
 # System Setting Keys
@@ -1185,92 +876,65 @@ SYSTEM_SETTING_KEYS = [
 
 
 # ==========================================================================
-# Paperless Document Audit
+# Paperless Document Audit (moved to ha_glue/models/database.py)
+# Radio Favorites (moved to ha_glue/models/database.py)
 # ==========================================================================
-
-class PaperlessAuditResult(Base):
-    """Paperless document audit results from LLM analysis."""
-    __tablename__ = "paperless_audit_results"
-
-    id = Column(Integer, primary_key=True)
-    paperless_doc_id = Column(Integer, index=True, unique=True)
-
-    # Snapshot of current state
-    current_title = Column(String, nullable=True)
-    current_correspondent = Column(String, nullable=True)
-    current_document_type = Column(String, nullable=True)
-    current_tags = Column(JSON, nullable=True)
-
-    # LLM suggestions
-    suggested_title = Column(String, nullable=True)
-    suggested_correspondent = Column(String, nullable=True)
-    suggested_document_type = Column(String, nullable=True)
-    suggested_tags = Column(JSON, nullable=True)
-
-    # Document date
-    current_date = Column(String, nullable=True)          # Paperless 'created' (YYYY-MM-DD)
-    suggested_date = Column(String, nullable=True)        # LLM-extracted date
-
-    # Missing metadata detection
-    missing_fields = Column(JSON, nullable=True)          # ["correspondent", "document_type", ...]
-
-    # Duplicate detection
-    duplicate_group_id = Column(String, nullable=True, index=True)
-    duplicate_score = Column(Float, nullable=True)        # 0.0-1.0
-
-    # Custom fields
-    current_custom_fields = Column(JSON, nullable=True)
-    suggested_custom_fields = Column(JSON, nullable=True)
-
-    # Language detection
-    detected_language = Column(String(10), nullable=True) # "de", "en", etc.
-
-    # Storage path
-    current_storage_path = Column(String, nullable=True)
-    suggested_storage_path = Column(String, nullable=True)
-
-    # Content completeness
-    content_completeness = Column(Integer, nullable=True) # 1-5
-    completeness_issues = Column(String, nullable=True)
-
-    # Content hash for duplicate detection
-    content_hash = Column(String(32), nullable=True)      # MD5 of first 1000 chars
-
-    # Assessment
-    ocr_quality = Column(Integer, nullable=True)          # 1-5
-    ocr_issues = Column(String, nullable=True)
-    confidence = Column(Float, nullable=True)             # 0.0-1.0
-    changes_needed = Column(Boolean, default=False)
-    reasoning = Column(Text, nullable=True)               # LLM reasoning
-
-    # Status: pending → applied/skipped/failed
-    status = Column(String, default="pending")
-
-    # Re-OCR
-    renfield_ocr_text = Column(Text, nullable=True)
-
-    # Timestamps
-    audited_at = Column(DateTime, default=_utcnow)
-    applied_at = Column(DateTime, nullable=True)
-    audit_run_id = Column(String, nullable=True, index=True)
 
 
 # ==========================================================================
-# Radio Favorites
+# Backwards-compat re-exports from ha_glue.models.database
 # ==========================================================================
+#
+# Phase 1 Week 1 — the HA-specific models were moved to
+# `ha_glue/models/database.py` to establish a clean platform vs ha-glue
+# boundary for the open-source extraction. These re-exports keep the
+# legacy `from models.database import Room` import path working so
+# consumer files (api/routes/rooms.py, services/presence_service.py,
+# etc.) don't need to change in the same commit.
+#
+# TODO(phase1-week4): remove these re-exports once every consumer has
+# migrated to `from ha_glue.models.database import ...` AND the CI lint
+# rule that forbids platform → ha_glue imports is in place. See
+# `docs/architecture/renfield-platform-boundary.md` in the parent Reva
+# repo for the rollout plan.
+#
+# The try/except handles the platform-only deployment mode: if
+# `ha_glue` isn't installed (a future X-idra/renfield-only deploy),
+# the re-exports silently skip and `from models.database import Room`
+# raises ImportError at import time, which is the correct behavior.
 
-class RadioFavorite(Base):
-    """User's favorite radio stations (provider-agnostic, currently TuneIn)."""
-    __tablename__ = "radio_favorites"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    station_id = Column(String(50), nullable=False)
-    station_name = Column(String(255), nullable=False)
-    station_image = Column(String(512), nullable=True)
-    genre = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-
-    __table_args__ = (
-        Index('ix_radio_favorites_user_station', 'user_id', 'station_id', unique=True),
+try:
+    from ha_glue.models.database import (  # noqa: F401 — re-export
+        DEFAULT_CAPABILITIES,
+        DEVICE_TYPE_SATELLITE,
+        DEVICE_TYPE_WEB_BROWSER,
+        DEVICE_TYPE_WEB_KIOSK,
+        DEVICE_TYPE_WEB_PANEL,
+        DEVICE_TYPE_WEB_TABLET,
+        DEVICE_TYPES,
+        OUTPUT_TYPE_AUDIO,
+        OUTPUT_TYPE_VISUAL,
+        OUTPUT_TYPES,
+        CameraEvent,
+        HomeAssistantEntity,
+        PaperlessAuditResult,
+        PresenceEvent,
+        RadioFavorite,
+        Room,
+        RoomDevice,
+        RoomOutputDevice,
+        RoomSatellite,
+        UserBleDevice,
     )
+except ImportError as _compat_err:
+    # Platform-only deployment — ha_glue not installed. Legacy consumer
+    # imports from models.database will fail at their import site with
+    # a clear ImportError, which is the desired behavior.
+    #
+    # Narrow catch: ONLY swallow the case where the top-level `ha_glue`
+    # package is missing. Any other ImportError (a typo inside
+    # `ha_glue.models.database`, a broken SQLAlchemy import, etc.) bubbles
+    # up immediately so it can't hide behind a confusing "cannot import
+    # name 'Room'" at the consumer site.
+    if _compat_err.name and _compat_err.name.split(".")[0] != "ha_glue":
+        raise
