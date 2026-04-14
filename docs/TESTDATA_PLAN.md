@@ -49,7 +49,7 @@ Generierungs-Script: `/tmp/generate_testdata.py`
 - **Prof. Dr. Anna Richter** — Fortbildungs-Dozentin
 
 **Privat:**
-- **Maria Bongard** — Partnerin (gleiche Adresse)
+- **Maria Musterfrau** — Partnerin (gleiche Adresse)
 - **Dr. Klaus Weber** — Hausarzt (Praxis Am Markt 7, Düsseldorf)
 - **Stadtwerke Düsseldorf** — Strom/Gas
 - **DEVK Versicherung** — Haftpflicht, KFZ
@@ -128,9 +128,9 @@ Generierungs-Script: `/tmp/generate_testdata.py`
 | 49 | kfz_kaufvertrag_golf.pdf | PDF | Kaufvertrag VW Golf VII, 15.500€, Autohaus Müller |
 | 50 | kfz_inspektion_2024.md | MD | Inspektionsbericht Autohaus Müller, 18.06.2024, nächster TÜV 06/2026 |
 | 51 | kfz_tuev_bericht_2024.pdf | PDF | TÜV-Bericht, bestanden ohne Mängel, 18.06.2024 |
-| 52 | reisebuchung_mallorca_2024.html | HTML | Reisebuchung Mallorca 01.-15.08.2024, Hotel Sol y Mar, mit Maria Bongard |
-| 53 | reisebuchung_wien_2024.html | HTML | Städtereise Wien 28.-31.10.2024, Hotel Sacher, mit Maria Bongard |
-| 54 | email_maria_einkaufsliste.md | MD | Einkaufsliste von Maria Bongard für Geburtstagsfeier |
+| 52 | reisebuchung_mallorca_2024.html | HTML | Reisebuchung Mallorca 01.-15.08.2024, Hotel Sol y Mar, mit Maria Musterfrau |
+| 53 | reisebuchung_wien_2024.html | HTML | Städtereise Wien 28.-31.10.2024, Hotel Sacher, mit Maria Musterfrau |
+| 54 | email_maria_einkaufsliste.md | MD | Einkaufsliste von Maria Musterfrau für Geburtstagsfeier |
 | 55 | email_maria_handwerker.md | MD | Email-Thread mit Maria über Handwerker-Termin Badezimmer |
 | 56 | rechnung_ikea_moebel.md | MD | IKEA Rechnung, Bücherregal BILLY + Schreibtisch MALM, 487€ |
 | 57 | rechnung_mediamarkt_laptop.md | MD | MediaMarkt Rechnung, MacBook Air M3, 1.299€ |
@@ -141,7 +141,7 @@ Generierungs-Script: `/tmp/generate_testdata.py`
 | 62 | handyvertrag_telekom.docx | DOCX | Telekom Handyvertrag, iPhone 15, 49,95€/Monat |
 | 63 | rezept_kontaktlinsen.md | MD | Kontaktlinsenrezept, Fielmann Düsseldorf, -2,5 / -2,75 |
 | 64 | email_vermieter_reparatur.md | MD | Email an Immo Düsseldorf GmbH bzgl. Heizungsreparatur |
-| 65 | vollmacht_maria_bongard.docx | DOCX | Gegenseitige Vorsorgevollmacht mit Maria Bongard |
+| 65 | vollmacht_maria_musterfrau.docx | DOCX | Gegenseitige Vorsorgevollmacht mit Maria Musterfrau (synthetic) |
 | 66 | zahnarzt_rechnung_2024.pdf | PDF | Zahnarztrechnung Dr. Petersen, Prophylaxe, 98€ |
 | 67 | rundfunkbeitrag_2024.md | MD | Rundfunkbeitrag 2024, Beitragsnummer 123-456-789-0 |
 | 68 | email_nachbar_paketannahme.md | MD | Email von Nachbar Schmidt wegen Paketannahme |
@@ -196,7 +196,7 @@ Generierungs-Script: `/tmp/generate_testdata.py`
 | 7 | Privat | "Stromrechnung Stadtwerke 2024" | rechnung_stadtwerke_strom_2024_q1.pdf |
 | 8 | Privat | "DEVK Versicherung KFZ" | versicherung_devk_kfz.docx (D-MB 2024) |
 | 9 | Privat | "Dr. Klaus Weber Arzt" | arztbrief_weber_checkup.pdf, _grippaler_infekt.md |
-| 10 | Privat | "Maria Bongard Mallorca" | reisebuchung_mallorca_2024.html |
+| 10 | Privat | "Maria Musterfrau Mallorca" | reisebuchung_mallorca_2024.html |
 | 11 | Privat | "Steuerbescheid Erstattung" | steuerbescheid_2023.pdf (1.245€) |
 | 12 | Privat | "VW Golf Autohaus Müller" | kfz_kaufvertrag_golf.pdf, kfz_inspektion_2024.md |
 | 13 | Verein | "TV Angermund Satzung" | satzung_tv_angermund.pdf |

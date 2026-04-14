@@ -1,0 +1,33 @@
+# Renfield Bulk Import — Classification Rules (Example)
+#
+# Copy this file to `config/import_rules.yaml` and edit for your setup.
+# The real `config/import_rules.yaml` is gitignored so local patterns
+# (which may contain personal/business names) don't end up in the repo.
+#
+# Usage:
+#   python bin/bulk_import.py --dir ~/Docs --config config/import_rules.yaml
+
+# Filename patterns (case-insensitive, order = priority).
+# If a filename contains any of these substrings, the document is routed
+# to the matching Knowledge Base.
+filename_patterns:
+  PERSONAL: personal     # → Knowledge Base "personal"
+  WORK:     work         # → Knowledge Base "work"
+  FINANCE:  finance      # → Knowledge Base "finance"
+
+# Addressee patterns (regex, matched against the text of the first page of a PDF).
+# Checked only if no filename pattern matched.
+# Use these to route documents addressed to specific people or organizations.
+addressee_patterns:
+  # 'Your\s+Name':              personal
+  # 'Your\s+Spouse':             personal
+  # 'Your\s+Company':            work
+  # 'Your\s+Club\s+or\s+Group':  club
+
+# Fallback Knowledge Base for unclassified documents.
+# null = skip + report (don't upload)
+fallback_kb: null
+
+# Auto-OCR: PDFs larger than N KB get force_ocr=true automatically.
+# 0 = disabled
+ocr_size_threshold_kb: 500

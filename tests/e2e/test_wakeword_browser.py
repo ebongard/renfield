@@ -7,7 +7,10 @@ import os
 import json
 import time
 
-SCREENSHOTS_DIR = "/Users/evdb/projects.ai/renfield/test-screenshots"
+SCREENSHOTS_DIR = os.environ.get(
+    "RENFIELD_TEST_SCREENSHOTS_DIR",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "test-screenshots"),
+)
 BASE_URL = "https://renfield.local"
 
 

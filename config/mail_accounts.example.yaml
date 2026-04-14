@@ -1,0 +1,42 @@
+# Renfield Mail Accounts — Example Configuration
+#
+# Copy this file to `config/mail_accounts.yaml` and edit for your setup.
+# The real `config/mail_accounts.yaml` is gitignored so local credentials
+# never end up in the repository.
+#
+# Renfield supports multiple accounts. Each account maps to a Renfield user
+# or household context. Passwords are loaded from environment variables
+# (set via Docker secrets or a local `.env` file), never stored here.
+
+accounts:
+  - name: primary
+    email: your.address@example.com
+    provider: generic
+    imap:
+      host: imap.example.com
+      port: 993
+      security: ssl
+    smtp:
+      host: smtp.example.com
+      port: 587
+      security: starttls
+    auth:
+      method: password
+      username: your.address@example.com
+      password_env: MAIL_PRIMARY_PASSWORD
+
+  # - name: secondary
+  #   email: other@example.com
+  #   provider: generic
+  #   imap:
+  #     host: imap.example.com
+  #     port: 993
+  #     security: ssl
+  #   smtp:
+  #     host: smtp.example.com
+  #     port: 587
+  #     security: starttls
+  #   auth:
+  #     method: password
+  #     username: other@example.com
+  #     password_env: MAIL_SECONDARY_PASSWORD

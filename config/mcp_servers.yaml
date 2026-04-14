@@ -279,7 +279,7 @@ servers:
     example_intent: mcp.email.search_emails
     env:
       MAIL_ACCOUNTS_CONFIG: "${MAIL_ACCOUNTS_CONFIG:-/config/mail_accounts.yaml}"
-      MAIL_REGFISH_PASSWORD: "${MAIL_REGFISH_PASSWORD:-}"
+      MAIL_PRIMARY_PASSWORD: "${MAIL_PRIMARY_PASSWORD:-}"
     prompt_tools:
       - list_accounts
       - search_emails

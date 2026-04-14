@@ -5,8 +5,8 @@
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-SATELLITE_HOST="${1:-satellite-wohnzimmer.local}"
-SATELLITE_USER="${2:-evdb}"
+SATELLITE_HOST="${1:-satellite-livingroom.local}"
+SATELLITE_USER="${2:-pi}"
 SATELLITE_PATH="/opt/renfield-satellite"
 
 echo "🛰️ Deploying satellite code to $SATELLITE_HOST..."

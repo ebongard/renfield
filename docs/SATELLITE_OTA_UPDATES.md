@@ -56,9 +56,11 @@ Der Satellite benötigt passwortlosen sudo-Zugriff für den Service-Neustart:
 
 ```bash
 # /etc/sudoers.d/renfield-satellite
-evdb ALL=(ALL) NOPASSWD: /bin/systemctl restart renfield-satellite.service
-evdb ALL=(ALL) NOPASSWD: /bin/systemctl stop renfield-satellite.service
-evdb ALL=(ALL) NOPASSWD: /bin/systemctl start renfield-satellite.service
+# Replace <satellite_user> with the username that runs the satellite service
+# (default: `pi` on Raspberry Pi OS).
+<satellite_user> ALL=(ALL) NOPASSWD: /bin/systemctl restart renfield-satellite.service
+<satellite_user> ALL=(ALL) NOPASSWD: /bin/systemctl stop renfield-satellite.service
+<satellite_user> ALL=(ALL) NOPASSWD: /bin/systemctl start renfield-satellite.service
 ```
 
 ## API Endpoints
@@ -202,7 +204,7 @@ Für Entwicklung oder schnelle Updates ohne OTA:
 ./bin/deploy-satellite.sh [hostname] [user]
 
 # Beispiel
-./bin/deploy-satellite.sh satellite-wohnzimmer.local evdb
+./bin/deploy-satellite.sh satellite-livingroom.local pi
 ```
 
 ## Fehlerbehebung

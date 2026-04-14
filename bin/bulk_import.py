@@ -11,9 +11,12 @@ Verwendung:
     python bin/bulk_import.py --dir ~/Downloads/Docs --verify-ssl   # erzwingt SSL-Verifikation
 
 Klassifizierungsreihenfolge:
-    1. Dateiname: enthält PRIVAT / XIDRA / SSV / VP / VuP  →  KB-Name aus Regeln
-    2. Adressat:  Text der 1. Seite (PDF) auf bekannte Muster prüfen
+    1. Dateiname: enthält ein konfigurables Schlüsselwort (z.B. PERSONAL / WORK)
+    2. Adressat:  Text der 1. Seite (PDF) auf konfigurierte Regex-Muster prüfen
     3. Fallback:  unclassified — wird separat gemeldet (kein Upload)
+
+Die eingebauten Default-Regeln sind nur Platzhalter. Für echten Gebrauch eine
+`config/import_rules.yaml` anlegen (siehe `config/import_rules.example.yaml`).
 
 Duplikate (HTTP 409) werden als "bereits importiert" gewertet, nicht als Fehler.
 """
@@ -42,22 +45,18 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 DEFAULT_CONFIG: dict = {
+    # Platzhalter-Defaults — für echten Gebrauch eine eigene
+    # `config/import_rules.yaml` anlegen (siehe `config/import_rules.example.yaml`).
+    #
     # Groß-/Kleinschreibung wird ignoriert; Reihenfolge bestimmt Priorität.
     "filename_patterns": {
-        "PRIVAT": "privat",
-        "XIDRA": "xidra",
-        "SSV": "ssv",
-        "VuP": "VuP",
-        "VP": "VuP",
+        "PERSONAL": "personal",
+        "WORK": "work",
+        "FINANCE": "finance",
     },
     # Regex gegen den extrahierten Text der 1. Seite (nur PDF).
-    "addressee_patterns": {
-        r"Eduard[.\s]+van\s+den\s+Bongard": "privat",
-        r"Jutta[.\s]+van\s+den\s+Bongard": "privat",
-        r"XIDRA": "xidra",
-        r"SSV.{0,30}Kleinenbroich": "ssv",
-        r"Schiess-Sport": "ssv",
-    },
+    # Leer per Default — Nutzer definieren eigene Muster in der Config-Datei.
+    "addressee_patterns": {},
     # KB-Name für nicht klassifizierte Dateien (None = überspringen, nur melden).
     "fallback_kb": None,
     # PDFs größer als dieser Wert (in KB) bekommen automatisch force_ocr=true.

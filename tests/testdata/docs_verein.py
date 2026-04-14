@@ -144,7 +144,7 @@ Nr|Name|Abteilung|Beitrittsdatum|Beitrag|Status
 6|Markus Lehmann|Turnen|15.08.2010|120 Euro|Aktiv
 7|Sandra Voss|Fitness|01.03.2019|120 Euro|Aktiv
 8|Peter Müller|Volleyball|01.04.2021|120 Euro|Aktiv
-9|Maria Bongard|Fitness|01.10.2020|120 Euro|Aktiv
+9|Maria Musterfrau|Fitness|01.10.2020|120 Euro|Aktiv
 10|Thomas Schmidt|Leichtathletik|01.06.2008|120 Euro|Aktiv
 
 Gesamtmitglieder|285

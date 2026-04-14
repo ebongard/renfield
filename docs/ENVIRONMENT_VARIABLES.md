@@ -932,7 +932,7 @@ CALENDAR_ENABLED=true
 | `N8N_API_KEY` | n8n API Key | `secrets/n8n_api_key` |
 | `HOME_ASSISTANT_TOKEN` | HA Long-Lived Access Token | `secrets/home_assistant_token` |
 | `PAPERLESS_API_TOKEN` | Paperless-NGX API Token | `secrets/paperless_api_token` |
-| `MAIL_REGFISH_PASSWORD` | Email IMAP/SMTP Passwort | `secrets/mail_regfish_password` |
+| `MAIL_PRIMARY_PASSWORD` | Email IMAP/SMTP Passwort (primary mail account from `mail_accounts.yaml`) | `secrets/mail_primary_password` |
 
 ### MCP-Server URLs (nicht-sensitiv, in .env)
 
@@ -992,30 +992,6 @@ EVOLUTION_API_URL=http://evolution-api:8080
 - Nutzt bestehende PostgreSQL (separate DB `evolution`) und Redis (Index 3)
 - Nur lokal erreichbar (127.0.0.1:8080), n8n greift via Docker-Netzwerk zu
 - Volume `evolution_instances` fuer WhatsApp-Session-Daten
-
----
-
-### Gaststaette Schellen (Reservierung → WhatsApp)
-
-n8n-Workflow fuer automatische Reservierungserkennung per E-Mail mit WhatsApp-Benachrichtigung.
-
-```bash
-# IMAP/SMTP Passwort fuer info@gaststaette-schellen.de (Regfish)
-MAIL_SCHELLEN_PASSWORD=
-
-# WhatsApp-Nummer der Empfaengerin (Format: 49XXXXXXXXX, ohne +)
-WHATSAPP_RAMONA_NUMBER=
-```
-
-**E-Mail-Konto:** Konfiguriert in `config/mail_accounts.yaml` (Name: `schellen`).
-
-**n8n-Workflow:** `docs/n8n-workflows/schellen-reservation-whatsapp.json` — importieren und IMAP/SMTP Credentials anlegen.
-
-**Ablauf:**
-1. IMAP Trigger pollt `info@gaststaette-schellen.de` auf neue E-Mails
-2. Ollama klassifiziert: Reservierung oder nicht?
-3. Bei Reservierung: WhatsApp an Ramona mit extrahierten Details
-4. Wenn keine Telefonnummer: automatische Rueckfrage-Mail an Absender
 
 ---
 
@@ -1270,7 +1246,7 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # JELLYFIN_BASE_URL=...       → secrets/jellyfin_base_url
 # N8N_API_KEY=...             → secrets/n8n_api_key
 # PAPERLESS_API_TOKEN=...     → secrets/paperless_api_token
-# MAIL_REGFISH_PASSWORD=...   → secrets/mail_regfish_password
+# MAIL_PRIMARY_PASSWORD=...   → secrets/mail_primary_password
 
 ```
 

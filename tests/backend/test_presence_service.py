@@ -947,43 +947,43 @@ class TestFindUserByName:
     """Test find_user_by_name() — case-insensitive name lookup."""
 
     def test_find_by_username(self, service):
-        service._user_names = {1: "evdb", 2: "alice"}
-        assert service.find_user_by_name("evdb") == 1
+        service._user_names = {1: "eve", 2: "alice"}
+        assert service.find_user_by_name("eve") == 1
         assert service.find_user_by_name("alice") == 2
 
     def test_find_by_username_case_insensitive(self, service):
-        service._user_names = {1: "evdb"}
-        assert service.find_user_by_name("EVDB") == 1
-        assert service.find_user_by_name("Evdb") == 1
+        service._user_names = {1: "eve"}
+        assert service.find_user_by_name("EVE") == 1
+        assert service.find_user_by_name("Eve") == 1
 
     def test_find_by_first_name(self, service):
-        service._user_names = {1: "evdb"}
-        service._user_first_names = {1: "Edi"}
-        assert service.find_user_by_name("Edi") == 1
-        assert service.find_user_by_name("edi") == 1
+        service._user_names = {1: "eve"}
+        service._user_first_names = {1: "Evelyn"}
+        assert service.find_user_by_name("Evelyn") == 1
+        assert service.find_user_by_name("evelyn") == 1
 
     def test_find_by_last_name(self, service):
-        service._user_names = {1: "evdb"}
+        service._user_names = {1: "eve"}
         service._user_last_names = {1: "van der Berg"}
         assert service.find_user_by_name("van der Berg") == 1
         assert service.find_user_by_name("VAN DER BERG") == 1
 
     def test_find_not_found(self, service):
-        service._user_names = {1: "evdb"}
-        service._user_first_names = {1: "Edi"}
+        service._user_names = {1: "eve"}
+        service._user_first_names = {1: "Evelyn"}
         assert service.find_user_by_name("nobody") is None
 
     def test_find_empty_input(self, service):
-        service._user_names = {1: "evdb"}
+        service._user_names = {1: "eve"}
         assert service.find_user_by_name("") is None
         assert service.find_user_by_name("   ") is None
 
     def test_username_takes_priority_over_first_name(self, service):
         """Username match returns first, even if first_name also matches another user."""
-        service._user_names = {1: "Edi", 2: "bob"}
-        service._user_first_names = {2: "Edi"}
-        # "Edi" matches username of user 1 first
-        assert service.find_user_by_name("Edi") == 1
+        service._user_names = {1: "Evelyn", 2: "bob"}
+        service._user_first_names = {2: "Evelyn"}
+        # "Evelyn" matches username of user 1 first
+        assert service.find_user_by_name("Evelyn") == 1
 
 
 @pytest.mark.unit
@@ -991,13 +991,13 @@ class TestGetDisplayName:
     """Test get_display_name() — first_name > username."""
 
     def test_returns_first_name_when_available(self, service):
-        service._user_names = {1: "evdb"}
-        service._user_first_names = {1: "Edi"}
-        assert service.get_display_name(1) == "Edi"
+        service._user_names = {1: "eve"}
+        service._user_first_names = {1: "Evelyn"}
+        assert service.get_display_name(1) == "Evelyn"
 
     def test_falls_back_to_username(self, service):
-        service._user_names = {1: "evdb"}
-        assert service.get_display_name(1) == "evdb"
+        service._user_names = {1: "eve"}
+        assert service.get_display_name(1) == "eve"
 
     def test_falls_back_to_user_id(self, service):
         assert service.get_display_name(99) == "User 99"

@@ -157,7 +157,7 @@ Betreff: Urlaubsantrag 05.-19.08.2024
 
 Liebe Frau Hoffmann,
 
-hiermit beantrage ich Erholungsurlaub für den Zeitraum 05.08.2024 bis 19.08.2024 (10 Arbeitstage). In dieser Zeit bin ich mit meiner Partnerin Maria Bongard auf Mallorca. Im Notfall bin ich per Email erreichbar, Vertretung übernimmt Thomas Krüger.
+hiermit beantrage ich Erholungsurlaub für den Zeitraum 05.08.2024 bis 19.08.2024 (10 Arbeitstage). In dieser Zeit bin ich mit meiner Partnerin Maria Musterfrau auf Mallorca. Im Notfall bin ich per Email erreichbar, Vertretung übernimmt Thomas Krüger.
 
 Resturlaub aktuell: 22 Tage. Nach dem beantragten Urlaub: 12 Tage.
 

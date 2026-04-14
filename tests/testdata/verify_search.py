@@ -79,10 +79,10 @@ SEARCH_TESTS = [
         ["Weber"],
     ),
     (
-        "Maria Bongard Mallorca Reise",
+        "Maria Musterfrau Mallorca Reise",
         2,
         ["reisebuchung_mallorca"],
-        ["Mallorca", "Maria Bongard"],
+        ["Mallorca", "Maria Musterfrau"],
     ),
     (
         "Steuerbescheid Erstattung 2023",

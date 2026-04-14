@@ -835,7 +835,7 @@ class TestEntityValidation:
 
     @pytest.mark.unit
     def test_valid_person_name(self):
-        assert KnowledgeGraphService._is_valid_entity("Eduard van den Bongard", "person")
+        assert KnowledgeGraphService._is_valid_entity("Anna von Beispiel", "person")
 
     @pytest.mark.unit
     def test_valid_organization(self):
@@ -1074,7 +1074,7 @@ class TestEntityValidationInExtraction:
         llm_response = MagicMock()
         llm_response.message.content = '''{
             "entities": [
-                {"name": "Eduard van den Bongard", "type": "person"},
+                {"name": "Anna von Beispiel", "type": "person"},
                 {"name": "F R E S E N", "type": "organization"},
                 {"name": "DE811127597", "type": "thing"},
                 {"name": "www.shell.de/effizienz", "type": "organization"},
@@ -1096,10 +1096,10 @@ class TestEntityValidationInExtraction:
             "Test message", "Test response", user_id=None,
         )
 
-        # Only "Eduard van den Bongard" and "Berlin" should pass
+        # Only "Anna von Beispiel" and "Berlin" should pass
         assert len(entities) == 2
         names = {e.name for e in entities}
-        assert "Eduard van den Bongard" in names
+        assert "Anna von Beispiel" in names
         assert "Berlin" in names
         assert "F R E S E N" not in names
         assert "DE811127597" not in names
@@ -1149,17 +1149,17 @@ class TestQueryEntityExtraction:
     async def test_extract_query_entities_returns_names(self, kg_service, db_session):
         """LLM returns entity names from a query."""
         llm_response = MagicMock()
-        llm_response.message.content = '["Eduard van den Bongard", "Krefeld"]'
+        llm_response.message.content = '["Anna von Beispiel", "Krefeld"]'
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
         kg_service._ollama_client = mock_client
 
         result = await kg_service._extract_query_entities(
-            "Was weiss ich über Eduard van den Bongard aus Krefeld?"
+            "Was weiss ich über Anna von Beispiel aus Krefeld?"
         )
 
-        assert result == ["Eduard van den Bongard", "Krefeld"]
+        assert result == ["Anna von Beispiel", "Krefeld"]
 
     @pytest.mark.unit
     async def test_extract_query_entities_empty_on_no_entities(self, kg_service, db_session):
@@ -1190,15 +1190,15 @@ class TestQueryEntityExtraction:
     async def test_extract_query_entities_handles_markdown_wrapped(self, kg_service, db_session):
         """Markdown-wrapped JSON array is parsed correctly."""
         llm_response = MagicMock()
-        llm_response.message.content = '```json\n["Eduard"]\n```'
+        llm_response.message.content = '```json\n["Anton"]\n```'
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
         kg_service._ollama_client = mock_client
 
-        result = await kg_service._extract_query_entities("Wer ist Eduard?")
+        result = await kg_service._extract_query_entities("Wer ist Anton?")
 
-        assert result == ["Eduard"]
+        assert result == ["Anton"]
 
     @pytest.mark.unit
     async def test_extract_query_entities_filters_non_strings(self, kg_service, db_session):
@@ -1217,9 +1217,9 @@ class TestQueryEntityExtraction:
     @pytest.mark.unit
     async def test_get_relevant_context_uses_extracted_entities(self, kg_service, db_session):
         """get_relevant_context embeds extracted entity names, not the full query."""
-        kg_service._extract_query_entities = AsyncMock(return_value=["Eduard"])
+        kg_service._extract_query_entities = AsyncMock(return_value=["Anton"])
         # _get_embedding returns None (mocked in fixture) → no pgvector query
-        # We just verify _get_embedding is called with "Eduard" not the full query
+        # We just verify _get_embedding is called with "Anton" not the full query
 
         embed_calls = []
         original_get_embedding = kg_service._get_embedding
@@ -1231,11 +1231,11 @@ class TestQueryEntityExtraction:
         kg_service._get_embedding = tracking_embed
 
         await kg_service.get_relevant_context(
-            "Was weiss ich über Eduard?", user_id=None,
+            "Was weiss ich über Anton?", user_id=None,
         )
 
-        # Should have embedded "Eduard", not the full query
-        assert embed_calls == ["Eduard"]
+        # Should have embedded "Anton", not the full query
+        assert embed_calls == ["Anton"]
 
     @pytest.mark.unit
     async def test_get_relevant_context_falls_back_to_full_query(self, kg_service, db_session):

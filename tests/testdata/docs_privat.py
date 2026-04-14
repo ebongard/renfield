@@ -6,7 +6,7 @@ DOCS = [
      """Mietvertrag
 
 Vermieter: Immo Düsseldorf GmbH, Königsallee 88, 40212 Düsseldorf
-Mieter: Erik van den Berg und Maria Bongard, Am Stirkenbend 20, 40489 Düsseldorf
+Mieter: Erik van den Berg und Maria Musterfrau, Am Stirkenbend 20, 40489 Düsseldorf
 
 Mietobjekt: 3-Zimmer-Wohnung, Am Stirkenbend 20, 1. OG links, 40489 Düsseldorf-Angermund. Wohnfläche: 78 qm.
 
@@ -21,13 +21,13 @@ Kaution: 2.850,00 Euro (3 Monats-Kaltmieten), hinterlegt auf Kautionskonto bei S
 
 Haustiere: Kleintierhaltung erlaubt, Hunde und Katzen nach Absprache.
 
-Unterschrieben am 20.01.2020 von Hans-Peter Krause (Geschäftsführer Immo Düsseldorf GmbH), Erik van den Berg und Maria Bongard."""),
+Unterschrieben am 20.01.2020 von Hans-Peter Krause (Geschäftsführer Immo Düsseldorf GmbH), Erik van den Berg und Maria Musterfrau."""),
 
     # 37
     ("nebenkostenabrechnung_2023.pdf", "Nebenkostenabrechnung 2023",
      """Immo Düsseldorf GmbH - Nebenkostenabrechnung
 
-Mieter: Erik van den Berg / Maria Bongard
+Mieter: Erik van den Berg / Maria Musterfrau
 Objekt: Am Stirkenbend 20, 1. OG links, 40489 Düsseldorf
 Abrechnungszeitraum: 01.01.2023 bis 31.12.2023
 
@@ -125,7 +125,7 @@ Riehler Straße 190, 50735 Köln
 Versicherungsschein - Privathaftpflichtversicherung
 
 Versicherungsnehmer: Erik van den Berg, Am Stirkenbend 20, 40489 Düsseldorf
-Mitversicherte Person: Maria Bongard (Lebenspartnerin, gleicher Haushalt)
+Mitversicherte Person: Maria Musterfrau (Lebenspartnerin, gleicher Haushalt)
 
 Versicherungs-Nr.: HP-2021-445566
 Versicherungsbeginn: 01.04.2021
@@ -165,7 +165,7 @@ Zahlweise: Jährlich per Bankeinzug
 
 Stellplatz: Garage Am Stirkenbend 20
 Jährliche Fahrleistung: 12.000 km
-Nutzer: Versicherungsnehmer und Maria Bongard
+Nutzer: Versicherungsnehmer und Maria Musterfrau
 
 Betreuer: Agentur Schneider, Düsseldorf-Angermund"""),
 
@@ -400,7 +400,7 @@ Prüfgebühr: 89,50 Euro"""),
 Buchungsnummer: TUI-2024-DE-887744
 Buchungsdatum: 15.03.2024
 
-Reisende: Erik van den Berg und Maria Bongard
+Reisende: Erik van den Berg und Maria Musterfrau
 
 Reiseziel: Mallorca, Spanien
 Hotel: Sol y Mar Beach Resort, Palma de Mallorca (4 Sterne)
@@ -425,7 +425,7 @@ Buchungsnummer: BC-2024-9912345
 Buchungsdatum: 05.09.2024
 
 Gast: Erik van den Berg
-Mitreisende: Maria Bongard
+Mitreisende: Maria Musterfrau
 
 Hotel: Hotel Sacher Wien, Philharmoniker Str. 4, 1010 Wien
 Zimmer: Deluxe Doppelzimmer
@@ -444,8 +444,8 @@ Flugkosten: 312,00 Euro (2 Personen, Hin+Rück)
 Geplant: Schloss Schönbrunn, Stephansdom, Naschmarkt, Staatsoper"""),
 
     # 54
-    ("email_maria_einkaufsliste.txt", "Email Maria Bongard Einkaufsliste",
-     """Von: Maria Bongard <maria.bongard@gmail.com>
+    ("email_maria_shoppinglist.txt", "Email Maria Musterfrau Einkaufsliste",
+     """Von: Maria Musterfrau <maria.musterfrau@example.com>
 An: Erik van den Berg <erik.vandenberg@gmail.com>
 Datum: 08.11.2024, 12:15
 Betreff: Einkaufsliste Geburtstagsfeier Samstag
@@ -477,8 +477,8 @@ Kannst du nach der Arbeit bei REWE vorbeischauen?
 Bussi, Maria"""),
 
     # 55
-    ("email_maria_handwerker.txt", "Email Maria Bongard Handwerker Badezimmer",
-     """Von: Maria Bongard <maria.bongard@gmail.com>
+    ("email_maria_handwerker.txt", "Email Maria Musterfrau Handwerker Badezimmer",
+     """Von: Maria Musterfrau <maria.musterfrau@example.com>
 An: Erik van den Berg <erik.vandenberg@gmail.com>
 Datum: 22.01.2025, 18:30
 Betreff: Re: Handwerker Badezimmer
@@ -542,7 +542,7 @@ LG Maria"""),
 **Garantie:** 2 Jahre Herstellergarantie + AppleCare+ bis 05.09.2027
 **Seriennummer MacBook:** FVFH4K8NQ6
 
-*Hinweis: Privatkauf, keine betriebliche Nutzung. Gerät für Maria Bongard als Geburtstagsgeschenk.*"""),
+*Hinweis: Privatkauf, keine betriebliche Nutzung. Gerät für Maria Musterfrau als Geburtstagsgeschenk.*"""),
 
     # 58
     ("kontoauszug_sparkasse_2024_01.xlsx", "Kontoauszug Sparkasse Januar 2024",
@@ -596,7 +596,7 @@ Stadt Düsseldorf, Bürgerbüro Angermund"""),
 
     # 60
     ("haushaltsbuch_2024.xlsx", "Haushaltsbuch 2024",
-     """Haushaltsbuch 2024|Erik van den Berg & Maria Bongard
+     """Haushaltsbuch 2024|Erik van den Berg & Maria Musterfrau
 Monat|Miete|Strom/Gas|Internet|Versicherung|Lebensmittel|Transport|Freizeit|Sonstiges|Gesamt
 Januar|1.250|232|60|72|420|89|150|85|2.358
 Februar|1.250|232|60|72|380|95|200|120|2.409
@@ -711,7 +711,7 @@ seit dem 02.01.2025 funktioniert die Heizung im Schlafzimmer unserer Wohnung (Am
 
 Bei den aktuellen Außentemperaturen von -5°C ist dies nicht tragbar. Wir bitten um schnellstmögliche Reparatur.
 
-Erreichbarkeit: Mo-Fr 09:00-18:00 unter 0176-4435567 oder per Email. Meine Partnerin Maria Bongard ist ebenfalls berechtigt, den Handwerker in die Wohnung zu lassen.
+Erreichbarkeit: Mo-Fr 09:00-18:00 unter 0176-4435567 oder per Email. Meine Partnerin Maria Musterfrau ist ebenfalls berechtigt, den Handwerker in die Wohnung zu lassen.
 
 Mietvertrag: Seit 15.02.2020, Mieter-Nr. IMD-2020-0815
 
@@ -719,11 +719,11 @@ Mit freundlichen Grüßen,
 Erik van den Berg"""),
 
     # 65
-    ("vollmacht_maria_bongard.docx", "Vorsorgevollmacht Maria Bongard",
+    ("vollmacht_maria_musterfrau.docx", "Vorsorgevollmacht Maria Musterfrau",
      """Gegenseitige Vorsorgevollmacht
 
 Vollmachtgeber 1: Erik van den Berg, geb. 12.05.1989, Am Stirkenbend 20, 40489 Düsseldorf
-Vollmachtgeber 2: Maria Bongard, geb. 15.11.1990, Am Stirkenbend 20, 40489 Düsseldorf
+Vollmachtgeber 2: Maria Musterfrau, geb. 15.11.1990, Am Stirkenbend 20, 40489 Düsseldorf
 
 Hiermit erteilen sich die Vollmachtgeber gegenseitig Vorsorgevollmacht für den Fall, dass sie aufgrund von Krankheit, Unfall oder Alter ihre Angelegenheiten nicht mehr selbst regeln können.
 
@@ -740,7 +740,7 @@ Diese Vollmacht gilt ab sofort und über den Tod hinaus.
 Erstellt am: 20.06.2023 in Düsseldorf
 Beglaubigt durch: Notar Dr. Wilhelm Hartmann, Düsseldorf
 
-Unterschriften: Erik van den Berg, Maria Bongard"""),
+Unterschriften: Erik van den Berg, Maria Musterfrau"""),
 
     # 66
     ("zahnarzt_rechnung_2024.pdf", "Zahnarztrechnung Dr. Petersen 2024",

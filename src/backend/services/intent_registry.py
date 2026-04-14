@@ -103,8 +103,8 @@ PRESENCE_INTENTS = IntegrationIntents(
             description_de="Aktuellen oder letzten bekannten Aufenthaltsort eines Benutzers abfragen",
             description_en="Get current or last known room location of a user",
             parameters=[IntentParam("user_name", "Name des Benutzers (Username, Vorname oder Nachname)", required=True)],
-            examples_de=["Wo ist Edi?", "In welchem Raum ist evdb?"],
-            examples_en=["Where is Edi?", "Which room is evdb in?"],
+            examples_de=["Wo ist Alex?", "In welchem Raum ist Alex?"],
+            examples_en=["Where is Alex?", "Which room is Alex in?"],
         ),
         IntentDef(
             name="internal.get_all_presence",

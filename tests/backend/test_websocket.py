@@ -534,8 +534,8 @@ class TestBuildActionSummary:
         action_result = {
             "success": True,
             "data": [
-                {"id": 123, "title": "Rechnung regfish 2024-01", "created": "2024-01-15"},
-                {"id": 456, "title": "Rechnung regfish 2023-12", "created": "2023-12-01"},
+                {"id": 123, "title": "Rechnung Telekom 2024-01", "created": "2024-01-15"},
+                {"id": 456, "title": "Rechnung Telekom 2023-12", "created": "2023-12-01"},
             ]
         }
 
@@ -544,7 +544,7 @@ class TestBuildActionSummary:
         assert "mcp.paperless.search_documents" in summary
         assert "2 Ergebnisse" in summary
         assert "id=123" in summary
-        assert "Rechnung regfish 2024-01" in summary
+        assert "Rechnung Telekom 2024-01" in summary
         assert "id=456" in summary
 
     @pytest.mark.unit
@@ -630,8 +630,8 @@ class TestBuildActionSummary:
         inner_data = {
             "count": 2,
             "results": [
-                {"id": 123, "title": "Rechnung regfish 2024-01", "created": "2024-01-15"},
-                {"id": 456, "title": "Rechnung regfish 2023-12", "created": "2023-12-01"},
+                {"id": 123, "title": "Rechnung Telekom 2024-01", "created": "2024-01-15"},
+                {"id": 456, "title": "Rechnung Telekom 2023-12", "created": "2023-12-01"},
             ]
         }
         action_result = {
@@ -644,7 +644,7 @@ class TestBuildActionSummary:
         assert "mcp.paperless.search_documents" in summary
         assert "2 Ergebnisse" in summary
         assert "id=123" in summary
-        assert "Rechnung regfish 2024-01" in summary
+        assert "Rechnung Telekom 2024-01" in summary
         assert "id=456" in summary
 
     @pytest.mark.unit

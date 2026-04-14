@@ -211,7 +211,7 @@ class Settings(BaseSettings):
     chat_upload_default_kb_name: str = "Chat Uploads"
     chat_upload_retention_days: int = Field(default=30, ge=1, le=365)
     chat_upload_cleanup_enabled: bool = False
-    chat_upload_email_account: str = "regfish"
+    chat_upload_email_account: str = "primary"
 
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
@@ -247,7 +247,7 @@ class Settings(BaseSettings):
 
     # Email MCP
     email_mcp_enabled: bool = False
-    mail_regfish_password: SecretStr | None = None
+    mail_primary_password: SecretStr | None = None
 
     # SearXNG
     searxng_api_url: str | None = None

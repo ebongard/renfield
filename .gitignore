@@ -93,3 +93,7 @@ kg-graph-*.png
 tasks/
 .mcp.json
 .gstack/
+
+# Personal config overrides (use the .example.yaml as a template)
+config/mail_accounts.yaml
+config/import_rules.yaml

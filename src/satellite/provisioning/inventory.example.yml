@@ -1,0 +1,21 @@
+---
+# Example Ansible inventory for Renfield satellites.
+# Copy this file to `inventory.yml` and edit for your setup.
+# The real `inventory.yml` is gitignored so personal hostnames and IPs
+# never end up in the repository.
+#
+# Default SSH user on Raspberry Pi OS is `pi`. Change to match your image.
+
+all:
+  children:
+    satellites:
+      hosts:
+        satellite-livingroom:
+          ansible_host: satellite-livingroom.local
+          ansible_user: pi
+        satellite-kitchen:
+          ansible_host: satellite-kitchen.local
+          ansible_user: pi
+        # satellite-bedroom:
+        #   ansible_host: 192.168.1.50
+        #   ansible_user: pi

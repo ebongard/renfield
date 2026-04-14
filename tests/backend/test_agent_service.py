@@ -98,7 +98,7 @@ class TestParseAgentJson:
         raw = json.dumps({
             "action": "mcp.email.send_email",
             "parameters": {
-                "account": "regfish",
+                "account": "primary",
                 "to": "test@example.com",
                 "subject": "Invoices",
                 "body": "Here are your invoices.",
@@ -1391,13 +1391,13 @@ class TestRecoverSendEmail:
     def test_recover_truncated_json(self):
         """Should extract basic fields from truncated send_email response."""
         context = AgentContext(original_message="test")
-        truncated = '{"action":"mcp.email.send_email","parameters":{"account":"regfish","to":"a@b.com","subject":"Invoices","body":"Here are your invoices","attachments":[{"filename":"doc.pdf","content_base64":"JVBERi0xLjcK...'
+        truncated = '{"action":"mcp.email.send_email","parameters":{"account":"primary","to":"a@b.com","subject":"Invoices","body":"Here are your invoices","attachments":[{"filename":"doc.pdf","content_base64":"JVBERi0xLjcK...'
         result = _recover_send_email(truncated, context)
         assert result is not None
         assert result["action"] == "mcp.email.send_email"
         assert result["parameters"]["to"] == "a@b.com"
         assert result["parameters"]["subject"] == "Invoices"
-        assert result["parameters"]["account"] == "regfish"
+        assert result["parameters"]["account"] == "primary"
 
     @pytest.mark.unit
     def test_no_send_email_returns_none(self):

@@ -772,11 +772,11 @@ class TestGetUserLocation:
         """User exists but has no presence data returns unknown status."""
         mock_presence_service = MagicMock()
         mock_presence_service.find_user_by_name.return_value = 1
-        mock_presence_service.get_display_name.return_value = "evdb"
+        mock_presence_service.get_display_name.return_value = "eve"
         mock_presence_service.get_user_presence.return_value = None
 
         with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
-            result = await internal_tools._get_user_location({"user_name": "evdb"})
+            result = await internal_tools._get_user_location({"user_name": "eve"})
 
         assert result["success"] is True
         assert result["data"]["status"] == "unknown"
