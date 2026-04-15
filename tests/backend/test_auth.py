@@ -487,6 +487,37 @@ class TestAuthAPIDisabled:
         # Auth is disabled by default in tests
         assert "auth_enabled" in data
 
+    async def test_get_auth_status_is_public_when_auth_enabled(self):
+        """GET /api/auth/status must be reachable without a token even
+        when auth is ENABLED — the frontend calls it before login to
+        decide whether to show a login page. Previously the endpoint
+        depended on `get_current_user`, which raises 401 when auth is
+        on and no token is supplied. The contract is: always return
+        `auth_enabled`, return the user only if the caller already
+        has a valid token.
+
+        Invokes the route handler directly instead of through a
+        FastAPI client so the test doesn't need the `async_client`
+        fixture (which can't build an in-memory SQLite DB for the
+        full schema because of the pgvector/TSVECTOR columns in
+        document_chunks). The endpoint's unauthenticated path does
+        not touch the DB, so bypassing the client is safe.
+        """
+        from api.routes.auth import get_auth_status
+        from utils.config import settings
+
+        original = settings.auth_enabled
+        settings.auth_enabled = True
+        try:
+            response = await get_auth_status(user=None)
+            assert response.auth_enabled is True, (
+                f"expected auth_enabled=True, got {response.auth_enabled}"
+            )
+            assert response.authenticated is False
+            assert response.user is None
+        finally:
+            settings.auth_enabled = original
+
     async def test_list_permissions(self, async_client):
         """Test GET /api/auth/permissions returns all permissions"""
         response = await async_client.get("/api/auth/permissions")

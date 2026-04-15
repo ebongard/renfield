@@ -26,6 +26,7 @@ from services.auth_service import (
     create_user,
     decode_token,
     get_current_user,
+    get_optional_user,
     get_role_by_name,
     get_user_by_id,
     oauth2_scheme,
@@ -378,13 +379,18 @@ async def logout(
 
 @router.get("/status", response_model=AuthStatusResponse)
 async def get_auth_status(
-    user: User | None = Depends(get_current_user)
+    user: User | None = Depends(get_optional_user)
 ):
     """
     Get authentication status and settings.
 
     Returns whether auth is enabled, if user is authenticated, etc.
-    Useful for frontend to determine what to show.
+    Useful for frontend to determine what to show. This endpoint MUST
+    be reachable without credentials — the frontend calls it before
+    the user has logged in, precisely to decide whether to show a
+    login page. Depends on ``get_optional_user`` (returns None when
+    no token is present) instead of ``get_current_user`` (which
+    raises 401 when auth is enabled but no token is supplied).
     """
     user_response = None
     if user:
