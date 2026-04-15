@@ -39,7 +39,7 @@ def _patch_resolve_deps(mock_room_service, mock_routing_service=None):
     # Ensure modules exist in sys.modules so patch() can resolve them.
     # The fake modules may not have the target attributes, so use create=True.
     _ensure_module = []
-    for mod_name in ["services.database", "services.room_service", "services.output_routing_service"]:
+    for mod_name in ["services.database", "ha_glue.services.room_service", "ha_glue.services.output_routing_service"]:
         if mod_name not in sys.modules:
             fake = ModuleType(mod_name)
             sys.modules[mod_name] = fake
@@ -49,8 +49,8 @@ def _patch_resolve_deps(mock_room_service, mock_routing_service=None):
     # top of the try block, even if the code returns before using them all.
     patches = [
         patch("services.database.AsyncSessionLocal", mock_session, create=True),
-        patch("services.room_service.RoomService", return_value=mock_room_service, create=True),
-        patch("services.output_routing_service.OutputRoutingService",
+        patch("ha_glue.services.room_service.RoomService", return_value=mock_room_service, create=True),
+        patch("ha_glue.services.output_routing_service.OutputRoutingService",
               return_value=mock_routing_service or MagicMock(), create=True),
     ]
 
@@ -334,7 +334,7 @@ class TestPlayInRoom:
         mock_ha_client.call_service = AsyncMock(return_value=True)
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/universal",
                 "room_name": "Arbeitszimmer",
@@ -392,7 +392,7 @@ class TestPlayInRoom:
         mock_ha_client.call_service = AsyncMock(return_value=False)
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/universal",
                 "room_name": "Arbeitszimmer",
@@ -419,7 +419,7 @@ class TestPlayInRoom:
         mock_ha_client.call_service = AsyncMock(side_effect=ConnectionError("HA unreachable"))
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/universal",
                 "room_name": "Arbeitszimmer",
@@ -491,7 +491,7 @@ class TestPlayInRoom:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=busy_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc/universal",
                 "room_name": "Arbeitszimmer",
@@ -520,7 +520,7 @@ class TestPlayInRoom:
         mock_ha_client.call_service = AsyncMock(return_value=True)
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._play_in_room({
                 "media_url": "http://example.com/playlist.m3u",
                 "room_name": "Wohnzimmer",
@@ -560,7 +560,7 @@ class TestPlayInRoom:
         )
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
              patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": static_url,
@@ -595,7 +595,7 @@ class TestPlayInRoom:
         mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
              patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/stream?static=true&api_key=k",
@@ -629,7 +629,7 @@ class TestPlayInRoom:
         mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
              patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/stream?static=true&api_key=k",
@@ -660,7 +660,7 @@ class TestPlayInRoom:
         mock_ha_client.get_state = AsyncMock(return_value={"state": "idle"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
              patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://example.com/audio.mp3",
@@ -743,7 +743,7 @@ class TestGetUserLocation:
     @pytest.mark.unit
     async def test_user_found_in_room(self, internal_tools):
         """User with active presence returns room info."""
-        from services.presence_service import UserPresence
+        from ha_glue.services.presence_service import UserPresence
         import time
 
         mock_presence_service = MagicMock()
@@ -757,7 +757,7 @@ class TestGetUserLocation:
             last_seen=time.time() - 30,
         )
 
-        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+        with patch("ha_glue.services.presence_service.get_presence_service", return_value=mock_presence_service):
             result = await internal_tools._get_user_location({"user_name": "Edi"})
 
         assert result["success"] is True
@@ -775,7 +775,7 @@ class TestGetUserLocation:
         mock_presence_service.get_display_name.return_value = "eve"
         mock_presence_service.get_user_presence.return_value = None
 
-        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+        with patch("ha_glue.services.presence_service.get_presence_service", return_value=mock_presence_service):
             result = await internal_tools._get_user_location({"user_name": "eve"})
 
         assert result["success"] is True
@@ -787,7 +787,7 @@ class TestGetUserLocation:
         mock_presence_service = MagicMock()
         mock_presence_service.find_user_by_name.return_value = None
 
-        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+        with patch("ha_glue.services.presence_service.get_presence_service", return_value=mock_presence_service):
             result = await internal_tools._get_user_location({"user_name": "nobody"})
 
         assert result["success"] is False
@@ -818,7 +818,7 @@ class TestGetAllPresence:
     @pytest.mark.unit
     async def test_users_present(self, internal_tools):
         """Returns all currently present users."""
-        from services.presence_service import UserPresence
+        from ha_glue.services.presence_service import UserPresence
         import time
 
         now = time.time()
@@ -829,7 +829,7 @@ class TestGetAllPresence:
         }
         mock_presence_service.get_display_name.side_effect = lambda uid: {1: "Edi", 2: "Alice"}[uid]
 
-        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+        with patch("ha_glue.services.presence_service.get_presence_service", return_value=mock_presence_service):
             result = await internal_tools._get_all_presence({})
 
         assert result["success"] is True
@@ -844,7 +844,7 @@ class TestGetAllPresence:
         mock_presence_service = MagicMock()
         mock_presence_service.get_all_presence.return_value = {}
 
-        with patch("services.presence_service.get_presence_service", return_value=mock_presence_service):
+        with patch("ha_glue.services.presence_service.get_presence_service", return_value=mock_presence_service):
             result = await internal_tools._get_all_presence({})
 
         assert result["success"] is True
@@ -1043,7 +1043,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "stop",
                 "room_name": "Arbeitszimmer",
@@ -1077,7 +1077,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "pause",
                 "room_name": "Wohnzimmer",
@@ -1110,7 +1110,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "resume",
                 "room_name": "Küche",
@@ -1143,7 +1143,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "next",
                 "room_name": "Arbeitszimmer",
@@ -1176,7 +1176,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "previous",
                 "room_name": "Arbeitszimmer",
@@ -1254,7 +1254,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "stop",
                 "room_name": "Arbeitszimmer",
@@ -1501,7 +1501,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "volume",
                 "room_name": "Wohnzimmer",
@@ -1629,7 +1629,7 @@ class TestMediaControl:
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=resolve_result), \
-             patch("integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
             result = await internal_tools._media_control({
                 "action": "volume",
                 "room_name": "Wohnzimmer",

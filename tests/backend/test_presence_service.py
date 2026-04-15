@@ -13,7 +13,7 @@ with patch("utils.config.settings") as mock_settings:
     mock_settings.presence_stale_timeout = 120
     mock_settings.presence_hysteresis_scans = 2
     mock_settings.presence_rssi_threshold = -80
-    from services.presence_service import PresenceService
+    from ha_glue.services.presence_service import PresenceService
 
 
 @pytest.fixture

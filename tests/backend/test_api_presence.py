@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from services.presence_service import PresenceService
+from ha_glue.services.presence_service import PresenceService
 
 
 @pytest.fixture

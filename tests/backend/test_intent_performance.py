@@ -24,20 +24,20 @@ class TestEntityMapCache:
     @pytest.fixture(autouse=True)
     def reset_cache(self):
         """Clear class-level cache before each test."""
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
             HomeAssistantClient._entity_map_cache = None
             HomeAssistantClient._entity_map_cache_time = 0
         yield
 
     @pytest.fixture
     def ha_client(self):
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
             return HomeAssistantClient()
 
     @pytest.mark.unit
@@ -83,7 +83,7 @@ class TestEntityMapCache:
     @pytest.mark.asyncio
     async def test_entity_map_cache_expires(self, ha_client):
         """Cache should expire after TTL."""
-        from integrations.homeassistant import HomeAssistantClient
+        from ha_glue.integrations.homeassistant import HomeAssistantClient
 
         mock_states = [
             {
@@ -109,11 +109,11 @@ class TestEntityMapCache:
     @pytest.mark.asyncio
     async def test_entity_map_cache_shared_across_instances(self):
         """Cache should be shared across HomeAssistantClient instances."""
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
 
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
 
             client1 = HomeAssistantClient()
             client2 = HomeAssistantClient()
@@ -172,7 +172,7 @@ class TestEntityContextScoring:
                 }
             ]
 
-            with patch('integrations.homeassistant.HomeAssistantClient.get_entity_map',
+            with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
                         new_callable=AsyncMock, return_value=mock_entities):
                 result = await service._build_entity_context(
                     "Schalte das Licht im Arbeitszimmer an",
@@ -211,7 +211,7 @@ class TestEntityContextScoring:
                 }
             ]
 
-            with patch('integrations.homeassistant.HomeAssistantClient.get_entity_map',
+            with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
                         new_callable=AsyncMock, return_value=mock_entities):
                 # "Licht" should match light domain
                 result = await service._build_entity_context("Schalte das Licht ein")

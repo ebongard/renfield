@@ -134,7 +134,7 @@ def _mock_lifecycle_modules():
     """Context manager to mock heavy dependencies for lifecycle import."""
     mocks = {
         "services.database": MagicMock(),
-        "services.device_manager": MagicMock(),
+        "ha_glue.services.device_manager": MagicMock(),
         "services.ollama_service": MagicMock(),
         "services.task_queue": MagicMock(),
         "redis": MagicMock(),

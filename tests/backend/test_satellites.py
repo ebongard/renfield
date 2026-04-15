@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from httpx import AsyncClient
 
-from services.satellite_manager import (
+from ha_glue.services.satellite_manager import (
     SatelliteCapabilities,
     SatelliteInfo,
     SatelliteManager,

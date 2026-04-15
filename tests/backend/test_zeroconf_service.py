@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.zeroconf_service import (
+from ha_glue.services.zeroconf_service import (
     SERVICE_NAME,
     SERVICE_TYPE,
     ZeroconfService,
@@ -91,10 +91,10 @@ class TestStartLifecycle:
         mock_async_zc = MagicMock()
         mock_async_zc.async_register_service = AsyncMock()
 
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
-             patch("services.zeroconf_service.ServiceInfo"), \
-             patch("services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
+             patch("ha_glue.services.zeroconf_service.ServiceInfo"), \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
             svc = ZeroconfService(port=8000)
             await svc.start()
 
@@ -105,7 +105,7 @@ class TestStartLifecycle:
     @pytest.mark.asyncio
     async def test_start_skips_when_not_available(self):
         """start() does nothing when zeroconf is not installed."""
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", False):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", False):
             svc = ZeroconfService()
             await svc.start()
 
@@ -118,10 +118,10 @@ class TestStartLifecycle:
         mock_async_zc = MagicMock()
         mock_async_zc.async_register_service = AsyncMock()
 
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
-             patch("services.zeroconf_service.ServiceInfo"), \
-             patch("services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
+             patch("ha_glue.services.zeroconf_service.ServiceInfo"), \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
             svc = ZeroconfService()
             await svc.start()
             mock_async_zc.async_register_service.reset_mock()
@@ -134,8 +134,8 @@ class TestStartLifecycle:
     @pytest.mark.asyncio
     async def test_start_handles_exception(self):
         """start() handles errors gracefully without raising."""
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.get_advertise_address", side_effect=RuntimeError("network error")):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", side_effect=RuntimeError("network error")):
             svc = ZeroconfService()
             await svc.start()  # Should not raise
 
@@ -148,10 +148,10 @@ class TestStartLifecycle:
         mock_async_zc.async_register_service = AsyncMock()
         mock_service_info = MagicMock()
 
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
-             patch("services.zeroconf_service.ServiceInfo", return_value=mock_service_info) as mock_si_cls, \
-             patch("services.zeroconf_service.get_advertise_address", return_value=(None, "renfield.local")):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
+             patch("ha_glue.services.zeroconf_service.ServiceInfo", return_value=mock_service_info) as mock_si_cls, \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", return_value=(None, "renfield.local")):
             svc = ZeroconfService(port=8000)
             await svc.start()
 
@@ -176,10 +176,10 @@ class TestStopLifecycle:
         mock_async_zc.async_unregister_service = AsyncMock()
         mock_async_zc.async_close = AsyncMock()
 
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
-             patch("services.zeroconf_service.ServiceInfo"), \
-             patch("services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
+             patch("ha_glue.services.zeroconf_service.ServiceInfo"), \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
             svc = ZeroconfService()
             await svc.start()
             await svc.stop()
@@ -203,10 +203,10 @@ class TestStopLifecycle:
         mock_async_zc.async_unregister_service = AsyncMock(side_effect=RuntimeError("zc error"))
         mock_async_zc.async_close = AsyncMock()
 
-        with patch("services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
-             patch("services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
-             patch("services.zeroconf_service.ServiceInfo"), \
-             patch("services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
+        with patch("ha_glue.services.zeroconf_service.ZEROCONF_AVAILABLE", True), \
+             patch("ha_glue.services.zeroconf_service.AsyncZeroconf", return_value=mock_async_zc), \
+             patch("ha_glue.services.zeroconf_service.ServiceInfo"), \
+             patch("ha_glue.services.zeroconf_service.get_advertise_address", return_value=("192.168.1.100", None)):
             svc = ZeroconfService()
             await svc.start()
             await svc.stop()  # Should not raise
@@ -263,19 +263,19 @@ class TestSingleton:
 
     def test_get_zeroconf_service_returns_instance(self):
         """get_zeroconf_service returns a ZeroconfService."""
-        with patch("services.zeroconf_service._zeroconf_service", None):
+        with patch("ha_glue.services.zeroconf_service._zeroconf_service", None):
             svc = get_zeroconf_service()
         assert isinstance(svc, ZeroconfService)
 
     def test_get_zeroconf_service_uses_port(self):
         """get_zeroconf_service passes port to constructor."""
-        with patch("services.zeroconf_service._zeroconf_service", None):
+        with patch("ha_glue.services.zeroconf_service._zeroconf_service", None):
             svc = get_zeroconf_service(port=9090)
         assert svc.port == 9090
 
     def test_get_zeroconf_service_returns_same_instance(self):
         """get_zeroconf_service returns singleton."""
-        with patch("services.zeroconf_service._zeroconf_service", None):
+        with patch("ha_glue.services.zeroconf_service._zeroconf_service", None):
             svc1 = get_zeroconf_service()
             svc2 = get_zeroconf_service()
         assert svc1 is svc2

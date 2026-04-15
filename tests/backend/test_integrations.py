@@ -21,11 +21,11 @@ class TestHomeAssistantClient:
     @pytest.fixture
     def ha_client(self):
         """Create HomeAssistantClient with test settings"""
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
             mock_settings.home_assistant_token = "test_token"
 
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
             return HomeAssistantClient()
 
     @pytest.mark.unit
@@ -216,10 +216,10 @@ class TestFrigateClient:
     @pytest.fixture
     def frigate_client(self):
         """Create FrigateClient with test settings"""
-        with patch('integrations.frigate.settings') as mock_settings:
+        with patch('ha_glue.integrations.frigate.settings') as mock_settings:
             mock_settings.frigate_url = "http://frigate.local:5000"
 
-            from integrations.frigate import FrigateClient
+            from ha_glue.integrations.frigate import FrigateClient
             return FrigateClient()
 
     @pytest.mark.unit
@@ -305,11 +305,11 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_ha_client_not_configured(self):
         """Test: HA Client ohne Konfiguration"""
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = None
             mock_settings.home_assistant_token = None
 
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
             client = HomeAssistantClient()
 
             # Should return empty/False without throwing
@@ -319,11 +319,11 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_ha_client_timeout(self):
         """Test: HA Client Timeout"""
-        with patch('integrations.homeassistant.settings') as mock_settings:
+        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
             mock_settings.home_assistant_url = "http://slow.server"
             mock_settings.home_assistant_token = "token"
 
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
             client = HomeAssistantClient()
 
             with patch.object(httpx.AsyncClient, 'get', new_callable=AsyncMock) as mock_get:
@@ -335,10 +335,10 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_frigate_client_not_configured(self):
         """Test: Frigate Client ohne Konfiguration"""
-        with patch('integrations.frigate.settings') as mock_settings:
+        with patch('ha_glue.integrations.frigate.settings') as mock_settings:
             mock_settings.frigate_url = None
 
-            from integrations.frigate import FrigateClient
+            from ha_glue.integrations.frigate import FrigateClient
             client = FrigateClient()
 
             result = await client.get_events()

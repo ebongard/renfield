@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.output_routing_service import (
+from ha_glue.services.output_routing_service import (
     DeviceAvailability,
     OutputDecision,
     OutputRoutingService,
@@ -74,7 +74,7 @@ def mock_ha_client():
 
 @pytest.fixture
 def service(mock_db_session, mock_ha_client):
-    with patch("services.output_routing_service.HomeAssistantClient", return_value=mock_ha_client):
+    with patch("ha_glue.services.output_routing_service.HomeAssistantClient", return_value=mock_ha_client):
         svc = OutputRoutingService(mock_db_session)
     return svc
 
@@ -316,7 +316,7 @@ class TestDeviceAvailabilityChecks:
 
     @pytest.mark.asyncio
     async def test_renfield_device_idle_is_available(self, service):
-        from services.device_manager import DeviceState
+        from ha_glue.services.device_manager import DeviceState
         mock_device = MagicMock()
         mock_device.capabilities.has_speaker = True
         mock_device.state = DeviceState.IDLE
@@ -324,14 +324,14 @@ class TestDeviceAvailabilityChecks:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = mock_device
 
-        with patch("services.device_manager.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.device_manager.get_device_manager", return_value=mock_dm):
             result = await service._check_renfield_device_availability("sat-kitchen")
 
         assert result == DeviceAvailability.AVAILABLE
 
     @pytest.mark.asyncio
     async def test_renfield_device_speaking_is_busy(self, service):
-        from services.device_manager import DeviceState
+        from ha_glue.services.device_manager import DeviceState
         mock_device = MagicMock()
         mock_device.capabilities.has_speaker = True
         mock_device.state = DeviceState.SPEAKING
@@ -339,7 +339,7 @@ class TestDeviceAvailabilityChecks:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = mock_device
 
-        with patch("services.device_manager.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.device_manager.get_device_manager", return_value=mock_dm):
             result = await service._check_renfield_device_availability("sat-kitchen")
 
         assert result == DeviceAvailability.BUSY
@@ -349,7 +349,7 @@ class TestDeviceAvailabilityChecks:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = None
 
-        with patch("services.device_manager.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.device_manager.get_device_manager", return_value=mock_dm):
             result = await service._check_renfield_device_availability("sat-kitchen")
 
         assert result == DeviceAvailability.UNAVAILABLE
@@ -362,7 +362,7 @@ class TestDeviceAvailabilityChecks:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = mock_device
 
-        with patch("services.device_manager.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.device_manager.get_device_manager", return_value=mock_dm):
             result = await service._check_renfield_device_availability("sat-kitchen")
 
         assert result == DeviceAvailability.UNAVAILABLE

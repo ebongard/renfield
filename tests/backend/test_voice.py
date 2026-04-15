@@ -231,7 +231,7 @@ class TestTTSCacheAPI:
     @pytest.mark.integration
     async def test_tts_cache_not_found(self, async_client: AsyncClient):
         """Testet GET /api/voice/tts-cache für nicht-existentes Audio"""
-        with patch('services.audio_output_service.get_audio_output_service') as mock_service:
+        with patch('ha_glue.services.audio_output_service.get_audio_output_service') as mock_service:
             mock_instance = MagicMock()
             mock_instance.get_cached_audio.return_value = None
             mock_service.return_value = mock_instance
@@ -245,7 +245,7 @@ class TestTTSCacheAPI:
         """Testet GET /api/voice/tts-cache mit gecachtem Audio"""
         cached_audio = b'RIFF' + b'\x00' * 100
 
-        with patch('services.audio_output_service.get_audio_output_service') as mock_service:
+        with patch('ha_glue.services.audio_output_service.get_audio_output_service') as mock_service:
             mock_instance = MagicMock()
             mock_instance.get_cached_audio.return_value = cached_audio
             mock_service.return_value = mock_instance

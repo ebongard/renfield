@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.media_follow_service import (
+from ha_glue.services.media_follow_service import (
     MediaFollowService,
     MediaSession,
     MediaType,
@@ -190,7 +190,7 @@ class TestOnUserEnterRoom:
 
         mock_resume = AsyncMock()
         with patch.object(playing_session, "_resume_playback", mock_resume), \
-             patch("services.media_follow_service.settings") as mock_settings:
+             patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             mock_settings.media_follow_resume_delay = 0  # no delay in tests
             await playing_session.on_user_enter_room(
@@ -217,7 +217,7 @@ class TestOnUserEnterRoom:
 
         mock_resume = AsyncMock()
         with patch.object(playing_session, "_resume_playback", mock_resume), \
-             patch("services.media_follow_service.settings") as mock_settings:
+             patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             mock_settings.media_follow_resume_delay = 0
             await playing_session.on_user_enter_room(
@@ -327,7 +327,7 @@ class TestConflictDuringEnter:
         with patch.object(service, "_resume_playback", mock_resume), \
              patch.object(service, "_stop_playback", mock_stop), \
              patch.object(service, "_resolve_conflict", return_value=1), \
-             patch("services.media_follow_service.settings") as mock_settings:
+             patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             mock_settings.media_follow_resume_delay = 0
             await service.on_user_enter_room(
@@ -361,7 +361,7 @@ class TestConflictDuringEnter:
         mock_resume = AsyncMock()
         with patch.object(service, "_resume_playback", mock_resume), \
              patch.object(service, "_resolve_conflict", return_value=2), \
-             patch("services.media_follow_service.settings") as mock_settings:
+             patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             mock_settings.media_follow_resume_delay = 0
             await service.on_user_enter_room(
@@ -415,7 +415,7 @@ class TestSessionExpiry:
         session.state = SessionState.SUSPENDED
         session.suspended_at = time.time() - 700
 
-        with patch("services.media_follow_service.settings") as mock_settings:
+        with patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             service._cleanup_expired_sessions()
 
@@ -430,7 +430,7 @@ class TestSessionExpiry:
         session.state = SessionState.SUSPENDED
         session.suspended_at = time.time() - 100  # Not expired
 
-        with patch("services.media_follow_service.settings") as mock_settings:
+        with patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             service._cleanup_expired_sessions()
 
@@ -438,7 +438,7 @@ class TestSessionExpiry:
 
     def test_cleanup_keeps_playing_sessions(self, playing_session):
         """Playing sessions should never be cleaned up."""
-        with patch("services.media_follow_service.settings") as mock_settings:
+        with patch("ha_glue.services.media_follow_service.settings") as mock_settings:
             mock_settings.media_follow_suspend_timeout = 600.0
             playing_session._cleanup_expired_sessions()
 
@@ -507,7 +507,7 @@ class TestResumeVideoPlayback:
         session.suspended_at = time.time()
 
         mock_result = {"success": True, "message": "Playing"}
-        with patch("services.media_follow_service.settings") as mock_settings, \
+        with patch("ha_glue.services.media_follow_service.settings") as mock_settings, \
              patch("services.internal_tools.InternalToolService._play_video_on_dlna",
                    new_callable=AsyncMock, return_value=mock_result) as mock_play:
             mock_settings.media_follow_resume_delay = 0

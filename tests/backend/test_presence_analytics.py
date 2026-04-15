@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from models.database import PresenceEvent, Role, Room, User
-from services.presence_analytics import (
+from ha_glue.services.presence_analytics import (
     PresenceAnalyticsService,
     _on_enter_room,
 )
@@ -64,7 +64,7 @@ async def _insert_event(db, user_id, room_id, event_type="enter", source="ble",
 class TestHookHandlers:
     async def test_on_enter_room_creates_event(self, db_session):
         """_on_enter_room persists an 'enter' event."""
-        from services.presence_analytics import _persist_event
+        from ha_glue.services.presence_analytics import _persist_event
 
         await _seed_user_and_room(db_session, user_id=1, room_id=10)
 
@@ -93,7 +93,7 @@ class TestHookHandlers:
 
     async def test_on_leave_room_creates_event(self, db_session):
         """_on_leave_room persists a 'leave' event."""
-        from services.presence_analytics import _persist_event
+        from ha_glue.services.presence_analytics import _persist_event
 
         await _seed_user_and_room(db_session, user_id=1, room_id=10)
 

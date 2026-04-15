@@ -21,7 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.audio_output_service import AudioOutputService, get_audio_output_service
+from ha_glue.services.audio_output_service import AudioOutputService, get_audio_output_service
 
 
 def _make_output_device(
@@ -55,8 +55,8 @@ def mock_settings():
 
 @pytest.fixture
 def service(mock_ha_client, mock_settings, tmp_path):
-    with patch("services.audio_output_service.HomeAssistantClient", return_value=mock_ha_client), \
-         patch("services.audio_output_service.settings", mock_settings):
+    with patch("ha_glue.services.audio_output_service.HomeAssistantClient", return_value=mock_ha_client), \
+         patch("ha_glue.services.audio_output_service.settings", mock_settings):
         svc = AudioOutputService()
         # Use tmp_path for cache to avoid filesystem side effects
         svc.TTS_CACHE_DIR = tmp_path
@@ -80,7 +80,7 @@ class TestPlayOnRenfieldDevice:
         mock_dm.get_device.return_value = mock_device
         mock_dm.send_tts_audio = AsyncMock()
 
-        with patch("services.audio_output_service.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.audio_output_service.get_device_manager", return_value=mock_dm):
             result = await service._play_on_renfield_device(
                 audio_bytes=b"fake-audio",
                 device_id="sat-kitchen",
@@ -100,7 +100,7 @@ class TestPlayOnRenfieldDevice:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = None
 
-        with patch("services.audio_output_service.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.audio_output_service.get_device_manager", return_value=mock_dm):
             result = await service._play_on_renfield_device(
                 audio_bytes=b"audio", device_id="sat-gone", session_id="sess-1"
             )
@@ -116,7 +116,7 @@ class TestPlayOnRenfieldDevice:
         mock_dm = MagicMock()
         mock_dm.get_device.return_value = mock_device
 
-        with patch("services.audio_output_service.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.audio_output_service.get_device_manager", return_value=mock_dm):
             result = await service._play_on_renfield_device(
                 audio_bytes=b"audio", device_id="sat-nospeaker", session_id="sess-1"
             )
@@ -133,7 +133,7 @@ class TestPlayOnRenfieldDevice:
         mock_dm.get_device.return_value = mock_device
         mock_dm.send_tts_audio = AsyncMock(side_effect=Exception("WS closed"))
 
-        with patch("services.audio_output_service.get_device_manager", return_value=mock_dm):
+        with patch("ha_glue.services.audio_output_service.get_device_manager", return_value=mock_dm):
             result = await service._play_on_renfield_device(
                 audio_bytes=b"audio", device_id="sat-err", session_id="sess-1"
             )
@@ -321,8 +321,8 @@ class TestBackendURL:
         mock_s.advertise_host = "renfield.local"
         mock_s.advertise_port = 8000
 
-        with patch("services.audio_output_service.settings", mock_s), \
-             patch("services.audio_output_service.HomeAssistantClient"):
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
             svc = AudioOutputService()
             url = svc._get_backend_url()
 
@@ -334,8 +334,8 @@ class TestBackendURL:
         mock_s.advertise_host = None
         mock_s.backend_internal_url = "http://backend:8000"
 
-        with patch("services.audio_output_service.settings", mock_s), \
-             patch("services.audio_output_service.HomeAssistantClient"):
+        with patch("ha_glue.services.audio_output_service.settings", mock_s), \
+             patch("ha_glue.services.audio_output_service.HomeAssistantClient"):
             svc = AudioOutputService()
             url = svc._get_backend_url()
 
@@ -351,12 +351,12 @@ class TestSingleton:
 
     def test_get_audio_output_service_returns_instance(self):
         """get_audio_output_service returns an AudioOutputService."""
-        import services.audio_output_service as mod
+        import ha_glue.services.audio_output_service as mod
         # Reset singleton
         mod._audio_output_service = None
 
-        with patch("services.audio_output_service.HomeAssistantClient"), \
-             patch("services.audio_output_service.settings") as mock_s:
+        with patch("ha_glue.services.audio_output_service.HomeAssistantClient"), \
+             patch("ha_glue.services.audio_output_service.settings") as mock_s:
             mock_s.advertise_host = None
             mock_s.backend_internal_url = "http://backend:8000"
             svc = get_audio_output_service()
@@ -367,11 +367,11 @@ class TestSingleton:
 
     def test_get_audio_output_service_returns_same_instance(self):
         """Repeated calls return the same singleton instance."""
-        import services.audio_output_service as mod
+        import ha_glue.services.audio_output_service as mod
         mod._audio_output_service = None
 
-        with patch("services.audio_output_service.HomeAssistantClient"), \
-             patch("services.audio_output_service.settings") as mock_s:
+        with patch("ha_glue.services.audio_output_service.HomeAssistantClient"), \
+             patch("ha_glue.services.audio_output_service.settings") as mock_s:
             mock_s.advertise_host = None
             mock_s.backend_internal_url = "http://backend:8000"
             svc1 = get_audio_output_service()

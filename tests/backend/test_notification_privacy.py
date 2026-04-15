@@ -1,14 +1,23 @@
 """
-Tests for privacy-aware TTS gating (should_play_tts).
+Tests for privacy-aware TTS gating (ha_should_play_tts_for_notification).
 
 Tests cover all privacy levels, presence states, and edge cases.
+
+After Phase 1 W2, this module moved from `services.notification_privacy`
+to `ha_glue.services.notification_privacy`. The function was renamed from
+`should_play_tts` to `ha_should_play_tts_for_notification` and its
+signature changed: keyword-only args and the database session is opened
+internally (not passed in) so the hook call site doesn't need to carry
+a session across the hook boundary.
 """
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.notification_privacy import should_play_tts
+from ha_glue.services.notification_privacy import ha_should_play_tts_for_notification
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,8 +53,19 @@ def _mock_db_returning_users(users: list):
     return db
 
 
-PATCH_SETTINGS = "services.notification_privacy.settings"
-PATCH_PRESENCE = "services.presence_service.get_presence_service"
+def _patch_session_local(db):
+    """Return a patch() for services.database.AsyncSessionLocal yielding `db`."""
+
+    @asynccontextmanager
+    async def _cm():
+        yield db
+
+    fake_sessionmaker = MagicMock(side_effect=lambda: _cm())
+    return patch("services.database.AsyncSessionLocal", fake_sessionmaker, create=True)
+
+
+PATCH_SETTINGS = "ha_glue.services.notification_privacy.ha_glue_settings"
+PATCH_PRESENCE = "ha_glue.services.presence_service.get_presence_service"
 
 
 # ---------------------------------------------------------------------------
@@ -57,18 +77,20 @@ class TestPublicPrivacy:
     @pytest.mark.asyncio
     async def test_public_always_allowed(self):
         """Public notifications always get TTS."""
-        db = AsyncMock()
-        result = await should_play_tts("public", None, None, db)
+        result = await ha_should_play_tts_for_notification(
+            privacy="public", target_user_id=None, room_id=None
+        )
         assert result is True
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_public_allowed_even_without_presence(self):
         """Public TTS works regardless of presence system state."""
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings:
             mock_settings.presence_enabled = False
-            result = await should_play_tts("public", None, None, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="public", target_user_id=None, room_id=None
+            )
             assert result is True
 
 
@@ -84,11 +106,12 @@ class TestConfidentialPrivacy:
         presence = MagicMock()
         presence.is_user_alone_in_room.return_value = True
 
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE, return_value=presence):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("confidential", 1, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
             assert result is True
             presence.is_user_alone_in_room.assert_called_once_with(1)
 
@@ -99,11 +122,12 @@ class TestConfidentialPrivacy:
         presence = MagicMock()
         presence.is_user_alone_in_room.return_value = False
 
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE, return_value=presence):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("confidential", 1, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
             assert result is False
 
     @pytest.mark.unit
@@ -113,22 +137,24 @@ class TestConfidentialPrivacy:
         presence = MagicMock()
         presence.is_user_alone_in_room.return_value = None  # not tracked
 
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE, return_value=presence):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("confidential", 1, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
             assert result is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_confidential_no_target_user(self):
         """Confidential TTS suppressed when no target_user_id specified."""
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("confidential", None, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=None, room_id=10
+            )
             assert result is False
 
     @pytest.mark.unit
@@ -138,11 +164,12 @@ class TestConfidentialPrivacy:
         presence = MagicMock()
         presence.is_user_alone_in_room.return_value = False
 
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE, return_value=presence):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("confidential", 1, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            )
             assert result is False
 
 
@@ -164,10 +191,13 @@ class TestPersonalPrivacy:
         db = _mock_db_returning_users(users)
 
         with patch(PATCH_SETTINGS) as mock_settings, \
-             patch(PATCH_PRESENCE, return_value=presence):
+             patch(PATCH_PRESENCE, return_value=presence), \
+             _patch_session_local(db):
             mock_settings.presence_enabled = True
             mock_settings.presence_household_roles = "Admin,Familie"
-            result = await should_play_tts("personal", None, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            )
             assert result is True
 
     @pytest.mark.unit
@@ -183,10 +213,13 @@ class TestPersonalPrivacy:
         db = _mock_db_returning_users(users)
 
         with patch(PATCH_SETTINGS) as mock_settings, \
-             patch(PATCH_PRESENCE, return_value=presence):
+             patch(PATCH_PRESENCE, return_value=presence), \
+             _patch_session_local(db):
             mock_settings.presence_enabled = True
             mock_settings.presence_household_roles = "Admin,Familie"
-            result = await should_play_tts("personal", None, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            )
             assert result is False
 
     @pytest.mark.unit
@@ -196,22 +229,24 @@ class TestPersonalPrivacy:
         presence = MagicMock()
         presence.get_room_occupants.return_value = []
 
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE, return_value=presence):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("personal", None, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            )
             assert result is False
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_personal_no_room(self):
         """Personal TTS suppressed when no room_id is provided."""
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("personal", None, None, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=None
+            )
             assert result is False
 
 
@@ -224,11 +259,14 @@ class TestPresenceDisabled:
     @pytest.mark.asyncio
     async def test_presence_disabled_blocks_nonpublic(self):
         """When presence is disabled, non-public notifications don't get TTS."""
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings:
             mock_settings.presence_enabled = False
-            assert await should_play_tts("personal", None, 10, db) is False
-            assert await should_play_tts("confidential", 1, 10, db) is False
+            assert await ha_should_play_tts_for_notification(
+                privacy="personal", target_user_id=None, room_id=10
+            ) is False
+            assert await ha_should_play_tts_for_notification(
+                privacy="confidential", target_user_id=1, room_id=10
+            ) is False
 
 
 # ---------------------------------------------------------------------------
@@ -240,9 +278,10 @@ class TestUnknownPrivacy:
     @pytest.mark.asyncio
     async def test_unknown_privacy_level_denied(self):
         """Unknown privacy levels are denied (fail-safe)."""
-        db = AsyncMock()
         with patch(PATCH_SETTINGS) as mock_settings, \
              patch(PATCH_PRESENCE):
             mock_settings.presence_enabled = True
-            result = await should_play_tts("secret", None, 10, db)
+            result = await ha_should_play_tts_for_notification(
+                privacy="secret", target_user_id=None, room_id=10
+            )
             assert result is False

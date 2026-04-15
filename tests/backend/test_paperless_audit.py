@@ -23,7 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from services.paperless_audit_service import PaperlessAuditService
+from ha_glue.services.paperless_audit_service import PaperlessAuditService
 
 
 # ============================================================================
@@ -947,7 +947,7 @@ class TestRunAudit:
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", new_callable=AsyncMock) as mock_analyze, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -972,7 +972,7 @@ class TestRunAudit:
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", new_callable=AsyncMock) as mock_analyze, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1003,7 +1003,7 @@ class TestRunAudit:
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", new_callable=AsyncMock) as mock_analyze, \
              patch.object(service, "_apply_fix", new_callable=AsyncMock) as mock_fix, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1029,7 +1029,7 @@ class TestRunAudit:
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", new_callable=AsyncMock) as mock_analyze, \
              patch.object(service, "_apply_fix", new_callable=AsyncMock) as mock_fix, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1055,7 +1055,7 @@ class TestRunAudit:
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", new_callable=AsyncMock) as mock_analyze, \
              patch.object(service, "_apply_fix", new_callable=AsyncMock) as mock_fix, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1079,7 +1079,7 @@ class TestRunAudit:
         """_running should be reset to False after audit completes."""
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1097,7 +1097,7 @@ class TestRunAudit:
         """_running should be reset even if an exception occurs."""
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8
@@ -1128,7 +1128,7 @@ class TestRunAudit:
         with patch.object(service, "_fetch_all_doc_ids", new_callable=AsyncMock) as mock_fetch, \
              patch.object(service, "_fetch_available_metadata", new_callable=AsyncMock) as mock_meta, \
              patch.object(service, "_analyze_document", side_effect=mock_analyze), \
-             patch("services.paperless_audit_service.settings") as mock_settings:
+             patch("ha_glue.services.paperless_audit_service.settings") as mock_settings:
 
             mock_settings.paperless_audit_fix_mode = "review"
             mock_settings.paperless_audit_confidence_threshold = 0.8

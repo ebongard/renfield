@@ -933,14 +933,13 @@ class TestPrivacyTtsGating:
         notification.room_id = 10
         notification.id = 99
 
-        with patch("services.notification_privacy.should_play_tts", new_callable=AsyncMock) as mock_gate:
+        with patch("ha_glue.services.notification_privacy.ha_should_play_tts_for_notification", new_callable=AsyncMock) as mock_gate:
             mock_gate.return_value = False
-            from services.notification_privacy import should_play_tts
-            result = await should_play_tts(
+            from ha_glue.services.notification_privacy import ha_should_play_tts_for_notification
+            result = await ha_should_play_tts_for_notification(
                 privacy=notification.privacy,
                 target_user_id=notification.target_user_id,
                 room_id=notification.room_id,
-                db=AsyncMock(),
             )
             assert result is False
 
