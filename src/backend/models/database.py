@@ -898,43 +898,70 @@ SYSTEM_SETTING_KEYS = [
 # `docs/architecture/renfield-platform-boundary.md` in the parent Reva
 # repo for the rollout plan.
 #
-# The try/except handles the platform-only deployment mode: if
-# `ha_glue` isn't installed (a future X-idra/renfield-only deploy),
-# the re-exports silently skip and `from models.database import Room`
-# raises ImportError at import time, which is the correct behavior.
+# Implementation note — module-level `__getattr__` instead of a tail
+# try/except block. The earlier shape of this file used a top-level
+# `from ha_glue.models.database import Room, ...` wrapped in
+# try/except. That has a circular-init failure mode: if a consumer
+# imports `from ha_glue.models.database import X` BEFORE anything has
+# touched `models.database`, then ha_glue.models.database starts
+# loading, hits its own `from models.database import Base`, models.database
+# starts loading, hits the tail re-export, tries to import from a
+# half-loaded ha_glue.models.database, raises ImportError on the
+# missing class, the except swallows it, and models.database finishes
+# loading WITHOUT the re-exported names. Subsequent
+# `from models.database import Room` then fails.
+#
+# Module-level `__getattr__` (PEP 562) avoids this entirely. The
+# import from ha_glue.models.database happens lazily, on the first
+# attribute access — by which time both modules are fully loaded and
+# there's no partial-init state to trip over.
+#
+# Platform-only deployments (no ha_glue): a missing `ha_glue` package
+# raises a clean `ModuleNotFoundError` at the consumer's import site,
+# clearly naming the missing package. No silent failures.
 
-try:
-    from ha_glue.models.database import (  # noqa: F401 — re-export
-        DEFAULT_CAPABILITIES,
-        DEVICE_TYPE_SATELLITE,
-        DEVICE_TYPE_WEB_BROWSER,
-        DEVICE_TYPE_WEB_KIOSK,
-        DEVICE_TYPE_WEB_PANEL,
-        DEVICE_TYPE_WEB_TABLET,
-        DEVICE_TYPES,
-        OUTPUT_TYPE_AUDIO,
-        OUTPUT_TYPE_VISUAL,
-        OUTPUT_TYPES,
-        CameraEvent,
-        HomeAssistantEntity,
-        PaperlessAuditResult,
-        PresenceEvent,
-        RadioFavorite,
-        Room,
-        RoomDevice,
-        RoomOutputDevice,
-        RoomSatellite,
-        UserBleDevice,
-    )
-except ImportError as _compat_err:
-    # Platform-only deployment — ha_glue not installed. Legacy consumer
-    # imports from models.database will fail at their import site with
-    # a clear ImportError, which is the desired behavior.
-    #
-    # Narrow catch: ONLY swallow the case where the top-level `ha_glue`
-    # package is missing. Any other ImportError (a typo inside
-    # `ha_glue.models.database`, a broken SQLAlchemy import, etc.) bubbles
-    # up immediately so it can't hide behind a confusing "cannot import
-    # name 'Room'" at the consumer site.
-    if _compat_err.name and _compat_err.name.split(".")[0] != "ha_glue":
-        raise
+_HA_GLUE_REEXPORT_NAMES = frozenset({
+    "DEFAULT_CAPABILITIES",
+    "DEVICE_TYPE_SATELLITE",
+    "DEVICE_TYPE_WEB_BROWSER",
+    "DEVICE_TYPE_WEB_KIOSK",
+    "DEVICE_TYPE_WEB_PANEL",
+    "DEVICE_TYPE_WEB_TABLET",
+    "DEVICE_TYPES",
+    "OUTPUT_TYPE_AUDIO",
+    "OUTPUT_TYPE_VISUAL",
+    "OUTPUT_TYPES",
+    "CameraEvent",
+    "HomeAssistantEntity",
+    "PaperlessAuditResult",
+    "PresenceEvent",
+    "RadioFavorite",
+    "Room",
+    "RoomDevice",
+    "RoomOutputDevice",
+    "RoomSatellite",
+    "UserBleDevice",
+})
+
+
+def __getattr__(name: str):
+    """Lazily re-export ha-glue model classes for backwards compatibility.
+
+    Triggered only when a caller does `from models.database import X`
+    or `models.database.X` for a name that isn't already in the module
+    namespace. Defers the `from ha_glue.models.database import ...`
+    until both modules are fully loaded, sidestepping the partial-init
+    cycle that a tail-of-file try/except produces.
+    """
+    if name not in _HA_GLUE_REEXPORT_NAMES:
+        raise AttributeError(f"module 'models.database' has no attribute {name!r}")
+    from ha_glue.models import database as _hg
+    try:
+        return getattr(_hg, name)
+    except AttributeError as exc:
+        # ha_glue is loaded but the symbol isn't there — propagate as
+        # AttributeError, not as a misleading "package missing" error.
+        raise AttributeError(
+            f"models.database compat re-export: name {name!r} not found in "
+            f"ha_glue.models.database (module loaded but symbol missing)"
+        ) from exc
