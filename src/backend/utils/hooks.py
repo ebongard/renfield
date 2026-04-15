@@ -128,6 +128,49 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # Platform default (no handler): empty list — notification is
     # persisted but not broadcast.
     "deliver_notification",
+    # ---------- Router / orchestrator uplift events ----------
+    # These events are declared here so plugins (e.g. Reva) can register
+    # handlers without register_hook() raising ValueError. Renfield does
+    # not yet fire them — the call-site wiring is the "router / orchestrator
+    # uplift" tracked in the Reva project notes. Declaring the event names
+    # up-front decouples the plugin-side registration from the platform-side
+    # firing, so plugins can ship forward-looking handlers safely.
+    #
+    # See docs/architecture/design-router-uplift.md and
+    # docs/architecture/design-orchestrator-uplift.md for the call-site
+    # design. When Renfield starts firing these events, handlers already
+    # registered in plugins begin participating automatically.
+    #
+    # Return contracts (for plugin authors):
+    #   load_entity_patterns: (no kwargs) -> list[dict] | None
+    #       Return a list of entity pattern dicts to extend Renfield's
+    #       router with plugin-specific recognizers (e.g. Reva's JIRA
+    #       issue keys, release IDs). First non-None result is merged,
+    #       not replaced.
+    #   post_routing: (message, domain, session_id, user_id,
+    #                  entity_matches, layer, confidence) -> None
+    #       Fired after the router classifies a message. Used for
+    #       telemetry and routing-decision persistence.
+    #   extend_orchestrator_roles: (no kwargs) -> list[str] | None
+    #       Return additional role names the orchestrator should
+    #       consider for cross-MCP fan-out.
+    #   pre_orchestration / post_orchestration: (query, plan, results)
+    #       Fired before and after the orchestrator runs its sub-agents
+    #       in parallel. Plugins can inspect or annotate the plan.
+    #   pre_sub_agent / post_sub_agent: (role, query, result)
+    #       Fired around each sub-agent step inside the orchestrator.
+    #   check_output: (role, response) -> dict | None
+    #       Final gate before returning a response to the user. Plugins
+    #       can reject or rewrite outputs that violate guardrails (e.g.
+    #       Reva's GDPR / prompt-leakage checks).
+    "load_entity_patterns",
+    "post_routing",
+    "extend_orchestrator_roles",
+    "pre_orchestration",
+    "post_orchestration",
+    "pre_sub_agent",
+    "post_sub_agent",
+    "check_output",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

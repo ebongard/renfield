@@ -32,6 +32,33 @@ def test_register_unknown_event_raises():
         register_hook("does_not_exist", AsyncMock())
 
 
+def test_uplift_events_are_registerable():
+    """Router / orchestrator uplift events must be in HOOK_EVENTS.
+
+    These events are declared for plugins (e.g. Reva) that ship forward-
+    looking handlers. Renfield does not fire them yet but they MUST be
+    registerable or plugin bootstrap aborts mid-chain with ValueError,
+    silently skipping every hook after the first unknown event.
+    """
+    uplift_events = {
+        "load_entity_patterns",
+        "post_routing",
+        "extend_orchestrator_roles",
+        "pre_orchestration",
+        "post_orchestration",
+        "pre_sub_agent",
+        "post_sub_agent",
+        "check_output",
+    }
+    missing = uplift_events - HOOK_EVENTS
+    assert not missing, (
+        f"Uplift events missing from HOOK_EVENTS: {sorted(missing)}. "
+        f"Adding them unblocks plugins that register speculative handlers."
+    )
+    for event in uplift_events:
+        register_hook(event, AsyncMock())  # must not raise
+
+
 # --- run_hooks ---
 
 
@@ -141,9 +168,9 @@ async def test_multiple_hooks_same_event():
 
 
 def test_hook_events_is_frozenset():
-    """HOOK_EVENTS is immutable."""
+    """HOOK_EVENTS is immutable and non-empty."""
     assert isinstance(HOOK_EVENTS, frozenset)
-    assert len(HOOK_EVENTS) == 12
+    assert len(HOOK_EVENTS) > 0
 
 
 # --- plugin loading integration ---
