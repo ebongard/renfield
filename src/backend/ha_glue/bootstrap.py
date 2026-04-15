@@ -250,7 +250,7 @@ async def _init_paperless_audit(app: Any) -> None:
         logger.info("Paperless MCP not configured — audit disabled")
         return
 
-    from api.routes.paperless_audit import router as audit_router
+    from ha_glue.api.routes.paperless_audit import router as audit_router
     from services.database import AsyncSessionLocal
     from ha_glue.services.paperless_audit_service import PaperlessAuditService
 
@@ -434,16 +434,24 @@ async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
 
 
 async def ha_glue_register_routes(*, app: Any) -> None:
-    """Mount ha_glue-owned REST API routes on the platform FastAPI app.
+    """Mount ha_glue-owned FastAPI routers on the platform app.
 
-    Currently just the HA admin endpoint (`/admin/refresh-keywords`)
-    that used to live inline in platform `main.py`. Week 2 Phase C
-    will add rooms, presence, satellites, camera, paperless_audit,
-    and homeassistant routers here too.
+    After Phase 1 W2 Phase C, all HA-flavored REST endpoints (camera,
+    homeassistant, paperless audit, presence, rooms, satellites,
+    /admin/refresh-keywords) and WebSockets (/ws/device, /ws/satellite)
+    live under ha_glue and are mounted here. Pro deploys (no ha_glue
+    loaded) never call this handler, so all HA endpoints cleanly return
+    404 — which is correct behavior.
 
     Each router is individually guarded so a broken module doesn't
-    block the others.
+    block the others. Feature-flag gating (smart_home / cameras /
+    satellites) matches the previous platform-side gates in main.py
+    so individual subsystems can still be toggled via the platform
+    Settings `features` dict.
     """
+    from utils.config import settings as _platform_settings
+
+    # --- /admin/refresh-keywords ---
     try:
         from ha_glue.api.admin import router as admin_router
         app.include_router(admin_router)
@@ -453,11 +461,74 @@ async def ha_glue_register_routes(*, app: Any) -> None:
             "ha_glue.bootstrap: admin router mount failed"
         )
 
-    # Device WebSocket (`/ws/device`) — satellites + Renfield web panels.
-    # Moved from platform `api/websocket/device_handler.py` to
-    # `ha_glue/api/websocket/device_handler.py` in Phase B.2b. Pro
-    # deploys (no ha_glue loaded) don't mount this, so `/ws/device`
-    # returns 404 — which is correct behavior (no satellites on pro).
+    # --- Camera REST router (Frigate NVR) ---
+    if _platform_settings.features.get("cameras"):
+        try:
+            from ha_glue.api.routes.camera import router as camera_router
+            app.include_router(camera_router, prefix="/api/camera", tags=["Camera"])
+            logger.info("✅ ha_glue: mounted /api/camera")
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "ha_glue.bootstrap: camera router mount failed"
+            )
+
+    # --- Home Assistant REST router ---
+    if _platform_settings.features.get("smart_home"):
+        try:
+            from ha_glue.api.routes.homeassistant import router as ha_router
+            app.include_router(
+                ha_router, prefix="/api/homeassistant", tags=["Home Assistant"]
+            )
+            logger.info("✅ ha_glue: mounted /api/homeassistant")
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "ha_glue.bootstrap: homeassistant router mount failed"
+            )
+
+    # --- Satellites REST router (registration, status, OTA) ---
+    if _platform_settings.features.get("satellites"):
+        try:
+            from ha_glue.api.routes.satellites import router as satellites_router
+            app.include_router(
+                satellites_router, prefix="/api/satellites", tags=["Satellites"]
+            )
+            logger.info("✅ ha_glue: mounted /api/satellites")
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "ha_glue.bootstrap: satellites router mount failed"
+            )
+
+    # --- Rooms REST router ---
+    try:
+        from ha_glue.api.routes.rooms import router as rooms_router
+        app.include_router(rooms_router, prefix="/api/rooms", tags=["Rooms"])
+        logger.info("✅ ha_glue: mounted /api/rooms")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: rooms router mount failed"
+        )
+
+    # --- Presence REST router (BLE + user location queries) ---
+    try:
+        from ha_glue.api.routes.presence import router as presence_router
+        app.include_router(presence_router, tags=["Presence"])
+        logger.info("✅ ha_glue: mounted presence router")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: presence router mount failed"
+        )
+
+    # --- Paperless audit REST router ---
+    try:
+        from ha_glue.api.routes.paperless_audit import router as paperless_router
+        app.include_router(paperless_router)
+        logger.info("✅ ha_glue: mounted paperless_audit router")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: paperless_audit router mount failed"
+        )
+
+    # --- Device WebSocket (/ws/device) — satellites + Renfield web panels ---
     try:
         from ha_glue.api.websocket.device_handler import router as device_router
         app.include_router(device_router, tags=["WebSocket Device"])
@@ -466,3 +537,14 @@ async def ha_glue_register_routes(*, app: Any) -> None:
         logger.opt(exception=True).warning(
             "ha_glue.bootstrap: device_router mount failed"
         )
+
+    # --- Satellite WebSocket (/ws/satellite) — Pi Zero audio stream ---
+    if _platform_settings.features.get("satellites"):
+        try:
+            from ha_glue.api.websocket.satellite_handler import router as satellite_router
+            app.include_router(satellite_router, tags=["WebSocket Satellite"])
+            logger.info("✅ ha_glue: mounted /ws/satellite")
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "ha_glue.bootstrap: satellite_router mount failed"
+            )

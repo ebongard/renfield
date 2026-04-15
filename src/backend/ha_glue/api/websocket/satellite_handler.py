@@ -24,7 +24,7 @@ from services.websocket_rate_limiter import get_connection_limiter, get_rate_lim
 from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 
-from .shared import get_whisper_service, send_ws_error
+from api.websocket.shared import get_whisper_service, send_ws_error
 
 router = APIRouter()
 

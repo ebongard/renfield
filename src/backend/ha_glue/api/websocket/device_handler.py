@@ -23,7 +23,7 @@ from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
 
-from .shared import get_whisper_service, send_ws_error
+from api.websocket.shared import get_whisper_service, send_ws_error
 
 router = APIRouter()
 

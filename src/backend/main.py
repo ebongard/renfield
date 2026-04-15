@@ -20,7 +20,6 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 from api.lifecycle import lifespan
 from api.routes import (
     auth,
-    camera,
     chat,
     chat_upload,
     feedback,
@@ -29,21 +28,19 @@ from api.routes import (
     memory,
     notifications,
     preferences,
-    presence,
     roles,
-    rooms,
-    satellites,
     speakers,
     tasks,
     users,
 )
-from api.routes import homeassistant as ha_routes
 from api.routes import knowledge_graph as kg_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
-from api.websocket import chat_router, kg_live_router, satellite_router
-# NOTE: device_router moved to ha_glue.api.websocket.device_handler and
-# is mounted via the register_routes hook from ha_glue.bootstrap.
+from api.websocket import chat_router, kg_live_router
+# NOTE: device_router, satellite_router, and the HA-specific REST routers
+# (camera, homeassistant, paperless_audit, presence, rooms, satellites)
+# all moved to ha_glue.api.* and are mounted via the register_routes hook
+# from ha_glue.bootstrap.
 from models.database import User
 from models.permissions import Permission
 from services.api_rate_limiter import setup_rate_limiter
@@ -163,15 +160,11 @@ app.include_router(tasks.router, prefix="/api/tasks", tags=["Tasks"])
 if settings.features["voice"]:
     from api.routes import voice
     app.include_router(voice.router, prefix="/api/voice", tags=["Voice"])
-if settings.features["cameras"]:
-    app.include_router(camera.router, prefix="/api/camera", tags=["Camera"])
-if settings.features["smart_home"]:
-    app.include_router(ha_routes.router, prefix="/api/homeassistant", tags=["Home Assistant"])
+# HA-specific REST routers (camera, homeassistant, satellites, rooms,
+# presence, paperless_audit) moved to ha_glue.api.routes and are
+# mounted via the register_routes hook in ha_glue/bootstrap.py.
 app.include_router(settings_routes.router, prefix="/api/settings", tags=["Settings"])
-if settings.features["satellites"]:
-    app.include_router(satellites.router, prefix="/api/satellites", tags=["Satellites"])
 app.include_router(speakers.router, prefix="/api/speakers", tags=["Speakers"])
-app.include_router(rooms.router, prefix="/api/rooms", tags=["Rooms"])
 app.include_router(knowledge.router, prefix="/api/knowledge", tags=["Knowledge"])
 app.include_router(memory.router, prefix="/api/memory", tags=["Memory"])
 app.include_router(preferences.router, prefix="/api/preferences", tags=["Preferences"])
@@ -179,14 +172,11 @@ app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
-app.include_router(presence.router, tags=["Presence"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
-if settings.features["satellites"]:
-    app.include_router(satellite_router, tags=["WebSocket Satellite"])
-# device_router mounted via ha_glue register_routes hook.
+# satellite_router + device_router mounted via ha_glue register_routes hook.
 if settings.knowledge_graph_enabled:
     app.include_router(kg_live_router, tags=["WebSocket Knowledge Graph"])
 
