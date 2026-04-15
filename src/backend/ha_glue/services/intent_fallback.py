@@ -3,7 +3,7 @@
 Registered as an `intent_fallback_resolve` hook handler at ha_glue
 package import time (see `ha_glue/__init__.py`).
 
-When the platform's LLM intent classifier (`OllamaService._extract_intent`)
+When the platform's LLM intent classifier (`OllamaService.extract_intent`)
 fails to parse JSON from the model response — even after a retry — it
 fires the `intent_fallback_resolve` hook to give domain-specific
 consumers a last chance to recognize the intent before falling through

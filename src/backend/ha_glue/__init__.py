@@ -28,44 +28,29 @@ imports.
 - `ha_glue.models.database` — 9 SQLAlchemy classes + constants. Compat
   re-export in `models/database.py` keeps legacy
   `from models.database import Room` working.
-- `ha_glue.services.intent_fallback` — HA-keyword intent fallback,
-  registered as an `intent_fallback_resolve` hook handler at import
-  time of this package.
+- `ha_glue.services.intent_fallback` — HA-keyword intent fallback
+  handler. Registered with the platform hook system by an explicit
+  call to `ha_glue.bootstrap.register()` from a platform startup file.
+- `ha_glue.bootstrap` — explicit hook-registration entry point.
 
 Service and route extractions for the rest of the ha-glue surface
 happen in Week 2; Alembic migration cutover in Week 3; CI lint gate
 in Week 4.
 
-## Hook registration
+## Hook registration — explicit, NOT side-effect-on-import
 
-This package's `__init__.py` registers all ha-glue hook handlers as a
-side effect of import. Trigger the bootstrap by adding `import ha_glue`
-to a platform startup file (currently `api/lifecycle.py` at the
-appropriate point), wrapped in a try/except so platform-only
-deployments (no ha_glue installed) degrade cleanly to "no HA fallback"
-without crashing.
+Importing this package is side-effect-free. Hook registration only
+happens when something explicitly calls `ha_glue.bootstrap.register()`.
+This is deliberate: the legacy compat re-export in
+`models/database.py::__getattr__` does `from ha_glue.models import
+database`, which imports the `ha_glue` package as part of attribute
+resolution. If `ha_glue/__init__.py` registered hooks as a side effect
+of import, every platform service that touched an ha-glue model
+through the compat shim would unconditionally activate HA behavior —
+even on `RENFIELD_EDITION=pro` deployments where the smart_home
+feature flag is False.
+
+Trigger the bootstrap explicitly from `api/lifecycle.py`, gated on
+`settings.features["smart_home"]`, and wrap in try/except so a
+missing `ha_glue` package degrades cleanly.
 """
-
-from loguru import logger as _logger
-
-
-def _register_hooks() -> None:
-    """Register all ha_glue hook handlers with the platform hook system.
-
-    Called once, at package import time. Failures are logged but never
-    propagate — a broken handler must not break Renfield startup.
-    """
-    try:
-        from utils.hooks import register_hook
-
-        from ha_glue.services.intent_fallback import ha_intent_fallback
-
-        register_hook("intent_fallback_resolve", ha_intent_fallback)
-        _logger.info("ha_glue: registered intent_fallback_resolve handler")
-    except Exception:  # noqa: BLE001 — startup must never break on plugin error
-        _logger.opt(exception=True).warning(
-            "ha_glue: hook registration failed — HA fallback disabled"
-        )
-
-
-_register_hooks()

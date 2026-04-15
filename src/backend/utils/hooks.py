@@ -34,7 +34,11 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # ha_glue) might still recognize the user's intent from raw keywords.
     # Handlers receive `message: str, lang: str` and return a dict
     # `{"intent": str, "parameters": dict, "confidence": float}` on success
-    # or None to fall through. First non-None result wins.
+    # or None to fall through. First well-shaped non-None result wins —
+    # registration order determines precedence, so earlier-registered
+    # handlers shadow later ones for the same input. The call site
+    # validates each candidate is a dict with an "intent" key before
+    # accepting it.
     "intent_fallback_resolve",
 })
 

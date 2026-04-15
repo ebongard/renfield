@@ -544,21 +544,28 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                     # JSON parsing of the LLM response failed even after retry.
                     # Fire the `intent_fallback_resolve` hook so domain-specific
                     # consumers (e.g. ha_glue's HA-keyword fallback) can still
-                    # recognize the intent. First handler that returns a non-None
-                    # result wins. If no handler matches, fall through to
-                    # general.unresolved and let the agent loop pick it up.
+                    # recognize the intent. First handler that returns a
+                    # well-shaped non-None result wins. If no handler matches,
+                    # fall through to general.unresolved and let the agent loop
+                    # pick it up.
                     from utils.hooks import run_hooks
                     fallback_results = await run_hooks(
                         "intent_fallback_resolve",
                         message=message,
                         lang=lang,
                     )
-                    if fallback_results:
-                        logger.info(
-                            f"✅ Intent fallback resolved by hook: "
-                            f"{fallback_results[0].get('intent')!r}"
+                    for candidate in fallback_results:
+                        if isinstance(candidate, dict) and "intent" in candidate:
+                            logger.info(
+                                f"✅ Intent fallback resolved by hook: "
+                                f"{candidate.get('intent')!r}"
+                            )
+                            return candidate
+                        logger.warning(
+                            f"⚠️  intent_fallback_resolve handler returned "
+                            f"unexpected shape (type={type(candidate).__name__}); "
+                            f"ignoring and trying next handler"
                         )
-                        return fallback_results[0]
 
                     # Fallback: unresolved intent (agent loop can pick this up)
                     return {
