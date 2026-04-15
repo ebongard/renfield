@@ -474,7 +474,7 @@ class PresenceService:
 
     async def push_macs_to_satellites(self):
         """Push current known MACs to all connected satellites."""
-        from services.satellite_manager import get_satellite_manager
+        from ha_glue.services.satellite_manager import get_satellite_manager
 
         manager = get_satellite_manager()
         ble_macs = list(self.get_ble_macs())

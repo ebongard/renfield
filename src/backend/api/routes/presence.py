@@ -14,7 +14,7 @@ from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from services.presence_service import get_presence_service
+from ha_glue.services.presence_service import get_presence_service
 from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 
@@ -313,7 +313,7 @@ async def get_heatmap(
     db: AsyncSession = Depends(get_db),
 ):
     """Room x hour heatmap of enter events."""
-    from services.presence_analytics import PresenceAnalyticsService
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
     service = PresenceAnalyticsService(db)
     return await service.get_heatmap(days=days, user_id=user_id)
@@ -326,7 +326,7 @@ async def get_predictions(
     db: AsyncSession = Depends(get_db),
 ):
     """Per-user room presence predictions by day-of-week and hour."""
-    from services.presence_analytics import PresenceAnalyticsService
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
     service = PresenceAnalyticsService(db)
     return await service.get_predictions(user_id=user_id, days=days)
@@ -338,7 +338,7 @@ async def get_daily_summary(
     db: AsyncSession = Depends(get_db),
 ):
     """Daily enter/leave event counts."""
-    from services.presence_analytics import PresenceAnalyticsService
+    from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
     service = PresenceAnalyticsService(db)
     return await service.get_daily_summary(days=days)

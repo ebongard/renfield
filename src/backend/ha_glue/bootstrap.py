@@ -185,7 +185,7 @@ async def ha_glue_on_startup(*, app: Any) -> None:
     # --- Media Follow Me (requires both presence and media_follow enabled) ---
     if ha_glue_settings.media_follow_enabled and ha_glue_settings.presence_enabled:
         try:
-            from services.media_follow_service import get_media_follow_service
+            from ha_glue.services.media_follow_service import get_media_follow_service
             from utils.hooks import register_hook
 
             mf_service = get_media_follow_service()
@@ -197,6 +197,29 @@ async def ha_glue_on_startup(*, app: Any) -> None:
             logger.opt(exception=True).warning(
                 "ha_glue.bootstrap: media follow registration failed"
             )
+
+    # --- Zeroconf service discovery (for satellite auto-registration) ---
+    try:
+        await _init_zeroconf(app)
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: Zeroconf init failed"
+        )
+
+
+async def _init_zeroconf(app: Any) -> None:
+    """Start the Zeroconf mDNS service for satellite auto-discovery.
+
+    Stores the service instance on `app.state.zeroconf_service` so the
+    shutdown hook can stop it. Previously lived in platform
+    `api/lifecycle.py::_init_zeroconf`; moved here because Zeroconf
+    satellite discovery is a pure home-automation consumer feature.
+    """
+    from ha_glue.services.zeroconf_service import get_zeroconf_service
+    zeroconf_service = get_zeroconf_service(port=8000)
+    await zeroconf_service.start()
+    app.state.zeroconf_service = zeroconf_service
+    logger.info("✅ Zeroconf Service bereit")
 
 
 async def _init_paperless_audit(app: Any) -> None:
@@ -219,7 +242,7 @@ async def _init_paperless_audit(app: Any) -> None:
 
     from api.routes.paperless_audit import router as audit_router
     from services.database import AsyncSessionLocal
-    from services.paperless_audit_service import PaperlessAuditService
+    from ha_glue.services.paperless_audit_service import PaperlessAuditService
 
     app.include_router(audit_router)
 
@@ -256,9 +279,9 @@ def _schedule_ha_keywords_preload() -> None:
 async def _init_presence(app: Any) -> None:
     """Bring up the presence subsystem: webhooks, analytics, BLE service, cleanup."""
     from services.database import AsyncSessionLocal
-    from services.presence_analytics import register_presence_analytics_hooks
-    from services.presence_service import get_presence_service
-    from services.presence_webhook import register_presence_webhooks
+    from ha_glue.services.presence_analytics import register_presence_analytics_hooks
+    from ha_glue.services.presence_service import get_presence_service
+    from ha_glue.services.presence_webhook import register_presence_webhooks
 
     register_presence_webhooks()
     register_presence_analytics_hooks()
@@ -289,7 +312,7 @@ def _schedule_presence_event_cleanup() -> None:
             try:
                 await asyncio.sleep(86400)  # 24 hours
                 from services.database import AsyncSessionLocal
-                from services.presence_analytics import PresenceAnalyticsService
+                from ha_glue.services.presence_analytics import PresenceAnalyticsService
 
                 async with AsyncSessionLocal() as db_session:
                     service = PresenceAnalyticsService(db_session)
@@ -313,10 +336,10 @@ def _schedule_presence_event_cleanup() -> None:
 
 
 async def ha_glue_on_shutdown(*, app: Any) -> None:
-    """Cancel background tasks started during ha_glue_on_startup.
+    """Cancel background tasks + stop Zeroconf.
 
-    Fires EARLY in the shutdown sequence (before MCP teardown, zeroconf
-    stop, device notification) so long-running loops get a chance to
+    Fires EARLY in the shutdown sequence (before MCP teardown and
+    device notification) so long-running loops and service advertisements
     exit gracefully before their dependencies go away.
 
     HTTP client singletons are NOT closed here — they live until the
@@ -325,18 +348,29 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
 
     Never raises. Platform startup is independently reliable.
     """
-    if not _ha_glue_tasks:
-        return
-    for task in _ha_glue_tasks:
-        if not task.done():
-            task.cancel()
-    for task in _ha_glue_tasks:
+    # --- Cancel background tasks ---
+    if _ha_glue_tasks:
+        for task in _ha_glue_tasks:
+            if not task.done():
+                task.cancel()
+        for task in _ha_glue_tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        _ha_glue_tasks.clear()
+        logger.info("ha_glue.bootstrap: background tasks cancelled")
+
+    # --- Stop Zeroconf service advertisement ---
+    zeroconf_svc = getattr(app.state, "zeroconf_service", None)
+    if zeroconf_svc is not None:
         try:
-            await task
-        except (asyncio.CancelledError, Exception):  # noqa: BLE001
-            pass
-    _ha_glue_tasks.clear()
-    logger.info("ha_glue.bootstrap: background tasks cancelled")
+            await zeroconf_svc.stop()
+            logger.info("ha_glue.bootstrap: Zeroconf service stopped")
+        except Exception:  # noqa: BLE001
+            logger.opt(exception=True).warning(
+                "ha_glue.bootstrap: Zeroconf stop failed"
+            )
 
 
 async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:

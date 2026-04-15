@@ -299,7 +299,7 @@ class InternalToolService:
         if not user_id:
             return
         try:
-            from services.media_follow_service import MediaType, get_media_follow_service
+            from ha_glue.services.media_follow_service import MediaType, get_media_follow_service
 
             mf = get_media_follow_service()
             # Convert string to enum if needed
@@ -573,7 +573,7 @@ class InternalToolService:
             from ha_glue.utils.config import ha_glue_settings as _settings
             if _settings.media_follow_enabled:
                 try:
-                    from services.media_follow_service import get_media_follow_service
+                    from ha_glue.services.media_follow_service import get_media_follow_service
                     mf = get_media_follow_service()
                     room_id = await self._get_room_id(resolved_room_name)
                     if room_id is not None:
@@ -1113,7 +1113,7 @@ class InternalToolService:
 
     async def _get_user_location(self, params: dict) -> dict:
         """Get the current or last known room location of a user."""
-        from services.presence_service import get_presence_service
+        from ha_glue.services.presence_service import get_presence_service
 
         user_name = (params.get("user_name") or "").strip()
         if not user_name:
@@ -1163,7 +1163,7 @@ class InternalToolService:
 
     async def _get_all_presence(self, params: dict) -> dict:
         """Get all currently present users and their room locations."""
-        from services.presence_service import get_presence_service
+        from ha_glue.services.presence_service import get_presence_service
 
         presence_service = get_presence_service()
         all_presence = presence_service.get_all_presence()

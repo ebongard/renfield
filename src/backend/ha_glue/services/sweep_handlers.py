@@ -45,7 +45,7 @@ async def ha_chat_context_established(
         return
 
     try:
-        from services.presence_service import get_presence_service
+        from ha_glue.services.presence_service import get_presence_service
         presence_svc = get_presence_service()
         await presence_svc.register_voice_presence(
             user_id=user_id,
@@ -76,7 +76,7 @@ async def ha_resolve_user_current_room(
         return None
 
     try:
-        from services.presence_service import get_presence_service
+        from ha_glue.services.presence_service import get_presence_service
         presence = get_presence_service()
         user_p = presence.get_user_presence(user_id)
     except Exception as e:  # noqa: BLE001

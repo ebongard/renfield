@@ -342,19 +342,6 @@ async def _init_agent_router(app: "FastAPI"):
         app.state.agent_roles_config = None
 
 
-async def _init_zeroconf(app: "FastAPI"):
-    """Initialize Zeroconf service for satellite auto-discovery."""
-    zeroconf_service = None
-    try:
-        from services.zeroconf_service import get_zeroconf_service
-        zeroconf_service = get_zeroconf_service(port=8000)
-        await zeroconf_service.start()
-        app.state.zeroconf_service = zeroconf_service
-    except Exception as e:
-        logger.warning(f"⚠️  Zeroconf Service konnte nicht gestartet werden: {e}")
-    return zeroconf_service
-
-
 async def _cancel_startup_tasks():
     """Cancel any pending startup tasks."""
     for task in _startup_tasks:
@@ -504,13 +491,12 @@ async def lifespan(app: "FastAPI"):
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
 
-    # Zeroconf for satellite discovery
-    zeroconf_service = await _init_zeroconf(app)
-
-    # Presence / paperless audit / media follow / conversation handoff
-    # are bootstrapped by ha_glue via its startup hook handler (fired
-    # below by `run_hooks("startup", ...)`). Each subsystem gates itself
-    # on the relevant `ha_glue_settings.X` flag internally.
+    # Presence / paperless audit / media follow / conversation handoff /
+    # Zeroconf satellite discovery are bootstrapped by ha_glue via its
+    # startup hook handler (fired below by `run_hooks("startup", ...)`).
+    # Each subsystem gates itself on the relevant `ha_glue_settings.X`
+    # flag internally. ha_glue also handles its own shutdown cleanup via
+    # `shutdown` and `shutdown_finalize` hook handlers.
 
     # Knowledge Graph hooks
     if settings.knowledge_graph_enabled:
@@ -568,8 +554,8 @@ async def lifespan(app: "FastAPI"):
     if getattr(app.state, "mcp_manager", None):
         await app.state.mcp_manager.shutdown()
 
-    if zeroconf_service:
-        await zeroconf_service.stop()
+    # Zeroconf is stopped by ha_glue's shutdown hook handler
+    # (see ha_glue/bootstrap.py::ha_glue_on_shutdown).
 
     # Late-phase cleanup — fires AFTER everything platform owns has
     # shut down. Plugins register handlers here for resources that

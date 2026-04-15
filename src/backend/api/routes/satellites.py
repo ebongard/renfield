@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
-from services.satellite_manager import get_satellite_manager
+from ha_glue.services.satellite_manager import get_satellite_manager
 from utils.config import settings
 from ha_glue.utils.config import ha_glue_settings
 
@@ -258,7 +258,7 @@ async def get_versions(_user: User = Depends(require_permission(Permission.ADMIN
 
     Returns the latest available version and version status of all satellites.
     """
-    from services.satellite_update_service import get_satellite_update_service
+    from ha_glue.services.satellite_update_service import get_satellite_update_service
 
     update_service = get_satellite_update_service()
     manager = get_satellite_manager()
@@ -290,7 +290,7 @@ async def get_update_package(_user: User = Depends(require_permission(Permission
     """
     from fastapi.responses import FileResponse
 
-    from services.satellite_update_service import get_satellite_update_service
+    from ha_glue.services.satellite_update_service import get_satellite_update_service
 
     update_service = get_satellite_update_service()
     package_info = update_service.get_package_info()
@@ -486,7 +486,7 @@ async def initiate_update(satellite_id: str, _user: User = Depends(require_permi
     Sends an update request to the satellite which will then download,
     install, and restart with the new version.
     """
-    from services.satellite_update_service import get_satellite_update_service
+    from ha_glue.services.satellite_update_service import get_satellite_update_service
 
     update_service = get_satellite_update_service()
     result = await update_service.initiate_update(satellite_id)
@@ -511,7 +511,7 @@ async def get_update_status(satellite_id: str, _user: User = Depends(require_per
 
     Returns version info and update progress if an update is in progress.
     """
-    from services.satellite_update_service import get_satellite_update_service
+    from ha_glue.services.satellite_update_service import get_satellite_update_service
 
     manager = get_satellite_manager()
     sat = manager.get_satellite(satellite_id)

@@ -66,7 +66,7 @@ async def ha_should_play_tts_for_notification(
         return False
 
     from services.database import AsyncSessionLocal
-    from services.presence_service import get_presence_service
+    from ha_glue.services.presence_service import get_presence_service
 
     presence = get_presence_service()
 

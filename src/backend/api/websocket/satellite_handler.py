@@ -132,7 +132,7 @@ async def satellite_websocket(
     # Access app state through websocket.app
     app = websocket.app
 
-    from services.satellite_manager import SatelliteState, get_satellite_manager
+    from ha_glue.services.satellite_manager import SatelliteState, get_satellite_manager
     satellite_manager = get_satellite_manager()
     rate_limiter = get_rate_limiter()
 
@@ -225,7 +225,7 @@ async def satellite_websocket(
                 # Push known BLE + Classic BT MACs to satellite for presence scanning
                 if ha_glue_settings.presence_enabled:
                     try:
-                        from services.presence_service import get_presence_service
+                        from ha_glue.services.presence_service import get_presence_service
                         presence_svc = get_presence_service()
                         ble_macs = presence_svc.get_ble_macs()
                         if ble_macs:
@@ -500,7 +500,7 @@ async def satellite_websocket(
                     # Register voice presence if speaker was recognized
                     if sat_user_id and ha_glue_settings.presence_enabled and satellite and satellite.room_id:
                         try:
-                            from services.presence_service import get_presence_service
+                            from ha_glue.services.presence_service import get_presence_service
                             presence_svc = get_presence_service()
                             await presence_svc.register_voice_presence(
                                 user_id=sat_user_id,
@@ -638,7 +638,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                     satellite = satellite_manager.get_satellite(satellite_id)
                     ble_room_id = satellite.room_id if satellite else None
 
-                    from services.presence_service import get_presence_service
+                    from ha_glue.services.presence_service import get_presence_service
                     presence_svc = get_presence_service()
                     await presence_svc.process_ble_report(
                         satellite_id=satellite_id,
@@ -650,7 +650,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle OTA update progress
             elif msg_type == "update_progress":
                 if satellite_id:
-                    from services.satellite_manager import UpdateStatus
+                    from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     progress = data.get("progress", 0)
                     message = data.get("message", "")
@@ -665,7 +665,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle OTA update complete
             elif msg_type == "update_complete":
                 if satellite_id:
-                    from services.satellite_manager import UpdateStatus
+                    from ha_glue.services.satellite_manager import UpdateStatus
                     success = data.get("success", False)
                     old_version = data.get("old_version", "unknown")
                     new_version = data.get("new_version", "unknown")
@@ -696,7 +696,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
             # Handle OTA update failed
             elif msg_type == "update_failed":
                 if satellite_id:
-                    from services.satellite_manager import UpdateStatus
+                    from ha_glue.services.satellite_manager import UpdateStatus
                     stage = data.get("stage", "unknown")
                     error = data.get("error", "Unknown error")
                     rolled_back = data.get("rolled_back", False)
