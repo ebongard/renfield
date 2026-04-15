@@ -17,7 +17,7 @@ from pydantic import ValidationError
 from models.database import DEFAULT_CAPABILITIES, DEVICE_TYPE_SATELLITE, DEVICE_TYPE_WEB_BROWSER, DEVICE_TYPES
 from models.websocket_messages import WSAudioMessage, WSErrorCode, WSRegisterMessage
 from services.database import AsyncSessionLocal
-from services.device_manager import DeviceManager, DeviceState, get_device_manager
+from ha_glue.services.device_manager import DeviceManager, DeviceState, get_device_manager
 from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
@@ -51,8 +51,8 @@ async def _route_tts_output(
         return
 
     try:
-        from services.audio_output_service import get_audio_output_service
-        from services.output_routing_service import OutputRoutingService
+        from ha_glue.services.audio_output_service import get_audio_output_service
+        from ha_glue.services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -398,7 +398,7 @@ async def device_websocket(
                 room_id = None
                 if success:
                     try:
-                        from services.room_service import RoomService
+                        from ha_glue.services.room_service import RoomService
 
                         async with AsyncSessionLocal() as db_session:
                             room_service = RoomService(db_session)
@@ -587,7 +587,7 @@ async def device_websocket(
         if device_id:
             # Mark device offline in database
             try:
-                from services.room_service import RoomService
+                from ha_glue.services.room_service import RoomService
 
                 async with AsyncSessionLocal() as db_session:
                     room_service = RoomService(db_session)

@@ -47,8 +47,8 @@ async def _route_satellite_tts_output(
         return
 
     try:
-        from services.audio_output_service import get_audio_output_service
-        from services.output_routing_service import OutputRoutingService
+        from ha_glue.services.audio_output_service import get_audio_output_service
+        from ha_glue.services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -180,7 +180,7 @@ async def satellite_websocket(
                 room_id = None
                 if success and ha_glue_settings.rooms_auto_create_from_satellite:
                     try:
-                        from services.room_service import RoomService
+                        from ha_glue.services.room_service import RoomService
 
                         async with AsyncSessionLocal() as db_session:
                             room_service = RoomService(db_session)
@@ -723,7 +723,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
         if satellite_id:
             # Mark satellite offline in database
             try:
-                from services.room_service import RoomService
+                from ha_glue.services.room_service import RoomService
 
                 async with AsyncSessionLocal() as db_session:
                     room_service = RoomService(db_session)

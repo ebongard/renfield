@@ -387,7 +387,7 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
     # Broadcasts a server_shutdown message to all active WebSocket
     # connections in the DeviceManager registry and closes them.
     try:
-        from services.device_manager import get_device_manager  # moves in Phase B.3
+        from ha_glue.services.device_manager import get_device_manager  # moves in Phase B.3
         dm = get_device_manager()
         shutdown_msg = {"type": "server_shutdown", "message": "Server is shutting down"}
         for device in list(dm.devices.values()):

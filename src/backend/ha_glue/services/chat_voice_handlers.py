@@ -66,8 +66,8 @@ async def ha_route_chat_tts_to_device_output(
         # NOTE: these 3 services live at services/*.py for now and move
         # to ha_glue/services/ in Phase B.3. Imports will be updated in
         # the same perl sweep that performs the move.
-        from services.audio_output_service import get_audio_output_service
-        from services.output_routing_service import OutputRoutingService
+        from ha_glue.services.audio_output_service import get_audio_output_service
+        from ha_glue.services.output_routing_service import OutputRoutingService
 
         async with AsyncSessionLocal() as db_session:
             routing_service = OutputRoutingService(db_session)
@@ -135,7 +135,7 @@ async def ha_resolve_room_context_by_ip(*, ip_address: str) -> dict | None:
     """
     try:
         from services.database import AsyncSessionLocal
-        from services.room_service import RoomService  # moves in Phase B.3
+        from ha_glue.services.room_service import RoomService  # moves in Phase B.3
 
         async with AsyncSessionLocal() as db_session:
             room_service = RoomService(db_session)
@@ -159,7 +159,7 @@ async def ha_fetch_tts_audio_cache(*, audio_id: str) -> bytes | None:
     doesn't exist (expired / not found / never stored).
     """
     try:
-        from services.audio_output_service import get_audio_output_service  # moves in Phase B.3
+        from ha_glue.services.audio_output_service import get_audio_output_service  # moves in Phase B.3
 
         service = get_audio_output_service()
         return service.get_cached_audio(audio_id)

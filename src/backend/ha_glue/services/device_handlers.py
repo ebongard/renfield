@@ -39,7 +39,7 @@ async def ha_get_connected_device_summary() -> dict | None:
     is correct (there are no satellites to count).
     """
     try:
-        from services.device_manager import get_device_manager  # moves in Phase B.3
+        from ha_glue.services.device_manager import get_device_manager  # moves in Phase B.3
         dm = get_device_manager()
         return {
             "connected": len(dm.devices),
@@ -67,7 +67,7 @@ async def ha_deliver_notification(
     Returns the list of device_ids that actually received the
     notification via WebSocket.
     """
-    from services.device_manager import get_device_manager  # moves in Phase B.3
+    from ha_glue.services.device_manager import get_device_manager  # moves in Phase B.3
 
     device_manager = get_device_manager()
     delivered_ids: list[str] = []
@@ -156,9 +156,9 @@ async def _deliver_notification_tts(notification: Any) -> bool:
         if notification.room_id:
             # NOTE: audio_output_service + output_routing_service still live
             # in services/ until Phase B.3. Imports update in that sweep.
-            from services.audio_output_service import get_audio_output_service
+            from ha_glue.services.audio_output_service import get_audio_output_service
             from services.database import AsyncSessionLocal
-            from services.output_routing_service import OutputRoutingService
+            from ha_glue.services.output_routing_service import OutputRoutingService
 
             async with AsyncSessionLocal() as db_session:
                 routing_service = OutputRoutingService(db_session)
@@ -179,7 +179,7 @@ async def _deliver_notification_tts(notification: Any) -> bool:
                         return True
 
         # Fallback: send TTS to all speakers in the target room (or all rooms)
-        from services.device_manager import get_device_manager
+        from ha_glue.services.device_manager import get_device_manager
 
         device_manager = get_device_manager()
         if notification.room_name:

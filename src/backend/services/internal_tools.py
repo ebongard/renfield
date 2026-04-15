@@ -157,8 +157,8 @@ class InternalToolService:
 
         try:
             from services.database import AsyncSessionLocal
-            from services.output_routing_service import OutputRoutingService
-            from services.room_service import RoomService
+            from ha_glue.services.output_routing_service import OutputRoutingService
+            from ha_glue.services.room_service import RoomService
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)
@@ -276,7 +276,7 @@ class InternalToolService:
         """Resolve room_name → room_id via RoomService."""
         try:
             from services.database import AsyncSessionLocal
-            from services.room_service import RoomService
+            from ha_glue.services.room_service import RoomService
 
             async with AsyncSessionLocal() as db:
                 rs = RoomService(db)
@@ -896,8 +896,8 @@ class InternalToolService:
 
         try:
             from services.database import AsyncSessionLocal
-            from services.output_routing_service import OutputRoutingService
-            from services.room_service import RoomService
+            from ha_glue.services.output_routing_service import OutputRoutingService
+            from ha_glue.services.room_service import RoomService
 
             async with AsyncSessionLocal() as db:
                 room_service = RoomService(db)

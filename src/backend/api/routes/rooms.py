@@ -14,7 +14,7 @@ from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
-from services.room_service import RoomService
+from ha_glue.services.room_service import RoomService
 
 # Import all schemas from separate file
 from .rooms_schemas import (
@@ -505,7 +505,7 @@ async def get_connected_devices(_user: User = Depends(require_permission(Permiss
 
     Returns real-time status of all connected satellites and web clients.
     """
-    from services.device_manager import get_device_manager
+    from ha_glue.services.device_manager import get_device_manager
 
     device_manager = get_device_manager()
     devices = device_manager.get_all_devices()
@@ -516,7 +516,7 @@ async def get_connected_devices(_user: User = Depends(require_permission(Permiss
 @router.get("/devices/connected/{room_id}", response_model=list[ConnectedDeviceResponse])
 async def get_connected_devices_in_room(room_id: int, _user: User = Depends(require_permission(Permission.ROOMS_READ))):
     """Get all connected devices in a specific room"""
-    from services.device_manager import get_device_manager
+    from ha_glue.services.device_manager import get_device_manager
 
     device_manager = get_device_manager()
     devices = device_manager.get_devices_in_room_by_id(room_id)
@@ -733,7 +733,7 @@ async def get_room_output_devices(
     _user: User = Depends(require_permission(Permission.ROOMS_READ)),
 ):
     """Get all output devices configured for a room"""
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     service = RoomService(db)
     room = await service.get_room(room_id)
@@ -754,7 +754,7 @@ async def add_output_device(
     _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Add an output device to a room"""
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     service = RoomService(db)
     room = await service.get_room(room_id)
@@ -810,7 +810,7 @@ async def update_output_device(
     _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Update an output device"""
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     routing_service = OutputRoutingService(db)
 
@@ -836,7 +836,7 @@ async def delete_output_device(
     _user: User = Depends(require_permission(Permission.ROOMS_MANAGE)),
 ):
     """Delete an output device"""
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     routing_service = OutputRoutingService(db)
     success = await routing_service.delete_output_device(device_id)
@@ -861,7 +861,7 @@ async def reorder_output_devices(
     The device_ids list should be in the desired order (first = highest priority).
     """
     from models.database import OUTPUT_TYPES
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     service = RoomService(db)
     room = await service.get_room(room_id)
@@ -896,7 +896,7 @@ async def get_available_outputs(
     Returns both Renfield devices (with speaker capability) and
     Home Assistant media_player entities.
     """
-    from services.output_routing_service import OutputRoutingService
+    from ha_glue.services.output_routing_service import OutputRoutingService
 
     service = RoomService(db)
     room = await service.get_room(room_id)

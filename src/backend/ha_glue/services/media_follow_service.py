@@ -414,7 +414,7 @@ class MediaFollowService:
     ) -> None:
         """Send an info notification to the user via Device WebSocket."""
         try:
-            from services.device_manager import get_device_manager
+            from ha_glue.services.device_manager import get_device_manager
 
             dm = get_device_manager()
             message = {

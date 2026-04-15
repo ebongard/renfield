@@ -209,7 +209,7 @@ class OutputRoutingService:
         """
         Check if a Renfield device is available (connected and idle).
         """
-        from services.device_manager import DeviceState, get_device_manager
+        from ha_glue.services.device_manager import DeviceState, get_device_manager
 
         device_manager = get_device_manager()
         device = device_manager.get_device(device_id)
