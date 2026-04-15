@@ -434,6 +434,82 @@ class TestWebSocketAuthentication:
 
         assert device_id is None
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_accepts_jwt(self):
+        """JWT access tokens from /api/auth/login must be accepted by /ws.
+
+        The React web chat reads `renfield_access_token` from localStorage
+        and appends it directly to the WS URL as `?token=<JWT>`. Before
+        this was supported, the backend only accepted device tokens and
+        rejected every web chat connection with 403. The dual-strategy
+        flow is: try JWT first, fall back to device token.
+        """
+        from unittest.mock import MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        # Mint a real JWT with the production helper so the structure
+        # and signing match exactly what /api/auth/login produces.
+        jwt = create_access_token(data={"sub": "7", "username": "testuser"})
+
+        ws = MagicMock()
+        ws.headers = {}
+
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            result = await authenticate_websocket(ws, token=jwt)
+        finally:
+            settings.ws_auth_enabled = original
+
+        assert result is not None, "JWT must authenticate the WS connection"
+        assert result.get("auth_method") == "jwt"
+        assert result.get("user_id") == "7"
+        assert result.get("authenticated") is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_jwt_falls_through_to_device_token(self):
+        """A non-JWT string must fall through to the device-token path.
+
+        Satellites use short-lived device tokens minted via POST
+        /api/ws/token. The JWT-first strategy must not break that flow:
+        if the token doesn't decode as a JWT, the device-token store
+        gets a chance to validate it.
+        """
+        from services.websocket_auth import (
+            WSTokenStore,
+            authenticate_websocket,
+            get_token_store,
+        )
+        from utils.config import settings
+        from unittest.mock import MagicMock
+
+        # Replace the module singleton with a fresh one for isolation.
+        import services.websocket_auth as ws_auth_mod
+        original_store = ws_auth_mod._token_store
+        ws_auth_mod._token_store = WSTokenStore()
+        try:
+            device_token = get_token_store().create_token(device_id="sat-001")
+
+            ws = MagicMock()
+            ws.headers = {}
+
+            original_enabled = settings.ws_auth_enabled
+            settings.ws_auth_enabled = True
+            try:
+                result = await authenticate_websocket(ws, token=device_token)
+            finally:
+                settings.ws_auth_enabled = original_enabled
+
+            assert result is not None, "device token must still authenticate"
+            assert result.get("device_id") == "sat-001"
+        finally:
+            ws_auth_mod._token_store = original_store
+
 
 # ============================================================================
 # WebSocket Protocol Edge Cases

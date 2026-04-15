@@ -141,6 +141,31 @@ async def authenticate_websocket(
     if not token:
         return None
 
+    # Strategy 1: Try JWT validation (web chat users authenticated via
+    # /api/auth/login). The React frontend reads `renfield_access_token`
+    # from localStorage and appends it directly to the WS URL as
+    # `?token=<JWT>`. Before this branch existed, the backend only
+    # accepted device tokens (from WSTokenStore) and rejected every
+    # web chat connection with 403.
+    try:
+        from services.auth_service import decode_token
+
+        payload = decode_token(token)
+        if payload and payload.get("type") == "access":
+            user_id = payload.get("sub")
+            logger.debug(f"WebSocket authenticated via JWT: user_id={user_id}")
+            return {
+                "authenticated": True,
+                "user_id": user_id,
+                "auth_method": "jwt",
+            }
+    except Exception:
+        # Not a valid JWT — fall through to device-token validation.
+        pass
+
+    # Strategy 2: Device token (satellites, devices) — the original
+    # flow. Used by hardware satellites that fetch a short-lived token
+    # via POST /api/ws/token at boot time.
     store = get_token_store()
     token_data = store.validate_token(token)
 
