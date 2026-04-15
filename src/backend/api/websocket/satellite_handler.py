@@ -22,6 +22,7 @@ from services.wakeword_config_manager import get_wakeword_config_manager
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_connection_limiter, get_rate_limiter
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 from .shared import get_whisper_service, send_ws_error
 
@@ -177,7 +178,7 @@ async def satellite_websocket(
 
                 # Persist room assignment to database
                 room_id = None
-                if success and settings.rooms_auto_create_from_satellite:
+                if success and ha_glue_settings.rooms_auto_create_from_satellite:
                     try:
                         from services.room_service import RoomService
 
@@ -222,7 +223,7 @@ async def satellite_websocket(
                 logger.info(f"📡 Satellite {satellite_id} registered from {room}")
 
                 # Push known BLE + Classic BT MACs to satellite for presence scanning
-                if settings.presence_enabled:
+                if ha_glue_settings.presence_enabled:
                     try:
                         from services.presence_service import get_presence_service
                         presence_svc = get_presence_service()
@@ -462,7 +463,7 @@ async def satellite_websocket(
                     # Load user permissions from speaker recognition
                     sat_user_permissions = None
                     sat_user_id = None
-                    if speaker_name and (settings.auth_enabled or settings.presence_enabled):
+                    if speaker_name and (settings.auth_enabled or ha_glue_settings.presence_enabled):
                         try:
                             from sqlalchemy import select
 
@@ -497,7 +498,7 @@ async def satellite_websocket(
                             logger.warning(f"⚠️ Failed to associate speaker with conversation: {e}")
 
                     # Register voice presence if speaker was recognized
-                    if sat_user_id and settings.presence_enabled and satellite and satellite.room_id:
+                    if sat_user_id and ha_glue_settings.presence_enabled and satellite and satellite.room_id:
                         try:
                             from services.presence_service import get_presence_service
                             presence_svc = get_presence_service()
@@ -632,7 +633,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
             # Handle BLE presence scan results
             elif msg_type == "ble_presence":
-                if satellite_id and settings.presence_enabled:
+                if satellite_id and ha_glue_settings.presence_enabled:
                     ble_devices = data.get("devices", [])
                     satellite = satellite_manager.get_satellite(satellite_id)
                     ble_room_id = satellite.room_id if satellite else None

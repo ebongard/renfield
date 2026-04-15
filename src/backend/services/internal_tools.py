@@ -291,7 +291,7 @@ class InternalToolService:
         self, params: dict, room_name: str, media_type, **kwargs
     ) -> None:
         """Register playback with MediaFollowService if enabled (async version)."""
-        from utils.config import settings as _settings
+        from ha_glue.utils.config import ha_glue_settings as _settings
 
         if not _settings.media_follow_enabled:
             return

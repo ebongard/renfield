@@ -16,6 +16,7 @@ from enum import Enum
 from loguru import logger
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 class MediaType(str, Enum):
@@ -189,8 +190,8 @@ class MediaFollowService:
             f"'{session.title or session.station_name or session.album_name}'"
         )
 
-        if settings.media_follow_resume_delay > 0:
-            await asyncio.sleep(settings.media_follow_resume_delay)
+        if ha_glue_settings.media_follow_resume_delay > 0:
+            await asyncio.sleep(ha_glue_settings.media_follow_resume_delay)
 
         await self._resume_playback(session, room_id, room_name)
 
@@ -397,7 +398,7 @@ class MediaFollowService:
     def _cleanup_expired_sessions(self) -> None:
         """Remove suspended sessions that have exceeded the timeout."""
         now = time.time()
-        timeout = settings.media_follow_suspend_timeout
+        timeout = ha_glue_settings.media_follow_suspend_timeout
         expired = [
             uid for uid, s in self._sessions.items()
             if s.state == SessionState.SUSPENDED

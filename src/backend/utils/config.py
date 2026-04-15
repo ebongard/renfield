@@ -46,15 +46,14 @@ class Settings(BaseSettings):
     ollama_vision_url: str | None = None         # Separate Ollama URL for vision model (default: ollama_url)
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
-    # Home Assistant
-    home_assistant_url: str | None = None
-    home_assistant_token: SecretStr | None = None
+    # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
+    # (see `HaGlueSettings`). Access via:
+    #     from ha_glue.utils.config import ha_glue_settings
+    # Env var names (HOME_ASSISTANT_URL, HOME_ASSISTANT_TOKEN, FRIGATE_URL,
+    # FRIGATE_TIMEOUT) are unchanged.
 
     # n8n — field exists so .env can set N8N_API_URL for the n8n-mcp stdio subprocess
     n8n_api_url: str | None = None
-
-    # Frigate
-    frigate_url: str | None = None
 
     # MCP integration toggles (used by mcp_servers.yaml)
     weather_enabled: bool = False
@@ -83,8 +82,7 @@ class Settings(BaseSettings):
     speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
     speaker_continuous_learning: bool = True     # Add embeddings to known speakers on each interaction
 
-    # Room Management
-    rooms_auto_create_from_satellite: bool = True  # Auto-create rooms when satellites register
+    # Room Management / Satellite OTA moved to ha_glue/utils/config.py.
 
     # Output Routing
     advertise_host: str | None = None  # Hostname/IP that external services (like HA) can reach
@@ -97,8 +95,7 @@ class Settings(BaseSettings):
     wake_word_threshold: float = 0.5
     wake_word_cooldown_ms: int = 2000
 
-    # Satellite OTA Updates
-    satellite_latest_version: str = "1.0.0"  # Latest available satellite version
+    # Satellite OTA Updates — moved to ha_glue/utils/config.py.
 
     # Agent (ReAct Loop)
     agent_enabled: bool = False           # Opt-in, disabled by default
@@ -223,27 +220,8 @@ class Settings(BaseSettings):
     secret_key: SecretStr = "changeme-in-production-use-strong-random-key"
     trusted_proxies: str = ""  # Comma-separated CIDRs, e.g. "172.18.0.0/16,127.0.0.1"
 
-    # Jellyfin
-    jellyfin_enabled: bool = False
-    jellyfin_url: str | None = None
-    jellyfin_base_url: str | None = None
-    jellyfin_api_key: SecretStr | None = None
-    jellyfin_token: SecretStr | None = None
-    jellyfin_user_id: str | None = None
-
-    # Paperless-NGX
-    paperless_enabled: bool = False
-    paperless_api_url: str | None = None
-    paperless_api_token: SecretStr | None = None
-
-    # Paperless Audit
-    paperless_audit_enabled: bool = False
-    paperless_audit_model: str = ""              # Empty = use default model
-    paperless_audit_schedule: str = "02:00"      # Daily at 02:00
-    paperless_audit_fix_mode: str = "review"     # review | auto_threshold | auto_all
-    paperless_audit_confidence_threshold: float = 0.9
-    paperless_audit_ocr_threshold: int = 2       # OCR <= 2 → suggest re-OCR
-    paperless_audit_batch_delay: float = 2.0     # Seconds between documents
+    # Jellyfin / Paperless / Paperless Audit settings moved to
+    # ha_glue/utils/config.py.
 
     # Email MCP
     email_mcp_enabled: bool = False
@@ -258,12 +236,7 @@ class Settings(BaseSettings):
     n8n_api_key: SecretStr | None = None
     n8n_mcp_enabled: bool = False
 
-    # Radio (TuneIn)
-    radio_enabled: bool = False
-    tunein_partner_id: str = ""
-
-    # Home Assistant MCP
-    ha_mcp_enabled: bool = False
+    # Radio (TuneIn) / HA MCP settings moved to ha_glue/utils/config.py.
 
     # === Plugin / Extension System ===
     plugin_module: str = ""  # e.g. "renfield_twin.hooks:register"
@@ -324,9 +297,7 @@ class Settings(BaseSettings):
     device_session_timeout: float = 30.0  # Max voice session duration in seconds
     device_heartbeat_timeout: float = 60.0  # Disconnect after no heartbeat for this duration
 
-    # Integration Timeouts
-    ha_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
-    frigate_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    # HA / Frigate integration timeouts moved to ha_glue/utils/config.py.
     n8n_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
 
     # Agent LLM Defaults (fallback when prompt_manager has no config)
@@ -338,9 +309,8 @@ class Settings(BaseSettings):
     cb_llm_recovery_timeout: float = Field(default=30.0, ge=1.0, le=600.0)
     cb_agent_recovery_timeout: float = Field(default=60.0, ge=1.0, le=600.0)
 
-    # Cache TTLs (seconds)
-    ha_cache_ttl: int = Field(default=300, ge=10, le=86400)
-    satellite_package_cache_ttl: int = Field(default=300, ge=10, le=86400)
+    # Cache TTLs (seconds) — ha_cache_ttl and satellite_package_cache_ttl
+    # moved to ha_glue/utils/config.py.
     intent_feedback_cache_ttl: int = Field(default=300, ge=10, le=86400)
 
     # === Proactive Notifications ===
@@ -358,20 +328,8 @@ class Settings(BaseSettings):
     proactive_feedback_learning_enabled: bool = False
     proactive_feedback_similarity_threshold: float = 0.80
 
-    # Presence Detection (BLE-based room-level)
-    presence_enabled: bool = False                      # Master-Switch for BLE presence detection
-    presence_stale_timeout: int = 120                   # Seconds before user marked absent
-    presence_hysteresis_scans: int = 2                  # Consecutive scans before room change
-    presence_rssi_threshold: int = -80                     # dBm, signals weaker than this are ignored
-    presence_household_roles: str = "Admin,Familie"        # Roles considered household members for privacy TTS
-    presence_webhook_url: str = ""                           # URL to POST presence events (empty = disabled)
-    presence_webhook_secret: str = ""                        # Shared secret for webhook auth (X-Webhook-Secret header)
-    presence_analytics_retention_days: int = 90              # Days to keep presence events for analytics
-
-    # Media Follow Me (playback follows user between rooms)
-    media_follow_enabled: bool = False                         # Master switch (requires presence_enabled)
-    media_follow_suspend_timeout: float = 600.0                # Seconds before suspended session expires
-    media_follow_resume_delay: float = 2.0                     # Delay before resuming in new room
+    # Presence Detection / Media Follow Me settings moved to
+    # ha_glue/utils/config.py.
 
     # Notification Polling (generic MCP server polling)
     notification_poller_enabled: bool = False           # Master-Switch for MCP notification polling

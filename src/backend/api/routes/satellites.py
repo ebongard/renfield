@@ -16,6 +16,7 @@ from models.permissions import Permission
 from services.auth_service import require_permission
 from services.satellite_manager import get_satellite_manager
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 router = APIRouter()
 
@@ -163,7 +164,7 @@ def _satellite_to_response(sat_id: str, sat_data: dict[str, Any]) -> SatelliteRe
 
     # Get version info
     version = sat_data.get("version", "unknown")
-    update_available = _is_update_available(version, settings.satellite_latest_version)
+    update_available = _is_update_available(version, ha_glue_settings.satellite_latest_version)
 
     return SatelliteResponse(
         satellite_id=sat_id,
@@ -218,7 +219,7 @@ async def list_satellites(_user: User = Depends(require_permission(Permission.AD
         total_count=len(responses),
         online_count=len(responses),  # All returned are online
         active_sessions=active_sessions,
-        latest_version=settings.satellite_latest_version
+        latest_version=ha_glue_settings.satellite_latest_version
     )
 
 

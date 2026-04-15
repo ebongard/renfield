@@ -16,6 +16,7 @@ from loguru import logger
 
 from services.satellite_manager import UpdateStatus, get_satellite_manager
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 class SatelliteUpdateService:
@@ -35,13 +36,13 @@ class SatelliteUpdateService:
         # Cache for built packages
         self._package_cache: dict[str, Any] | None = None
         self._package_cache_time: float = 0
-        self._package_cache_ttl: float = settings.satellite_package_cache_ttl
+        self._package_cache_ttl: float = ha_glue_settings.satellite_package_cache_ttl
 
         logger.info("📦 SatelliteUpdateService initialized")
 
     def get_latest_version(self) -> str:
         """Get the latest available satellite version from config"""
-        return settings.satellite_latest_version
+        return ha_glue_settings.satellite_latest_version
 
     def is_update_available(self, current_version: str) -> bool:
         """

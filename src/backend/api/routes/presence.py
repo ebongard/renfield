@@ -16,6 +16,7 @@ from services.auth_service import require_permission
 from services.database import get_db
 from services.presence_service import get_presence_service
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 router = APIRouter(prefix="/api/presence")
 
@@ -70,7 +71,7 @@ class PresenceStatusResponse(BaseModel):
 @router.get("/status", response_model=PresenceStatusResponse)
 async def get_presence_status():
     """Check whether presence detection is enabled."""
-    return PresenceStatusResponse(enabled=settings.presence_enabled)
+    return PresenceStatusResponse(enabled=ha_glue_settings.presence_enabled)
 
 
 # --- Room occupancy ---
@@ -78,7 +79,7 @@ async def get_presence_status():
 @router.get("/rooms", response_model=list[RoomOccupancyResponse])
 async def get_rooms_presence():
     """Get all rooms with their current occupants."""
-    if not settings.presence_enabled:
+    if not ha_glue_settings.presence_enabled:
         return []
 
     presence = get_presence_service()
@@ -110,7 +111,7 @@ async def get_rooms_presence():
 @router.get("/room/{room_id}", response_model=RoomOccupancyResponse)
 async def get_room_presence(room_id: int):
     """Get occupants of a specific room."""
-    if not settings.presence_enabled:
+    if not ha_glue_settings.presence_enabled:
         return RoomOccupancyResponse(room_id=room_id)
 
     presence = get_presence_service()
@@ -140,7 +141,7 @@ async def get_room_presence(room_id: int):
 @router.get("/user/{user_id}", response_model=UserPresenceResponse)
 async def get_user_presence(user_id: int):
     """Get current room and alone-status for a user."""
-    if not settings.presence_enabled:
+    if not ha_glue_settings.presence_enabled:
         return UserPresenceResponse(user_id=user_id)
 
     presence = get_presence_service()

@@ -18,6 +18,7 @@ Usage:
 from dataclasses import dataclass, field
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 @dataclass
@@ -96,7 +97,7 @@ PRESENCE_INTENTS = IntegrationIntents(
     integration_name="presence",
     title_de="ANWESENHEIT",
     title_en="PRESENCE",
-    is_enabled_func=lambda: settings.presence_enabled,
+    is_enabled_func=lambda: ha_glue_settings.presence_enabled,
     intents=[
         IntentDef(
             name="internal.get_user_location",

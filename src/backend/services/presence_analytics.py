@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import PresenceEvent, Room
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 from utils.hooks import register_hook
 
 # ---------------------------------------------------------------------------
@@ -196,7 +197,7 @@ class PresenceAnalyticsService:
 
     async def cleanup_old_events(self, retention_days: int | None = None) -> int:
         """Delete events older than retention_days. Returns count deleted."""
-        retention = retention_days or settings.presence_analytics_retention_days
+        retention = retention_days or ha_glue_settings.presence_analytics_retention_days
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=retention)
 
         result = await self.db.execute(

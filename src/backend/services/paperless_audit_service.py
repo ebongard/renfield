@@ -21,6 +21,7 @@ from uuid import uuid4
 from sqlalchemy import func, select
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +100,8 @@ class PaperlessAuditService:
         Returns:
             {"run_id": str, "total": int, "processed": int, "changes_found": int}
         """
-        fix_mode = fix_mode or settings.paperless_audit_fix_mode
-        confidence_threshold = confidence_threshold or settings.paperless_audit_confidence_threshold
+        fix_mode = fix_mode or ha_glue_settings.paperless_audit_fix_mode
+        confidence_threshold = confidence_threshold or ha_glue_settings.paperless_audit_confidence_threshold
         run_id = str(uuid4())
 
         # State is set by run_audit_background() when called via API.
@@ -162,7 +163,7 @@ class PaperlessAuditService:
                     logger.error(f"Audit failed for doc {doc_id}: {e}")
 
                 # Throttle
-                await asyncio.sleep(settings.paperless_audit_batch_delay)
+                await asyncio.sleep(ha_glue_settings.paperless_audit_batch_delay)
 
             return {
                 "run_id": run_id,
@@ -442,7 +443,7 @@ class PaperlessAuditService:
             get_default_client,
         )
 
-        model = settings.paperless_audit_model or settings.ollama_model
+        model = ha_glue_settings.paperless_audit_model or settings.ollama_model
         content = (doc.get("content") or "")[:_MAX_CONTENT_LENGTH]
 
         # Build custom fields schema string

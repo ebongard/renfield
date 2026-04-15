@@ -18,6 +18,7 @@ from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -255,7 +256,7 @@ def _schedule_presence_event_cleanup():
     _startup_tasks.append(task)
     logger.info(
         f"Presence Event Cleanup Scheduler gestartet "
-        f"(retention={settings.presence_analytics_retention_days}d, täglich)"
+        f"(retention={ha_glue_settings.presence_analytics_retention_days}d, täglich)"
     )
 
 
@@ -265,7 +266,7 @@ async def _init_paperless_audit(app: "FastAPI") -> None:
     Routes, service, and imports only happen inside this function.
     If Paperless MCP is not configured, nothing is imported, no routes exist.
     """
-    if not settings.paperless_audit_enabled:
+    if not ha_glue_settings.paperless_audit_enabled:
         return
 
     mcp_manager = getattr(app.state, "mcp_manager", None)
@@ -584,7 +585,7 @@ async def lifespan(app: "FastAPI"):
     zeroconf_service = await _init_zeroconf(app)
 
     # Presence webhooks + analytics
-    if settings.presence_enabled:
+    if ha_glue_settings.presence_enabled:
         from services.presence_webhook import register_presence_webhooks
 
         register_presence_webhooks()
@@ -612,7 +613,7 @@ async def lifespan(app: "FastAPI"):
                 presence_svc.set_room_name(room.id, room.name)
 
     # Conversation handoff hook (requires presence for room-change detection)
-    if settings.presence_enabled:
+    if ha_glue_settings.presence_enabled:
         from services.conversation_handoff import on_presence_enter_room
         from utils.hooks import register_hook
 
@@ -620,7 +621,7 @@ async def lifespan(app: "FastAPI"):
         logger.info("✅ Conversation handoff hook registered")
 
     # Media Follow Me hooks (requires both presence and media_follow enabled)
-    if settings.media_follow_enabled and settings.presence_enabled:
+    if ha_glue_settings.media_follow_enabled and ha_glue_settings.presence_enabled:
         from services.media_follow_service import get_media_follow_service
         from utils.hooks import register_hook
 

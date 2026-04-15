@@ -4,6 +4,7 @@ import httpx
 from loguru import logger
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 from utils.hooks import register_hook
 
 _client: httpx.AsyncClient | None = None
@@ -16,12 +17,12 @@ async def _dispatch(event: str, **kwargs):
         _client = httpx.AsyncClient(timeout=10.0)
 
     headers = {"Content-Type": "application/json"}
-    if settings.presence_webhook_secret:
-        headers["X-Webhook-Secret"] = settings.presence_webhook_secret
+    if ha_glue_settings.presence_webhook_secret:
+        headers["X-Webhook-Secret"] = ha_glue_settings.presence_webhook_secret
 
     payload = {"event": event, **kwargs}
     try:
-        resp = await _client.post(settings.presence_webhook_url, json=payload, headers=headers)
+        resp = await _client.post(ha_glue_settings.presence_webhook_url, json=payload, headers=headers)
         resp.raise_for_status()
         logger.debug(f"Presence webhook: {event} → {resp.status_code}")
     except Exception:
@@ -30,7 +31,7 @@ async def _dispatch(event: str, **kwargs):
 
 def register_presence_webhooks():
     """Register hook handlers for all presence events."""
-    if not settings.presence_webhook_url:
+    if not ha_glue_settings.presence_webhook_url:
         return
 
     for event in (
@@ -44,4 +45,4 @@ def register_presence_webhooks():
 
         register_hook(event, handler)
 
-    logger.info(f"Presence webhooks registered → {settings.presence_webhook_url}")
+    logger.info(f"Presence webhooks registered → {ha_glue_settings.presence_webhook_url}")

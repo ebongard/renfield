@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 @dataclass
@@ -51,9 +52,9 @@ class PresenceService:
         self._mac_to_method: dict[str, str] = {}         # MAC → detection_method cache
         self._presence: dict[int, UserPresence] = {}     # user_id → presence
         self._sightings: dict[str, list[DeviceSighting]] = {}  # MAC → recent sightings
-        self._hysteresis_threshold: int = settings.presence_hysteresis_scans
-        self._stale_timeout: float = float(settings.presence_stale_timeout)
-        self._rssi_threshold: int = settings.presence_rssi_threshold
+        self._hysteresis_threshold: int = ha_glue_settings.presence_hysteresis_scans
+        self._stale_timeout: float = float(ha_glue_settings.presence_stale_timeout)
+        self._rssi_threshold: int = ha_glue_settings.presence_rssi_threshold
         self._room_names: dict[int, str] = {}            # room_id → name cache
         self._user_names: dict[int, str] = {}            # user_id → username
         self._user_first_names: dict[int, str] = {}      # user_id → first_name

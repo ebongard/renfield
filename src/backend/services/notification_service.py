@@ -28,6 +28,7 @@ from models.database import (
     SystemSetting,
 )
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 class NotificationService:
@@ -501,7 +502,7 @@ class NotificationService:
         logger.info(f"📨 Notification #{notification.id} erstellt: {title} (urgency={urgency})")
 
         # Resolve target user's room from presence if no room specified
-        if target_user_id and not room_id and settings.presence_enabled:
+        if target_user_id and not room_id and ha_glue_settings.presence_enabled:
             try:
                 from services.presence_service import get_presence_service
                 presence = get_presence_service()

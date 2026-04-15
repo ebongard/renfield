@@ -22,6 +22,7 @@ from services.input_guard import detect_injection
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 from .shared import (
     ConversationSessionState,
@@ -649,7 +650,7 @@ async def websocket_endpoint(
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
 
             # Register voice/auth presence if user is authenticated in a known room
-            if (user_id and settings.presence_enabled
+            if (user_id and ha_glue_settings.presence_enabled
                     and room_context and room_context.get("room_id")):
                 try:
                     from services.presence_service import get_presence_service

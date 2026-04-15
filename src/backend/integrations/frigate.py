@@ -9,6 +9,7 @@ import paho.mqtt.client as mqtt
 from loguru import logger
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 _shared_frigate_client: httpx.AsyncClient | None = None
 
@@ -17,9 +18,9 @@ async def get_frigate_http_client() -> httpx.AsyncClient:
     global _shared_frigate_client
     if _shared_frigate_client is None or _shared_frigate_client.is_closed:
         _shared_frigate_client = httpx.AsyncClient(
-            base_url=settings.frigate_url or "",
+            base_url=ha_glue_settings.frigate_url or "",
             limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-            timeout=httpx.Timeout(settings.frigate_timeout),
+            timeout=httpx.Timeout(ha_glue_settings.frigate_timeout),
         )
     return _shared_frigate_client
 
@@ -35,7 +36,7 @@ class FrigateClient:
     """Client für Frigate NVR"""
 
     def __init__(self):
-        self.base_url = settings.frigate_url
+        self.base_url = ha_glue_settings.frigate_url
         self.mqtt_client = None
         self.event_callbacks = []
 
@@ -57,7 +58,7 @@ class FrigateClient:
             response = await client.get(
                 "/api/events",
                 params=params,
-                timeout=settings.frigate_timeout
+                timeout=ha_glue_settings.frigate_timeout
             )
             response.raise_for_status()
             return response.json()
@@ -71,7 +72,7 @@ class FrigateClient:
             client = await get_frigate_http_client()
             response = await client.get(
                 f"/api/events/{event_id}/snapshot.jpg",
-                timeout=settings.frigate_timeout
+                timeout=ha_glue_settings.frigate_timeout
             )
             response.raise_for_status()
             return response.content
@@ -85,7 +86,7 @@ class FrigateClient:
             client = await get_frigate_http_client()
             response = await client.get(
                 "/api/config",
-                timeout=settings.frigate_timeout
+                timeout=ha_glue_settings.frigate_timeout
             )
             response.raise_for_status()
             config = response.json()

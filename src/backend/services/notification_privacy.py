@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 
 async def should_play_tts(
@@ -39,7 +40,7 @@ async def should_play_tts(
     if privacy == "public":
         return True
 
-    if not settings.presence_enabled:
+    if not ha_glue_settings.presence_enabled:
         logger.debug("Presence disabled — suppressing non-public TTS (privacy=%s)", privacy)
         return False
 
@@ -74,7 +75,7 @@ async def _all_household_members(user_ids: list[int], db: AsyncSession) -> bool:
     """Check whether all given user IDs belong to household roles."""
     from models.database import User
 
-    household_roles = {r.strip() for r in settings.presence_household_roles.split(",") if r.strip()}
+    household_roles = {r.strip() for r in ha_glue_settings.presence_household_roles.split(",") if r.strip()}
 
     result = await db.execute(
         select(User).options(selectinload(User.role)).where(User.id.in_(user_ids))

@@ -13,6 +13,7 @@ import httpx
 from loguru import logger
 
 from utils.config import settings
+from ha_glue.utils.config import ha_glue_settings
 
 _shared_http_client: httpx.AsyncClient | None = None
 
@@ -20,15 +21,15 @@ _shared_http_client: httpx.AsyncClient | None = None
 async def get_ha_http_client() -> httpx.AsyncClient:
     global _shared_http_client
     if _shared_http_client is None or _shared_http_client.is_closed:
-        token = settings.home_assistant_token.get_secret_value() if settings.home_assistant_token else ""
+        token = ha_glue_settings.home_assistant_token.get_secret_value() if ha_glue_settings.home_assistant_token else ""
         _shared_http_client = httpx.AsyncClient(
-            base_url=settings.home_assistant_url or "",
+            base_url=ha_glue_settings.home_assistant_url or "",
             headers={
                 "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             },
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
-            timeout=httpx.Timeout(settings.ha_timeout),
+            timeout=httpx.Timeout(ha_glue_settings.ha_timeout),
         )
     return _shared_http_client
 
@@ -49,18 +50,18 @@ class HomeAssistantClient:
     _ENTITY_MAP_TTL: float = 60.0  # seconds
 
     def __init__(self):
-        self.base_url = settings.home_assistant_url
-        self.token = settings.home_assistant_token.get_secret_value() if settings.home_assistant_token else None
+        self.base_url = ha_glue_settings.home_assistant_url
+        self.token = ha_glue_settings.home_assistant_token.get_secret_value() if ha_glue_settings.home_assistant_token else None
         # Keyword Cache
         self._keywords_cache = None
         self._keywords_last_updated = None
-        self._cache_ttl = settings.ha_cache_ttl
+        self._cache_ttl = ha_glue_settings.ha_cache_ttl
 
     async def get_states(self) -> list[dict]:
         """Alle Entity States abrufen"""
         try:
             client = await get_ha_http_client()
-            response = await client.get("/api/states", timeout=settings.ha_timeout)
+            response = await client.get("/api/states", timeout=ha_glue_settings.ha_timeout)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -71,7 +72,7 @@ class HomeAssistantClient:
         """State einer bestimmten Entity abrufen"""
         try:
             client = await get_ha_http_client()
-            response = await client.get(f"/api/states/{entity_id}", timeout=settings.ha_timeout)
+            response = await client.get(f"/api/states/{entity_id}", timeout=ha_glue_settings.ha_timeout)
             response.raise_for_status()
             return response.json()
         except Exception as e:
@@ -96,7 +97,7 @@ class HomeAssistantClient:
             response = await client.post(
                 f"/api/services/{domain}/{service}",
                 json=data,
-                timeout=timeout or settings.ha_timeout
+                timeout=timeout or ha_glue_settings.ha_timeout
             )
             response.raise_for_status()
             logger.info(f"✅ Service {domain}.{service} für {entity_id} aufgerufen")
@@ -485,7 +486,7 @@ class HomeAssistantClient:
             client = await get_ha_http_client()
             response = await client.get(
                 "/api/config/area_registry",
-                timeout=settings.ha_timeout
+                timeout=ha_glue_settings.ha_timeout
             )
 
             if response.status_code == 200:
