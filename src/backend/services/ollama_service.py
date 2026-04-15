@@ -541,40 +541,24 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                         logger.warning(f"⚠️ Retry also failed: {retry_err}")
 
                 if intent_data is None:
-                    # Letzter Versuch: Prüfe ob wir einen Home Assistant Intent vermuten können
-                    message_lower = message.lower()
-                    ha_action_keywords = ["schalte", "mach", "stelle", "ist", "zeige", "öffne", "schließe"]
-
-                    has_action = any(keyword in message_lower for keyword in ha_action_keywords)
-                    has_device = any(keyword in message_lower for keyword in ["licht", "lampe", "fenster", "tür", "heizung", "rolladen"])
-
-                    if has_action and has_device:
-                        logger.warning("⚠️  Vermute Home Assistant Intent - verwende Fallback mit Entity-Suche")
-                        # Versuche zumindest die Entity zu finden
-                        from integrations.homeassistant import HomeAssistantClient
-                        ha_client = HomeAssistantClient()
-                        search_results = await ha_client.search_entities(message)
-
-                        if search_results:
-                            # Nehme erste gefundene Entity
-                            entity_id = search_results[0]["entity_id"]
-
-                            # Bestimme Intent basierend auf Aktion
-                            if any(word in message_lower for word in ["ein", "an", "schalte ein"]):
-                                intent = "homeassistant.turn_on"
-                            elif any(word in message_lower for word in ["aus", "schalte aus"]):
-                                intent = "homeassistant.turn_off"
-                            elif any(word in message_lower for word in ["ist", "status", "zustand"]):
-                                intent = "homeassistant.get_state"
-                            else:
-                                intent = "homeassistant.turn_on"  # Default
-
-                            logger.info(f"✅ Fallback Intent: {intent} mit Entity: {entity_id}")
-                            return {
-                                "intent": intent,
-                                "parameters": {"entity_id": entity_id},
-                                "confidence": 0.6  # Niedrigere Confidence für Fallback
-                            }
+                    # JSON parsing of the LLM response failed even after retry.
+                    # Fire the `intent_fallback_resolve` hook so domain-specific
+                    # consumers (e.g. ha_glue's HA-keyword fallback) can still
+                    # recognize the intent. First handler that returns a non-None
+                    # result wins. If no handler matches, fall through to
+                    # general.unresolved and let the agent loop pick it up.
+                    from utils.hooks import run_hooks
+                    fallback_results = await run_hooks(
+                        "intent_fallback_resolve",
+                        message=message,
+                        lang=lang,
+                    )
+                    if fallback_results:
+                        logger.info(
+                            f"✅ Intent fallback resolved by hook: "
+                            f"{fallback_results[0].get('intent')!r}"
+                        )
+                        return fallback_results[0]
 
                     # Fallback: unresolved intent (agent loop can pick this up)
                     return {

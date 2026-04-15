@@ -29,6 +29,13 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "presence_last_left",
     "compact_mcp_result",
     "authenticate",
+    # Intent classification fallback — fired by the LLM intent dispatcher
+    # when JSON parsing fails and a domain-specific consumer (e.g. HA via
+    # ha_glue) might still recognize the user's intent from raw keywords.
+    # Handlers receive `message: str, lang: str` and return a dict
+    # `{"intent": str, "parameters": dict, "confidence": float}` on success
+    # or None to fall through. First non-None result wins.
+    "intent_fallback_resolve",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]
