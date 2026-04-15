@@ -41,13 +41,14 @@ from api.routes import homeassistant as ha_routes
 from api.routes import knowledge_graph as kg_routes
 from api.routes import mcp as mcp_routes
 from api.routes import settings as settings_routes
-from api.websocket import chat_router, device_router, kg_live_router, satellite_router
+from api.websocket import chat_router, kg_live_router, satellite_router
+# NOTE: device_router moved to ha_glue.api.websocket.device_handler and
+# is mounted via the register_routes hook from ha_glue.bootstrap.
 from models.database import User
 from models.permissions import Permission
 from services.api_rate_limiter import setup_rate_limiter
 from services.auth_service import get_current_user, require_permission
 from services.database import AsyncSessionLocal
-from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
 from services.websocket_auth import get_token_store
 from utils.config import settings
@@ -185,7 +186,7 @@ app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowl
 app.include_router(chat_router, tags=["WebSocket Chat"])
 if settings.features["satellites"]:
     app.include_router(satellite_router, tags=["WebSocket Satellite"])
-app.include_router(device_router, tags=["WebSocket Device"])
+# device_router mounted via ha_glue register_routes hook.
 if settings.knowledge_graph_enabled:
     app.include_router(kg_live_router, tags=["WebSocket Knowledge Graph"])
 
@@ -329,14 +330,21 @@ async def readiness_check():
         checks["redis"] = {"status": "degraded", "error": "connection failed"}
         # Redis is optional, don't fail health check
 
-    # Connected devices count
+    # Connected devices count via hook — ha_glue's handler reports
+    # DeviceManager state. Platform-only deploys (no handler) report
+    # "unknown".
     try:
-        device_manager = get_device_manager()
-        checks["devices"] = {
-            "status": "healthy",
-            "connected": len(device_manager.devices),
-            "active_sessions": len(device_manager.sessions)
-        }
+        from utils.hooks import run_hooks
+        results = await run_hooks("get_connected_device_summary")
+        device_summary = None
+        for result in results:
+            if isinstance(result, dict):
+                device_summary = result
+                break
+        if device_summary is not None:
+            checks["devices"] = {"status": "healthy", **device_summary}
+        else:
+            checks["devices"] = {"status": "unknown"}
     except Exception:
         checks["devices"] = {"status": "unknown"}
 

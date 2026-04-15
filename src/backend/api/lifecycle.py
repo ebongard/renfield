@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING
 from loguru import logger
 
 from services.database import AsyncSessionLocal, init_db
-from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from utils.config import settings
@@ -353,20 +352,9 @@ async def _cancel_startup_tasks():
                 pass
 
 
-async def _notify_devices_shutdown():
-    """Notify all connected devices about server shutdown."""
-    try:
-        device_manager = get_device_manager()
-        shutdown_msg = {"type": "server_shutdown", "message": "Server is shutting down"}
-        for device in list(device_manager.devices.values()):
-            try:
-                await device.websocket.send_json(shutdown_msg)
-                await device.websocket.close(code=1001, reason="Server shutdown")
-            except Exception:
-                pass
-        logger.info(f"👋 Notified {len(device_manager.devices)} devices about shutdown")
-    except Exception as e:
-        logger.warning(f"⚠️ Error notifying devices: {e}")
+# `_notify_devices_shutdown` moved to ha_glue/bootstrap.py; ha_glue's
+# `shutdown` hook handler now broadcasts the server_shutdown message
+# to connected devices.
 
 
 async def _load_plugin_module():
@@ -548,7 +536,8 @@ async def lifespan(app: "FastAPI"):
     if getattr(app.state, "notification_poller", None):
         await app.state.notification_poller.stop()
 
-    await _notify_devices_shutdown()
+    # Device shutdown notification handled by ha_glue's shutdown hook
+    # handler (see ha_glue/bootstrap.py::ha_glue_on_shutdown).
 
     # Shutdown MCP
     if getattr(app.state, "mcp_manager", None):

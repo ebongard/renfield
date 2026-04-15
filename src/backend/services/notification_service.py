@@ -548,156 +548,32 @@ class NotificationService:
     # ------------------------------------------------------------------
 
     async def _deliver(self, notification: Notification, tts: bool = True) -> list[str]:
+        """Deliver a notification to connected devices via the hook system.
+
+        Fires the `deliver_notification` hook and returns the first
+        well-shaped `list[str]` of delivered device IDs. ha_glue's
+        handler owns the WS broadcast + TTS delivery logic (including
+        privacy gating via `should_play_tts_for_notification`).
+        Platform-only deploys (no handler) return an empty list —
+        the notification is persisted but not broadcast.
         """
-        Deliver notification to connected devices via WebSocket broadcast
-        and optionally via TTS.
-
-        Returns list of device IDs that received the notification.
-        """
-        from services.device_manager import get_device_manager
-
-        device_manager = get_device_manager()
-        delivered_ids: list[str] = []
-
-        # Build WS message
-        ws_message = {
-            "type": "notification",
-            "notification_id": notification.id,
-            "title": notification.title,
-            "message": notification.message,
-            "urgency": notification.urgency,
-            "source": notification.source,
-            "room": notification.room_name,
-            "tts_handled": False,
-            "created_at": notification.created_at.isoformat() if notification.created_at else None,
-        }
-
-        # Determine target devices
-        if notification.room_name:
-            # Room-specific: broadcast to room devices
-            devices = device_manager.get_devices_in_room(notification.room_name)
-            if notification.room_id:
-                devices = devices or device_manager.get_devices_in_room_by_id(notification.room_id)
-        else:
-            # Global: broadcast to all devices
-            devices = list(device_manager.devices.values())
-
-        # Send to display-capable devices with notification support
-        for device in devices:
-            if device.capabilities.supports_notifications or device.capabilities.has_display:
-                try:
-                    await device.websocket.send_json(ws_message)
-                    delivered_ids.append(device.device_id)
-                except Exception as e:
-                    logger.warning(f"⚠️ Notification delivery failed for {device.device_id}: {e}")
-
-        logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
-
-        # TTS delivery (with privacy gate via hook)
-        if tts:
-            tts_allowed = True
-            if notification.privacy and notification.privacy != "public":
-                # Non-public privacy levels require a domain-specific handler
-                # to decide whether TTS is safe. ha_glue's handler uses BLE
-                # presence to check room occupancy. Platform default (no
-                # handler) fails safe: non-public TTS is suppressed.
-                try:
-                    from utils.hooks import run_hooks
-                    results = await run_hooks(
-                        "should_play_tts_for_notification",
-                        privacy=notification.privacy,
-                        target_user_id=notification.target_user_id,
-                        room_id=notification.room_id,
-                    )
-                    tts_allowed = False  # fail-safe default
-                    for result in results:
-                        if isinstance(result, bool):
-                            tts_allowed = result
-                            break
-                        logger.warning(
-                            f"⚠️  should_play_tts_for_notification handler returned "
-                            f"unexpected shape (type={type(result).__name__}); ignoring"
-                        )
-                except Exception as e:
-                    logger.warning("Privacy gate hook error, suppressing TTS: %s", e)
-                    tts_allowed = False
-            if tts_allowed:
-                tts_delivered = await self._deliver_tts(notification)
-                if tts_delivered:
-                    notification.tts_delivered = True
-                    ws_message["tts_handled"] = True
-            else:
-                logger.info("TTS suppressed for #%d (privacy=%s)", notification.id, notification.privacy)
-
-        return delivered_ids
-
-    async def _deliver_tts(self, notification: Notification) -> bool:
-        """Generate TTS and route to best audio output device for the room."""
         try:
-            from services.piper_service import PiperService
-
-            piper = PiperService()
-            tts_audio = await piper.synthesize_to_bytes(notification.message)
-
-            if not tts_audio:
-                logger.warning(f"⚠️ TTS synthesis failed for notification #{notification.id}")
-                return False
-
-            # Route via OutputRoutingService if room is known
-            if notification.room_id:
-                from services.audio_output_service import get_audio_output_service
-                from services.database import AsyncSessionLocal
-                from services.output_routing_service import OutputRoutingService
-
-                async with AsyncSessionLocal() as db_session:
-                    routing_service = OutputRoutingService(db_session)
-                    audio_output_service = get_audio_output_service()
-
-                    decision = await routing_service.get_audio_output_for_room(
-                        room_id=notification.room_id,
-                    )
-
-                    if decision.output_device and not decision.fallback_to_input:
-                        success = await audio_output_service.play_audio(
-                            audio_bytes=tts_audio,
-                            output_device=decision.output_device,
-                            session_id=f"notification-{notification.id}",
-                        )
-                        if success:
-                            logger.info(f"🔊 TTS für Notification #{notification.id} abgespielt")
-                            return True
-
-            # Fallback: send TTS to all speakers in the target room (or all rooms)
-            from services.device_manager import get_device_manager
-
-            device_manager = get_device_manager()
-            if notification.room_name:
-                devices = device_manager.get_devices_in_room(notification.room_name)
-            else:
-                devices = list(device_manager.devices.values())
-
-            import base64
-            audio_b64 = base64.b64encode(tts_audio).decode("utf-8")
-
-            for device in devices:
-                if device.capabilities.has_speaker:
-                    try:
-                        await device.websocket.send_json({
-                            "type": "tts_audio",
-                            "session_id": f"notification-{notification.id}",
-                            "audio": audio_b64,
-                            "is_final": True,
-                        })
-                        logger.info(f"🔊 TTS an {device.device_id} gesendet")
-                        return True
-                    except Exception as e:
-                        logger.warning(f"⚠️ TTS delivery to {device.device_id} failed: {e}")
-
-            return False
-
-        except Exception as e:
-            logger.error(f"❌ TTS delivery failed for notification #{notification.id}: {e}")
-            return False
+            from utils.hooks import run_hooks
+            results = await run_hooks(
+                "deliver_notification",
+                notification=notification,
+                tts=tts,
+            )
+            for result in results:
+                if isinstance(result, list):
+                    return result
+                logger.warning(
+                    f"⚠️  deliver_notification handler returned unexpected "
+                    f"shape (type={type(result).__name__}); ignoring"
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"deliver_notification hook failed: {e}")
+        return []
 
     # ------------------------------------------------------------------
     # CRUD

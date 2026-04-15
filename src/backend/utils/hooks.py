@@ -112,6 +112,22 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # `audio_id: str`. Handlers return `bytes | None`. First well-shaped
     # result wins. Platform default: None — endpoint returns 404.
     "fetch_tts_audio_cache",
+    # Connected device summary for /health endpoint. Fired by
+    # main.py `/health` to report how many devices (satellites +
+    # Renfield web panels) are currently connected. Handlers return
+    # a dict like `{"connected": int, "active_sessions": int}`.
+    # First well-shaped result wins. Platform default (no handler):
+    # health endpoint reports `{"status": "unknown"}`.
+    "get_connected_device_summary",
+    # Deliver a notification to connected devices. Fired by
+    # `services/notification_service.py::_deliver` after persisting
+    # a Notification row. Handlers receive the Notification ORM
+    # object + `tts: bool` and are responsible for (a) WebSocket
+    # broadcast (b) privacy-gated TTS delivery. Handlers return
+    # `list[str]` of device_ids that actually received the notification.
+    # Platform default (no handler): empty list — notification is
+    # persisted but not broadcast.
+    "deliver_notification",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

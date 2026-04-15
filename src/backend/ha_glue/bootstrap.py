@@ -82,6 +82,10 @@ def register() -> None:
             ha_resolve_room_context_by_ip,
             ha_route_chat_tts_to_device_output,
         )
+        from ha_glue.services.device_handlers import (
+            ha_deliver_notification,
+            ha_get_connected_device_summary,
+        )
 
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
@@ -92,12 +96,14 @@ def register() -> None:
         register_hook("route_chat_tts_to_device_output", ha_route_chat_tts_to_device_output)
         register_hook("resolve_room_context_by_ip", ha_resolve_room_context_by_ip)
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
+        register_hook("get_connected_device_summary", ha_get_connected_device_summary)
+        register_hook("deliver_notification", ha_deliver_notification)
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 13 handlers across 13 events"
+            "ha_glue.bootstrap: registered 15 handlers across 15 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
@@ -376,6 +382,24 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
                 "ha_glue.bootstrap: Zeroconf stop failed"
             )
 
+    # --- Notify connected devices about server shutdown ---
+    # Previously in platform `api/lifecycle.py::_notify_devices_shutdown`.
+    # Broadcasts a server_shutdown message to all active WebSocket
+    # connections in the DeviceManager registry and closes them.
+    try:
+        from services.device_manager import get_device_manager  # moves in Phase B.3
+        dm = get_device_manager()
+        shutdown_msg = {"type": "server_shutdown", "message": "Server is shutting down"}
+        for device in list(dm.devices.values()):
+            try:
+                await device.websocket.send_json(shutdown_msg)
+                await device.websocket.close(code=1001, reason="Server shutdown")
+            except Exception:  # noqa: BLE001
+                pass
+        logger.info(f"👋 ha_glue: notified {len(dm.devices)} devices about shutdown")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️  ha_glue device shutdown broadcast failed: {e}")
+
 
 async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
     """Close HTTP client singletons AFTER everything else has shut down.
@@ -427,4 +451,18 @@ async def ha_glue_register_routes(*, app: Any) -> None:
     except Exception:  # noqa: BLE001
         logger.opt(exception=True).warning(
             "ha_glue.bootstrap: admin router mount failed"
+        )
+
+    # Device WebSocket (`/ws/device`) — satellites + Renfield web panels.
+    # Moved from platform `api/websocket/device_handler.py` to
+    # `ha_glue/api/websocket/device_handler.py` in Phase B.2b. Pro
+    # deploys (no ha_glue loaded) don't mount this, so `/ws/device`
+    # returns 404 — which is correct behavior (no satellites on pro).
+    try:
+        from ha_glue.api.websocket.device_handler import router as device_router
+        app.include_router(device_router, tags=["WebSocket Device"])
+        logger.info("✅ ha_glue: mounted /ws/device")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: device_router mount failed"
         )
