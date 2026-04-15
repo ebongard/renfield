@@ -209,64 +209,36 @@ def _build_action_summary(intent: dict, action_result: dict, max_chars: int = 20
 async def _route_chat_tts_output(
     room_context: dict,
     response_text: str,
-    websocket: WebSocket
+    websocket: WebSocket,
 ) -> bool:
-    """
-    Route TTS audio for chat WebSocket to the best available output device.
+    """Fire the `route_chat_tts_to_device_output` hook for domain routing.
 
-    Returns True if TTS was handled server-side (sent to HA media player),
-    False if frontend should handle TTS.
+    The actual HA-media-player routing logic used to live here inline
+    but moved to `ha_glue/services/chat_voice_handlers.py` in Phase 1
+    W2 Phase B.2a. Platform-only deploys (no handler registered) get
+    `False` and the frontend plays TTS — same behavior as a pro deploy
+    where ha_glue is loaded but smart_home is disabled.
     """
-    room_id = room_context.get("room_id")
-    device_id = room_context.get("device_id")
-
-    if not room_id:
+    if not room_context or not room_context.get("room_id"):
         return False
 
     try:
-        from services.audio_output_service import get_audio_output_service
-        from services.output_routing_service import OutputRoutingService
-
-        async with AsyncSessionLocal() as db_session:
-            routing_service = OutputRoutingService(db_session)
-
-            # Get the best audio output device for this room
-            decision = await routing_service.get_audio_output_for_room(
-                room_id=room_id,
-                input_device_id=device_id
+        from utils.hooks import run_hooks
+        results = await run_hooks(
+            "route_chat_tts_to_device_output",
+            room_context=room_context,
+            response_text=response_text,
+        )
+        for result in results:
+            if isinstance(result, bool):
+                return result
+            logger.warning(
+                f"⚠️  route_chat_tts_to_device_output handler returned "
+                f"unexpected shape (type={type(result).__name__}); ignoring"
             )
-
-            logger.info(f"🔊 Chat output routing: {decision.reason} → {decision.target_type}:{decision.target_id}")
-
-            # Only handle server-side if we have a configured HA output device
-            # (Renfield devices would be the input device itself in this case)
-            if decision.output_device and not decision.fallback_to_input and decision.target_type == "homeassistant":
-                # Generate TTS
-                from services.piper_service import get_piper_service
-                piper = get_piper_service()
-                tts_audio = await piper.synthesize_to_bytes(response_text)
-
-                if tts_audio:
-                    audio_output_service = get_audio_output_service()
-                    success = await audio_output_service.play_audio(
-                        audio_bytes=tts_audio,
-                        output_device=decision.output_device,
-                        session_id=f"chat-{room_id}-{device_id}"
-                    )
-
-                    if success:
-                        logger.info(f"🔊 TTS sent to HA media player: {decision.target_id}")
-                        return True
-                    else:
-                        logger.warning(f"Failed to send TTS to {decision.target_id}, frontend will handle")
-
-            return False
-
-    except Exception as e:
-        logger.error(f"❌ Chat TTS routing failed: {e}")
-        import traceback
-        logger.error(traceback.format_exc())
-        return False
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"❌ Chat TTS routing hook failed: {e}")
+    return False
 
 
 async def _extract_memories_background(
@@ -548,18 +520,33 @@ async def websocket_endpoint(
     # Access app state through websocket.app
     app = websocket.app
     ollama = app.state.ollama
-    # Try to auto-detect room context from IP address
+    # Try to auto-detect room context from IP address via hook.
+    # ha_glue's handler uses RoomService.get_room_context_by_ip; on pro
+    # deploys with no handler, room_context stays None and chat proceeds
+    # without it.
     room_context = None
     try:
         if ip_address and ip_address != "unknown":
-            from services.room_service import RoomService
-
-            async with AsyncSessionLocal() as db_session:
-                room_service = RoomService(db_session)
-                room_context = await room_service.get_room_context_by_ip(ip_address)
-
+            from utils.hooks import run_hooks
+            results = await run_hooks(
+                "resolve_room_context_by_ip",
+                ip_address=ip_address,
+            )
+            for result in results:
+                if isinstance(result, dict):
+                    room_context = result
+                    break
+                if result is not None:
+                    logger.warning(
+                        f"⚠️  resolve_room_context_by_ip handler returned "
+                        f"unexpected shape (type={type(result).__name__}); ignoring"
+                    )
             if room_context:
-                logger.info(f"🏠 Auto-detected room from IP {ip_address}: {room_context.get('room_name')} (device: {room_context.get('device_name', room_context.get('device_id'))})")
+                logger.info(
+                    f"🏠 Auto-detected room from IP {ip_address}: "
+                    f"{room_context.get('room_name')} "
+                    f"(device: {room_context.get('device_name', room_context.get('device_id'))})"
+                )
             else:
                 logger.debug(f"📍 No room context for IP {ip_address}")
     except Exception as e:

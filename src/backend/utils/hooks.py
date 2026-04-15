@@ -91,6 +91,27 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # non-None result wins. Platform default (no handler) leaves the
     # notification un-roomed.
     "resolve_user_current_room",
+    # Route a chat response's TTS audio to a device output. Fired by
+    # `api/websocket/chat_handler.py` when an LLM response is ready and
+    # the chat session has a room context. Kwargs: `room_context: dict,
+    # response_text: str`. Handlers return `bool` — True if TTS was
+    # handled server-side (ha_glue synthesized + sent to HA media
+    # player or similar), False if the frontend should play it. First
+    # well-shaped result wins. Platform default (no handler): False.
+    "route_chat_tts_to_device_output",
+    # Resolve a room context from a client IP address. Fired by
+    # `api/websocket/chat_handler.py` on WebSocket connect to auto-
+    # detect which room a device is in. Kwargs: `ip_address: str`.
+    # Handlers return a dict (room_id, room_name, device_id, device_name)
+    # or None. First well-shaped result wins. Platform default: None —
+    # chat proceeds without room context.
+    "resolve_room_context_by_ip",
+    # Fetch cached TTS audio by its audio_id. Fired by
+    # `api/routes/voice.py::get_tts_cache` which serves HA media players
+    # that fetch pre-generated TTS audio via HTTP. Kwargs:
+    # `audio_id: str`. Handlers return `bytes | None`. First well-shaped
+    # result wins. Platform default: None — endpoint returns 404.
+    "fetch_tts_audio_cache",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

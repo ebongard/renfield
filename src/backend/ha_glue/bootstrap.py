@@ -77,6 +77,11 @@ def register() -> None:
             ha_chat_context_established,
             ha_resolve_user_current_room,
         )
+        from ha_glue.services.chat_voice_handlers import (
+            ha_fetch_tts_audio_cache,
+            ha_resolve_room_context_by_ip,
+            ha_route_chat_tts_to_device_output,
+        )
 
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
@@ -84,16 +89,15 @@ def register() -> None:
         register_hook("chat_context_established", ha_chat_context_established)
         register_hook("should_play_tts_for_notification", ha_should_play_tts_for_notification)
         register_hook("resolve_user_current_room", ha_resolve_user_current_room)
+        register_hook("route_chat_tts_to_device_output", ha_route_chat_tts_to_device_output)
+        register_hook("resolve_room_context_by_ip", ha_resolve_room_context_by_ip)
+        register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 10 handlers — intent_fallback_resolve, "
-            "build_entity_context, validate_classified_intent, "
-            "chat_context_established, should_play_tts_for_notification, "
-            "resolve_user_current_room, startup, shutdown, shutdown_finalize, "
-            "register_routes"
+            "ha_glue.bootstrap: registered 13 handlers across 13 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
