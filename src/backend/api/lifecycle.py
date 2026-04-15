@@ -18,7 +18,6 @@ from services.device_manager import get_device_manager
 from services.ollama_service import OllamaService
 from services.task_queue import TaskQueue
 from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -236,61 +235,6 @@ def _schedule_upload_cleanup():
     )
 
 
-def _schedule_presence_event_cleanup():
-    """Schedule daily cleanup of old presence analytics events."""
-    async def cleanup_loop():
-        while True:
-            try:
-                await asyncio.sleep(86400)  # 24 hours
-                from services.presence_analytics import PresenceAnalyticsService
-
-                async with AsyncSessionLocal() as db_session:
-                    service = PresenceAnalyticsService(db_session)
-                    await service.cleanup_old_events()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Presence event cleanup failed: {e}")
-
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"Presence Event Cleanup Scheduler gestartet "
-        f"(retention={ha_glue_settings.presence_analytics_retention_days}d, täglich)"
-    )
-
-
-async def _init_paperless_audit(app: "FastAPI") -> None:
-    """Dynamically provision Paperless audit if MCP server is available.
-
-    Routes, service, and imports only happen inside this function.
-    If Paperless MCP is not configured, nothing is imported, no routes exist.
-    """
-    if not ha_glue_settings.paperless_audit_enabled:
-        return
-
-    mcp_manager = getattr(app.state, "mcp_manager", None)
-    if not mcp_manager or not mcp_manager.has_server("paperless"):
-        logger.info("Paperless MCP not configured — audit disabled")
-        return
-
-    # Lazy imports: only loaded when Paperless is available
-    from api.routes.paperless_audit import router as audit_router
-    from services.paperless_audit_service import PaperlessAuditService
-
-    # Mount routes dynamically
-    app.include_router(audit_router)
-
-    # Start service
-    audit_service = PaperlessAuditService(
-        mcp_manager=mcp_manager,
-        db_factory=AsyncSessionLocal,
-    )
-    app.state.paperless_audit = audit_service
-    await audit_service.start()
-    logger.info("Paperless Audit: Routes mounted, service started")
-
-
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -308,26 +252,6 @@ def _schedule_notification_poller(app):
     task = asyncio.create_task(poller_main())
     _startup_tasks.append(task)
     logger.info("Notification Poller scheduled")
-
-
-def _schedule_ha_keywords_preload():
-    """Schedule Home Assistant keywords preloading in background."""
-    try:
-        from integrations.homeassistant import HomeAssistantClient
-
-        async def preload_keywords():
-            """Load HA keywords in background."""
-            try:
-                ha_client = HomeAssistantClient()
-                keywords = await ha_client.get_keywords()
-                logger.info(f"✅ Home Assistant Keywords vorgeladen: {len(keywords)} Keywords")
-            except Exception as e:
-                logger.warning(f"⚠️  Keywords konnten nicht vorgeladen werden: {e}")
-
-        task = asyncio.create_task(preload_keywords())
-        _startup_tasks.append(task)
-    except Exception as e:
-        logger.warning(f"⚠️  Keyword-Preloading fehlgeschlagen: {e}")
 
 
 async def _init_mcp(app: "FastAPI"):
@@ -568,13 +492,12 @@ async def lifespan(app: "FastAPI"):
 
     # Stage 3: Depends on MCP
     await _init_agent_router(app)
-    await _init_paperless_audit(app)
 
-    # Background preloading
+    # Background preloading (platform-owned schedulers only — ha_glue's
+    # HA keyword preloader and presence event cleanup scheduler are started
+    # from ha_glue.bootstrap.ha_glue_on_startup via the `startup` hook).
     if settings.features["voice"]:
         _schedule_whisper_preload()
-    if settings.features["smart_home"]:
-        _schedule_ha_keywords_preload()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
@@ -584,52 +507,10 @@ async def lifespan(app: "FastAPI"):
     # Zeroconf for satellite discovery
     zeroconf_service = await _init_zeroconf(app)
 
-    # Presence webhooks + analytics
-    if ha_glue_settings.presence_enabled:
-        from services.presence_webhook import register_presence_webhooks
-
-        register_presence_webhooks()
-
-        from services.presence_analytics import register_presence_analytics_hooks
-
-        register_presence_analytics_hooks()
-        _schedule_presence_event_cleanup()
-
-        # Load BLE device registry (MAC → user_id) from database
-        from services.presence_service import get_presence_service
-
-        presence_svc = get_presence_service()
-        async with AsyncSessionLocal() as db_session:
-            await presence_svc.load_device_registry(db_session)
-
-        # Cache room names for presence display
-        from models.database import Room
-
-        async with AsyncSessionLocal() as db_session:
-            from sqlalchemy import select
-
-            rooms = (await db_session.execute(select(Room))).scalars().all()
-            for room in rooms:
-                presence_svc.set_room_name(room.id, room.name)
-
-    # Conversation handoff hook (requires presence for room-change detection)
-    if ha_glue_settings.presence_enabled:
-        from services.conversation_handoff import on_presence_enter_room
-        from utils.hooks import register_hook
-
-        register_hook("presence_enter_room", on_presence_enter_room)
-        logger.info("✅ Conversation handoff hook registered")
-
-    # Media Follow Me hooks (requires both presence and media_follow enabled)
-    if ha_glue_settings.media_follow_enabled and ha_glue_settings.presence_enabled:
-        from services.media_follow_service import get_media_follow_service
-        from utils.hooks import register_hook
-
-        mf_service = get_media_follow_service()
-        register_hook("presence_leave_room", mf_service.on_user_leave_room)
-        register_hook("presence_enter_room", mf_service.on_user_enter_room)
-        register_hook("presence_last_left", mf_service.on_last_left)
-        logger.info("✅ Media Follow Me hooks registered")
+    # Presence / paperless audit / media follow / conversation handoff
+    # are bootstrapped by ha_glue via its startup hook handler (fired
+    # below by `run_hooks("startup", ...)`). Each subsystem gates itself
+    # on the relevant `ha_glue_settings.X` flag internally.
 
     # Knowledge Graph hooks
     if settings.knowledge_graph_enabled:
