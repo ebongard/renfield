@@ -570,7 +570,7 @@ class InternalToolService:
 
         # Clear media follow session on explicit stop
         if action == "stop" and result.get("success"):
-            from utils.config import settings as _settings
+            from ha_glue.utils.config import ha_glue_settings as _settings
             if _settings.media_follow_enabled:
                 try:
                     from services.media_follow_service import get_media_follow_service
