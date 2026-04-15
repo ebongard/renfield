@@ -69,6 +69,28 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # `general.conversation` when the message doesn't actually contain
     # HA-shaped words.
     "validate_classified_intent",
+    # Chat message context established — fired by the WebSocket chat
+    # handler when an authenticated user's message starts processing and
+    # a room context is known. Kwargs: `user_id: int, room_id: int,
+    # room_name: str | None, lang: str`. Handlers return nothing. Used
+    # by ha_glue to register BLE voice-auth presence when a user speaks
+    # from a known room. Platform default (no handler) is a no-op.
+    "chat_context_established",
+    # Privacy-aware TTS gate for notifications — fired by the notification
+    # service when delivering a non-public notification that may require
+    # suppression based on room occupancy. Kwargs: `privacy: str,
+    # target_user_id: int | None, room_id: int | None`. Handlers return
+    # `bool` — True if TTS allowed, False to suppress. First well-shaped
+    # non-None result wins. Platform default (no handler) falls back to
+    # "suppress non-public TTS" as fail-safe.
+    "should_play_tts_for_notification",
+    # Resolve a user's current room — fired by the notification service
+    # when a notification has a target user but no explicit room. Kwargs:
+    # `user_id: int`. Handlers return a dict
+    # `{"room_id": int, "room_name": str}` or None. First well-shaped
+    # non-None result wins. Platform default (no handler) leaves the
+    # notification un-roomed.
+    "resolve_user_current_room",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

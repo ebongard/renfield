@@ -28,7 +28,6 @@ from models.database import (
     SystemSetting,
 )
 from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 
 class NotificationService:
@@ -501,17 +500,29 @@ class NotificationService:
 
         logger.info(f"📨 Notification #{notification.id} erstellt: {title} (urgency={urgency})")
 
-        # Resolve target user's room from presence if no room specified
-        if target_user_id and not room_id and ha_glue_settings.presence_enabled:
+        # Resolve target user's room via hook — domain-specific consumers
+        # (e.g. ha_glue's BLE presence service) can respond with the user's
+        # current room. Platform default: no handler → notification stays
+        # un-roomed, and the targeted broadcast falls back to the generic
+        # channel.
+        if target_user_id and not room_id:
             try:
-                from services.presence_service import get_presence_service
-                presence = get_presence_service()
-                user_p = presence.get_user_presence(target_user_id)
-                if user_p and user_p.room_id:
-                    notification.room_id = user_p.room_id
-                    notification.room_name = user_p.room_name or ""
+                from utils.hooks import run_hooks
+                results = await run_hooks(
+                    "resolve_user_current_room",
+                    user_id=target_user_id,
+                )
+                for result in results:
+                    if isinstance(result, dict) and "room_id" in result:
+                        notification.room_id = result["room_id"]
+                        notification.room_name = result.get("room_name", "")
+                        break
+                    logger.warning(
+                        f"⚠️  resolve_user_current_room handler returned "
+                        f"unexpected shape (type={type(result).__name__}); ignoring"
+                    )
             except Exception as e:
-                logger.debug("Could not resolve target user room: %s", e)
+                logger.debug("Could not resolve target user room via hook: %s", e)
 
         # Store embedding in background
         if embedding:
@@ -582,22 +593,33 @@ class NotificationService:
 
         logger.info(f"📤 Notification #{notification.id} an {len(delivered_ids)} Geräte gesendet")
 
-        # TTS delivery (with privacy gate)
+        # TTS delivery (with privacy gate via hook)
         if tts:
             tts_allowed = True
             if notification.privacy and notification.privacy != "public":
+                # Non-public privacy levels require a domain-specific handler
+                # to decide whether TTS is safe. ha_glue's handler uses BLE
+                # presence to check room occupancy. Platform default (no
+                # handler) fails safe: non-public TTS is suppressed.
                 try:
-                    from services.database import AsyncSessionLocal
-                    from services.notification_privacy import should_play_tts
-                    async with AsyncSessionLocal() as privacy_db:
-                        tts_allowed = await should_play_tts(
-                            privacy=notification.privacy,
-                            target_user_id=notification.target_user_id,
-                            room_id=notification.room_id,
-                            db=privacy_db,
+                    from utils.hooks import run_hooks
+                    results = await run_hooks(
+                        "should_play_tts_for_notification",
+                        privacy=notification.privacy,
+                        target_user_id=notification.target_user_id,
+                        room_id=notification.room_id,
+                    )
+                    tts_allowed = False  # fail-safe default
+                    for result in results:
+                        if isinstance(result, bool):
+                            tts_allowed = result
+                            break
+                        logger.warning(
+                            f"⚠️  should_play_tts_for_notification handler returned "
+                            f"unexpected shape (type={type(result).__name__}); ignoring"
                         )
                 except Exception as e:
-                    logger.warning("Privacy gate error, suppressing TTS: %s", e)
+                    logger.warning("Privacy gate hook error, suppressing TTS: %s", e)
                     tts_allowed = False
             if tts_allowed:
                 tts_delivered = await self._deliver_tts(notification)

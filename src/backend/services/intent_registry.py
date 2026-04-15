@@ -18,7 +18,6 @@ Usage:
 from dataclasses import dataclass, field
 
 from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 
 @dataclass
@@ -93,30 +92,6 @@ KNOWLEDGE_INTENTS = IntegrationIntents(
     ],
 )
 
-PRESENCE_INTENTS = IntegrationIntents(
-    integration_name="presence",
-    title_de="ANWESENHEIT",
-    title_en="PRESENCE",
-    is_enabled_func=lambda: ha_glue_settings.presence_enabled,
-    intents=[
-        IntentDef(
-            name="internal.get_user_location",
-            description_de="Aktuellen oder letzten bekannten Aufenthaltsort eines Benutzers abfragen",
-            description_en="Get current or last known room location of a user",
-            parameters=[IntentParam("user_name", "Name des Benutzers (Username, Vorname oder Nachname)", required=True)],
-            examples_de=["Wo ist Alex?", "In welchem Raum ist Alex?"],
-            examples_en=["Where is Alex?", "Which room is Alex in?"],
-        ),
-        IntentDef(
-            name="internal.get_all_presence",
-            description_de="Alle aktuell anwesenden Benutzer und ihre Räume anzeigen",
-            description_en="Get all currently present users and their room locations",
-            examples_de=["Wer ist zuhause?", "Wo sind alle?"],
-            examples_en=["Who is home?", "Where is everyone?"],
-        ),
-    ],
-)
-
 GENERAL_INTENTS = IntegrationIntents(
     integration_name="general",
     title_de="ALLGEMEIN",
@@ -133,10 +108,12 @@ GENERAL_INTENTS = IntegrationIntents(
     ],
 )
 
-# All core integrations (HA, n8n, camera are now MCP-only)
+# All core integrations (HA, n8n, camera are now MCP-only).
+# Domain-specific integrations (e.g. ha_glue's PRESENCE_INTENTS) are
+# registered at startup via `intent_registry.add_integration()` rather
+# than declared here, so platform code doesn't depend on ha_glue.
 CORE_INTEGRATIONS = [
     KNOWLEDGE_INTENTS,
-    PRESENCE_INTENTS,
     GENERAL_INTENTS,
 ]
 
@@ -154,9 +131,26 @@ class IntentRegistry:
         self._mcp_tools: list[dict] = []
         self._mcp_examples: dict[str, dict[str, list[str]]] = {}  # server_name → {"de": [...], "en": [...]}
         self._mcp_prompt_tools: dict[str, list[str]] = {}  # server_name → [tool_name, ...]
+        # Plugin-registered integrations (e.g. ha_glue's PRESENCE_INTENTS).
+        # Extends CORE_INTEGRATIONS at runtime without platform code
+        # knowing about specific domain integrations. Populated via
+        # `add_integration()` during plugin startup hooks.
+        self._plugin_integrations: list[IntegrationIntents] = []
         # Prompt cache: invalidated when tools/plugins change
         self._prompt_cache: dict[str, str] = {}  # key → cached output
         self._examples_cache: dict[str, str] = {}  # key → cached output
+
+    def add_integration(self, integration: IntegrationIntents) -> None:
+        """Register a plugin-provided integration.
+
+        Called by domain-specific plugins (e.g. ha_glue) during startup
+        to contribute their own `IntegrationIntents` to the registry.
+        The integration's own `is_enabled_func` is queried on every
+        `get_enabled_integrations()` call, so plugins can gate on
+        their own settings without platform knowing about them.
+        """
+        self._plugin_integrations.append(integration)
+        self._invalidate_prompt_cache()
 
     def _invalidate_prompt_cache(self) -> None:
         """Clear cached prompt outputs when configuration changes."""
@@ -189,8 +183,9 @@ class IntentRegistry:
         self._invalidate_prompt_cache()
 
     def get_enabled_integrations(self) -> list[IntegrationIntents]:
-        """Get list of enabled core integrations."""
-        return [i for i in CORE_INTEGRATIONS if i.is_enabled_func()]
+        """Get list of enabled core + plugin-registered integrations."""
+        all_integrations = CORE_INTEGRATIONS + self._plugin_integrations
+        return [i for i in all_integrations if i.is_enabled_func()]
 
     def is_intent_available(self, intent_name: str) -> bool:
         """Check if an intent is currently available."""
@@ -379,7 +374,7 @@ class IntentRegistry:
             "mcp_tools": 0,
         }
 
-        for integration in CORE_INTEGRATIONS:
+        for integration in CORE_INTEGRATIONS + self._plugin_integrations:
             if integration.is_enabled_func():
                 status["enabled_integrations"].append({
                     "name": integration.integration_name,

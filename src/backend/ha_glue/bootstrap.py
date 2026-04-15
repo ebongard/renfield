@@ -70,17 +70,28 @@ def register() -> None:
             ha_validate_classified_intent,
         )
         from ha_glue.services.intent_fallback import ha_intent_fallback
+        from ha_glue.services.notification_privacy import (
+            ha_should_play_tts_for_notification,
+        )
+        from ha_glue.services.sweep_handlers import (
+            ha_chat_context_established,
+            ha_resolve_user_current_room,
+        )
 
         register_hook("intent_fallback_resolve", ha_intent_fallback)
         register_hook("build_entity_context", ha_build_entity_context)
         register_hook("validate_classified_intent", ha_validate_classified_intent)
+        register_hook("chat_context_established", ha_chat_context_established)
+        register_hook("should_play_tts_for_notification", ha_should_play_tts_for_notification)
+        register_hook("resolve_user_current_room", ha_resolve_user_current_room)
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         logger.info(
-            "ha_glue.bootstrap: registered 6 handlers — intent_fallback_resolve, "
-            "build_entity_context, validate_classified_intent, startup, "
-            "shutdown, shutdown_finalize"
+            "ha_glue.bootstrap: registered 9 handlers — intent_fallback_resolve, "
+            "build_entity_context, validate_classified_intent, "
+            "chat_context_established, should_play_tts_for_notification, "
+            "resolve_user_current_room, startup, shutdown, shutdown_finalize"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
@@ -111,6 +122,25 @@ async def ha_glue_on_startup(*, app: Any) -> None:
     not prevent the others from initializing.
     """
     from ha_glue.utils.config import ha_glue_settings
+
+    # --- Register presence intents with the platform IntentRegistry ---
+    # The `PRESENCE_INTENTS` definition used to live inline in
+    # `services/intent_registry.py` with an `is_enabled_func` lambda
+    # reading `ha_glue_settings`. Moved to ha_glue and registered here
+    # via the new `intent_registry.add_integration()` method. The
+    # lambda still reads `ha_glue_settings.presence_enabled`, so the
+    # intents only appear in the prompt when presence is actually on.
+    try:
+        from services.intent_registry import intent_registry
+
+        from ha_glue.services.presence_intents import PRESENCE_INTENTS
+
+        intent_registry.add_integration(PRESENCE_INTENTS)
+        logger.info("✅ ha_glue: registered PRESENCE_INTENTS with intent_registry")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: PRESENCE_INTENTS registration failed"
+        )
 
     # --- Paperless audit ---
     try:

@@ -22,7 +22,6 @@ from services.input_guard import detect_injection
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
-from ha_glue.utils.config import ha_glue_settings
 
 from .shared import (
     ConversationSessionState,
@@ -649,19 +648,20 @@ async def websocket_endpoint(
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to load user permissions: {e}")
 
-            # Register voice/auth presence if user is authenticated in a known room
-            if (user_id and ha_glue_settings.presence_enabled
-                    and room_context and room_context.get("room_id")):
-                try:
-                    from services.presence_service import get_presence_service
-                    presence_svc = get_presence_service()
-                    await presence_svc.register_voice_presence(
-                        user_id=int(user_id),
-                        room_id=room_context["room_id"],
-                        room_name=room_context.get("room_name"),
-                    )
-                except Exception as e:
-                    logger.warning(f"⚠️ Auth presence update failed: {e}")
+            # Fire chat_context_established hook so domain-specific consumers
+            # (e.g. ha_glue's BLE voice-presence registration) can react to
+            # an authenticated user speaking from a known room. Platform
+            # default: no handler → no-op. Exceptions in handlers are caught
+            # by run_hooks and logged.
+            if user_id and room_context and room_context.get("room_id"):
+                from utils.hooks import run_hooks
+                await run_hooks(
+                    "chat_context_established",
+                    user_id=int(user_id),
+                    room_id=room_context["room_id"],
+                    room_name=room_context.get("room_name"),
+                    lang=lang,
+                )
 
             # === Media Transport Shortcut (pre-memory, pre-router) ===
             # Detect simple stop/pause/resume/next/previous BEFORE memory retrieval
