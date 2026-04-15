@@ -1,15 +1,25 @@
 """
-Internal Agent Tools — Provider-agnostic tools for the Agent Loop.
+ha_glue Internal Agent Tools — Home-automation tools for the Agent Loop.
 
-These tools handle cross-cutting concerns that don't belong to any
-specific MCP server:
-- Room resolution (room name → media_player entity)
-- Media playback (any URL → any room's audio device via HA)
-- Presence queries (user location via BLE/voice presence)
+Moved from `services/internal_tools.py` in Phase 1 W4 follow-up (see
+ebongard/renfield#358). Every tool in this file touches ha_glue
+subsystems — room resolution, HA media players, DLNA renderers, BLE
+presence, TuneIn radio. Platform-only deploys should never see these.
 
-This keeps playback logic provider-agnostic: Jellyfin, Spotify, or any
-future provider just needs to supply a stream URL. The internal tools
-handle routing it to the correct room device.
+The `internal.knowledge_search` tool that used to share this module
+moved to `services/knowledge_tool.py` — it is pure-RAG, has no
+ha-glue dependencies, and belongs on the platform.
+
+Registration / dispatch:
+- `ha_glue/bootstrap.py::ha_glue_register_tools` hooks the `register_tools`
+  event and adds every tool in `InternalToolService.TOOLS` to the agent's
+  `ToolRegistry`. Platform-only deploys (no handler) see none of them.
+- `ha_glue/bootstrap.py::ha_glue_execute_tool` hooks `execute_tool` and
+  dispatches any `internal.*` intent to `InternalToolService.execute()`.
+
+Platform callers (agent_tools.py, action_executor.py, chat_handler.py)
+no longer import this module directly. They go through the hook system
+so platform-only deploys never reach the ha_glue package.
 """
 import time
 
@@ -47,13 +57,6 @@ class InternalToolService:
         "internal.get_all_presence": {
             "description": "Get all currently present users and their room locations. Use this when asked 'where is everyone?' or 'who is home?'.",
             "parameters": {},
-        },
-        "internal.knowledge_search": {
-            "description": "Search the user's local knowledge base (uploaded documents, invoices, contracts) by semantic similarity. Returns matching text passages with source document info.",
-            "parameters": {
-                "query": "Search query (required)",
-                "top_k": "Maximum number of results to return (optional, default: from server config)",
-            },
         },
         "internal.media_control": {
             "description": "Control media playback in a room: stop, pause, resume, next track, previous track, set volume. Works with both Home Assistant media players and DLNA renderers.",
@@ -118,7 +121,6 @@ class InternalToolService:
         "internal.play_in_room": "_play_in_room",
         "internal.get_user_location": "_get_user_location",
         "internal.get_all_presence": "_get_all_presence",
-        "internal.knowledge_search": "_knowledge_search",
         "internal.media_control": "_media_control",
         "internal.play_album_on_dlna": "_play_album_on_dlna",
         "internal.play_video_on_dlna": "_play_video_on_dlna",
@@ -1190,75 +1192,6 @@ class InternalToolService:
             "action_taken": True,
             "data": {"users": users},
         }
-
-    async def _knowledge_search(self, params: dict) -> dict:
-        """Search the local knowledge base (RAG) by semantic similarity."""
-        query = (params.get("query") or "").strip()
-        if not query:
-            return {
-                "success": False,
-                "message": "Parameter 'query' is required",
-                "action_taken": False,
-            }
-
-        # top_k: use parameter if provided, otherwise fall back to settings
-        top_k = None
-        if params.get("top_k"):
-            try:
-                top_k = int(params["top_k"])
-            except (ValueError, TypeError):
-                pass
-
-        try:
-            from services.database import AsyncSessionLocal
-            from services.rag_service import RAGService
-
-            async with AsyncSessionLocal() as db:
-                rag = RAGService(db)
-                results = await rag.search(query=query, top_k=top_k)
-
-            if results:
-                context_parts = []
-                for r in results:
-                    content = (
-                        r.get("chunk", {}).get("content", "")
-                        if isinstance(r.get("chunk"), dict)
-                        else r.get("content", "")
-                    )
-                    source = (
-                        r.get("document", {}).get("filename", "")
-                        if isinstance(r.get("document"), dict)
-                        else r.get("filename", "")
-                    )
-                    if content:
-                        context_parts.append(f"[{source}] {content[:500]}")
-
-                return {
-                    "success": True,
-                    "message": f"Knowledge base results ({len(results)} hits)",
-                    "action_taken": True,
-                    "data": {
-                        "query": query,
-                        "results_count": len(results),
-                        "context": "\n\n".join(context_parts),
-                    },
-                }
-            else:
-                return {
-                    "success": True,
-                    "message": f"No results in knowledge base for: {query}",
-                    "action_taken": True,
-                    "empty_result": True,
-                    "data": {"query": query, "results_count": 0},
-                }
-
-        except Exception as e:
-            logger.error(f"Error in knowledge_search: {e}")
-            return {
-                "success": False,
-                "message": f"Knowledge base search error: {e!s}",
-                "action_taken": False,
-            }
 
     # ── Radio tools ──────────────────────────────────────────────────────────
 

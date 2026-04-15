@@ -508,7 +508,7 @@ class TestResumeVideoPlayback:
 
         mock_result = {"success": True, "message": "Playing"}
         with patch("ha_glue.services.media_follow_service.settings") as mock_settings, \
-             patch("services.internal_tools.InternalToolService._play_video_on_dlna",
+             patch("ha_glue.services.internal_tools.InternalToolService._play_video_on_dlna",
                    new_callable=AsyncMock, return_value=mock_result) as mock_play:
             mock_settings.media_follow_resume_delay = 0
             await service._resume_playback(session, 20, "Schlafzimmer")

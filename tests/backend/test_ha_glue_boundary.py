@@ -37,7 +37,7 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent / "src" / "backend"
 
 # Paths relative to src/backend/ that are allowed to import from ha_glue.
 #
-# Three categories of exception:
+# Two categories of exception, both with structural justification:
 #
 #   1. Structural bootstrap: files that must load ha_glue at deploy time
 #      to wire hooks or target_metadata. These must use try/except ImportError
@@ -47,21 +47,18 @@ BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent / "src" / "backend"
 #      on demand, wrapped in function-body or __getattr__ so platform-only
 #      deploys never hit the import.
 #
-#   3. Known-pending reclassification: files that are structurally
-#      ha_glue-dependent and will move in a follow-up PR. These use
-#      function-body lazy imports so platform-only deploys are safe.
+# Every other platform → ha_glue edge is now routed through the hook
+# system (`run_hooks` / `register_hook`). If you feel the urge to add a
+# new entry here, ask whether a hook event would do the job instead —
+# that is the official boundary crossing, this allowlist is for the two
+# special cases that cannot use hooks (the hook bus itself has to load
+# somewhere, and old imports need a transition bridge).
 ALLOWED_IMPORTERS = frozenset({
     # (1) Structural bootstrap
     "api/lifecycle.py",
     "alembic/env.py",
     # (2) Lazy compat shim
     "models/database.py",
-    # (3) Pending reclassification — see ebongard/renfield#358
-    #     Every ha_glue import in this file is inside a method body, so a
-    #     platform-only deploy never loads ha_glue as long as the methods
-    #     are never called. Reva (RENFIELD_EDITION=pro, smart_home=False)
-    #     does not call them.
-    "services/internal_tools.py",
 })
 
 

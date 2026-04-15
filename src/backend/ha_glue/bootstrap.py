@@ -98,12 +98,14 @@ def register() -> None:
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)
         register_hook("get_connected_device_summary", ha_get_connected_device_summary)
         register_hook("deliver_notification", ha_deliver_notification)
+        register_hook("register_tools", ha_glue_register_tools)
+        register_hook("execute_tool", ha_glue_execute_tool)
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 15 handlers across 15 events"
+            "ha_glue.bootstrap: registered 17 handlers across 17 events"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
@@ -431,6 +433,70 @@ async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
 # ---------------------------------------------------------------------------
 # register_routes handler — mount ha_glue-owned FastAPI routers
 # ---------------------------------------------------------------------------
+
+
+async def ha_glue_register_tools(*, registry: Any, **_: Any) -> None:
+    """Register ha_glue internal tools with the platform agent tool registry.
+
+    Fires on `register_tools`. Iterates `InternalToolService.TOOLS` and
+    adds each tool definition to the registry, respecting the registry's
+    `internal_filter` attribute (same semantics as the platform's built-in
+    internal tool registration used to have).
+
+    Platform-only deploys (no ha_glue loaded) never hit this handler and
+    the agent loop never sees these tools — which is correct. The
+    platform's own `knowledge_tool.py` registers `internal.knowledge_search`
+    unconditionally; everything else in `internal.*` is owned by ha_glue.
+    """
+    from ha_glue.services.internal_tools import InternalToolService
+    from services.agent_tools import ToolDefinition
+
+    internal_filter = getattr(registry, "internal_filter", None)
+
+    added = 0
+    for name, definition in InternalToolService.TOOLS.items():
+        if internal_filter is not None and name not in internal_filter:
+            continue
+        params = {
+            param_name: param_desc
+            for param_name, param_desc in definition.get("parameters", {}).items()
+        }
+        tool = ToolDefinition(
+            name=name,
+            description=definition["description"],
+            parameters=params,
+        )
+        registry._tools[tool.name] = tool
+        added += 1
+    logger.debug(f"ha_glue: registered {added} internal.* tools with agent registry")
+
+
+async def ha_glue_execute_tool(
+    *,
+    intent: str,
+    parameters: dict,
+    **_: Any,
+) -> dict | None:
+    """Dispatch `internal.*` intents to the ha_glue InternalToolService.
+
+    Fires on `execute_tool`. Returns a result dict if the intent is
+    ha_glue-owned, or None to let other handlers / the default dispatch
+    deal with it.
+
+    The platform's `internal.knowledge_search` is NOT handled here — it
+    is dispatched directly in `action_executor.py` before the hook runs,
+    so platform-only deploys don't need ha_glue to answer RAG queries.
+    """
+    if not intent.startswith("internal."):
+        return None
+    if intent == "internal.knowledge_search":
+        # Platform owns this tool — let the direct dispatch handle it.
+        return None
+
+    from ha_glue.services.internal_tools import InternalToolService
+
+    service = InternalToolService()
+    return await service.execute(intent, parameters)
 
 
 async def ha_glue_register_routes(*, app: Any) -> None:

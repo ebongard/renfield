@@ -216,7 +216,7 @@ class MediaFollowService:
     async def _stop_playback(self, session: MediaSession) -> None:
         """Stop current playback via MCP/HA."""
         try:
-            from services.internal_tools import InternalToolService
+            from ha_glue.services.internal_tools import InternalToolService
 
             svc = InternalToolService()
             result = await svc._media_control({
@@ -237,7 +237,7 @@ class MediaFollowService:
     ) -> None:
         """Resume playback in a new room."""
         try:
-            from services.internal_tools import InternalToolService
+            from ha_glue.services.internal_tools import InternalToolService
 
             svc = InternalToolService()
             result: dict = {}

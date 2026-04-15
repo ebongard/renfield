@@ -59,11 +59,32 @@ class ActionExecutor:
                 "action_taken": False
             }
 
-        # Internal agent tools (room resolution, media playback)
+        # Platform-owned internal tool: knowledge base RAG search.
+        if intent == "internal.knowledge_search":
+            from services.knowledge_tool import knowledge_search
+            return await knowledge_search(parameters)
+
+        # Other `internal.*` intents (room resolution, media playback,
+        # presence, radio) live in ha_glue and are dispatched via the
+        # `execute_tool` hook. Platform-only deploys without ha_glue fall
+        # through to the "Unknown intent" response below, which is the
+        # correct behavior.
         if intent.startswith("internal."):
-            from services.internal_tools import InternalToolService
-            internal_tools = InternalToolService()
-            return await internal_tools.execute(intent, parameters)
+            from utils.hooks import run_hooks
+            hook_results = await run_hooks(
+                "execute_tool",
+                intent=intent,
+                parameters=parameters,
+                user_permissions=user_permissions,
+                user_id=user_id,
+            )
+            if hook_results:
+                return hook_results[0]
+            return {
+                "success": False,
+                "message": f"Internal tool not available on this deploy: {intent}",
+                "action_taken": False,
+            }
 
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):

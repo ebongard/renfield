@@ -72,21 +72,24 @@ class AgentToolRegistry:
         self._schedule_register_tools_hook()
 
     def _register_internal_tools(self, internal_filter: list[str] | None = None) -> None:
-        """Register internal agent tools (room resolution, media playback).
+        """Register platform-owned internal agent tools.
+
+        The only `internal.*` tool the platform ships is `knowledge_search`
+        (pure RAG, no ha_glue deps). Every other `internal.*` tool is
+        registered by ha_glue via the `register_tools` hook. On platform-
+        only deploys without ha_glue, the agent loop simply never sees
+        media/room/presence tools — which is correct.
 
         Args:
             internal_filter: If set, only register these tool names. None = all.
         """
-        from services.internal_tools import InternalToolService
+        from services.knowledge_tool import KNOWLEDGE_TOOL
 
-        for name, definition in InternalToolService.TOOLS.items():
+        for name, definition in KNOWLEDGE_TOOL.items():
             if internal_filter is not None and name not in internal_filter:
                 continue
 
-            params = {}
-            for param_name, param_desc in definition.get("parameters", {}).items():
-                params[param_name] = param_desc
-
+            params = dict(definition.get("parameters", {}))
             tool = ToolDefinition(
                 name=name,
                 description=definition["description"],

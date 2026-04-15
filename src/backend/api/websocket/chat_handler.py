@@ -670,12 +670,21 @@ async def websocket_endpoint(
                         or session_state.last_media_room
                     )
                     if room:
-                        from services.internal_tools import InternalToolService
-                        tool_svc = InternalToolService()
-                        result = await tool_svc.execute(
-                            "internal.media_control",
-                            {"action": action_name, "room_name": room},
+                        # Media transport is an ha_glue tool (HA / DLNA).
+                        # Dispatch via `execute_tool` hook so platform-only
+                        # deploys without ha_glue get a clean "not available"
+                        # result instead of an import error.
+                        from utils.hooks import run_hooks
+                        hook_results = await run_hooks(
+                            "execute_tool",
+                            intent="internal.media_control",
+                            parameters={"action": action_name, "room_name": room},
                         )
+                        result = hook_results[0] if hook_results else {
+                            "success": False,
+                            "message": "Media control not available on this deploy",
+                            "action_taken": False,
+                        }
                         intent = {
                             "intent": "internal.media_control",
                             "parameters": {"action": action_name, "room_name": room},
