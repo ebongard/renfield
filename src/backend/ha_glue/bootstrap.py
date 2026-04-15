@@ -65,13 +65,22 @@ def register() -> None:
     try:
         from utils.hooks import register_hook
 
+        from ha_glue.services.intent_context import (
+            ha_build_entity_context,
+            ha_validate_classified_intent,
+        )
         from ha_glue.services.intent_fallback import ha_intent_fallback
 
         register_hook("intent_fallback_resolve", ha_intent_fallback)
+        register_hook("build_entity_context", ha_build_entity_context)
+        register_hook("validate_classified_intent", ha_validate_classified_intent)
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
+        register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
         logger.info(
-            "ha_glue.bootstrap: registered intent_fallback_resolve + startup + shutdown handlers"
+            "ha_glue.bootstrap: registered 6 handlers — intent_fallback_resolve, "
+            "build_entity_context, validate_classified_intent, startup, "
+            "shutdown, shutdown_finalize"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
@@ -272,18 +281,23 @@ def _schedule_presence_event_cleanup() -> None:
 
 
 async def ha_glue_on_shutdown(*, app: Any) -> None:
-    """Cancel every background task started during ha_glue_on_startup.
+    """Cancel background tasks started during ha_glue_on_startup.
 
-    Platform has its own `_cancel_startup_tasks` for tasks it owns; this
-    handler is only responsible for ha_glue's own tasks so the lifecycle
-    cleanly separates ownership.
+    Fires EARLY in the shutdown sequence (before MCP teardown, zeroconf
+    stop, device notification) so long-running loops get a chance to
+    exit gracefully before their dependencies go away.
+
+    HTTP client singletons are NOT closed here — they live until the
+    LATE phase (`ha_glue_on_shutdown_finalize`) because MCP may still
+    invoke HA tools during its own teardown.
+
+    Never raises. Platform startup is independently reliable.
     """
     if not _ha_glue_tasks:
         return
     for task in _ha_glue_tasks:
         if not task.done():
             task.cancel()
-    # Wait briefly for cancellations to propagate. Never raise.
     for task in _ha_glue_tasks:
         try:
             await task
@@ -291,3 +305,30 @@ async def ha_glue_on_shutdown(*, app: Any) -> None:
             pass
     _ha_glue_tasks.clear()
     logger.info("ha_glue.bootstrap: background tasks cancelled")
+
+
+async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
+    """Close HTTP client singletons AFTER everything else has shut down.
+
+    Fires in the LATE shutdown phase (`shutdown_finalize` hook), which
+    runs after MCP teardown and zeroconf stop. MCP may still invoke HA
+    tool calls during its shutdown (cleanup notifications, final state
+    sync), so the HA/Frigate HTTP clients must stay alive until then.
+
+    Each singleton closer is guarded so a broken one doesn't block the
+    others. Never raises — late-shutdown must not block pod exit.
+    """
+    try:
+        from integrations.homeassistant import close_ha_client
+        await close_ha_client()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: close_ha_client failed"
+        )
+    try:
+        from integrations.frigate import close_frigate_client
+        await close_frigate_client()
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: close_frigate_client failed"
+        )

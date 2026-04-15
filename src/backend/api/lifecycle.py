@@ -571,10 +571,10 @@ async def lifespan(app: "FastAPI"):
     if zeroconf_service:
         await zeroconf_service.stop()
 
-    # Close HTTP client singletons
-    from integrations.frigate import close_frigate_client
-    from integrations.homeassistant import close_ha_client
-    await close_ha_client()
-    await close_frigate_client()
+    # Late-phase cleanup — fires AFTER everything platform owns has
+    # shut down. Plugins register handlers here for resources that
+    # were still in use during earlier teardown steps (e.g. HTTP
+    # client singletons MCP was calling during its shutdown).
+    await run_hooks("shutdown_finalize", app=app)
 
     logger.info("✅ Shutdown complete")

@@ -574,22 +574,27 @@ WICHTIGE REGELN FÜR ANTWORTEN:
                         "confidence": 0.0
                     }
 
-            # Validierung: Wenn es keine HA-relevante Frage ist, erzwinge general.conversation
-            if intent_data.get("intent", "").startswith("homeassistant."):
-                # Lade dynamische Keywords von Home Assistant
-                ha_keywords = await self._get_ha_keywords()
-
-                message_lower = message.lower()
-                has_ha_keyword = any(keyword in message_lower for keyword in ha_keywords)
-
-                if not has_ha_keyword:
-                    # Keine HA-Keywords gefunden, überschreibe Intent
-                    logger.info(f"⚠️  Intent überschrieben: Keine HA-Keywords in '{message[:50]}' gefunden")
-                    intent_data = {
-                        "intent": "general.conversation",
-                        "parameters": {},
-                        "confidence": 1.0
-                    }
+            # Post-classification validation via hook. Domain-specific
+            # handlers (e.g. ha_glue's HA keyword check) can override the
+            # classification when they detect a false positive — for
+            # instance an `homeassistant.*` intent on a message that
+            # doesn't contain HA-shaped words. First well-shaped non-None
+            # override wins; if no handler overrides, intent_data stays.
+            from utils.hooks import run_hooks
+            overrides = await run_hooks(
+                "validate_classified_intent",
+                intent_data=intent_data,
+                message=message,
+                lang=lang,
+            )
+            for override in overrides:
+                if isinstance(override, dict) and "intent" in override:
+                    intent_data = override
+                    break
+                logger.warning(
+                    f"⚠️  validate_classified_intent handler returned unexpected "
+                    f"shape (type={type(override).__name__}); ignoring"
+                )
 
             logger.info(f"🎯 Intent: {intent_data.get('intent')} | Entity: {intent_data.get('parameters', {}).get('entity_id', 'none')}")
 
@@ -719,145 +724,38 @@ WICHTIGE REGELN FÜR ANTWORTEN:
     async def _build_entity_context(
         self,
         message: str,
-        room_context: dict | None = None
+        room_context: dict | None = None,
+        lang: str = "de",
     ) -> str:
+        """Build a domain-specific entity-context block for the intent prompt.
+
+        Fires the `build_entity_context` hook so domain-specific consumers
+        (e.g. ha_glue's HA entity filtering logic) can inject a prompt
+        block listing relevant entities. First handler to return a
+        well-shaped non-None string wins. If no handler registers or all
+        return None, falls through to an empty string — the intent prompt
+        is built without an entity list, same as a pro deploy or one
+        without the HA integration wired up.
+
+        Runs as a parallel task alongside `_find_correction_examples()`
+        (see `asyncio.gather` in `extract_intent`), so keeping this
+        method as a thin wrapper preserves the parallelism.
         """
-        Erstelle Entity-Kontext für Intent Recognition
-
-        Filtert Entities basierend auf der Nachricht und gibt dem LLM
-        eine Liste relevanter Entities zur Auswahl.
-
-        Args:
-            message: Die Benutzernachricht
-            room_context: Optional dict mit room_name, room_id etc.
-        """
-        try:
-            from integrations.homeassistant import HomeAssistantClient
-            ha_client = HomeAssistantClient()
-
-            # Lade alle Entities
-            entity_map = await ha_client.get_entity_map()
-
-            if not entity_map:
-                return "VERFÜGBARE ENTITIES: (Keine - Home Assistant nicht erreichbar)"
-
-            message_lower = message.lower()
-
-            # Extrahiere aktuellen Raum aus Context
-            current_room = None
-            current_room_normalized = None
-            if room_context:
-                room_name = room_context.get("room_name")
-                if room_name:
-                    current_room = room_name.lower()
-                    # Normalisiere Raumnamen (entferne Umlaute für Matching)
-                    current_room_normalized = current_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
-
-            # Pre-compute message words as a set for O(1) lookups
-            message_words = {w for w in message_lower.split() if len(w) > 2}
-
-            # Pre-compute device keyword matches: which domains are relevant for this message?
-            device_keywords = {
-                "fenster": ["binary_sensor", "sensor"],
-                "tür": ["binary_sensor"],
-                "licht": ["light"],
-                "lampe": ["light"],
-                "schalter": ["switch"],
-                "heizung": ["climate"],
-                "thermostat": ["climate"],
-                "rolladen": ["cover"],
-                "jalousie": ["cover"],
-                "mediaplayer": ["media_player"],
-                "player": ["media_player"],
-                "fernseher": ["media_player"],
-                "tv": ["media_player"],
-                "musik": ["media_player"],
-                "spotify": ["media_player"],
-                "radio": ["media_player"]
-            }
-            # Build a set of domains that match keywords in the message (computed once)
-            matched_domains = set()
-            for keyword, domains in device_keywords.items():
-                if keyword in message_lower:
-                    matched_domains.update(domains)
-
-            # Filtere relevante Entities basierend auf Message
-            relevant_entities = []
-
-            # Priorisierung: Raum und Device-Type erkennen
-            for entity in entity_map:
-                relevance_score = 0
-                entity_room = (entity.get("room") or "").lower()
-
-                # HÖCHSTE Priorität: Entity ist im aktuellen Raum des Benutzers
-                if current_room and entity_room:
-                    entity_room_normalized = entity_room.replace("ä", "a").replace("ö", "o").replace("ü", "u")
-                    if current_room in entity_room or current_room_normalized in entity_room_normalized:
-                        relevance_score += 20  # Starker Bonus für aktuellen Raum
-
-                # Raum-Match aus Nachricht
-                if entity_room:
-                    if entity_room in message_lower:
-                        relevance_score += 10
-
-                # Friendly Name Match — set intersection instead of O(n*m) loop
-                friendly_name_lower = (entity.get("friendly_name") or "").lower()
-                friendly_words = set(friendly_name_lower.split())
-                matches = message_words & friendly_words
-                if matches:
-                    relevance_score += 5 * len(matches)
-
-                # Device-Type Match — O(1) set lookup instead of iterating all keywords
-                if entity.get("domain") in matched_domains:
-                    relevance_score += 8
-
-                # Füge Entity hinzu wenn relevant
-                if relevance_score > 0:
-                    relevant_entities.append((relevance_score, entity))
-
-            # Sortiere nach Relevanz und nimm Top 15
-            relevant_entities.sort(key=lambda x: x[0], reverse=True)
-            top_entities = [e[1] for e in relevant_entities[:25]]
-
-            # Falls keine relevanten gefunden, zeige die häufigsten Typen
-            if not top_entities:
-                # Nehme die ersten 10 Entities jedes Typs
-                seen_domains = set()
-                for entity in entity_map:
-                    domain = entity.get("domain")
-                    if domain not in seen_domains or len(top_entities) < 25:
-                        top_entities.append(entity)
-                        seen_domains.add(domain)
-                        if len(top_entities) >= 25:
-                            break
-
-            # Formatiere als kompakte Liste
-            # Note: MCP HA tools use "name" (friendly_name) and "area" (room) as parameters,
-            # NOT entity_id. Format the context so the LLM uses the correct parameter values.
-            context_lines = ["VERFÜGBARE HOME ASSISTANT ENTITIES:"]
-            context_lines.append("  [Für MCP HA-Tools: Nutze 'name' = friendly_name, 'area' = Raum-Name]")
-
-            # Wenn aktueller Raum bekannt, zeige Entities in diesem Raum zuerst
-            if current_room:
-                context_lines.append(f"  [Entitäten im aktuellen Raum '{current_room}' haben Priorität]")
-
-            for entity in top_entities:
-                entity_room = (entity.get("room") or "").lower()
-                is_current_room = current_room and entity_room and current_room in entity_room
-
-                room_info = f", area: \"{entity['room']}\"" if entity.get('room') else ""
-                state_info = f" [aktuell: {entity.get('state', 'unknown')}]"
-                current_room_marker = " ★" if is_current_room else ""
-
-                context_lines.append(
-                    f"  - name: \"{entity['friendly_name']}\"{room_info}{state_info}{current_room_marker}"
-                )
-
-            return "\n".join(context_lines)
-
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Erstellen des Entity-Kontexts: {e}")
-            return "VERFÜGBARE ENTITIES: (Fehler beim Laden)"
+        from utils.hooks import run_hooks
+        results = await run_hooks(
+            "build_entity_context",
+            message=message,
+            room_context=room_context,
+            lang=lang,
+        )
+        for candidate in results:
+            if isinstance(candidate, str):
+                return candidate
+            logger.warning(
+                f"⚠️  build_entity_context handler returned unexpected shape "
+                f"(type={type(candidate).__name__}); ignoring"
+            )
+        return ""
 
     async def _find_correction_examples(self, message: str, lang: str) -> str:
         """
@@ -880,21 +778,6 @@ WICHTIGE REGELN FÜR ANTWORTEN:
         except Exception as e:
             logger.warning(f"⚠️ Intent correction lookup failed: {e}")
         return ""
-
-    async def _get_ha_keywords(self) -> set:
-        """Hole dynamische Keywords von Home Assistant"""
-        try:
-            from integrations.homeassistant import HomeAssistantClient
-            ha_client = HomeAssistantClient()
-            keywords = await ha_client.get_keywords()
-            return keywords
-        except Exception as e:
-            logger.error(f"❌ Fehler beim Laden der HA-Keywords: {e}")
-            # Fallback zu minimaler Keyword-Liste
-            return {
-                "licht", "lampe", "schalter", "thermostat", "heizung",
-                "fenster", "tür", "rolladen", "ein", "aus", "an", "schalten"
-            }
 
     # ========== Kontext-Management Methoden ==========
     # NOTE: These methods delegate to ConversationService for backwards compatibility.

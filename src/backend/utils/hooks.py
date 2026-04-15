@@ -15,6 +15,14 @@ from loguru import logger
 HOOK_EVENTS: frozenset[str] = frozenset({
     "startup",
     "shutdown",
+    # Late shutdown phase — fires AFTER MCP shutdown, zeroconf stop, and
+    # all other platform-owned teardown. Used by plugins that need to
+    # clean up dependencies the platform was still using during its own
+    # shutdown (e.g. ha_glue's HA/Frigate HTTP client singletons, which
+    # MCP may still invoke during its shutdown sequence). Handlers
+    # receive `app` as the only kwarg. Exceptions from handlers are
+    # logged and ignored — late-shutdown must never block pod exit.
+    "shutdown_finalize",
     "register_routes",
     "register_tools",
     "execute_tool",
@@ -40,6 +48,27 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # validates each candidate is a dict with an "intent" key before
     # accepting it.
     "intent_fallback_resolve",
+    # Entity context for intent classification — fired by OllamaService
+    # .extract_intent to build a domain-specific "available entities" block
+    # that gets injected into the intent prompt. Handlers receive
+    # `message: str, room_context: dict | None, lang: str` and return a
+    # formatted string (multi-line prompt context) or None. First
+    # well-shaped non-None result wins. Empty string fall-through means
+    # "no domain context available" and the intent prompt is built without
+    # an entity list. ha_glue's handler returns the HA entity list filtered
+    # by message keywords.
+    "build_entity_context",
+    # Post-classification validation — fired by OllamaService.extract_intent
+    # AFTER the LLM returns a structured intent. Handlers receive
+    # `intent_data: dict, message: str, lang: str` and return EITHER an
+    # override dict (`{"intent": ..., "parameters": ..., "confidence": ...}`)
+    # that replaces the classification, OR None to leave the classification
+    # unchanged. First well-shaped non-None override wins — registration
+    # order determines precedence. ha_glue's handler uses this to validate
+    # `homeassistant.*` intents against an HA keyword set and fall back to
+    # `general.conversation` when the message doesn't actually contain
+    # HA-shaped words.
+    "validate_classified_intent",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]
