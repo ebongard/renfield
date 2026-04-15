@@ -373,7 +373,7 @@ class InternalToolService:
         try:
             import asyncio as _asyncio
 
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
 
@@ -672,7 +672,7 @@ class InternalToolService:
             }
 
         try:
-            from integrations.homeassistant import HomeAssistantClient
+            from ha_glue.integrations.homeassistant import HomeAssistantClient
 
             ha_client = HomeAssistantClient()
 

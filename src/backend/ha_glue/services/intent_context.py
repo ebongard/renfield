@@ -84,7 +84,7 @@ async def ha_build_entity_context(
     same behavior as the pre-extraction inline version.
     """
     try:
-        from integrations.homeassistant import HomeAssistantClient
+        from ha_glue.integrations.homeassistant import HomeAssistantClient
         ha_client = HomeAssistantClient()
         entity_map = await ha_client.get_entity_map()
     except Exception as exc:  # noqa: BLE001
@@ -197,7 +197,7 @@ _HA_FALLBACK_KEYWORDS: frozenset[str] = frozenset({
 async def _get_ha_keywords() -> set[str]:
     """Fetch the live HA keyword set, falling back to the hardcoded list."""
     try:
-        from integrations.homeassistant import HomeAssistantClient
+        from ha_glue.integrations.homeassistant import HomeAssistantClient
         ha_client = HomeAssistantClient()
         return await ha_client.get_keywords()
     except Exception as exc:  # noqa: BLE001

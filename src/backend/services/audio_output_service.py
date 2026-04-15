@@ -16,7 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from integrations.homeassistant import HomeAssistantClient
+from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import RoomOutputDevice
 from services.device_manager import get_device_manager
 from utils.config import settings

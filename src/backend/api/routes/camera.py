@@ -9,7 +9,7 @@ With RPBAC permission checks:
 from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
-from integrations.frigate import FrigateClient
+from ha_glue.integrations.frigate import FrigateClient
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission

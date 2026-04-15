@@ -87,11 +87,13 @@ def register() -> None:
         register_hook("startup", ha_glue_on_startup)
         register_hook("shutdown", ha_glue_on_shutdown)
         register_hook("shutdown_finalize", ha_glue_on_shutdown_finalize)
+        register_hook("register_routes", ha_glue_register_routes)
         logger.info(
-            "ha_glue.bootstrap: registered 9 handlers — intent_fallback_resolve, "
+            "ha_glue.bootstrap: registered 10 handlers — intent_fallback_resolve, "
             "build_entity_context, validate_classified_intent, "
             "chat_context_established, should_play_tts_for_notification, "
-            "resolve_user_current_room, startup, shutdown, shutdown_finalize"
+            "resolve_user_current_room, startup, shutdown, shutdown_finalize, "
+            "register_routes"
         )
     except Exception:  # noqa: BLE001 — startup must never break on plugin error
         logger.opt(exception=True).warning(
@@ -233,7 +235,7 @@ async def _init_paperless_audit(app: Any) -> None:
 def _schedule_ha_keywords_preload() -> None:
     """Schedule Home Assistant keywords preloading in background."""
     try:
-        from integrations.homeassistant import HomeAssistantClient
+        from ha_glue.integrations.homeassistant import HomeAssistantClient
 
         async def preload_keywords():
             try:
@@ -349,16 +351,42 @@ async def ha_glue_on_shutdown_finalize(*, app: Any) -> None:
     others. Never raises — late-shutdown must not block pod exit.
     """
     try:
-        from integrations.homeassistant import close_ha_client
+        from ha_glue.integrations.homeassistant import close_ha_client
         await close_ha_client()
     except Exception:  # noqa: BLE001
         logger.opt(exception=True).warning(
             "ha_glue.bootstrap: close_ha_client failed"
         )
     try:
-        from integrations.frigate import close_frigate_client
+        from ha_glue.integrations.frigate import close_frigate_client
         await close_frigate_client()
     except Exception:  # noqa: BLE001
         logger.opt(exception=True).warning(
             "ha_glue.bootstrap: close_frigate_client failed"
+        )
+
+
+# ---------------------------------------------------------------------------
+# register_routes handler — mount ha_glue-owned FastAPI routers
+# ---------------------------------------------------------------------------
+
+
+async def ha_glue_register_routes(*, app: Any) -> None:
+    """Mount ha_glue-owned REST API routes on the platform FastAPI app.
+
+    Currently just the HA admin endpoint (`/admin/refresh-keywords`)
+    that used to live inline in platform `main.py`. Week 2 Phase C
+    will add rooms, presence, satellites, camera, paperless_audit,
+    and homeassistant routers here too.
+
+    Each router is individually guarded so a broken module doesn't
+    block the others.
+    """
+    try:
+        from ha_glue.api.admin import router as admin_router
+        app.include_router(admin_router)
+        logger.info("✅ ha_glue: mounted /admin/refresh-keywords")
+    except Exception:  # noqa: BLE001
+        logger.opt(exception=True).warning(
+            "ha_glue.bootstrap: admin router mount failed"
         )

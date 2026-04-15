@@ -101,7 +101,7 @@ async def ha_intent_fallback(*, message: str, lang: str) -> dict | None:
     # so we keep all HA client imports inside ha_glue. If HA itself is offline
     # this raises and the hook system catches + logs it; the fallback returns
     # None and the platform falls through to general.unresolved cleanly.
-    from integrations.homeassistant import HomeAssistantClient
+    from ha_glue.integrations.homeassistant import HomeAssistantClient
     ha_client = HomeAssistantClient()
     search_results = await ha_client.search_entities(message)
 

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from integrations.homeassistant import HomeAssistantClient
+from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission

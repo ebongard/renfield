@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel
 
-from integrations.homeassistant import HomeAssistantClient
+from ha_glue.integrations.homeassistant import HomeAssistantClient
 from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission

@@ -393,31 +393,10 @@ async def create_ws_token(
     }
 
 
-# Admin Endpoint: Refresh HA Keywords
-@app.post("/admin/refresh-keywords")
-async def refresh_keywords(
-    user = Depends(require_permission(Permission.ADMIN))
-):
-    """
-    Lade Home Assistant Keywords neu
-
-    Nützlich nach dem Hinzufügen neuer Geräte in HA
-
-    Requires: admin permission (when auth is enabled)
-    """
-    try:
-        from integrations.homeassistant import HomeAssistantClient
-        ha_client = HomeAssistantClient()
-        keywords = await ha_client.get_keywords(refresh=True)
-
-        return {
-            "status": "success",
-            "keywords_count": len(keywords),
-            "sample_keywords": list(keywords)[:20]
-        }
-    except Exception as e:
-        logger.error(f"❌ Keyword Refresh Fehler: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# Admin Endpoint /admin/refresh-keywords moved to
+# ha_glue.api.admin (mounted via the register_routes hook from
+# ha_glue.bootstrap). Platform-only deploys without ha_glue simply
+# don't have the endpoint — any attempt to POST to it returns 404.
 
 
 # Admin Endpoint: Re-Embed All Tables
