@@ -49,8 +49,11 @@ smart-home tables are EMPTY in the Reva production database. So (a)
 is safe for X-IDRA's single pro deploy.
 """
 import asyncio
+import importlib
+import os
 from logging.config import fileConfig
 
+from loguru import logger
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -78,6 +81,58 @@ except ImportError:
     # will see only the 22 platform tables in Base.metadata.
     pass
 
+# ---------------------------------------------------------------------------
+# Plugin metadata discovery (X-idra/reva#151)
+# ---------------------------------------------------------------------------
+#
+# Plugins like Reva declare their own SQLAlchemy `Base = declarative_base()`
+# so their tables live on a separate MetaData instance from Renfield's core
+# `Base.metadata`. Without this block, `alembic revision --autogenerate`
+# sees those tables in the live DB but not in `target_metadata`, and emits
+# `drop_table` for every one of them — a latent footgun waiting for the
+# day someone blindly applies that diff.
+#
+# Fix: each plugin can set `PLUGIN_METADATA_MODULES` to a comma-separated
+# list of dotted module paths. Each module is imported for its side effects
+# and, if it exposes a top-level `Base` attribute, that Base's metadata is
+# appended to Alembic's `target_metadata` list. Alembic natively supports
+# multiple MetaData objects via a list.
+#
+# Example (Reva):
+#   PLUGIN_METADATA_MODULES=reva.metadata
+#
+# Reva's `reva.metadata` module imports every Reva model submodule as a
+# side effect and re-exports `reva.core.models.Base`, which owns the full
+# set of reva_* tables.
+#
+# If the env var is unset or the module fails to import, target_metadata
+# stays exactly what it would have been — zero behaviour change for
+# platform-only deploys or deploys without the env var set.
+_plugin_metadatas: list = []
+_plugin_modules_env = os.getenv("PLUGIN_METADATA_MODULES", "")
+for _mod_spec in _plugin_modules_env.split(","):
+    _spec = _mod_spec.strip()
+    if not _spec:
+        continue
+    try:
+        _plugin_mod = importlib.import_module(_spec)
+    except ImportError as _exc:
+        logger.warning(
+            f"alembic/env.py: plugin metadata module {_spec!r} not importable: {_exc}"
+        )
+        continue
+    _plugin_base = getattr(_plugin_mod, "Base", None)
+    if _plugin_base is None:
+        logger.warning(
+            f"alembic/env.py: plugin metadata module {_spec!r} has no top-level 'Base' attribute"
+        )
+        continue
+    _plugin_metadatas.append(_plugin_base.metadata)
+    logger.info(
+        f"alembic/env.py: registered plugin metadata from {_spec} "
+        f"({len(_plugin_base.metadata.tables)} tables)"
+    )
+
 # Alembic Config object
 config = context.config
 
@@ -91,8 +146,12 @@ config.set_main_option(
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Model's MetaData object for 'autogenerate' support
-target_metadata = Base.metadata
+# Model's MetaData object(s) for 'autogenerate' support.
+# Alembic accepts a single MetaData or a list of them. When no plugin
+# metadata modules are configured we pass the bare MetaData to preserve
+# the pre-#151 shape; when any are registered we pass a list so each
+# plugin's tables are considered independently.
+target_metadata = [Base.metadata, *_plugin_metadatas] if _plugin_metadatas else Base.metadata
 
 
 def run_migrations_offline() -> None:
