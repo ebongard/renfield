@@ -424,7 +424,8 @@ class ConversationService:
     async def list_all(
         self,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        user_id: int | None = None,
     ) -> list[dict]:
         """
         Hole Liste aller Konversationen.
@@ -432,9 +433,12 @@ class ConversationService:
         Args:
             limit: Maximale Anzahl
             offset: Pagination-Offset
+            user_id: Wenn gesetzt, nur Konversationen dieses Users (auth mode).
+                Wenn None, werden alle Konversationen zurueckgegeben (single-user mode).
 
         Returns:
-            Liste von Konversations-Zusammenfassungen
+            Liste von Konversations-Zusammenfassungen mit `preview` (gekuerzte
+            erste User-Nachricht) und `message_count`.
         """
         try:
             # Count subquery: message count per conversation
@@ -463,7 +467,7 @@ class ConversationService:
             first_msg = aliased(preview_subq)
 
             # Main query joining both subqueries
-            result = await self.db.execute(
+            stmt = (
                 select(
                     Conversation,
                     func.coalesce(count_subq.c.message_count, 0).label("message_count"),
@@ -475,6 +479,10 @@ class ConversationService:
                 .limit(limit)
                 .offset(offset)
             )
+            if user_id is not None:
+                stmt = stmt.where(Conversation.user_id == user_id)
+
+            result = await self.db.execute(stmt)
             rows = result.all()
 
             summaries = []

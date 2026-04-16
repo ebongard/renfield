@@ -255,6 +255,73 @@ class TestListAll:
         assert result[0]["session_id"] == "newer"
         assert result[1]["session_id"] == "older"
 
+    async def test_preview_is_first_user_message_truncated(
+        self, db_session: AsyncSession
+    ):
+        """Preview must be the first user message (not the last, not assistant)."""
+        service = ConversationService(db_session)
+        await service.save_message("with-preview", "user", "Mein erster Satz")
+        await service.save_message("with-preview", "assistant", "Eine Antwort")
+        await service.save_message("with-preview", "user", "Eine zweite Frage")
+
+        result = await service.list_all()
+        entry = next(r for r in result if r["session_id"] == "with-preview")
+        assert entry["preview"] == "Mein erster Satz"
+        assert entry["message_count"] == 3
+
+    async def test_preview_truncated_to_100_chars(self, db_session: AsyncSession):
+        service = ConversationService(db_session)
+        long_msg = "x" * 200
+        await service.save_message("long-msg", "user", long_msg)
+
+        result = await service.list_all()
+        entry = next(r for r in result if r["session_id"] == "long-msg")
+        assert len(entry["preview"]) == 100
+
+    async def test_user_id_filter_returns_only_user_conversations(
+        self, db_session: AsyncSession
+    ):
+        """When user_id is given, list_all returns only that user's conversations.
+
+        Regression: /api/conversations bypassed list_all when authenticated
+        and returned conversations without `preview`, so the sidebar showed
+        "New Conversation" for every entry. The fix unifies both paths
+        through list_all with an optional user_id filter.
+        """
+        service = ConversationService(db_session)
+        await service.save_message("user-1-conv", "user", "Hi from user 1")
+        await service.save_message("user-2-conv", "user", "Hi from user 2")
+        await service.save_message("orphan-conv", "user", "No owner")
+
+        # Manually assign user_id since save_message doesn't take it directly
+        result = await db_session.execute(
+            select(Conversation).where(
+                Conversation.session_id.in_(["user-1-conv", "user-2-conv"])
+            )
+        )
+        for conv in result.scalars().all():
+            conv.user_id = 1 if conv.session_id == "user-1-conv" else 2
+        await db_session.commit()
+
+        # User 1 sees only their own
+        only_user_1 = await service.list_all(user_id=1)
+        assert {c["session_id"] for c in only_user_1} == {"user-1-conv"}
+
+        # User 2 sees only their own
+        only_user_2 = await service.list_all(user_id=2)
+        assert {c["session_id"] for c in only_user_2} == {"user-2-conv"}
+
+        # No filter sees everything (single-user mode)
+        all_conv = await service.list_all()
+        assert {c["session_id"] for c in all_conv} == {
+            "user-1-conv", "user-2-conv", "orphan-conv",
+        }
+
+        # Each filtered entry still carries preview + message_count
+        entry = only_user_1[0]
+        assert entry["preview"] == "Hi from user 1"
+        assert entry["message_count"] == 1
+
 
 # ============================================================================
 # ConversationService.search Tests

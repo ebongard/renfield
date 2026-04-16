@@ -328,30 +328,22 @@ async def list_conversations(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(get_current_user),
 ):
-    """Liste aller Konversationen"""
+    """Liste aller Konversationen.
+
+    Authenticated users see only their own conversations; in single-user mode
+    (no auth) all conversations are returned. Both paths produce the same
+    shape so the frontend ChatSidebar can render `preview` (truncated first
+    user message) and `message_count` consistently.
+    """
     try:
-        if current_user is not None:
-            query = (
-                select(Conversation)
-                .where(Conversation.user_id == current_user.id)
-                .order_by(Conversation.updated_at.desc())
-                .offset(offset)
-                .limit(limit)
-            )
-            result = await db.execute(query)
-            convs = result.scalars().all()
-            conversations = [
-                {
-                    "session_id": c.session_id,
-                    "created_at": c.created_at.isoformat() if c.created_at else None,
-                    "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-                }
-                for c in convs
-            ]
-        else:
-            from main import app
-            ollama: OllamaService = app.state.ollama
-            conversations = await ollama.get_all_conversations(db, limit, offset)
+        from services.conversation_service import ConversationService
+
+        service = ConversationService(db)
+        conversations = await service.list_all(
+            limit=limit,
+            offset=offset,
+            user_id=current_user.id if current_user is not None else None,
+        )
 
         return {
             "conversations": conversations,
