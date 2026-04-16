@@ -89,8 +89,17 @@ class ActionExecutor:
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
-            if user_id is not None:
-                parameters["user_id"] = user_id
+            # `user_id` is passed as a kwarg to `execute_tool()` (used for
+            # permission checks + audit), NOT merged into `parameters`. MCP
+            # tools have strict Pydantic schemas; every unknown key triggers
+            # `Unexpected keyword argument` and the call fails. This was the
+            # invisible-until-auth bug: when JWT auth finally returned a real
+            # int user_id, every MCP call that used to succeed with
+            # `user_id=None` started failing. Fix previously landed on
+            # `feat/web-chat-v2` (f45c98e) but never made it to main — this
+            # cherry-picks it up. See the ws-auth and /api/auth/status PRs
+            # (ebongard/renfield#364 + #365 + #366) for the sibling half-merged
+            # fixes from the same branch.
             return await self.mcp_manager.execute_tool(
                 intent, parameters, user_permissions=user_permissions,
                 user_id=user_id,

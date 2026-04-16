@@ -175,6 +175,47 @@ class TestActionExecutorMCP:
         assert result["success"] is False
         assert "rate limited" in result["message"]
 
+    @pytest.mark.unit
+    async def test_mcp_user_id_not_injected_into_parameters(self, action_executor):
+        """Regression: user_id must NOT land in the MCP tool's `parameters` dict.
+
+        MCP tools have strict Pydantic schemas and reject unknown keys with
+        "Unexpected keyword argument". user_id is passed as a separate
+        kwarg to execute_tool() (for permission checks and audit), never
+        as a tool parameter.
+
+        This is a regression guard — the fix lived on feat/web-chat-v2
+        (commit f45c98e, 2026-04-11) but never reached main, so every
+        MCP call for authenticated users started failing silently again
+        when JWT WS auth went live. Don't let the same mistake land
+        twice.
+        """
+        intent_data = {
+            "intent": "mcp.release.list_releases",
+            "parameters": {"status": "active"},  # original user-provided params
+            "confidence": 0.95,
+        }
+
+        await action_executor.execute(
+            intent_data,
+            user_permissions=["release.read"],
+            user_id=7,  # authenticated user
+        )
+
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        # Positional: (intent, parameters)
+        passed_intent, passed_parameters = call_args.args
+        assert passed_intent == "mcp.release.list_releases"
+        assert passed_parameters == {"status": "active"}, (
+            f"user_id leaked into MCP parameters: {passed_parameters!r}. "
+            f"It must stay out of `parameters` and only travel via the "
+            f"execute_tool kwarg so the tool's schema validation passes."
+        )
+        # But user_id MUST still reach execute_tool as a kwarg — that's
+        # what downstream permission checks read.
+        assert call_args.kwargs.get("user_id") == 7
+
 
 # ============================================================================
 # ActionExecutor Edge Cases Tests
