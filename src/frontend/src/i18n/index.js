@@ -21,7 +21,14 @@ i18n
       lookupLocalStorage: 'renfield_language'
     },
     interpolation: {
-      escapeValue: false // React already escapes values
+      escapeValue: false, // React already escapes values
+      // Make {{appName}} resolve everywhere without each call site passing
+      // it explicitly. Driven by the VITE_APP_NAME build arg so the same
+      // bundle can be branded as Renfield (default) or Reva / etc. via
+      // the white-label Dockerfile args.
+      defaultVariables: {
+        appName: import.meta.env.VITE_APP_NAME || 'Renfield',
+      },
     }
   });
 
