@@ -225,7 +225,7 @@ export default function Layout({ children }) {
             </button>
 
             <Link to="/" className="flex items-center">
-              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-12 w-auto" />
+              <img src={import.meta.env.VITE_APP_LOGO_URL || "/renfield-logo-header.svg"} alt={import.meta.env.VITE_APP_NAME || "Renfield"} className="h-12 w-auto" />
             </Link>
           </div>
 
@@ -299,7 +299,7 @@ export default function Layout({ children }) {
           {/* Full logo + close — shown on mobile + desktop hover */}
           <div className="flex items-center justify-between w-full lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
             <Link to="/" onClick={handleNavClick} className="flex items-center overflow-hidden">
-              <img src="/renfield-logo-header.svg" alt="Renfield" className="h-11 w-auto" />
+              <img src={import.meta.env.VITE_APP_LOGO_URL || "/renfield-logo-header.svg"} alt={import.meta.env.VITE_APP_NAME || "Renfield"} className="h-11 w-auto" />
             </Link>
             <button
               ref={firstFocusableRef}

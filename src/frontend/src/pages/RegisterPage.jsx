@@ -107,7 +107,7 @@ export default function RegisterPage() {
         {/* Logo/Title */}
         <div className="text-center mb-8">
           <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
-          <h1 className="text-4xl font-bold font-display text-cream">Renfield</h1>
+          <h1 className="text-4xl font-bold font-display text-cream">{import.meta.env.VITE_APP_NAME || 'Renfield'}</h1>
           <p className="text-gray-400 mt-2">{t('auth.createYourAccount')}</p>
         </div>
 
@@ -257,7 +257,7 @@ export default function RegisterPage() {
 
         {/* Footer */}
         <p className="text-center text-gray-500 text-sm mt-8">
-          Renfield - {t('auth.personalAssistant')}
+          {import.meta.env.VITE_APP_NAME || 'Renfield'} - {t('auth.personalAssistant')}
         </p>
       </div>
     </div>
