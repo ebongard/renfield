@@ -129,14 +129,64 @@ class QueryOrchestrator:
         When agent_orchestrator_parallel is True, sub-agents run in parallel
         with isolated contexts. Otherwise falls back to sequential execution.
 
+        Fires `pre_orchestration` before sub-agents launch and
+        `post_orchestration` after synthesis. If any post_orchestration handler
+        returns a dict containing a `card` key, an additional AgentStep with
+        step_type="card" is yielded so the WebSocket layer can forward it to
+        the client. First well-shaped card wins.
+
         Yields AgentStep objects for real-time feedback.
         """
+        from services.agent_service import AgentStep
+        from utils.hooks import run_hooks
+
+        plan = {"sub_queries": list(sub_queries), "message": message, "lang": lang}
+        try:
+            await run_hooks("pre_orchestration", message=message, plan=plan, lang=lang)
+        except Exception as e:
+            # Hook failures must never break orchestration.
+            logger.warning(f"pre_orchestration hook raised, ignoring: {e}")
+
+        sub_results: list[dict] = []
+        final_answer: str | None = None
+
         if settings.agent_orchestrator_parallel:
-            async for step in self._run_parallel(sub_queries, message, ollama, executor, lang, **agent_kwargs):
-                yield step
+            inner = self._run_parallel(
+                sub_queries, message, ollama, executor, lang,
+                sub_results_out=sub_results, **agent_kwargs,
+            )
         else:
-            async for step in self._run_sequential(sub_queries, message, ollama, executor, lang, **agent_kwargs):
-                yield step
+            inner = self._run_sequential(
+                sub_queries, message, ollama, executor, lang,
+                sub_results_out=sub_results, **agent_kwargs,
+            )
+
+        async for step in inner:
+            if step.step_type == "final_answer":
+                final_answer = step.content
+            yield step
+
+        try:
+            hook_results = await run_hooks(
+                "post_orchestration",
+                message=message,
+                sub_results=sub_results,
+                final_answer=final_answer,
+                lang=lang,
+            )
+        except Exception as e:
+            logger.warning(f"post_orchestration hook raised, ignoring: {e}")
+            hook_results = []
+
+        for hr in hook_results:
+            if isinstance(hr, dict) and hr.get("card"):
+                yield AgentStep(
+                    step_number=100,
+                    step_type="card",
+                    content="",
+                    data={"card": hr["card"]},
+                )
+                break
 
     async def _run_sub_agent(
         self,
@@ -197,9 +247,15 @@ class QueryOrchestrator:
         ollama: "OllamaService",
         executor: "ActionExecutor",
         lang: str = "de",
+        sub_results_out: list[dict] | None = None,
         **agent_kwargs,
     ) -> AsyncGenerator["AgentStep", None]:
-        """Run all sub-agents in parallel, then synthesize."""
+        """Run all sub-agents in parallel, then synthesize.
+
+        `sub_results_out` (when provided) is appended to as sub-agents complete,
+        giving the caller access to the structured per-role answers needed for
+        the post_orchestration hook.
+        """
         from services.agent_service import AgentStep
 
         logger.info(f"⚡ Orchestrator: parallel execution of {len(sub_queries)} sub-agents")
@@ -212,7 +268,7 @@ class QueryOrchestrator:
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Yield steps grouped by sub-agent + collect results for synthesis
-        sub_results: list[dict] = []
+        sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
         for sq, result in zip(sub_queries, raw_results):
             if isinstance(result, Exception):
                 logger.error(f"Orchestrator: sub-agent [{sq['role']}] failed: {result}")
@@ -245,13 +301,19 @@ class QueryOrchestrator:
         ollama: "OllamaService",
         executor: "ActionExecutor",
         lang: str = "de",
+        sub_results_out: list[dict] | None = None,
         **agent_kwargs,
     ) -> AsyncGenerator["AgentStep", None]:
-        """Run sub-agents sequentially (original behavior)."""
+        """Run sub-agents sequentially (original behavior).
+
+        `sub_results_out` (when provided) is appended to as each sub-agent
+        completes, giving the caller access to the structured per-role answers
+        for the post_orchestration hook.
+        """
         from services.agent_service import AgentService, AgentStep
         from services.agent_tools import AgentToolRegistry
 
-        sub_results: list[dict] = []
+        sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
 
         for i, sq in enumerate(sub_queries):
             role_name = sq["role"]

@@ -170,3 +170,194 @@ class TestDetectMultiDomain:
 
             result = await orchestrator.detect_multi_domain("test", ollama)
             assert result is None
+
+
+# ============================================================================
+# pre/post_orchestration hooks + card emission
+# ============================================================================
+
+class TestOrchestrationHooks:
+    """`run_orchestrated` must fire pre/post hooks and forward any card payload."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_pre_and_post_hooks_fire(self):
+        """Both hook events fire with the expected kwargs."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        captured = {"pre": [], "post": []}
+
+        async def pre_handler(**kw):
+            captured["pre"].append(kw)
+            return None
+
+        async def post_handler(**kw):
+            captured["post"].append(kw)
+            return None
+
+        register_hook("pre_orchestration", pre_handler)
+        register_hook("post_orchestration", post_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty_runner(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch.object(orchestrator, "_run_parallel", _empty_runner), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            steps = []
+            async for step in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="Mach Licht an und spiel Musik",
+                ollama=_make_ollama("ok"),
+                executor=MagicMock(),
+                lang="de",
+            ):
+                steps.append(step)
+
+        assert len(captured["pre"]) == 1
+        assert captured["pre"][0]["message"] == "Mach Licht an und spiel Musik"
+        assert captured["pre"][0]["lang"] == "de"
+        assert "plan" in captured["pre"][0]
+
+        assert len(captured["post"]) == 1
+        assert captured["post"][0]["message"] == "Mach Licht an und spiel Musik"
+        assert captured["post"][0]["final_answer"] == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_post_hook_card_emitted_as_step(self):
+        """A post_orchestration handler returning {'card': ...} yields a card step."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        card_payload = {"type": "AdaptiveCard", "version": "1.5", "body": [{"type": "TextBlock", "text": "hi"}]}
+
+        async def card_handler(**kw):
+            return {"card": card_payload}
+
+        register_hook("post_orchestration", card_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty_runner(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="done")
+
+        with patch.object(orchestrator, "_run_parallel", _empty_runner), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            steps = []
+            async for step in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="msg",
+                ollama=_make_ollama("ok"),
+                executor=MagicMock(),
+                lang="de",
+            ):
+                steps.append(step)
+
+        card_steps = [s for s in steps if s.step_type == "card"]
+        assert len(card_steps) == 1
+        assert card_steps[0].data == {"card": card_payload}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_post_hook_first_card_wins(self):
+        """When multiple handlers return a card, only the first lands as a step."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        async def first(**kw):
+            return {"card": {"version": "1.5", "marker": "first"}}
+
+        async def second(**kw):
+            return {"card": {"version": "1.5", "marker": "second"}}
+
+        register_hook("post_orchestration", first)
+        register_hook("post_orchestration", second)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty_runner(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="x")
+
+        with patch.object(orchestrator, "_run_parallel", _empty_runner), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            cards = []
+            async for step in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("x"),
+                executor=MagicMock(), lang="de",
+            ):
+                if step.step_type == "card":
+                    cards.append(step.data["card"])
+
+        assert len(cards) == 1
+        assert cards[0]["marker"] == "first"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_post_hook_failure_does_not_break_orchestration(self):
+        """A raising hook is logged and ignored, final_answer still streams."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        async def broken_handler(**kw):
+            raise RuntimeError("boom")
+
+        register_hook("post_orchestration", broken_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty_runner(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="answered")
+
+        with patch.object(orchestrator, "_run_parallel", _empty_runner), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            steps = []
+            async for step in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("x"),
+                executor=MagicMock(), lang="de",
+            ):
+                steps.append(step)
+
+        assert any(s.step_type == "final_answer" and s.content == "answered" for s in steps)
+        assert not any(s.step_type == "card" for s in steps)
+
+
+# ============================================================================
+# step_to_ws_message: card step -> WebSocket payload
+# ============================================================================
+
+class TestCardStepWsMessage:
+    @pytest.mark.unit
+    def test_card_step_serializes_to_card_ws_message(self):
+        from services.agent_service import AgentStep, step_to_ws_message
+        card = {"type": "AdaptiveCard", "version": "1.5", "body": []}
+        step = AgentStep(step_number=100, step_type="card", data={"card": card})
+
+        msg = step_to_ws_message(step)
+        assert msg == {"type": "card", "card": card}
+
+    @pytest.mark.unit
+    def test_card_step_with_no_data_yields_null_card(self):
+        """Defensive: a malformed card step should not raise."""
+        from services.agent_service import AgentStep, step_to_ws_message
+        msg = step_to_ws_message(AgentStep(step_number=100, step_type="card"))
+        assert msg == {"type": "card", "card": None}

@@ -1632,6 +1632,14 @@ def step_to_ws_message(step: AgentStep) -> dict:
             "success": False,
             "message": _sanitize_credentials(step.content) if step.content else step.content,
         }
+    elif step.step_type == "card":
+        # Adaptive Card payload from a post_orchestration hook handler.
+        # Frontend renders via AdaptiveCardRenderer attached to the latest
+        # assistant message.
+        return {
+            "type": "card",
+            "card": (step.data or {}).get("card"),
+        }
     else:
         return {
             "type": "agent_thinking",

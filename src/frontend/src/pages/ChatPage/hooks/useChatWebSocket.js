@@ -25,6 +25,7 @@ export function useChatWebSocket({
   onAgentThinking,
   onAgentToolCall,
   onAgentToolResult,
+  onCard,
 } = {}) {
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef(null);
@@ -37,7 +38,13 @@ export function useChatWebSocket({
       reconnectTimeoutRef.current = null;
     }
 
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+    let wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+    // Append JWT token for WebSocket authentication (falls back to device-token cookie if absent)
+    const accessToken = localStorage.getItem('renfield_access_token');
+    if (accessToken) {
+      const sep = wsUrl.includes('?') ? '&' : '?';
+      wsUrl = `${wsUrl}${sep}token=${accessToken}`;
+    }
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
@@ -84,6 +91,9 @@ export function useChatWebSocket({
       } else if (data.type === 'agent_tool_result') {
         debug.log('Agent tool result:', data.tool, data.success ? 'success' : 'failed');
         onAgentToolResult?.(data);
+      } else if (data.type === 'card') {
+        debug.log('Card received');
+        onCard?.(data);
       }
     };
 
@@ -99,7 +109,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onAgentThinking, onAgentToolCall, onAgentToolResult]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onAgentThinking, onAgentToolCall, onAgentToolResult, onCard]);
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {

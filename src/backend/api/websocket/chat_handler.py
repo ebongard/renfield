@@ -803,7 +803,67 @@ async def websocket_endpoint(
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
 
-                if role.name == "conversation":
+                # === Cross-MCP Orchestrator (opt-in via agent_orchestrator_enabled) ===
+                # Detect multi-domain queries before falling through to single-role
+                # dispatch. When detected, sub-agents fan out in parallel and a
+                # synthesizer composes the combined answer. Plugins can build an
+                # Adaptive Card via the post_orchestration hook — the resulting
+                # `card` step lands on the WebSocket as `{"type": "card", ...}`.
+                orchestrated = False
+                if (
+                    settings.agent_orchestrator_enabled
+                    and mcp_manager is not None
+                    and role.name not in ("conversation", "knowledge")
+                ):
+                    try:
+                        from services.orchestrator import QueryOrchestrator
+                        orchestrator = QueryOrchestrator(agent_router, mcp_manager)
+                        sub_queries = await orchestrator.detect_multi_domain(
+                            content, ollama, lang=ollama.default_lang,
+                        )
+                    except Exception as _orch_err:
+                        logger.warning(f"Orchestrator detection failed, falling back to single-role: {_orch_err}")
+                        sub_queries = None
+
+                    if sub_queries and len(sub_queries) >= 2:
+                        agent_used = True
+                        orchestrated = True
+                        logger.info(f"🎼 Orchestrator: {len(sub_queries)} sub-queries → {[sq.get('role') for sq in sub_queries]}")
+                        executor = ActionExecutor(mcp_manager=mcp_manager)
+                        agent_tool_results = []
+                        async for step in orchestrator.run_orchestrated(
+                            sub_queries=sub_queries,
+                            message=content,
+                            ollama=ollama,
+                            executor=executor,
+                            lang=ollama.default_lang,
+                            conversation_history=session_state.conversation_history if session_state.conversation_history else None,
+                            room_context=room_context,
+                            memory_context=memory_context,
+                            document_context=document_context,
+                            personality_context=personality_context,
+                            user_permissions=user_permissions,
+                            user_id=user_id,
+                            context_vars_text=_context_vars_text,
+                            summary_text=_summary_text,
+                        ):
+                            await websocket.send_json(step_to_ws_message(step))
+                            if step.step_type == "final_answer":
+                                full_response = step.content
+                            if step.step_type == "tool_result" and step.success and step.data:
+                                agent_tool_results.append((step.tool, step.data))
+                            if step.step_type in ("tool_call", "tool_result"):
+                                agent_steps_count += 1
+
+                        if agent_tool_results:
+                            action_result = _build_agent_action_result(agent_tool_results)
+                        if not intent:
+                            intent = {"intent": "agent.orchestrated", "confidence": 1.0, "parameters": {}}
+                        logger.info(f"🎼 Orchestrator abgeschlossen: {agent_steps_count} Steps across {len(sub_queries)} sub-agents")
+
+                if orchestrated:
+                    pass  # Orchestrator handled the request — skip single-role dispatch
+                elif role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop
                     intent = {"intent": "general.conversation", "parameters": {}, "confidence": 1.0}
 
