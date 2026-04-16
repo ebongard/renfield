@@ -25,7 +25,8 @@ import {
   MapPin,
   Wrench,
   FileSearch,
-  Share2
+  Share2,
+  GitBranch
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -50,6 +51,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
   { nameKey: 'nav.integrations', href: '/admin/integrations', icon: Blocks, permission: ['admin', 'plugins.use', 'plugins.manage'] },
   { nameKey: 'nav.intents', href: '/admin/intents', icon: Zap, permission: ['admin'] },
+  { nameKey: 'nav.routingDashboard', href: '/admin/routing', icon: GitBranch, permission: ['admin'] },
   { nameKey: 'nav.users', href: '/admin/users', icon: UserCog, permission: ['admin'] },
   { nameKey: 'nav.roles', href: '/admin/roles', icon: Shield, permission: ['admin'] },
   { nameKey: 'nav.satellites', href: '/admin/satellites', icon: Satellite, permission: ['admin'], feature: 'satellites' },
