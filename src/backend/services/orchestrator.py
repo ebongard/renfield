@@ -265,9 +265,16 @@ class QueryOrchestrator:
             lang=lang,
             **agent_kwargs,
         ):
-            # Tag step with sub-agent role for frontend grouping
-            step.data = step.data or {}
-            step.data["sub_agent_role"] = role_name
+            # Tag step with sub-agent role for frontend grouping. Some MCP
+            # tools return list-shaped step.data (e.g. JQL search results) —
+            # only inject the marker when data is dict-shaped or unset, never
+            # convert a list into a dict (would lose the result payload).
+            if step.data is None:
+                step.data = {"sub_agent_role": role_name}
+            elif isinstance(step.data, dict):
+                step.data["sub_agent_role"] = role_name
+            # list/scalar data stays as-is; sub_agent_role is then unavailable
+            # for frontend grouping on that step but the data itself survives.
             steps.append(step)
             if step.step_type == "final_answer":
                 final_answer = step.content

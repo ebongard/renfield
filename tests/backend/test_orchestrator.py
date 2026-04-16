@@ -435,3 +435,97 @@ class TestCardStepWsMessage:
         from services.agent_service import AgentStep, step_to_ws_message
         msg = step_to_ws_message(AgentStep(step_number=100, step_type="card"))
         assert msg == {"type": "card", "card": None}
+
+
+# ============================================================================
+# _run_sub_agent: handle list-shaped step.data
+# ============================================================================
+
+class TestRunSubAgentListData:
+    """Sub-agent step tagging must survive list/scalar step.data payloads.
+
+    Real prod failure: JQL search returns step.data as a list, sub-agent
+    crashed with `list indices must be integers or slices, not str` because
+    the tag injection assumed dict.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_list_step_data_does_not_crash_sub_agent(self):
+        from services.agent_service import AgentStep
+        from services.orchestrator import QueryOrchestrator
+
+        # Build a sub-agent that yields one list-data step + a final_answer
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(
+                step_number=1, step_type="tool_result",
+                tool="jira_search", success=True,
+                data=[{"key": "REVA-42"}, {"key": "REVA-43"}],  # LIST not dict
+            )
+            yield AgentStep(
+                step_number=2, step_type="final_answer",
+                content="Found 2 tickets",
+            )
+
+        primary = _make_role("jira", servers=["jira"])
+        primary.has_agent_loop = True
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+            MockReg.return_value = MagicMock()
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "jira", "query": "find tickets"},
+                _make_ollama("ok"),
+                MagicMock(),
+                "de",
+            )
+
+        # Sub-agent completed, list-shaped data preserved as-is
+        assert result["role"] == "jira"
+        assert result["answer"] == "Found 2 tickets"
+        assert len(result["steps"]) == 2
+        assert result["steps"][0].data == [{"key": "REVA-42"}, {"key": "REVA-43"}]
+        # Dict-shaped final_answer step got tagged
+        assert result["steps"][1].data == {"sub_agent_role": "jira"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_dict_step_data_still_tagged(self):
+        """Regression: dict-shaped data must still get sub_agent_role injected."""
+        from services.agent_service import AgentStep
+        from services.orchestrator import QueryOrchestrator
+
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(
+                step_number=1, step_type="tool_result",
+                tool="get_release", success=True,
+                data={"id": "REL-100", "status": "QA"},
+            )
+
+        primary = _make_role("release", servers=["release"])
+        primary.has_agent_loop = True
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+            MockReg.return_value = MagicMock()
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"),
+                MagicMock(),
+                "de",
+            )
+
+        assert result["steps"][0].data["sub_agent_role"] == "release"
+        assert result["steps"][0].data["id"] == "REL-100"
