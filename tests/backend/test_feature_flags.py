@@ -148,6 +148,55 @@ class TestFeatureOverrides:
         assert s.features["voice"] is False
         assert s.features["smart_home"] is True
 
+    def test_knowledge_graph_override_enables_on_pro(self):
+        """Explicit True enables knowledge_graph on pro edition.
+
+        Regression guard: cherry-pick 4f3344a added tasks/knowledge/
+        knowledge_graph to the `features` property without declaring
+        the matching `feature_*` Pydantic fields, so per-deploy
+        overrides (e.g. Reva needs the knowledge graph for chat-data
+        extraction) silently no-op'd. This test pins that the override
+        actually works.
+        """
+        s = Settings(
+            renfield_edition="pro",
+            feature_knowledge_graph=True,
+            _env_file=None,
+        )
+        assert s.features["knowledge_graph"] is True
+        # Other pro defaults still apply
+        assert s.features["tasks"] is False
+        assert s.features["knowledge"] is False
+        assert s.features["smart_home"] is False
+
+    def test_tasks_override_enables_on_pro(self):
+        """Explicit True enables tasks on pro edition."""
+        s = Settings(
+            renfield_edition="pro",
+            feature_tasks=True,
+            _env_file=None,
+        )
+        assert s.features["tasks"] is True
+
+    def test_knowledge_override_enables_on_pro(self):
+        """Explicit True enables knowledge on pro edition."""
+        s = Settings(
+            renfield_edition="pro",
+            feature_knowledge=True,
+            _env_file=None,
+        )
+        assert s.features["knowledge"] is True
+
+    def test_knowledge_graph_override_disables_on_community(self):
+        """Explicit False disables knowledge_graph on community edition."""
+        s = Settings(
+            renfield_edition="community",
+            feature_knowledge_graph=False,
+            _env_file=None,
+        )
+        assert s.features["knowledge_graph"] is False
+        assert s.features["smart_home"] is True
+
 
 # ============================================================================
 # Auth Status Endpoint Tests

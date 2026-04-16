@@ -11,11 +11,26 @@ class Settings(BaseSettings):
     """Anwendungs-Einstellungen"""
 
     # Edition & Feature Flags
+    #
+    # Each `feature_*` field maps to a UI nav item / route guard. `None`
+    # means "fall through to the edition preset". Setting True or False
+    # via env (e.g. FEATURE_KNOWLEDGE_GRAPH=true) overrides the preset.
+    #
+    # If you add a feature key to the `features` property below, ALSO add
+    # the matching `feature_<name>: bool | None = None` field here —
+    # otherwise Pydantic Settings has nothing to bind the env var to and
+    # the override silently no-ops while the preset wins. (Cherry-pick
+    # 4f3344a originally added tasks/knowledge/knowledge_graph to the
+    # property without the fields, breaking per-deploy overrides until
+    # this commit.)
     renfield_edition: str = "community"  # "community" (full/home) or "pro" (business, no smart home)
-    feature_smart_home: bool | None = None   # None = use edition default
-    feature_cameras: bool | None = None      # None = use edition default
-    feature_satellites: bool | None = None   # None = use edition default
-    feature_voice: bool | None = None       # None = use edition default
+    feature_smart_home: bool | None = None       # None = use edition default
+    feature_cameras: bool | None = None          # None = use edition default
+    feature_satellites: bool | None = None       # None = use edition default
+    feature_voice: bool | None = None            # None = use edition default
+    feature_tasks: bool | None = None            # None = use edition default
+    feature_knowledge: bool | None = None        # None = use edition default
+    feature_knowledge_graph: bool | None = None  # None = use edition default
 
     # Datenbank - Einzelfelder für dynamischen DATABASE_URL-Aufbau
     database_url: str | None = None
