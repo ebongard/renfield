@@ -171,6 +171,80 @@ class TestDetectMultiDomain:
             result = await orchestrator.detect_multi_domain("test", ollama)
             assert result is None
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_extracts_json_array_from_prose_response(self):
+        """3B router models often wrap JSON in prose — the extractor must cope.
+
+        Real failure observed in prod (renfield#374): llama3.2:3b returned a
+        German explanation paragraph with the JSON array embedded mid-text
+        followed by another sentence. The detector previously crashed on
+        json.loads(). Now we find the first `[` and last `]` and parse that
+        slice.
+        """
+        roles = [_make_role("smart_home", servers=["homeassistant"]), _make_role("media", servers=["jellyfin"])]
+        router = _make_router(roles)
+        prose_wrapped = (
+            'Die Anfrage benoetigt mehrere Aktionen:\n\n'
+            '[{"role":"smart_home","query":"Licht an"},'
+            '{"role":"media","query":"Musik spielen"}]\n\n'
+            'Bitte beachten Sie diese Aufteilung.'
+        )
+        ollama = _make_ollama(prose_wrapped)
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "detect prompt"
+            s.agent_ollama_url = None
+            s.ollama_model = "test-model"
+            s.agent_router_timeout = 10.0
+            s.agent_orchestrator_parallel = True
+
+            result = await orchestrator.detect_multi_domain("Mach Licht an und spiel Musik", ollama)
+            assert result is not None
+            assert len(result) == 2
+            assert {sq["role"] for sq in result} == {"smart_home", "media"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_planner_uses_primary_role_model(self):
+        """Detection must call the heavy agent model, not the small router.
+
+        Reva ran qwen3.5:27b (the role model) as planner in production. Small
+        router models can't reliably emit pure JSON. This test pins that the
+        first agent-loop role's `model` is what gets passed to client.chat.
+        """
+        primary = _make_role("smart_home", servers=["homeassistant"])
+        primary.model = "qwen3.5:27b"
+        primary.ollama_url = "http://cuda.local:8081/v1"
+        roles = [primary, _make_role("media", servers=["jellyfin"])]
+        router = _make_router(roles)
+        ollama = _make_ollama("null")
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}), \
+             patch("services.orchestrator.get_agent_client") as gac:
+            pm.get.return_value = "detect prompt"
+            s.ollama_model = "fallback-model"
+            s.agent_ollama_url = "http://fallback:1234"
+            s.agent_router_timeout = 10.0
+
+            mock_client = MagicMock()
+            mock_resp = MagicMock()
+            mock_resp.message.content = "null"
+            mock_client.chat = AsyncMock(return_value=mock_resp)
+            gac.return_value = (mock_client, "http://cuda.local:8081/v1")
+
+            await orchestrator.detect_multi_domain("test", ollama)
+
+            gac.assert_called_once_with(fallback_url="http://cuda.local:8081/v1")
+            mock_client.chat.assert_called_once()
+            assert mock_client.chat.call_args.kwargs["model"] == "qwen3.5:27b"
+
 
 # ============================================================================
 # pre/post_orchestration hooks + card emission

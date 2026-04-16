@@ -530,14 +530,34 @@ de:
 
   # Cross-MCP orchestrator prompts
   orchestrator_detect_prompt: |
-    Benoetigt diese Anfrage mehrere unabhaengige Aktionen in verschiedenen Domaenen?
-    Anfrage: "{message}"
+    Du zerlegst Anfragen in Teilaufgaben fuer verschiedene Domaenen.
+    Antworte IMMER mit reinem JSON. Keine Erklaerungen, kein Prosa-Text.
 
-    Verfuegbare Domaenen:
+    Verfuegbare Domaenen (nutze GENAU diese Namen als "role"):
     {role_descriptions}
 
-    Falls ja, antworte mit JSON: [{{"role": "...", "query": "..."}}, ...]
-    Falls nein (eine einzelne Domaene genuegt), antworte mit: null
+    Regeln:
+    1. Wenn die Anfrage mindestens zwei unabhaengige Aktionen in verschiedenen
+       Domaenen braucht -> JSON-Array mit je einem Eintrag pro Domaene.
+    2. Wenn eine einzige Domaene ausreicht -> genau das Wort: null
+    3. "role" MUSS exakt einer der oben gelisteten Domaenen-Namen sein.
+    4. "query" ist ein knapper Satz, der diese Domaene allein erledigen kann.
+
+    Beispiele:
+
+    Anfrage: "Licht an und spiel Musik"
+    Antwort:
+    [{{"role":"smart_home","query":"Licht einschalten"}},{{"role":"media","query":"Musik abspielen"}}]
+
+    Anfrage: "Welche Release-Tickets gibt es zu REL-100?"
+    Antwort:
+    [{{"role":"release","query":"Details zu Release REL-100"}},{{"role":"jira","query":"Jira-Tickets verknuepft mit REL-100"}}]
+
+    Anfrage: "Mach das Licht im Wohnzimmer an"
+    Antwort: null
+
+    Anfrage: "{message}"
+    Antwort:
 
   orchestrator_synthesize_prompt: |
     Kombiniere diese Teilergebnisse zu einer natuerlichen Antwort auf die urspruengliche Frage.
@@ -1058,14 +1078,34 @@ en:
 
   # Cross-MCP orchestrator prompts
   orchestrator_detect_prompt: |
-    Does this request require multiple independent actions across different domains?
-    Request: "{message}"
+    You decompose a request into sub-tasks for different domains.
+    ALWAYS answer with pure JSON. No explanations, no prose.
 
-    Available domains:
+    Available domains (use EXACTLY these names as "role"):
     {role_descriptions}
 
-    If yes, reply with JSON: [{{"role": "...", "query": "..."}}, ...]
-    If no (a single domain suffices), reply with: null
+    Rules:
+    1. If the request needs at least two independent actions in different
+       domains -> JSON array with one entry per domain.
+    2. If a single domain is enough -> exactly the word: null
+    3. "role" MUST be exactly one of the listed domain names above.
+    4. "query" is a short sentence that domain alone can complete.
+
+    Examples:
+
+    Request: "Turn on the light and play music"
+    Answer:
+    [{{"role":"smart_home","query":"Turn on the light"}},{{"role":"media","query":"Play music"}}]
+
+    Request: "Which release tickets exist for REL-100?"
+    Answer:
+    [{{"role":"release","query":"Details for release REL-100"}},{{"role":"jira","query":"Jira tickets linked to REL-100"}}]
+
+    Request: "Turn on the living room light"
+    Answer: null
+
+    Request: "{message}"
+    Answer:
 
   orchestrator_synthesize_prompt: |
     Combine these partial results into a natural answer to the original question.

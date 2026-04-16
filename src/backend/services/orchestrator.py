@@ -64,45 +64,80 @@ class QueryOrchestrator:
         if not detect_prompt:
             return None
 
-        try:
-            router_url = settings.agent_router_url or settings.agent_ollama_url
-            router_model = settings.agent_router_model or settings.ollama_intent_model or settings.ollama_model
+        # Planner: use the primary role's agent model + URL. Small router
+        # models (e.g. llama3.2:3b) cannot reliably emit pure JSON for
+        # multi-domain decomposition — they wrap JSON in prose and invent
+        # role names. Reva ran qwen3.5:27b on llama-server as its planner
+        # in production for months; we mirror that here.
+        primary_role = next(
+            (r for r in self.router.roles.values() if r.has_agent_loop),
+            None,
+        )
+        planner_model: str | None = None
+        planner_url: str | None = None
+        if primary_role is not None:
+            planner_model = getattr(primary_role, "model", None)
+            planner_url = getattr(primary_role, "ollama_url", None)
+        planner_model = planner_model or settings.ollama_model
+        planner_url = planner_url or settings.agent_ollama_url
 
-            if router_url:
-                client, _ = get_agent_client(fallback_url=router_url)
+        if not planner_model:
+            logger.debug("Orchestrator: no planner model configured, skipping detection")
+            return None
+
+        try:
+            if planner_url:
+                client, _ = get_agent_client(fallback_url=planner_url)
             else:
                 client = ollama.client
 
-            classification_kwargs = get_classification_chat_kwargs(router_model)
+            classification_kwargs = get_classification_chat_kwargs(planner_model)
+            # num_predict=800 matches Reva's production planner budget — enough
+            # for a 4-sub-agent plan with localized query strings.
             raw_response = await asyncio.wait_for(
                 client.chat(
-                    model=router_model,
+                    model=planner_model,
                     messages=[{"role": "user", "content": detect_prompt}],
-                    options={"temperature": 0, "num_predict": 256, "num_ctx": 4096},
+                    options={"temperature": 0, "num_predict": 800, "num_ctx": 4096},
                     **classification_kwargs,
                 ),
                 timeout=settings.agent_router_timeout,
             )
-            response_text = extract_response_content(raw_response) or ""
+            response_text = (extract_response_content(raw_response) or "").strip()
 
-            # Parse response — either JSON array or "null"
-            response_text = response_text.strip()
+            # Accept the explicit "null" sentinel (single-domain signal).
             if response_text.lower() in ("null", "none", ""):
                 return None
 
-            sub_queries = json.loads(response_text)
+            # Extract the JSON array from a potentially-prose response.
+            # Even large models occasionally wrap the array in explanation.
+            start = response_text.find("[")
+            end = response_text.rfind("]") + 1
+            if start < 0 or end <= start:
+                logger.info(f"Orchestrator: no JSON array in response, single-role. Raw: {response_text[:200]}")
+                return None
+
+            try:
+                sub_queries = json.loads(response_text[start:end])
+            except json.JSONDecodeError as e:
+                logger.info(f"Orchestrator: JSON parse failed ({e}), single-role. Raw: {response_text[start:end][:200]}")
+                return None
+
             if not isinstance(sub_queries, list) or len(sub_queries) < 2:
                 return None
 
-            # Validate each sub-query has role and query
+            # Validate each sub-query has role + query and the role exists.
             valid = []
             for sq in sub_queries:
                 if isinstance(sq, dict) and sq.get("role") and sq.get("query"):
-                    # Verify role exists
                     if sq["role"] in self.router.roles:
                         valid.append(sq)
 
             if len(valid) < 2:
+                logger.info(
+                    f"Orchestrator: parsed {len(sub_queries)} entries but only "
+                    f"{len(valid)} had valid roles, single-role"
+                )
                 return None
 
             logger.info(
