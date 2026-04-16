@@ -11,6 +11,8 @@ Testet:
 
 import base64
 import json
+from contextlib import asynccontextmanager
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -27,6 +29,33 @@ from models.websocket_messages import (
     create_error_response,
     parse_ws_message,
 )
+
+# ============================================================================
+# Test helpers
+# ============================================================================
+
+
+def _fake_session_local():
+    """Return a `sessionmaker`-shaped mock suitable for `async with ... as db:`.
+
+    `authenticate_websocket` does:
+        async with AsyncSessionLocal() as db:
+            user = await get_user_by_id(db, user_id_int)
+
+    So we need:
+        - callable `AsyncSessionLocal` → returns an async context manager
+        - the context manager's `__aenter__` yields a mock db
+        - `get_user_by_id` itself is patched separately so the db mock
+          doesn't actually need to do anything
+    """
+    fake_db = MagicMock()
+
+    @asynccontextmanager
+    async def _cm():
+        yield fake_db
+
+    return MagicMock(side_effect=lambda: _cm())
+
 
 # ============================================================================
 # WebSocket Message Parsing Tests
@@ -444,8 +473,14 @@ class TestWebSocketAuthentication:
         this was supported, the backend only accepted device tokens and
         rejected every web chat connection with 403. The dual-strategy
         flow is: try JWT first, fall back to device token.
+
+        Critically, we assert `user_id` is an **int** (from the DB column)
+        and not the raw JWT `sub` string. Downstream code uses it in
+        asyncpg queries that expect an integer column — a string would
+        crash with `DataError: str object cannot be interpreted as an
+        integer`.
         """
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import AsyncMock, MagicMock, patch
 
         from services.auth_service import create_access_token
         from services.websocket_auth import authenticate_websocket
@@ -455,20 +490,109 @@ class TestWebSocketAuthentication:
         # and signing match exactly what /api/auth/login produces.
         jwt = create_access_token(data={"sub": "7", "username": "testuser"})
 
+        # Stub the User lookup. `authenticate_websocket` now validates
+        # that the User row exists and is active before accepting the
+        # JWT; we don't want the test to require a real DB.
+        fake_user = MagicMock()
+        fake_user.id = 7  # int, as it would come from the DB column
+        fake_user.is_active = True
+
         ws = MagicMock()
         ws.headers = {}
 
         original = settings.ws_auth_enabled
         settings.ws_auth_enabled = True
         try:
-            result = await authenticate_websocket(ws, token=jwt)
+            with patch(
+                "services.auth_service.get_user_by_id",
+                new=AsyncMock(return_value=fake_user),
+            ), patch(
+                "services.database.AsyncSessionLocal",
+                new=_fake_session_local(),
+            ):
+                result = await authenticate_websocket(ws, token=jwt)
         finally:
             settings.ws_auth_enabled = original
 
         assert result is not None, "JWT must authenticate the WS connection"
         assert result.get("auth_method") == "jwt"
-        assert result.get("user_id") == "7"
+        assert result.get("user_id") == 7
+        assert isinstance(result.get("user_id"), int), (
+            "user_id must be INT from the DB column, not str from the JWT sub. "
+            "asyncpg rejects str for integer columns."
+        )
         assert result.get("authenticated") is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_jwt_rejects_unknown_user(self):
+        """A well-formed JWT for a deleted user must be rejected.
+
+        An attacker with a former user's JWT must not:
+        - be accepted as if the user still exists, OR
+        - get a fall-through chance at the device-token path.
+        """
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        jwt = create_access_token(data={"sub": "999", "username": "ghost"})
+
+        ws = MagicMock()
+        ws.headers = {}
+
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            with patch(
+                "services.auth_service.get_user_by_id",
+                new=AsyncMock(return_value=None),  # user not found
+            ), patch(
+                "services.database.AsyncSessionLocal",
+                new=_fake_session_local(),
+            ):
+                result = await authenticate_websocket(ws, token=jwt)
+        finally:
+            settings.ws_auth_enabled = original
+
+        assert result is None, "deleted user's JWT must be rejected"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_authenticate_websocket_jwt_rejects_disabled_user(self):
+        """A well-formed JWT for a disabled user must be rejected."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        from services.auth_service import create_access_token
+        from services.websocket_auth import authenticate_websocket
+        from utils.config import settings
+
+        jwt = create_access_token(data={"sub": "7", "username": "testuser"})
+
+        disabled = MagicMock()
+        disabled.id = 7
+        disabled.is_active = False
+
+        ws = MagicMock()
+        ws.headers = {}
+
+        original = settings.ws_auth_enabled
+        settings.ws_auth_enabled = True
+        try:
+            with patch(
+                "services.auth_service.get_user_by_id",
+                new=AsyncMock(return_value=disabled),
+            ), patch(
+                "services.database.AsyncSessionLocal",
+                new=_fake_session_local(),
+            ):
+                result = await authenticate_websocket(ws, token=jwt)
+        finally:
+            settings.ws_auth_enabled = original
+
+        assert result is None, "disabled user's JWT must be rejected"
 
     @pytest.mark.unit
     @pytest.mark.asyncio

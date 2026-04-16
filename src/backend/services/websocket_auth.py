@@ -144,24 +144,63 @@ async def authenticate_websocket(
     # Strategy 1: Try JWT validation (web chat users authenticated via
     # /api/auth/login). The React frontend reads `renfield_access_token`
     # from localStorage and appends it directly to the WS URL as
-    # `?token=<JWT>`. Before this branch existed, the backend only
-    # accepted device tokens (from WSTokenStore) and rejected every
-    # web chat connection with 403.
+    # `?token=<JWT>`. We mirror the User-resolution pattern from
+    # `auth_service.get_current_user`: decode → cast sub → look up the
+    # User → verify existence + active status → return the INT user.id
+    # from the DB column so downstream code never has to defensively
+    # cast a string.
+    #
+    # Why the DB lookup matters:
+    # - JWT `sub` claim is a string per the JWT spec (RFC 7519 §4.1.2).
+    #   Without the lookup we'd return that string directly and
+    #   downstream queries that expect int user_id crash asyncpg with
+    #   `DataError: str object cannot be interpreted as an integer`.
+    # - A revoked / deleted / disabled user whose JWT hasn't expired yet
+    #   must NOT be able to reconnect. The User row is the source of
+    #   truth for "can this person still use the system".
+    # - If the JWT is structurally valid but the User is gone, we return
+    #   None (reject) — we do NOT fall through to the device-token path,
+    #   because an attacker presenting a former user's JWT shouldn't get
+    #   a second chance at matching a satellite token.
+    payload = None
     try:
         from services.auth_service import decode_token
 
         payload = decode_token(token)
-        if payload and payload.get("type") == "access":
-            user_id = payload.get("sub")
-            logger.debug(f"WebSocket authenticated via JWT: user_id={user_id}")
-            return {
-                "authenticated": True,
-                "user_id": user_id,
-                "auth_method": "jwt",
-            }
-    except Exception:
-        # Not a valid JWT — fall through to device-token validation.
-        pass
+    except Exception as e:  # noqa: BLE001 — decode_token shouldn't raise, but defend
+        logger.debug(f"WebSocket JWT decode raised unexpectedly: {e}")
+
+    if payload and payload.get("type") == "access":
+        sub = payload.get("sub")
+        try:
+            user_id_int = int(sub)
+        except (TypeError, ValueError):
+            logger.debug(f"WebSocket JWT 'sub' is not an int-like string: {sub!r}")
+            return None
+
+        try:
+            from services.auth_service import get_user_by_id
+            from services.database import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as db:
+                user = await get_user_by_id(db, user_id_int)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"WebSocket JWT user lookup failed: {e}")
+            return None
+
+        if user is None:
+            logger.debug(f"WebSocket JWT auth: user_id={user_id_int} not found")
+            return None
+        if not user.is_active:
+            logger.debug(f"WebSocket JWT auth: user_id={user_id_int} disabled")
+            return None
+
+        logger.debug(f"WebSocket authenticated via JWT: user_id={user.id}")
+        return {
+            "authenticated": True,
+            "user_id": user.id,  # int from the DB column, not the JWT string
+            "auth_method": "jwt",
+        }
 
     # Strategy 2: Device token (satellites, devices) — the original
     # flow. Used by hardware satellites that fetch a short-lived token
