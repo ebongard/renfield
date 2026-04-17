@@ -141,9 +141,11 @@ async def test_orchestrator_parallel_runs_both_agents():
             steps.append(step)
 
     final_answers = [s for s in steps if s.step_type == "final_answer"]
-    # 2 sub-agent finals + 1 synthesis = 3
-    assert len(final_answers) >= 2
-    assert any("Combined" in s.content for s in final_answers)
+    # Orchestrator now yields exactly ONE final_answer — the synthesized
+    # one. Per-sub-agent final_answer steps are suppressed so the web chat
+    # doesn't render multiple greetings / duplicated intro text.
+    assert len(final_answers) == 1
+    assert final_answers[0].content == "Combined answer"
 
 
 @pytest.mark.unit
@@ -188,7 +190,10 @@ async def test_orchestrator_error_isolation():
     finals = [s for s in steps if s.step_type == "final_answer"]
     assert len(errors) == 1
     assert "bad" in errors[0].content
-    assert len(finals) >= 1
+    # Even with synthesis returning None, exactly one final_answer is
+    # yielded — falling back to the surviving sub-agent's answer.
+    assert len(finals) == 1
+    assert finals[0].content == "Good result"
 
 
 @pytest.mark.unit

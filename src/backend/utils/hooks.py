@@ -171,6 +171,18 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "pre_sub_agent",
     "post_sub_agent",
     "check_output",
+    # Sub-intent dispatch — fired by chat_handler after AgentRouter
+    # classification when the matched role declares a sub_intent with a
+    # ``dispatch: {type: handler, handler: <name>}`` config. Handlers
+    # receive ``role: str, sub_intent: str, handler_name: str,
+    # message: str, lang: str, session_id, user_id, user_name,
+    # conversation_id, mcp_manager, ctx_vars`` and return either
+    # ``{"handled": True, "answer": str, "card": dict | None,
+    # "entry_mapping": list}`` to fully own the turn (bypassing the
+    # orchestrator and agent loop) or ``None`` to decline. First
+    # plugin returning ``handled=True`` wins. This is the web-chat
+    # equivalent of the Teams transport's ``_DISPATCH_HANDLERS`` table.
+    "dispatch_sub_intent",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

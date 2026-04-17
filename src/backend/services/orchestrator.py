@@ -309,7 +309,15 @@ class QueryOrchestrator:
         ]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Yield steps grouped by sub-agent + collect results for synthesis
+        # Yield steps grouped by sub-agent + collect results for synthesis.
+        # IMPORTANT: per-sub-agent `final_answer` steps are suppressed
+        # here — they are intermediate artifacts, not the combined
+        # response. The user sees exactly one final answer: either the
+        # synthesizer's output (for 2+ successful sub-agents) or the
+        # single surviving sub-agent's answer (1 sub-agent, or fallback).
+        # Without this filter, the web chat would render 1 + N answers
+        # (each with its own greeting), which duplicates content and
+        # confuses the user.
         sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
         for sq, result in zip(sub_queries, raw_results):
             if isinstance(result, Exception):
@@ -323,18 +331,13 @@ class QueryOrchestrator:
                 continue
 
             for step in result["steps"]:
+                if step.step_type == "final_answer":
+                    continue  # see note above
                 yield step
             sub_results.append(result)
 
-        # Synthesize combined answer
-        if len([r for r in sub_results if r.get("answer")]) >= 2:
-            synthesized = await self._synthesize(message, sub_results, ollama, lang)
-            if synthesized:
-                yield AgentStep(
-                    step_number=99,
-                    step_type="final_answer",
-                    content=synthesized,
-                )
+        async for step in self._emit_combined_answer(message, sub_results, ollama, lang):
+            yield step
 
     async def _run_sequential(
         self,
@@ -375,6 +378,8 @@ class QueryOrchestrator:
             )
             agent = AgentService(tool_registry, role=role)
 
+            # Same suppression rule as _run_parallel — only the
+            # combined answer should be surfaced to the user.
             final_answer = None
             async for step in agent.run(
                 message=query,
@@ -383,9 +388,10 @@ class QueryOrchestrator:
                 lang=lang,
                 **agent_kwargs,
             ):
-                yield step
                 if step.step_type == "final_answer":
                     final_answer = step.content
+                    continue
+                yield step
 
             sub_results.append({
                 "role": role_name,
@@ -393,15 +399,43 @@ class QueryOrchestrator:
                 "answer": final_answer or "",
             })
 
-        # Synthesize combined answer
-        if len(sub_results) >= 2:
+        async for step in self._emit_combined_answer(message, sub_results, ollama, lang):
+            yield step
+
+    async def _emit_combined_answer(
+        self,
+        message: str,
+        sub_results: list[dict],
+        ollama: "OllamaService",
+        lang: str,
+    ) -> "AsyncGenerator[AgentStep, None]":
+        """Yield a single combined ``final_answer`` for the orchestrated turn.
+
+        Two-step logic:
+        1. Try the LLM synthesizer when at least two sub-agents returned
+           a non-empty answer — the combined deck usually needs the
+           narrative glue that the synthesizer produces.
+        2. Otherwise fall back to the first non-empty sub-agent answer.
+           This keeps single-successful-sub-agent runs from going
+           silent (which would happen if we kept the old ``>= 2`` gate
+           now that we suppress per-sub-agent final_answers).
+        """
+        from services.agent_service import AgentStep
+
+        non_empty = [r for r in sub_results if r.get("answer")]
+        synthesized: str | None = None
+        if len(non_empty) >= 2:
             synthesized = await self._synthesize(message, sub_results, ollama, lang)
-            if synthesized:
-                yield AgentStep(
-                    step_number=99,
-                    step_type="final_answer",
-                    content=synthesized,
-                )
+
+        final_text = synthesized or (non_empty[0]["answer"] if non_empty else "")
+        if not final_text:
+            return
+
+        yield AgentStep(
+            step_number=99,
+            step_type="final_answer",
+            content=final_text,
+        )
 
     async def _synthesize(
         self,

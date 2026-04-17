@@ -1180,7 +1180,7 @@ class TestSetSemanticRouter:
         router = AgentRouter(config)
 
         mock_sr = AsyncMock()
-        mock_sr.classify.return_value = ("smart_home", 0.92)
+        mock_sr.classify.return_value = ("smart_home", None, 0.92)
         router.set_semantic_router(mock_sr)
 
         ollama = MagicMock()
@@ -1205,7 +1205,7 @@ class TestSetSemanticRouter:
         router = AgentRouter(config)
 
         mock_sr = AsyncMock()
-        mock_sr.classify.return_value = (None, 0.3)
+        mock_sr.classify.return_value = (None, None, 0.3)
         router.set_semantic_router(mock_sr)
 
         mock_client = AsyncMock()

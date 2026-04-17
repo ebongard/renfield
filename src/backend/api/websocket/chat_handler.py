@@ -805,6 +805,76 @@ async def websocket_endpoint(
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
 
+                # === Sub-intent dispatch (plugin-owned deliverables) =============
+                # When the AgentRouter classifies a ``sub_intent`` with an
+                # explicit handler dispatch config, give plugins a chance
+                # to fully handle the turn before the orchestrator /
+                # single-role agent runs. This mirrors the Teams transport's
+                # _DISPATCH_HANDLERS table but works via the hook system so
+                # plugins don't need to monkey-patch the transport.
+                sub_intent_handled = False
+                if (
+                    role and role.sub_intent
+                    and role.sub_intent_definitions
+                ):
+                    si_config = role.sub_intent_definitions.get(role.sub_intent) or {}
+                    dispatch = si_config.get("dispatch") if isinstance(si_config, dict) else None
+                    if isinstance(dispatch, dict) and dispatch.get("type") == "handler":
+                        si_results = await run_hooks(
+                            "dispatch_sub_intent",
+                            role=role.name,
+                            sub_intent=role.sub_intent,
+                            handler_name=dispatch.get("handler", ""),
+                            message=content,
+                            lang=ollama.default_lang,
+                            session_id=msg_session_id,
+                            user_id=user_id,
+                            user_name=None,
+                            conversation_id=msg_session_id,
+                            mcp_manager=mcp_manager,
+                            ctx_vars=_ctx_vars,
+                        )
+                        # First plugin that returns a non-None dict wins
+                        si_result = next(
+                            (r for r in (si_results or []) if isinstance(r, dict)),
+                            None,
+                        )
+                        if si_result and si_result.get("handled"):
+                            agent_used = True
+                            sub_intent_handled = True
+                            full_response = si_result.get("answer", "") or ""
+                            card = si_result.get("card")
+                            intent = {
+                                "intent": f"sub_intent.{role.sub_intent}",
+                                "confidence": 1.0,
+                                "parameters": {},
+                            }
+
+                            # Stream the final answer so the web chat
+                            # renders it the same way as an agent response.
+                            # Order matters: stream the text first, attach
+                            # the card to the freshly-rendered assistant
+                            # bubble, THEN emit done. Some clients stop
+                            # listening after done (our python test
+                            # harness does), so card must land before it.
+                            if full_response:
+                                await websocket.send_json({
+                                    "type": "stream",
+                                    "content": full_response,
+                                })
+                            if card:
+                                await websocket.send_json({
+                                    "type": "card",
+                                    "card": card,
+                                })
+                            if full_response:
+                                await websocket.send_json({"type": "done"})
+                            logger.info(
+                                f"Sub-intent '{role.name}/{role.sub_intent}' "
+                                f"handled by plugin (answer_chars={len(full_response)}, "
+                                f"card={'yes' if card else 'no'})"
+                            )
+
                 # === Cross-MCP Orchestrator (opt-in via agent_orchestrator_enabled) ===
                 # Detect multi-domain queries before falling through to single-role
                 # dispatch. When detected, sub-agents fan out in parallel and a
@@ -813,7 +883,8 @@ async def websocket_endpoint(
                 # `card` step lands on the WebSocket as `{"type": "card", ...}`.
                 orchestrated = False
                 if (
-                    settings.agent_orchestrator_enabled
+                    not sub_intent_handled
+                    and settings.agent_orchestrator_enabled
                     and mcp_manager is not None
                     and role.name not in ("conversation", "knowledge")
                 ):
@@ -863,7 +934,9 @@ async def websocket_endpoint(
                             intent = {"intent": "agent.orchestrated", "confidence": 1.0, "parameters": {}}
                         logger.info(f"🎼 Orchestrator abgeschlossen: {agent_steps_count} Steps across {len(sub_queries)} sub-agents")
 
-                if orchestrated:
+                if sub_intent_handled:
+                    pass  # Sub-intent plugin fully handled the turn
+                elif orchestrated:
                     pass  # Orchestrator handled the request — skip single-role dispatch
                 elif role.name == "conversation":
                     # Direct LLM response — no tools, no agent loop

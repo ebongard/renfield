@@ -371,16 +371,28 @@ class AgentRouter:
         Returns:
             The classified AgentRole
         """
-        # Semantic fast path: try embedding-based classification first
+        # Semantic fast path: try embedding-based classification first.
+        # The router now also indexes sub_intent utterances, so a
+        # deliverable-style sub_intent (``my_dashboard``, ``status_report``)
+        # can win over the parent role and bypass the agent loop via the
+        # sub-intent dispatch hook.
         if self._semantic_router:
             try:
-                sem_role, sem_sim = await self._semantic_router.classify(message)
+                sem_role, sem_sub_intent, sem_sim = await self._semantic_router.classify(message)
                 if sem_role and sem_role in self.roles:
                     role = self.roles[sem_role]
+                    si_msg = f"/{sem_sub_intent}" if sem_sub_intent else ""
                     logger.info(
                         f"Router semantic fast-path: '{message[:60]}' -> "
-                        f"'{sem_role}' (sim={sem_sim:.3f})"
+                        f"'{sem_role}{si_msg}' (sim={sem_sim:.3f})"
                     )
+                    # Only propagate sub_intent when the parent role
+                    # actually defines it — otherwise silently drop to
+                    # avoid dispatching against a stale config.
+                    if sem_sub_intent and role.sub_intent_definitions and (
+                        sem_sub_intent in role.sub_intent_definitions
+                    ):
+                        return replace(role, sub_intent=sem_sub_intent)
                     return replace(role, sub_intent=None)
             except Exception as e:
                 logger.warning(f"Semantic router failed, falling back to LLM: {e}")
