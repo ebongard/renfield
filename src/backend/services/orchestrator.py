@@ -411,30 +411,60 @@ class QueryOrchestrator:
     ) -> "AsyncGenerator[AgentStep, None]":
         """Yield a single combined ``final_answer`` for the orchestrated turn.
 
-        Two-step logic:
-        1. Try the LLM synthesizer when at least two sub-agents returned
-           a non-empty answer — the combined deck usually needs the
-           narrative glue that the synthesizer produces.
-        2. Otherwise fall back to the first non-empty sub-agent answer.
-           This keeps single-successful-sub-agent runs from going
-           silent (which would happen if we kept the old ``>= 2`` gate
-           now that we suppress per-sub-agent final_answers).
+        Logic:
+        1. Synthesize via LLM when ≥2 sub-agents returned a non-empty
+           answer — the combined deck needs narrative glue.
+        2. Fall back to the first non-empty sub-agent answer when only
+           one succeeded.
+        3. When *every* sub-agent failed (``non_empty`` is empty), emit
+           a visible error message so the user sees feedback and the
+           downstream chat_handler persists the turn. Returning silently
+           here would leave ``full_response=""``, which gates both the
+           WebSocket final bubble AND DB persistence — losing the whole
+           turn including the user's message.
         """
         from services.agent_service import AgentStep
 
         non_empty = [r for r in sub_results if r.get("answer")]
-        synthesized: str | None = None
+
         if len(non_empty) >= 2:
             synthesized = await self._synthesize(message, sub_results, ollama, lang)
+            if synthesized:
+                yield AgentStep(
+                    step_number=99,
+                    step_type="final_answer",
+                    content=synthesized,
+                )
+                return
+            # Synthesizer returned nothing — fall through to fallback.
 
-        final_text = synthesized or (non_empty[0]["answer"] if non_empty else "")
-        if not final_text:
+        if non_empty:
+            yield AgentStep(
+                step_number=99,
+                step_type="final_answer",
+                content=non_empty[0]["answer"],
+            )
             return
 
+        # Every sub-agent failed. Surface a localized error so the user
+        # isn't left staring at an empty reply.
+        failed_roles = [r.get("role", "?") for r in sub_results]
+        if lang.startswith("de"):
+            msg = (
+                "Keine der angefragten Integrationen hat eine Antwort "
+                f"geliefert (betroffen: {', '.join(failed_roles)}). "
+                "Bitte versuche es in einem Moment erneut."
+            )
+        else:
+            msg = (
+                "None of the requested integrations returned an answer "
+                f"(affected: {', '.join(failed_roles)}). "
+                "Please try again in a moment."
+            )
         yield AgentStep(
             step_number=99,
             step_type="final_answer",
-            content=final_text,
+            content=msg,
         )
 
     async def _synthesize(

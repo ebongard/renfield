@@ -850,13 +850,15 @@ async def websocket_endpoint(
                                 "parameters": {},
                             }
 
-                            # Stream the final answer so the web chat
-                            # renders it the same way as an agent response.
-                            # Order matters: stream the text first, attach
-                            # the card to the freshly-rendered assistant
-                            # bubble, THEN emit done. Some clients stop
-                            # listening after done (our python test
-                            # harness does), so card must land before it.
+                            # Stream the final answer + card so the web
+                            # chat renders the assistant bubble with the
+                            # adaptive card attached. The shared
+                            # persistence block below emits the ``done``
+                            # marker with ``intent`` / ``agent_steps``
+                            # metadata — do NOT emit a separate done
+                            # here, it would double-fire and clients that
+                            # stop listening after the first done would
+                            # miss the payload metadata.
                             if full_response:
                                 await websocket.send_json({
                                     "type": "stream",
@@ -867,8 +869,6 @@ async def websocket_endpoint(
                                     "type": "card",
                                     "card": card,
                                 })
-                            if full_response:
-                                await websocket.send_json({"type": "done"})
                             logger.info(
                                 f"Sub-intent '{role.name}/{role.sub_intent}' "
                                 f"handled by plugin (answer_chars={len(full_response)}, "
