@@ -794,13 +794,19 @@ async def websocket_endpoint(
                 _background_tasks.add(_pr_task)
                 _pr_task.add_done_callback(_background_tasks.discard)
 
-                # Let plugins modify conversation history before the agent sees it
+                # Let plugins modify conversation history before the agent sees it.
+                # ``user_id`` is included so plugins can resolve the
+                # authenticated user before any Conversation row exists
+                # for this session — needed for cross-channel handoff,
+                # which has to look up the user's OTHER conversations
+                # on the very first turn.
                 from utils.hooks import run_hooks
                 hook_results = await run_hooks(
                     "pre_agent_context",
                     history=session_state.conversation_history or [],
                     session_id=msg_session_id or "",
                     lang=ollama.default_lang,
+                    user_id=user_id,
                 )
                 if hook_results:
                     session_state.conversation_history = hook_results[0]
@@ -829,8 +835,14 @@ async def websocket_endpoint(
                         dispatch_user_name: str | None = None
                         if user_id is not None:
                             try:
+                                # NOTE: do NOT reimport AsyncSessionLocal
+                                # here — a local import inside this
+                                # function scope shadows the
+                                # module-level binding (line 20) for
+                                # the rest of the function, causing
+                                # UnboundLocalError in later blocks
+                                # (e.g. the save_message path below).
                                 from services.auth_service import get_user_by_id
-                                from services.database import AsyncSessionLocal
                                 async with AsyncSessionLocal() as _db:
                                     _user = await get_user_by_id(_db, user_id)
                                     if _user is not None:
