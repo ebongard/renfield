@@ -820,6 +820,26 @@ async def websocket_endpoint(
                     si_config = role.sub_intent_definitions.get(role.sub_intent) or {}
                     dispatch = si_config.get("dispatch") if isinstance(si_config, dict) else None
                     if isinstance(dispatch, dict) and dispatch.get("type") == "handler":
+                        # Resolve the authenticated user's username once —
+                        # sub-intent handlers that need to query per-user
+                        # data (my_dashboard fetches the caller's releases
+                        # from Digital.ai Release by username) would
+                        # otherwise receive ``None`` and silently return
+                        # empty results.
+                        dispatch_user_name: str | None = None
+                        if user_id is not None:
+                            try:
+                                from services.auth_service import get_user_by_id
+                                from services.database import AsyncSessionLocal
+                                async with AsyncSessionLocal() as _db:
+                                    _user = await get_user_by_id(_db, user_id)
+                                    if _user is not None:
+                                        dispatch_user_name = _user.username
+                            except Exception as _e:
+                                logger.debug(
+                                    f"Sub-intent dispatch: username lookup "
+                                    f"for user_id={user_id} failed: {_e}"
+                                )
                         si_results = await run_hooks(
                             "dispatch_sub_intent",
                             role=role.name,
@@ -829,7 +849,7 @@ async def websocket_endpoint(
                             lang=ollama.default_lang,
                             session_id=msg_session_id,
                             user_id=user_id,
-                            user_name=None,
+                            user_name=dispatch_user_name,
                             conversation_id=msg_session_id,
                             mcp_manager=mcp_manager,
                             ctx_vars=_ctx_vars,

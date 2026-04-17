@@ -29,8 +29,10 @@ from loguru import logger
 # negation. Shared across dispatch paths (Teams transport + web-chat
 # hook) via _infer_sub_intent.
 _ANTI_DASHBOARD = re.compile(
-    r"\b(erstell|bericht|report|status\s*bericht|details?\s+(zu|von|to|of)|"
-    r"suche|alle\s+releases|list|zeig\s+mir\s+alle|schick|sende|generate|deliveri)",
+    r"\b(erstell\w*|bericht\w*|report\w*|status[\s-]*bericht|"
+    r"details?\s+(?:zu|von|to|of)|suche\w*|alle\s+releases|"
+    r"list(?:|e|en|s|ing)|zeig\s+mir\s+alle|schick\w*|"
+    r"sende\w*|generate\w*|deliveri\w*)\b",
     re.IGNORECASE,
 )
 

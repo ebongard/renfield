@@ -238,3 +238,88 @@ async def test_orchestrator_step_tagging():
     for step in steps:
         if step.data and "sub_agent_role" in step.data:
             assert step.data["sub_agent_role"] == "smart_home"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_all_sub_agents_fail_emits_error_final_answer():
+    """When every sub-agent raises, the orchestrator must still yield a
+    final_answer so downstream message persistence runs. Regression test
+    for the silent-failure hole before PR #384 fix commit 51fb953."""
+    from services.orchestrator import QueryOrchestrator
+
+    mock_router = MagicMock()
+    mock_role = MagicMock()
+    mock_role.has_agent_loop = True
+    mock_role.mcp_servers = []
+    mock_role.internal_tools = []
+    mock_router.roles = {"release": mock_role, "jira": mock_role}
+
+    orch = QueryOrchestrator(mock_router, MagicMock())
+
+    async def mock_run_sub(sq, *args, **kwargs):
+        raise RuntimeError(f"{sq['role']} down")
+
+    orch._run_sub_agent = mock_run_sub
+    orch._synthesize = AsyncMock(return_value=None)
+
+    sub_queries = [
+        {"role": "release", "query": "a"},
+        {"role": "jira", "query": "b"},
+    ]
+
+    steps = []
+    with patch.object(settings, "agent_orchestrator_parallel", True):
+        async for step in orch._run_parallel(sub_queries, "test", MagicMock(), MagicMock()):
+            steps.append(step)
+
+    errors = [s for s in steps if s.step_type == "error"]
+    finals = [s for s in steps if s.step_type == "final_answer"]
+    assert len(errors) == 2
+    # Exactly one final_answer, localized error message
+    assert len(finals) == 1
+    assert "release" in finals[0].content and "jira" in finals[0].content
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_orchestrator_synthesis_none_falls_back_to_first_answer():
+    """If the synthesizer returns None despite having ≥2 non-empty
+    sub-agent results, the orchestrator must still emit a final_answer
+    (falling back to the first answer). Regression test for the
+    silent-return hole in the middle branch."""
+    from services.agent_service import AgentStep
+    from services.orchestrator import QueryOrchestrator
+
+    mock_router = MagicMock()
+    mock_role = MagicMock()
+    mock_role.has_agent_loop = True
+    mock_role.mcp_servers = []
+    mock_role.internal_tools = []
+    mock_router.roles = {"a": mock_role, "b": mock_role}
+
+    orch = QueryOrchestrator(mock_router, MagicMock())
+
+    async def mock_run_sub(sq, *args, **kwargs):
+        return {
+            "role": sq["role"],
+            "query": sq["query"],
+            "answer": f"answer-from-{sq['role']}",
+            "steps": [],
+        }
+
+    orch._run_sub_agent = mock_run_sub
+    orch._synthesize = AsyncMock(return_value=None)  # synthesizer fails
+
+    steps = []
+    with patch.object(settings, "agent_orchestrator_parallel", True):
+        async for step in orch._run_parallel(
+            [{"role": "a", "query": "q"}, {"role": "b", "query": "q"}],
+            "msg", MagicMock(), MagicMock(),
+        ):
+            steps.append(step)
+
+    finals = [s for s in steps if s.step_type == "final_answer"]
+    assert len(finals) == 1
+    # Falls back to the first non-empty answer
+    assert finals[0].content == "answer-from-a"

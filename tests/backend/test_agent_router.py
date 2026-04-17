@@ -1227,3 +1227,68 @@ class TestSetSemanticRouter:
             mock_sr.classify.assert_called_once_with("something")
             # LLM classification was attempted (get_agent_client was called)
             assert role.name == "general"
+
+
+# ---------------------------------------------------------------------------
+# Anti-dashboard guard + sub_intent inference on fast paths
+# (follow-up to PR #384 review findings)
+# ---------------------------------------------------------------------------
+
+
+class TestInferSubIntent:
+    """AgentRouter._infer_sub_intent: keyword-based sub_intent inference
+    used by the Layer-1 entity-id path, Layer-2 continuity path, and the
+    LLM prose-fallback path."""
+
+    @pytest.mark.unit
+    def test_status_report_wins_on_deliverable_query(self):
+        from services.agent_router import AgentRouter
+        defs = {
+            "my_dashboard": {
+                "de": "mein Dashboard, meine Aufgaben. NICHT verwenden fuer: Statusbericht erstellen",
+            },
+            "status_report": {
+                "de": "Statusbericht, Release-Bericht, status report",
+            },
+        }
+        assert AgentRouter._infer_sub_intent(
+            "Statusbericht für Product A 1.3.5", defs, "de",
+        ) == "status_report"
+
+    @pytest.mark.unit
+    def test_anti_dashboard_guard_rejects_false_positive(self):
+        """A message asking for a status report must NOT be classified
+        as my_dashboard even if 'Statusbericht' happens to appear in the
+        my_dashboard description's NICHT clause — the keyword matcher
+        can't parse negation."""
+        from services.agent_router import AgentRouter
+        defs = {
+            "my_dashboard": {
+                "de": "dashboard, meine aufgaben, NICHT fuer: Statusbericht erstellen, alle releases",
+            },
+        }
+        assert AgentRouter._infer_sub_intent(
+            "Statusbericht erstellen bitte", defs, "de",
+        ) is None
+
+    @pytest.mark.unit
+    def test_my_dashboard_still_matches_genuine_query(self):
+        from services.agent_router import AgentRouter
+        defs = {
+            "my_dashboard": {
+                "de": "dashboard, meine aufgaben, was liegt bei mir an",
+            },
+        }
+        assert AgentRouter._infer_sub_intent(
+            "Was liegt bei mir an?", defs, "de",
+        ) == "my_dashboard"
+
+    @pytest.mark.unit
+    def test_no_hits_returns_none(self):
+        from services.agent_router import AgentRouter
+        defs = {
+            "my_dashboard": {"de": "dashboard, tasks"},
+        }
+        assert AgentRouter._infer_sub_intent(
+            "Hello world", defs, "de",
+        ) is None
