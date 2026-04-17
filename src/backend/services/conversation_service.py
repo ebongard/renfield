@@ -136,6 +136,13 @@ class ConversationService:
             if not conversation:
                 conversation = Conversation(session_id=session_id, user_id=user_id)
                 self.db.add(conversation)
+                # Flush so ``conversation.id`` is populated before it's
+                # used as ``Message.conversation_id`` below — otherwise
+                # the first message of every brand-new session gets
+                # saved with ``conversation_id=NULL`` and becomes
+                # orphaned (invisible to any JOIN-based history or
+                # message-count query).
+                await self.db.flush()
             elif user_id and conversation.user_id is None:
                 conversation.user_id = user_id
                 await self.db.flush()
