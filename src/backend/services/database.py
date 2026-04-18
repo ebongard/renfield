@@ -1,8 +1,10 @@
 """
 Datenbank Service
 """
+from pathlib import Path
+
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from models.database import Base
@@ -26,6 +28,44 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False
 )
 
+async def _ensure_alembic_baseline():
+    """Stamp alembic_version to HEAD when the DB was just bootstrapped by create_all.
+
+    Fresh installs create the schema directly from SQLAlchemy models — the 41-migration
+    history is skipped. Stamping HEAD tells future ``alembic upgrade head`` runs that
+    everything up to the current revision has been applied, so only NEW migrations run.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    # Resolve alembic.ini next to this module's package root (src/backend/alembic.ini)
+    backend_root = Path(__file__).resolve().parent.parent
+    cfg = Config(str(backend_root / "alembic.ini"))
+    cfg.set_main_option("script_location", str(backend_root / "alembic"))
+    head_rev = ScriptDirectory.from_config(cfg).get_current_head()
+    if not head_rev:
+        logger.warning("Alembic has no head revision — skipping stamp")
+        return
+
+    async with engine.begin() as conn:
+        tables = await conn.run_sync(lambda c: inspect(c).get_table_names())
+        if "alembic_version" in tables:
+            result = await conn.execute(text("SELECT version_num FROM alembic_version LIMIT 1"))
+            if result.fetchone():
+                return  # already stamped — respect existing version
+        else:
+            await conn.execute(text(
+                "CREATE TABLE alembic_version ("
+                "version_num VARCHAR(32) NOT NULL, "
+                "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
+            ))
+        await conn.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
+            {"v": head_rev},
+        )
+    logger.info(f"✅ Alembic stamped to HEAD ({head_rev}) for fresh install")
+
+
 async def init_db():
     """Datenbank initialisieren und Tabellen erstellen"""
     try:
@@ -34,6 +74,7 @@ async def init_db():
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             await conn.run_sync(Base.metadata.create_all)
         logger.info("✅ Datenbank-Tabellen erstellt")
+        await _ensure_alembic_baseline()
     except Exception as e:
         logger.error(f"❌ Fehler beim Initialisieren der Datenbank: {e}")
         raise
