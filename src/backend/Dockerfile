@@ -119,6 +119,12 @@ RUN npm install -g n8n-mcp@latest
 # Application code
 COPY . .
 
+# Wake word models — TFLite/ONNX files served to satellites via
+# /api/settings/wakeword/models/{id}. On docker-compose these were bind-mounted
+# from ./data/wakeword-models; in the image build context they must sit next to
+# the backend sources (synced from the repo's data/wakeword-models/ at build time).
+COPY wakeword-models /app/wakeword-models
+
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash appuser \
     && chown -R appuser:appuser /app
