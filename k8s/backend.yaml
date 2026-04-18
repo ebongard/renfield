@@ -70,12 +70,18 @@ spec:
               echo "waiting for ollama..."
               until nc -z ollama 11434; do sleep 1; done
               echo "deps ready"
+              # Ensure the persistent HOME exists so Python libs can create
+              # their cache dirs there on first run (EasyOCR, HF, torch, whisper).
+              mkdir -p /app/data/cache-home/.cache /app/data/cache-home/.EasyOCR
           resources:
             requests:
               cpu: 10m
               memory: 16Mi
             limits:
               memory: 64Mi
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
       containers:
         - name: backend
           image: registry.treehouse.x-idra.de/renfield/backend:latest

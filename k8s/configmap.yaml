@@ -75,6 +75,12 @@ data:
   # Satellites
   SATELLITE_LATEST_VERSION: "1.3.0"
 
+  # Persist ML model caches (EasyOCR ~/.EasyOCR, HuggingFace ~/.cache/huggingface,
+  # Torch ~/.cache/torch, whisper ~/.cache/whisper) across pod restarts by
+  # pointing HOME at the /app/data mount (Longhorn PVC).
+  HOME: "/app/data/cache-home"
+  HF_HOME: "/app/data/cache-home/.cache/huggingface"
+
   # Logging
   LOG_LEVEL: "INFO"
   DO_NOT_TRACK: "1"
