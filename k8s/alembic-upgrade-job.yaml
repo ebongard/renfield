@@ -1,0 +1,53 @@
+# One-shot alembic upgrade Job.
+#
+# When to apply:
+#   - After deploying a backend image with new migrations against an existing DB.
+#   - NOT for fresh installs — those are handled by backend startup (init_db + auto-stamp).
+#
+# Usage:
+#   kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml
+#   kubectl -n renfield logs -f job/alembic-upgrade
+#   kubectl -n renfield delete job alembic-upgrade    # remove after success
+#
+# The Job is idempotent: running it with the DB already at HEAD is a no-op.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: alembic-upgrade
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: renfield
+    spec:
+      restartPolicy: OnFailure
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: alembic
+          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          imagePullPolicy: Always
+          workingDir: /app
+          command: ["alembic", "upgrade", "head"]
+          envFrom:
+            - configMapRef:
+                name: renfield-env
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: postgres-password
+            - name: DATABASE_URL
+              value: postgresql+asyncpg://renfield:$(POSTGRES_PASSWORD)@postgres:5432/renfield
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 1Gi

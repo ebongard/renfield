@@ -1,0 +1,14 @@
+# HTTP → HTTPS redirect for renfield.local.
+# Scoped to the renfield namespace — other ingresses in the cluster are unaffected.
+# Requires Traefik's kubernetescrd provider (see ../private_k8s/traefik.yaml).
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: https-redirect
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true

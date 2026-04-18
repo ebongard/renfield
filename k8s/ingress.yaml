@@ -1,0 +1,82 @@
+# Renfield ingress.
+#
+# Split into two Ingress objects so we can apply different router config per scheme:
+#   - renfield-http: matches only HTTP (entrypoint web), applies HTTPS redirect middleware.
+#   - renfield-https: matches only HTTPS (entrypoint websecure), terminates TLS with renfield-tls.
+#
+# A single Ingress cannot do this cleanly because `router.tls: true` restricts to websecure
+# (no HTTP router to redirect), and omitting it means no TLS termination on HTTPS (404).
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: renfield-http
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.middlewares: renfield-https-redirect@kubernetescrd
+spec:
+  rules:
+    - host: renfield.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              # Backend is never actually reached — middleware sends 308 first.
+              # A valid backend is still required by the Ingress schema.
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: renfield-https
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  tls:
+    - hosts:
+        - renfield.local
+      secretName: renfield-tls
+  rules:
+    - host: renfield.local
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

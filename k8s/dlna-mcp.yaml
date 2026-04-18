@@ -1,0 +1,84 @@
+# DLNA MCP Server — runs on host network so SSDP multicast (239.255.255.250:1900)
+# can reach DLNA renderers on the LAN. Calico CNI does not forward multicast between
+# pod-net and host-net, so `hostNetwork: true` is required for renderer discovery.
+#
+# Scheduler picks any worker node; `hostPort: 9091` ensures at most one instance per
+# node. The ClusterIP Service below (name "dlna-mcp") gives backend a stable DNS
+# name — kube-proxy routes to the pod's current host IP, so failover to another node
+# is transparent to the backend.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dlna-mcp
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: dlna-mcp
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: dlna-mcp
+  ports:
+    - port: 9091
+      targetPort: 9091
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dlna-mcp
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: dlna-mcp
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: dlna-mcp
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: dlna-mcp
+        app.kubernetes.io/part-of: renfield
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      imagePullSecrets:
+        - name: harbor-pull-secret
+      containers:
+        - name: dlna-mcp
+          image: registry.treehouse.x-idra.de/renfield/backend:latest
+          imagePullPolicy: IfNotPresent
+          command: ["/opt/venv/bin/renfield-mcp-dlna"]
+          env:
+            - name: MCP_TRANSPORT
+              value: streamable-http
+            - name: MCP_HOST
+              value: "0.0.0.0"
+            - name: MCP_PORT
+              value: "9091"
+          ports:
+            - containerPort: 9091
+              hostPort: 9091
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: 9091
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 9091
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi

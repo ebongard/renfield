@@ -1,0 +1,73 @@
+# mDNS responder for `renfield.local`.
+#
+# Satellites (and other LAN clients) resolve `renfield.local` via multicast DNS
+# (RFC 6762). The old renfield host's Avahi owned that name; after decommission
+# no one answered, so satellites got NXDOMAIN and nsswitch's
+# `mdns4_minimal [NOTFOUND=return]` stopped the lookup before trying DNS.
+#
+# This Deployment runs Avahi on the cluster (host network) and publishes
+# `renfield.local` pointing at the LoadBalancer IP 192.168.1.230. All
+# satellites on the LAN see the advertisement without any per-host config.
+#
+# Why Deployment (not DaemonSet): only one host may own the `renfield.local`
+# name on a LAN — two Avahi responders would cause name-collision renaming
+# to `renfield-2.local` etc. `replicas: 1` enforces singleton; the scheduler
+# picks any worker node, and failover to another node re-publishes the name.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mdns-responder
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: mdns-responder
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mdns-responder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mdns-responder
+        app.kubernetes.io/part-of: renfield
+    spec:
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+        - name: avahi
+          image: debian:bookworm-slim
+          command: ["bash", "-c"]
+          args:
+            - |
+              set -e
+              apt-get update -q
+              apt-get install -qy --no-install-recommends avahi-daemon avahi-utils dbus
+              # Disable host-name publishing to avoid conflicts with the node's own hostname.
+              sed -i 's/^host-name=.*/host-name=mdns-responder-k8s/' /etc/avahi/avahi-daemon.conf
+              sed -i 's/^#*publish-hinfo=.*/publish-hinfo=no/' /etc/avahi/avahi-daemon.conf
+              sed -i 's/^#*publish-workstation=.*/publish-workstation=no/' /etc/avahi/avahi-daemon.conf
+              mkdir -p /var/run/dbus
+              dbus-daemon --system --nofork &
+              sleep 2
+              avahi-daemon --no-chroot --no-drop-root &
+              sleep 3
+              # Publish renfield.local → 192.168.1.230 (Traefik LB).
+              # avahi-publish-address runs in foreground and keeps the name until killed.
+              exec avahi-publish-address -v renfield.local 192.168.1.230
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_BIND_SERVICE
+                - NET_RAW
+                - SYS_ADMIN
+          resources:
+            requests:
+              cpu: 20m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi

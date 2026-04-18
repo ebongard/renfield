@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: renfield
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - postgres.yaml
+  - redis.yaml
+  - ollama.yaml
+  - searxng.yaml
+  - dlna-mcp.yaml
+  - mdns-responder.yaml
+  - backend.yaml
+  - frontend.yaml
+  - middleware-https-redirect.yaml
+  - ingress.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: renfield
+    includeSelectors: false

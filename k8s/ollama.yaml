@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+        app.kubernetes.io/part-of: renfield
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values: [k8s-gpu-1, k8s-gpu-2]
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: ollama
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: ollama
+          image: ollama/ollama:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 11434
+          env:
+            - name: OLLAMA_HOST
+              value: "0.0.0.0:11434"
+            - name: OLLAMA_MODELS
+              value: /root/.ollama/models
+            - name: OLLAMA_KEEP_ALIVE
+              value: "30m"
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 11434
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: 16Gi
+              nvidia.com/gpu: 1
+      volumes:
+        - name: models
+          hostPath:
+            path: /mnt/llm/.ollama
+            type: Directory
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+
+---
+# One-shot Job: pre-pull models missing from NFS so first backend requests don't stall.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ollama-model-prepull
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+        - name: wait-for-ollama
+          image: curlimages/curl:8.10.1
+          command: ["sh", "-c"]
+          args:
+            - |
+              until curl -fsS http://ollama:11434/ > /dev/null; do
+                echo "waiting for ollama..."
+                sleep 3
+              done
+              echo "ollama ready"
+      containers:
+        - name: prepull
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -euo pipefail
+              for m in qwen3:14b qwen3-embedding:4b qwen3-vl:8b; do
+                echo "Pulling $m ..."
+                code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST http://ollama:11434/api/pull \
+                  -H 'Content-Type: application/json' \
+                  --max-time 1800 \
+                  -d "{\"model\":\"$m\",\"stream\":false}")
+                echo "HTTP $code"
+                tail -c 400 /tmp/out; echo
+                [ "$code" = "200" ] || exit 1
+              done
+              echo "Done."
