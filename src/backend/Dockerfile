@@ -35,23 +35,17 @@ ENV PATH="/opt/venv/bin:$PATH"
 # setuptools required for openai-whisper (uses pkg_resources)
 RUN pip install --no-cache-dir --upgrade pip>=25.3 setuptools
 
-# Install PyTorch CPU-only first (saves ~500MB vs CUDA version)
-# ARM64 doesn't use +cpu suffix, x86_64 does
-RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "x86_64" ]; then \
-        pip install --no-cache-dir torch==2.1.2+cpu torchaudio==2.1.2+cpu \
-            --index-url https://download.pytorch.org/whl/cpu; \
-    else \
-        pip install --no-cache-dir torch==2.1.2 torchaudio==2.1.2; \
-    fi
-
-# Install remaining Python dependencies
-COPY requirements.txt ./
-# Remove torch/torchaudio (already installed CPU-only) and openai-whisper (needs special handling)
-# Separate GitHub-hosted MCP packages (need --no-cache-dir to always fetch latest)
-RUN grep -v "^torch" requirements.txt | grep -v "^torchaudio" | grep -v "github.com" | grep -v "^openai-whisper" > requirements-filtered.txt \
-    && grep "github.com" requirements.txt > requirements-github.txt || true \
-    && pip install --no-cache-dir -r requirements-filtered.txt \
+# Install all Python dependencies with a constraints file that pins torch/torchaudio/torchvision
+# to +cpu wheels from the PyTorch CPU index. This prevents transitive deps (docling, easyocr,
+# transformers) from resolving torch to a full CUDA build which adds ~3GB of nvidia/* wheels.
+COPY requirements.txt constraints.txt ./
+RUN grep -v "github.com" requirements.txt > requirements-pypi.txt \
+    && (grep "github.com" requirements.txt > requirements-github.txt || true) \
+    && (grep -v "^openai-whisper" requirements-pypi.txt > requirements-pypi-filtered.txt || true) \
+    && pip install --no-cache-dir \
+         --extra-index-url https://download.pytorch.org/whl/cpu \
+         --constraint constraints.txt \
+         -r requirements-pypi-filtered.txt \
     && pip install --no-cache-dir --no-deps openai-whisper \
     && pip install --no-cache-dir tiktoken more-itertools \
     && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
