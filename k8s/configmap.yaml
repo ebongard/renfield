@@ -21,6 +21,7 @@ data:
   FRIGATE_URL: "http://frigate.local:5000"          # TODO: resolve to IP when needed
   JELLYFIN_URL: "http://192.168.1.123:8096"
   SEARXNG_API_URL: "http://searxng:8080"            # in-cluster SearXNG pod
+  SEARXNG_INSTANCES: "http://searxng:8080"          # consumed by @kevinwatt/mcp-server-searxng
   N8N_API_URL: "https://n8n.home.bongard.dev/api/v1"
   PAPERLESS_API_URL: "https://paperless.home.bongard.dev/api"
 
