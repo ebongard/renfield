@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # Redis
     redis_url: str = "redis://redis:6379"
 
+    # Document worker (#388). Flag gates whether /api/knowledge/upload runs
+    # Docling inline (False, legacy) or enqueues the task for the async worker
+    # pod (True). Defaults off; flipped in PR C1 after the worker is verified
+    # in the target cluster.
+    document_worker_enabled: bool = False
+
     # Ollama - Multi-Modell Konfiguration
     ollama_url: str = "http://ollama:11434"
     ollama_model: str = "llama3.2:3b"  # Legacy fallback; recommended: qwen3:14b (see docs/LLM_MODEL_GUIDE.md)
