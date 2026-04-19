@@ -7,6 +7,7 @@ Pydantic schemas are defined in knowledge_schemas.py.
 """
 import hashlib
 import os
+import uuid
 from pathlib import Path
 
 import aiofiles
@@ -333,7 +334,6 @@ async def upload_document(
     upload_dir.mkdir(parents=True, exist_ok=True)
 
     # Eindeutigen Dateinamen generieren
-    import uuid
     safe_name = os.path.basename((file.filename or "unknown").replace("\x00", ""))
     unique_filename = f"{uuid.uuid4().hex}_{safe_name}"
     file_path = upload_dir / unique_filename

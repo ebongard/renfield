@@ -218,7 +218,8 @@ export function useDocumentPolling({
         for (const doc of timedOutDocs) onTimeoutRef.current(doc);
       }
     }
-    const aliveIds = currentIds.filter((id) => !timedOutIds.includes(id));
+    const timedOutSet = new Set(timedOutIds);
+    const aliveIds = currentIds.filter((id) => !timedOutSet.has(id));
     if (aliveIds.length === 0) return;
 
     const controller = new AbortController();
