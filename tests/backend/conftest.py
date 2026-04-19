@@ -14,8 +14,65 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy.dialects.postgresql import TSVECTOR
+from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
+
+# ---------------------------------------------------------------------------
+# Test-harness compatibility: production models declare Postgres-specific
+# column types (TSVECTOR for full-text search; pgvector's Vector for
+# embeddings) that SQLite can't compile. Register a dialect-specific
+# fallback so Base.metadata.create_all() succeeds against the in-memory
+# SQLite engine used by these fixtures. Production DDL on Postgres is
+# unaffected — the override only fires when dialect == sqlite.
+#
+# Scope: TEXT is not searchable and the Vector columns accept any payload
+# under SQLite; that's fine because unit tests that exercise similarity
+# search or to_tsvector() paths either mock those branches or mark
+# themselves @pytest.mark.database for a real Postgres integration run.
+# ---------------------------------------------------------------------------
+
+
+@compiles(TSVECTOR, "sqlite")
+def _tsvector_sqlite(element, compiler, **kw):
+    return "TEXT"
+
+
+try:  # pgvector is a soft dependency in the image; tolerate its absence.
+    from pgvector.sqlalchemy import Vector as _PgvectorVector
+except ImportError:  # pragma: no cover
+    _PgvectorVector = None
+else:
+
+    @compiles(_PgvectorVector, "sqlite")
+    def _pgvector_sqlite(element, compiler, **kw):
+        return "BLOB"
+
+
+def _register_postgres_shim_udfs(dbapi_conn, connection_record):
+    """Register pass-through Python implementations of the Postgres-only
+    SQL functions our production queries use, so SQLite can at least
+    execute the statements without error.
+
+    The stored values are not semantically meaningful for search — tests
+    that exercise actual FTS ranking should mark themselves for a real
+    Postgres integration run (`@pytest.mark.database`, driven against a
+    real Postgres fixture when available). What these shims buy us is:
+    unit tests exercising the code path can run without the queries
+    throwing `no such function` and aborting transactions.
+    """
+    def _to_tsvector(config: str | None, content: str | None) -> str:
+        # Real to_tsvector returns a tsvector; for SQLite we just keep the
+        # content as-is so downstream assertions on row existence still work.
+        return content or ""
+
+    try:
+        # aiosqlite 0.18+ exposes the underlying sqlite3 connection directly.
+        dbapi_conn.create_function("to_tsvector", 2, _to_tsvector)
+    except AttributeError:  # pragma: no cover - defensive
+        pass
+
 
 # Renfield Imports
 from models.database import (
@@ -45,12 +102,19 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 @pytest.fixture
 async def async_engine():
     """Create async SQLite engine for tests"""
+    from sqlalchemy import event
+
     engine = create_async_engine(
         TEST_DATABASE_URL,
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
         echo=False
     )
+
+    # Hook is attached to the sync-engine side of the async wrapper. It runs
+    # once per raw sqlite3 connection, registering the to_tsvector shim
+    # defined above.
+    event.listen(engine.sync_engine, "connect", _register_postgres_shim_udfs)
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
