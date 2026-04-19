@@ -245,7 +245,12 @@ class DocumentTaskQueue:
                     await self.ack(entry_id)
                     continue
                 claimed.append(StreamEntry(entry_id=entry_id, params=params))
-            if next_cursor == "0-0" or not items:
+            # XAUTOCLAIM returns "0-0" as next_cursor when the scan has
+            # completed a full loop. An empty items batch with a non-"0-0"
+            # cursor just means "no entries matched the min_idle filter in
+            # this window"; later windows may still have entries, so we
+            # must keep iterating.
+            if next_cursor == "0-0":
                 break
             cursor = next_cursor
         if claimed:
