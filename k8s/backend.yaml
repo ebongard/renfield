@@ -209,12 +209,14 @@ spec:
             limits:
               cpu: "2"
               # Docling + EasyOCR both moved to the document-worker pod
-              # (#388 + chat_upload auto-index follow-up). Backend now
-              # runs FastAPI + Ollama client + MCP managers + any
-              # synchronous chat_upload /index call (rare; user-
-              # triggered). 5Gi covers the steady state with room for a
-              # burst; original pre-Docling budget was ~4Gi.
-              memory: 5Gi
+              # on the hot paths (#388 + chat_upload auto-index
+              # follow-up). Backend still runs Docling inline on the
+              # user-triggered /api/chat/upload/{id}/index endpoint —
+              # rare, but can peak 3-4 GiB on a large PDF. 6 GiB leaves
+              # room for baseline (FastAPI + Ollama client + MCP + pool)
+              # plus one concurrent sync /index without OOMKill. Could
+              # drop to 5 GiB once that endpoint also migrates.
+              memory: 6Gi
       volumes:
         # RWX NFS PVCs shared with document-worker — see k8s/shared-pvcs.yaml.
         - name: uploads

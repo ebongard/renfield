@@ -541,10 +541,12 @@ async def _auto_index_to_kb(
         })
         logger.info(f"Chat upload {upload_id} enqueued as doc {doc_id} → KB {kb_id}")
 
-        # Step 2 — poll for terminal state.
-        deadline = asyncio.get_event_loop().time() + _POLL_TIMEOUT_S
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(_POLL_INTERVAL_S)
+        # Step 2 — poll for terminal state. Check first, sleep after,
+        # so a worker that finishes in <2s notifies the UI immediately
+        # instead of being punished by an unnecessary full interval.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _POLL_TIMEOUT_S
+        while loop.time() < deadline:
             async with AsyncSessionLocal() as db:
                 doc_row = (await db.execute(
                     select(ChatUpload.document_id, ChatUpload.knowledge_base_id)
@@ -575,6 +577,8 @@ async def _auto_index_to_kb(
                 return
             if d.status == "failed":
                 raise RuntimeError(d.error_message or "Document processing failed in worker")
+            # Non-terminal — wait and loop.
+            await asyncio.sleep(_POLL_INTERVAL_S)
 
         # Poll cap without a terminal state — worker is stuck or slow.
         raise TimeoutError(f"Worker did not finish within {_POLL_TIMEOUT_S} s")
