@@ -121,6 +121,15 @@ async def main() -> None:
     queue = DocumentTaskQueue(redis_client=redis, consumer_id=consumer)
     await queue.ensure_group()
 
+    # Heartbeat MUST start before reclaim_stale. On restart, the PEL may
+    # contain several entries left over from the previous consumer; each
+    # reclaimed entry runs through _process_entry (Docling: 15–120 s).
+    # Posting the heartbeat during that window keeps /api/knowledge/upload
+    # green instead of 503'ing for minutes while the worker is in fact
+    # alive and catching up.
+    stop_event = asyncio.Event()
+    heartbeat_task = asyncio.create_task(_heartbeat_loop(redis, stop_event, consumer))
+
     # Reclaim anything a previous consumer started but didn't finish.
     reclaimed = await queue.reclaim_stale()
     if reclaimed:
@@ -131,12 +140,9 @@ async def main() -> None:
         for entry in reclaimed:
             await _process_entry(redis, queue, entry)
 
-    stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop_event.set)
-
-    heartbeat_task = asyncio.create_task(_heartbeat_loop(redis, stop_event, consumer))
 
     try:
         while not stop_event.is_set():
