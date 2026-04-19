@@ -208,15 +208,13 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              # Down from 12Gi: the main upload path moved to the
-              # document-worker pod (#388) so the API no longer has to
-              # survive a 4 GB Docling peak on every request. 8Gi still
-              # leaves room for the synchronous chat-upload path
-              # (api/routes/chat_upload.py) which keeps Docling+EasyOCR
-              # in-process for now; migrating that to the worker lets us
-              # drop the cap further. The historical "8Gi was still hit"
-              # note referred to serving-path Docling — that's gone.
-              memory: 8Gi
+              # Docling + EasyOCR both moved to the document-worker pod
+              # (#388 + chat_upload auto-index follow-up). Backend now
+              # runs FastAPI + Ollama client + MCP managers + any
+              # synchronous chat_upload /index call (rare; user-
+              # triggered). 5Gi covers the steady state with room for a
+              # burst; original pre-Docling budget was ~4Gi.
+              memory: 5Gi
       volumes:
         # RWX NFS PVCs shared with document-worker — see k8s/shared-pvcs.yaml.
         - name: uploads

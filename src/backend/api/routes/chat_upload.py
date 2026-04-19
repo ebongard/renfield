@@ -464,10 +464,34 @@ async def _auto_index_to_kb(
     file_hash: str | None,
     session_id: str | None = None,
 ) -> None:
-    """Background task: auto-index a chat upload into the default KB."""
-    from api.websocket.shared import notify_session
+    """Background task: auto-index a chat upload into the default KB via
+    the document-worker pod (#388).
 
-    # Notify: processing started
+    This used to call ``rag.ingest_document`` inline in the backend pod,
+    which meant Docling+EasyOCR ran in the API serving path for every
+    chat attachment — the reason backend memory was stuck at 8 GiB after
+    the main upload path moved to the worker. Now we:
+
+      1. Create the Document row (``status=pending``) in the backend so
+         the upload row can be linked immediately.
+      2. Enqueue on the Redis Stream the worker already consumes.
+      3. Poll the row's status with a 2 s tick, 30 min hard cap.
+      4. Fire the same ``notify_session`` messages at the same moments
+         the old inline call did — chat UI contract unchanged.
+
+    Lives in the background-task executor, so the HTTP response for the
+    original upload request has already returned. Polling here doesn't
+    block anyone.
+    """
+    import asyncio
+
+    from api.websocket.shared import notify_session
+    from services.redis_client import get_redis
+    from services.task_queue import DocumentTaskQueue
+
+    _POLL_INTERVAL_S = 2
+    _POLL_TIMEOUT_S = 30 * 60  # 30 minutes — matches frontend cap
+
     if session_id:
         await notify_session(session_id, {
             "type": "document_processing",
@@ -476,43 +500,87 @@ async def _auto_index_to_kb(
         })
 
     try:
+        # Heartbeat-gate the enqueue. If the worker is down we surface
+        # an error right away rather than sit in the poll loop for
+        # 30 minutes and finally time out. Same check the main upload
+        # endpoint uses.
+        from api.routes.knowledge import _worker_is_alive
+        if not await _worker_is_alive():
+            raise RuntimeError("Document worker is unavailable")
+
+        # Step 1 — Document row + enqueue, within a short-lived session.
         async with AsyncSessionLocal() as db:
             kb = await _get_or_create_default_kb(db)
 
             from services.rag_service import RAGService
             rag = RAGService(db)
-            doc = await rag.ingest_document(
+            doc = await rag.create_document_record(
                 file_path=file_path,
                 knowledge_base_id=kb.id,
                 filename=filename,
                 file_hash=file_hash,
             )
+            doc_id = doc.id
+            kb_id = kb.id
 
-            result = await db.execute(
+            # Link the chat upload to the pending doc up-front so the
+            # UI can show "processing" without waiting for the worker.
+            upload_row = (await db.execute(
                 select(ChatUpload).where(ChatUpload.id == upload_id)
-            )
-            upload = result.scalar_one_or_none()
-            if upload:
-                upload.document_id = doc.id
-                upload.knowledge_base_id = kb.id
+            )).scalar_one_or_none()
+            if upload_row:
+                upload_row.document_id = doc_id
+                upload_row.knowledge_base_id = kb_id
                 await db.commit()
 
-            logger.info(f"Auto-indexed chat upload {upload_id} → KB '{kb.name}' (doc {doc.id})")
+        queue = DocumentTaskQueue(redis_client=get_redis())
+        await queue.enqueue({
+            "document_id": doc_id,
+            "force_ocr": False,
+            "user_id": None,
+        })
+        logger.info(f"Chat upload {upload_id} enqueued as doc {doc_id} → KB {kb_id}")
 
-            # Notify: ready
-            if session_id:
-                await notify_session(session_id, {
-                    "type": "document_ready",
-                    "upload_id": upload_id,
-                    "filename": filename,
-                    "document_id": doc.id,
-                    "knowledge_base_id": kb.id,
-                    "chunk_count": doc.chunk_count,
-                })
+        # Step 2 — poll for terminal state.
+        deadline = asyncio.get_event_loop().time() + _POLL_TIMEOUT_S
+        while asyncio.get_event_loop().time() < deadline:
+            await asyncio.sleep(_POLL_INTERVAL_S)
+            async with AsyncSessionLocal() as db:
+                doc_row = (await db.execute(
+                    select(ChatUpload.document_id, ChatUpload.knowledge_base_id)
+                    .where(ChatUpload.id == upload_id)
+                )).first()
+                # Defensive: if the upload was deleted mid-flight, bail
+                # silently — the worker will still process the doc row
+                # and the user will see it in the knowledge list.
+                if not doc_row:
+                    return
+                from models.database import Document as _Doc
+                d = (await db.execute(
+                    select(_Doc).where(_Doc.id == doc_id)
+                )).scalar_one_or_none()
+            if d is None:
+                return
+            if d.status == "completed":
+                if session_id:
+                    await notify_session(session_id, {
+                        "type": "document_ready",
+                        "upload_id": upload_id,
+                        "filename": filename,
+                        "document_id": doc_id,
+                        "knowledge_base_id": kb_id,
+                        "chunk_count": d.chunk_count or 0,
+                    })
+                logger.info(f"Auto-indexed chat upload {upload_id} → doc {doc_id} ({d.chunk_count} chunks)")
+                return
+            if d.status == "failed":
+                raise RuntimeError(d.error_message or "Document processing failed in worker")
+
+        # Poll cap without a terminal state — worker is stuck or slow.
+        raise TimeoutError(f"Worker did not finish within {_POLL_TIMEOUT_S} s")
+
     except Exception as e:
         logger.error(f"Auto-index failed for upload {upload_id}: {e}")
-
-        # Notify: error
         if session_id:
             await notify_session(session_id, {
                 "type": "document_error",

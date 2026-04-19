@@ -54,10 +54,12 @@ Merged PRs:
 
 Still open:
 
-- `chat_upload.py` Docling path migration — would drop backend memory to
-  ~5 GiB as originally planned.
-- `renfield-data` Longhorn PVC audit — may be orphaned after the shared
-  NFS mounts took over `/app/data/uploads` and `/app/data/cache-home`.
+- `chat_upload.py` **sync `/index` endpoint** — user-triggered path
+  still calls `ingest_document` inline. Migrating this to 202+poll
+  would break the current client contract (response has no
+  `document_id` / `chunk_count` at 202 time). Not worth it until the
+  chat UI needs the change for other reasons. The background
+  auto-index path (the hot one) is on the worker.
 
 ## Why a separate deployment
 
