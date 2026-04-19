@@ -11,9 +11,11 @@ the global module cache is clean.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -46,11 +48,24 @@ def test_worker_import_does_not_load_fastapi_app():
         """
     )
 
+    # The subprocess gets a fresh Python and does NOT inherit sys.path
+    # modifications made by conftest.py. Inject PYTHONPATH explicitly so
+    # ``import workers.document_processor_worker`` resolves both in the
+    # container (where PYTHONPATH is unset but CWD=/app works) and on CI
+    # runners (where CWD is the repo root and only PYTHONPATH helps).
+    backend_root = Path(__file__).resolve().parents[2] / "src" / "backend"
+    env = os.environ.copy()
+    existing = env.get("PYTHONPATH", "")
+    env["PYTHONPATH"] = (
+        str(backend_root) + (os.pathsep + existing if existing else "")
+    )
+
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
         timeout=30,
+        env=env,
     )
     assert result.returncode == 0, (
         f"worker import test failed.\nstdout:\n{result.stdout}\n"
