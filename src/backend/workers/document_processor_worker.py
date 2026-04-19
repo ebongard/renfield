@@ -84,23 +84,17 @@ async def _process_entry(
         return
 
     force_ocr = bool(entry.params.get("force_ocr", False))
+    user_id = entry.params.get("user_id")
     progress = DocumentProgress(redis, doc_id)
     try:
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)
-            # ``process_existing_document`` lands in PR B. Accessing it via
-            # getattr keeps PR A importable + runnable (the method just
-            # doesn't exist yet; the worker is idle while the feature flag
-            # stays off).
-            handler = getattr(rag, "process_existing_document", None)
-            if handler is None:
-                logger.error(
-                    "RAGService.process_existing_document is not available yet "
-                    "(PR B). Re-queue the task and ack to avoid a poison loop."
-                )
-                await queue.ack(entry.entry_id)
-                return
-            await handler(document_id=doc_id, force_ocr=force_ocr)
+            await rag.process_existing_document(
+                document_id=doc_id,
+                force_ocr=force_ocr,
+                user_id=user_id,
+                progress=progress,
+            )
         await queue.ack(entry.entry_id)
         logger.info(f"processed doc {doc_id} (entry {entry.entry_id})")
     except Exception as e:
