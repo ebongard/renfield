@@ -61,10 +61,6 @@ async def _augment_with_progress(
     Degrades silently on Redis errors: the row still renders, just without
     live progress. We don't want a stale Redis to 500 the docs list.
     """
-    if not settings.document_worker_enabled:
-        # Legacy inline path never wrote these keys; skip the round-trip.
-        return
-
     redis = get_redis()
     try:
         progress = DocumentProgress(redis, doc.id)
@@ -349,105 +345,67 @@ async def upload_document(
         logger.error(f"Fehler beim Speichern der Datei: {e}")
         raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
 
-    # Branch on DOCUMENT_WORKER_ENABLED (#388).
-    #
-    # Worker path: create the Document row synchronously (cheap INSERT so
-    # the client immediately has an id to poll), enqueue on the Redis
-    # Stream, return 202. The worker pod runs Docling out-of-process.
-    #
-    # Legacy inline path: kept unchanged so the flag can be flipped off
-    # at any time if the worker deployment is having trouble.
-    if settings.document_worker_enabled:
-        if not await _worker_is_alive():
-            # Nobody's consuming the stream — don't silently queue into the
-            # void. Clean up the saved file so the next retry doesn't race
-            # with an orphan on disk, and surface a 503 with a retry CTA.
-            if file_path.exists():
-                try:
-                    os.remove(file_path)
-                except OSError as e:
-                    logger.warning(f"failed to clean up orphan upload {file_path}: {e}")
-            raise HTTPException(
-                status_code=503,
-                detail={
-                    "message": "Document worker unavailable",
-                    "retryable": True,
-                },
-            )
-
-        try:
-            doc = await rag.create_document_record(
-                file_path=str(file_path),
-                knowledge_base_id=knowledge_base_id,
-                filename=file.filename,
-                file_hash=file_hash,
-            )
-        except Exception as e:
-            if file_path.exists():
-                try:
-                    os.remove(file_path)
-                except OSError as cleanup_err:
-                    # Don't let cleanup mask the real DB error the user
-                    # needs to see. Log it and move on.
-                    logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
-            logger.error(f"Fehler beim Anlegen des Document-Records: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
-        queue = DocumentTaskQueue(redis_client=get_redis())
-        await queue.enqueue({
-            "document_id": doc.id,
-            "force_ocr": force_ocr,
-            "user_id": user.id if user else None,
-        })
-
-        response.status_code = 202
-        return DocumentResponse(
-            id=doc.id,
-            filename=doc.filename,
-            title=doc.title,
-            file_type=doc.file_type,
-            file_size=doc.file_size,
-            status=doc.status,  # "pending"
-            error_message=None,
-            chunk_count=0,
-            page_count=None,
-            knowledge_base_id=doc.knowledge_base_id,
-            created_at=doc.created_at.isoformat() if doc.created_at else "",
-            processed_at=None,
+    # Worker path (#388): create the Document row synchronously (cheap
+    # INSERT so the client has an id to poll), enqueue on the Redis
+    # Stream, return 202. The worker pod runs Docling out-of-process so
+    # a large PDF can't OOM the API serving path.
+    if not await _worker_is_alive():
+        # Nobody's consuming the stream — don't silently queue into the
+        # void. Clean up the saved file so the next retry doesn't race
+        # with an orphan on disk, and surface a 503 with a retry CTA.
+        if file_path.exists():
+            try:
+                os.remove(file_path)
+            except OSError as e:
+                logger.warning(f"failed to clean up orphan upload {file_path}: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": "Document worker unavailable",
+                "retryable": True,
+            },
         )
 
-    # Legacy inline path
     try:
-        document = await rag.ingest_document(
-            str(file_path),
+        doc = await rag.create_document_record(
+            file_path=str(file_path),
             knowledge_base_id=knowledge_base_id,
             filename=file.filename,
             file_hash=file_hash,
-            user_id=user.id if user else None,
-            force_ocr=force_ocr
         )
-
-        return DocumentResponse(
-            id=document.id,
-            filename=document.filename,
-            title=document.title,
-            file_type=document.file_type,
-            file_size=document.file_size,
-            status=document.status,
-            error_message=document.error_message,
-            chunk_count=document.chunk_count or 0,
-            page_count=document.page_count,
-            knowledge_base_id=document.knowledge_base_id,
-            created_at=document.created_at.isoformat() if document.created_at else "",
-            processed_at=document.processed_at.isoformat() if document.processed_at else None
-        )
-
     except Exception as e:
-        # Datei bei Fehler löschen
         if file_path.exists():
-            os.remove(file_path)
-        logger.error(f"Fehler beim Indexieren: {e}")
+            try:
+                os.remove(file_path)
+            except OSError as cleanup_err:
+                # Don't let cleanup mask the real DB error the user
+                # needs to see. Log it and move on.
+                logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
+        logger.error(f"Fehler beim Anlegen des Document-Records: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+    queue = DocumentTaskQueue(redis_client=get_redis())
+    await queue.enqueue({
+        "document_id": doc.id,
+        "force_ocr": force_ocr,
+        "user_id": user.id if user else None,
+    })
+
+    response.status_code = 202
+    return DocumentResponse(
+        id=doc.id,
+        filename=doc.filename,
+        title=doc.title,
+        file_type=doc.file_type,
+        file_size=doc.file_size,
+        status=doc.status,  # "pending"
+        error_message=None,
+        chunk_count=0,
+        page_count=None,
+        knowledge_base_id=doc.knowledge_base_id,
+        created_at=doc.created_at.isoformat() if doc.created_at else "",
+        processed_at=None,
+    )
 
 
 # =============================================================================

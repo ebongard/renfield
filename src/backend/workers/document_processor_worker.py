@@ -23,9 +23,9 @@ Design constraints:
   short-circuit enqueue when no worker is alive. See
   ``_worker_is_alive`` in ``api/routes/knowledge.py``.
 
-Not wired into ``/api/knowledge/upload`` yet. PR A ships the worker as
-runnable infra; the upload endpoint still takes the inline code path
-until ``DOCUMENT_WORKER_ENABLED`` is flipped in PR C1.
+Consumes all uploads enqueued by ``/api/knowledge/upload``. The
+synchronous chat-upload path still runs Docling in the API pod —
+separate lifecycle, lower per-request memory footprint.
 """
 from __future__ import annotations
 

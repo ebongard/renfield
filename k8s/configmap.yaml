@@ -82,11 +82,6 @@ data:
   HOME: "/app/data/cache-home"
   HF_HOME: "/app/data/cache-home/.cache/huggingface"
 
-  # Document worker split (#388). When false, /api/knowledge/upload runs
-  # Docling inline in the request. When true, the endpoint enqueues on the
-  # Redis Stream and the document-worker pod owns the processing.
-  DOCUMENT_WORKER_ENABLED: "false"
-
   # Logging
   LOG_LEVEL: "INFO"
   DO_NOT_TRACK: "1"

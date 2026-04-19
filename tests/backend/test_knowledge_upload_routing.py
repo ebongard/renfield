@@ -84,15 +84,11 @@ async def test_upload_duplicate_hash_returns_409(
 
 @pytest.mark.unit
 @pytest.mark.database
-async def test_upload_returns_202_when_worker_enabled_and_alive(
-    async_client: AsyncClient, db_session, kb, monkeypatch
+async def test_upload_returns_202_when_worker_alive(
+    async_client: AsyncClient, db_session, kb
 ):
-    """With DOCUMENT_WORKER_ENABLED=true and the heartbeat present, upload
-    should persist a pending Document and enqueue a task."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "document_worker_enabled", True)
-
+    """Upload endpoint persists a pending Document and enqueues a task
+    on the Redis Stream. The worker pod consumes from there."""
     enqueued: list[dict] = []
 
     async def _fake_enqueue(self, params):
@@ -123,21 +119,19 @@ async def test_upload_returns_202_when_worker_enabled_and_alive(
 
 
 # ---------------------------------------------------------------------------
-# Matrix #7 — flag ON + heartbeat missing → 503
+# Matrix #7 — worker heartbeat missing → 503 (cleanup: file must be removed)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.unit
 @pytest.mark.database
 async def test_upload_returns_503_when_worker_heartbeat_missing(
-    async_client: AsyncClient, db_session, kb, monkeypatch
+    async_client: AsyncClient, db_session, kb
 ):
-    """With flag on and no heartbeat, the endpoint must 503 (retryable)
-    rather than silently enqueue into a stream nobody's reading."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "document_worker_enabled", True)
-
+    """When the worker heartbeat is missing, the endpoint must 503
+    (retryable) rather than silently enqueue into a stream nobody's
+    reading. The saved file must also be cleaned up so a retry doesn't
+    race with an orphan on disk."""
     enqueue_mock = AsyncMock()
     with patch(
         "api.routes.knowledge._worker_is_alive",
@@ -156,49 +150,6 @@ async def test_upload_returns_503_when_worker_heartbeat_missing(
     assert body["detail"]["retryable"] is True
     # Must not have enqueued.
     enqueue_mock.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# Matrix #8 — flag OFF → legacy inline path (returns 200, doc processed)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.unit
-@pytest.mark.database
-async def test_upload_legacy_inline_path_when_flag_off(
-    async_client: AsyncClient, db_session, kb, monkeypatch
-):
-    """With the flag off (the current production default) the endpoint must
-    still run the synchronous ingest path and return 200 — no worker touch."""
-    from utils.config import settings
-
-    monkeypatch.setattr(settings, "document_worker_enabled", False)
-
-    worker_alive = AsyncMock()
-    with patch(
-        "services.rag_service.RAGService.ingest_document",
-        new=AsyncMock(
-            return_value=Document(
-                id=42,
-                filename="legacy.txt",
-                status="completed",
-                knowledge_base_id=kb.id,
-            )
-        ),
-    ), patch(
-        "api.routes.knowledge._worker_is_alive",
-        new=worker_alive,
-    ):
-        response = await async_client.post(
-            f"/api/knowledge/upload?knowledge_base_id={kb.id}",
-            files=[_fake_upload(b"legacy payload", "legacy.txt")],
-        )
-
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["status"] == "completed"
-    # The heartbeat check must be skipped entirely on the legacy path.
-    worker_alive.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

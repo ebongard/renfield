@@ -173,9 +173,10 @@ class RAGService:
 
         Used by the upload route to commit the row inside the HTTP request
         so the client immediately has an id to poll. The actual Docling +
-        embedding work runs later, either inline (legacy, via the wrapper
-        ``ingest_document``) or asynchronously in the document-worker
-        (``process_existing_document``, #388).
+        embedding work runs asynchronously in the document-worker via
+        ``process_existing_document`` (#388). The ``ingest_document``
+        wrapper still exists for callers that need synchronous ingestion
+        (currently chat upload, reindex) — those run Docling in-process.
         """
         actual_filename = filename or os.path.basename(file_path)
         doc = Document(
@@ -324,13 +325,12 @@ class RAGService:
         user_id: int | None = None,
         force_ocr: bool = False,
     ) -> Document:
-        """Back-compat wrapper: create the Document row + process inline.
+        """Synchronous wrapper: create the Document row + process inline.
 
-        Used by the legacy upload path (while ``DOCUMENT_WORKER_ENABLED``
-        is false), the chat-upload routes, and ``reindex_document``. In
-        the worker world these are two separate steps: the upload
-        endpoint calls ``create_document_record`` and enqueues; the
-        worker calls ``process_existing_document``.
+        Used by the chat-upload routes and ``reindex_document``. The
+        main knowledge-base upload path (``/api/knowledge/upload``) is
+        async now (#388) — it calls ``create_document_record`` and
+        enqueues, and the worker pod calls ``process_existing_document``.
 
         **Lifecycle note.** The returned Document is identical in shape
         and final state to what the pre-split implementation produced.

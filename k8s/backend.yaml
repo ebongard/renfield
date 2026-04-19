@@ -212,12 +212,11 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              # 12Gi: 8Gi was still hit by Docling+EasyOCR on large PDFs. Node has
-              # 15Gi total — Ollama's limit is 16Gi but actual use is far lower, so
-              # this leaves working room. This is a stop-gap; the real fix is the
-              # worker split in docs/DOCUMENT_WORKER_SPLIT.md, after which the
-              # backend's limit drops back to ~4Gi.
-              memory: 12Gi
+              # Docling+EasyOCR moved to document-worker (#388) so the API
+              # serving path no longer needs the 12Gi stop-gap. 5Gi covers
+              # FastAPI + Ollama client + MCP + synchronous chat-upload
+              # ingestion with headroom.
+              memory: 5Gi
       volumes:
         - name: data
           persistentVolumeClaim:
