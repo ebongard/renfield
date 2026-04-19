@@ -36,6 +36,12 @@ spec:
         app.kubernetes.io/name: document-worker
         app.kubernetes.io/part-of: renfield
     spec:
+      # Default is 30s, which is short compared to Docling+OCR on a big PDF
+      # (15–120s). Set 120s so SIGTERM has a realistic chance to finish the
+      # in-flight task and XACK it. If the task exceeds 120s the pod gets
+      # SIGKILLed anyway; the Stream PEL + reclaim_stale recovers it on the
+      # next boot (design invariant, covered by integration test #10).
+      terminationGracePeriodSeconds: 120
       imagePullSecrets:
         - name: harbor-pull-secret
       initContainers:
