@@ -123,8 +123,17 @@ class RAGService:
             "Kontext:"
         )
         try:
-            from services.llm_client import get_chat_client
-            client = get_chat_client()
+            # Previously imported from ``services.llm_client`` which
+            # never existed, and called ``get_chat_client()`` which
+            # was never implemented — both errors were swallowed by
+            # the broad except below, silently disabling contextual
+            # retrieval for every chunk indexed since the feature
+            # landed. Caught during post-cutover log inspection.
+            # ``get_default_client()`` returns the general LLM client
+            # (with fallback wiring) and exposes ``generate`` via the
+            # ollama.AsyncClient passthrough.
+            from utils.llm_client import get_default_client
+            client = get_default_client()
             model = settings.rag_contextual_model or settings.ollama_chat_model
             response = await asyncio.wait_for(
                 client.generate(model=model, prompt=prompt, options={"temperature": 0.1, "num_predict": 80}),

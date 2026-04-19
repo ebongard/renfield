@@ -1,0 +1,11 @@
+# Renfield mail accounts — shipped default (no accounts configured).
+#
+# This file is the k8s ConfigMap default so the renfield-mcp-mail server
+# starts without warnings when the operator hasn't set up real mail
+# accounts yet. Replace via a patched ConfigMap when ready — see
+# `config/mail_accounts.example.yaml` for the schema.
+#
+# Docker-compose users: copy mail_accounts.example.yaml to
+# mail_accounts.yaml (gitignored) and fill in real credentials.
+
+accounts: []

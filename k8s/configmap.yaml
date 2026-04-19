@@ -82,6 +82,12 @@ data:
   HOME: "/app/data/cache-home"
   HF_HOME: "/app/data/cache-home/.cache/huggingface"
 
+  # Mail MCP account config. Mounted into the backend pod via the
+  # renfield-mcp-config ConfigMap — see k8s/backend.yaml. The `/config/`
+  # default from config/mcp_servers.yaml doesn't exist in the pod;
+  # override to the actual mount path.
+  MAIL_ACCOUNTS_CONFIG: "/app/config/mail_accounts.yaml"
+
   # Logging
   LOG_LEVEL: "INFO"
   DO_NOT_TRACK: "1"

@@ -173,11 +173,19 @@ spec:
             - name: uploads
               mountPath: /app/data/uploads
             # Shared ML model cache (EasyOCR / HuggingFace / Docling).
-            # Not strictly required on the backend since Docling now runs
-            # in the worker, but keeps warm-cache behaviour for the
-            # legacy-inline rollback path (flag off).
+            # Backend still needs it because chat_upload.py runs Docling
+            # in-process; the worker reads from the same cache for the
+            # async upload path.
             - name: cache-home
               mountPath: /app/data/cache-home
+            # Overlay an ephemeral npm cache on top of the shared
+            # cache-home. The MCP stdio servers npx-install on startup,
+            # and backend + worker racing on the same .npm tree caused
+            # ENOTEMPTY rename errors that made MCP 'search' and 'news'
+            # fail on first connect (retries worked, just noisy). Pod-
+            # local emptyDir sidesteps the race entirely.
+            - name: npm-cache
+              mountPath: /app/data/cache-home/.npm
             - name: mcp-config
               mountPath: /app/config/mcp_servers.yaml
               subPath: mcp_servers.yaml
@@ -189,6 +197,14 @@ spec:
             - name: mcp-config
               mountPath: /app/config/kg_scopes.yaml
               subPath: kg_scopes.yaml
+              readOnly: true
+            # Silences the "Config file not found: /config/mail_accounts.yaml"
+            # WARN from renfield-mcp-mail on startup. The shipped default
+            # ships `accounts: []`; override by patching this entry in the
+            # renfield-mcp-config ConfigMap when real accounts are added.
+            - name: mcp-config
+              mountPath: /app/config/mail_accounts.yaml
+              subPath: mail_accounts.yaml
               readOnly: true
           livenessProbe:
             httpGet:
@@ -232,6 +248,11 @@ spec:
         - name: cache-home
           persistentVolumeClaim:
             claimName: renfield-cache-shared
+        # Pod-local npm cache (see mount comment). 2Gi is generous; npm
+        # + all MCP server dependencies typically land around 500 MB.
+        - name: npm-cache
+          emptyDir:
+            sizeLimit: 2Gi
         - name: mcp-config
           configMap:
             name: renfield-mcp-config

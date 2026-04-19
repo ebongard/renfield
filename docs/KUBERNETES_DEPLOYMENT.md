@@ -213,10 +213,14 @@ kubectl -n renfield create secret tls renfield-tls --cert=tls.crt --key=tls.key
 rm tls.{crt,key}
 
 # 5. MCP / agent config ConfigMap
+# `mail_accounts.default.yaml` is renamed to `mail_accounts.yaml` in the
+# ConfigMap — the mail MCP expects that exact filename. Swap in a real
+# accounts file here if you have one.
 kubectl -n renfield create configmap renfield-mcp-config \
   --from-file=config/mcp_servers.yaml \
   --from-file=config/agent_roles.yaml \
-  --from-file=config/kg_scopes.yaml
+  --from-file=config/kg_scopes.yaml \
+  --from-file=mail_accounts.yaml=config/mail_accounts.default.yaml
 
 # 6. Everything else via kustomize
 kubectl apply -k k8s/
