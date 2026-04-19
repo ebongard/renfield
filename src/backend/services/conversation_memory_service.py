@@ -416,6 +416,15 @@ class ConversationMemoryService:
         Returns:
             List of dicts with id, content, category, importance, similarity
         """
+        # Circles v1 / Lane A3: when the flag is on, delegate to the extracted
+        # MemoryRetrieval module. Behavioural parity is guarded by the test suite
+        # at tests/backend/test_memory_retrieval_extract.py.
+        if settings.circles_use_new_memory:
+            from services.memory_retrieval import MemoryRetrieval
+            return await MemoryRetrieval(self.db).retrieve(
+                message, user_id=user_id, limit=limit, threshold=threshold,
+            )
+
         limit = limit or settings.memory_retrieval_limit
         threshold = threshold if threshold is not None else settings.memory_retrieval_threshold
 
@@ -503,6 +512,15 @@ class ConversationMemoryService:
         Returns:
             List of dicts with id, content, category, importance, similarity=1.0
         """
+        # Circles v1 / Lane A3: when the flag is on, delegate to the extracted
+        # MemoryRetrieval module. Behavioural parity is guarded by the test suite
+        # at tests/backend/test_memory_retrieval_extract.py.
+        if settings.circles_use_new_memory:
+            from services.memory_retrieval import MemoryRetrieval
+            return await MemoryRetrieval(self.db).retrieve_essential(
+                user_id=user_id, limit=limit,
+            )
+
         threshold = settings.memory_essential_threshold
         limit = limit or settings.memory_retrieval_limit
 
@@ -588,6 +606,15 @@ class ConversationMemoryService:
 
         The total character count of all sections is capped at budget_chars.
         """
+        # Circles v1 / Lane A3: when the flag is on, delegate to the extracted
+        # MemoryRetrieval module. Behavioural parity is guarded by the test suite
+        # at tests/backend/test_memory_retrieval_extract.py.
+        if settings.circles_use_new_memory:
+            from services.memory_retrieval import MemoryRetrieval
+            return await MemoryRetrieval(self.db).retrieve_for_prompt(
+                query, user_id=user_id, team_ids=team_ids, budget_chars=budget_chars,
+            )
+
         budget = budget_chars or settings.memory_retrieval_budget_chars
         sections: dict[str, list[dict]] = {
             "essential": [],
