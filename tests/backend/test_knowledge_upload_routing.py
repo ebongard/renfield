@@ -240,3 +240,41 @@ async def test_batch_endpoint_rejects_oversize_batch(async_client: AsyncClient):
 async def test_batch_endpoint_rejects_non_integer_ids(async_client: AsyncClient):
     response = await async_client.get("/api/knowledge/documents/batch?ids=1,abc,3")
     assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# C2: 413/415 semantic HTTP codes for size and format rejections
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+async def test_upload_unsupported_format_returns_415(async_client: AsyncClient):
+    """Unknown extensions get 415 Unsupported Media Type with an `allowed`
+    list in the structured detail so the frontend can render the hint
+    without hard-coding the extension set."""
+    response = await async_client.post(
+        "/api/knowledge/upload",
+        files=[("file", ("evil.exe", io.BytesIO(b"MZ..."), "application/octet-stream"))],
+    )
+    assert response.status_code == 415, response.text
+    body = response.json()
+    assert isinstance(body["detail"], dict)
+    assert "allowed" in body["detail"]
+    assert body["detail"]["received"] == "exe"
+
+
+@pytest.mark.unit
+async def test_upload_oversize_returns_413(async_client: AsyncClient, monkeypatch):
+    """Files above `max_file_size_mb` get 413 Content Too Large with
+    `max_mb` in the detail. We shrink the limit to 0 so even a tiny file
+    trips it, keeping the test fast."""
+    from utils.config import settings
+
+    monkeypatch.setattr(settings, "max_file_size_mb", 0)
+    response = await async_client.post(
+        "/api/knowledge/upload",
+        files=[("file", ("big.txt", io.BytesIO(b"x" * 2048), "text/plain"))],
+    )
+    assert response.status_code == 413, response.text
+    body = response.json()
+    assert body["detail"]["max_mb"] == 0

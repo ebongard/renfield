@@ -409,7 +409,8 @@
     "serverError": "Something went wrong during upload.",
     "showDetails": "Show details",
     "hideDetails": "Hide details",
-    "failedRetry": "Upload again"
+    "failedRetry": "Upload again",
+    "pollingTimeout": "Processing of \"{{filename}}\" is taking longer than expected. Please refresh to see the current status."
   },
   "memory": {
     "title": "Memories",

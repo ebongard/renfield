@@ -3,25 +3,77 @@
  *
  * The backend includes an `existing_document` payload with id, filename,
  * and uploaded_at. We render a proper dialog (not a toast) because the user
- * needs a choice: jump to the existing entry, or cancel. A11y: escape key
- * closes, the jump button receives initial focus.
+ * needs a choice: jump to the existing entry, or cancel.
  *
- * Full focus-management polish (trap, return focus on close) lands in C2.
+ * C2 additions:
+ *   - Focus trap: Tab and Shift+Tab cycle within the dialog only.
+ *   - Focus return: whichever element owned focus when the dialog opened
+ *     gets focus back when it closes (typically the upload input).
+ *   - Initial focus on the jump button stays C1 behaviour.
+ *   - Escape closes — unchanged.
  */
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
+// Query that matches anything keyboard-focusable. We use this to scope the
+// Tab/Shift+Tab cycle to elements living inside the dialog.
+const FOCUSABLE_SELECTOR = [
+  'a[href]',
+  'button:not([disabled])',
+  'textarea:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
 export default function DuplicateDialog({ existing, onClose, onJump }) {
   const jumpBtnRef = useRef(null);
+  const dialogRef = useRef(null);
+  const lastFocusedRef = useRef(null);
   const { t, i18n } = useTranslation();
 
   useEffect(() => {
+    // Remember who owned focus so we can restore it on close.
+    lastFocusedRef.current = document.activeElement;
     if (jumpBtnRef.current) jumpBtnRef.current.focus();
+
     const onKey = (e) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      if (!dialogRef.current) return;
+
+      // Focus trap: keep Tab/Shift+Tab within the dialog.
+      const focusables = dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR);
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      // Return focus to whoever had it before the dialog opened. Wrapped
+      // in a try/catch because the previously-focused node may have been
+      // unmounted (e.g. tab closed, element re-rendered).
+      const prev = lastFocusedRef.current;
+      if (prev && typeof prev.focus === 'function') {
+        try {
+          prev.focus();
+        } catch {
+          /* element gone; nothing to do */
+        }
+      }
+    };
   }, [onClose]);
 
   if (!existing) return null;
@@ -40,7 +92,10 @@ export default function DuplicateDialog({ existing, onClose, onJump }) {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
+      <div
+        ref={dialogRef}
+        className="bg-white dark:bg-gray-900 rounded-lg shadow-xl p-6 max-w-md w-full mx-4"
+      >
         <h2 id="duplicate-dialog-title" className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2">
           {t('knowledge.duplicateTitle')}
         </h2>

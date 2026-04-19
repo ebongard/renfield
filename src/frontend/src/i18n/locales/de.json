@@ -409,7 +409,8 @@
     "serverError": "Beim Hochladen ist etwas schiefgegangen.",
     "showDetails": "Details anzeigen",
     "hideDetails": "Details verbergen",
-    "failedRetry": "Erneut hochladen"
+    "failedRetry": "Erneut hochladen",
+    "pollingTimeout": "Die Verarbeitung von „{{filename}}\" dauert länger als erwartet. Bitte die Seite neu laden, um den aktuellen Status zu sehen."
   },
   "memory": {
     "title": "Erinnerungen",

@@ -27,6 +27,7 @@ import Badge from '../components/Badge';
 import StatusBadge from '../components/knowledge/StatusBadge';
 import DuplicateDialog from '../components/knowledge/DuplicateDialog';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
+import { useInflightTabTitle } from '../hooks/useInflightTabTitle';
 
 export default function KnowledgePage() {
   const { t } = useTranslation();
@@ -114,7 +115,21 @@ export default function KnowledgePage() {
       await loadDocuments();
       await loadStats();
     },
+    onTimeout: (doc) => {
+      // 30-min cap hit. Tell the user their poll loop gave up, but leave
+      // the DB row alone — a manual refresh can still pick it up if the
+      // worker does eventually finish.
+      setUploadProgress(t('knowledge.pollingTimeout', { filename: doc.filename }));
+      setTimeout(() => setUploadProgress(null), 8000);
+    },
   });
+
+  // Mutate the tab title while docs are still in flight so the user sees
+  // a count even when the tab isn't focused.
+  useInflightTabTitle(
+    Object.keys(activeDocs).length,
+    t('knowledge.title') + ' — Renfield',
+  );
 
   // Last file the user tried to upload, so the 503-toast retry CTA can
   // re-submit without re-opening the file picker.
@@ -169,15 +184,16 @@ export default function KnowledgePage() {
         // keep setTimeout longer for retry CTA; cleared on retry or dismiss
         setTimeout(() => setUploadProgress(null), 10000);
       } else if (status === 413) {
-        const maxMb = error.response?.headers?.['x-max-mb'] || '';
+        const maxMb = detail?.max_mb ?? '';
         setUploadProgress(t('knowledge.fileTooLarge', { maxMb }));
         setTimeout(() => setUploadProgress(null), 5000);
-      } else if (status === 400 && typeof detail === 'string' && detail.toLowerCase().includes('format')) {
-        setUploadProgress(t('knowledge.formatNotSupported', { allowed: '' }) + ' ' + detail);
+      } else if (status === 415) {
+        const allowed = Array.isArray(detail?.allowed) ? detail.allowed.join(', ') : '';
+        setUploadProgress(t('knowledge.formatNotSupported', { allowed }));
         setTimeout(() => setUploadProgress(null), 6000);
       } else {
         console.error('Upload error:', error);
-        const msg = typeof detail === 'string' ? detail : t('knowledge.serverError');
+        const msg = typeof detail === 'string' ? detail : detail?.message || t('knowledge.serverError');
         setUploadProgress(`${t('knowledge.errorLabel')}: ${msg}`);
         setTimeout(() => setUploadProgress(null), 6000);
       }
