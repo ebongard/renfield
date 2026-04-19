@@ -25,11 +25,19 @@ export function useDocumentPolling({ onResolved, intervalMs = DEFAULT_POLL_INTER
   const [activeDocs, setActiveDocs] = useState({});
   const intervalRef = useRef(null);
   const onResolvedRef = useRef(onResolved);
+  // Mirror activeDocs into a ref so poll() reads the current set even
+  // when the effect doesn't restart (e.g. resolve-A + track-B land in
+  // the same React batch so ids.length stays constant).
+  const activeDocsRef = useRef(activeDocs);
 
   // Keep the callback ref fresh so parent re-renders don't restart the poll.
   useEffect(() => {
     onResolvedRef.current = onResolved;
   }, [onResolved]);
+
+  useEffect(() => {
+    activeDocsRef.current = activeDocs;
+  }, [activeDocs]);
 
   const track = useCallback((doc) => {
     if (!doc || TERMINAL_STATES.has(doc.status)) return;
@@ -58,24 +66,27 @@ export function useDocumentPolling({ onResolved, intervalMs = DEFAULT_POLL_INTER
     if (intervalRef.current) return; // already running
 
     const poll = async () => {
-      const currentIds = Object.keys(activeDocs).map(Number);
+      const currentIds = Object.keys(activeDocsRef.current).map(Number);
       if (currentIds.length === 0) return;
       try {
         const response = await apiClient.get('/api/knowledge/documents/batch', {
           params: { ids: currentIds.join(',') },
         });
         const rows = response.data || [];
+        // Compute resolved rows up front — setActiveDocs(fn) defers the
+        // updater to commit time, so collecting from inside it would
+        // read empty when we fire callbacks below. Derive the list from
+        // the batch response, which is the single source of truth for
+        // this tick.
+        const resolvedThisTick = rows.filter((row) =>
+          TERMINAL_STATES.has(row.status),
+        );
+        const seen = new Set(rows.map((row) => row.id));
         setActiveDocs((prev) => {
           const next = { ...prev };
-          const seen = new Set();
           for (const row of rows) {
-            seen.add(row.id);
             if (TERMINAL_STATES.has(row.status)) {
               delete next[row.id];
-              if (onResolvedRef.current) {
-                // Defer to avoid setState-during-render surprises.
-                queueMicrotask(() => onResolvedRef.current(row));
-              }
             } else {
               next[row.id] = row;
             }
@@ -87,6 +98,14 @@ export function useDocumentPolling({ onResolved, intervalMs = DEFAULT_POLL_INTER
           }
           return next;
         });
+        // Fire resolution callbacks outside the updater so StrictMode's
+        // double-invocation in dev doesn't deliver duplicate onResolved
+        // events to the caller.
+        if (resolvedThisTick.length && onResolvedRef.current) {
+          for (const row of resolvedThisTick) {
+            onResolvedRef.current(row);
+          }
+        }
       } catch (err) {
         // Keep polling through transient errors; caller sees stale data,
         // not a crash. A long outage will be visible because statuses

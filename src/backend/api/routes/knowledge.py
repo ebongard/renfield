@@ -371,7 +371,12 @@ async def upload_document(
             )
         except Exception as e:
             if file_path.exists():
-                os.remove(file_path)
+                try:
+                    os.remove(file_path)
+                except OSError as cleanup_err:
+                    # Don't let cleanup mask the real DB error the user
+                    # needs to see. Log it and move on.
+                    logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
             logger.error(f"Fehler beim Anlegen des Document-Records: {e}")
             raise HTTPException(status_code=500, detail=str(e))
 

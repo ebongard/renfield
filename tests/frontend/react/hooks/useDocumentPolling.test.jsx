@@ -149,4 +149,41 @@ describe('useDocumentPolling', () => {
     await waitFor(() => expect(call).toBeGreaterThanOrEqual(2));
     await waitFor(() => expect(result.current.activeDocs[5]?.status).toBe('processing'));
   });
+
+  it('keeps polling when a doc resolves + a new one is tracked in the same tick (same length)', async () => {
+    // Regression: the poll loop used to close over a stale activeDocs
+    // snapshot, so if A resolved and B was tracked in the same React
+    // batch, the next XHR would still target A and never query B.
+    const requestedIds = [];
+    let aStatus = 'processing';
+    server.use(
+      http.get(BATCH_PATH, ({ request }) => {
+        const url = new URL(request.url);
+        const ids = url.searchParams.get('ids') || '';
+        requestedIds.push(ids);
+        const rows = [];
+        for (const raw of ids.split(',').filter(Boolean)) {
+          const id = Number(raw);
+          if (id === 1) rows.push(pendingDoc(1, { status: aStatus }));
+          if (id === 2) rows.push(pendingDoc(2, { status: 'processing' }));
+        }
+        return HttpResponse.json(rows);
+      }),
+    );
+    const { result } = renderHook(() => useDocumentPolling({ intervalMs: TEST_INTERVAL }));
+    act(() => result.current.track(pendingDoc(1)));
+    await waitFor(() => expect(result.current.activeDocs[1]?.status).toBe('processing'));
+
+    // Simulate A resolving and B being tracked in the same React batch.
+    aStatus = 'completed';
+    act(() => {
+      result.current.track(pendingDoc(2));
+    });
+
+    // Eventually the server should be asked about id 2.
+    await waitFor(() => {
+      expect(requestedIds.some((q) => q.split(',').includes('2'))).toBe(true);
+    });
+    await waitFor(() => expect(result.current.activeDocs[2]?.status).toBe('processing'));
+  });
 });
