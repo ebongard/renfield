@@ -25,14 +25,39 @@ Revision history:
 
 ## Status
 
-- **Current**: backend runs document processing inline in the upload request.
-  First real PDF upload OOMKilled at 6 GiB — Docling boots RT-DETR layout +
-  EasyOCR detection/recognition models (770 weights) on top of the resident
-  Whisper + transformers footprint.
-- **Short-term mitigation** (shipped in PR #387): backend memory limit 12 GiB.
-  Works, but still a landmine for scanned multi-hundred-page PDFs.
-- **Long-term plan** (this document): separate worker deployment, backend
-  drops back to ~5 GiB.
+**Shipped 2026-04-19.** The `/api/knowledge/upload` path is now fully async
+— creates a pending Document, enqueues to the Redis Stream, returns 202,
+polling frontend drives it to `completed`. Backend memory limit dropped
+12 GiB → 8 GiB (would be 5 GiB if not for chat_upload, which still runs
+Docling inline — follow-up).
+
+Merged PRs:
+
+- **PR A** (infra) — `4cb5800`: NFS-CSI, shared PVCs, DocumentTaskQueue
+  (Streams), DocumentProgress, worker Deployment, `DOCUMENT_WORKER_ENABLED=false`.
+- **PR B** (refactor) — `cf7ea1e`: RAGService split into
+  `create_document_record` + `process_existing_document` + back-compat
+  `ingest_document` wrapper.
+- **PR C1** (cutover) — `dc46060`: upload endpoint branches on flag,
+  heartbeat gate, batch endpoint, live progress, minimal frontend.
+- **#392** (fix) — `a3c5162`: backend missed the shared PVC mounts at
+  cutover; added them, migrated doc 9 via `kubectl cp`.
+- **PR C2** (polish) — `fe48f24`: polling backoff + Visibility API +
+  localStorage + tab-title + progressbar A11y + 413/415 semantics.
+- **#394** (cleanup) — `65e39b7`: removed legacy inline path,
+  `DOCUMENT_WORKER_ENABLED` config, 12 GiB → 8 GiB.
+- **#395** (follow-up) — `5f702a3`: silent RAG regression
+  (`services.llm_client` → `utils.llm_client`), npm cache NFS race,
+  mail MCP default config.
+- **#396** (race fix) — `fbc9b63`: unique `(file_hash, knowledge_base_id)`
+  constraint + route IntegrityError handler → 409 not 500.
+
+Still open:
+
+- `chat_upload.py` Docling path migration — would drop backend memory to
+  ~5 GiB as originally planned.
+- `renfield-data` Longhorn PVC audit — may be orphaned after the shared
+  NFS mounts took over `/app/data/uploads` and `/app/data/cache-home`.
 
 ## Why a separate deployment
 

@@ -39,6 +39,10 @@ const LS_MAX_ENTRIES = 20;
 const LS_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 h hard cap
 const LS_STALE_TRIM_MS = 10 * 60 * 1000;   // 10 min — trim zombie entries
 
+// SSR / jsdom without document guard. Hoisted so the four call sites
+// inside the scheduling effect don't have to repeat the `typeof` check.
+const HAS_DOCUMENT = typeof document !== 'undefined';
+
 function readLSEntries() {
   try {
     const raw = window.localStorage.getItem(LS_KEY);
@@ -317,7 +321,7 @@ export function useDocumentPolling({
         timerRef.current = null;
       }
       if (Object.keys(activeDocsRef.current).length === 0) return;
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      if (HAS_DOCUMENT && document.visibilityState === 'hidden') {
         // Don't schedule while hidden; the visibility listener will
         // restart us when the tab comes back.
         return;
@@ -333,7 +337,7 @@ export function useDocumentPolling({
     };
 
     const onVisibilityChange = () => {
-      if (typeof document === 'undefined') return;
+      if (!HAS_DOCUMENT) return;
       if (document.visibilityState === 'visible') {
         // Catch-up poll immediately, then resume the ladder.
         backoffIndexRef.current = 0;
@@ -349,7 +353,7 @@ export function useDocumentPolling({
       }
     };
 
-    if (typeof document !== 'undefined') {
+    if (HAS_DOCUMENT) {
       document.addEventListener('visibilitychange', onVisibilityChange);
     }
 
@@ -360,7 +364,7 @@ export function useDocumentPolling({
 
     return () => {
       cancelled = true;
-      if (typeof document !== 'undefined') {
+      if (HAS_DOCUMENT) {
         document.removeEventListener('visibilitychange', onVisibilityChange);
       }
       if (timerRef.current) {

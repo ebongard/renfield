@@ -71,16 +71,20 @@ export default function StatusBadge({ doc, filename }) {
   const progress = hasKnownPageProgress(doc);
 
   // Rate-limit the live-region announcement so a long OCR job doesn't hit
-  // the screen reader with 120 updates in a minute.
+  // the screen reader with 120 updates in a minute. Key the effect on
+  // `sub` only — a language switch changes `label` but shouldn't reset
+  // the rate-limit window (user already heard the equivalent phrase in
+  // the old language).
   const lastAnnouncedAtRef = useRef(0);
   const [announcement, setAnnouncement] = useState('');
   useEffect(() => {
-    const now = Date.now();
     if (!sub) return;
+    const now = Date.now();
     if (now - lastAnnouncedAtRef.current < LIVE_REGION_MIN_GAP_MS) return;
     lastAnnouncedAtRef.current = now;
     setAnnouncement(`${label}: ${sub}`);
-  }, [label, sub]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps — see above
+  }, [sub]);
 
   // Status transitions are always announced (terminal or major change). The
   // stage/page sub-label uses a separate polite region above.
@@ -119,8 +123,12 @@ export default function StatusBadge({ doc, filename }) {
       </div>
       {/* Separate polite-live sub-region for rate-limited stage announcements.
           Visually hidden but read by screen readers. Kept out of the
-          progressbar element so SR doesn't get duplicate readouts. */}
-      <span className="sr-only" aria-live="polite">{announcement}</span>
+          progressbar element so SR doesn't get duplicate readouts. Only
+          rendered when we actually have something to announce — an
+          always-present empty live region is noise in the DOM. */}
+      {announcement && (
+        <span className="sr-only" aria-live="polite">{announcement}</span>
+      )}
     </div>
   );
 }
