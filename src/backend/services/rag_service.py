@@ -8,7 +8,7 @@ import asyncio
 import os
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from sqlalchemy import delete, func, select, text
@@ -22,6 +22,7 @@ from sqlalchemy.orm import selectinload
 from models.database import (
     DOC_STATUS_COMPLETED,
     DOC_STATUS_FAILED,
+    DOC_STATUS_PENDING,
     DOC_STATUS_PROCESSING,
     EMBEDDING_DIMENSION,
     Document,
@@ -31,6 +32,9 @@ from models.database import (
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 from utils.llm_client import get_embed_client
+
+if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
+    from services.progress import DocumentProgress
 
 
 class RAGService:
@@ -158,60 +162,74 @@ class RAGService:
     # Document Ingestion
     # ==========================================================================
 
-    async def ingest_document(
+    async def create_document_record(
         self,
         file_path: str,
         knowledge_base_id: int | None = None,
         filename: str | None = None,
         file_hash: str | None = None,
-        user_id: int | None = None,
-        force_ocr: bool = False
     ) -> Document:
-        """
-        Verarbeitet und indexiert ein Dokument.
+        """Insert a ``Document`` row with status=pending and return it.
 
-        1. Dokument mit Docling parsen
-        2. Chunks erstellen
-        3. Embeddings generieren
-        4. In Datenbank speichern
-
-        Args:
-            file_path: Pfad zur Dokumentdatei
-            knowledge_base_id: Optional Knowledge Base ID
-            filename: Optional Dateiname (falls anders als file_path)
-            file_hash: Optional SHA256 hash for duplicate detection
-
-        Returns:
-            Document-Objekt mit Status
+        Used by the upload route to commit the row inside the HTTP request
+        so the client immediately has an id to poll. The actual Docling +
+        embedding work runs later, either inline (legacy, via the wrapper
+        ``ingest_document``) or asynchronously in the document-worker
+        (``process_existing_document``, #388).
         """
         actual_filename = filename or os.path.basename(file_path)
-
-        # Document-Eintrag erstellen
         doc = Document(
             file_path=file_path,
             filename=actual_filename,
             knowledge_base_id=knowledge_base_id,
             file_hash=file_hash,
-            status=DOC_STATUS_PROCESSING
+            status=DOC_STATUS_PENDING,
         )
         self.db.add(doc)
         await self.db.commit()
         await self.db.refresh(doc)
+        logger.info(f"Dokument erstellt: ID={doc.id}, Datei={actual_filename}, status=pending")
+        return doc
 
-        logger.info(f"Dokument erstellt: ID={doc.id}, Datei={actual_filename}")
+    async def process_existing_document(
+        self,
+        document_id: int,
+        force_ocr: bool = False,
+        user_id: int | None = None,
+        progress: "DocumentProgress | None" = None,
+    ) -> None:
+        """Run the ingestion pipeline on an already-persisted Document.
+
+        Transitions the row through pending → processing → completed/failed
+        and publishes optional live progress (stage + page counters) to
+        Redis via ``DocumentProgress`` for the frontend poll. Returns ``None``
+        on both success and a handled Docling failure (row is updated in
+        either case); re-raises for unexpected Python exceptions after
+        marking the row failed, so the caller can log and the task queue
+        can leave the entry un-ACKed for reclaim.
+        """
+        doc = await self.db.get(Document, document_id)
+        if doc is None:
+            raise ValueError(f"Document {document_id} not found")
+
+        doc.status = DOC_STATUS_PROCESSING
+        await self.db.commit()
 
         try:
-            # 1. Dokument verarbeiten
-            result = await self.processor.process_document(file_path, force_ocr=force_ocr)
+            # Stage 1: parsing — Docling reads the file, OCRs if needed,
+            # produces chunks and metadata.
+            if progress is not None:
+                await progress.set_stage("parsing")
+            result = await self.processor.process_document(doc.file_path, force_ocr=force_ocr)
 
             if result["status"] == "failed":
                 doc.status = DOC_STATUS_FAILED
                 doc.error_message = result.get("error", "Unbekannter Fehler")
                 await self.db.commit()
                 logger.error(f"Dokumentverarbeitung fehlgeschlagen: {doc.error_message}")
-                return doc
+                return
 
-            # 2. Metadaten aktualisieren
+            # Metadata from the parsed doc.
             metadata = result["metadata"]
             doc.title = metadata.get("title")
             doc.author = metadata.get("author")
@@ -219,16 +237,19 @@ class RAGService:
             doc.file_size = metadata.get("file_size")
             doc.page_count = metadata.get("page_count")
 
-            # 3. Contextual Retrieval: generate LLM context prefix per chunk
+            # Stage 2: chunking + contextual-retrieval prefix generation.
+            if progress is not None:
+                await progress.set_stage("chunking")
             chunks = result["chunks"]
-            doc_summary = f"{doc.title or actual_filename}"
+            doc_summary = f"{doc.title or doc.filename}"
             if chunks:
                 doc_summary += f" — {chunks[0]['text'][:300]}" if chunks[0].get("text") else ""
             chunks = await self._contextualize_chunks(chunks, doc_summary)
 
-            # 4. Chunks mit Embeddings erstellen (parallel, batch insert)
+            # Stage 3: embedding generation + DB inserts.
+            if progress is not None:
+                await progress.set_stage("embedding")
             sem = asyncio.Semaphore(5)
-
             if settings.rag_parent_child_enabled:
                 chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
             else:
@@ -241,23 +262,23 @@ class RAGService:
             doc.chunk_count = chunk_count
             doc.status = DOC_STATUS_COMPLETED
             doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
-
             await self.db.commit()
 
-            # Populate search_vector for Full-Text Search (bulk update)
+            # Populate search_vector for Full-Text Search (bulk update).
             fts_config = settings.rag_hybrid_fts_config
             await self.db.execute(
-                text("""
+                text(
+                    """
                     UPDATE document_chunks
                     SET search_vector = to_tsvector(:fts_config, content)
                     WHERE document_id = :doc_id
                     AND search_vector IS NULL
                     AND content IS NOT NULL
-                """),
-                {"doc_id": doc.id, "fts_config": fts_config}
+                    """
+                ),
+                {"doc_id": doc.id, "fts_config": fts_config},
             )
             await self.db.commit()
-
             await self.db.refresh(doc)
 
             # Fire KG extraction hook (fire-and-forget).
@@ -267,22 +288,25 @@ class RAGService:
             # (names, addresses, organisations) is in text/paragraph chunks.
             _KG_SKIP_TYPES = {"table", "code", "formula"}
             kg_chunks = [
-                co.content for co in chunk_objects
+                co.content
+                for co in chunk_objects
                 if co.content and co.chunk_type not in _KG_SKIP_TYPES
             ]
             if kg_chunks:
                 from utils.hooks import run_hooks
-                _task = asyncio.create_task(run_hooks(
-                    "post_document_ingest",
-                    chunks=kg_chunks,
-                    document_id=doc.id,
-                    user_id=user_id,
-                ))
+
+                _task = asyncio.create_task(
+                    run_hooks(
+                        "post_document_ingest",
+                        chunks=kg_chunks,
+                        document_id=doc.id,
+                        user_id=user_id,
+                    )
+                )
                 _background_tasks.add(_task)
                 _task.add_done_callback(_background_tasks.discard)
 
             logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")
-            return doc
 
         except Exception as e:
             doc.status = DOC_STATUS_FAILED
@@ -290,6 +314,37 @@ class RAGService:
             await self.db.commit()
             logger.error(f"Fehler beim Indexieren: {e}")
             raise
+
+    async def ingest_document(
+        self,
+        file_path: str,
+        knowledge_base_id: int | None = None,
+        filename: str | None = None,
+        file_hash: str | None = None,
+        user_id: int | None = None,
+        force_ocr: bool = False,
+    ) -> Document:
+        """Back-compat wrapper: create the Document row + process inline.
+
+        Pre-#388 behaviour. Still used by the legacy upload path (while
+        ``DOCUMENT_WORKER_ENABLED`` is false), the chat-upload routes, and
+        ``reindex_document``. In the worker world these are two separate
+        steps: the upload endpoint calls ``create_document_record`` and
+        enqueues; the worker calls ``process_existing_document``.
+        """
+        doc = await self.create_document_record(
+            file_path=file_path,
+            knowledge_base_id=knowledge_base_id,
+            filename=filename,
+            file_hash=file_hash,
+        )
+        await self.process_existing_document(
+            document_id=doc.id,
+            force_ocr=force_ocr,
+            user_id=user_id,
+        )
+        await self.db.refresh(doc)
+        return doc
 
     # --------------------------------------------------------------------------
     # Ingestion Strategies
