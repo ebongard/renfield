@@ -267,6 +267,16 @@ kubectl -n renfield create configmap renfield-mcp-config \
 kubectl -n renfield rollout restart deploy/backend
 ```
 
+When retiring a PVC that's attached to a running Deployment (e.g. the
+`renfield-data` removal post-#388), roll the Deployment first so the
+PVC becomes unbound, then delete it:
+
+```bash
+kubectl apply -k k8s/                         # manifest no longer mounts it
+kubectl -n renfield rollout status deploy/backend
+kubectl -n renfield delete pvc renfield-data  # now unbound
+```
+
 Ollama model pulls: drop the model into the NFS share at `192.168.1.9:/mnt/data/llm/.ollama/` and it becomes visible to both Ollama pods; the `ollama-model-prepull` Job can also be re-applied to pull a specific list.
 
 ## Not Yet Included

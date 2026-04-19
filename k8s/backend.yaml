@@ -14,22 +14,6 @@ spec:
       targetPort: 8000
 
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: renfield-data
-  namespace: renfield
-  labels:
-    app.kubernetes.io/name: backend
-    app.kubernetes.io/part-of: renfield
-spec:
-  accessModes: [ReadWriteOnce]
-  storageClassName: longhorn
-  resources:
-    requests:
-      storage: 10Gi
-
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -80,8 +64,6 @@ spec:
             limits:
               memory: 64Mi
           volumeMounts:
-            - name: data
-              mountPath: /app/data
             - name: cache-home
               mountPath: /app/data/cache-home
       containers:
@@ -164,8 +146,6 @@ spec:
                   name: renfield-secrets
                   key: mail-regfish-password
           volumeMounts:
-            - name: data
-              mountPath: /app/data
             # Shared with the document-worker pod (#388 cutover). The API
             # writes the uploaded file here, the worker reads it from the
             # same NFS-backed PVC. Must be mounted at the same path on
@@ -238,9 +218,6 @@ spec:
               # note referred to serving-path Docling — that's gone.
               memory: 8Gi
       volumes:
-        - name: data
-          persistentVolumeClaim:
-            claimName: renfield-data
         # RWX NFS PVCs shared with document-worker — see k8s/shared-pvcs.yaml.
         - name: uploads
           persistentVolumeClaim:
