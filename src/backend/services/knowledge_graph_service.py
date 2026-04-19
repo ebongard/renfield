@@ -880,6 +880,15 @@ class KnowledgeGraphService:
 
         Returns formatted context string or None if nothing relevant.
         """
+        # Circles v1 / Lane A2: when the flag is on, delegate to the extracted
+        # KGRetrieval module. Behavioural parity is guarded by the test suite
+        # at tests/backend/test_kg_retrieval_extract.py.
+        if settings.circles_use_new_kg:
+            from services.kg_retrieval import KGRetrieval
+            return await KGRetrieval(self.db).get_relevant_context(
+                query, user_id=user_id, user_role=user_role, lang=lang,
+            )
+
         from services.kg_scope_loader import get_scope_loader
         scope_loader = get_scope_loader()
 
