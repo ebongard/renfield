@@ -31,10 +31,11 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 ### Frontend Rules
 
+- **DESIGN.md is the source of truth.** Before any UI change, read `DESIGN.md` at repo root. Color tokens, fonts, spacing, motion, semantic colors, and the tier visual language are defined there. Do NOT deviate without explicit user approval. In `/review` and `/qa`, flag any code that doesn't match DESIGN.md.
 - **Dark Mode**: ALL components must use Tailwind `dark:` variants. Never hardcode colors.
 - **i18n**: ALL user-facing strings must use `useTranslation()`. Never hardcode text.
 - **Translations**: Add to BOTH `src/frontend/src/i18n/locales/de.json` and `en.json`.
-- **Component classes** (in `index.css`): `.card`, `.input`, `.btn-primary`, `.btn-secondary`
+- **Component classes** (in `index.css`): `.card`, `.input`, `.btn-primary`, `.btn-secondary`. New classes per DESIGN.md (e.g., `.tier-badge`, `.atom-row`) must use only DESIGN.md tokens.
 
 ## Development Commands
 

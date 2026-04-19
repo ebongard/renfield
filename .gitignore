@@ -97,3 +97,6 @@ tasks/
 # Personal config overrides (use the .example.yaml as a template)
 config/mail_accounts.yaml
 config/import_rules.yaml
+
+# Session artifacts (gstack /retro, /office-hours scratch)
+.context/
