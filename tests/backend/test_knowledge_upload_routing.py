@@ -275,49 +275,58 @@ async def test_upload_race_handler_returns_409_not_500(
     async_client: AsyncClient, db_session, kb
 ):
     """Route-level IntegrityError handler: when create_document_record
-    raises IntegrityError (simulating the race where another request
-    committed between our pre-check SELECT and our INSERT), the
-    endpoint must return 409 with the winner's filename — never 500."""
+    raises uq_documents_file_hash_kb IntegrityError (simulating the
+    race where another request committed between our pre-check SELECT
+    and our INSERT), the endpoint must return 409 with the winner's
+    filename — never 500.
+
+    The tricky part: the pre-check SELECT runs before create_document_record,
+    so if we seed the winner up-front it wins at the pre-check and
+    never reaches the handler under test. We simulate the race using
+    a side_effect on create_document_record that *first* commits the
+    winner, *then* raises IntegrityError — mirroring real production
+    ordering (winner commits during our round-trip, our INSERT then
+    loses).
+    """
     from sqlalchemy.exc import IntegrityError
 
     payload = b"race-bytes-routelevel"
     file_hash = hashlib.sha256(payload).hexdigest()
+    winner_id = {"id": None}
 
-    # Pre-commit the winning row. The route's IntegrityError handler
-    # looks this up by (hash, kb) to populate the 409 response.
-    winner = Document(
-        filename="winner.txt",
-        file_path="/tmp/winner.txt",
-        status="completed",
-        knowledge_base_id=kb.id,
-        file_hash=file_hash,
-    )
-    db_session.add(winner)
-    await db_session.commit()
+    async def _race_create(self, **kwargs):
+        # Simulate concurrent winner committing between our pre-check
+        # and our INSERT. The pre-check already ran above (and missed)
+        # by the time this fires.
+        winner = Document(
+            filename="winner.txt",
+            file_path="/tmp/winner.txt",
+            status="completed",
+            knowledge_base_id=kb.id,
+            file_hash=file_hash,
+        )
+        self.db.add(winner)
+        await self.db.commit()
+        await self.db.refresh(winner)
+        winner_id["id"] = winner.id
+        # Now our INSERT would fail with the unique constraint — raise
+        # the same error SQLAlchemy produces. orig.__str__ needs to
+        # contain the constraint name for the handler's narrow check.
+        class _FakeOrig(Exception):
+            def __str__(self) -> str:
+                return "duplicate key value violates unique constraint \"uq_documents_file_hash_kb\""
+        raise IntegrityError("INSERT INTO documents ...", {}, _FakeOrig())
 
-    # Force the route past the pre-check by giving the fake-uploaded
-    # bytes a DIFFERENT hash than the winner's, then make
-    # create_document_record raise IntegrityError with the actual hash
-    # we want the handler to look up. We patch the handler's db query
-    # indirectly by making sure the pre-check doesn't find a row for
-    # our upload's real hash — so we use distinct bytes here.
-    #
-    # Simplest path: patch create_document_record to raise, and also
-    # patch file_hash into the route so the lookup matches winner.
-    fake_err = IntegrityError("INSERT", {}, Exception("unique violation"))
     with patch(
         "api.routes.knowledge._worker_is_alive",
         new=AsyncMock(return_value=True),
     ), patch(
         "services.rag_service.RAGService.create_document_record",
-        new=AsyncMock(side_effect=fake_err),
-    ), patch(
-        "api.routes.knowledge.hashlib.sha256"
-    ) as sha:
-        sha.return_value.hexdigest.return_value = file_hash
+        new=_race_create,
+    ):
         response = await async_client.post(
             f"/api/knowledge/upload?knowledge_base_id={kb.id}",
-            files=[_fake_upload(b"other-bytes-different-hash", "race.txt")],
+            files=[_fake_upload(payload, "race.txt")],
         )
 
     # Must be 409, not 500.
@@ -325,3 +334,34 @@ async def test_upload_race_handler_returns_409_not_500(
     body = response.json()
     assert "existing_document" in body["detail"]
     assert body["detail"]["existing_document"]["filename"] == "winner.txt"
+    assert body["detail"]["existing_document"]["id"] == winner_id["id"]
+
+
+@pytest.mark.unit
+@pytest.mark.database
+async def test_upload_non_hash_integrity_error_returns_500(
+    async_client: AsyncClient, db_session, kb
+):
+    """Distinguishing the race from other IntegrityErrors: a FK / NOT
+    NULL violation (i.e. not the uq_documents_file_hash_kb constraint)
+    must propagate as a 500, not get mis-labeled as a 409 with a fake
+    existing_document payload."""
+    from sqlalchemy.exc import IntegrityError
+
+    class _FakeFkOrig(Exception):
+        def __str__(self) -> str:
+            return "insert or update on table \"documents\" violates foreign key constraint \"documents_knowledge_base_id_fkey\""
+
+    fake_err = IntegrityError("INSERT", {}, _FakeFkOrig())
+    with patch(
+        "api.routes.knowledge._worker_is_alive",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "services.rag_service.RAGService.create_document_record",
+        new=AsyncMock(side_effect=fake_err),
+    ):
+        response = await async_client.post(
+            f"/api/knowledge/upload?knowledge_base_id={kb.id}",
+            files=[_fake_upload(b"fk-violation-bytes", "fk.txt")],
+        )
+    assert response.status_code == 500, response.text
