@@ -284,20 +284,27 @@ async def test_document_progress_stage_refreshes_ttl():
 
 @pytest.mark.unit
 async def test_document_progress_pages_clamps_and_refreshes_ttl():
-    """set_pages must clamp `current` into [0, total] and refresh TTL."""
+    """set_pages must clamp `current` into [0, total] and refresh TTL.
+
+    Each sub-case uses ``reset_mock()`` so a silent-skip regression in
+    one clamp direction cannot be masked by the next correct call's
+    ``assert_awaited_with`` (which only sees the latest call).
+    """
     redis = AsyncMock()
     progress = DocumentProgress(redis, doc_id=7)
 
     await progress.set_pages(current=5, total=10)
-    redis.set.assert_awaited_with(_progress_key(7), "5/10", ex=DEFAULT_TTL_S)
+    redis.set.assert_awaited_once_with(_progress_key(7), "5/10", ex=DEFAULT_TTL_S)
+    redis.set.reset_mock()
 
     # Clamp negative current to 0
     await progress.set_pages(current=-3, total=10)
-    redis.set.assert_awaited_with(_progress_key(7), "0/10", ex=DEFAULT_TTL_S)
+    redis.set.assert_awaited_once_with(_progress_key(7), "0/10", ex=DEFAULT_TTL_S)
+    redis.set.reset_mock()
 
     # Clamp overshoot current to total
     await progress.set_pages(current=15, total=10)
-    redis.set.assert_awaited_with(_progress_key(7), "10/10", ex=DEFAULT_TTL_S)
+    redis.set.assert_awaited_once_with(_progress_key(7), "10/10", ex=DEFAULT_TTL_S)
 
 
 @pytest.mark.unit

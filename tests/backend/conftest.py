@@ -61,10 +61,26 @@ def _register_postgres_shim_udfs(dbapi_conn, connection_record):
     real Postgres fixture when available). What these shims buy us is:
     unit tests exercising the code path can run without the queries
     throwing `no such function` and aborting transactions.
+
+    **Known blind spot:** the shim does not validate the ``config`` arg
+    to ``to_tsvector``. A production regression that passes a wrong
+    config value (None, empty, or an unknown language) will still pass
+    unit tests here because SQLite never looks at it. Catch those with
+    a ``@pytest.mark.database`` integration test running against real
+    Postgres.
     """
     def _to_tsvector(config: str | None, content: str | None) -> str:
         # Real to_tsvector returns a tsvector; for SQLite we just keep the
         # content as-is so downstream assertions on row existence still work.
+        # We do sanity-check the config so completely-empty arg regressions
+        # fail loudly rather than silently masking as "no rows matched".
+        if config is None or config == "":
+            raise ValueError(
+                "to_tsvector(config=<empty>): call sites must pass a non-empty "
+                "FTS config (e.g. 'german'). A None/empty config indicates a "
+                "regression in the caller — the SQLite shim cannot validate "
+                "language-level correctness, only presence."
+            )
         return content or ""
 
     try:

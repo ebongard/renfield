@@ -326,11 +326,21 @@ class RAGService:
     ) -> Document:
         """Back-compat wrapper: create the Document row + process inline.
 
-        Pre-#388 behaviour. Still used by the legacy upload path (while
-        ``DOCUMENT_WORKER_ENABLED`` is false), the chat-upload routes, and
-        ``reindex_document``. In the worker world these are two separate
-        steps: the upload endpoint calls ``create_document_record`` and
-        enqueues; the worker calls ``process_existing_document``.
+        Used by the legacy upload path (while ``DOCUMENT_WORKER_ENABLED``
+        is false), the chat-upload routes, and ``reindex_document``. In
+        the worker world these are two separate steps: the upload
+        endpoint calls ``create_document_record`` and enqueues; the
+        worker calls ``process_existing_document``.
+
+        **Lifecycle note.** The returned Document is identical in shape
+        and final state to what the pre-split implementation produced.
+        Internally, however, the row now passes through two commits
+        (``pending`` → ``processing`` → ``completed``/``failed``)
+        instead of one (``processing`` → ``completed``/``failed``).
+        External observers polling mid-ingest may briefly see
+        ``status=pending`` where they previously would have seen
+        ``processing``. This is intentional: the same three-state
+        lifecycle serves both inline and worker paths.
         """
         doc = await self.create_document_record(
             file_path=file_path,
