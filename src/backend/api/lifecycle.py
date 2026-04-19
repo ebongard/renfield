@@ -585,4 +585,11 @@ async def lifespan(app: "FastAPI"):
     # client singletons MCP was calling during its shutdown).
     await run_hooks("shutdown_finalize", app=app)
 
+    # Close the shared Redis client used by the knowledge routes (#388).
+    try:
+        from services.redis_client import close_redis
+        await close_redis()
+    except Exception as e:  # pragma: no cover — defensive cleanup
+        logger.warning(f"redis close failed: {e}")
+
     logger.info("✅ Shutdown complete")

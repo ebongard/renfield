@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 import aiofiles
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,8 +19,76 @@ from models.database import Document, KBPermission, KnowledgeBase, User
 from models.permissions import Permission, has_permission
 from services.auth_service import get_optional_user
 from services.database import get_db
+from services.progress import DocumentProgress
 from services.rag_service import RAGService
+from services.redis_client import get_redis
+from services.task_queue import DocumentTaskQueue
 from utils.config import settings
+
+# Worker liveness key. Written every 30 s by the document-worker pod with
+# a 90 s TTL. If missing when the flag is on, we 503 the upload rather than
+# enqueue into a stream nobody's consuming.
+_WORKER_HEARTBEAT_KEY = "renfield:worker:document:heartbeat"
+
+
+async def _worker_is_alive() -> bool:
+    """Check the Redis heartbeat key. Returns True if a worker has
+    refreshed it within the TTL window."""
+    redis = get_redis()
+    try:
+        value = await redis.get(_WORKER_HEARTBEAT_KEY)
+    except Exception as e:
+        # Redis outage masks the worker's real state; treat as dead so we
+        # fail loudly rather than silently enqueue into a broken Redis.
+        logger.warning(f"heartbeat check failed: {e}; treating worker as unavailable")
+        return False
+    return value is not None
+
+
+async def _augment_with_progress(
+    doc: Document,
+    resp_kwargs: dict,
+    *,
+    include_queue_position: bool,
+) -> None:
+    """Populate the new #388 progress fields on a DocumentResponse payload.
+
+    Reads stage + pages from DocumentProgress (Redis), and — only for rows
+    in pending state — computes a 1-indexed queue position via the
+    DocumentTaskQueue's pending count. Mutates ``resp_kwargs`` in place.
+
+    Degrades silently on Redis errors: the row still renders, just without
+    live progress. We don't want a stale Redis to 500 the docs list.
+    """
+    if not settings.document_worker_enabled:
+        # Legacy inline path never wrote these keys; skip the round-trip.
+        return
+
+    redis = get_redis()
+    try:
+        progress = DocumentProgress(redis, doc.id)
+        live = await progress.read()
+        if live.get("stage"):
+            resp_kwargs["stage"] = live["stage"]
+        if live.get("pages"):
+            resp_kwargs["pages"] = live["pages"]
+    except Exception as e:
+        logger.warning(f"progress read failed for doc {doc.id}: {e}")
+
+    if include_queue_position and doc.status == "pending":
+        try:
+            queue = DocumentTaskQueue(redis_client=redis)
+            pending = await queue.pending_count()
+            # Approximation: the user's doc is somewhere in the PEL/stream;
+            # without tracking entry-ids we report total backlog + 1 as an
+            # upper-bound "your doc is at most this far back". The UI shows
+            # "Platz <n>" in the badge — directional not exact.
+            if pending > 0:
+                resp_kwargs["queue_position"] = pending
+            else:
+                resp_kwargs["queue_position"] = 1
+        except Exception as e:
+            logger.warning(f"queue position read failed for doc {doc.id}: {e}")
 
 # Import all schemas from separate file
 from .knowledge_schemas import (
@@ -157,6 +225,7 @@ async def get_user_kb_permission(
 
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
+    response: Response,
     file: UploadFile = File(...),
     knowledge_base_id: int | None = Query(None, description="Knowledge Base ID"),
     force_ocr: bool = Query(False, description="Force full-page OCR (ignores embedded text). Useful for scanned PDFs with garbled text layer."),
@@ -267,7 +336,69 @@ async def upload_document(
         logger.error(f"Fehler beim Speichern der Datei: {e}")
         raise HTTPException(status_code=500, detail=f"Fehler beim Speichern: {e!s}")
 
-    # Dokument verarbeiten und indexieren
+    # Branch on DOCUMENT_WORKER_ENABLED (#388).
+    #
+    # Worker path: create the Document row synchronously (cheap INSERT so
+    # the client immediately has an id to poll), enqueue on the Redis
+    # Stream, return 202. The worker pod runs Docling out-of-process.
+    #
+    # Legacy inline path: kept unchanged so the flag can be flipped off
+    # at any time if the worker deployment is having trouble.
+    if settings.document_worker_enabled:
+        if not await _worker_is_alive():
+            # Nobody's consuming the stream — don't silently queue into the
+            # void. Clean up the saved file so the next retry doesn't race
+            # with an orphan on disk, and surface a 503 with a retry CTA.
+            if file_path.exists():
+                try:
+                    os.remove(file_path)
+                except OSError as e:
+                    logger.warning(f"failed to clean up orphan upload {file_path}: {e}")
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "message": "Document worker unavailable",
+                    "retryable": True,
+                },
+            )
+
+        try:
+            doc = await rag.create_document_record(
+                file_path=str(file_path),
+                knowledge_base_id=knowledge_base_id,
+                filename=file.filename,
+                file_hash=file_hash,
+            )
+        except Exception as e:
+            if file_path.exists():
+                os.remove(file_path)
+            logger.error(f"Fehler beim Anlegen des Document-Records: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
+
+        queue = DocumentTaskQueue(redis_client=get_redis())
+        await queue.enqueue({
+            "document_id": doc.id,
+            "force_ocr": force_ocr,
+            "user_id": user.id if user else None,
+        })
+
+        response.status_code = 202
+        return DocumentResponse(
+            id=doc.id,
+            filename=doc.filename,
+            title=doc.title,
+            file_type=doc.file_type,
+            file_size=doc.file_size,
+            status=doc.status,  # "pending"
+            error_message=None,
+            chunk_count=0,
+            page_count=None,
+            knowledge_base_id=doc.knowledge_base_id,
+            created_at=doc.created_at.isoformat() if doc.created_at else "",
+            processed_at=None,
+        )
+
+    # Legacy inline path
     try:
         document = await rag.ingest_document(
             str(file_path),
@@ -338,23 +469,84 @@ async def list_documents(
         offset=offset
     )
 
-    return [
-        DocumentResponse(
-            id=doc.id,
-            filename=doc.filename,
-            title=doc.title,
-            file_type=doc.file_type,
-            file_size=doc.file_size,
-            status=doc.status,
-            error_message=doc.error_message,
-            chunk_count=doc.chunk_count or 0,
-            page_count=doc.page_count,
-            knowledge_base_id=doc.knowledge_base_id,
-            created_at=doc.created_at.isoformat() if doc.created_at else "",
-            processed_at=doc.processed_at.isoformat() if doc.processed_at else None
-        )
-        for doc in documents
-    ]
+    responses: list[DocumentResponse] = []
+    for doc in documents:
+        kwargs = _doc_to_response_kwargs(doc)
+        # Queue position only meaningful on single-doc + batch polling
+        # endpoints; the list view is a bulk screen and we don't want to
+        # spam Redis with XPENDING on every listed row.
+        await _augment_with_progress(doc, kwargs, include_queue_position=False)
+        responses.append(DocumentResponse(**kwargs))
+    return responses
+
+
+def _doc_to_response_kwargs(doc: Document) -> dict:
+    """Common Document → DocumentResponse mapping. Lives in one place so
+    new fields land consistently across single-doc, list, and batch
+    endpoints."""
+    return {
+        "id": doc.id,
+        "filename": doc.filename,
+        "title": doc.title,
+        "file_type": doc.file_type,
+        "file_size": doc.file_size,
+        "status": doc.status,
+        "error_message": doc.error_message,
+        "chunk_count": doc.chunk_count or 0,
+        "page_count": doc.page_count,
+        "knowledge_base_id": doc.knowledge_base_id,
+        "created_at": doc.created_at.isoformat() if doc.created_at else "",
+        "processed_at": doc.processed_at.isoformat() if doc.processed_at else None,
+    }
+
+
+@router.get("/documents/batch", response_model=list[DocumentResponse])
+async def get_documents_batch(
+    ids: str = Query(..., description="Comma-separated list of document ids (e.g. ?ids=1,2,3)"),
+    rag: RAGService = Depends(get_rag_service),
+    user: User | None = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Batch lookup of document status + live progress.
+
+    Added for the polling frontend (#388): one request per poll interval
+    instead of one-per-in-flight-doc. Permission check mirrors the single
+    GET endpoint; documents the caller can't read are silently dropped.
+    """
+    try:
+        id_list = [int(x) for x in ids.split(",") if x.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers")
+    if not id_list:
+        return []
+    # Cap the batch to avoid pathological URL-length / N+1 queries. 50 is
+    # well above realistic per-user in-flight upload counts.
+    if len(id_list) > 50:
+        raise HTTPException(status_code=400, detail="Batch too large (max 50 ids)")
+
+    result = await db.execute(select(Document).where(Document.id.in_(id_list)))
+    documents = result.scalars().all()
+
+    responses: list[DocumentResponse] = []
+    for doc in documents:
+        # Per-doc permission check
+        if settings.auth_enabled:
+            if not user:
+                # Auth enforced at the route level for list endpoints; this
+                # is belt-and-braces. Skip the row rather than 401ing the
+                # whole batch.
+                continue
+            if doc.knowledge_base_id:
+                kb_res = await db.execute(
+                    select(KnowledgeBase).where(KnowledgeBase.id == doc.knowledge_base_id)
+                )
+                kb = kb_res.scalar_one_or_none()
+                if kb and not await check_kb_access(kb, user, "read", db):
+                    continue
+        kwargs = _doc_to_response_kwargs(doc)
+        await _augment_with_progress(doc, kwargs, include_queue_position=True)
+        responses.append(DocumentResponse(**kwargs))
+    return responses
 
 
 @router.get("/documents/{document_id}", response_model=DocumentResponse)
@@ -381,20 +573,9 @@ async def get_document(
             if kb and not await check_kb_access(kb, user, "read", db):
                 raise HTTPException(status_code=403, detail="No access to this document")
 
-    return DocumentResponse(
-        id=document.id,
-        filename=document.filename,
-        title=document.title,
-        file_type=document.file_type,
-        file_size=document.file_size,
-        status=document.status,
-        error_message=document.error_message,
-        chunk_count=document.chunk_count or 0,
-        page_count=document.page_count,
-        knowledge_base_id=document.knowledge_base_id,
-        created_at=document.created_at.isoformat() if document.created_at else "",
-        processed_at=document.processed_at.isoformat() if document.processed_at else None
-    )
+    kwargs = _doc_to_response_kwargs(document)
+    await _augment_with_progress(document, kwargs, include_queue_position=True)
+    return DocumentResponse(**kwargs)
 
 
 @router.delete("/documents/{document_id}")

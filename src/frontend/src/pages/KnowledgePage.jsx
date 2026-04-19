@@ -24,6 +24,9 @@ import { useConfirmDialog } from '../components/ConfirmDialog';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import StatusBadge from '../components/knowledge/StatusBadge';
+import DuplicateDialog from '../components/knowledge/DuplicateDialog';
+import { useDocumentPolling } from '../hooks/useDocumentPolling';
 
 export default function KnowledgePage() {
   const { t } = useTranslation();
@@ -48,6 +51,13 @@ export default function KnowledgePage() {
   // New Knowledge Base state
   const [showNewKbModal, setShowNewKbModal] = useState(false);
   const [newKbName, setNewKbName] = useState('');
+
+  // Duplicate-upload dialog (#388): surface 409 as a real modal with an
+  // anchor to the existing document, not a toast.
+  const [duplicate, setDuplicate] = useState(null);
+
+  // Per-row expansion state for showing raw `error_message` on failed docs.
+  const [expandedErrors, setExpandedErrors] = useState({});
   const [newKbDescription, setNewKbDescription] = useState('');
 
   // Move / Bulk selection state
@@ -96,13 +106,30 @@ export default function KnowledgePage() {
     loadAll();
   }, [loadDocuments, loadKnowledgeBases, loadStats]);
 
-  // File upload handler
-  const handleUpload = async (event) => {
-    const file = event.target.files[0];
+  // Polling for in-flight uploads (#388). Populated from 202 responses
+  // below; each poll refreshes the tracked docs, and on terminal state
+  // we trigger a list reload so the row updates in place.
+  const { activeDocs, track: trackDocument } = useDocumentPolling({
+    onResolved: async () => {
+      await loadDocuments();
+      await loadStats();
+    },
+  });
+
+  // Last file the user tried to upload, so the 503-toast retry CTA can
+  // re-submit without re-opening the file picker.
+  const [pendingRetryFile, setPendingRetryFile] = useState(null);
+
+  // File upload handler — handles both 200 (legacy inline) and 202
+  // (worker-enabled) responses. On 202 we track the doc for polling and
+  // surface a "queued, processing soon" toast; on 200 we just reload.
+  const handleUpload = async (eventOrFile) => {
+    const file = eventOrFile?.target?.files?.[0] || eventOrFile;
     if (!file) return;
 
     setUploading(true);
     setUploadProgress(t('knowledge.processing', { filename: file.name }));
+    setPendingRetryFile(file);
 
     const formData = new FormData();
     formData.append('file', file);
@@ -112,23 +139,60 @@ export default function KnowledgePage() {
         ? { knowledge_base_id: selectedKnowledgeBase }
         : {};
 
-      await apiClient.post('/api/knowledge/upload', formData, {
+      const response = await apiClient.post('/api/knowledge/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
-        params
+        params,
       });
 
-      setUploadProgress(t('knowledge.uploadSuccess'));
-      await loadDocuments();
-      await loadStats();
+      if (response.status === 202) {
+        setUploadProgress(t('knowledge.uploadQueued'));
+        trackDocument(response.data);
+        setPendingRetryFile(null);
+        await loadDocuments();
+      } else {
+        setUploadProgress(t('knowledge.uploadSuccess'));
+        setPendingRetryFile(null);
+        await loadDocuments();
+        await loadStats();
+      }
 
-      setTimeout(() => setUploadProgress(null), 2000);
+      setTimeout(() => setUploadProgress(null), 2500);
     } catch (error) {
-      console.error('Upload error:', error);
-      setUploadProgress(`${t('knowledge.errorLabel')}: ${error.response?.data?.detail || t('knowledge.uploadFailed')}`);
-      setTimeout(() => setUploadProgress(null), 5000);
+      const status = error.response?.status;
+      const detail = error.response?.data?.detail;
+
+      if (status === 409 && detail?.existing_document) {
+        setDuplicate(detail.existing_document);
+        setUploadProgress(null);
+      } else if (status === 503) {
+        setUploadProgress(t('knowledge.workerUnavailable'));
+        // keep setTimeout longer for retry CTA; cleared on retry or dismiss
+        setTimeout(() => setUploadProgress(null), 10000);
+      } else if (status === 413) {
+        const maxMb = error.response?.headers?.['x-max-mb'] || '';
+        setUploadProgress(t('knowledge.fileTooLarge', { maxMb }));
+        setTimeout(() => setUploadProgress(null), 5000);
+      } else if (status === 400 && typeof detail === 'string' && detail.toLowerCase().includes('format')) {
+        setUploadProgress(t('knowledge.formatNotSupported', { allowed: '' }) + ' ' + detail);
+        setTimeout(() => setUploadProgress(null), 6000);
+      } else {
+        console.error('Upload error:', error);
+        const msg = typeof detail === 'string' ? detail : t('knowledge.serverError');
+        setUploadProgress(`${t('knowledge.errorLabel')}: ${msg}`);
+        setTimeout(() => setUploadProgress(null), 6000);
+      }
     } finally {
       setUploading(false);
-      event.target.value = '';
+      if (eventOrFile?.target) eventOrFile.target.value = '';
+    }
+  };
+
+  // Retry the last upload that bounced with 503.
+  const handleRetryUpload = () => {
+    if (pendingRetryFile) {
+      const file = pendingRetryFile;
+      setPendingRetryFile(null);
+      handleUpload(file);
     }
   };
 
@@ -289,19 +353,20 @@ export default function KnowledgePage() {
     );
   };
 
-  // Status icon helper
+  // Status icon helper — retained for callers that still render just the
+  // icon (e.g. the Stats card). The document row uses <StatusBadge>.
   const getStatusIcon = (status) => {
     switch (status) {
       case 'completed':
-        return <CheckCircle className="w-5 h-5 text-green-500" />;
+        return <CheckCircle className="w-5 h-5 text-green-500" aria-hidden="true" />;
       case 'processing':
-        return <Loader className="w-5 h-5 text-blue-500 animate-spin" />;
+        return <Loader className="w-5 h-5 text-blue-500 animate-spin" aria-hidden="true" />;
       case 'pending':
-        return <Clock className="w-5 h-5 text-yellow-500" />;
+        return <Clock className="w-5 h-5 text-gray-500" aria-hidden="true" />;
       case 'failed':
-        return <XCircle className="w-5 h-5 text-red-500" />;
+        return <XCircle className="w-5 h-5 text-red-500" aria-hidden="true" />;
       default:
-        return <AlertCircle className="w-5 h-5 text-gray-500" />;
+        return <AlertCircle className="w-5 h-5 text-gray-500" aria-hidden="true" />;
     }
   };
 
@@ -470,13 +535,25 @@ export default function KnowledgePage() {
         {uploadProgress && (
           <Alert
             variant={
-              uploadProgress.includes('Fehler') ? 'error'
-              : uploadProgress.includes('Erfolgreich') ? 'success'
+              uploadProgress.includes('Fehler') || uploadProgress.includes(t('knowledge.workerUnavailable').slice(0, 20)) ? 'error'
+              : uploadProgress === t('knowledge.uploadQueued') || uploadProgress.includes('Erfolgreich') ? 'success'
               : 'info'
             }
             className="mt-4"
+            role={uploadProgress.includes('Fehler') ? 'alert' : 'status'}
           >
-            {uploadProgress}
+            <div className="flex items-center justify-between gap-3">
+              <span>{uploadProgress}</span>
+              {pendingRetryFile && uploadProgress === t('knowledge.workerUnavailable') && (
+                <button
+                  type="button"
+                  onClick={handleRetryUpload}
+                  className="btn-secondary !py-1 !px-3 text-sm min-h-[44px] sm:min-h-0"
+                >
+                  {t('knowledge.retry')}
+                </button>
+              )}
+            </div>
           </Alert>
         )}
       </div>
@@ -621,8 +698,22 @@ export default function KnowledgePage() {
                 <span className="text-sm text-gray-500 dark:text-gray-400">{t('common.all')}</span>
               </div>
             )}
-            {documents.map((doc) => (
-              <div key={doc.id} className="group card">
+            {documents.map((staleDoc) => {
+              // Overlay live polling data on top of the list-fetched row so
+              // stage + queue_position + pages update every 2s without a
+              // full list reload. Once the doc resolves (completed/failed)
+              // the polling hook drops it from activeDocs and onResolved
+              // triggers a list reload — so stale data is replaced with
+              // the authoritative row shortly after.
+              const doc = activeDocs[staleDoc.id]
+                ? { ...staleDoc, ...activeDocs[staleDoc.id] }
+                : staleDoc;
+              return (
+              <div
+                key={doc.id}
+                id={`doc-${doc.id}`}
+                className="group card transition-shadow"
+              >
                 <div className="flex items-start space-x-4">
                   {knowledgeBases.length > 0 && (
                     <div className="mt-2">
@@ -652,24 +743,30 @@ export default function KnowledgePage() {
                     <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                       Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
                     </p>
-                    {doc.error_message && (
-                      <p className="text-xs text-red-600 dark:text-red-400 mt-1">
-                        {t('knowledge.errorLabel')}: {doc.error_message}
-                      </p>
+                    {doc.status === 'failed' && doc.error_message && (
+                      <div className="mt-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setExpandedErrors((prev) => ({ ...prev, [doc.id]: !prev[doc.id] }))
+                          }
+                          className="text-xs text-red-600 dark:text-red-400 underline hover:no-underline min-h-[44px] sm:min-h-0"
+                          aria-expanded={Boolean(expandedErrors[doc.id])}
+                        >
+                          {expandedErrors[doc.id]
+                            ? t('knowledge.hideDetails')
+                            : t('knowledge.showDetails')}
+                        </button>
+                        {expandedErrors[doc.id] && (
+                          <pre className="mt-1 text-xs text-red-600 dark:text-red-400 whitespace-pre-wrap break-words font-mono">
+                            {doc.error_message}
+                          </pre>
+                        )}
+                      </div>
                     )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-2">
-                      {getStatusIcon(doc.status)}
-                      <Badge color={
-                        doc.status === 'completed' ? 'green'
-                        : doc.status === 'failed' ? 'red'
-                        : doc.status === 'processing' ? 'blue'
-                        : 'yellow'
-                      }>
-                        {doc.status}
-                      </Badge>
-                    </div>
+                    <StatusBadge doc={doc} filename={doc.filename} />
                     <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
                       {knowledgeBases.length > 0 && (
                         <div className="relative">
@@ -706,12 +803,31 @@ export default function KnowledgePage() {
                   </div>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </>
         )}
       </div>
 
       {ConfirmDialogComponent}
+      {duplicate && (
+        <DuplicateDialog
+          existing={duplicate}
+          onClose={() => setDuplicate(null)}
+          onJump={(id) => {
+            // Jump to the existing doc by scrolling its row into view and
+            // briefly highlighting it. The row's anchor id matches `doc-{id}`.
+            const el = document.getElementById(`doc-${id}`);
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.classList.add('ring-2', 'ring-primary-400');
+              setTimeout(() => {
+                el.classList.remove('ring-2', 'ring-primary-400');
+              }, 2500);
+            }
+          }}
+        />
+      )}
 
       {/* New Knowledge Base Modal */}
       {showNewKbModal && (

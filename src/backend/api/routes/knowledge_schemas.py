@@ -54,6 +54,15 @@ class KBPermissionResponse(BaseModel):
 
 # --- Document Models ---
 
+
+class DocumentProgressPages(BaseModel):
+    """Current/total page counters for paginated inputs (PDF, DOCX).
+    Absent on non-paginated content (TXT, PNG)."""
+
+    current: int
+    total: int
+
+
 class DocumentResponse(BaseModel):
     id: int
     filename: str
@@ -67,6 +76,12 @@ class DocumentResponse(BaseModel):
     knowledge_base_id: int | None
     created_at: str
     processed_at: str | None
+    # Live progress fields (#388). All three default to None so legacy
+    # callers that don't augment the response (flag off path) still
+    # serialize cleanly.
+    stage: str | None = None
+    pages: DocumentProgressPages | None = None
+    queue_position: int | None = None
 
 
 # --- Search Models ---
