@@ -3,7 +3,7 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -153,6 +153,19 @@ class KnowledgeBase(Base):
 class Document(Base):
     """Hochgeladene Dokumente (Metadaten)"""
     __tablename__ = "documents"
+
+    # Unique on (file_hash, knowledge_base_id) closes the concurrent-upload
+    # race: two requests that both pass the SELECT-based duplicate check
+    # can race to INSERT — this constraint converts the loser into an
+    # IntegrityError which the route maps to 409. Migration c3d4e5f6g7h8
+    # uses NULLS NOT DISTINCT on Postgres so the global-RAG case
+    # (knowledge_base_id IS NULL) is also covered.
+    __table_args__ = (
+        UniqueConstraint(
+            "file_hash", "knowledge_base_id",
+            name="uq_documents_file_hash_kb",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=True, index=True)

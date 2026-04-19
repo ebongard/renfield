@@ -14,6 +14,7 @@ import aiofiles
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, Response, UploadFile
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import Document, KBPermission, KnowledgeBase, User
@@ -372,6 +373,45 @@ async def upload_document(
             knowledge_base_id=knowledge_base_id,
             filename=file.filename,
             file_hash=file_hash,
+        )
+    except IntegrityError:
+        # Concurrent-upload race: someone else committed the same
+        # (file_hash, knowledge_base_id) pair between our SELECT-based
+        # dup check and this INSERT. Convert to the same 409 response
+        # the pre-insert check produces so the frontend just opens the
+        # duplicate dialog either way. Clean up the orphan file and
+        # fetch the winning row for the payload.
+        if file_path.exists():
+            try:
+                os.remove(file_path)
+            except OSError as cleanup_err:
+                logger.warning(f"failed to clean up orphan upload {file_path}: {cleanup_err}")
+        await rag.db.rollback()
+        winner_q = await rag.db.execute(
+            select(Document).where(
+                Document.file_hash == file_hash,
+                Document.knowledge_base_id == knowledge_base_id,
+            )
+        )
+        winner = winner_q.scalar_one_or_none()
+        logger.warning(
+            f"Concurrent duplicate upload detected for hash {file_hash[:16]}... "
+            f"(kb={knowledge_base_id}); returning 409 with winner id={winner.id if winner else 'unknown'}"
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Dieses Dokument existiert bereits in der Knowledge Base",
+                "existing_document": {
+                    "id": winner.id if winner else None,
+                    "filename": winner.filename if winner else file.filename,
+                    "uploaded_at": (
+                        winner.created_at.isoformat()
+                        if winner and winner.created_at
+                        else None
+                    ),
+                },
+            },
         )
     except Exception as e:
         if file_path.exists():
