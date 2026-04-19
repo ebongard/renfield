@@ -5,13 +5,23 @@ backend pod into a dedicated worker deployment.
 
 Revision history:
 - v1 (2026-04-18): initial draft, inline feature flag, hostPath NFS, existing Redis-list TaskQueue.
-- **v2 (2026-04-19)**: pressure-tested in `/plan-eng-review`. Six changes incorporated:
-  (1) TaskQueue replaced by Redis Streams for at-least-once durability;
+- v2 (2026-04-19, morning): pressure-tested in `/plan-eng-review`. Six changes:
+  (1) TaskQueue → Redis Streams for at-least-once durability;
   (2) shared storage via NFS-CSI driver, not hostPath;
-  (3) worker heartbeat gates the upload route's fast-path;
-  (4) test matrix made mandatory (worker-crash recovery is blocking);
+  (3) worker heartbeat gates the upload route;
+  (4) test matrix mandatory (worker-crash recovery is blocking);
   (5) frontend polling ships in the cutover PR, not a follow-up;
   (6) worker entrypoint audited for module isolation.
+- **v3 (2026-04-19, afternoon)**: pressure-tested in `/plan-design-review`.
+  Eight UX decisions adopted:
+  (1) reuse existing `pending` status, don't invent `queued`;
+  (2) full polling strategy (1 s start, 10 s cap, 30 min timeout, Visibility API, AbortController);
+  (3) full DE copy map for all response states;
+  (4) tab-title mutation + localStorage optimistic persistence;
+  (5) per-page progress via stage + page counters;
+  (6) queue-position always shown when ≥ 1;
+  (7) full A11y spec (ARIA live, progressbar, focus management, contrast);
+  (8) cutover PR split into C1 (minimal cutover) + C2 (polish).
 
 ## Status
 
@@ -29,19 +39,19 @@ Revision history:
 - Isolates a heavyweight, spiky memory consumer from the steady-state API path.
 - Survives `WHISPER_MODEL` being bumped to `medium`/`large-v3` without re-budgeting.
 - Lets document ingestion scale horizontally without scaling FastAPI replicas.
-- Aligns with the pattern already used for Ollama (separate pods behind a
-  Service) and uses the Redis instance already in the cluster.
+- Aligns with the pattern already used for Ollama and uses the Redis instance
+  already in the cluster.
 
 ## Architecture target
 
 ```
-    upload request                                     poll / WS notify
+    upload request                                     poll / tab badge
     ─────────────►  ┌────────────────┐               ◄──────────────────
                     │    Backend     │                       Client
                     │   (FastAPI)    │
                     └────────┬───────┘
      1. create Doc          │
-        record(queued)      │   4. check worker heartbeat
+        record(pending)     │   4. check worker heartbeat
      2. XADD on stream      │      → 503 if stale (> 90s)
                             ▼
                     ┌───────────────┐              ┌────────────────┐
@@ -49,20 +59,22 @@ Revision history:
                     │ stream+group: │◄──XREADGROUP─│  (1 replica)   │
                     │ renfield:doc  │──XACK──      │                │
                     │ heartbeat key │              │   Docling      │
-                    └───────┬───────┘              │   EasyOCR      │
-                            │ heartbeat            │   → embedder   │
-                            │ SET renfield:        │     (Ollama)   │
-                            │ worker:hb EX 90s     └────────┬───────┘
+                    │ stage key     │              │   EasyOCR      │
+                    │ progress key  │──SET─────────│   → embedder   │
+                    └───────┬───────┘              │     (Ollama)   │
+                            │ heartbeat            └────────┬───────┘
+                            │ SET renfield:                 │
+                            │ worker:hb EX 90s              │
                             │  ◄─────────────────── every 30s
                             │
                             │  read/write PDFs
                             ▼
                     ┌──────────────────────┐         ┌──────────────┐
                     │ RWX PVC via NFS-CSI  │         │ Postgres DB  │
-                    │ uploads-shared       │         │ chunks +     │
+                    │ renfield-uploads     │         │ chunks +     │
                     │ NFS: 192.168.1.9:    │         │ embeddings   │
-                    │  /mnt/data/          │         └──────────────┘
-                    │  renfield-uploads    │
+                    │ /mnt/data/k8s/       │         └──────────────┘
+                    │ renfield/uploads     │
                     └──────────────────────┘
 ```
 
@@ -79,14 +91,14 @@ request must eventually succeed or fail visibly.
 Streams give us:
 
 - Single atomic `XADD` (no LPUSH+SET race).
-- `XREADGROUP` reads without removing — the entry stays in the Pending Entries
+- `XREADGROUP` reads without removing; entry stays in the Pending Entries
   List (PEL) until ACKed.
 - `XACK` on successful completion removes it from the PEL.
-- Worker crash → entry stays pending → next worker (or the same worker after
-  restart) reads it via `XPENDING` + `XCLAIM` after a visibility timeout.
+- Worker crash → entry stays pending → next worker (or the same after restart)
+  reads it via `XPENDING` + `XCLAIM` after a visibility timeout.
 - Consumer-group semantics for free horizontal scale (post-MVP).
 
-No Celery needed. `redis.asyncio` already ships XREADGROUP support.
+No Celery. `redis.asyncio` already ships XREADGROUP support.
 
 Changes in `services/task_queue.py`:
 
@@ -101,88 +113,62 @@ class DocumentTaskQueue:
     read_one(block_ms=5000)  → XREADGROUP BLOCK 5000 COUNT 1
     ack(entry_id)            → XACK
     reclaim_stale()          → XPENDING + XCLAIM for entries idle > visibility_s
+    xlen_pending()           → XLEN + PEL depth for queue-position calculation
     close()
 ```
 
-The old `TaskQueue` class stays for any non-document fire-and-forget uses
-(none currently, but `ensure_admin_user` or cleanup scheduling might adopt
-it later). We rename the module carefully to avoid breaking imports.
+The old `TaskQueue` class stays for any non-document fire-and-forget uses.
 
 ## Shared uploads storage — NFS-CSI driver
 
-The uploads directory must be visible to both the backend (for save) and the
-worker (for read). Longhorn is `ReadWriteOnce` — multi-node access is not
-possible. `hostPath` was ruled out: `/mnt/data/renfield-uploads` is **not**
-exported from `192.168.1.9` today (only `/mnt/data/llm` is), and any
-hostPath-based solution requires per-node manual mount management that
-silently breaks on node replacement. That violates our "no per-host patches"
-rule.
+Install kubernetes-csi/csi-driver-nfs. RWX PVCs are then declarative; the
+driver mounts pod-local on-demand. Node replacement is transparent.
 
-### Chosen approach: CSI Driver NFS
+**Server-side state** (already verified 2026-04-19):
 
-Install the official Kubernetes CSI driver for NFS (kubernetes-csi/csi-driver-nfs).
-This is a standard, well-maintained k8s addon that speaks to any NFSv3/v4
-server and exposes ReadWriteMany PersistentVolumes declaratively.
-
-**Server-side prep** (one-time, on `192.168.1.9`):
-
-```
-sudo mkdir /mnt/data/renfield-uploads
-sudo chown nobody:nogroup /mnt/data/renfield-uploads
-sudo chmod 0770 /mnt/data/renfield-uploads
-# /etc/exports — add a line for each worker node subnet:
-/mnt/data/renfield-uploads  192.168.1.0/24(rw,sync,no_subtree_check,no_root_squash)
-sudo exportfs -ra
-```
+- `/mnt/data/k8s` is exported `*` from `192.168.1.9` and world-writable
+  (`drwxrwxrwx`). Subdirectories created by the CSI provisioner land as
+  `nobody:root 755`, which backend + worker (both container-root) can
+  read/write through root_squash.
+- Subdirectory convention: `/mnt/data/k8s/<namespace>/<purpose>/`.
+  For Renfield: `/mnt/data/k8s/renfield/uploads/` and
+  `/mnt/data/k8s/renfield/cache-home/`.
 
 **Cluster-side** (tracked in `../private_k8s/nfs-csi/`):
 
-1. Install the driver via the upstream manifests (vendor pinned copy under
-   `../private_k8s/nfs-csi/driver-v4.x.y.yaml`).
-2. Create a `StorageClass` `nfs-csi`:
+1. Install csi-driver-nfs v4.13.2 (latest stable, released 2026-04-16).
+2. Two StorageClasses:
    ```yaml
-   apiVersion: storage.k8s.io/v1
-   kind: StorageClass
-   metadata:
-     name: nfs-csi
+   # nfs-csi-renfield-uploads
    provisioner: nfs.csi.k8s.io
    parameters:
      server: 192.168.1.9
-     share: /mnt/data/renfield-uploads
+     share: /mnt/data/k8s/renfield/uploads
    reclaimPolicy: Retain
-   volumeBindingMode: Immediate
-   mountOptions:
-     - nfsvers=4.2
-     - hard
-     - timeo=600
+   mountOptions: [nfsvers=4.2, hard, timeo=600]
    ```
-3. In `k8s/backend.yaml` and `k8s/document-worker.yaml`, mount a
-   `PersistentVolumeClaim` with `accessModes: [ReadWriteMany]` and
-   `storageClassName: nfs-csi` at `/app/data/uploads`.
+3. PVCs in `k8s/` reference these classes with `accessModes: [ReadWriteMany]`.
 
-This puts the NFS mount **inside** the Kubernetes object model. Node
-replacement is transparent — the CSI driver re-attaches on whatever node
-the pod lands on. No `/etc/fstab`, no per-node `mkdir`, no drift.
+The NFS mount lives inside the Kubernetes object model. No `/etc/fstab`, no
+per-node `mkdir`, no drift.
 
 ### Data migration
 
-Existing uploads live on the Longhorn RWO PVC under `/app/data/uploads/`. The
-migration is a one-shot `rsync` executed with the backend in a read-only window:
+Existing uploads live on the Longhorn RWO PVC under `/app/data/uploads/`.
+One-shot rsync with a short read-only window:
 
-1. Create the new NFS-CSI PVC `renfield-uploads-shared`.
-2. Spin up a migrator Job that mounts **both** the old PVC and the new PVC and
-   runs `rsync -a --delete /old/uploads/ /new/uploads/`.
-3. Scale backend to 0 briefly (or set it to respond 503 on `/api/knowledge/upload`
-   during the cutover).
-4. Re-run rsync to capture last-second deltas.
-5. Redeploy backend with the new PVC mounted, worker deployment up, flag flipped.
-6. Keep the old PVC with `reclaimPolicy: Retain` for 30 days in case of rollback.
+1. Create NFS-CSI PVC `renfield-uploads-shared`.
+2. Migrator Job mounts both old + new, runs `rsync -a --delete old/ new/`.
+3. Backend scale-to-0 briefly (or `/api/knowledge/upload` returns 503).
+4. Re-rsync to capture deltas.
+5. Redeploy backend with new PVC, worker up, flag flipped.
+6. Old PVC kept with `reclaimPolicy: Retain` for 30 days.
 
 ## Worker heartbeat gates the upload route
 
-If `DOCUMENT_WORKER_ENABLED=true` but no worker is consuming (e.g. image-pull
-stalled, worker crash-looping, ConfigMap out of sync), the upload endpoint
-would enqueue tasks into a stream no one reads. Users see permanent spinners.
+If `DOCUMENT_WORKER_ENABLED=true` but no worker is consuming (image-pull
+stall, crash-loop, ConfigMap drift), the upload endpoint would enqueue
+tasks into a stream no one reads. Users see permanent spinners.
 
 Solution: worker publishes a liveness key every 30 s:
 
@@ -190,46 +176,178 @@ Solution: worker publishes a liveness key every 30 s:
 SET renfield:worker:document:heartbeat <pod_name> EX 90
 ```
 
-Upload endpoint checks it before enqueuing:
-
-```python
-async def _worker_is_alive(redis) -> bool:
-    return await redis.get("renfield:worker:document:heartbeat") is not None
-```
-
-If the key is missing **and** `DOCUMENT_WORKER_ENABLED=true`, the upload
-endpoint returns `503 Service Unavailable` with a clear message. The client
-can retry. We do **not** fall back to inline — that would silently hide the
-infrastructure outage. Fail loudly, escalate to ops.
-
-If `DOCUMENT_WORKER_ENABLED=false`, the old inline path runs, heartbeat is
-ignored.
+Upload endpoint checks before enqueuing; if missing and the flag is on,
+return **503** with the copy specified below. The client shows a Retry CTA.
+We do **not** fall back to inline — that silently hides the infrastructure
+outage. Fail loudly, escalate to ops.
 
 ## Worker entrypoint — module isolation
 
 `python -m workers.document_processor_worker` must **not** import or boot
-the FastAPI app, or it pulls the MCP client (connecting to 10 servers on
-startup), Whisper, Speechbrain, Ollama clients, the full lifecycle init —
-exactly what we're trying to excise from the worker.
+the FastAPI app. Otherwise it pulls MCP-connect, Whisper, Speechbrain, Ollama
+clients, full lifecycle init — exactly what we're excising from the worker.
 
-The worker module imports only:
+Worker imports only:
 
 - `services.database` (engine + session factory)
-- `services.rag_service` (`RAGService`, specifically the new
-  `process_existing_document` entry point)
+- `services.rag_service` (`RAGService`, `process_existing_document`)
 - `services.document_processor` (Docling)
-- `services.task_queue` (new `DocumentTaskQueue`)
+- `services.task_queue` (`DocumentTaskQueue`)
+- `services.progress` (new, see below)
 - `utils.config.settings`
-- `utils.llm_client.get_embed_client` (Ollama calls from Docling's chunk loop)
+- `utils.llm_client.get_embed_client`
 
 Explicit test: `importlib.import_module("workers.document_processor_worker")`
-must not trigger `main.app` instantiation or MCP-connect.
+must not trigger `main.app` or MCP connect.
+
+## Processing stage + per-page progress
+
+During `process_existing_document`, the worker writes two Redis keys so the
+frontend can show granular progress. Keys are TTL-bound to 30 min to avoid
+leaking state for dead tasks.
+
+```
+renfield:doc:{doc_id}:stage     → "parsing" | "ocr" | "chunking" | "embedding"
+renfield:doc:{doc_id}:progress  → "47/120"  (current/total pages, or "" for non-paginated)
+```
+
+New module `src/backend/services/progress.py`:
+
+```python
+class DocumentProgress:
+    def __init__(self, redis, doc_id: int): ...
+    async def set_stage(self, stage: str) -> None: ...
+    async def set_pages(self, current: int, total: int) -> None: ...
+    async def clear(self) -> None: ...
+    async def read(self) -> dict: ...  # used by GET /api/knowledge/documents/{id}
+```
+
+Docling's `DocumentConverter` already accepts progress callbacks in newer
+versions; worker wires them to `DocumentProgress.set_pages`. Non-paginated
+inputs (TXT, PNG) skip the page counter; stage alone is meaningful.
+
+`GET /api/knowledge/documents/{id}` surfaces both fields alongside `status`:
+
+```json
+{
+  "id": 42,
+  "status": "processing",
+  "stage": "ocr",
+  "pages": { "current": 47, "total": 120 },
+  "queue_position": null,
+  "error_message": null
+}
+```
+
+When status is `pending`: `queue_position` is set to the 1-indexed position in
+the stream (via `XPENDING` + PEL depth). When status transitions to
+`processing`, `queue_position` clears.
+
+## Upload lifecycle UX
+
+This is the complete user-facing contract for the new flow.
+
+### Status taxonomy (reuses existing `pending`)
+
+| Status | Label (DE) | Icon | Color | Meaning |
+|---|---|---|---|---|
+| `pending` | „In Warteschlange" | `Clock` | gray-500 | Enqueued, worker hasn't picked it up |
+| `processing` | „Wird verarbeitet…" | `Loader2` (spin) | primary-500 | Active, with stage + page sub-label |
+| `completed` | „Fertig" | `CheckCircle2` | green-500 | Indexed and searchable |
+| `failed` | „Fehlgeschlagen" | `AlertCircle` | red-500 | Unhandled exception; error_message set |
+
+**No new backend status.** `queued` is not introduced. `pending` (already in
+the frontend's `statusFilters`) covers the enqueued-but-not-yet-read state.
+
+### Sub-labels during `processing`
+
+The badge sub-label reads the `stage` + `pages` fields:
+
+| Stage | Sub-label |
+|---|---|
+| parsing | „Dokument wird gelesen…" |
+| ocr | „Text wird erkannt… Seite `{current}` von `{total}`" (only shown when pages present) |
+| chunking | „Abschnitte werden erstellt…" |
+| embedding | „Wird in die Wissensbasis aufgenommen…" |
+
+If `processing` persists > 30 s without stage progression, an additional
+muted line reads: „Das kann bei großen PDFs eine Minute dauern."
+
+### Queue position
+
+When `status=pending` and `queue_position` is set, the badge sub-label reads
+„Platz `{queue_position}`". Always shown when present; hidden when position
+can't be computed (e.g., stream lookup failed — we don't show "Platz —").
+
+### Polling strategy
+
+- **First poll** 1 s after upload response.
+- **Interval** doubles after each poll until capped at 10 s: 1, 2, 4, 8, 10, 10, …
+- **Reset to 1 s** on every status/stage/page change (user just got useful info,
+  keep it snappy).
+- **Timeout** after 30 min continuous polling per document → mark locally as
+  „Zeitüberschreitung", show Retry CTA. Remote state in DB unchanged; a manual
+  refresh can pick it up if the worker eventually finishes.
+- **Page Visibility API**: tab hidden → pause interval; tab visible → single
+  catch-up fetch + resume interval.
+- **AbortController** on every fetch; component unmount aborts in-flight requests.
+- **Per-tab singleton**: one polling loop per page instance, not per document.
+  Batch lookups via `GET /api/knowledge/documents?ids=1,2,3` (new query param)
+  when > 1 document is active.
+
+### HTTP response copy (DE)
+
+| Code | Situation | UI surface | Message |
+|---|---|---|---|
+| **202** | Upload accepted, enqueued | Inline on upload zone + new row appears in list as `pending` | „Hochgeladen. Die Verarbeitung startet gleich." |
+| **409** | Duplicate hash (existing_document in body) | Modal dialog | Title: „Dieses Dokument gibt es schon". Body: „`{existing.filename}` wurde am `{existing.uploaded_at|date('de')}` bereits hochgeladen." Primary: „Zum vorhandenen Eintrag springen" (anchor link). Secondary: „Abbrechen". |
+| **413** | File too large | Toast (red) | „Datei zu groß. Maximum: `{max_mb}` MB." |
+| **415 / 400** | Format not allowed | Toast (red) | „Dateiformat nicht unterstützt. Erlaubt: `{allowed}`." |
+| **503** | Worker heartbeat missing | Toast (amber) with Retry CTA | „Die Dokumentverarbeitung ist gerade nicht erreichbar. Bitte in einer Minute erneut versuchen." Button: „Erneut versuchen" → re-POST the same file. |
+| **500** | Unknown server error | Toast (red) with Details expander | „Beim Hochladen ist etwas schiefgegangen." Expander reveals raw `detail`. |
+| `status=failed` from poll | Processing exception | Inline in the document row, replacing the spinner | „Fehlgeschlagen". Expander reveals `error_message`. Button: „Erneut hochladen" → re-POST (old document row is left alone). |
+
+### Tab-title + localStorage optimistic state
+
+- **Tab title** mutates while own uploads are `pending` or `processing`:
+  `(2) Wissensbasis — Renfield`. On all complete: `(✓) Wissensbasis — Renfield`
+  until the user focuses the tab or 30 s pass.
+- **localStorage key**: `renfield.kb.inflight` = array of
+  `{docId, filename, startedAt}` (max 20 entries, capped at 24 h age).
+  Written on 202-response, trimmed after `completed|failed` is observed or the
+  entry is older than 10 min (belt-and-suspenders against zombie entries).
+- **On page load**: hydrate from localStorage. Any entry whose `docId` matches
+  the server's list and is still `pending`/`processing` gets a subtle „Gerade
+  hochgeladen" hairline over its row for 5 min.
+- **No OS notifications** (`Notification.requestPermission()` is invasive for a
+  household context and doesn't add enough on top of title mutation).
+
+### Accessibility
+
+- Status region on the document list is wrapped in `<div role="status"
+  aria-live="polite">`. Screen readers announce status transitions as they
+  happen. A dedicated polite-live sub-region for stage changes so users aren't
+  spammed with page-counter updates (rate-limit: at most every 10 s).
+- Progress bar on `processing` rows with `pages.total` present:
+  `<progress role="progressbar" aria-valuenow={current} aria-valuemax={total}
+  aria-valuetext="Seite 47 von 120">`. Without pages, use `aria-busy="true"`
+  on the row instead.
+- Icon-only status badges carry `aria-label="{statusLabel}: {filename}"`.
+  The visible icon is `aria-hidden="true"`.
+- 409 dialog: focus moves to „Zum vorhandenen Eintrag springen" on open.
+  `Esc` closes the dialog. Focus returns to the upload trigger on close.
+- Touch targets on Retry, Details expander, and row-level buttons ≥ 44×44 px.
+- Keyboard path: Tab from upload zone → status filter → each document row's
+  primary action → pagination. Enter/Space activate.
+- Color contrast: every status color tested against WCAG AA in both Tailwind
+  `dark:` and light mode. `gray-500` on `gray-100` fails AA — use `gray-700`
+  for the pending label, only the icon carries the lighter tone.
 
 ## Backend code changes
 
 ### 1. `src/backend/services/rag_service.py`
 
-Split `ingest_document` into two entry points, keep the existing function as
+Split `ingest_document` into two entry points; keep the legacy function as
 a thin wrapper so non-upload callers don't break:
 
 ```python
@@ -241,7 +359,7 @@ async def create_document_record(
     file_hash: str,
     user_id: int | None,
 ) -> Document:
-    """Insert the Document row with status=queued; returns the persisted row."""
+    """Insert the Document row with status=pending; returns the persisted row."""
 
 async def process_existing_document(
     self,
@@ -249,14 +367,12 @@ async def process_existing_document(
     force_ocr: bool = False,
 ) -> None:
     """Run Docling → chunking → embedding → FTS on a pre-existing row.
-    Transitions status queued → processing → completed/failed.
-    Commits a final error_message on any unhandled exception."""
+    Reports progress via DocumentProgress. Transitions
+    pending → processing → completed/failed. Always commits a final
+    error_message on any unhandled exception."""
 
 # Back-compat wrapper (non-upload callers, test fixtures):
-async def ingest_document(self, *args, **kwargs) -> Document:
-    doc = await self.create_document_record(...)
-    await self.process_existing_document(doc.id, kwargs.get("force_ocr", False))
-    return await self.db.get(Document, doc.id)
+async def ingest_document(self, *args, **kwargs) -> Document: ...
 ```
 
 Audit required: grep for existing callers of `ingest_document` before merging.
@@ -271,14 +387,14 @@ if settings.document_worker_enabled:
         raise HTTPException(503, "Document worker unavailable")
     doc = await rag.create_document_record(...)
     await queue.enqueue({"document_id": doc.id, "force_ocr": force_ocr})
-    return DocumentResponse(id=doc.id, status="queued", ...)  # 202
+    return DocumentResponse(id=doc.id, status="pending", ...)  # 202
 else:
-    # Legacy inline path — unchanged.
     doc = await rag.ingest_document(...)
-    return DocumentResponse(...)
+    return DocumentResponse(...)  # 200, legacy
 ```
 
-HTTP status code for the new path is `202 Accepted`, not `200`.
+New: `GET /api/knowledge/documents?ids=1,2,3` batch endpoint for the polling
+client. Keeps Redis+DB load O(1) regardless of how many docs are in flight.
 
 ### 3. New module `src/backend/workers/document_processor_worker.py`
 
@@ -289,8 +405,6 @@ async def main():
     redis = await aioredis.from_url(settings.redis_url)
     queue = DocumentTaskQueue(redis, consumer_id=pod_name())
     await queue.ensure_group()
-
-    # Reclaim entries from dead consumers on startup
     await queue.reclaim_stale()
 
     stop_event = asyncio.Event()
@@ -306,8 +420,9 @@ async def main():
             if not entry:
                 continue
             entry_id, params = entry
+            progress = DocumentProgress(redis, params["document_id"])
             async with AsyncSessionLocal() as db:
-                rag = RAGService(db)
+                rag = RAGService(db, progress=progress)
                 try:
                     await rag.process_existing_document(
                         document_id=params["document_id"],
@@ -316,28 +431,40 @@ async def main():
                     await queue.ack(entry_id)
                 except Exception as e:
                     logger.exception(f"Task {entry_id} failed: {e}")
-                    # Do NOT ack — entry stays in PEL, reclaim_stale picks it
-                    # up after visibility timeout. Document row already has
-                    # status=failed and error_message from process_existing_document.
+                    # Do NOT ack — reclaim_stale reaps after visibility timeout.
+                finally:
+                    await progress.clear()
     finally:
         heartbeat_task.cancel()
         await queue.close()
         await redis.aclose()
 ```
 
-### 4. `src/frontend/src/pages/KnowledgePage.tsx`
+### 4. `src/frontend/src/pages/KnowledgePage.jsx`
 
-After upload returns 202, poll `/api/knowledge/documents/{id}` every 2 s
-until `status ∈ {completed, failed}`. Surface per-document progress (queued,
-processing, completed, failed) with a spinner and a clear error path.
+Two sub-phases, matching the PR split below:
 
-This is **not** a follow-up — it ships in the cutover PR. Without it, users
-see a silent hung spinner immediately after upload, which is a UX regression
-vs. the synchronous `200` today.
+**C1 (cutover):**
+- Upload handler accepts 202 response. Inserts optimistic row with
+  `status=pending` while waiting for server list refresh.
+- Basic polling loop (fixed 2 s) until `completed`/`failed`.
+- Status badges use the full taxonomy above. Copy map applied for all six
+  response codes. 409 uses a real modal, not a toast.
+- Basic A11y: `role="status" aria-live="polite"` on the status column,
+  `aria-label` on icon-only badges, 44 px touch targets.
+
+**C2 (polish):**
+- Polling strategy upgraded: 1 s start, 10 s cap, Visibility API, AbortController,
+  batch endpoint.
+- Stage + page sub-labels; progressbar on rows with pages.
+- Tab-title mutation + localStorage optimistic persistence.
+- Queue-position sub-label when `pending`.
+- Full A11y: progressbar semantics, focus management on 409 dialog, keyboard
+  path audit, contrast review.
 
 ## K8s changes
 
-### `k8s/document-worker.yaml` (new)
+### `k8s/document-worker.yaml` (new, PR A)
 
 ```yaml
 apiVersion: apps/v1
@@ -347,10 +474,8 @@ metadata:
   namespace: renfield
 spec:
   replicas: 1
-  strategy:
-    type: Recreate
-  selector:
-    matchLabels: {app.kubernetes.io/name: document-worker}
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app.kubernetes.io/name: document-worker}}
   template:
     metadata:
       labels: {app.kubernetes.io/name: document-worker, app.kubernetes.io/part-of: renfield}
@@ -365,11 +490,9 @@ spec:
           env:
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
-            # Postgres, Redis, Ollama URLs come from renfield-env; secrets as in backend
           volumeMounts:
             - {name: uploads, mountPath: /app/data/uploads}
-            - {name: cache-home, mountPath: /app/data/cache-home}  # shared HF+EasyOCR cache
-            - {name: mcp-config, mountPath: /app/config/...}
+            - {name: cache-home, mountPath: /app/data/cache-home}
           resources:
             requests: {cpu: 500m, memory: 1Gi}
             limits:   {cpu: "2",  memory: 6Gi}
@@ -378,86 +501,91 @@ spec:
           persistentVolumeClaim: {claimName: renfield-uploads-shared}
         - name: cache-home
           persistentVolumeClaim: {claimName: renfield-cache-shared}
-        - name: mcp-config
-          configMap: {name: renfield-mcp-config}
 ```
 
-No Service — worker is a pure stream consumer.
+No Service — worker is a pure consumer.
 
-### `k8s/backend.yaml` (modified)
+### `k8s/backend.yaml` (modified across PRs)
 
-- Replace `renfield-data` PVC mount at `/app/data` with two PVCs:
-  `renfield-uploads-shared` (RWX, NFS-CSI) at `/app/data/uploads`, and
-  `renfield-cache-shared` (RWX, NFS-CSI) at `/app/data/cache-home`.
-- After cutover: memory limit `12Gi → 5Gi`.
+- **PR A**: add new PVC mounts alongside Longhorn (dual-write window).
+- **PR C1 cutover**: drop Longhorn `renfield-data`, keep NFS-CSI PVCs.
+- **Post-cutover**: memory limit `12Gi → 5Gi`.
 
 ### `k8s/configmap.yaml`
 
-- Add `DOCUMENT_WORKER_ENABLED: "false"` (default off, flipped in rollout).
+Add `DOCUMENT_WORKER_ENABLED: "false"` in PR A; flip during rollout.
 
 ### `../private_k8s/nfs-csi/` (new, cluster-wide)
 
-- Pinned copy of `csi-driver-nfs` manifests (version tracked in the README).
-- Two `StorageClass` objects: `nfs-csi` for uploads, shared by namespaces as
-  they need RWX NFS.
+- Pinned `csi-driver-nfs` v4.13.2 manifests.
+- `StorageClass nfs-csi-renfield-uploads` and `StorageClass nfs-csi-renfield-cache`.
 
 ## Test matrix (mandatory, blocking)
 
-| # | Path | Kind | Tool |
-|---|------|------|------|
-| 1 | `create_document_record` happy path | unit | pytest + async |
-| 2 | `create_document_record` with duplicate hash → 409 | unit | pytest |
-| 3 | `process_existing_document` happy path (stubbed Docling) | unit | pytest |
-| 4 | `process_existing_document` Docling failure → `status=failed` with error_message | unit | pytest |
-| 5 | `process_existing_document` embedder raises → `status=failed`, DB rolled back | unit | pytest |
-| 6 | Upload endpoint 202 with flag=on, worker heartbeat present | API | httpx + test client |
-| 7 | Upload endpoint 503 with flag=on, heartbeat missing | API | httpx |
-| 8 | Upload endpoint legacy 200 with flag=off | API | httpx |
-| 9 | Worker loop: successful processing → XACK called | integration | testcontainers redis |
-| 10 | **Worker crash recovery: SIGKILL mid-task → next worker reclaims via XCLAIM** | **integration, blocking** | testcontainers redis |
-| 11 | Worker SIGTERM: finishes current task, exits cleanly | integration | subprocess + signal |
-| 12 | Worker module import does NOT instantiate FastAPI app | unit | importlib + introspection |
-| 13 | Frontend: upload → 202 → polling → completed badge shown | e2e | vitest + MSW |
-| 14 | Frontend: upload → 202 → polling sees `status=failed` → error surface | e2e | vitest + MSW |
+| # | Path | Kind |
+|---|------|------|
+| 1 | `create_document_record` happy path | unit |
+| 2 | `create_document_record` with duplicate hash → 409 | unit |
+| 3 | `process_existing_document` happy path (stubbed Docling) | unit |
+| 4 | `process_existing_document` Docling failure → `status=failed` with error_message | unit |
+| 5 | `process_existing_document` embedder raises → `status=failed`, DB rolled back | unit |
+| 6 | Upload endpoint 202 with flag=on, worker heartbeat present | API |
+| 7 | Upload endpoint 503 with flag=on, heartbeat missing | API |
+| 8 | Upload endpoint legacy 200 with flag=off | API |
+| 9 | Worker loop: successful processing → XACK called | integration |
+| 10 | **Worker crash recovery: SIGKILL mid-task → next worker reclaims via XCLAIM** | **integration, blocking** |
+| 11 | Worker SIGTERM: finishes current task, exits cleanly | integration |
+| 12 | Worker module import does NOT instantiate FastAPI app | unit |
+| 13 | DocumentProgress stage + page writes + TTL expiry | unit |
+| 14 | `GET /api/knowledge/documents?ids=1,2,3` batch endpoint returns all three | API |
+| 15 | Frontend (C1): upload → 202 → row appears `pending` → polling → `completed` | e2e |
+| 16 | Frontend (C1): upload → 202 → polling sees `failed` → error surface with Retry | e2e |
+| 17 | Frontend (C1): upload → 503 → toast + Retry CTA | e2e |
+| 18 | Frontend (C1): duplicate upload → 409 dialog → anchor jumps to existing | e2e |
+| 19 | Frontend (C2): backoff observed 1 → 2 → 4 → 8 → 10 s | unit (hook test) |
+| 20 | Frontend (C2): Visibility API pauses polling in hidden tab | unit |
+| 21 | Frontend (C2): localStorage round-trip on reload during `processing` | unit |
+| 22 | Frontend (C2): screen-reader announces status transitions (RTL + axe-core) | e2e |
+| 23 | Frontend (C2): queue position sub-label renders when pending with position | unit |
 
 Test 10 is the reason we're switching to Streams. Without it, the whole
-redesign is lipstick.
+redesign is cosmetic.
 
-## Migration plan
+## Migration plan (revised after UX review)
 
-Sequenced, each step independently revertable:
+Five sequenced PRs:
 
-1. **Cluster prep** — install NFS-CSI driver, create StorageClass, verify
-   provisioning with a throwaway test PVC.
-2. **Server prep** — create `/mnt/data/renfield-uploads` on `192.168.1.9`,
-   add `/etc/exports` entry, `exportfs -ra`.
-3. **PR A (infra)** — add `DocumentTaskQueue` (Streams) alongside existing
-   `TaskQueue`; add `k8s/document-worker.yaml` + PVC manifests + worker
-   module; `DOCUMENT_WORKER_ENABLED=false`. Nothing behaviourally changes.
-4. **PR B (refactor)** — split `RAGService.ingest_document`; unit tests 1–5.
-5. **PR C (cutover-ready)** — upload endpoint branch on flag; heartbeat
-   gating; frontend polling; tests 6–14.
-6. **Rollout** — deploy PR C with flag still off. Run migrator Job.
-   `docker compose up` cutover check:
-   1. Scale backend to 0, run final rsync.
-   2. Scale backend to 1 with flag still off — verify new PVC mounts read/write.
-   3. Apply ConfigMap with `DOCUMENT_WORKER_ENABLED=true`.
-   4. Restart backend + worker. Smoke-test an upload end-to-end.
-7. **Cleanup** — drop backend memory `12Gi → 5Gi` in a follow-up commit once
-   the stack has been stable 48 h. Remove legacy inline path once flag has
-   been on for a week.
+1. **PR A (Infra)** — NFS-CSI installation (vendored in `private_k8s/`),
+   StorageClasses, PVC manifests, `DocumentTaskQueue` (Streams) alongside
+   existing TaskQueue, `DocumentProgress`, `workers/document_processor_worker.py`,
+   `k8s/document-worker.yaml`, `DOCUMENT_WORKER_ENABLED=false`. Nothing behaviourally
+   changes from a user perspective.
+2. **PR B (Refactor)** — `RAGService` split into `create_document_record` +
+   `process_existing_document`. Unit tests 1–5, 13.
+3. **PR C1 (Cutover, backend + minimal frontend)** — upload endpoint branches on
+   flag; heartbeat gate; batch `?ids=` endpoint; DocumentProgress wired from
+   Docling callbacks; minimal frontend (badges + copy map + basic polling +
+   409 dialog + basic A11y). Tests 6–12, 14–18. After merge: run migrator Job,
+   flip flag, verify.
+4. **PR C2 (Polish)** — frontend UX additions: polling backoff, Visibility API,
+   localStorage, tab-title mutation, progressbar, queue-position sub-label,
+   full A11y audit, contrast review. Tests 19–23.
+5. **Cleanup** — backend memory limit `12Gi → 5Gi`. Remove legacy inline path
+   once C1 has been flag-on for a week without incident.
 
 ## Out of scope
 
 - Celery migration — Streams covers everything we need.
 - Worker horizontal autoscaling — 1 replica holds current load.
-- Multi-tenant priority queues (e.g. premium uploads first) — single stream.
-- PDF-level progress reporting (per-page %) — status=processing is enough.
+- Multi-tenant priority queues — single stream.
+- Per-user upload quotas / retention — tracked separately.
+- Native OS notifications (`Notification.requestPermission()`) — invasive for
+  household context; tab-title + localStorage covers the need.
 
 ## Open questions
 
-- **NFS-CSI version pin.** Current stable is v4.10.x — check against K8s
-  v1.35 compatibility before ingesting.
-- **Migration-window tolerance.** How long can uploads be 503 during rsync?
-  Current estimate: 2 min for today's payload. If unacceptable, we can
-  double-write during the transition and cut over lazily.
+- **Migration window tolerance.** How long can uploads be 503 during rsync?
+  Estimate: ~2 min for today's payload. If unacceptable, double-write during
+  the transition.
+- **NFS-CSI pinning.** Using v4.13.2 (released 2026-04-16). Verify compatibility
+  with K8s v1.35 before PR A merges.
