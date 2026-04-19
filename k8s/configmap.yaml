@@ -23,7 +23,11 @@ data:
   SEARXNG_API_URL: "http://searxng:8080"            # in-cluster SearXNG pod
   SEARXNG_INSTANCES: "http://searxng:8080"          # consumed by @kevinwatt/mcp-server-searxng
   N8N_API_URL: "https://n8n.home.bongard.dev/api/v1"
-  PAPERLESS_API_URL: "https://paperless.home.bongard.dev/api"
+  # LAN-direct. The DNS name `paperless.home.bongard.dev` points at a
+  # Hostpoint shared-hosting IP (Wildcard A-record leftover) and presents
+  # a *.web.hostpoint.ch cert — unusable. Paperless is reachable directly
+  # on the cluster subnet.
+  PAPERLESS_API_URL: "http://192.168.1.162:8000/api"
 
   # Models (auto-pulled by Ollama on first use if missing from NFS)
   OLLAMA_MODEL: "qwen3:14b"
