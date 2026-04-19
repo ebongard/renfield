@@ -212,11 +212,15 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              # Docling+EasyOCR moved to document-worker (#388) so the API
-              # serving path no longer needs the 12Gi stop-gap. 5Gi covers
-              # FastAPI + Ollama client + MCP + synchronous chat-upload
-              # ingestion with headroom.
-              memory: 5Gi
+              # Down from 12Gi: the main upload path moved to the
+              # document-worker pod (#388) so the API no longer has to
+              # survive a 4 GB Docling peak on every request. 8Gi still
+              # leaves room for the synchronous chat-upload path
+              # (api/routes/chat_upload.py) which keeps Docling+EasyOCR
+              # in-process for now; migrating that to the worker lets us
+              # drop the cap further. The historical "8Gi was still hit"
+              # note referred to serving-path Docling — that's gone.
+              memory: 8Gi
       volumes:
         - name: data
           persistentVolumeClaim:

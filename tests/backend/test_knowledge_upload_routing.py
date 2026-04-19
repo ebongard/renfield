@@ -1,11 +1,14 @@
-"""Upload-endpoint routing tests for the document-worker cutover (#388, PR C1).
+"""Upload-endpoint routing tests for the document-worker path (#388).
 
 Matrix items:
-  #2  upload with duplicate hash → 409 (route-level behaviour, unchanged by PR B)
-  #6  upload with flag=on + worker heartbeat present → 202 + queued row
-  #7  upload with flag=on + heartbeat missing → 503 + cleanup
-  #8  upload with flag=off → 200 legacy inline path still works
+  #2  upload with duplicate hash → 409
+  #6  upload with worker heartbeat present → 202 + queued row
+  #7  upload with heartbeat missing → 503 + file cleanup
   #14 GET /api/knowledge/documents/batch returns requested ids
+
+  Plus C2 semantic-code coverage:
+  - unknown extension → 415 with structured {allowed, received}
+  - oversize upload → 413 with structured {max_mb, received_mb}
 """
 from __future__ import annotations
 
