@@ -16,6 +16,8 @@ resources:
   - frontend.yaml
   - middleware-https-redirect.yaml
   - ingress.yaml
+  - shared-pvcs.yaml
+  - document-worker.yaml
 
 labels:
   - pairs:

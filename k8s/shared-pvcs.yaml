@@ -1,0 +1,46 @@
+# Shared ReadWriteMany PVCs for the document worker split (#388).
+#
+# These PVCs back storage that both the backend and the document-worker pods
+# need to read/write simultaneously. Longhorn's default StorageClass is
+# ReadWriteOnce, which cannot span two nodes. NFS-CSI v4.13.2 provisions
+# backed by the household NFS export at 192.168.1.9:/mnt/data/k8s/renfield/.
+#
+# Mounted by:
+#   renfield-uploads-shared → backend + worker at /app/data/uploads
+#                             (document files served to /api/settings/wakeword/models
+#                              unrelated; this is /api/knowledge/upload payload storage)
+#   renfield-cache-shared   → backend + worker at /app/data/cache-home
+#                             (HuggingFace + EasyOCR + Whisper model caches)
+#
+# These manifests are shipped in PR A (infrastructure) but NOT yet mounted by
+# any deployment. Actual mounts follow in PR C1 (cutover), after the migrator
+# Job has copied existing uploads off the Longhorn renfield-data PVC.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: renfield-uploads-shared
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-csi-renfield-uploads
+  resources:
+    requests:
+      storage: 50Gi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: renfield-cache-shared
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-csi-renfield-cache
+  resources:
+    requests:
+      storage: 20Gi

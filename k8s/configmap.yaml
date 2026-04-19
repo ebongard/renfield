@@ -77,9 +77,15 @@ data:
 
   # Persist ML model caches (EasyOCR ~/.EasyOCR, HuggingFace ~/.cache/huggingface,
   # Torch ~/.cache/torch, whisper ~/.cache/whisper) across pod restarts by
-  # pointing HOME at the /app/data mount (Longhorn PVC).
+  # pointing HOME at the /app/data mount (Longhorn PVC today; NFS-CSI RWX
+  # PVC after cutover — same path, shared with the document-worker).
   HOME: "/app/data/cache-home"
   HF_HOME: "/app/data/cache-home/.cache/huggingface"
+
+  # Document worker split (#388). When false, /api/knowledge/upload runs
+  # Docling inline in the request. When true, the endpoint enqueues on the
+  # Redis Stream and the document-worker pod owns the processing.
+  DOCUMENT_WORKER_ENABLED: "false"
 
   # Logging
   LOG_LEVEL: "INFO"
