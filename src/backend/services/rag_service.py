@@ -593,6 +593,15 @@ class RAGService:
         Returns:
             Liste von {chunk, document, similarity}
         """
+        # Circles v1 / Lane A1: route to the extracted RAGRetrieval module when
+        # the flag is on. Parity verified by tests/backend/test_rag_retrieval_extract.py.
+        if settings.circles_use_new_rag:
+            from services.rag_retrieval import RAGRetrieval
+            return await RAGRetrieval(self.db).search(
+                query, top_k=top_k, knowledge_base_id=knowledge_base_id,
+                similarity_threshold=similarity_threshold,
+            )
+
         top_k = top_k or settings.rag_top_k
         threshold = similarity_threshold or settings.rag_similarity_threshold
 
@@ -983,6 +992,13 @@ class RAGService:
         Returns:
             Formatierter Kontext-String mit Quellenangaben
         """
+        # Circles v1 / Lane A1 — see search() for the same flag pattern.
+        if settings.circles_use_new_rag:
+            from services.rag_retrieval import RAGRetrieval
+            return await RAGRetrieval(self.db).get_context(
+                query, top_k=top_k, knowledge_base_id=knowledge_base_id,
+            )
+
         results = await self.search(query, top_k, knowledge_base_id)
 
         if not results:
