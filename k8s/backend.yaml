@@ -82,6 +82,8 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/data
+            - name: cache-home
+              mountPath: /app/data/cache-home
       containers:
         - name: backend
           image: registry.treehouse.x-idra.de/renfield/backend:latest
@@ -164,6 +166,18 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /app/data
+            # Shared with the document-worker pod (#388 cutover). The API
+            # writes the uploaded file here, the worker reads it from the
+            # same NFS-backed PVC. Must be mounted at the same path on
+            # both pods because the DB stores absolute file paths.
+            - name: uploads
+              mountPath: /app/data/uploads
+            # Shared ML model cache (EasyOCR / HuggingFace / Docling).
+            # Not strictly required on the backend since Docling now runs
+            # in the worker, but keeps warm-cache behaviour for the
+            # legacy-inline rollback path (flag off).
+            - name: cache-home
+              mountPath: /app/data/cache-home
             - name: mcp-config
               mountPath: /app/config/mcp_servers.yaml
               subPath: mcp_servers.yaml
@@ -208,6 +222,13 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: renfield-data
+        # RWX NFS PVCs shared with document-worker — see k8s/shared-pvcs.yaml.
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: renfield-uploads-shared
+        - name: cache-home
+          persistentVolumeClaim:
+            claimName: renfield-cache-shared
         - name: mcp-config
           configMap:
             name: renfield-mcp-config
