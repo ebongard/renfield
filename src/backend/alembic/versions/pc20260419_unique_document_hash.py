@@ -1,7 +1,7 @@
 """Unique constraint on (file_hash, knowledge_base_id) for documents
 
 Revision ID: pc20260419_uniq_doc_hash
-Revises: t4c5d6e7f8g9
+Revises: pc20260402a1
 Create Date: 2026-04-19 14:20:00.000000
 
 Closes the concurrent-upload race: two simultaneous uploads of the same
@@ -33,7 +33,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'pc20260419_uniq_doc_hash'
-down_revision: Union[str, None] = 't4c5d6e7f8g9'
+down_revision: Union[str, None] = 'pc20260402a1'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
