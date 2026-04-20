@@ -592,160 +592,23 @@ class ConversationMemoryService:
         self,
         query: str,
         user_id: int | None = None,
-        team_ids: list[str] | None = None,
         budget_chars: int | None = None,
     ) -> dict[str, list[dict]]:
         """
         Budget-aware memory retrieval organized by section.
 
-        Returns memories partitioned into sections for structured prompt injection:
-        - essential: High-importance facts/preferences (always included)
-        - procedural: Behavioral rules
-        - semantic: Query-relevant memories
-        - episodic: Recent interaction episodes (if episodic memory enabled)
+        Lane C: always delegates to the extracted MemoryRetrieval module.
+        The legacy scope/team-based path was retired with the circles v1
+        rollout — circle_tier subsumes scope semantics, team_ids is parked
+        for v2 named circles.
 
-        The total character count of all sections is capped at budget_chars.
+        Returns dict[section -> list[memory]] for essential / procedural /
+        semantic / episodic, capped at `budget_chars` total.
         """
-        # Circles v1 / Lane A3: when the flag is on, delegate to the extracted
-        # MemoryRetrieval module. Behavioural parity is guarded by the test suite
-        # at tests/backend/test_memory_retrieval_extract.py.
-        if settings.circles_use_new_memory:
-            from services.memory_retrieval import MemoryRetrieval
-            return await MemoryRetrieval(self.db).retrieve_for_prompt(
-                query, user_id=user_id, team_ids=team_ids, budget_chars=budget_chars,
-            )
-
-        budget = budget_chars or settings.memory_retrieval_budget_chars
-        sections: dict[str, list[dict]] = {
-            "essential": [],
-            "procedural": [],
-            "semantic": [],
-            "episodic": [],
-        }
-        used_chars = 0
-        seen_ids: set[int] = set()
-
-        # --- 1. Essential memories (always injected) ---
-        essential = await self.retrieve_essential(user_id=user_id)
-        for m in essential:
-            content_len = len(m["content"])
-            if used_chars + content_len > budget:
-                break
-            sections["essential"].append(m)
-            seen_ids.add(m["id"])
-            used_chars += content_len
-
-        # --- 2. Procedural memories (scope: user + team + global) ---
-        scope_filter = self._build_scope_filter(user_id, team_ids)
-        procedural_sql = text(f"""
-            SELECT id, content, category, importance, access_count, created_at,
-                   source, scope, trigger_pattern
-            FROM conversation_memories
-            WHERE is_active = true
-              AND category = 'procedural'
-              {scope_filter}
-            ORDER BY importance DESC
-            LIMIT 10
-        """)
-        params: dict = {}
-        if user_id is not None:
-            params["user_id"] = user_id
-        if team_ids:
-            params["team_ids"] = tuple(team_ids)
-
-        try:
-            result = await self.db.execute(procedural_sql, params)
-            for row in result.fetchall():
-                if row.id in seen_ids:
-                    continue
-                # trigger_pattern matching: skip if pattern is set and doesn't match
-                pattern = getattr(row, "trigger_pattern", None)
-                if pattern:
-                    try:
-                        if not re.search(pattern, query, re.IGNORECASE):
-                            # Essential procedural memories (importance >= 0.9) always pass
-                            if (row.importance or 0) < settings.memory_essential_threshold:
-                                continue
-                    except re.error:
-                        pass  # Invalid regex — include the memory anyway
-                content_len = len(row.content)
-                if used_chars + content_len > budget:
-                    break
-                sections["procedural"].append({
-                    "id": row.id,
-                    "content": row.content,
-                    "category": row.category,
-                    "importance": row.importance,
-                    "source": getattr(row, "source", "llm_inferred"),
-                    "scope": getattr(row, "scope", "user"),
-                })
-                seen_ids.add(row.id)
-                used_chars += content_len
-        except Exception as e:
-            logger.warning(f"Procedural memory retrieval failed: {e}")
-
-        # --- 3. Semantic memories (query-relevant) ---
-        if used_chars < budget:
-            semantic = await self.retrieve(query, user_id=user_id)
-            for m in semantic:
-                if m["id"] in seen_ids:
-                    continue
-                content_len = len(m["content"])
-                if used_chars + content_len > budget:
-                    break
-                created = None
-                if m.get("created_at"):
-                    try:
-                        created = datetime.fromisoformat(m["created_at"])
-                    except (ValueError, TypeError):
-                        pass
-                m["recency_score"] = round(self._recency_score(created), 3)
-                sections["semantic"].append(m)
-                seen_ids.add(m["id"])
-                used_chars += content_len
-
-        # --- 4. Episodic memories (recent interactions) ---
-        if used_chars < budget and settings.memory_episodic_enabled:
-            try:
-                from services.episodic_memory_service import EpisodicMemoryService
-
-                ep_svc = EpisodicMemoryService(self.db)
-                episodes = await ep_svc.retrieve(
-                    query, user_id=user_id, limit=3, threshold=0.4
-                )
-                for ep in episodes:
-                    summary_len = len(ep["summary"])
-                    if used_chars + summary_len > budget:
-                        break
-                    sections["episodic"].append(ep)
-                    used_chars += summary_len
-            except Exception as e:
-                logger.warning(f"Episodic memory retrieval failed: {e}")
-
-        total = sum(len(v) for v in sections.values())
-        if total:
-            logger.debug(
-                f"Memory prompt: {total} items ({used_chars} chars) — "
-                f"essential={len(sections['essential'])}, "
-                f"procedural={len(sections['procedural'])}, "
-                f"semantic={len(sections['semantic'])}, "
-                f"episodic={len(sections['episodic'])}"
-            )
-
-        return sections
-
-    @staticmethod
-    def _build_scope_filter(
-        user_id: int | None,
-        team_ids: list[str] | None,
-    ) -> str:
-        """Build SQL scope filter clause for multi-scope retrieval."""
-        conditions = ["scope = 'global'"]
-        if user_id is not None:
-            conditions.append("(scope = 'user' AND user_id = :user_id)")
-        if team_ids:
-            conditions.append("(scope = 'team' AND team_id IN :team_ids)")
-        return "AND (" + " OR ".join(conditions) + ")"
+        from services.memory_retrieval import MemoryRetrieval
+        return await MemoryRetrieval(self.db).retrieve_for_prompt(
+            query, user_id=user_id, budget_chars=budget_chars,
+        )
 
     # =========================================================================
     # Cleanup

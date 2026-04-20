@@ -437,7 +437,8 @@ async def _stream_rag_response(
 
                     search_results = await rag_service.search(
                         query=content,
-                        knowledge_base_id=knowledge_base_id
+                        knowledge_base_id=knowledge_base_id,
+                        user_id=user_id,
                     )
 
                     if search_results:

@@ -51,7 +51,7 @@ class ActionExecutor:
 
         # Internal intents (no MCP equivalent)
         if intent.startswith("knowledge."):
-            return await self._execute_knowledge(intent, parameters)
+            return await self._execute_knowledge(intent, parameters, user_id=user_id)
         elif intent == "general.conversation":
             return {
                 "success": True,
@@ -121,7 +121,9 @@ class ActionExecutor:
             "action_taken": False
         }
 
-    async def _execute_knowledge(self, intent: str, parameters: dict) -> dict:
+    async def _execute_knowledge(
+        self, intent: str, parameters: dict, user_id: int | None = None,
+    ) -> dict:
         """Wissensdatenbank-Aktionen ausführen (RAG)"""
         query = parameters.get("query") or parameters.get("question") or parameters.get("text", "")
 
@@ -138,7 +140,7 @@ class ActionExecutor:
 
             async with AsyncSessionLocal() as db:
                 rag = RAGService(db)
-                results = await rag.search(query=query, top_k=5)
+                results = await rag.search(query=query, top_k=5, user_id=user_id)
 
             if results:
                 # Build context from search results

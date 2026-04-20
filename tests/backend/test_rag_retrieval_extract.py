@@ -168,63 +168,64 @@ class TestFormatContextParity:
 # =============================================================================
 
 
-class TestFlagRouting:
-    """When CIRCLES_USE_NEW_RAG is on, RAGService.search must call RAGRetrieval.search."""
+class TestRouting:
+    """
+    Lane C: RAGService.search and RAGService.get_context unconditionally route
+    through RAGRetrieval (which applies the circle-tier filter). The legacy
+    `circles_use_new_rag` flag is retained on the settings model for
+    back-compat but is now a no-op.
+    """
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_search_flag_on_routes_to_retrieval_module(self):
+    async def test_search_always_routes_to_retrieval_module(self):
         db = MagicMock()
         service = RAGService(db)
         sentinel = [make_result(42, content="from RAGRetrieval path")]
 
-        with patch("services.rag_service.settings") as svc_settings, \
-             patch("services.rag_retrieval.RAGRetrieval.search", new=AsyncMock(return_value=sentinel)) as ret_search:
-            svc_settings.circles_use_new_rag = True
-            result = await service.search("anything", top_k=5)
+        with patch(
+            "services.rag_retrieval.RAGRetrieval.search",
+            new=AsyncMock(return_value=sentinel),
+        ) as ret_search:
+            result = await service.search("anything", top_k=5, user_id=42)
 
         ret_search.assert_called_once()
-        assert result is sentinel, "RAGService.search must return RAGRetrieval.search output verbatim"
+        assert ret_search.call_args.kwargs.get("user_id") == 42
+        assert result is sentinel
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_search_flag_off_does_not_route_to_retrieval_module(self):
+    async def test_search_routes_when_legacy_flag_off(self):
+        """The CIRCLES_USE_NEW_RAG flag is dead — both ON and OFF route."""
         db = MagicMock()
         service = RAGService(db)
+        sentinel = [make_result(42)]
 
-        # Mock the legacy inline path enough to not blow up; we don't care about result quality,
-        # only that the new RAGRetrieval.search is NOT called.
         with patch("services.rag_service.settings") as svc_settings, \
-             patch.object(service, "get_embedding", new=AsyncMock(return_value=[0.1] * 768)), \
-             patch.object(service, "_search_dense", new=AsyncMock(return_value=[])), \
-             patch.object(service, "_search_bm25", new=AsyncMock(return_value=[])), \
-             patch("services.rag_retrieval.RAGRetrieval.search", new=AsyncMock(return_value=[])) as ret_search:
-            svc_settings.circles_use_new_rag = False
-            svc_settings.rag_top_k = 5
-            svc_settings.rag_similarity_threshold = 0.4
-            svc_settings.rag_hybrid_enabled = True
-            svc_settings.rag_rerank_enabled = False
-            svc_settings.rag_parent_child_enabled = False
-            svc_settings.rag_context_window = 0
-            svc_settings.rag_context_window_max = 3
-
+             patch(
+                 "services.rag_retrieval.RAGRetrieval.search",
+                 new=AsyncMock(return_value=sentinel),
+             ) as ret_search:
+            svc_settings.circles_use_new_rag = False  # no-op now
             await service.search("anything", top_k=5)
 
-        ret_search.assert_not_called()
+        ret_search.assert_called_once()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_get_context_flag_on_routes_to_retrieval_module(self):
+    async def test_get_context_always_routes(self):
         db = MagicMock()
         service = RAGService(db)
         sentinel = "[Quelle 1: x.pdf, Seite 1]\nrouted"
 
-        with patch("services.rag_service.settings") as svc_settings, \
-             patch("services.rag_retrieval.RAGRetrieval.get_context", new=AsyncMock(return_value=sentinel)) as ret_ctx:
-            svc_settings.circles_use_new_rag = True
-            result = await service.get_context("anything", top_k=3)
+        with patch(
+            "services.rag_retrieval.RAGRetrieval.get_context",
+            new=AsyncMock(return_value=sentinel),
+        ) as ret_ctx:
+            result = await service.get_context("anything", top_k=3, user_id=7)
 
         ret_ctx.assert_called_once()
+        assert ret_ctx.call_args.kwargs.get("user_id") == 7
         assert result == sentinel
 
 

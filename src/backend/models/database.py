@@ -430,49 +430,12 @@ class User(Base):
 
 
 # =============================================================================
-# Knowledge Base Permissions (for sharing)
+# Knowledge Base Permission Levels — circles v1 retired the per-KB
+# `kb_permissions` table; per-resource grants now live in AtomExplicitGrant
+# (chunk-level). These string constants stay because route validators and
+# the kb_shares_service helper still reference them.
 # =============================================================================
 
-class KBPermission(Base):
-    """
-    Per-user permission for a specific Knowledge Base.
-
-    DEPRECATED in circles v1 — the underlying `kb_permissions` table is DROPPED
-    by pc20260420_circles_v1_schema.py. The ORM class is kept here so existing
-    `from models.database import KBPermission` imports continue to resolve at
-    application startup (preventing app-wide ImportError from breaking the boot
-    path). Consumers that issue SQL against this table at runtime (notably the
-    /api/knowledge/bases/{id}/share endpoint in api/routes/knowledge.py) will
-    fail at query-execution time with "table kb_permissions does not exist".
-
-    Replacement: AtomExplicitGrant (defined at the bottom of this file) provides
-    per-resource exception grants at chunk granularity. The migration above
-    creates one AtomExplicitGrant per (chunk, granted_user, permission) for every
-    pre-existing KBPermission row, preserving the data behind the new model.
-
-    Lane C of the second-brain-circles plan rewrites the legacy share routes
-    to use AtomExplicitGrant directly. Until then, callers of /share break by
-    design — Renfield is not yet live with external users (CEO-review HOLD_SCOPE).
-    """
-    __tablename__ = "kb_permissions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    permission = Column(String(20), nullable=False, default="read")
-    granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-
-    __table_args__ = (
-        Index('idx_kb_permissions_kb_user', 'knowledge_base_id', 'user_id', unique=True),
-    )
-
-    knowledge_base = relationship("KnowledgeBase", foreign_keys=[knowledge_base_id])
-    user = relationship("User", foreign_keys=[user_id])
-    granter = relationship("User", foreign_keys=[granted_by])
-
-
-# KB Permission Levels (kept for back-compat with code that imports these constants)
 KB_PERM_READ = "read"
 KB_PERM_WRITE = "write"
 KB_PERM_ADMIN = "admin"
@@ -819,10 +782,6 @@ MEMORY_CHANGED_BY_RESOLUTION = "contradiction_resolution"
 # Entity Type Constants
 KG_ENTITY_TYPES = ["person", "place", "organization", "thing", "event", "concept"]
 
-# Knowledge Graph Scope Constants
-KG_SCOPE_PERSONAL = "personal"  # Built-in scope, always exists (owner-only)
-
-
 class KGEntity(Base):
     """Named entity extracted from conversations for the Knowledge Graph."""
     __tablename__ = "kg_entities"
@@ -840,13 +799,6 @@ class KGEntity(Base):
     first_seen_at = Column(DateTime, default=_utcnow)
     last_seen_at = Column(DateTime, default=_utcnow)
     is_active = Column(Boolean, default=True, index=True)
-    # Circles v1: scope column SOFT-DROPPED — the underlying SQL column is dropped
-    # by pc20260420_circles_v1_schema.py, but the ORM column declaration is kept
-    # so existing `KGEntity.scope` references in services/knowledge_graph_service.py
-    # and services/kg_retrieval.py don't ImportError at startup. Queries against
-    # `kg_entities.scope` fail at runtime ("column does not exist") until Lane C
-    # rewrites those callers to use `circle_tier` instead.
-    scope = Column(String(50), default=KG_SCOPE_PERSONAL, nullable=True)
     # FK to atoms registry + denormalized circle_tier for SQL filter perf.
     # Back-fill from old scope='personal'->0(self), yaml-defined->2(household)
     # in pc20260420_circles_v1 migration.

@@ -43,9 +43,9 @@ export default function KnowledgeGraphPage() {
   const [entitiesPage, setEntitiesPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
-  const [scopeFilter, setScopeFilter] = useState('all');
-  const [availableScopes, setAvailableScopes] = useState([]);
-  const [scopeMenuEntity, setScopeMenuEntity] = useState(null);
+  const [tierFilter, setTierFilter] = useState('all');
+  const [availableTiers, setAvailableTiers] = useState([]);
+  const [tierMenuEntity, setTierMenuEntity] = useState(null);
 
   // Relations state
   const [relations, setRelations] = useState([]);
@@ -91,27 +91,25 @@ export default function KnowledgeGraphPage() {
     }
   }, [error, success]);
 
-  // Load scopes
-  const loadScopes = async () => {
+  // Load circle tiers
+  const loadTiers = async () => {
     try {
-      const response = await apiClient.get('/api/knowledge-graph/scopes', {
+      const response = await apiClient.get('/api/knowledge-graph/circle-tiers', {
         params: { lang: t('lang') === 'de' ? 'de' : 'en' }
       });
-      setAvailableScopes(response.data.scopes);
+      setAvailableTiers(response.data.tiers);
     } catch (err) {
-      console.error('Failed to load KG scopes:', err);
-      // Fallback to default scopes
-      setAvailableScopes([
-        { name: 'personal', label: t('knowledgeGraph.personal'), description: '' },
-        { name: 'family', label: t('knowledgeGraph.family'), description: '' },
-        { name: 'public', label: t('knowledgeGraph.public'), description: '' },
+      console.error('Failed to load circle tiers:', err);
+      setAvailableTiers([
+        { tier: 0, name: 'self', label: t('knowledgeGraph.personal'), description: '' },
+        { tier: 2, name: 'household', label: t('knowledgeGraph.family'), description: '' },
+        { tier: 4, name: 'public', label: t('knowledgeGraph.public'), description: '' },
       ]);
     }
   };
 
-  // Load scopes on mount
   useEffect(() => {
-    loadScopes();
+    loadTiers();
   }, []);
 
   // Load entities
@@ -123,7 +121,7 @@ export default function KnowledgeGraphPage() {
       params.set('size', String(PAGE_SIZE));
       if (typeFilter) params.set('type', typeFilter);
       if (searchQuery) params.set('search', searchQuery);
-      if (scopeFilter && scopeFilter !== 'all') params.set('scope', scopeFilter);
+      if (tierFilter && tierFilter !== 'all') params.set('circle_tier', tierFilter);
 
       const response = await apiClient.get(`/api/knowledge-graph/entities?${params}`);
       setEntities(response.data.entities);
@@ -262,19 +260,19 @@ export default function KnowledgeGraphPage() {
     }
   };
 
-  // Update entity scope
-  const handleUpdateScope = async (entity, newScope) => {
+  // Update entity circle_tier
+  const handleUpdateCircleTier = async (entity, newTier) => {
     try {
       await apiClient.patch(
-        `/api/knowledge-graph/entities/${entity.id}/scope`,
-        { scope: newScope }
+        `/api/knowledge-graph/entities/${entity.id}/circle-tier`,
+        { circle_tier: newTier }
       );
 
-      const scopeInfo = availableScopes.find(s => s.name === newScope);
+      const tierInfo = availableTiers.find(t => t.tier === newTier);
       setSuccess(
-        t('knowledgeGraph.scopeUpdated', { name: entity.name, scope: scopeInfo?.label || newScope })
+        t('knowledgeGraph.scopeUpdated', { name: entity.name, scope: tierInfo?.label || String(newTier) })
       );
-      setScopeMenuEntity(null);
+      setTierMenuEntity(null);
       loadEntities();
     } catch (err) {
       setError(t('common.error'));
@@ -437,13 +435,13 @@ export default function KnowledgeGraphPage() {
             </select>
 
             <select
-              value={scopeFilter}
-              onChange={(e) => { setScopeFilter(e.target.value); setEntitiesPage(1); }}
+              value={tierFilter}
+              onChange={(e) => { setTierFilter(e.target.value); setEntitiesPage(1); }}
               className="input w-auto"
             >
               <option value="all">{t('common.all')}</option>
-              {availableScopes.map(scope => (
-                <option key={scope.name} value={scope.name}>{scope.label}</option>
+              {availableTiers.map(t => (
+                <option key={t.tier} value={String(t.tier)}>{t.label}</option>
               ))}
             </select>
 
@@ -539,9 +537,9 @@ export default function KnowledgeGraphPage() {
                             <Badge color={TYPE_BADGE_COLORS[entity.entity_type] || 'amber'}>
                               {t(`knowledgeGraph.${entity.entity_type}`)}
                             </Badge>
-                            {entity.scope && entity.scope !== 'personal' && (
+                            {entity.circle_tier !== undefined && entity.circle_tier !== 0 && (
                               <Badge color="green">
-                                {availableScopes.find(s => s.name === entity.scope)?.label || entity.scope}
+                                {availableTiers.find(tier => tier.tier === entity.circle_tier)?.label || `tier ${entity.circle_tier}`}
                               </Badge>
                             )}
                           </div>
@@ -557,29 +555,29 @@ export default function KnowledgeGraphPage() {
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setScopeMenuEntity(scopeMenuEntity?.id === entity.id ? null : entity);
+                                    setTierMenuEntity(tierMenuEntity?.id === entity.id ? null : entity);
                                   }}
                                   className={`btn-icon ${
-                                    entity.scope === 'personal' ? 'btn-icon-ghost' :
+                                    (entity.circle_tier || 0) === 0 ? 'btn-icon-ghost' :
                                     'text-green-600 dark:text-green-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg'
                                   }`}
                                   title={t('knowledgeGraph.changeScope')}
                                 >
-                                  {entity.scope === 'personal' ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+                                  {(entity.circle_tier || 0) === 0 ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
                                 </button>
 
-                                {scopeMenuEntity?.id === entity.id && (
+                                {tierMenuEntity?.id === entity.id && (
                                   <div className="absolute right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-10">
-                                    {availableScopes.map((scopeInfo) => (
+                                    {availableTiers.map((tierInfo) => (
                                       <button
-                                        key={scopeInfo.name}
-                                        onClick={() => handleUpdateScope(entity, scopeInfo.name)}
+                                        key={tierInfo.tier}
+                                        onClick={() => handleUpdateCircleTier(entity, tierInfo.tier)}
                                         className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700 ${
-                                          entity.scope === scopeInfo.name ? 'font-semibold' : ''
+                                          (entity.circle_tier || 0) === tierInfo.tier ? 'font-semibold' : ''
                                         }`}
-                                        title={scopeInfo.description}
+                                        title={tierInfo.description}
                                       >
-                                        {scopeInfo.label}
+                                        {tierInfo.label}
                                       </button>
                                     ))}
                                   </div>

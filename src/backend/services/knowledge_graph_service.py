@@ -16,7 +16,7 @@ from loguru import logger
 from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import KG_ENTITY_TYPES, KG_SCOPE_PERSONAL, KGEntity, KGRelation
+from models.database import KG_ENTITY_TYPES, TIER_PUBLIC, KGEntity, KGRelation
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -292,28 +292,32 @@ class KnowledgeGraphService:
         name: str,
         entity_type: str,
         user_id: int | None,
-        user_role: str | None = None,
+        user_role: str | None = None,  # kept for back-compat; ignored under circles
         description: str | None = None,
     ) -> KGEntity:
         """
         Resolve an entity by name, creating or merging as needed.
 
-        Resolution order:
-        1. Exact name match in personal entities (user_id + scope=personal)
-        2. Exact name match in accessible custom scopes (based on user role)
-        3. Embedding similarity in personal entities
-        4. Embedding similarity in accessible custom scopes
-        5. Create new personal entity
-        """
-        from services.kg_scope_loader import get_scope_loader
-        scope_loader = get_scope_loader()
+        Lane C rewrite: scope-based steps 2 and 4 (accessible custom scopes
+        from kg_scope_loader) are removed because the scope column was
+        DROPPED by pc20260420_circles_v1_schema. New resolution order:
 
-        # Step 1: Personal exact match (include unowned entities)
+        1. Exact name match in user's own entities (user_id + unowned)
+        2. Embedding similarity in user's own entities
+        3. Create new entity owned by this user (circle_tier defaults to
+           the user's default_capture_policy.tier; AtomService.upsert_atom
+           creates the corresponding atoms row)
+
+        Cross-user entity dedup (the old "accessible scopes" behavior) is
+        deferred to v2 — household-shared knowledge graph entities will
+        come back via the named-circles work then. For v1 dogfooding,
+        per-user entity isolation is acceptable + simpler.
+        """
+        # Step 1: Exact name match in user's own entities (include unowned)
         query = select(KGEntity).where(
             func.lower(KGEntity.name) == name.lower(),
             KGEntity.is_active == True,  # noqa: E712
             or_(KGEntity.user_id == user_id, KGEntity.user_id.is_(None)),
-            KGEntity.scope == KG_SCOPE_PERSONAL,
         )
         result = await self.db.execute(query)
         existing = result.scalar_one_or_none()
@@ -326,27 +330,7 @@ class KnowledgeGraphService:
             await self.db.flush()
             return existing
 
-        # Step 2: Custom scopes exact match (user's accessible scopes)
-        accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
-        if accessible_scopes:
-            query = select(KGEntity).where(
-                func.lower(KGEntity.name) == name.lower(),
-                KGEntity.is_active == True,  # noqa: E712
-                KGEntity.scope.in_(accessible_scopes),
-            )
-            result = await self.db.execute(query)
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                # Update mention count but keep the original owner
-                existing.mention_count = (existing.mention_count or 1) + 1
-                existing.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
-                if description and not existing.description:
-                    existing.description = description
-                await self.db.flush()
-                return existing
-
-        # Step 3 & 4: Embedding similarity check
+        # Step 2: Embedding similarity check (user's own entities only)
         embedding = None
         try:
             embedding = await self._get_embedding(name)
@@ -354,7 +338,6 @@ class KnowledgeGraphService:
             logger.warning(f"KG: Could not generate embedding for entity '{name}': {e}")
 
         if embedding:
-            # Check personal entities first
             similar = await self._find_similar_entity(
                 embedding, user_id=user_id, accessible_scopes=None
             )
@@ -366,46 +349,33 @@ class KnowledgeGraphService:
                 await self.db.flush()
                 return similar
 
-            # Check accessible custom scopes
-            if accessible_scopes:
-                similar = await self._find_similar_entity(
-                    embedding, user_id=None, accessible_scopes=accessible_scopes
-                )
-                if similar:
-                    similar.mention_count = (similar.mention_count or 1) + 1
-                    similar.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
-                    if description and not similar.description:
-                        similar.description = description
-                    await self.db.flush()
-                    return similar
-
-        # Step 5: Check personal entity limit (only personal entities count)
+        # Step 3: Per-user entity limit check (no scope filter; just count user's entities)
         if user_id is not None:
             count_result = await self.db.execute(
                 select(func.count(KGEntity.id)).where(
                     KGEntity.user_id == user_id,
                     KGEntity.is_active == True,  # noqa: E712
-                    KGEntity.scope == KG_SCOPE_PERSONAL,
                 )
             )
             count = count_result.scalar() or 0
             if count >= settings.kg_max_entities_per_user:
-                logger.warning(f"KG: Personal entity limit reached for user {user_id}")
-                # Return a best-effort match or skip
+                logger.warning(f"KG: Entity limit reached for user {user_id}")
                 return await self._get_oldest_entity(user_id)
 
-        # Create new personal entity
+        # Create new entity. circle_tier defaults to 0 (self) — owner can
+        # promote later via /api/atoms/{id}/tier. The scope column is gone
+        # but the model declaration retains it for back-compat (Lane C
+        # cleanup will remove the ORM stub).
         entity = KGEntity(
             user_id=user_id,
             name=name,
             entity_type=entity_type if entity_type in KG_ENTITY_TYPES else "thing",
             description=description,
             embedding=embedding,
-            scope=KG_SCOPE_PERSONAL,  # Personal by default
         )
         self.db.add(entity)
         await self.db.flush()
-        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id} scope=personal")
+        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id}")
         return entity
 
     async def _find_similar_entity(
@@ -425,17 +395,14 @@ class KnowledgeGraphService:
         threshold = settings.kg_similarity_threshold
         embedding_str = f"[{','.join(map(str, embedding))}]"
 
-        if accessible_scopes:
-            # Search in accessible custom scopes only
-            scopes_str = ','.join(f"'{s}'" for s in accessible_scopes)
-            user_filter = f"AND scope IN ({scopes_str})"
-            params: dict = {"embedding": embedding_str}
-        elif user_id is not None:
-            # Search in personal (user-owned + unowned) only
-            user_filter = "AND ((user_id = :user_id OR user_id IS NULL) AND scope = 'personal')"
-            params = {"embedding": embedding_str, "user_id": user_id}
+        # Lane C rewrite: scope column was DROPPED. Filter by user_id only;
+        # the accessible_scopes parameter is kept in the signature for back-compat
+        # with existing callers but is now ignored. Cross-user dedup returns
+        # via v2 named-circles work.
+        if user_id is not None:
+            user_filter = "AND (user_id = :user_id OR user_id IS NULL)"
+            params: dict = {"embedding": embedding_str, "user_id": user_id}
         else:
-            # No filtering (shouldn't happen in normal flow)
             user_filter = ""
             params = {"embedding": embedding_str}
 
@@ -462,13 +429,13 @@ class KnowledgeGraphService:
         return None
 
     async def _get_oldest_entity(self, user_id: int) -> KGEntity | None:
-        """Get the oldest personal entity for a user (fallback when limit reached)."""
+        """Get the oldest entity for a user (fallback when entity limit reached)."""
+        # Lane C rewrite: dropped scope filter; just match on user_id.
         result = await self.db.execute(
             select(KGEntity)
             .where(
                 KGEntity.user_id == user_id,
                 KGEntity.is_active == True,  # noqa: E712
-                KGEntity.scope == KG_SCOPE_PERSONAL,
             )
             .order_by(KGEntity.first_seen_at.asc())
             .limit(1)
@@ -868,153 +835,25 @@ class KnowledgeGraphService:
         self,
         query: str,
         user_id: int | None = None,
-        user_role: str | None = None,
+        user_role: str | None = None,  # kept for back-compat; ignored under circles
         lang: str = "de",
     ) -> str | None:
         """
-        Retrieve relevant graph triples for a query based on user's accessible scopes.
+        Retrieve relevant graph triples for a query, filtered by circle access.
 
-        Uses LLM entity extraction to convert natural-language queries into
-        entity name searches, improving cosine similarity matching. Falls back
-        to embedding the full query if no entity names are extracted.
+        Lane C rewrite: this method ALWAYS delegates to KGRetrieval, regardless
+        of the CIRCLES_USE_NEW_KG flag. The legacy inline scope-based body was
+        removed because it referenced kg_entities.scope which was DROPPED by
+        pc20260420_circles_v1_schema. The flag is preserved for back-compat
+        with existing config but is now a no-op for this method.
 
-        Returns formatted context string or None if nothing relevant.
+        See services/kg_retrieval.py for the implementation. The kg_scope_loader
+        and YAML scope config (config/kg_scopes.yaml) are no longer consulted.
         """
-        # Circles v1 / Lane A2: when the flag is on, delegate to the extracted
-        # KGRetrieval module. Behavioural parity is guarded by the test suite
-        # at tests/backend/test_kg_retrieval_extract.py.
-        if settings.circles_use_new_kg:
-            from services.kg_retrieval import KGRetrieval
-            return await KGRetrieval(self.db).get_relevant_context(
-                query, user_id=user_id, user_role=user_role, lang=lang,
-            )
-
-        from services.kg_scope_loader import get_scope_loader
-        scope_loader = get_scope_loader()
-
-        threshold = settings.kg_retrieval_threshold
-        max_triples = settings.kg_max_context_triples
-
-        # Build scope filter based on user's accessible scopes
-        if user_id is not None:
-            accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
-
-            if accessible_scopes:
-                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
-                user_filter = f"""AND (
-                    ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')
-                    OR e.scope IN ({scopes_list})
-                )"""
-                base_params: dict = {"user_id": user_id}
-            else:
-                user_filter = "AND ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')"
-                base_params = {"user_id": user_id}
-        else:
-            accessible_scopes = scope_loader.get_accessible_scopes(None, include_personal=False)
-            if accessible_scopes:
-                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
-                user_filter = f"AND e.scope IN ({scopes_list})"
-                base_params = {}
-            else:
-                return None
-
-        # Extract entity names from query, fall back to full query
-        extracted_names = await self._extract_query_entities(query, lang)
-        search_texts = extracted_names if extracted_names else [query]
-
-        if extracted_names:
-            logger.debug(f"KG: Extracted entity names from query: {extracted_names}")
-
-        # Search for each text, collecting matching entity IDs
-        relevant_ids: list[int] = []
-        seen_ids: set[int] = set()
-
-        for search_text in search_texts:
-            try:
-                embedding = await self._get_embedding(search_text)
-            except Exception as e:
-                logger.warning(f"KG: Could not embed '{search_text}': {e}")
-                continue
-
-            if not embedding:
-                continue
-
-            embedding_str = f"[{','.join(map(str, embedding))}]"
-            params = {**base_params, "embedding": embedding_str}
-
-            sql = text(f"""
-                SELECT e.id, e.name, e.entity_type,
-                       1 - (e.embedding <=> CAST(:embedding AS vector)) as similarity
-                FROM kg_entities e
-                WHERE e.is_active = true
-                  AND e.embedding IS NOT NULL
-                  {user_filter}
-                ORDER BY e.embedding <=> CAST(:embedding AS vector)
-                LIMIT 10
-            """)
-
-            result = await self.db.execute(sql, params)
-            rows = result.fetchall()
-
-            for row in rows:
-                sim = float(row.similarity) if row.similarity else 0
-                if sim >= threshold and row.id not in seen_ids:
-                    relevant_ids.append(row.id)
-                    seen_ids.add(row.id)
-
-        if not relevant_ids:
-            return None
-
-        # Fetch relations involving those entities
-        relations = await self.db.execute(
-            select(KGRelation)
-            .where(
-                KGRelation.is_active == True,  # noqa: E712
-                (KGRelation.subject_id.in_(relevant_ids)) | (KGRelation.object_id.in_(relevant_ids)),
-            )
-            .limit(max_triples)
+        from services.kg_retrieval import KGRetrieval
+        return await KGRetrieval(self.db).get_relevant_context(
+            query, user_id=user_id, user_role=user_role, lang=lang,
         )
-        relation_rows = relations.scalars().all()
-
-        if not relation_rows:
-            return None
-
-        # Fetch all entity names we need
-        entity_ids = set()
-        for r in relation_rows:
-            entity_ids.add(r.subject_id)
-            entity_ids.add(r.object_id)
-
-        entities_result = await self.db.execute(
-            select(KGEntity).where(KGEntity.id.in_(entity_ids))
-        )
-        entity_map = {e.id: e.name for e in entities_result.scalars().all()}
-
-        # Format triples
-        triples = []
-        for r in relation_rows:
-            subj = entity_map.get(r.subject_id, "?")
-            obj = entity_map.get(r.object_id, "?")
-            triples.append(f"- {subj} {r.predicate} {obj}")
-
-        if not triples:
-            return None
-
-        if lang == "de":
-            header = (
-                "WISSENSGRAPH (persoenliche Fakten ueber den Benutzer und sein Umfeld):\n"
-                "Die folgenden Fakten stammen aus Dokumenten und Gespraechen des Benutzers.\n"
-                "Nutze NUR diese Fakten wenn die Frage sich auf genannte Personen/Orte/Organisationen bezieht.\n"
-                "Erfinde KEINE zusaetzlichen Informationen ueber diese Entitaeten."
-            )
-        else:
-            header = (
-                "KNOWLEDGE GRAPH (personal facts about the user and their environment):\n"
-                "The following facts come from the user's documents and conversations.\n"
-                "Use ONLY these facts when the question refers to named people/places/organizations.\n"
-                "Do NOT invent additional information about these entities."
-            )
-        return f"{header}\n" + "\n".join(triples)
 
     # =========================================================================
     # CRUD for API
@@ -1025,14 +864,11 @@ class KnowledgeGraphService:
         user_id: int | None = None,
         entity_type: str | None = None,
         search: str | None = None,
-        scope: str | None = None,
+        circle_tier: int | None = None,
         page: int = 1,
         size: int = 50,
     ) -> tuple[list[KGEntity], int]:
-        """List active entities with filters."""
-        from services.kg_scope_loader import get_scope_loader
-        scope_loader = get_scope_loader()
-
+        """List active entities with optional filters."""
         query = select(KGEntity).where(KGEntity.is_active == True)  # noqa: E712
         count_query = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
 
@@ -1046,9 +882,9 @@ class KnowledgeGraphService:
             like_pattern = f"%{search}%"
             query = query.where(KGEntity.name.ilike(like_pattern))
             count_query = count_query.where(KGEntity.name.ilike(like_pattern))
-        if scope is not None and scope_loader.is_valid_scope(scope):
-            query = query.where(KGEntity.scope == scope)
-            count_query = count_query.where(KGEntity.scope == scope)
+        if circle_tier is not None:
+            query = query.where(KGEntity.circle_tier == int(circle_tier))
+            count_query = count_query.where(KGEntity.circle_tier == int(circle_tier))
 
         total_result = await self.db.execute(count_query)
         total = total_result.scalar() or 0
@@ -1096,23 +932,54 @@ class KnowledgeGraphService:
         await self.db.refresh(entity)
         return entity
 
-    async def update_entity_scope(
+    async def update_entity_circle_tier(
         self,
         entity_id: int,
-        scope: str,
+        circle_tier: int,
     ) -> KGEntity | None:
-        """Update scope of an entity (admin only)."""
-        from services.kg_scope_loader import get_scope_loader
-        scope_loader = get_scope_loader()
+        """
+        Update an entity's circle_tier (admin only).
 
-        if not scope_loader.is_valid_scope(scope):
-            raise ValueError(f"Invalid scope: {scope}")
+        Cascades through AtomService when the entity has a backing atoms row,
+        which:
+          - rewrites atom.policy = {"tier": new_tier}
+          - rewrites kg_relations.circle_tier on every incident edge using
+            MIN(subject.circle_tier, object.circle_tier) (CEO Finding E)
+          - invalidates resolver caches for the atom
+
+        For entities without an atom_id (legacy rows the AtomService
+        backfill missed), we update the column directly + manually cascade
+        the kg_relations recompute, but skip the policy/cache machinery.
+        """
+        if circle_tier < 0 or circle_tier > TIER_PUBLIC:
+            raise ValueError(
+                f"Invalid circle_tier: {circle_tier} (must be 0..{TIER_PUBLIC})"
+            )
 
         entity = await self.get_entity(entity_id)
         if not entity:
             return None
 
-        entity.scope = scope
+        if entity.atom_id:
+            from services.atom_service import AtomService
+            await AtomService(self.db).update_tier(
+                entity.atom_id, {"tier": int(circle_tier)},
+            )
+            await self.db.refresh(entity)
+            return entity
+
+        # No atom_id — direct column write + manual relation recompute.
+        entity.circle_tier = int(circle_tier)
+        await self.db.execute(
+            text(
+                "UPDATE kg_relations r SET circle_tier = "
+                "LEAST(s.circle_tier, o.circle_tier) "
+                "FROM kg_entities s, kg_entities o "
+                "WHERE r.subject_id = s.id AND r.object_id = o.id "
+                "AND (r.subject_id = :entity_id OR r.object_id = :entity_id)"
+            ),
+            {"entity_id": int(entity_id)},
+        )
         await self.db.commit()
         await self.db.refresh(entity)
         return entity

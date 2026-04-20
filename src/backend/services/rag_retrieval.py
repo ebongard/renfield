@@ -51,6 +51,8 @@ from loguru import logger
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from models.database import TIER_PUBLIC
+from services.circle_sql import document_chunks_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -103,6 +105,7 @@ class RAGRetrieval:
         top_k: int | None = None,
         knowledge_base_id: int | None = None,
         similarity_threshold: float | None = None,
+        user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Search relevant chunks for a query.
@@ -110,6 +113,13 @@ class RAGRetrieval:
         Hybrid (dense + BM25 via RRF) by default; falls back to BM25-only
         when embedding generation fails. Optional rerank pass + either
         parent-child resolution or context-window expansion.
+
+        Circle filter (Lane C): when `user_id` is provided, both retrievers
+        constrain results via `services.circle_sql.document_chunks_circles_filter`
+        — owner's own chunks + public-tier + explicit grants + tier-membership.
+        When `user_id` is None, only public-tier chunks are reachable
+        (anonymous-callers fallback for AUTH_ENABLED=false single-user mode is
+        handled upstream by the route layer passing the sole user's id).
 
         Returns: list of {chunk, document, similarity}
         """
@@ -123,7 +133,7 @@ class RAGRetrieval:
             query_embedding = None
 
         if query_embedding is None:
-            results = await self._search_bm25(query, top_k, knowledge_base_id)
+            results = await self._search_bm25(query, top_k, knowledge_base_id, user_id)
             logger.info(
                 f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"found={len(results)}"
@@ -131,16 +141,18 @@ class RAGRetrieval:
         elif settings.rag_hybrid_enabled:
             candidate_k = top_k * 3
             dense_results = await self._search_dense(
-                query_embedding, candidate_k, knowledge_base_id, threshold
+                query_embedding, candidate_k, knowledge_base_id, threshold, user_id
             )
-            bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id)
+            bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id, user_id)
             results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
             logger.info(
                 f"📚 RAG Hybrid Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"dense={len(dense_results)}, bm25={len(bm25_results)}, fused={len(results)}"
             )
         else:
-            results = await self._search_dense(query_embedding, top_k, knowledge_base_id, threshold)
+            results = await self._search_dense(
+                query_embedding, top_k, knowledge_base_id, threshold, user_id
+            )
             logger.info(
                 f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
                 f"threshold={threshold}, found={len(results)}"
@@ -168,9 +180,11 @@ class RAGRetrieval:
         top_k: int,
         knowledge_base_id: int | None = None,
         threshold: float | None = None,
+        user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
+        circles_clause, circles_params = self._chunk_circles_filter(user_id)
 
         sql = text(f"""
             SELECT
@@ -188,14 +202,16 @@ class RAGRetrieval:
                 1 - (dc.embedding <=> CAST(:embedding AS vector)) as similarity
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
+            JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
             AND dc.embedding IS NOT NULL
+            AND {circles_clause}
             {kb_filter}
             ORDER BY dc.embedding <=> CAST(:embedding AS vector)
             LIMIT :limit
         """)
 
-        params: dict[str, Any] = {"embedding": embedding_str, "limit": top_k}
+        params: dict[str, Any] = {"embedding": embedding_str, "limit": top_k, **circles_params}
         if knowledge_base_id:
             params["kb_id"] = knowledge_base_id
 
@@ -235,9 +251,11 @@ class RAGRetrieval:
         query: str,
         top_k: int,
         knowledge_base_id: int | None = None,
+        user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         fts_config = settings.rag_hybrid_fts_config
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
+        circles_clause, circles_params = self._chunk_circles_filter(user_id)
 
         # OR-match: any query term can match; ts_rank_cd ranks by coverage
         or_query = " OR ".join(query.split())
@@ -258,15 +276,20 @@ class RAGRetrieval:
                 ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
+            JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
             AND dc.search_vector IS NOT NULL
             AND dc.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
+            AND {circles_clause}
             {kb_filter}
             ORDER BY rank DESC
             LIMIT :limit
         """)
 
-        params: dict[str, Any] = {"or_query": or_query, "fts_config": fts_config, "limit": top_k}
+        params: dict[str, Any] = {
+            "or_query": or_query, "fts_config": fts_config, "limit": top_k,
+            **circles_params,
+        }
         if knowledge_base_id:
             params["kb_id"] = knowledge_base_id
 
@@ -531,10 +554,32 @@ class RAGRetrieval:
         query: str,
         top_k: int | None = None,
         knowledge_base_id: int | None = None,
+        user_id: int | None = None,
     ) -> str:
         """Search + format into a prompt-ready context string with source attribution."""
-        results = await self.search(query, top_k, knowledge_base_id)
+        results = await self.search(query, top_k, knowledge_base_id, user_id=user_id)
         return self.format_context_from_results(results)
+
+    @staticmethod
+    def _chunk_circles_filter(user_id: int | None) -> tuple[str, dict[str, Any]]:
+        """
+        Build the document_chunks WHERE-fragment + bind params for circle access.
+
+        Single-user/AUTH_ENABLED=false: full bypass (filter always-true). Matches
+        the legacy `check_kb_access` shape — "auth disabled = full access".
+
+        Anonymous authenticated callers (`user_id is None` while auth is on):
+        only public-tier chunks reachable.
+
+        Authenticated callers: delegates to
+        `circle_sql.document_chunks_circles_filter` (owner / public /
+        explicit-grant / tier-membership 4-branch OR).
+        """
+        if not settings.auth_enabled:
+            return ("TRUE", {})
+        if user_id is None:
+            return ("dc.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
+        return document_chunks_circles_filter(user_id)
 
     def format_context_from_results(self, results: list[dict[str, Any]]) -> str:
         """Format pre-fetched search results into context string without re-searching.

@@ -3,21 +3,22 @@
 from pydantic import BaseModel, Field
 
 
-class ScopeInfo(BaseModel):
-    """Scope information."""
-    name: str           # e.g., "personal", "family", "public"
-    label: str          # Localized label (e.g., "Familie", "Family")
+class CircleTierInfo(BaseModel):
+    """One rung of the circle ladder."""
+    tier: int           # 0..4 (self/trusted/household/extended/public)
+    name: str           # canonical English label, e.g. "household"
+    label: str          # Localized label (e.g., "Familie", "Household")
     description: str    # Localized description
 
 
-class ScopesListResponse(BaseModel):
-    """List of available scopes."""
-    scopes: list[ScopeInfo]
+class CircleTiersListResponse(BaseModel):
+    """List of circle tiers (0..4) with localized labels."""
+    tiers: list[CircleTierInfo]
 
 
-class EntityScopeUpdate(BaseModel):
-    """Update entity scope."""
-    scope: str  # e.g., "personal", "family", "public", or any custom scope from YAML
+class EntityCircleTierUpdate(BaseModel):
+    """Update entity circle_tier (0..4)."""
+    circle_tier: int = Field(ge=0, le=4)
 
 
 class EntityResponse(BaseModel):
@@ -28,7 +29,7 @@ class EntityResponse(BaseModel):
     mention_count: int = 1
     first_seen_at: str = ""
     last_seen_at: str = ""
-    scope: str = "personal"  # New field
+    circle_tier: int = 0  # 0=self, 1=trusted, 2=household, 3=extended, 4=public
 
 
 class EntityUpdate(BaseModel):

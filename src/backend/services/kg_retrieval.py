@@ -165,46 +165,57 @@ class KGRetrieval:
         self,
         query: str,
         user_id: int | None = None,
-        user_role: str | None = None,
+        user_role: str | None = None,  # kept for back-compat; ignored under circles
         lang: str = "de",
     ) -> str | None:
         """
-        Retrieve relevant graph triples for a query based on user's accessible scopes.
+        Retrieve relevant graph triples for a query, filtered by circle access.
 
         Uses LLM entity extraction to convert natural-language queries into
         entity name searches, improving cosine similarity matching. Falls back
         to embedding the full query if no entity names are extracted.
 
+        Lane C rewrite: filter is now circle-tier-based (per-entity-owner) via
+        EXISTS subqueries on circle_memberships + atom_explicit_grants. The
+        legacy scope-based filter (and user_role parameter) are retired —
+        scope was dropped from kg_entities by pc20260420_circles_v1_schema.
+
+        For un-authenticated callers (user_id is None), only public-tier
+        entities are reachable. AUTH_ENABLED=false single-user mode is handled
+        upstream (the route layer doesn't call this with user_id=None for
+        single-user instances; it passes the sole user's id).
+
         Returns formatted context string or None if nothing relevant.
         """
-        from services.kg_scope_loader import get_scope_loader
-        scope_loader = get_scope_loader()
+        from services.circle_sql import (
+            kg_entities_circles_filter,
+            kg_relations_circles_filter,
+        )
 
         threshold = settings.kg_retrieval_threshold
         max_triples = settings.kg_max_context_triples
 
-        # Build scope filter based on user's accessible scopes
-        if user_id is not None:
-            accessible_scopes = scope_loader.get_accessible_scopes(user_role, include_personal=False)
-
-            if accessible_scopes:
-                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
-                user_filter = f"""AND (
-                    ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')
-                    OR e.scope IN ({scopes_list})
-                )"""
-                base_params: dict[str, Any] = {"user_id": user_id}
-            else:
-                user_filter = "AND ((e.user_id = :user_id OR e.user_id IS NULL) AND e.scope = 'personal')"
-                base_params = {"user_id": user_id}
+        # AUTH_ENABLED=false → full bypass (single-user mode sees everything).
+        # Anonymous-but-auth-on (`user_id is None`) → public-tier only.
+        # Authenticated → standard 4-branch OR via circle_sql helpers.
+        if not settings.auth_enabled:
+            entity_filter = ""
+            entity_params: dict[str, Any] = {}
+            relation_filter_clause = ""
+            relation_params: dict[str, Any] = {}
+        elif user_id is None:
+            from models.database import TIER_PUBLIC
+            entity_filter = "AND e.circle_tier = :pub_tier"
+            entity_params = {"pub_tier": TIER_PUBLIC}
+            relation_filter_clause = "AND r.circle_tier = :pub_tier"
+            relation_params = {"pub_tier": TIER_PUBLIC}
         else:
-            accessible_scopes = scope_loader.get_accessible_scopes(None, include_personal=False)
-            if accessible_scopes:
-                scopes_list = ','.join(f"'{s}'" for s in accessible_scopes)
-                user_filter = f"AND e.scope IN ({scopes_list})"
-                base_params = {}
-            else:
-                return None
+            ent_clause, ent_params = kg_entities_circles_filter(user_id, alias="e")
+            entity_filter = f"AND {ent_clause}"
+            entity_params = ent_params
+            rel_clause, rel_params = kg_relations_circles_filter(user_id, alias="r")
+            relation_filter_clause = f"AND {rel_clause}"
+            relation_params = rel_params
 
         # Extract entity names from query, fall back to full query
         extracted_names = await self._extract_query_entities(query, lang)
@@ -228,7 +239,7 @@ class KGRetrieval:
                 continue
 
             embedding_str = f"[{','.join(map(str, embedding))}]"
-            params = {**base_params, "embedding": embedding_str}
+            params = {**entity_params, "embedding": embedding_str}
 
             sql = text(f"""
                 SELECT e.id, e.name, e.entity_type,
@@ -236,7 +247,7 @@ class KGRetrieval:
                 FROM kg_entities e
                 WHERE e.is_active = true
                   AND e.embedding IS NOT NULL
-                  {user_filter}
+                  {entity_filter}
                 ORDER BY e.embedding <=> CAST(:embedding AS vector)
                 LIMIT 10
             """)
@@ -253,16 +264,34 @@ class KGRetrieval:
         if not relevant_ids:
             return None
 
-        # Fetch relations involving those entities
-        relations = await self.db.execute(
-            select(KGRelation)
-            .where(
-                KGRelation.is_active == True,  # noqa: E712
-                (KGRelation.subject_id.in_(relevant_ids)) | (KGRelation.object_id.in_(relevant_ids)),
+        # Fetch relations involving those entities, filtered by relation tier
+        # (defends against the case where an entity is accessible but a relation
+        # at a more-restrictive tier should still be hidden — kg_relations
+        # carries its own circle_tier from MIN(subject.tier, object.tier)).
+        rel_sql = text(f"""
+            SELECT r.id, r.subject_id, r.predicate, r.object_id
+            FROM kg_relations r
+            WHERE r.is_active = true
+              AND (r.subject_id = ANY(:rel_ids) OR r.object_id = ANY(:rel_ids))
+              {relation_filter_clause}
+            LIMIT :max_triples
+        """)
+        rel_params_full = {
+            **relation_params,
+            "rel_ids": relevant_ids,
+            "max_triples": max_triples,
+        }
+        rel_result = await self.db.execute(rel_sql, rel_params_full)
+        relation_rows_raw = rel_result.fetchall()
+
+        # Convert to KGRelation-like objects for the rest of the function
+        from types import SimpleNamespace
+        relation_rows = [
+            SimpleNamespace(
+                id=r.id, subject_id=r.subject_id, predicate=r.predicate, object_id=r.object_id,
             )
-            .limit(max_triples)
-        )
-        relation_rows = relations.scalars().all()
+            for r in relation_rows_raw
+        ]
 
         if not relation_rows:
             return None

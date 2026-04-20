@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import Document, KBPermission, KnowledgeBase, User
+from models.database import Document, KnowledgeBase, User
 from models.permissions import Permission, has_permission
 from services.auth_service import get_optional_user
 from services.database import get_db
@@ -156,20 +156,14 @@ async def check_kb_access(
         if has_permission(user_perms, Permission.KB_SHARED):
             return True
 
-    # Check explicit KBPermission
+    # Check explicit grants via the atom_explicit_grants → chunks aggregation.
     if db:
-        result = await db.execute(
-            select(KBPermission).where(
-                KBPermission.knowledge_base_id == kb.id,
-                KBPermission.user_id == user.id
-            )
-        )
-        perm = result.scalar_one_or_none()
-        if perm:
-            # Permission levels: read < write < admin
+        from services.kb_shares_service import get_user_kb_permission_level
+        level = await get_user_kb_permission_level(db, kb.id, user.id)
+        if level:
             perm_levels = {"read": 1, "write": 2, "admin": 3}
             required_level = perm_levels.get(required_action, 1)
-            user_level = perm_levels.get(perm.permission, 0)
+            user_level = perm_levels.get(level, 0)
             if user_level >= required_level:
                 return True
 
@@ -199,16 +193,11 @@ async def get_user_kb_permission(
     if kb.owner_id == user.id:
         return "owner"
 
-    # Check explicit permission
-    result = await db.execute(
-        select(KBPermission).where(
-            KBPermission.knowledge_base_id == kb.id,
-            KBPermission.user_id == user.id
-        )
-    )
-    perm = result.scalar_one_or_none()
-    if perm:
-        return perm.permission
+    # Check explicit grants via the atom_explicit_grants → chunks aggregation.
+    from services.kb_shares_service import get_user_kb_permission_level
+    level = await get_user_kb_permission_level(db, kb.id, user.id)
+    if level:
+        return level
 
     # Public KB + kb.shared = read
     if kb.is_public and has_permission(user_perms, Permission.KB_SHARED):
@@ -797,13 +786,8 @@ async def list_knowledge_bases(
         elif has_permission(user_perms, Permission.KB_NONE):
             return []
         else:
-            # Batch-load all KB IDs the user has explicit permissions for
-            perm_result = await db.execute(
-                select(KBPermission.knowledge_base_id).where(
-                    KBPermission.user_id == user.id
-                )
-            )
-            user_kb_ids: set[int] = set(perm_result.scalars().all())
+            from services.kb_shares_service import list_user_shared_kb_ids
+            user_kb_ids: set[int] = await list_user_shared_kb_ids(db, user.id)
 
             accessible_bases = []
             for kb in all_bases:
@@ -934,7 +918,8 @@ async def search_knowledge(
         query=request.query,
         top_k=request.top_k,
         knowledge_base_id=request.knowledge_base_id,
-        similarity_threshold=request.similarity_threshold
+        similarity_threshold=request.similarity_threshold,
+        user_id=user.id if user else None,
     )
 
     return SearchResponse(
@@ -992,7 +977,8 @@ async def search_knowledge_get(
         query=q,
         top_k=top_k,
         knowledge_base_id=knowledge_base_id,
-        similarity_threshold=threshold
+        similarity_threshold=threshold,
+        user_id=user.id if user else None,
     )
 
     return {
@@ -1143,15 +1129,17 @@ async def list_kb_permissions(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    List all permissions for a knowledge base.
+    List all permissions for a knowledge base. Owner or admin only.
 
-    Only owner or admin can view permissions.
+    Lane C: aggregates atom_explicit_grants by user_id so one logical
+    KB-share surfaces as one row even though it's stored per chunk.
+    The `id` field in the response is the granted_to_user_id (same thing
+    the revoke endpoint's {permission_id} path param now accepts).
     """
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge Base not found")
 
-    # Check access
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -1160,41 +1148,34 @@ async def list_kb_permissions(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can view permissions")
 
-    # Get all permissions
-    result = await db.execute(
-        select(KBPermission).where(KBPermission.knowledge_base_id == kb_id)
-    )
-    permissions = result.scalars().all()
+    from services.kb_shares_service import list_kb_shares
+    shares = await list_kb_shares(db, kb_id)
 
-    # Batch-load all referenced users in a single query
-    all_user_ids = set()
-    for perm in permissions:
-        all_user_ids.add(perm.user_id)
-        if perm.granted_by:
-            all_user_ids.add(perm.granted_by)
+    # Batch-load all referenced users
+    all_user_ids: set[int] = set()
+    for s in shares:
+        all_user_ids.add(s["user_id"])
+        if s["granted_by"]:
+            all_user_ids.add(s["granted_by"])
 
     user_map: dict[int, User] = {}
     if all_user_ids:
-        user_result = await db.execute(
-            select(User).where(User.id.in_(all_user_ids))
-        )
+        user_result = await db.execute(select(User).where(User.id.in_(all_user_ids)))
         user_map = {u.id: u for u in user_result.scalars().all()}
 
     response = []
-    for perm in permissions:
-        perm_user = user_map.get(perm.user_id)
-        granter = user_map.get(perm.granted_by) if perm.granted_by else None
-
+    for s in shares:
+        perm_user = user_map.get(s["user_id"])
+        granter = user_map.get(s["granted_by"]) if s["granted_by"] else None
         response.append(KBPermissionResponse(
-            id=perm.id,
-            user_id=perm.user_id,
+            id=s["user_id"],
+            user_id=s["user_id"],
             username=perm_user.username if perm_user else "Unknown",
-            permission=perm.permission,
-            granted_by=perm.granted_by,
+            permission=s["permission"],
+            granted_by=s["granted_by"],
             granted_by_username=granter.username if granter else None,
-            created_at=perm.created_at.isoformat() if perm.created_at else ""
+            created_at=s["granted_at"].isoformat() if s["granted_at"] else "",
         ))
-
     return response
 
 
@@ -1206,16 +1187,11 @@ async def share_knowledge_base(
     user: User | None = Depends(get_optional_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """
-    Share a knowledge base with another user.
-
-    Only owner or admin can share.
-    """
+    """Share a knowledge base with another user. Owner or admin only."""
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge Base not found")
 
-    # Check access
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -1224,56 +1200,38 @@ async def share_knowledge_base(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can share")
 
-    # Check target user exists
     target_result = await db.execute(select(User).where(User.id == data.user_id))
     target_user = target_result.scalar_one_or_none()
     if not target_user:
         raise HTTPException(status_code=404, detail="Target user not found")
 
-    # Can't share with yourself
     if user and target_user.id == user.id:
         raise HTTPException(status_code=400, detail="Cannot share with yourself")
 
-    # Can't share with owner
     if kb.owner_id and target_user.id == kb.owner_id:
         raise HTTPException(status_code=400, detail="User is already the owner")
 
-    # Check if permission already exists
-    existing_result = await db.execute(
-        select(KBPermission).where(
-            KBPermission.knowledge_base_id == kb_id,
-            KBPermission.user_id == data.user_id
-        )
+    from services.kb_shares_service import share_kb, list_kb_shares
+    await share_kb(
+        db, kb_id,
+        target_user_id=data.user_id,
+        permission_level=data.permission,
+        granted_by=user.id if user else None,
     )
-    existing = existing_result.scalar_one_or_none()
 
-    if existing:
-        # Update existing permission
-        existing.permission = data.permission
-        existing.granted_by = user.id if user else None
-        await db.commit()
-        await db.refresh(existing)
-        perm = existing
-    else:
-        # Create new permission
-        perm = KBPermission(
-            knowledge_base_id=kb_id,
-            user_id=data.user_id,
-            permission=data.permission,
-            granted_by=user.id if user else None
-        )
-        db.add(perm)
-        await db.commit()
-        await db.refresh(perm)
+    # Fetch the aggregated share row to echo back
+    shares = await list_kb_shares(db, kb_id)
+    share_row = next((s for s in shares if s["user_id"] == data.user_id), None)
+    granted_at = share_row["granted_at"].isoformat() if share_row and share_row["granted_at"] else ""
 
     return KBPermissionResponse(
-        id=perm.id,
-        user_id=perm.user_id,
+        id=data.user_id,
+        user_id=data.user_id,
         username=target_user.username,
-        permission=perm.permission,
-        granted_by=perm.granted_by,
+        permission=data.permission,
+        granted_by=user.id if user else None,
         granted_by_username=user.username if user else None,
-        created_at=perm.created_at.isoformat() if perm.created_at else ""
+        created_at=granted_at,
     )
 
 
@@ -1286,15 +1244,15 @@ async def revoke_kb_permission(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Revoke a user's access to a knowledge base.
+    Revoke a user's access to a knowledge base. Owner or admin only.
 
-    Only owner or admin can revoke permissions.
+    Lane C: `permission_id` is now the `granted_to_user_id` (matches the
+    `id` field returned by the list endpoint).
     """
     kb = await rag.get_knowledge_base(kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="Knowledge Base not found")
 
-    # Check access
     if settings.auth_enabled:
         if not user:
             raise HTTPException(status_code=401, detail="Authentication required")
@@ -1303,20 +1261,10 @@ async def revoke_kb_permission(
         if user_perm not in ("owner", "admin"):
             raise HTTPException(status_code=403, detail="Only owner or admin can revoke permissions")
 
-    # Get permission
-    result = await db.execute(
-        select(KBPermission).where(
-            KBPermission.id == permission_id,
-            KBPermission.knowledge_base_id == kb_id
-        )
-    )
-    perm = result.scalar_one_or_none()
-
-    if not perm:
+    from services.kb_shares_service import revoke_kb_share
+    removed = await revoke_kb_share(db, kb_id, target_user_id=permission_id)
+    if removed == 0:
         raise HTTPException(status_code=404, detail="Permission not found")
-
-    await db.delete(perm)
-    await db.commit()
 
     return {"message": "Permission revoked"}
 

@@ -114,20 +114,24 @@ class TestExtractQueryEntitiesParity:
             assert result == ["Anna", "Bob"]
 
 
-class TestFlagRouting:
+class TestRouting:
+    """
+    Lane C: KnowledgeGraphService.get_relevant_context unconditionally
+    delegates to KGRetrieval. The legacy CIRCLES_USE_NEW_KG flag is
+    retained on the settings model for back-compat but is now a no-op.
+    """
+
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_flag_on_routes_to_kg_retrieval(self):
+    async def test_always_routes_to_kg_retrieval(self):
         db = MagicMock()
         service = KnowledgeGraphService(db)
         sentinel = "WISSENSGRAPH:\n- Anna lives_in Hamburg"
 
-        with patch("services.knowledge_graph_service.settings") as svc_settings, \
-             patch(
-                 "services.kg_retrieval.KGRetrieval.get_relevant_context",
-                 new=AsyncMock(return_value=sentinel),
-             ) as ret_get:
-            svc_settings.circles_use_new_kg = True
+        with patch(
+            "services.kg_retrieval.KGRetrieval.get_relevant_context",
+            new=AsyncMock(return_value=sentinel),
+        ) as ret_get:
             result = await service.get_relevant_context(
                 "Where does Anna live?", user_id=42, user_role="family", lang="de"
             )
@@ -141,39 +145,22 @@ class TestFlagRouting:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_flag_off_does_not_route_to_kg_retrieval(self):
-        """With the flag off, get_relevant_context must NOT delegate to KGRetrieval."""
+    async def test_routes_even_when_legacy_flag_off(self):
+        """The legacy circles_use_new_kg flag is dead — both values route through KGRetrieval."""
         db = MagicMock()
         service = KnowledgeGraphService(db)
+        sentinel = "WISSENSGRAPH:\n- foo bar baz"
 
-        # Stub the inline path: empty entity extraction + embedding failure means
-        # the function exits early without hitting the SQL relations fetch.
-        # We don't care about the inline result; we only assert KGRetrieval is NOT called.
         with patch("services.knowledge_graph_service.settings") as svc_settings, \
-             patch("services.kg_scope_loader.get_scope_loader") as scope_loader, \
-             patch.object(
-                 KnowledgeGraphService, "_extract_query_entities",
-                 new=AsyncMock(return_value=[]),
-             ), \
-             patch.object(
-                 KnowledgeGraphService, "_get_embedding",
-                 new=AsyncMock(side_effect=RuntimeError("simulated embedding failure")),
-             ), \
              patch(
                  "services.kg_retrieval.KGRetrieval.get_relevant_context",
-                 new=AsyncMock(return_value="should not be called"),
+                 new=AsyncMock(return_value=sentinel),
              ) as ret_get:
-            svc_settings.circles_use_new_kg = False
-            svc_settings.kg_retrieval_threshold = 0.7
-            svc_settings.kg_max_context_triples = 50
-            scope_loader.return_value.get_accessible_scopes.return_value = ["personal"]
-
+            svc_settings.circles_use_new_kg = False  # flag now a no-op
             result = await service.get_relevant_context("query", user_id=1)
 
-        # Inline path returned None (no entities + embedding failed) — that's expected.
-        # Critical assertion: KGRetrieval was NOT touched.
-        assert result is None
-        ret_get.assert_not_called()
+        ret_get.assert_called_once()
+        assert result == sentinel
 
 
 class TestKGRetrievalSurface:

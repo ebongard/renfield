@@ -63,9 +63,17 @@ async def knowledge_search(params: dict) -> dict:
         from services.database import AsyncSessionLocal
         from services.rag_service import RAGService
 
+        # FastMCP injects `user_id` into the params dict from the auth context;
+        # passing it through pins the RAG search to that user's circle reach.
+        user_id_raw = params.get("user_id")
+        try:
+            user_id_int = int(user_id_raw) if user_id_raw is not None else None
+        except (TypeError, ValueError):
+            user_id_int = None
+
         async with AsyncSessionLocal() as db:
             rag = RAGService(db)
-            results = await rag.search(query=query, top_k=top_k)
+            results = await rag.search(query=query, top_k=top_k, user_id=user_id_int)
 
         if results:
             context_parts = []

@@ -54,7 +54,8 @@ from loguru import logger
 from sqlalchemy import text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ConversationMemory
+from models.database import TIER_PUBLIC, ConversationMemory
+from services.circle_sql import conversation_memories_circles_filter
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -108,6 +109,12 @@ class MemoryRetrieval:
         """
         Retrieve relevant memories using cosine similarity search.
 
+        Lane C: `user_id` is the asker. Results include the asker's own
+        memories + public-tier + explicit-grant + tier-membership reachable
+        memories from circle peers (per `circle_sql.conversation_memories_circles_filter`).
+        For anonymous callers (`user_id is None`) only public-tier memories
+        are returned.
+
         Returns list of dicts with id, content, category, importance, similarity.
         Side effect: updates access_count + last_accessed_at on returned rows.
         """
@@ -121,8 +128,7 @@ class MemoryRetrieval:
             return []
 
         embedding_str = f"[{','.join(map(str, query_embedding))}]"
-
-        user_filter = "AND user_id = :user_id" if user_id is not None else ""
+        circles_clause, circles_params = self._memory_circles_filter(user_id)
 
         sql = text(f"""
             SELECT
@@ -134,17 +140,17 @@ class MemoryRetrieval:
                 access_count,
                 created_at,
                 1 - (embedding <=> CAST(:embedding AS vector)) as similarity
-            FROM conversation_memories
+            FROM conversation_memories m
             WHERE is_active = true
               AND embedding IS NOT NULL
-              {user_filter}
+              AND {circles_clause}
             ORDER BY (1 - (embedding <=> CAST(:embedding AS vector))) * importance * confidence DESC
             LIMIT :limit
         """)
 
-        params: dict[str, Any] = {"embedding": embedding_str, "limit": limit}
-        if user_id is not None:
-            params["user_id"] = user_id
+        params: dict[str, Any] = {
+            "embedding": embedding_str, "limit": limit, **circles_params,
+        }
 
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
@@ -194,26 +200,28 @@ class MemoryRetrieval:
         Essential memories (importance >= threshold, category != 'context')
         are always injected into the LLM context so the assistant knows
         the user's name, location, preferences, etc.
+
+        Lane C: `user_id` is the asker — circle filter applies (own +
+        public + explicit-grant + tier-membership).
         """
         threshold = settings.memory_essential_threshold
         limit = limit or settings.memory_retrieval_limit
-
-        user_filter = "AND user_id = :user_id" if user_id is not None else ""
+        circles_clause, circles_params = self._memory_circles_filter(user_id)
 
         sql = text(f"""
             SELECT id, content, category, importance, access_count, created_at
-            FROM conversation_memories
+            FROM conversation_memories m
             WHERE is_active = true
               AND importance >= :threshold
               AND category != 'context'
-              {user_filter}
+              AND {circles_clause}
             ORDER BY importance DESC
             LIMIT :limit
         """)
 
-        params: dict[str, Any] = {"threshold": threshold, "limit": limit}
-        if user_id is not None:
-            params["user_id"] = user_id
+        params: dict[str, Any] = {
+            "threshold": threshold, "limit": limit, **circles_params,
+        }
 
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
@@ -262,23 +270,25 @@ class MemoryRetrieval:
         return math.exp(-0.693 * age_days / half_life_days)
 
     @staticmethod
-    def _build_scope_filter(
-        user_id: int | None,
-        team_ids: list[str] | None,
-    ) -> str:
-        """Build SQL scope filter clause for multi-scope retrieval."""
-        conditions = ["scope = 'global'"]
-        if user_id is not None:
-            conditions.append("(scope = 'user' AND user_id = :user_id)")
-        if team_ids:
-            conditions.append("(scope = 'team' AND team_id IN :team_ids)")
-        return "AND (" + " OR ".join(conditions) + ")"
+    def _memory_circles_filter(user_id: int | None) -> tuple[str, dict[str, Any]]:
+        """
+        Build the conversation_memories WHERE-fragment + bind params for circle access.
+
+        AUTH_ENABLED=false: full bypass (single-user mode sees everything).
+        Anonymous-but-auth-on (`user_id is None`): only public-tier memories.
+        Authenticated callers: standard 4-branch OR via
+        `circle_sql.conversation_memories_circles_filter`.
+        """
+        if not settings.auth_enabled:
+            return ("TRUE", {})
+        if user_id is None:
+            return ("m.circle_tier = :asker_id_pub", {"asker_id_pub": TIER_PUBLIC})
+        return conversation_memories_circles_filter(user_id, alias="m")
 
     async def retrieve_for_prompt(
         self,
         query: str,
         user_id: int | None = None,
-        team_ids: list[str] | None = None,
         budget_chars: int | None = None,
     ) -> dict[str, list[dict]]:
         """
@@ -291,6 +301,8 @@ class MemoryRetrieval:
         - episodic: Recent interaction episodes (if episodic memory enabled)
 
         The total character count of all sections is capped at budget_chars.
+        Lane C: legacy `team_ids` parameter removed — circle_tier subsumes
+        team scoping (parked for v2 named-circles).
         """
         budget = budget_chars or settings.memory_retrieval_budget_chars
         sections: dict[str, list[dict]] = {
@@ -312,23 +324,19 @@ class MemoryRetrieval:
             seen_ids.add(m["id"])
             used_chars += content_len
 
-        # --- 2. Procedural memories (scope: user + team + global) ---
-        scope_filter = self._build_scope_filter(user_id, team_ids)
+        # --- 2. Procedural memories (circle-filtered) ---
+        circles_clause, circles_params = self._memory_circles_filter(user_id)
         procedural_sql = text(f"""
             SELECT id, content, category, importance, access_count, created_at,
-                   source, scope, trigger_pattern
-            FROM conversation_memories
+                   source, circle_tier, trigger_pattern
+            FROM conversation_memories m
             WHERE is_active = true
               AND category = 'procedural'
-              {scope_filter}
+              AND {circles_clause}
             ORDER BY importance DESC
             LIMIT 10
         """)
-        params: dict[str, Any] = {}
-        if user_id is not None:
-            params["user_id"] = user_id
-        if team_ids:
-            params["team_ids"] = tuple(team_ids)
+        params: dict[str, Any] = dict(circles_params)
 
         try:
             result = await self.db.execute(procedural_sql, params)
@@ -354,7 +362,7 @@ class MemoryRetrieval:
                     "category": row.category,
                     "importance": row.importance,
                     "source": getattr(row, "source", "llm_inferred"),
-                    "scope": getattr(row, "scope", "user"),
+                    "circle_tier": int(getattr(row, "circle_tier", 0) or 0),
                 })
                 seen_ids.add(row.id)
                 used_chars += content_len

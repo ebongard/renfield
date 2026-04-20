@@ -1844,31 +1844,9 @@ class TestRevaMemoryConstants:
         assert MEMORY_SCOPE_GLOBAL == "global"
 
 
-class TestBuildScopeFilter:
-    """Test _build_scope_filter() SQL clause builder."""
-
-    @pytest.mark.unit
-    def test_global_only(self):
-        from services.conversation_memory_service import ConversationMemoryService
-        result = ConversationMemoryService._build_scope_filter(None, None)
-        assert "scope = 'global'" in result
-        assert "user_id" not in result
-        assert "team_id" not in result
-
-    @pytest.mark.unit
-    def test_user_scope(self):
-        from services.conversation_memory_service import ConversationMemoryService
-        result = ConversationMemoryService._build_scope_filter(42, None)
-        assert "scope = 'global'" in result
-        assert "scope = 'user' AND user_id = :user_id" in result
-
-    @pytest.mark.unit
-    def test_team_scope(self):
-        from services.conversation_memory_service import ConversationMemoryService
-        result = ConversationMemoryService._build_scope_filter(42, ["team-a", "team-b"])
-        assert "scope = 'global'" in result
-        assert "scope = 'user'" in result
-        assert "scope = 'team' AND team_id IN :team_ids" in result
+# NOTE (Lane C): the legacy _build_scope_filter helper was removed.
+# Circle-tier filter parity is covered in tests/backend/test_circle_sql.py
+# and tests/backend/test_memory_retrieval_extract.py::TestMemoryCirclesFilter.
 
 
 class TestRecencyScore:

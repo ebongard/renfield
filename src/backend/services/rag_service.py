@@ -575,82 +575,30 @@ class RAGService:
         query: str,
         top_k: int | None = None,
         knowledge_base_id: int | None = None,
-        similarity_threshold: float | None = None
+        similarity_threshold: float | None = None,
+        user_id: int | None = None,
     ) -> list[dict[str, Any]]:
         """
         Sucht relevante Chunks für eine Anfrage.
 
-        Uses Hybrid Search (Dense + BM25 via RRF) when enabled,
-        otherwise falls back to dense-only search.
-        Optionally expands results with adjacent chunks (Context Window).
+        Lane C: always delegates to the extracted RAGRetrieval module which
+        applies the circle-tier WHERE filter (`circle_sql.document_chunks_circles_filter`).
+        The legacy inline path was retired with circles v1 — the legacy SQL
+        had no permission filter and would leak chunks across circle boundaries.
 
         Args:
             query: Suchanfrage
             top_k: Anzahl der Ergebnisse (default: settings.rag_top_k)
             knowledge_base_id: Optional Knowledge Base Filter
             similarity_threshold: Minimum Similarity (default: settings.rag_similarity_threshold)
-
-        Returns:
-            Liste von {chunk, document, similarity}
+            user_id: Authenticated asker — required for circle filtering. None
+                     reduces results to public-tier only.
         """
-        # Circles v1 / Lane A1: route to the extracted RAGRetrieval module when
-        # the flag is on. Parity verified by tests/backend/test_rag_retrieval_extract.py.
-        if settings.circles_use_new_rag:
-            from services.rag_retrieval import RAGRetrieval
-            return await RAGRetrieval(self.db).search(
-                query, top_k=top_k, knowledge_base_id=knowledge_base_id,
-                similarity_threshold=similarity_threshold,
-            )
-
-        top_k = top_k or settings.rag_top_k
-        threshold = similarity_threshold or settings.rag_similarity_threshold
-
-        # Query-Embedding erstellen (mit BM25-Fallback bei Fehler)
-        try:
-            query_embedding = await self.get_embedding(query)
-        except Exception as e:
-            logger.warning(f"Embedding fehlgeschlagen, Fallback auf BM25-only: {e}")
-            query_embedding = None
-
-        if query_embedding is None:
-            # BM25-only Fallback wenn Embedding-Modell nicht erreichbar
-            results = await self._search_bm25(query, top_k, knowledge_base_id)
-            logger.info(
-                f"📚 RAG BM25-only Fallback: query='{query[:50]}', kb_id={knowledge_base_id}, "
-                f"found={len(results)}"
-            )
-        elif settings.rag_hybrid_enabled:
-            # Hybrid Search (Dense + BM25 via RRF)
-            candidate_k = top_k * 3  # Over-fetch for RRF fusion
-            dense_results = await self._search_dense(
-                query_embedding, candidate_k, knowledge_base_id, threshold
-            )
-            bm25_results = await self._search_bm25(query, candidate_k, knowledge_base_id)
-            results = self._reciprocal_rank_fusion(dense_results, bm25_results, top_k)
-            logger.info(
-                f"📚 RAG Hybrid Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
-                f"dense={len(dense_results)}, bm25={len(bm25_results)}, fused={len(results)}"
-            )
-        else:
-            results = await self._search_dense(query_embedding, top_k, knowledge_base_id, threshold)
-            logger.info(
-                f"📚 RAG Dense Search: query='{query[:50]}', kb_id={knowledge_base_id}, "
-                f"threshold={threshold}, found={len(results)}"
-            )
-
-        # Reranking (second-pass relevance scoring with dedicated model)
-        if results:
-            results = await self._rerank(query, results)
-
-        # Parent-Child Resolution OR Context Window Expansion (mutually exclusive)
-        if settings.rag_parent_child_enabled and results:
-            results = await self._resolve_parents(results)
-        else:
-            window_size = min(settings.rag_context_window, settings.rag_context_window_max)
-            if window_size > 0 and results:
-                results = await self._expand_context_window(results, window_size)
-
-        return results
+        from services.rag_retrieval import RAGRetrieval
+        return await RAGRetrieval(self.db).search(
+            query, top_k=top_k, knowledge_base_id=knowledge_base_id,
+            similarity_threshold=similarity_threshold, user_id=user_id,
+        )
 
     # --------------------------------------------------------------------------
     # Dense Search (pgvector cosine similarity)
@@ -979,47 +927,19 @@ class RAGService:
         self,
         query: str,
         top_k: int | None = None,
-        knowledge_base_id: int | None = None
+        knowledge_base_id: int | None = None,
+        user_id: int | None = None,
     ) -> str:
         """
         Erstellt einen formatierten Kontext-String für das LLM.
 
-        Args:
-            query: Suchanfrage
-            top_k: Anzahl der Chunks
-            knowledge_base_id: Optional Knowledge Base Filter
-
-        Returns:
-            Formatierter Kontext-String mit Quellenangaben
+        Lane C: always delegates to RAGRetrieval (circle-aware). See search()
+        for the rationale.
         """
-        # Circles v1 / Lane A1 — see search() for the same flag pattern.
-        if settings.circles_use_new_rag:
-            from services.rag_retrieval import RAGRetrieval
-            return await RAGRetrieval(self.db).get_context(
-                query, top_k=top_k, knowledge_base_id=knowledge_base_id,
-            )
-
-        results = await self.search(query, top_k, knowledge_base_id)
-
-        if not results:
-            return ""
-
-        context_parts = []
-        for i, result in enumerate(results, 1):
-            chunk = result["chunk"]
-            doc = result["document"]
-
-            # Formatierte Quellenangabe
-            source_info = f"[Quelle {i}: {doc['filename']}"
-            if chunk["page_number"]:
-                source_info += f", Seite {chunk['page_number']}"
-            if chunk["section_title"]:
-                source_info += f", {chunk['section_title']}"
-            source_info += "]"
-
-            context_parts.append(f"{source_info}\n{chunk['content']}")
-
-        return "\n\n---\n\n".join(context_parts)
+        from services.rag_retrieval import RAGRetrieval
+        return await RAGRetrieval(self.db).get_context(
+            query, top_k=top_k, knowledge_base_id=knowledge_base_id, user_id=user_id,
+        )
 
     def format_context_from_results(self, results: list[dict]) -> str:
         """Format pre-fetched search results into context string without re-searching."""

@@ -7,13 +7,15 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routes.knowledge_graph_schemas import (
+    CircleTierInfo,
+    CircleTiersListResponse,
     CleanupInvalidResponse,
     DuplicateCluster,
     DuplicateClustersResponse,
     EntityBrief,
+    EntityCircleTierUpdate,
     EntityListResponse,
     EntityResponse,
-    EntityScopeUpdate,
     EntityUpdate,
     KGStatsResponse,
     MergeDuplicatesResponse,
@@ -22,9 +24,8 @@ from api.routes.knowledge_graph_schemas import (
     RelationListResponse,
     RelationResponse,
     RelationUpdate,
-    ScopesListResponse,
 )
-from models.database import User
+from models.database import TIER_PUBLIC, User
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
@@ -44,23 +45,46 @@ def _entity_to_response(entity) -> EntityResponse:
         mention_count=entity.mention_count or 1,
         first_seen_at=entity.first_seen_at.isoformat() if entity.first_seen_at else "",
         last_seen_at=entity.last_seen_at.isoformat() if entity.last_seen_at else "",
-        scope=entity.scope or "personal",
+        circle_tier=int(entity.circle_tier or 0),
     )
 
 
-@router.get("/scopes", response_model=ScopesListResponse)
+# Localized tier labels — kept inline because the ladder is fixed at 5 rungs
+# and never user-extensible (per Lane B / circles v1 design).
+_TIER_LABELS: dict[int, dict[str, dict[str, str]]] = {
+    0: {"de": {"label": "Privat", "description": "Nur für mich sichtbar."},
+        "en": {"label": "Self", "description": "Visible only to me."}},
+    1: {"de": {"label": "Vertraut", "description": "Für vertraute Personen sichtbar."},
+        "en": {"label": "Trusted", "description": "Visible to trusted people."}},
+    2: {"de": {"label": "Haushalt", "description": "Für den ganzen Haushalt sichtbar."},
+        "en": {"label": "Household", "description": "Visible to everyone in the household."}},
+    3: {"de": {"label": "Erweitert", "description": "Für den erweiterten Kreis sichtbar."},
+        "en": {"label": "Extended", "description": "Visible to the extended circle."}},
+    4: {"de": {"label": "Öffentlich", "description": "Öffentlich sichtbar."},
+        "en": {"label": "Public", "description": "Publicly visible."}},
+}
+_TIER_NAMES = {0: "self", 1: "trusted", 2: "household", 3: "extended", 4: "public"}
+
+
+@router.get("/circle-tiers", response_model=CircleTiersListResponse)
 @limiter.limit(settings.api_rate_limit_admin)
-async def list_scopes(
+async def list_circle_tiers(
     request: Request,
     lang: str = Query("de"),
     user: User = Depends(require_permission(Permission.KG_VIEW)),
 ):
-    """List available KG scopes with labels and descriptions."""
-    from services.kg_scope_loader import get_scope_loader
-    scope_loader = get_scope_loader()
-
-    scopes = scope_loader.get_all_scopes(lang)
-    return ScopesListResponse(scopes=scopes)
+    """List circle tiers (0..4) with localized labels and descriptions."""
+    lang_key = lang if lang in ("de", "en") else "de"
+    tiers = [
+        CircleTierInfo(
+            tier=t,
+            name=_TIER_NAMES[t],
+            label=_TIER_LABELS[t][lang_key]["label"],
+            description=_TIER_LABELS[t][lang_key]["description"],
+        )
+        for t in range(TIER_PUBLIC + 1)
+    ]
+    return CircleTiersListResponse(tiers=tiers)
 
 
 @router.get("/entities", response_model=EntityListResponse)
@@ -70,7 +94,7 @@ async def list_entities(
     user_id: int | None = Query(None),
     type: str | None = Query(None),
     search: str | None = Query(None),
-    scope: str | None = Query(None),
+    circle_tier: int | None = Query(None, ge=0, le=4),
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
@@ -83,7 +107,7 @@ async def list_entities(
             user_id=user_id,
             entity_type=type,
             search=search,
-            scope=scope,
+            circle_tier=circle_tier,
             page=page,
             size=size,
         )
@@ -142,19 +166,19 @@ async def update_entity(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/entities/{entity_id}/scope")
+@router.patch("/entities/{entity_id}/circle-tier", response_model=EntityResponse)
 @limiter.limit(settings.api_rate_limit_admin)
-async def update_entity_scope(
+async def update_entity_circle_tier(
     request: Request,
     entity_id: int,
-    body: EntityScopeUpdate,
+    body: EntityCircleTierUpdate,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(require_permission(Permission.KG_MANAGE)),
 ):
-    """Update scope of an entity."""
+    """Update an entity's circle_tier (0..4). Cascades to incident relations."""
     try:
         svc = KnowledgeGraphService(db)
-        entity = await svc.update_entity_scope(entity_id, body.scope)
+        entity = await svc.update_entity_circle_tier(entity_id, body.circle_tier)
         if not entity:
             raise HTTPException(status_code=404, detail="Entity not found")
         return _entity_to_response(entity)
@@ -163,7 +187,7 @@ async def update_entity_scope(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Update KG entity scope error: {e}")
+        logger.error(f"Update KG entity circle_tier error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
