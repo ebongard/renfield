@@ -1769,3 +1769,178 @@ class TestAgentBreaksOnRepeatedEmptyResults:
         # Should not have used many steps
         tool_calls = [s for s in steps if s.step_type == "tool_call"]
         assert len(tool_calls) == 2
+
+
+# ============================================================================
+# Plugin-observable ContextVars: token_budget_info, token_usage_info
+# ============================================================================
+
+
+class TestTokenContextVars:
+    """Plugin-observable ContextVars populated during AgentService.run().
+
+    Plugins (e.g. the Reva Teams transport) read these after the agent loop
+    to publish real per-request token metrics without needing access to the
+    internal AgentContext. See module-level docstring in agent_service.py.
+    """
+
+    def _make_registry(self):
+        from services.agent_tools import AgentToolRegistry
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+
+    def _make_ollama_mock(self, responses):
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+        call_count = 0
+
+        async def mock_chat(**kwargs):
+            nonlocal call_count
+            idx = min(call_count, len(responses) - 1)
+            call_count += 1
+            resp = MagicMock()
+            resp.message = MagicMock()
+            resp.message.content = responses[idx]
+            return resp
+
+        ollama.client.chat = mock_chat
+        _shared_agent_client.chat = mock_chat
+        return ollama
+
+    @pytest.mark.unit
+    async def test_token_usage_info_set_after_run(self):
+        """token_usage_info contains real input/output totals after run()."""
+        from services.agent_service import token_usage_info
+
+        registry = self._make_registry()
+        ollama = self._make_ollama_mock([
+            '{"action": "final_answer", "answer": "Hi", "reason": "Done"}'
+        ])
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=3)
+        async for _ in agent.run(
+            message="Hallo", ollama=ollama, executor=executor
+        ):
+            pass
+
+        usage = token_usage_info.get()
+        assert usage is not None, "token_usage_info should be set after run()"
+        assert usage["input_tokens"] > 0, "input_tokens should be populated"
+        assert usage["output_tokens"] > 0, "output_tokens should be populated"
+        assert usage["total_tokens"] == usage["input_tokens"] + usage["output_tokens"]
+
+    @pytest.mark.unit
+    async def test_token_usage_info_reset_each_run(self):
+        """A fresh run() resets token_usage_info — no leak from prior request."""
+        from services.agent_service import token_usage_info
+
+        # Pre-seed a stale value
+        token_usage_info.set({"input_tokens": 999, "output_tokens": 999, "total_tokens": 1998})
+
+        registry = self._make_registry()
+        ollama = self._make_ollama_mock([
+            '{"action": "final_answer", "answer": "Hi", "reason": "Done"}'
+        ])
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=3)
+        async for _ in agent.run(
+            message="Hallo", ollama=ollama, executor=executor
+        ):
+            pass
+
+        usage = token_usage_info.get()
+        assert usage is not None
+        # Stale 999 tokens should be gone — real counts are far smaller for
+        # a single-turn greeting
+        assert usage["input_tokens"] != 999, "stale input_tokens leaked"
+        assert usage["output_tokens"] != 999, "stale output_tokens leaked"
+
+    @pytest.mark.unit
+    async def test_token_usage_info_populated_on_early_error(self):
+        """Early error paths (e.g. LLM failure) still publish token usage."""
+        from services.agent_service import token_usage_info
+
+        registry = self._make_registry()
+        ollama = MagicMock()
+        ollama.client = MagicMock()
+
+        async def mock_chat_raises(**kwargs):
+            raise RuntimeError("LLM unreachable")
+
+        ollama.client.chat = mock_chat_raises
+        _shared_agent_client.chat = mock_chat_raises
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=3)
+        steps = []
+        async for step in agent.run(
+            message="Hallo", ollama=ollama, executor=executor
+        ):
+            steps.append(step)
+
+        # Should have yielded an error and a fallback final_answer
+        assert any(s.step_type == "error" for s in steps)
+
+        # ContextVar should be set — the try/finally fires on early return
+        usage = token_usage_info.get()
+        assert usage is not None, "token_usage_info missing on error path"
+        # On this code path the chat call raises before track_tokens is invoked,
+        # and _build_fallback_answer does not call track_tokens either, so both
+        # counters must be exactly 0. If a future change introduces token
+        # tracking on the error path, update this assertion deliberately.
+        assert usage["input_tokens"] == 0, f"expected 0 input_tokens on error path, got {usage['input_tokens']}"
+        assert usage["output_tokens"] == 0, f"expected 0 output_tokens on error path, got {usage['output_tokens']}"
+
+    @pytest.mark.unit
+    async def test_token_budget_info_set_even_without_truncation(self):
+        """token_budget_info is set on the happy path (no reduction) too."""
+        from services.agent_service import token_budget_info
+
+        registry = self._make_registry()
+        ollama = self._make_ollama_mock([
+            '{"action": "final_answer", "answer": "Hi", "reason": "Done"}'
+        ])
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=3)
+        async for _ in agent.run(
+            message="Hallo", ollama=ollama, executor=executor
+        ):
+            pass
+
+        budget = token_budget_info.get()
+        assert budget is not None, "token_budget_info should be set even when no truncation"
+        assert "utilization" in budget
+        assert "truncated" in budget
+        assert "passes" in budget
+        assert 0.0 <= budget["utilization"] <= 1.5  # typically <0.1 for a small prompt
+        assert budget["truncated"] is False
+        assert budget["passes"] == []
+
+    @pytest.mark.unit
+    async def test_token_budget_info_reset_each_run(self):
+        """A fresh run() resets token_budget_info — no leak from prior request."""
+        from services.agent_service import token_budget_info
+
+        token_budget_info.set({
+            "utilization": 0.95, "truncated": True, "passes": ["drop_memory"],
+        })
+
+        registry = self._make_registry()
+        ollama = self._make_ollama_mock([
+            '{"action": "final_answer", "answer": "Hi", "reason": "Done"}'
+        ])
+        executor = AsyncMock()
+
+        agent = AgentService(registry, max_steps=3)
+        async for _ in agent.run(
+            message="Hallo", ollama=ollama, executor=executor
+        ):
+            pass
+
+        budget = token_budget_info.get()
+        assert budget is not None
+        # Real budget for a greeting is well under threshold
+        assert budget["truncated"] is False
+        assert budget["passes"] == []

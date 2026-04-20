@@ -13,6 +13,7 @@ import json
 import re
 import time
 from collections.abc import AsyncGenerator
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -29,6 +30,36 @@ if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
     from services.agent_router import AgentRole
     from services.ollama_service import OllamaService
+
+
+# --- Plugin-observable ContextVars ------------------------------------------
+# Populated during AgentService.run(); consumed by plugins to read real
+# per-request state after the agent loop completes. Reset to None at the start
+# of each run so values never leak between requests.
+#
+# token_budget_info: {"utilization": float, "truncated": bool, "passes": list[str]}
+#   utilization  — fraction of context window used on the most recent
+#                  _enforce_token_budget call in the current run
+#   truncated    — whether that most recent call triggered at least one
+#                  reduction pass
+#   passes       — names of reduction passes that ran during that most recent
+#                  call (for debugging)
+#
+#   IMPORTANT — "last call wins" semantics: _enforce_token_budget runs once
+#   per agent step, and each invocation overwrites this ContextVar. If step 1
+#   truncated aggressively but step 3 stayed under threshold, plugins reading
+#   after run() returns see truncated=False (the step-3 state). Plugins that
+#   need cross-step aggregation must subscribe to the record_budget_reduction
+#   counter instead, which accumulates across the entire run.
+#   A future per-step list shape is tracked as tech debt upstream.
+#
+# token_usage_info: {"input_tokens": int, "output_tokens": int, "total_tokens": int}
+#   Real per-request totals from AgentContext.get_token_usage(), aggregated
+#   across all LLM calls in the run (budget enforcement, agent steps, summary).
+#   Unlike token_budget_info, these counts are cumulative over the whole run.
+
+token_budget_info: ContextVar[dict | None] = ContextVar("token_budget_info", default=None)
+token_usage_info: ContextVar[dict | None] = ContextVar("token_usage_info", default=None)
 
 
 def _compress_history_message(content: str, max_chars: int = 500) -> str:
@@ -657,82 +688,103 @@ class AgentService:
 
         prompt_tokens = token_counter.count(prompt)
         utilization = (prompt_tokens + reserved) / max_tokens
+        passes_run: list[str] = []
 
-        if utilization <= threshold:
-            return prompt, memory_context, document_context, conversation_history
-
-        logger.warning(
-            f"Token budget over threshold: {utilization:.0%} "
-            f"({prompt_tokens} tokens + {reserved} reserved / {max_tokens} max)"
-        )
-        from utils.metrics import record_budget_reduction
-
-        # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt
-        tool_result_steps = [
-            s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
-        ]
-        if tool_result_steps:
-            context.tool_result_budget_chars = 1  # minimal — just get the skeleton
-            prompt = await self._build_agent_prompt(
-                message, context, conversation_history,
-                memory_context=memory_context, document_context=document_context,
-                lang=lang, **build_kwargs,
-            )
-            skeleton_tokens = token_counter.count(prompt)
-            token_headroom = max(0, int(max_tokens * threshold) - reserved - skeleton_tokens)
-            total_chars_budget = int(token_headroom * 3.5)
-            n_results = len(tool_result_steps)
-            per_result_chars = max(200, total_chars_budget // max(1, n_results))
-            context.tool_result_budget_chars = per_result_chars
-            prompt = await self._build_agent_prompt(
-                message, context, conversation_history,
-                memory_context=memory_context, document_context=document_context,
-                lang=lang, **build_kwargs,
-            )
-            prompt_tokens = token_counter.count(prompt)
-            utilization = (prompt_tokens + reserved) / max_tokens
-            record_budget_reduction("adaptive_tool_budget")
-            logger.info(
-                f"Budget pass 0 (adaptive tool budget): {utilization:.0%} "
-                f"({per_result_chars} chars/result x {n_results} results)"
-            )
-            if utilization <= threshold:
-                return prompt, memory_context, document_context, conversation_history
-        context.tool_result_budget_chars = 0  # reset for fallback passes
-
-        # Pass 1: Halve conversation history
-        if conversation_history and len(conversation_history) > 3:
-            conversation_history = conversation_history[-3:]
-            prompt = await self._build_agent_prompt(
-                message, context, conversation_history,
-                memory_context=memory_context,
-                document_context=document_context,
-                lang=lang, **build_kwargs,
-            )
-            prompt_tokens = token_counter.count(prompt)
-            utilization = (prompt_tokens + reserved) / max_tokens
-            record_budget_reduction("halve_history")
-            logger.info(f"Budget pass 1 (halve history): {utilization:.0%}")
+        try:
             if utilization <= threshold:
                 return prompt, memory_context, document_context, conversation_history
 
-        # Pass 2: Drop memory context
-        if memory_context:
-            prompt = await self._build_agent_prompt(
-                message, context, conversation_history,
-                memory_context="",
-                document_context=document_context,
-                lang=lang, **build_kwargs,
+            logger.warning(
+                f"Token budget over threshold: {utilization:.0%} "
+                f"({prompt_tokens} tokens + {reserved} reserved / {max_tokens} max)"
             )
-            prompt_tokens = token_counter.count(prompt)
-            utilization = (prompt_tokens + reserved) / max_tokens
-            record_budget_reduction("drop_memory")
-            logger.info(f"Budget pass 2 (drop memory): {utilization:.0%}")
-            if utilization <= threshold:
-                return prompt, "", document_context, conversation_history
+            from utils.metrics import record_budget_reduction
 
-        # Pass 3: Drop document context
-        if document_context:
+            # Pass 0: Adaptive tool result budgeting via _serialize_for_prompt
+            tool_result_steps = [
+                s for s in context.steps if s.step_type == "tool_result" and (s.data is not None or s.content)
+            ]
+            if tool_result_steps:
+                context.tool_result_budget_chars = 1  # minimal — just get the skeleton
+                prompt = await self._build_agent_prompt(
+                    message, context, conversation_history,
+                    memory_context=memory_context, document_context=document_context,
+                    lang=lang, **build_kwargs,
+                )
+                skeleton_tokens = token_counter.count(prompt)
+                token_headroom = max(0, int(max_tokens * threshold) - reserved - skeleton_tokens)
+                total_chars_budget = int(token_headroom * 3.5)
+                n_results = len(tool_result_steps)
+                per_result_chars = max(200, total_chars_budget // max(1, n_results))
+                context.tool_result_budget_chars = per_result_chars
+                prompt = await self._build_agent_prompt(
+                    message, context, conversation_history,
+                    memory_context=memory_context, document_context=document_context,
+                    lang=lang, **build_kwargs,
+                )
+                prompt_tokens = token_counter.count(prompt)
+                utilization = (prompt_tokens + reserved) / max_tokens
+                record_budget_reduction("adaptive_tool_budget")
+                passes_run.append("adaptive_tool_budget")
+                logger.info(
+                    f"Budget pass 0 (adaptive tool budget): {utilization:.0%} "
+                    f"({per_result_chars} chars/result x {n_results} results)"
+                )
+                if utilization <= threshold:
+                    return prompt, memory_context, document_context, conversation_history
+            context.tool_result_budget_chars = 0  # reset for fallback passes
+
+            # Pass 1: Halve conversation history
+            if conversation_history and len(conversation_history) > 3:
+                conversation_history = conversation_history[-3:]
+                prompt = await self._build_agent_prompt(
+                    message, context, conversation_history,
+                    memory_context=memory_context,
+                    document_context=document_context,
+                    lang=lang, **build_kwargs,
+                )
+                prompt_tokens = token_counter.count(prompt)
+                utilization = (prompt_tokens + reserved) / max_tokens
+                record_budget_reduction("halve_history")
+                passes_run.append("halve_history")
+                logger.info(f"Budget pass 1 (halve history): {utilization:.0%}")
+                if utilization <= threshold:
+                    return prompt, memory_context, document_context, conversation_history
+
+            # Pass 2: Drop memory context
+            if memory_context:
+                prompt = await self._build_agent_prompt(
+                    message, context, conversation_history,
+                    memory_context="",
+                    document_context=document_context,
+                    lang=lang, **build_kwargs,
+                )
+                prompt_tokens = token_counter.count(prompt)
+                utilization = (prompt_tokens + reserved) / max_tokens
+                record_budget_reduction("drop_memory")
+                passes_run.append("drop_memory")
+                logger.info(f"Budget pass 2 (drop memory): {utilization:.0%}")
+                if utilization <= threshold:
+                    return prompt, "", document_context, conversation_history
+
+            # Pass 3: Drop document context
+            if document_context:
+                prompt = await self._build_agent_prompt(
+                    message, context, conversation_history,
+                    memory_context="",
+                    document_context="",
+                    lang=lang, **build_kwargs,
+                )
+                prompt_tokens = token_counter.count(prompt)
+                utilization = (prompt_tokens + reserved) / max_tokens
+                record_budget_reduction("drop_documents")
+                passes_run.append("drop_documents")
+                logger.info(f"Budget pass 3 (drop documents): {utilization:.0%}")
+                if utilization <= threshold:
+                    return prompt, "", "", conversation_history
+
+            # Pass 4: Truncate history results
+            context.truncate_history_results(max_chars=500)
             prompt = await self._build_agent_prompt(
                 message, context, conversation_history,
                 memory_context="",
@@ -741,24 +793,19 @@ class AgentService:
             )
             prompt_tokens = token_counter.count(prompt)
             utilization = (prompt_tokens + reserved) / max_tokens
-            record_budget_reduction("drop_documents")
-            logger.info(f"Budget pass 3 (drop documents): {utilization:.0%}")
-            if utilization <= threshold:
-                return prompt, "", "", conversation_history
-
-        # Pass 4: Truncate history results
-        context.truncate_history_results(max_chars=500)
-        prompt = await self._build_agent_prompt(
-            message, context, conversation_history,
-            memory_context="",
-            document_context="",
-            lang=lang, **build_kwargs,
-        )
-        prompt_tokens = token_counter.count(prompt)
-        utilization = (prompt_tokens + reserved) / max_tokens
-        record_budget_reduction("truncate_results")
-        logger.info(f"Budget pass 4 (truncate results): {utilization:.0%}")
-        return prompt, "", "", conversation_history
+            record_budget_reduction("truncate_results")
+            passes_run.append("truncate_results")
+            logger.info(f"Budget pass 4 (truncate results): {utilization:.0%}")
+            return prompt, "", "", conversation_history
+        finally:
+            # Expose final budget state to plugins via ContextVar.
+            # Fires even on early return (happy path, no reduction needed) so
+            # callers always see a value after _enforce_token_budget ran.
+            token_budget_info.set({
+                "utilization": round(utilization, 4),
+                "truncated": bool(passes_run),
+                "passes": list(passes_run),
+            })
 
     async def _build_agent_prompt(
         self,
@@ -892,10 +939,76 @@ class AgentService:
         context_vars_text: str = "",
         summary_text: str = "",
     ) -> AsyncGenerator[AgentStep, None]:
+        """Thin wrapper around _run_impl.
+
+        Resets plugin-observable ContextVars at the start of each request and
+        publishes the final per-request token usage via `token_usage_info`
+        after the loop finishes — whether by normal completion, early return,
+        or error. See module-level docstring on the ContextVars for the
+        expected payload shape.
+
+        Why the split into run() + _run_impl()?
+        The agent loop has many early-return paths (timeouts, circuit-breaker
+        trips, infinite-loop aborts, LLM failures). Publishing token_usage_info
+        on all of them requires a try/finally that sees the AgentContext. The
+        wrapper owns context creation so the `finally` can read
+        context.get_token_usage() regardless of where _run_impl returns.
+        Do not merge these back into a single method — it would require
+        wrapping ~500 lines of loop body in try/finally indentation.
+        """
+        # Reset per-request state so values never leak between requests.
+        token_budget_info.set(None)
+        token_usage_info.set(None)
+
+        context = AgentContext(original_message=message)
+        try:
+            async for step in self._run_impl(
+                context,
+                message=message,
+                ollama=ollama,
+                executor=executor,
+                conversation_history=conversation_history,
+                room_context=room_context,
+                lang=lang,
+                memory_context=memory_context,
+                document_context=document_context,
+                personality_context=personality_context,
+                user_permissions=user_permissions,
+                user_id=user_id,
+                context_vars_text=context_vars_text,
+                summary_text=summary_text,
+            ):
+                yield step
+        finally:
+            # Publish real token counts from the AgentContext — fires on every
+            # exit path including timeouts, circuit-breaker trips, and
+            # infinite-loop aborts.
+            token_usage_info.set(context.get_token_usage())
+
+    async def _run_impl(
+        self,
+        context: AgentContext,
+        *,
+        message: str,
+        ollama: "OllamaService",
+        executor: "ActionExecutor",
+        conversation_history: list[dict] | None = None,
+        room_context: dict | None = None,
+        lang: str | None = None,
+        memory_context: str = "",
+        document_context: str = "",
+        personality_context: str = "",
+        user_permissions: list[str] | None = None,
+        user_id: int | None = None,
+        context_vars_text: str = "",
+        summary_text: str = "",
+    ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
 
         Args:
+            context: AgentContext created by the outer `run()` wrapper so the
+                wrapper can read final token usage even on early returns.
             message: The user's original message
             ollama: OllamaService instance for LLM calls
             executor: ActionExecutor for executing tool calls
@@ -912,7 +1025,6 @@ class AgentService:
         # Use ollama's default language if not specified
         lang = lang or ollama.default_lang
 
-        context = AgentContext(original_message=message)
         start_time = time.monotonic()
 
         # Ensure plugin tools (register_tools hook) are ready before we read
