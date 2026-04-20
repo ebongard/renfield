@@ -19,9 +19,11 @@ logger.add(sys.stderr, level=os.getenv("LOG_LEVEL", "INFO"))
 # Lokale Imports
 from api.lifecycle import lifespan
 from api.routes import (
+    atoms,
     auth,
     chat,
     chat_upload,
+    circles,
     feedback,
     intents,
     knowledge,
@@ -173,6 +175,8 @@ app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
+app.include_router(atoms.router, prefix="/api/atoms", tags=["Circles - Atoms"])
+app.include_router(circles.router, prefix="/api/circles", tags=["Circles - Membership"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
