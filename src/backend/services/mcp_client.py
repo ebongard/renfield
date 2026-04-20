@@ -1216,6 +1216,47 @@ class MCPManager:
                 "data": None,
             }
 
+    async def execute_tool_streaming(
+        self,
+        namespaced_name: str,
+        arguments: dict,
+        user_permissions: list[str] | None = None,
+        user_id: int | None = None,
+    ):
+        """
+        Like `execute_tool` but yields an AsyncIterator of progress + result.
+
+        For tools with no native streaming support (the current default for
+        every MCP server in the fleet) this yields exactly one item — the
+        same `FinalResult` dict that `execute_tool` returns. Consumers can
+        treat the iterator as "fire-and-forget" for those.
+
+        For streaming-capable tools (Lane F1.3 — federation `query_brain`
+        being the first), intermediate `ProgressChunk` items appear before
+        the final dict. The chunk vocabulary is locked in
+        `services/mcp_streaming.PROGRESS_LABELS` so chunk consumers can
+        switch on `label` without parsing free-form strings.
+
+        Yields:
+            ProgressChunk*, FinalResult — exactly one FinalResult is the
+            final yield for every successful call. Errors also surface as
+            a FinalResult (`success=False`) so consumers don't need a
+            separate exception path.
+
+        Cancellation: if the consumer aborts the iterator (e.g., the
+        WebSocket relay drops), the underlying tool call is allowed to
+        complete in the background but its result is discarded.
+        """
+        # F1.2: thin wrapper. F1.3 will detect streaming-capable tools and
+        # yield real ProgressChunks before the final dict.
+        result = await self.execute_tool(
+            namespaced_name=namespaced_name,
+            arguments=arguments,
+            user_permissions=user_permissions,
+            user_id=user_id,
+        )
+        yield result
+
     def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""
         return list(self._tool_index.values())
