@@ -127,6 +127,70 @@
            dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400;
 }
 
+/* =========================================================================
+   Tier visual language — per DESIGN.md (second-brain-circles).
+   Color + symbol + label co-present (never color alone). Warm (inner) →
+   cool (outer) maps depth → openness.
+   ========================================================================= */
+
+@utility tier-badge {
+  /* Base pill. Mix with .tier-badge-{0..4} for color. */
+  @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full
+         text-xs font-medium tabular-nums border;
+}
+
+@utility tier-badge-0 {
+  /* SELF — deepest crimson on lightest pink. */
+  @apply bg-primary-50 text-primary-700 border-primary-200
+         dark:bg-primary-900/40 dark:text-primary-300 dark:border-primary-700;
+}
+
+@utility tier-badge-1 {
+  /* TRUSTED — brand crimson. */
+  @apply bg-primary-100 text-primary-600 border-primary-300
+         dark:bg-primary-800/40 dark:text-primary-200 dark:border-primary-600;
+}
+
+@utility tier-badge-2 {
+  /* HOUSEHOLD — hearth cream (flips to warm gray-200 in dark per DESIGN.md). */
+  @apply bg-[#f0e6d3] text-gray-800 border-gray-300
+         dark:bg-gray-700 dark:text-gray-100 dark:border-gray-500;
+}
+
+@utility tier-badge-3 {
+  /* EXTENDED — light turquoise. */
+  @apply bg-accent-100 text-accent-700 border-accent-300
+         dark:bg-accent-900/40 dark:text-accent-300 dark:border-accent-600;
+}
+
+@utility tier-badge-4 {
+  /* PUBLIC — deep turquoise. */
+  @apply bg-accent-50 text-accent-800 border-accent-400
+         dark:bg-accent-800/40 dark:text-accent-200 dark:border-accent-700;
+}
+
+@utility tier-ring-0 {
+  @apply border-l-4 border-primary-700;
+}
+@utility tier-ring-1 {
+  @apply border-l-4 border-primary-500;
+}
+@utility tier-ring-2 {
+  @apply border-l-4 border-[#f0e6d3] dark:border-gray-500;
+}
+@utility tier-ring-3 {
+  @apply border-l-4 border-accent-300;
+}
+@utility tier-ring-4 {
+  @apply border-l-4 border-accent-700;
+}
+
+@utility atom-row {
+  @apply flex items-start gap-3 p-4 bg-white rounded-lg border border-gray-200
+         hover:shadow-sm transition-shadow
+         dark:bg-gray-800 dark:border-gray-700;
+}
+
 @layer utilities {
   /* Body base styles - Light mode default */
   body {

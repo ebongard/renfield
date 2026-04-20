@@ -30,6 +30,9 @@ const KnowledgeGraphPage = lazy(() => import('./pages/KnowledgeGraphPage'));
 const MaintenancePage = lazy(() => import('./pages/MaintenancePage'));
 const PaperlessAuditPage = lazy(() => import('./pages/PaperlessAuditPage'));
 const RoutingDashboardPage = lazy(() => import('./pages/RoutingDashboardPage'));
+const BrainPage = lazy(() => import('./pages/BrainPage'));
+const BrainReviewPage = lazy(() => import('./pages/BrainReviewPage'));
+const CirclesSettingsPage = lazy(() => import('./pages/CirclesSettingsPage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -82,6 +85,22 @@ function AppRoutes() {
             } />
             <Route path="/memory" element={<MemoryPage />} />
             <Route path="/knowledge-graph" element={<KnowledgeGraphPage />} />
+            {/* Circles v1 — second brain, review queue, circles management */}
+            <Route path="/brain" element={
+              <ProtectedRoute>
+                <BrainPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/brain/review" element={
+              <ProtectedRoute>
+                <BrainReviewPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings/circles" element={
+              <ProtectedRoute>
+                <CirclesSettingsPage />
+              </ProtectedRoute>
+            } />
             {/* Redirect old /plugins route to new integrations page */}
             <Route path="/plugins" element={<Navigate to="/admin/integrations" replace />} />
             {/* Admin routes */}

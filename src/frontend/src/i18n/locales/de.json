@@ -41,6 +41,9 @@
     "presence": "Anwesenheit",
     "knowledgeGraph": "Wissensgraph",
     "memory": "Erinnerungen",
+    "brain": "Zweites Gehirn",
+    "brainReview": "Überprüfung",
+    "circles": "Kreise",
     "intents": "Intents",
     "maintenance": "Wartung",
     "paperlessAudit": "Paperless Audit",
@@ -1025,5 +1028,54 @@
     },
     "notConfigured": "Paperless Audit ist nicht konfiguriert. Aktiviere PAPERLESS_AUDIT_ENABLED=true und stelle sicher, dass der Paperless MCP-Server verbunden ist.",
     "error": "Fehler beim Laden der Audit-Daten"
+  },
+  "circles": {
+    "tier": {
+      "0": "Privat",
+      "1": "Vertraut",
+      "2": "Haushalt",
+      "3": "Erweitert",
+      "4": "Öffentlich"
+    },
+    "tierDescription": {
+      "0": "Nur für mich sichtbar.",
+      "1": "Für vertraute Personen sichtbar.",
+      "2": "Für den ganzen Haushalt sichtbar.",
+      "3": "Für den erweiterten Kreis sichtbar.",
+      "4": "Öffentlich sichtbar."
+    },
+    "tierAriaLabel": "Kreis-Stufe {{tier}}: {{label}}",
+    "tierPickerLabel": "Kreis-Stufe wählen",
+    "brainTitle": "Zweites Gehirn",
+    "brainSubtitle": "Durchsuche alle deine Atome — Dokumente, Fakten, Notizen, Erinnerungen.",
+    "brainSearchPlaceholder": "Suchanfrage eingeben...",
+    "brainEmpty": "Noch keine Ergebnisse. Stelle eine Suchanfrage.",
+    "brainNoMatches": "Keine passenden Atome gefunden.",
+    "reviewTitle": "Überprüfungs-Warteschlange",
+    "reviewSubtitle": "Neu erfasste Atome der letzten {{days}} Tage. Prüfe die Stufe.",
+    "reviewDaysLabel": "Zeitraum",
+    "reviewEmpty": "Keine neuen Atome zur Überprüfung.",
+    "reviewTierChanged": "Stufe aktualisiert.",
+    "settingsTitle": "Kreise & Mitglieder",
+    "settingsSubtitle": "Verwalte deine Kreis-Stufen und wer darin eingeladen ist.",
+    "defaultCaptureTier": "Standard-Erfassungsstufe",
+    "defaultCaptureHint": "Neue Atome werden automatisch in dieser Stufe erfasst.",
+    "members": "Mitglieder",
+    "addMember": "Mitglied hinzufügen",
+    "addMemberUser": "Benutzer",
+    "addMemberTier": "Stufe",
+    "noMembers": "Noch keine Mitglieder in deinen Kreisen.",
+    "removeMember": "Mitglied entfernen",
+    "removeMemberConfirm": "{{name}} aus allen Kreisen entfernen?",
+    "atomType": {
+      "kb_chunk": "Dokument",
+      "kg_node": "Entität",
+      "kg_edge": "Beziehung",
+      "conversation_memory": "Erinnerung"
+    },
+    "couldNotLoad": "Konnte Daten nicht laden.",
+    "couldNotSave": "Konnte Änderungen nicht speichern.",
+    "score": "Relevanz",
+    "capturedAt": "Erfasst am"
   }
 }

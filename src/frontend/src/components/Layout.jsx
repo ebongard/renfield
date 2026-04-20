@@ -22,6 +22,8 @@ import {
   Blocks,
   Zap,
   Brain,
+  Inbox,
+  CircleDashed,
   MapPin,
   Wrench,
   FileSearch,
@@ -37,6 +39,8 @@ import { useAuth } from '../context/AuthContext';
 const mainNavigationConfig = [
   { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'], feature: 'knowledge' },
+  { nameKey: 'nav.brain', href: '/brain', icon: Brain },
+  { nameKey: 'nav.brainReview', href: '/brain/review', icon: Inbox },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
   { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2, feature: 'knowledge_graph' },
   { nameKey: 'nav.tasks', href: '/tasks', icon: CheckSquare, feature: 'tasks' },
@@ -57,6 +61,7 @@ const adminNavigationConfig = [
   { nameKey: 'nav.paperlessAudit', href: '/admin/paperless-audit', icon: FileSearch, permission: ['admin'] },
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
+  { nameKey: 'nav.circles', href: '/settings/circles', icon: CircleDashed },
 ];
 
 export default function Layout({ children }) {

@@ -41,6 +41,9 @@
     "presence": "Presence",
     "knowledgeGraph": "Knowledge Graph",
     "memory": "Memories",
+    "brain": "Second Brain",
+    "brainReview": "Review",
+    "circles": "Circles",
     "intents": "Intents",
     "maintenance": "Maintenance",
     "paperlessAudit": "Paperless Audit",
@@ -1025,5 +1028,54 @@
     },
     "notConfigured": "Paperless Audit is not configured. Enable PAPERLESS_AUDIT_ENABLED=true and ensure the Paperless MCP server is connected.",
     "error": "Failed to load audit data"
+  },
+  "circles": {
+    "tier": {
+      "0": "Self",
+      "1": "Trusted",
+      "2": "Household",
+      "3": "Extended",
+      "4": "Public"
+    },
+    "tierDescription": {
+      "0": "Visible only to me.",
+      "1": "Visible to trusted people.",
+      "2": "Visible to everyone in the household.",
+      "3": "Visible to the extended circle.",
+      "4": "Publicly visible."
+    },
+    "tierAriaLabel": "Circle tier {{tier}}: {{label}}",
+    "tierPickerLabel": "Choose a circle tier",
+    "brainTitle": "Second Brain",
+    "brainSubtitle": "Search every atom — documents, facts, notes, memories.",
+    "brainSearchPlaceholder": "Type a query...",
+    "brainEmpty": "No results yet. Type a query to search.",
+    "brainNoMatches": "No matching atoms found.",
+    "reviewTitle": "Review Queue",
+    "reviewSubtitle": "Atoms captured in the last {{days}} days. Check the tier.",
+    "reviewDaysLabel": "Window",
+    "reviewEmpty": "No new atoms to review.",
+    "reviewTierChanged": "Tier updated.",
+    "settingsTitle": "Circles & Members",
+    "settingsSubtitle": "Manage your tiers and who is invited into each.",
+    "defaultCaptureTier": "Default capture tier",
+    "defaultCaptureHint": "New atoms are captured at this tier by default.",
+    "members": "Members",
+    "addMember": "Add member",
+    "addMemberUser": "User",
+    "addMemberTier": "Tier",
+    "noMembers": "No members in your circles yet.",
+    "removeMember": "Remove member",
+    "removeMemberConfirm": "Remove {{name}} from all circles?",
+    "atomType": {
+      "kb_chunk": "Document",
+      "kg_node": "Entity",
+      "kg_edge": "Relation",
+      "conversation_memory": "Memory"
+    },
+    "couldNotLoad": "Could not load data.",
+    "couldNotSave": "Could not save changes.",
+    "score": "Relevance",
+    "capturedAt": "Captured"
   }
 }
