@@ -18,12 +18,17 @@ import os
 import random
 import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
+
+# Sink signature: chat_handler passes this down so federation ProgressChunks
+# reach the user's WebSocket as they happen. `None` means nobody's listening
+# (the default path — non-chat callers don't need progress relay).
+ProgressSink = Callable[[dict], Awaitable[None]]
 
 import httpx
 import yaml
@@ -1075,6 +1080,7 @@ class MCPManager:
         arguments: dict,
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
+        progress_sink: ProgressSink | None = None,
     ) -> dict:
         """
         Execute an MCP tool by its namespaced name.
@@ -1090,6 +1096,10 @@ class MCPManager:
             arguments: Tool arguments
             user_permissions: User's permission strings (None = no auth / allow all)
             user_id: Authenticated user ID for audit logging
+            progress_sink: Optional async callback that receives one dict per
+                federation ProgressChunk (enriched with peer identity). F4c
+                uses this to relay "asking Mom's brain…" status to the chat
+                WebSocket. Non-federation tools ignore the sink.
 
         Returns:
             {"success": bool, "message": str, "data": Any}
@@ -1158,8 +1168,9 @@ class MCPManager:
         # loop dispatches through execute_tool (non-streaming), so we
         # need the federation bridge here too. Collect the final
         # FinalResult from _execute_federation_streaming; ProgressChunks
-        # are discarded on this path (non-streaming callers don't care,
-        # same shape as execute_tool's streaming-delegate fallback).
+        # go to progress_sink if one was threaded in by the chat handler
+        # (F4c) — otherwise they're discarded (non-chat callers don't
+        # care about live progress).
         if state is not None and state.config.transport == MCPTransportType.FEDERATION:
             final_result: dict | None = None
             async for item in self._execute_federation_streaming(
@@ -1168,6 +1179,7 @@ class MCPManager:
                 arguments=arguments,
                 user_permissions=user_permissions,
                 user_id=user_id,
+                progress_sink=progress_sink,
             ):
                 if not isinstance(item, ProgressChunk):
                     final_result = item
@@ -1283,6 +1295,7 @@ class MCPManager:
         arguments: dict,
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
+        progress_sink: ProgressSink | None = None,
     ) -> AsyncIterator[ProgressChunk | FinalResult]:
         """
         Like `execute_tool` but yields an AsyncIterator of progress + result.
@@ -1341,6 +1354,7 @@ class MCPManager:
                 arguments=arguments,
                 user_permissions=user_permissions,
                 user_id=user_id,
+                progress_sink=progress_sink,
             ):
                 yield item
             return
@@ -1378,6 +1392,7 @@ class MCPManager:
         arguments: dict,
         user_permissions: list[str] | None,
         user_id: int | None,
+        progress_sink: ProgressSink | None = None,
     ) -> AsyncIterator[ProgressChunk | FinalResult]:
         """
         Route a federation-transport tool call to the remote Renfield peer.
@@ -1461,6 +1476,24 @@ class MCPManager:
 
         asker = FederationQueryAsker()
         async for item in asker.query_peer(peer, query_text):
+            # F4c — relay ProgressChunks to the chat WS sink if one was
+            # threaded in. Enrich with stable peer identity (remote_pubkey)
+            # so the frontend can key status lines per-peer even when the
+            # display name changes or collides. Sink failures must not
+            # abort the tool call — log and continue.
+            if progress_sink is not None and isinstance(item, ProgressChunk):
+                try:
+                    await progress_sink({
+                        "peer_pubkey": peer.remote_pubkey,
+                        "peer_display_name": peer.remote_display_name,
+                        "label": item.label,
+                        "detail": item.detail,
+                        "sequence": item.sequence,
+                    })
+                except Exception as sink_err:  # pragma: no cover — sink is best-effort
+                    logger.warning(
+                        f"Federation progress_sink raised (continuing): {sink_err}"
+                    )
             yield item
 
     async def _execute_tool_streaming_impl(

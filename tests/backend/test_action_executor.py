@@ -35,6 +35,7 @@ class TestActionExecutorRouting:
             {"entity_id": "light.wohnzimmer"},
             user_permissions=None,
             user_id=None,
+            progress_sink=None,
         )
 
     @pytest.mark.unit
@@ -54,6 +55,7 @@ class TestActionExecutorRouting:
             {},
             user_permissions=None,
             user_id=None,
+            progress_sink=None,
         )
 
     @pytest.mark.unit
@@ -73,6 +75,7 @@ class TestActionExecutorRouting:
             {"location": "Berlin"},
             user_permissions=None,
             user_id=None,
+            progress_sink=None,
         )
 
     @pytest.mark.unit

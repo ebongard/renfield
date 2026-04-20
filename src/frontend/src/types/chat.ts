@@ -84,9 +84,24 @@ export interface ChatErrorMessage {
   message: string;
 }
 
+// Federation progress — emitted while a remote peer is answering a
+// query from the local agent loop. The frontend keys live status lines
+// by `peer_pubkey` so concurrent fan-out to multiple peers stays
+// readable. `label` is from the locked FEDERATION_PROGRESS_LABELS
+// vocabulary: waking_up | retrieving | synthesizing | complete | failed.
+export interface ChatFederationProgressMessage {
+  type: 'agent_federation_progress';
+  peer_pubkey: string;
+  peer_display_name: string;
+  label: 'waking_up' | 'retrieving' | 'synthesizing' | 'complete' | 'failed' | string;
+  detail: Record<string, unknown>;
+  sequence: number;
+}
+
 export type ChatWebSocketMessage =
   | ChatTextMessage
   | ChatStreamMessage
   | ChatActionMessage
   | ChatDoneMessage
-  | ChatErrorMessage;
+  | ChatErrorMessage
+  | ChatFederationProgressMessage;

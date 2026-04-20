@@ -496,3 +496,207 @@ class TestOllamaSynthesis:
         assert answer == ""
 
         reset_federation_identity_for_tests()
+
+
+# =============================================================================
+# F4c — ProgressChunk relay to chat WebSocket via progress_sink
+# =============================================================================
+
+
+class TestFederationProgressSink:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_progress_sink_receives_enriched_chunks(self, tmp_path, monkeypatch):
+        """Every ProgressChunk yielded by the asker reaches the sink,
+        enriched with stable peer identity (remote_pubkey + display_name).
+        FinalResult is NOT sent to the sink."""
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_11", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=11,
+        )
+        state = MCPServerState(config=config)
+        state.connected = True
+        manager._servers["peer_11"] = state
+        manager._tool_index["mcp.peer_11.query_brain"] = MCPToolInfo(
+            server_name="peer_11", original_name="query_brain",
+            namespaced_name="mcp.peer_11.query_brain", description="", input_schema={},
+        )
+
+        fake_peer = SimpleNamespace(
+            id=11,
+            remote_pubkey="a" * 64,
+            remote_display_name="Mom",
+            revoked_at=None,
+        )
+        session_mock = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none = lambda: fake_peer
+        session_mock.execute = AsyncMock(return_value=result_mock)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        async def fake_query_peer(self, peer, text):
+            yield ProgressChunk(label="waking_up", detail={"peer": peer.remote_display_name}, sequence=1)
+            yield ProgressChunk(label="retrieving", detail={"peer": peer.remote_display_name}, sequence=2)
+            yield ProgressChunk(label="synthesizing", detail={"peer": peer.remote_display_name}, sequence=3)
+            yield ProgressChunk(label="complete", detail={"peer": peer.remote_display_name}, sequence=4)
+            yield {"success": True, "message": "done", "data": None}
+
+        monkeypatch.setattr(
+            "services.federation_query_asker.FederationQueryAsker.query_peer",
+            fake_query_peer,
+        )
+
+        sink_calls: list[dict] = []
+
+        async def sink(payload: dict) -> None:
+            sink_calls.append(payload)
+
+        # Drive through execute_tool (non-streaming) — that's the path the
+        # agent loop uses. FinalResult is returned; ProgressChunks fan out
+        # via the sink.
+        final = await manager.execute_tool(
+            "mcp.peer_11.query_brain",
+            {"query": "what's for dinner?"},
+            progress_sink=sink,
+        )
+
+        assert final["success"] is True
+        assert len(sink_calls) == 4
+        # Enrichment — stable identity for frontend keying
+        for payload in sink_calls:
+            assert payload["peer_pubkey"] == "a" * 64
+            assert payload["peer_display_name"] == "Mom"
+            assert "label" in payload
+            assert "sequence" in payload
+        # Label order preserved
+        assert [c["label"] for c in sink_calls] == [
+            "waking_up", "retrieving", "synthesizing", "complete",
+        ]
+        # Sequences monotonic
+        assert [c["sequence"] for c in sink_calls] == [1, 2, 3, 4]
+
+        reset_federation_identity_for_tests()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_progress_sink_raises_does_not_abort_tool(self, tmp_path, monkeypatch):
+        """A sink that raises must not crash the tool call. Chunks keep
+        arriving, FinalResult is still returned. This matters because
+        WebSocket.send_json can fail if the client closed mid-stream."""
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_12", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=12,
+        )
+        state = MCPServerState(config=config)
+        state.connected = True
+        manager._servers["peer_12"] = state
+        manager._tool_index["mcp.peer_12.query_brain"] = MCPToolInfo(
+            server_name="peer_12", original_name="query_brain",
+            namespaced_name="mcp.peer_12.query_brain", description="", input_schema={},
+        )
+
+        fake_peer = SimpleNamespace(
+            id=12, remote_pubkey="b" * 64, remote_display_name="Dad", revoked_at=None,
+        )
+        session_mock = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none = lambda: fake_peer
+        session_mock.execute = AsyncMock(return_value=result_mock)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        async def fake_query_peer(self, peer, text):
+            yield ProgressChunk(label="retrieving", sequence=1)
+            yield ProgressChunk(label="complete", sequence=2)
+            yield {"success": True, "message": "done", "data": None}
+
+        monkeypatch.setattr(
+            "services.federation_query_asker.FederationQueryAsker.query_peer",
+            fake_query_peer,
+        )
+
+        call_count = 0
+
+        async def broken_sink(payload: dict) -> None:
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("ws closed")
+
+        final = await manager.execute_tool(
+            "mcp.peer_12.query_brain",
+            {"query": "q"},
+            progress_sink=broken_sink,
+        )
+
+        # Both chunks attempted — the raise on chunk 1 did NOT short-circuit chunk 2
+        assert call_count == 2
+        # FinalResult still returned despite the sink errors
+        assert final["success"] is True
+
+        reset_federation_identity_for_tests()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_sink_is_backwards_compatible(self, tmp_path, monkeypatch):
+        """When no sink is passed (the default), federation calls behave
+        exactly as before — no chunks emitted anywhere, FinalResult only."""
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_13", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=13,
+        )
+        state = MCPServerState(config=config)
+        state.connected = True
+        manager._servers["peer_13"] = state
+        manager._tool_index["mcp.peer_13.query_brain"] = MCPToolInfo(
+            server_name="peer_13", original_name="query_brain",
+            namespaced_name="mcp.peer_13.query_brain", description="", input_schema={},
+        )
+
+        fake_peer = SimpleNamespace(
+            id=13, remote_pubkey="c" * 64, remote_display_name="Aunt", revoked_at=None,
+        )
+        session_mock = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none = lambda: fake_peer
+        session_mock.execute = AsyncMock(return_value=result_mock)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        async def fake_query_peer(self, peer, text):
+            yield ProgressChunk(label="retrieving", sequence=1)
+            yield {"success": True, "message": "ok", "data": None}
+
+        monkeypatch.setattr(
+            "services.federation_query_asker.FederationQueryAsker.query_peer",
+            fake_query_peer,
+        )
+
+        # No progress_sink arg
+        final = await manager.execute_tool(
+            "mcp.peer_13.query_brain", {"query": "q"},
+        )
+        assert final["success"] is True
+
+        reset_federation_identity_for_tests()

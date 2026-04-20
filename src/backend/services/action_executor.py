@@ -20,6 +20,7 @@ class ActionExecutor:
         intent_data: dict,
         user_permissions: list[str] | None = None,
         user_id: int | None = None,
+        progress_sink=None,
     ) -> dict:
         """
         Führt einen Intent aus
@@ -34,6 +35,10 @@ class ActionExecutor:
                 None means no auth / allow all (backwards-compatible).
             user_id: Authenticated user ID. Passed to MCP tools as user_id
                 for per-user filtering (e.g. calendar visibility).
+            progress_sink: Optional async `dict -> None` callback for live
+                progress relay. F4c forwards federation ProgressChunks
+                to the chat WebSocket through this sink. Ignored by
+                non-federation paths.
 
         Returns:
             {
@@ -102,7 +107,7 @@ class ActionExecutor:
             # fixes from the same branch.
             return await self.mcp_manager.execute_tool(
                 intent, parameters, user_permissions=user_permissions,
-                user_id=user_id,
+                user_id=user_id, progress_sink=progress_sink,
             )
 
         # Plugin tool dispatch — plugins can register custom tool handlers

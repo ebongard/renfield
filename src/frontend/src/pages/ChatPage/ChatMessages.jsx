@@ -1,6 +1,6 @@
 import React, { useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight } from 'lucide-react';
+import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, Radio } from 'lucide-react';
 import AdaptiveCardRenderer from '../../components/AdaptiveCardRenderer';
 import IntentCorrectionButton from '../../components/IntentCorrectionButton';
 import AttachmentQuickActions from './AttachmentQuickActions';
@@ -207,6 +207,26 @@ export default function ChatMessages() {
                 </details>
               );
             })()}
+
+            {/* F4c — federation progress: one status line per remote peer */}
+            {message.federationProgress && Object.keys(message.federationProgress).length > 0 && (
+              <ul className="mb-2 space-y-1" aria-live="polite">
+                {Object.entries(message.federationProgress).map(([pubkey, entry]) => (
+                  <li
+                    key={pubkey}
+                    className="flex items-center gap-1.5 text-sm text-gray-600 dark:text-gray-300"
+                  >
+                    <Radio className="w-4 h-4 flex-shrink-0 text-accent-500 dark:text-accent-400 animate-pulse" aria-hidden="true" />
+                    <span>
+                      {t(`chat.federationProgress.${entry.label}`, {
+                        name: entry.peer_display_name,
+                        defaultValue: t('chat.federationProgress.fallback', { name: entry.peer_display_name }),
+                      })}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
 
             {message.role === 'assistant' ? renderMessageContent(message.content) : <p className="whitespace-pre-wrap">{message.content}</p>}
 

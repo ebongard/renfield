@@ -158,6 +158,14 @@
     "agentThinking": "Thinking...",
     "agentStepsCount": "{{count}} step completed",
     "agentStepsCount_other": "{{count}} steps completed",
+    "federationProgress": {
+      "waking_up": "Connecting to {{name}}'s Renfield...",
+      "retrieving": "{{name}}'s Renfield is searching...",
+      "synthesizing": "{{name}}'s Renfield is drafting a reply...",
+      "complete": "{{name}}'s Renfield is done.",
+      "failed": "{{name}}'s Renfield couldn't answer.",
+      "fallback": "Asking {{name}}'s Renfield..."
+    },
     "exampleWeather": "How's the weather?",
     "exampleLight": "Turn on the living room light",
     "exampleMusic": "Play some jazz music"

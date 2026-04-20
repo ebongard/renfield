@@ -1013,6 +1013,27 @@ async def websocket_endpoint(
                     executor = ActionExecutor(mcp_manager=mcp_manager)
 
                     agent_tool_results = []
+
+                    # F4c — federation progress relay. When the agent's
+                    # tool call is a federated query, ProgressChunks
+                    # reach this sink with peer identity already enriched.
+                    # Forward straight to the chat WS so the user sees
+                    # "asking Mom's brain…" live. Sink is best-effort:
+                    # a send failure must not break the tool call, so
+                    # we swallow here (mcp_client also logs on raise).
+                    async def _federation_progress_sink(payload: dict) -> None:
+                        try:
+                            await websocket.send_json({
+                                "type": "agent_federation_progress",
+                                **payload,
+                            })
+                        except Exception as send_err:  # noqa: BLE001
+                            logger.warning(
+                                f"agent_federation_progress send failed "
+                                f"(peer={payload.get('peer_pubkey','?')[:12]}…, "
+                                f"label={payload.get('label')}): {send_err}"
+                            )
+
                     async for step in agent.run(
                         message=content,
                         ollama=ollama,
@@ -1026,6 +1047,7 @@ async def websocket_endpoint(
                         user_id=user_id,
                         context_vars_text=_context_vars_text,
                         summary_text=_summary_text,
+                        progress_sink=_federation_progress_sink,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)

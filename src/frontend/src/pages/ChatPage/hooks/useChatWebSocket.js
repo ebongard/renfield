@@ -25,6 +25,7 @@ export function useChatWebSocket({
   onAgentThinking,
   onAgentToolCall,
   onAgentToolResult,
+  onAgentFederationProgress,
   onCard,
 } = {}) {
   const [wsConnected, setWsConnected] = useState(false);
@@ -91,6 +92,9 @@ export function useChatWebSocket({
       } else if (data.type === 'agent_tool_result') {
         debug.log('Agent tool result:', data.tool, data.success ? 'success' : 'failed');
         onAgentToolResult?.(data);
+      } else if (data.type === 'agent_federation_progress') {
+        debug.log('Federation progress:', data.peer_display_name, data.label, `seq=${data.sequence}`);
+        onAgentFederationProgress?.(data);
       } else if (data.type === 'card') {
         debug.log('Card received');
         onCard?.(data);
@@ -109,7 +113,7 @@ export function useChatWebSocket({
     };
 
     wsRef.current = ws;
-  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onAgentThinking, onAgentToolCall, onAgentToolResult, onCard]);
+  }, [onStreamChunk, onStreamDone, onAction, onRagContext, onIntentFeedbackRequest, onDocumentProcessing, onDocumentReady, onDocumentError, onAgentThinking, onAgentToolCall, onAgentToolResult, onAgentFederationProgress, onCard]);
 
   // Connect on mount, cleanup on unmount
   useEffect(() => {

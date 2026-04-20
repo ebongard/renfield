@@ -283,6 +283,9 @@ export function ChatProvider({ children }) {
           streaming: false,
           intentInfo: intentInfo || undefined,
           userQuery: lastUserQueryRef.current || undefined,
+          // F4c — any lingering per-peer progress lines belong only to
+          // the live streaming phase; drop them when the message finalizes.
+          federationProgress: undefined,
         };
         lastIntentInfoRef.current = null;
 
@@ -397,6 +400,47 @@ export function ChatProvider({ children }) {
     });
   }, []);
 
+  // F4c — live federation progress per remote peer. Keyed by pubkey so
+  // fan-out to multiple peers renders one status line per peer. On a
+  // terminal chunk (`complete`/`failed`) we remove that peer's entry
+  // so the status line disappears; `handleStreamDone` wipes anything
+  // still lingering (e.g., agent aborted mid-tool). We deliberately
+  // do NOT clear on agent_tool_result — parallel tool dispatch means
+  // other peers may still be mid-flight when one completes.
+  //
+  // Out-of-order chunks are ignored by `sequence`: only advance when
+  // seq > stored seq (drops stale late arrivals but keeps terminal
+  // chunks regardless, since losing a `complete` would strand the line).
+  const handleAgentFederationProgress = useCallback((data) => {
+    const { peer_pubkey, peer_display_name, label, sequence } = data;
+    setMessages(prev => {
+      const lastMsg = prev[prev.length - 1];
+      if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.streaming) {
+        // Chunk arrived before any assistant message — attach to a new
+        // streaming message so the user sees something while waiting.
+        return [...prev, {
+          role: 'assistant',
+          content: '',
+          streaming: true,
+          federationProgress: { [peer_pubkey]: { peer_display_name, label, sequence } },
+        }];
+      }
+      const current = lastMsg.federationProgress || {};
+      const next = { ...current };
+      const isTerminal = label === 'complete' || label === 'failed';
+      if (isTerminal) {
+        delete next[peer_pubkey];
+      } else {
+        const existing = current[peer_pubkey];
+        if (existing && sequence <= existing.sequence) {
+          return prev; // stale chunk, drop it
+        }
+        next[peer_pubkey] = { peer_display_name, label, sequence };
+      }
+      return [...prev.slice(0, -1), { ...lastMsg, federationProgress: next }];
+    });
+  }, []);
+
   // Handle document processing notifications from backend
   const handleDocumentProcessing = useCallback((data) => {
     setMessages(prev => prev.map(msg => {
@@ -461,6 +505,7 @@ export function ChatProvider({ children }) {
     onAgentThinking: handleAgentThinking,
     onAgentToolCall: handleAgentToolCall,
     onAgentToolResult: handleAgentToolResult,
+    onAgentFederationProgress: handleAgentFederationProgress,
     onCard: handleCard,
   });
 

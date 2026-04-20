@@ -938,6 +938,7 @@ class AgentService:
         user_id: int | None = None,
         context_vars_text: str = "",
         summary_text: str = "",
+        progress_sink=None,
     ) -> AsyncGenerator[AgentStep, None]:
         """Thin wrapper around _run_impl.
 
@@ -977,6 +978,7 @@ class AgentService:
                 user_id=user_id,
                 context_vars_text=context_vars_text,
                 summary_text=summary_text,
+                progress_sink=progress_sink,
             ):
                 yield step
         finally:
@@ -1002,6 +1004,7 @@ class AgentService:
         user_id: int | None = None,
         context_vars_text: str = "",
         summary_text: str = "",
+        progress_sink=None,
     ) -> AsyncGenerator[AgentStep, None]:
         """
         Run the Agent Loop. Yields AgentStep objects for real-time feedback.
@@ -1259,7 +1262,12 @@ class AgentService:
                             "parameters": act_data.get("parameters", {}),
                             "confidence": 1.0,
                         }
-                        return await executor.execute(intent_data, user_permissions=user_permissions, user_id=user_id)
+                        return await executor.execute(
+                            intent_data,
+                            user_permissions=user_permissions,
+                            user_id=user_id,
+                            progress_sink=progress_sink,
+                        )
 
                     exec_results = await asyncio.gather(
                         *[_exec_parallel(a) for a in valid_actions],
@@ -1388,7 +1396,7 @@ class AgentService:
                 }
                 result = await executor.execute(
                     intent_data, user_permissions=user_permissions,
-                    user_id=user_id,
+                    user_id=user_id, progress_sink=progress_sink,
                 )
             except Exception as e:
                 logger.error(f"❌ Agent tool execution failed: {action} — {e}")

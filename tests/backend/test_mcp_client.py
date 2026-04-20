@@ -785,6 +785,7 @@ class TestMCPIntentRouting:
             {"to": "user@example.com", "subject": "Test"},
             user_permissions=None,
             user_id=None,
+            progress_sink=None,
         )
 
     @pytest.mark.unit
