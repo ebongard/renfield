@@ -1077,6 +1077,22 @@
     "couldNotLoad": "Could not load data.",
     "couldNotSave": "Could not save changes.",
     "score": "Relevance",
-    "capturedAt": "Captured"
+    "capturedAt": "Captured",
+    "peersTitle": "Connected Renfield instances",
+    "peersSubtitle": "Paired Renfield instances from other household members.",
+    "peersManageHint": "You pair new peers from the circles settings page:",
+    "peersEmptyHeadline": "No paired Renfields yet.",
+    "peersEmptyHint": "Pair two Renfield instances through the QR-code handshake to enable federated queries.",
+    "peersCouldNotLoad": "Could not load peer list.",
+    "peerNeverSeen": "Not seen yet",
+    "peerJustNow": "Just now",
+    "peerMinutesAgo": "{{n}}m ago",
+    "peerHoursAgo": "{{n}}h ago",
+    "peerDaysAgo": "{{n}}d ago",
+    "revokePeer": "Revoke pairing",
+    "revokePeerTitle": "Revoke pairing?",
+    "revokePeerConfirm": "Really end pairing with {{name}}? This Renfield will no longer be able to query your shared atoms.",
+    "peerRevoked": "Pairing with {{name}} revoked.",
+    "peerRevokeFailed": "Could not revoke the pairing."
   }
 }

@@ -1077,6 +1077,22 @@
     "couldNotLoad": "Konnte Daten nicht laden.",
     "couldNotSave": "Konnte Änderungen nicht speichern.",
     "score": "Relevanz",
-    "capturedAt": "Erfasst am"
+    "capturedAt": "Erfasst am",
+    "peersTitle": "Verbundene Renfield-Instanzen",
+    "peersSubtitle": "Renfields anderer Haushaltsmitglieder, mit denen du gekoppelt bist.",
+    "peersManageHint": "Neue Peers koppelst du auf der Kreis-Einstellungsseite:",
+    "peersEmptyHeadline": "Noch keine gekoppelten Renfields.",
+    "peersEmptyHint": "Koppele zwei Renfields über den QR-Code-Handshake, um föderierte Anfragen zu stellen.",
+    "peersCouldNotLoad": "Konnte Peer-Liste nicht laden.",
+    "peerNeverSeen": "Noch nicht gesehen",
+    "peerJustNow": "Gerade eben",
+    "peerMinutesAgo": "vor {{n}} Min.",
+    "peerHoursAgo": "vor {{n}} Std.",
+    "peerDaysAgo": "vor {{n}} Tagen",
+    "revokePeer": "Kopplung aufheben",
+    "revokePeerTitle": "Kopplung aufheben?",
+    "revokePeerConfirm": "Kopplung zu {{name}} wirklich beenden? Diese Renfield-Instanz kann danach nicht mehr auf deine geteilten Informationen zugreifen.",
+    "peerRevoked": "Kopplung zu {{name}} beendet.",
+    "peerRevokeFailed": "Kopplung konnte nicht beendet werden."
   }
 }

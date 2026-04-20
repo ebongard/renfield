@@ -33,6 +33,7 @@ const RoutingDashboardPage = lazy(() => import('./pages/RoutingDashboardPage'));
 const BrainPage = lazy(() => import('./pages/BrainPage'));
 const BrainReviewPage = lazy(() => import('./pages/BrainReviewPage'));
 const CirclesSettingsPage = lazy(() => import('./pages/CirclesSettingsPage'));
+const CirclesPeersPage = lazy(() => import('./pages/CirclesPeersPage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -99,6 +100,11 @@ function AppRoutes() {
             <Route path="/settings/circles" element={
               <ProtectedRoute>
                 <CirclesSettingsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/settings/circles/peers" element={
+              <ProtectedRoute>
+                <CirclesPeersPage />
               </ProtectedRoute>
             } />
             {/* Redirect old /plugins route to new integrations page */}
