@@ -1063,6 +1063,7 @@
     "members": "Mitglieder",
     "addMember": "Mitglied hinzufügen",
     "addMemberUser": "Benutzer",
+    "addMemberUserIdHint": "Keine Benutzerliste verfügbar (Admin-Berechtigung erforderlich). Gib die user_id manuell ein.",
     "addMemberTier": "Stufe",
     "noMembers": "Noch keine Mitglieder in deinen Kreisen.",
     "removeMember": "Mitglied entfernen",

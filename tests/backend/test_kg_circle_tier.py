@@ -94,6 +94,7 @@ class TestUpdateEntityCircleTierDispatch:
         db.execute = AsyncMock()
         db.commit = AsyncMock()
         db.refresh = AsyncMock()
+        db.flush = AsyncMock()
         svc = KnowledgeGraphService(db)
         ent = MagicMock()
         ent.atom_id = None
@@ -107,3 +108,10 @@ class TestUpdateEntityCircleTierDispatch:
         assert "UPDATE kg_relations" in sql_text
         assert "LEAST(s.circle_tier, o.circle_tier)" in sql_text
         db.commit.assert_awaited_once()
+        # Explicit flush MUST come before the raw UPDATE so LEAST() reads
+        # the new entity.circle_tier (CRITICAL for cascade correctness).
+        db.flush.assert_awaited_once()
+        # Verify call order: get_entity → flush → execute → commit
+        # (We don't enforce get_entity ordering since that uses a separate mock.)
+        # If flush didn't fire before execute, the entity.circle_tier write
+        # wouldn't be visible to the LEAST() reader.

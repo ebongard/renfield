@@ -92,7 +92,15 @@ async def revoke_kb_share(
     kb_id: int,
     target_user_id: int,
 ) -> int:
-    """Delete every grant for chunks of `kb_id` granted to `target_user_id`. Returns count removed."""
+    """
+    Delete every atom_explicit_grants row on chunks of `kb_id` granted to
+    `target_user_id`.
+
+    Returns the number of DELETED ROWS (one per chunk, NOT one per logical
+    share). Callers that want "did we revoke something" should compare
+    `> 0`; callers that need the logical share count should call
+    `list_kb_shares` before and after.
+    """
     result = await db.execute(
         text(
             "DELETE FROM atom_explicit_grants g "
@@ -112,23 +120,52 @@ async def revoke_kb_share(
 
 async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
     """
-    One aggregated row per granted user with the MAX-permissive level,
-    earliest grant timestamp, and the most-recent granter.
+    One aggregated row per granted user.
+
+    Returns:
+        permission   MAX-permissive level (admin > write > read) across
+                     all this user's chunk-grants on the KB.
+        granted_at   timestamp of the MOST RECENT grant for this user.
+        granted_by   the user_id that issued THAT most-recent grant
+                     (paired correctly via DISTINCT ON, not the arbitrary
+                     MAX(granted_by) the legacy aggregation produced).
+
+    DISTINCT ON in the inner CTE picks one representative row per
+    (user, atom) pair (the most-recent grant per chunk); the outer
+    aggregation then collapses across chunks.
     """
     result = await db.execute(
         text(
-            "SELECT g.granted_to_user_id AS user_id, "
-            "       MAX(CASE g.permission_level "
-            "           WHEN 'admin' THEN 3 WHEN 'write' THEN 2 ELSE 1 END) AS rank, "
-            "       MAX(g.granted_by) AS granted_by, "
-            "       MIN(g.granted_at) AS granted_at "
-            "FROM atom_explicit_grants g "
-            "JOIN atoms a ON g.atom_id = a.atom_id "
-            "JOIN document_chunks dc ON a.source_id = dc.id::text "
-            "JOIN documents d ON dc.document_id = d.id "
-            "WHERE a.source_table = 'document_chunks' "
-            "  AND d.knowledge_base_id = :kb_id "
-            "GROUP BY g.granted_to_user_id"
+            "WITH latest_per_chunk AS ("
+            "  SELECT DISTINCT ON (g.granted_to_user_id, g.atom_id) "
+            "    g.granted_to_user_id, g.atom_id, g.permission_level, "
+            "    g.granted_by, g.granted_at "
+            "  FROM atom_explicit_grants g "
+            "  JOIN atoms a ON g.atom_id = a.atom_id "
+            "  JOIN document_chunks dc ON a.source_id = dc.id::text "
+            "  JOIN documents d ON dc.document_id = d.id "
+            "  WHERE a.source_table = 'document_chunks' "
+            "    AND d.knowledge_base_id = :kb_id "
+            "  ORDER BY g.granted_to_user_id, g.atom_id, g.granted_at DESC "
+            "), "
+            "ranked AS ("
+            "  SELECT granted_to_user_id, "
+            "         MAX(CASE permission_level "
+            "             WHEN 'admin' THEN 3 WHEN 'write' THEN 2 ELSE 1 END) AS rank, "
+            "         MAX(granted_at) AS latest_at "
+            "  FROM latest_per_chunk "
+            "  GROUP BY granted_to_user_id "
+            ") "
+            "SELECT DISTINCT ON (r.granted_to_user_id) "
+            "       r.granted_to_user_id AS user_id, "
+            "       r.rank, "
+            "       r.latest_at AS granted_at, "
+            "       lpc.granted_by "
+            "FROM ranked r "
+            "JOIN latest_per_chunk lpc "
+            "  ON lpc.granted_to_user_id = r.granted_to_user_id "
+            "  AND lpc.granted_at = r.latest_at "
+            "ORDER BY r.granted_to_user_id, lpc.granted_by NULLS LAST"
         ),
         {"kb_id": kb_id},
     )

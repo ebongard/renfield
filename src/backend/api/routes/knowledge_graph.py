@@ -110,6 +110,7 @@ async def list_entities(
             circle_tier=circle_tier,
             page=page,
             size=size,
+            asker_id=user.id if user else None,
         )
         return EntityListResponse(
             entities=[_entity_to_response(e) for e in entities],

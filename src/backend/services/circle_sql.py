@@ -98,11 +98,15 @@ def circles_filter_clause(
 
     if source_table_value:
         # Per-resource explicit grant — MAX-permissive with tier check.
+        # `source_table_value` flows through a bind param (`{asker_param}_src`)
+        # so even if a future caller forwards user-supplied input, there's no
+        # SQL injection sink. `owner_col`, `tier_col`, `sid_expr` remain
+        # structural (identifier interpolation) — NEVER pass user input there.
         parts.append(
             f"EXISTS ("
             f"  SELECT 1 FROM atom_explicit_grants g "
             f"  JOIN atoms a ON a.atom_id = g.atom_id "
-            f"  WHERE a.source_table = '{source_table_value}' "
+            f"  WHERE a.source_table = :{asker_param}_src "
             f"  AND a.source_id = ({sid_expr})::text "
             f"  AND g.granted_to_user_id = :{asker_param}"
             f")"
@@ -129,17 +133,25 @@ def circles_filter_params(
     *,
     asker_param: str = "asker_id",
     public_tier_index: int = TIER_PUBLIC,
+    source_table_value: str = "",
 ) -> dict[str, Any]:
     """
     Build the parameter dict to bind alongside the clause from circles_filter_clause.
 
     Caller merges this with their other query parameters:
         params = {**other_params, **circles_filter_params(asker_id=user_id)}
+
+    When `source_table_value` is set, also emits `{asker_param}_src` — the
+    bind that the explicit-grants EXISTS subquery reads. Safe to pass
+    user-supplied strings here (bind param, not interpolated).
     """
-    return {
+    params = {
         asker_param: asker_id,
         f"{asker_param}_pub": public_tier_index,
     }
+    if source_table_value:
+        params[f"{asker_param}_src"] = source_table_value
+    return params
 
 
 # =============================================================================
@@ -149,29 +161,23 @@ def circles_filter_params(
 
 def kg_entities_circles_filter(asker_id: int, alias: str = "e") -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering kg_entities."""
-    clause = circles_filter_clause(
-        table_alias=alias,
-        source_table_value="kg_entities",
-    )
-    return clause, circles_filter_params(asker_id)
+    src = "kg_entities"
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
 def kg_relations_circles_filter(asker_id: int, alias: str = "r") -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering kg_relations."""
-    clause = circles_filter_clause(
-        table_alias=alias,
-        source_table_value="kg_relations",
-    )
-    return clause, circles_filter_params(asker_id)
+    src = "kg_relations"
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
 def conversation_memories_circles_filter(asker_id: int, alias: str = "m") -> tuple[str, dict[str, Any]]:
     """Returns (clause, params) for circle-filtering conversation_memories."""
-    clause = circles_filter_clause(
-        table_alias=alias,
-        source_table_value="conversation_memories",
-    )
-    return clause, circles_filter_params(asker_id)
+    src = "conversation_memories"
+    clause = circles_filter_clause(table_alias=alias, source_table_value=src)
+    return clause, circles_filter_params(asker_id, source_table_value=src)
 
 
 def document_chunks_circles_filter(
@@ -197,12 +203,13 @@ def document_chunks_circles_filter(
             WHERE ... AND ({clause})
         '''
     """
+    src = "document_chunks"
     clause = circles_filter_clause(
         table_alias=chunk_alias,
         owner_col="owner_id",
         tier_col="circle_tier",
-        source_table_value="document_chunks",
+        source_table_value=src,
         owner_table_alias=kb_alias,
         source_id_expr=f"{chunk_alias}.id",
     )
-    return clause, circles_filter_params(asker_id)
+    return clause, circles_filter_params(asker_id, source_table_value=src)

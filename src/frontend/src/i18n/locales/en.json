@@ -1063,6 +1063,7 @@
     "members": "Members",
     "addMember": "Add member",
     "addMemberUser": "User",
+    "addMemberUserIdHint": "User list unavailable (admin permission required). Enter a user_id manually.",
     "addMemberTier": "Tier",
     "noMembers": "No members in your circles yet.",
     "removeMember": "Remove member",

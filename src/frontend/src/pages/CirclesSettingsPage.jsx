@@ -16,6 +16,7 @@ export default function CirclesSettingsPage() {
   const [settings, setSettings] = useState(null);
   const [members, setMembers] = useState([]);
   const [userOptions, setUserOptions] = useState([]);
+  const [userOptionsBlocked, setUserOptionsBlocked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [savingTier, setSavingTier] = useState(false);
   const [error, setError] = useState(null);
@@ -26,6 +27,8 @@ export default function CirclesSettingsPage() {
   const [addUserId, setAddUserId] = useState('');
   const [addTier, setAddTier] = useState(2);
   const [adding, setAdding] = useState(false);
+  // Per-member saving guard — prevents out-of-order PATCHes on rapid clicks.
+  const [savingMemberIds, setSavingMemberIds] = useState(() => new Set());
 
   const load = useCallback(async () => {
     try {
@@ -44,14 +47,17 @@ export default function CirclesSettingsPage() {
     }
   }, [t]);
 
-  // Also pull the user list so the add dialog has a picker.
+  // Also pull the user list so the add dialog has a picker. Non-admins hit
+  // 403 (USERS_VIEW required); fall back to free-form user_id and surface a
+  // hint in the modal so the user understands why there's no dropdown.
   const loadUsers = useCallback(async () => {
     try {
       const resp = await apiClient.get('/api/users');
       setUserOptions(resp.data?.users || resp.data || []);
-    } catch {
-      // Non-fatal — add-dialog falls back to free-form user_id input.
+      setUserOptionsBlocked(false);
+    } catch (err) {
       setUserOptions([]);
+      setUserOptionsBlocked(err?.response?.status === 403);
     }
   }, []);
 
@@ -111,6 +117,8 @@ export default function CirclesSettingsPage() {
   };
 
   const handleMemberTierChange = async (member, newTier) => {
+    if (savingMemberIds.has(member.member_user_id)) return;
+    setSavingMemberIds((prev) => new Set(prev).add(member.member_user_id));
     try {
       await apiClient.patch(`/api/circles/me/members/${member.member_user_id}`, {
         dimension: 'tier',
@@ -124,6 +132,12 @@ export default function CirclesSettingsPage() {
       setSuccess(t('common.success'));
     } catch {
       setError(t('circles.couldNotSave'));
+    } finally {
+      setSavingMemberIds((prev) => {
+        const next = new Set(prev);
+        next.delete(member.member_user_id);
+        return next;
+      });
     }
   };
 
@@ -224,6 +238,7 @@ export default function CirclesSettingsPage() {
                         <TierPicker
                           value={tier}
                           onChange={(nt) => handleMemberTierChange(member, nt)}
+                          disabled={savingMemberIds.has(member.member_user_id)}
                         />
                         <button
                           type="button"
@@ -266,16 +281,23 @@ export default function CirclesSettingsPage() {
                 ))}
               </select>
             ) : (
-              <input
-                id="add-user"
-                type="number"
-                min="1"
-                value={addUserId}
-                onChange={(e) => setAddUserId(e.target.value)}
-                required
-                className="input"
-                placeholder="user_id"
-              />
+              <>
+                <input
+                  id="add-user"
+                  type="number"
+                  min="1"
+                  value={addUserId}
+                  onChange={(e) => setAddUserId(e.target.value)}
+                  required
+                  className="input"
+                  placeholder="user_id"
+                />
+                {userOptionsBlocked && (
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    {t('circles.addMemberUserIdHint')}
+                  </p>
+                )}
+              </>
             )}
           </div>
           <div>

@@ -325,17 +325,41 @@ def upgrade() -> None:
             "WHERE r.subject_id = s.id AND r.user_id IS NULL AND s.user_id IS NOT NULL"
         )
 
-        # Same defense for kg_entities — back-fill from a system user (id=1, the
-        # default admin). Any kg_entities row with NULL user_id at this point
-        # has no clear ownership; assigning to admin keeps the FK valid and
-        # surfaces the rows for manual reassignment via /api/circles/me UI.
-        bind.exec_driver_sql(
-            "UPDATE kg_entities SET user_id = 1 WHERE user_id IS NULL"
-        )
-        # And for conversation_memories — same rationale.
-        bind.exec_driver_sql(
-            "UPDATE conversation_memories SET user_id = 1 WHERE user_id IS NULL"
-        )
+        # Same defense for kg_entities — back-fill from the oldest surviving
+        # user (usually the admin, id=1, but hardening against the case where
+        # that user has been deleted). Any row with NULL user_id at this
+        # point has no clear ownership; assigning to the fallback keeps the
+        # FK valid and surfaces the rows for manual reassignment via
+        # /api/circles/me UI.
+        #
+        # Review NIT #11 fix: the legacy hardcoded `user_id = 1` would
+        # FK-violate on fresh-DB test harnesses where no users exist yet, or
+        # on installations where user id=1 has been deleted.
+        fallback_user_id = bind.exec_driver_sql(
+            "SELECT id FROM users ORDER BY id ASC LIMIT 1"
+        ).scalar()
+        if fallback_user_id is None:
+            # No users exist — the NULL-user rows are orphans from pre-auth
+            # data and have nowhere valid to point. Skip the back-fill; the
+            # atoms upsert below uses COALESCE(user_id, 0) which
+            # FK-violates on 0. Fresh-DB installs never hit this path
+            # because those tables are empty; warn loudly for anyone else.
+            op.get_context().autocommit_block()  # no-op, keeps context
+            import logging
+            logging.getLogger("alembic").warning(
+                "pc20260420_circles_v1: no users in DB — skipping "
+                "NULL-user backfill for kg_entities / conversation_memories. "
+                "Any legacy rows will fail the atoms FK step."
+            )
+        else:
+            bind.exec_driver_sql(
+                f"UPDATE kg_entities SET user_id = {int(fallback_user_id)} "
+                f"WHERE user_id IS NULL"
+            )
+            bind.exec_driver_sql(
+                f"UPDATE conversation_memories SET user_id = {int(fallback_user_id)} "
+                f"WHERE user_id IS NULL"
+            )
 
     # 3e. Populate knowledge_bases.default_circle_tier from is_public.
     if dialect == "postgresql":

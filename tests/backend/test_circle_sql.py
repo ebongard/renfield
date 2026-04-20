@@ -38,7 +38,7 @@ class TestCirclesFilterClause:
     def test_grant_subquery_present_when_source_table_set(self):
         clause = circles_filter_clause(table_alias="e", source_table_value="kg_entities")
         assert "atom_explicit_grants" in clause
-        assert "a.source_table = 'kg_entities'" in clause
+        assert "a.source_table = :asker_id_src" in clause
         assert "a.source_id = (e.id)::text" in clause
 
     def test_membership_subquery_uses_owner_alias(self):
@@ -83,13 +83,23 @@ class TestCirclesFilterParams:
         params = circles_filter_params(asker_id=7, asker_param="me")
         assert params == {"me": 7, "me_pub": TIER_PUBLIC}
 
+    def test_source_table_value_emits_src_bind(self):
+        params = circles_filter_params(asker_id=1, source_table_value="kg_entities")
+        assert params["asker_id_src"] == "kg_entities"
+
+    def test_no_src_bind_when_source_table_value_empty(self):
+        params = circles_filter_params(asker_id=1, source_table_value="")
+        assert "asker_id_src" not in params
+
 
 class TestKgEntitiesWrapper:
     def test_returns_clause_and_params(self):
         clause, params = kg_entities_circles_filter(asker_id=42)
         assert "e.user_id = :asker_id" in clause
-        assert "a.source_table = 'kg_entities'" in clause
-        assert params == {"asker_id": 42, "asker_id_pub": TIER_PUBLIC}
+        assert "a.source_table = :asker_id_src" in clause
+        assert params == {
+            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "kg_entities",
+        }
 
     def test_custom_alias(self):
         clause, _ = kg_entities_circles_filter(asker_id=1, alias="ent")
@@ -100,16 +110,20 @@ class TestKgRelationsWrapper:
     def test_returns_clause_and_params(self):
         clause, params = kg_relations_circles_filter(asker_id=42)
         assert "r.user_id = :asker_id" in clause
-        assert "a.source_table = 'kg_relations'" in clause
-        assert params == {"asker_id": 42, "asker_id_pub": TIER_PUBLIC}
+        assert "a.source_table = :asker_id_src" in clause
+        assert params == {
+            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "kg_relations",
+        }
 
 
 class TestConversationMemoriesWrapper:
     def test_returns_clause_and_params(self):
         clause, params = conversation_memories_circles_filter(asker_id=42)
         assert "m.user_id = :asker_id" in clause
-        assert "a.source_table = 'conversation_memories'" in clause
-        assert params == {"asker_id": 42, "asker_id_pub": TIER_PUBLIC}
+        assert "a.source_table = :asker_id_src" in clause
+        assert params == {
+            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "conversation_memories",
+        }
 
 
 class TestDocumentChunksWrapper:
@@ -121,10 +135,12 @@ class TestDocumentChunksWrapper:
         assert "dc.circle_tier = :asker_id_pub" in clause
         # Membership reaches kb.owner_id
         assert "m.circle_owner_id = kb.owner_id" in clause
-        # Grant subquery anchored on document_chunks
-        assert "a.source_table = 'document_chunks'" in clause
+        # Grant subquery anchored on document_chunks (bound, not interpolated)
+        assert "a.source_table = :asker_id_src" in clause
         assert "a.source_id = (dc.id)::text" in clause
-        assert params == {"asker_id": 42, "asker_id_pub": TIER_PUBLIC}
+        assert params == {
+            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "document_chunks",
+        }
 
     def test_custom_aliases(self):
         clause, _ = document_chunks_circles_filter(

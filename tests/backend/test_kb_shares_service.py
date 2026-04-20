@@ -115,6 +115,28 @@ async def test_list_kb_shares_aggregates_to_max_permission():
 
 @pytest.mark.asyncio
 @pytest.mark.unit
+async def test_list_kb_shares_uses_distinct_on_for_paired_granter():
+    """
+    Review BLOCKING #4 regression guard: the aggregate must pair granted_by
+    with the row producing granted_at (not arbitrary MAX(granted_by) with
+    MIN(granted_at) as the legacy code did).
+    """
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=MagicMock(fetchall=lambda: []))
+    await kb_shares_service.list_kb_shares(db, kb_id=1)
+
+    sql = str(db.execute.call_args.args[0])
+    # DISTINCT ON ensures one row per user, paired correctly.
+    assert "DISTINCT ON" in sql
+    # latest_per_chunk CTE picks most-recent grant per (user, chunk).
+    assert "latest_per_chunk" in sql
+    # The legacy arbitrary MAX(granted_by) must not appear.
+    assert "MAX(granted_by)" not in sql.replace(" ", "")
+    assert "MAX(g.granted_by)" not in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
 async def test_get_user_kb_permission_level_none_when_no_rows():
     db = MagicMock()
     fake_result = MagicMock()

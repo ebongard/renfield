@@ -867,8 +867,25 @@ class KnowledgeGraphService:
         circle_tier: int | None = None,
         page: int = 1,
         size: int = 50,
+        asker_id: int | None = None,
     ) -> tuple[list[KGEntity], int]:
-        """List active entities with optional filters."""
+        """
+        List active entities with optional filters.
+
+        Circle access: when `asker_id` is provided, results are restricted to
+        entities the asker can see (own + public + explicit-grant + tier-reach).
+        `asker_id=None` in auth-enabled mode falls back to public-tier only;
+        when `AUTH_ENABLED=false` the asker check is skipped entirely (the
+        legacy "single-user sees everything" contract).
+
+        The `user_id` filter is ORTHOGONAL to the circle check — callers
+        requesting `?user_id=X` see only entities owned by X *that asker can
+        also access*. Without the asker filter, any KG_VIEW caller could query
+        `?user_id=<anyone>` and exfiltrate the full entity set (review BLOCKING #8).
+        """
+        from sqlalchemy import text as sa_text
+        from services.circle_sql import kg_entities_circles_filter
+
         query = select(KGEntity).where(KGEntity.is_active == True)  # noqa: E712
         count_query = select(func.count(KGEntity.id)).where(KGEntity.is_active == True)  # noqa: E712
 
@@ -885,6 +902,19 @@ class KnowledgeGraphService:
         if circle_tier is not None:
             query = query.where(KGEntity.circle_tier == int(circle_tier))
             count_query = count_query.where(KGEntity.circle_tier == int(circle_tier))
+
+        # Circle access check (review BLOCKING #8 fix).
+        if not settings.auth_enabled:
+            pass  # single-user bypass — no filter
+        elif asker_id is None:
+            from models.database import TIER_PUBLIC
+            query = query.where(KGEntity.circle_tier == TIER_PUBLIC)
+            count_query = count_query.where(KGEntity.circle_tier == TIER_PUBLIC)
+        else:
+            # Alias the KGEntity table as `e` so the helper's clause applies.
+            clause, circle_params = kg_entities_circles_filter(asker_id, alias="kg_entities")
+            query = query.where(sa_text(clause).bindparams(**circle_params))
+            count_query = count_query.where(sa_text(clause).bindparams(**circle_params))
 
         total_result = await self.db.execute(count_query)
         total = total_result.scalar() or 0
@@ -969,7 +999,11 @@ class KnowledgeGraphService:
             return entity
 
         # No atom_id — direct column write + manual relation recompute.
+        # Explicit flush before the raw UPDATE so the cascade reads the new
+        # entity.circle_tier via LEAST(). Don't rely on autoflush (some
+        # session configs disable it; subtle drift if it ever flips).
         entity.circle_tier = int(circle_tier)
+        await self.db.flush()
         await self.db.execute(
             text(
                 "UPDATE kg_relations r SET circle_tier = "

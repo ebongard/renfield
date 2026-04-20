@@ -186,6 +186,12 @@ class RAGRetrieval:
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
         circles_clause, circles_params = self._chunk_circles_filter(user_id)
 
+        # LEFT JOIN on knowledge_bases so documents without a KB (legacy
+        # direct-upload path where knowledge_base_id IS NULL) are still
+        # considered. For those rows, kb.owner_id is NULL — the owner-branch
+        # and tier-membership-branch of the circles clause degrade to NULL
+        # (falsy), so a null-KB chunk is only reachable via the public-tier
+        # or explicit-grant branches (safe default; no unattributed leak).
         sql = text(f"""
             SELECT
                 dc.id,
@@ -202,7 +208,7 @@ class RAGRetrieval:
                 1 - (dc.embedding <=> CAST(:embedding AS vector)) as similarity
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
-            JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
+            LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
             AND dc.embedding IS NOT NULL
             AND {circles_clause}
@@ -260,6 +266,8 @@ class RAGRetrieval:
         # OR-match: any query term can match; ts_rank_cd ranks by coverage
         or_query = " OR ".join(query.split())
 
+        # LEFT JOIN rationale matches _search_dense — null-KB chunks reachable
+        # only via public-tier or explicit-grant branches of the circles clause.
         sql = text(f"""
             SELECT
                 dc.id,
@@ -276,7 +284,7 @@ class RAGRetrieval:
                 ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
-            JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
+            LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
             AND dc.search_vector IS NOT NULL
             AND dc.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
