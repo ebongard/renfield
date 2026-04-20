@@ -624,6 +624,11 @@ class MCPServerConfig:
     permissions: list[str] = field(default_factory=list)  # e.g. ["mcp.calendar.read", "mcp.calendar.manage"]
     tool_permissions: dict[str, str] = field(default_factory=dict)  # e.g. {"list_events": "mcp.calendar.read"}
     notifications: dict | None = None  # {"enabled": true, "poll_interval": 900, "tool": "get_pending_notifications"}
+    streaming: bool = False  # Opt-in: server emits progress notifications via MCP progress_callback.
+                              # When true, execute_tool_streaming wires an asyncio.Queue to capture
+                              # notifications and yield ProgressChunks. First consumer: federation
+                              # query_brain (F3). Non-streaming servers ignore this flag — the
+                              # progress queue stays empty and only the final result is yielded.
 
 
 @dataclass
@@ -782,6 +787,7 @@ class MCPManager:
                     permissions=entry.get("permissions", []),
                     tool_permissions=entry.get("tool_permissions", {}),
                     notifications=_parse_notifications(entry.get("notifications")),
+                    streaming=bool(_resolve_value(entry.get("streaming", False))),
                 )
 
                 if not config.enabled:
@@ -1254,21 +1260,201 @@ class MCPManager:
         Cancellation:
             If the consumer aborts the iterator (`break`, `aclose()`,
             GC) AFTER the first `__anext__()` but before the final yield,
-            the underlying tool call is allowed to complete in the
-            background but its result is discarded. If `aclose()` is
+            the underlying tool call is cancelled. If `aclose()` is
             called BEFORE the first `__anext__()`, the underlying tool
             is never invoked — creating the generator does not start
             work, the first `__anext__()` does.
         """
-        # F1.2: thin wrapper. F1.3 will detect streaming-capable tools and
-        # yield real ProgressChunks before the final dict.
-        result = await self.execute_tool(
+        # Resolve the server first so we can branch on the streaming flag.
+        # Tool lookup happens inside execute_tool anyway, so for the
+        # non-streaming path we just wrap that single call. For the
+        # streaming path we need to duplicate the lookup because we want
+        # the state object to check `config.streaming` on.
+        tool_info = self._tool_index.get(namespaced_name)
+        state = None
+        if tool_info is not None:
+            state = self._servers.get(tool_info.server_name)
+
+        # Non-streaming path: yield once, same shape as execute_tool.
+        if state is None or not state.config.streaming:
+            result = await self.execute_tool(
+                namespaced_name=namespaced_name,
+                arguments=arguments,
+                user_permissions=user_permissions,
+                user_id=user_id,
+            )
+            yield result
+            return
+
+        # Streaming path — progress_callback → asyncio.Queue → consumer.
+        # Shares the prep machinery (perm/rate/validation/timeout/format)
+        # with execute_tool via the code below; kept inline rather than in
+        # a helper because the streaming concurrency shape is distinct
+        # enough that extracting it obscures more than it saves.
+        async for item in self._execute_tool_streaming_impl(
+            tool_info=tool_info,
+            state=state,
             namespaced_name=namespaced_name,
             arguments=arguments,
             user_permissions=user_permissions,
             user_id=user_id,
+        ):
+            yield item
+
+    async def _execute_tool_streaming_impl(
+        self,
+        tool_info: "MCPToolInfo",
+        state: "MCPServerState",
+        namespaced_name: str,
+        arguments: dict,
+        user_permissions: list[str] | None,
+        user_id: int | None,
+    ) -> AsyncIterator[ProgressChunk | FinalResult]:
+        """Streaming-path implementation for F1.3.
+
+        Runs the tool call in a background task with an asyncio.Queue-backed
+        progress_callback. Yields ProgressChunks as they arrive, then the
+        final FinalResult dict (same shape execute_tool returns).
+        """
+        from services.mcp_streaming import (
+            PROGRESS_LABEL_FAILED,
+            PROGRESS_LABEL_TOOL_RUNNING,
+            PROGRESS_LABELS,
         )
-        yield result
+
+        # === Permission check ===
+        perm_error = self._check_tool_permission(tool_info, user_permissions)
+        if perm_error:
+            logger.warning(f"🔒 MCP permission denied: {namespaced_name} — {perm_error}")
+            yield {"success": False, "message": perm_error, "data": None}
+            return
+
+        if not state.connected or not state.session:
+            yield {
+                "success": False,
+                "message": f"MCP Server '{tool_info.server_name}' nicht verbunden",
+                "data": None,
+            }
+            return
+
+        # === Rate limiting ===
+        if state.rate_limiter and not await state.rate_limiter.acquire():
+            logger.warning(f"MCP rate limit exceeded for server '{tool_info.server_name}'")
+            yield {
+                "success": False,
+                "message": f"Rate limit exceeded for MCP server '{tool_info.server_name}'",
+                "data": None,
+            }
+            return
+
+        # === Argument coercion + validation ===
+        arguments = _coerce_arguments(arguments, tool_info.input_schema)
+        arguments = await _geocode_location_arguments(arguments, tool_info.input_schema)
+        try:
+            _validate_tool_input(arguments, tool_info.input_schema)
+        except MCPValidationError as e:
+            logger.warning(f"MCP input validation failed for {namespaced_name}: {e}")
+            yield {"success": False, "message": str(e), "data": None}
+            return
+
+        # === Set up progress queue + callback ===
+        progress_queue: asyncio.Queue = asyncio.Queue()
+        sequence_counter = 0
+
+        async def progress_cb(progress: float, total: float | None, message: str | None) -> None:
+            """MCP SDK passes (progress, total, message). `message` carries the
+            progress label; we validate it against PROGRESS_LABELS and fall
+            back to TOOL_RUNNING for unknown labels (defence against a
+            misbehaving or malicious responder emitting arbitrary strings)."""
+            nonlocal sequence_counter
+            sequence_counter += 1
+            label = message if message in PROGRESS_LABELS else PROGRESS_LABEL_TOOL_RUNNING
+            detail: dict[str, Any] = {"progress": float(progress)}
+            if total is not None:
+                detail["total"] = float(total)
+            await progress_queue.put(ProgressChunk(
+                label=label, detail=detail, sequence=sequence_counter,
+            ))
+
+        # === Run the tool call as a background task ===
+        try:
+            call_coro = state.session.call_tool(
+                tool_info.original_name, arguments, progress_callback=progress_cb,
+            )
+        except TypeError:
+            # Older MCP SDK without progress_callback kwarg — degrade gracefully.
+            logger.debug(
+                f"MCP SDK call_tool has no progress_callback kwarg; "
+                f"{namespaced_name} runs without streaming."
+            )
+            call_coro = state.session.call_tool(tool_info.original_name, arguments)
+
+        user_info = f" (user_id={user_id})" if user_id is not None else ""
+        logger.debug(f"MCP streaming call: {namespaced_name}{user_info}")
+
+        call_task = asyncio.create_task(
+            asyncio.wait_for(call_coro, timeout=settings.mcp_call_timeout)
+        )
+
+        # === Drain progress chunks while task runs ===
+        try:
+            while not call_task.done():
+                try:
+                    chunk = await asyncio.wait_for(progress_queue.get(), timeout=0.05)
+                    yield chunk
+                except TimeoutError:
+                    continue
+            # Flush anything that arrived after the last poll.
+            while not progress_queue.empty():
+                yield progress_queue.get_nowait()
+        except (asyncio.CancelledError, GeneratorExit):
+            # Consumer closed the generator — cancel the tool call.
+            call_task.cancel()
+            raise
+
+        # === Yield the final result (same format as execute_tool) ===
+        try:
+            result = await call_task
+        except TimeoutError:
+            logger.error(f"MCP tool call timeout: {namespaced_name}")
+            yield {
+                "success": False,
+                "message": f"Tool-Aufruf Timeout: {namespaced_name}",
+                "data": None,
+            }
+            return
+        except Exception as e:
+            logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
+            state.connected = False
+            state.last_error = str(e)
+            yield {
+                "success": False,
+                "message": f"Tool-Aufruf fehlgeschlagen: {e}",
+                "data": None,
+            }
+            return
+
+        # Convert CallToolResult → FinalResult dict (same logic as execute_tool).
+        is_error = getattr(result, "isError", False)
+        content_parts = []
+        raw_data = []
+        for item in result.content:
+            text = getattr(item, "text", None)
+            if text:
+                content_parts.append(_truncate_response(text))
+            raw_data.append({"type": getattr(item, "type", "unknown"), "text": text})
+
+        message_text = "\n".join(content_parts) if content_parts else "Tool executed"
+        message_text = _truncate_response(message_text)
+
+        if not is_error:
+            is_error = _detect_inner_error(message_text)
+
+        yield {
+            "success": not is_error,
+            "message": message_text,
+            "data": raw_data if raw_data else None,
+        }
 
     def get_all_tools(self) -> list[MCPToolInfo]:
         """Return all discovered MCP tools."""
