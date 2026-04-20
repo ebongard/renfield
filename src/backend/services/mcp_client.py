@@ -1360,12 +1360,17 @@ class MCPManager:
             return
 
         # Non-streaming path: yield once, same shape as execute_tool.
+        # Sink is forwarded defensively so any future streaming tool that
+        # is registered but drops back through this branch (e.g., server
+        # lost streaming mid-session) still has the sink available. Today
+        # only the FEDERATION branch above actually invokes the sink.
         if state is None or not state.config.streaming:
             result = await self.execute_tool(
                 namespaced_name=namespaced_name,
                 arguments=arguments,
                 user_permissions=user_permissions,
                 user_id=user_id,
+                progress_sink=progress_sink,
             )
             yield result
             return

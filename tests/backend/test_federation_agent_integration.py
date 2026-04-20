@@ -542,11 +542,14 @@ class TestFederationProgressSink:
             "services.database.AsyncSessionLocal", lambda: session_mock,
         )
 
+        # Matches today's FederationQueryAsker._run emission: intermediate
+        # progress labels during polling, then FinalResult on terminal
+        # status (asker doesn't emit `complete`/`failed` as chunks — those
+        # are responder-side status strings that break the poll loop).
         async def fake_query_peer(self, peer, text):
             yield ProgressChunk(label="waking_up", detail={"peer": peer.remote_display_name}, sequence=1)
             yield ProgressChunk(label="retrieving", detail={"peer": peer.remote_display_name}, sequence=2)
             yield ProgressChunk(label="synthesizing", detail={"peer": peer.remote_display_name}, sequence=3)
-            yield ProgressChunk(label="complete", detail={"peer": peer.remote_display_name}, sequence=4)
             yield {"success": True, "message": "done", "data": None}
 
         monkeypatch.setattr(
@@ -569,7 +572,7 @@ class TestFederationProgressSink:
         )
 
         assert final["success"] is True
-        assert len(sink_calls) == 4
+        assert len(sink_calls) == 3
         # Enrichment — stable identity for frontend keying
         for payload in sink_calls:
             assert payload["peer_pubkey"] == "a" * 64
@@ -578,10 +581,10 @@ class TestFederationProgressSink:
             assert "sequence" in payload
         # Label order preserved
         assert [c["label"] for c in sink_calls] == [
-            "waking_up", "retrieving", "synthesizing", "complete",
+            "waking_up", "retrieving", "synthesizing",
         ]
         # Sequences monotonic
-        assert [c["sequence"] for c in sink_calls] == [1, 2, 3, 4]
+        assert [c["sequence"] for c in sink_calls] == [1, 2, 3]
 
         reset_federation_identity_for_tests()
 
@@ -622,7 +625,7 @@ class TestFederationProgressSink:
 
         async def fake_query_peer(self, peer, text):
             yield ProgressChunk(label="retrieving", sequence=1)
-            yield ProgressChunk(label="complete", sequence=2)
+            yield ProgressChunk(label="synthesizing", sequence=2)
             yield {"success": True, "message": "done", "data": None}
 
         monkeypatch.setattr(

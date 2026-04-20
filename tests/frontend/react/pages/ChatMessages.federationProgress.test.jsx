@@ -81,7 +81,7 @@ describe('ChatMessages — federation progress', () => {
     ]);
     renderWithRouter(<ChatMessages />);
     expect(screen.getByText(/Moms Renfield sucht Wissen/i)).toBeInTheDocument();
-    expect(screen.getByText(/Dads Renfield formuliert Antwort/i)).toBeInTheDocument();
+    expect(screen.getByText(/Dads Renfield formuliert eine Antwort/i)).toBeInTheDocument();
   });
 
   it('renders an aria-live region for screen readers', () => {
@@ -133,6 +133,6 @@ describe('ChatMessages — federation progress', () => {
     renderWithRouter(<ChatMessages />);
     expect(screen.getByText(/Verbinde mit As Renfield/i)).toBeInTheDocument();
     expect(screen.getByText(/Bs Renfield sucht Wissen/i)).toBeInTheDocument();
-    expect(screen.getByText(/Cs Renfield formuliert Antwort/i)).toBeInTheDocument();
+    expect(screen.getByText(/Cs Renfield formuliert eine Antwort/i)).toBeInTheDocument();
   });
 });

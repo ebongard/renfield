@@ -89,6 +89,9 @@ export interface ChatErrorMessage {
 // by `peer_pubkey` so concurrent fan-out to multiple peers stays
 // readable. `label` is from the locked FEDERATION_PROGRESS_LABELS
 // vocabulary: waking_up | retrieving | synthesizing | complete | failed.
+// `detail` is currently only `{ peer: display_name }` (redundant with
+// `peer_display_name` above); reserved for future per-label context
+// additions without an i18n shape break.
 export interface ChatFederationProgressMessage {
   type: 'agent_federation_progress';
   peer_pubkey: string;

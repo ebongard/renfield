@@ -161,7 +161,7 @@
     "federationProgress": {
       "waking_up": "Verbinde mit {{name}}s Renfield...",
       "retrieving": "{{name}}s Renfield sucht Wissen...",
-      "synthesizing": "{{name}}s Renfield formuliert Antwort...",
+      "synthesizing": "{{name}}s Renfield formuliert eine Antwort...",
       "complete": "{{name}}s Renfield ist fertig.",
       "failed": "{{name}}s Renfield konnte nicht antworten.",
       "fallback": "Frage {{name}}s Renfield..."

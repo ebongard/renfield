@@ -402,11 +402,17 @@ export function ChatProvider({ children }) {
 
   // F4c — live federation progress per remote peer. Keyed by pubkey so
   // fan-out to multiple peers renders one status line per peer. On a
-  // terminal chunk (`complete`/`failed`) we remove that peer's entry
-  // so the status line disappears; `handleStreamDone` wipes anything
-  // still lingering (e.g., agent aborted mid-tool). We deliberately
-  // do NOT clear on agent_tool_result — parallel tool dispatch means
-  // other peers may still be mid-flight when one completes.
+  // terminal chunk (`complete`/`failed`) we remove that peer's entry;
+  // `handleStreamDone` wipes anything still lingering (e.g., agent
+  // aborted mid-tool). We deliberately do NOT clear on agent_tool_result
+  // — parallel tool dispatch means other peers may still be mid-flight
+  // when one completes.
+  //
+  // Note on the terminal branch: today's FederationQueryAsker only emits
+  // `waking_up` / `retrieving` / `synthesizing` as ProgressChunks and
+  // transitions to a FinalResult on terminal status — so the `isTerminal`
+  // delete path is defense-in-depth against a future asker revision that
+  // emits a terminal chunk. Today, cleanup rides entirely on handleStreamDone.
   //
   // Out-of-order chunks are ignored by `sequence`: only advance when
   // seq > stored seq (drops stale late arrivals but keeps terminal
