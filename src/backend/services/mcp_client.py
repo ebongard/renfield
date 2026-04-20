@@ -770,12 +770,23 @@ class MCPManager:
 
         for entry in raw["servers"]:
             try:
+                transport_str = _resolve_value(entry.get("transport", "streamable_http"))
+                transport = MCPTransportType(transport_str)
+                # FEDERATION is registry-managed (paired peers) — refuse
+                # YAML definitions so an admin can't accidentally register
+                # a federation entry without going through the pairing
+                # handshake, which would have no PeerUser row and crash
+                # at request time.
+                if transport == MCPTransportType.FEDERATION:
+                    raise ValueError(
+                        f"MCP server '{entry['name']}': transport='federation' is "
+                        f"registry-managed (paired peers only), not YAML-configured. "
+                        f"Remove this server from mcp_servers.yaml."
+                    )
                 config = MCPServerConfig(
                     name=entry["name"],
                     url=_resolve_value(entry.get("url")),
-                    transport=MCPTransportType(
-                        _resolve_value(entry.get("transport", "streamable_http"))
-                    ),
+                    transport=transport,
                     auth_token_env=entry.get("auth_token_env"),
                     headers={
                         k: _resolve_value(v)
@@ -1141,6 +1152,33 @@ class MCPManager:
             }
 
         state = self._servers.get(tool_info.server_name)
+
+        # Federation-transport branch (F3c): virtual servers have no MCP
+        # session at all — they route through HTTP federation. The agent
+        # loop dispatches through execute_tool (non-streaming), so we
+        # need the federation bridge here too. Collect the final
+        # FinalResult from _execute_federation_streaming; ProgressChunks
+        # are discarded on this path (non-streaming callers don't care,
+        # same shape as execute_tool's streaming-delegate fallback).
+        if state is not None and state.config.transport == MCPTransportType.FEDERATION:
+            final_result: dict | None = None
+            async for item in self._execute_federation_streaming(
+                state=state,
+                namespaced_name=namespaced_name,
+                arguments=arguments,
+                user_permissions=user_permissions,
+                user_id=user_id,
+            ):
+                if not isinstance(item, ProgressChunk):
+                    final_result = item
+            if final_result is None:
+                return {
+                    "success": False,
+                    "message": "Federation tool yielded no final result",
+                    "data": None,
+                }
+            return final_result
+
         if not state or not state.connected or not state.session:
             return {
                 "success": False,
@@ -1348,6 +1386,16 @@ class MCPManager:
         so revocation takes effect immediately. Opens its own AsyncSession
         because the request-scoped one was closed by FastAPI before this
         (agent-loop) call path — same pattern as the responder's bg task.
+
+        Permission enforcement (review BLOCKING #2): reads the tool from
+        _tool_index and calls _check_tool_permission just like the
+        non-federation paths. The agent loop picking the tool is not a
+        permission boundary — it's a tool-selection heuristic.
+
+        Schema note: federation tools bypass _coerce_arguments /
+        _validate_tool_input because the schema is intentionally
+        documentation-only (single `query: str` param). If query_brain
+        grows fields in F3d/F5, wire validation here.
         """
         from services.database import AsyncSessionLocal
         from services.federation_query_asker import FederationQueryAsker
@@ -1362,6 +1410,25 @@ class MCPManager:
                 "data": None,
             }
             return
+
+        # Permission check — same semantics as execute_tool's gate.
+        # Enforces whatever `permissions` the registry attached to the
+        # federation config (default: empty = no permission string
+        # required, i.e. any authenticated user can query any peer).
+        # F5 may tighten this to per-peer permission strings.
+        tool_info = self._tool_index.get(namespaced_name)
+        if tool_info is not None:
+            perm_error = self._check_tool_permission(tool_info, user_permissions)
+            if perm_error:
+                logger.warning(
+                    f"🔒 Federation permission denied: {namespaced_name} — {perm_error}"
+                )
+                yield {
+                    "success": False,
+                    "message": perm_error,
+                    "data": None,
+                }
+                return
 
         query_text = arguments.get("query") or arguments.get("text") or ""
         if not query_text:
@@ -1634,6 +1701,12 @@ class MCPManager:
     async def refresh_tools(self) -> None:
         """Refresh tool lists from all connected servers and reconnect failed ones."""
         for state in self._servers.values():
+            # Federation-transport servers have no MCP session; their
+            # single `query_brain` tool is managed by PeerMCPRegistry,
+            # not discovered via list_tools. Skip explicitly so future
+            # refactors don't accidentally include them.
+            if state.config.transport == MCPTransportType.FEDERATION:
+                continue
             if state.connected and state.session:
                 try:
                     tools_result = await asyncio.wait_for(

@@ -125,21 +125,24 @@ async def sync_peers(manager: MCPManager, db: AsyncSession) -> None:
 
     # 1. Register/update current peers.
     for server_name, peer in wanted.items():
-        manager._servers[server_name] = MCPServerState(
-            config=_build_federation_config(peer),
-        )
+        state = MCPServerState(config=_build_federation_config(peer))
         # `connected=True` is a lie — there's no MCP session — but
         # execute_tool_streaming's federation branch doesn't touch the
         # session at all, it goes straight to FederationQueryAsker.
         # We set it so `get_connected_server_names()` reports peers
         # as discoverable.
-        manager._servers[server_name].connected = True
+        state.connected = True
 
         tool_info = _build_query_brain_tool(peer)
         manager._tool_index[tool_info.namespaced_name] = tool_info
-        # Also register in the server's discovered-tools list so
-        # fuzzy fallback in execute_tool can find it.
-        manager._servers[server_name].all_discovered_tools = [tool_info]
+        # `tools` drives admin surfaces (`get_status()` tool_count);
+        # `all_discovered_tools` drives fuzzy fallback in execute_tool.
+        # Set both so dashboards report the peer correctly AND the
+        # agent-loop's tool-lookup path can find it by namespace or
+        # short name.
+        state.tools = [tool_info]
+        state.all_discovered_tools = [tool_info]
+        manager._servers[server_name] = state
 
     # 2. Drop entries for peers that have since been revoked or deleted.
     stale_server_names = [

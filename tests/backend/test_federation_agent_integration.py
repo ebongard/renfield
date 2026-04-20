@@ -184,6 +184,114 @@ class TestFederationRouting:
         assert items[-1]["success"] is False
         assert "query" in items[-1]["message"].lower()
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_execute_tool_routes_federation_too(self, tmp_path, monkeypatch):
+        """CRITICAL #1 regression: the agent loop dispatches through
+        execute_tool (non-streaming), NOT execute_tool_streaming. The
+        federation branch must be present in BOTH methods so peers are
+        reachable from the agent loop."""
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_5", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=5,
+        )
+        state = MCPServerState(config=config)
+        state.connected = True
+        manager._servers["peer_5"] = state
+        manager._tool_index["mcp.peer_5.query_brain"] = MCPToolInfo(
+            server_name="peer_5", original_name="query_brain",
+            namespaced_name="mcp.peer_5.query_brain", description="", input_schema={},
+        )
+
+        fake_peer = SimpleNamespace(id=5, remote_display_name="Dad", revoked_at=None)
+        session_mock = AsyncMock()
+        r = MagicMock()
+        r.scalar_one_or_none = lambda: fake_peer
+        session_mock.execute = AsyncMock(return_value=r)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        async def fake_query_peer(self, peer, text):
+            yield ProgressChunk(label="retrieving", sequence=1)
+            yield {"success": True, "message": f"answered by {peer.remote_display_name}", "data": None}
+        monkeypatch.setattr(
+            "services.federation_query_asker.FederationQueryAsker.query_peer",
+            fake_query_peer,
+        )
+
+        # NON-STREAMING path — agent loop's entry point
+        result = await manager.execute_tool(
+            "mcp.peer_5.query_brain", {"query": "?"},
+        )
+
+        assert result["success"] is True
+        assert "Dad" in result["message"]
+        # ProgressChunks are discarded on the non-streaming path, only
+        # the final dict is returned.
+        assert "data" in result
+
+        reset_federation_identity_for_tests()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_federation_branch_enforces_permissions(self, tmp_path, monkeypatch):
+        """BLOCKING #2 regression: federation tools go through
+        _check_tool_permission like every other path. A user without
+        the required permission gets a permission-denied FinalResult
+        BEFORE the peer is even looked up (no wasted HTTP)."""
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_9", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=9,
+            permissions=["federation.query"],  # requires this permission
+        )
+        manager._servers["peer_9"] = MCPServerState(config=config)
+        manager._servers["peer_9"].connected = True
+        manager._tool_index["mcp.peer_9.query_brain"] = MCPToolInfo(
+            server_name="peer_9", original_name="query_brain",
+            namespaced_name="mcp.peer_9.query_brain", description="", input_schema={},
+        )
+
+        # Track whether we reached the peer lookup (we shouldn't)
+        lookup_called = False
+        session_mock = AsyncMock()
+        r = MagicMock()
+
+        def _lookup():
+            nonlocal lookup_called
+            lookup_called = True
+            return None
+
+        r.scalar_one_or_none = _lookup
+        session_mock.execute = AsyncMock(return_value=r)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        # Caller has NO matching permission
+        items = [i async for i in manager.execute_tool_streaming(
+            "mcp.peer_9.query_brain", {"query": "?"},
+            user_permissions=["some.other.perm"],
+        )]
+
+        assert items[-1]["success"] is False
+        # Permission check fires before peer lookup
+        assert not lookup_called
+
+        reset_federation_identity_for_tests()
+
 
 # =============================================================================
 # F3c.2 — PeerMCPRegistry.sync_peers
@@ -260,11 +368,18 @@ class TestSyncPeers:
     async def test_does_not_touch_non_federation_servers(self):
         """Non-federation servers (stdio n8n, streamable_http paperless,
         etc.) must be unaffected by sync_peers — only entries with the
-        `peer_` prefix are managed."""
+        `peer_` prefix are managed. Both _servers and _tool_index must
+        be preserved so existing tools stay reachable after a resync."""
         manager = MCPManager()
         manager._servers["n8n"] = MCPServerState(
             config=MCPServerConfig(name="n8n", transport=MCPTransportType.STDIO),
         )
+        existing_tool = MCPToolInfo(
+            server_name="n8n", original_name="list_workflows",
+            namespaced_name="mcp.n8n.list_workflows",
+            description="", input_schema={},
+        )
+        manager._tool_index["mcp.n8n.list_workflows"] = existing_tool
 
         db = AsyncMock()
         result = MagicMock()
@@ -273,7 +388,31 @@ class TestSyncPeers:
 
         await sync_peers(manager, db)
 
-        assert "n8n" in manager._servers  # untouched
+        # Server entry preserved
+        assert "n8n" in manager._servers
+        # Tool entry preserved — regression guard for a future refactor
+        # that might mistakenly wipe the whole _tool_index.
+        assert "mcp.n8n.list_workflows" in manager._tool_index
+        assert manager._tool_index["mcp.n8n.list_workflows"] is existing_tool
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_registers_state_tools_for_admin_surfaces(self):
+        """`get_status()` reads state.tools for tool_count. sync_peers
+        must set it (not just all_discovered_tools) so admin UI reports
+        peer tool counts correctly."""
+        manager = MCPManager()
+        db = AsyncMock()
+        peers = [SimpleNamespace(id=1, remote_pubkey="a"*64, remote_display_name="Mom")]
+        result = MagicMock()
+        result.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=peers)))
+        db.execute = AsyncMock(return_value=result)
+
+        await sync_peers(manager, db)
+
+        state = manager._servers[_server_name_for(1)]
+        assert len(state.tools) == 1
+        assert state.tools[0].original_name == QUERY_BRAIN_TOOL_NAME
 
 
 # =============================================================================
