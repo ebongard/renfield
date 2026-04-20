@@ -104,6 +104,41 @@ class TestAtomTier:
     def test_tier_with_empty_policy(self):
         assert _atom(policy={}).tier == 0
 
+    @pytest.mark.unit
+    def test_from_mutable_deep_copies_policy(self):
+        # Per PR #402 review OPTIONAL #17: from_mutable should isolate the
+        # atom from later mutations of the source dict.
+        source_policy = {"tier": 2}
+        now = datetime.now(UTC).replace(tzinfo=None)
+        atom = Atom.from_mutable(
+            atom_id="x",
+            atom_type="kb_chunk",
+            owner_user_id=42,
+            policy=source_policy,
+            created_at=now,
+            updated_at=now,
+        )
+        # Mutate the source dict AFTER construction — atom must not see it.
+        source_policy["tier"] = 999
+        assert atom.tier == 2
+
+    @pytest.mark.unit
+    def test_from_mutable_deep_copies_payload(self):
+        source_payload = {"chunk_id": 7, "nested": {"key": "value"}}
+        now = datetime.now(UTC).replace(tzinfo=None)
+        atom = Atom.from_mutable(
+            atom_id="x",
+            atom_type="kb_chunk",
+            owner_user_id=42,
+            policy={"tier": 0},
+            created_at=now,
+            updated_at=now,
+            payload=source_payload,
+        )
+        # Deep-copy means even nested dicts are isolated.
+        source_payload["nested"]["key"] = "mutated"
+        assert atom.payload["nested"]["key"] == "value"
+
 
 # =============================================================================
 # Provenance redaction

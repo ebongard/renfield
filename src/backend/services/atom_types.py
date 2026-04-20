@@ -11,6 +11,32 @@ Per source type the payload shape differs (TypedDicts below). Pre-fetched
 search results return AtomMatch (atom + retrieval score + snippet + rank).
 Federation provenance returns Provenance (display label only; no chunk text
 on the wire — see Provenance.redacted_for_remote).
+
+NAMING CONVENTIONS (locked per PR #402 review OPTIONAL #14):
+
+  circle_tier        DB COLUMN name on source tables (document_chunks.circle_tier,
+                     kg_entities.circle_tier, etc.). The denormalized integer
+                     copy of policy["tier"] used for SQL filter pushdown.
+                     Always integer 0..N where lower = more private.
+
+  policy["tier"]     JSON KEY inside the dimension-agnostic atoms.policy column.
+                     Always integer 0..N. The canonical access value; the
+                     `circle_tier` column is just a denormalized copy.
+
+  Atom.tier          DATACLASS PROPERTY on the Atom dataclass — convenience
+                     accessor that returns int(self.policy.get("tier", 0)).
+
+  AtomResponse.tier  API RESPONSE FIELD — same int as Atom.tier, exposed
+                     alongside the full `policy` dict for client convenience.
+
+  max_visible_tier   PARAMETER NAME on AtomStore.query — the deepest tier
+                     index the asker can reach in the relevant atom owner's
+                     circles (computed by CircleResolver.get_max_visible_tier).
+
+The word "tier" alone always refers to the integer access value (regardless
+of context: DB column, JSON key, dataclass property, parameter, or response
+field). The word "circle_tier" specifically refers to the denormalized DB
+column. There is no `tier_index` anywhere in the v1 code.
 """
 from __future__ import annotations
 
@@ -86,6 +112,16 @@ class Atom:
       Combined:         {"tier": int, "tenant": str, "project": str}
 
     The `payload` shape depends on atom_type — see AtomPayload* TypedDicts.
+
+    IMMUTABILITY NOTE (per PR #402 review OPTIONAL #17):
+    @dataclass(frozen=True) prevents reassignment of attributes (so you can't do
+    `atom.policy = {...}`), but the dict instances stored in `policy` and `payload`
+    are MUTABLE — `atom.policy["tier"] = 9` would silently mutate the dataclass.
+    Use the `from_mutable` classmethod constructor (or build atoms via
+    AtomService.upsert_atom) to get an Atom with read-only views over policy
+    and payload. Direct construction with mutable dicts is allowed for
+    convenience (most call sites build an atom and immediately persist it),
+    but if you need defensive immutability across boundaries, use from_mutable.
     """
     atom_id: str            # UUID4 as 36-char string
     atom_type: str          # one of {'kb_chunk', 'kg_node', 'kg_edge', 'conversation_memory'}
@@ -99,6 +135,43 @@ class Atom:
     def tier(self) -> int:
         """Convenience: read the tier from policy. Returns 0 (self) if not present."""
         return int(self.policy.get("tier", 0))
+
+    @classmethod
+    def from_mutable(
+        cls,
+        atom_id: str,
+        atom_type: str,
+        owner_user_id: int,
+        policy: dict[str, Any],
+        created_at: datetime,
+        updated_at: datetime,
+        payload: dict[str, Any] | None = None,
+    ) -> "Atom":
+        """
+        Construct an Atom from mutable input dicts, deep-copying policy and
+        payload so subsequent mutations of the source dicts don't affect this
+        atom. Use this when an atom crosses a trust boundary (e.g., AtomService
+        builds it from a raw row and hands it off to a long-lived consumer).
+
+        For internal builders that immediately persist the atom (write-and-discard
+        pattern), the regular dataclass constructor is fine — sharing dict
+        references is a non-issue when the atom is discarded after the persist.
+
+        NOTE: deep-copy is the practical defense; true immutability via
+        MappingProxyType wrapping isn't worth fighting the dataclass field
+        type system for in v1. Don't mutate `atom.policy` or `atom.payload`
+        after construction — use AtomService.update_tier for policy changes.
+        """
+        import copy
+        return cls(
+            atom_id=atom_id,
+            atom_type=atom_type,
+            owner_user_id=owner_user_id,
+            policy=copy.deepcopy(policy),
+            created_at=created_at,
+            updated_at=updated_at,
+            payload=copy.deepcopy(payload or {}),
+        )
 
 
 @dataclass(frozen=True)

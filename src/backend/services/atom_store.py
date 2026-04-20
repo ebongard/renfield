@@ -25,7 +25,6 @@ code review and a CI lint rule (lint not yet built; will land in Lane C).
 from __future__ import annotations
 
 from typing import Protocol, Sequence
-from uuid import UUID
 
 from services.atom_types import Atom, AtomMatch
 
@@ -56,7 +55,7 @@ class AtomStore(Protocol):
         """
         ...
 
-    async def get_atom(self, atom_id: UUID | str, *, asker_id: int) -> Atom | None:
+    async def get_atom(self, atom_id: str, *, asker_id: int) -> Atom | None:
         """
         Returns None for both "not found" AND "not authorized" (uniform 404
         to avoid existence oracle). Audit log records access-denial separately
@@ -76,7 +75,7 @@ class AtomStore(Protocol):
         """
         ...
 
-    async def update_tier(self, atom_id: UUID | str, new_policy: dict) -> None:
+    async def update_tier(self, atom_id: str, new_policy: dict) -> None:
         """
         Updates atoms.policy AND the denormalized circle_tier on the source row
         in one transaction. Invalidates CircleResolver cache for this atom.
@@ -87,7 +86,7 @@ class AtomStore(Protocol):
         """
         ...
 
-    async def soft_delete(self, atom_id: UUID | str) -> None:
+    async def soft_delete(self, atom_id: str) -> None:
         """
         Marks the source row inactive. The atoms row stays for audit trail;
         the FK with ON DELETE CASCADE means hard-deleting the atom would

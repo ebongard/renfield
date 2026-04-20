@@ -85,6 +85,23 @@ Tier integers (matches DESIGN.md tier visual language):
     2 = household   (cream)
     3 = extended    (light turquoise)
     4 = public      (deep turquoise)
+
+Deployment requirements (per PR #402 review OPTIONAL #16):
+- PostgreSQL only (SQLite raises NotImplementedError early in upgrade()).
+- pgcrypto extension required for gen_random_uuid(). The migration calls
+  `CREATE EXTENSION IF NOT EXISTS pgcrypto` which requires SUPERUSER on the
+  database. Renfield's docker-compose Postgres runs as superuser, so this
+  works locally and on .159. Managed-DB deployments (RDS, Cloud SQL, Hetzner
+  managed Postgres) often restrict CREATE EXTENSION — in those environments
+  an admin must run `CREATE EXTENSION pgcrypto;` once before this migration,
+  then this migration's IF NOT EXISTS becomes a no-op.
+
+Transaction safety (per PR #402 review OPTIONAL #18):
+- Verified env.py uses `with context.begin_transaction()` (lines 167,174),
+  so this migration runs inside a single transaction. Partial failure
+  rolls back ALL DDL+DML — no half-migrated state on production. The
+  `with` block commits on success, rolls back on any exception including
+  the loud-fail RuntimeError when an unmapped scope value is encountered.
 """
 from typing import Sequence, Union
 
