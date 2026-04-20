@@ -9,7 +9,7 @@ or through the extracted KGRetrieval module (flag on).
 Approach (mirrors test_rag_retrieval_extract.py):
 - _extract_query_entities parity: mock the LLM client; assert both classes
   parse identical raw responses into the same list of entity names.
-- get_relevant_context flag routing: confirm `circles_use_new_kg` flag
+- get_relevant_context: unconditionally routes to KGRetrieval
   actually re-routes calls to KGRetrieval (and does NOT route when off).
 - KGRetrieval public-surface check: catches accidental method renames.
 """
@@ -143,24 +143,6 @@ class TestRouting:
         assert call_kwargs.kwargs.get("lang") == "de"
         assert result == sentinel
 
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_routes_even_when_legacy_flag_off(self):
-        """The legacy circles_use_new_kg flag is dead — both values route through KGRetrieval."""
-        db = MagicMock()
-        service = KnowledgeGraphService(db)
-        sentinel = "WISSENSGRAPH:\n- foo bar baz"
-
-        with patch("services.knowledge_graph_service.settings") as svc_settings, \
-             patch(
-                 "services.kg_retrieval.KGRetrieval.get_relevant_context",
-                 new=AsyncMock(return_value=sentinel),
-             ) as ret_get:
-            svc_settings.circles_use_new_kg = False  # flag now a no-op
-            result = await service.get_relevant_context("query", user_id=1)
-
-        ret_get.assert_called_once()
-        assert result == sentinel
 
 
 class TestKGRetrievalSurface:

@@ -14,7 +14,7 @@ Approach:
   `format_context_from_results`) are exercised through BOTH the legacy inline
   RAGService path and the new RAGRetrieval delegate path with the same
   mocked DB / Ollama responses, asserting identical output.
-- Flag routing test: confirms the `circles_use_new_rag` flag actually
+- Routing test: confirms RAGService.search / get_context unconditionally
   re-routes calls to RAGRetrieval (verified by patching the import target
   and asserting it gets called).
 """
@@ -170,10 +170,8 @@ class TestFormatContextParity:
 
 class TestRouting:
     """
-    Lane C: RAGService.search and RAGService.get_context unconditionally route
-    through RAGRetrieval (which applies the circle-tier filter). The legacy
-    `circles_use_new_rag` flag is retained on the settings model for
-    back-compat but is now a no-op.
+    RAGService.search and RAGService.get_context unconditionally route through
+    RAGRetrieval (which applies the circle-tier filter).
     """
 
     @pytest.mark.asyncio
@@ -192,24 +190,6 @@ class TestRouting:
         ret_search.assert_called_once()
         assert ret_search.call_args.kwargs.get("user_id") == 42
         assert result is sentinel
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_search_routes_when_legacy_flag_off(self):
-        """The CIRCLES_USE_NEW_RAG flag is dead — both ON and OFF route."""
-        db = MagicMock()
-        service = RAGService(db)
-        sentinel = [make_result(42)]
-
-        with patch("services.rag_service.settings") as svc_settings, \
-             patch(
-                 "services.rag_retrieval.RAGRetrieval.search",
-                 new=AsyncMock(return_value=sentinel),
-             ) as ret_search:
-            svc_settings.circles_use_new_rag = False  # no-op now
-            await service.search("anything", top_k=5)
-
-        ret_search.assert_called_once()
 
     @pytest.mark.asyncio
     @pytest.mark.unit

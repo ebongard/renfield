@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from services.rag_retrieval import RAGRetrieval
 from services.rag_service import RAGService
 from utils.config import settings
 
@@ -29,6 +30,13 @@ def rag_service(mock_db):
     return RAGService(mock_db)
 
 
+@pytest.fixture
+def rag_retrieval(mock_db):
+    """Retrieval-side helper — search + BM25 + rerank + parent resolution
+    are owned by RAGRetrieval after the circles v1 split."""
+    return RAGRetrieval(mock_db)
+
+
 # ===========================================================================
 # 1. BM25 Fallback when embedding fails
 # ===========================================================================
@@ -36,21 +44,21 @@ def rag_service(mock_db):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_search_falls_back_to_bm25_on_embedding_failure(rag_service, mock_db):
+async def test_search_falls_back_to_bm25_on_embedding_failure(rag_retrieval, mock_db):
     """When embedding model is unreachable, search should fall back to BM25-only."""
-    rag_service.get_embedding = AsyncMock(side_effect=ConnectionError("Ollama down"))
-    rag_service._search_bm25 = AsyncMock(return_value=[
+    rag_retrieval.get_embedding = AsyncMock(side_effect=ConnectionError("Ollama down"))
+    rag_retrieval._search_bm25 = AsyncMock(return_value=[
         {"chunk": {"id": 1, "content": "test", "chunk_index": 0, "page_number": 1,
                    "section_title": None, "chunk_type": "paragraph", "parent_chunk_id": None},
          "document": {"id": 1, "filename": "test.pdf", "title": "Test"},
          "similarity": 0.5}
     ])
-    rag_service._resolve_parents = AsyncMock(side_effect=lambda x: x)
+    rag_retrieval._resolve_parents = AsyncMock(side_effect=lambda x: x)
 
-    results = await rag_service.search("test query")
+    results = await rag_retrieval.search("test query")
 
     assert len(results) == 1
-    rag_service._search_bm25.assert_called_once()
+    rag_retrieval._search_bm25.assert_called_once()
 
 
 # ===========================================================================
@@ -152,7 +160,7 @@ async def test_parent_child_creates_parent_and_children(rag_service, mock_db):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_resolve_parents_replaces_child_content(rag_service, mock_db):
+async def test_resolve_parents_replaces_child_content(rag_retrieval, mock_db):
     """_resolve_parents should replace child content with parent content and deduplicate."""
     # Two children from same parent
     results = [
@@ -174,7 +182,7 @@ async def test_resolve_parents_replaces_child_content(rag_service, mock_db):
     mock_result.fetchall.return_value = [mock_row]
     mock_db.execute = AsyncMock(return_value=mock_result)
 
-    resolved = await rag_service._resolve_parents(results)
+    resolved = await rag_retrieval._resolve_parents(results)
 
     # Should deduplicate: only 1 result (highest scoring child's parent)
     assert len(resolved) == 1
@@ -184,14 +192,14 @@ async def test_resolve_parents_replaces_child_content(rag_service, mock_db):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_resolve_parents_passthrough_no_parents(rag_service):
+async def test_resolve_parents_passthrough_no_parents(rag_retrieval):
     """_resolve_parents returns results unchanged when no parent_chunk_id is set."""
     results = [
         {"chunk": {"id": 1, "content": "flat chunk", "parent_chunk_id": None,
                    "chunk_index": 0, "page_number": 1, "section_title": None, "chunk_type": "paragraph"},
          "document": {"id": 1, "filename": "test.pdf", "title": "Test"}, "similarity": 0.9},
     ]
-    resolved = await rag_service._resolve_parents(results)
+    resolved = await rag_retrieval._resolve_parents(results)
     assert len(resolved) == 1
     assert resolved[0]["chunk"]["content"] == "flat chunk"
 
@@ -203,7 +211,7 @@ async def test_resolve_parents_passthrough_no_parents(rag_service):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_rerank_reorders_and_reduces(rag_service):
+async def test_rerank_reorders_and_reduces(rag_retrieval):
     """_rerank should reorder results by reranker score and reduce to rag_rerank_top_k."""
     mock_embeddings = {
         "query": [1.0, 0.0, 0.0],
@@ -225,7 +233,7 @@ async def test_rerank_reorders_and_reduces(rag_service):
 
     mock_client = AsyncMock()
     mock_client.embeddings = mock_embeddings_fn
-    rag_service._get_ollama_client = AsyncMock(return_value=mock_client)
+    rag_retrieval._get_ollama_client = AsyncMock(return_value=mock_client)
 
     results = [
         {"chunk": {"id": 1, "content": "bad chunk text"}, "document": {"id": 1}, "similarity": 0.9},
@@ -236,7 +244,7 @@ async def test_rerank_reorders_and_reduces(rag_service):
     with patch.object(settings, "rag_rerank_enabled", True), \
          patch.object(settings, "rag_rerank_top_k", 2), \
          patch.object(settings, "rag_rerank_model", "test-reranker"):
-        reranked = await rag_service._rerank("query about things", results)
+        reranked = await rag_retrieval._rerank("query about things", results)
 
     assert len(reranked) == 2  # Reduced to top_k=2
 
@@ -248,11 +256,11 @@ async def test_rerank_reorders_and_reduces(rag_service):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_rerank_fallback_on_error(rag_service):
+async def test_rerank_fallback_on_error(rag_retrieval):
     """_rerank should return un-reranked results when reranker model fails."""
     mock_client = AsyncMock()
     mock_client.embeddings = AsyncMock(side_effect=ConnectionError("model not found"))
-    rag_service._get_ollama_client = AsyncMock(return_value=mock_client)
+    rag_retrieval._get_ollama_client = AsyncMock(return_value=mock_client)
 
     results = [
         {"chunk": {"id": i, "content": f"chunk {i}"}, "document": {"id": i}, "similarity": 0.5}
@@ -261,7 +269,7 @@ async def test_rerank_fallback_on_error(rag_service):
 
     with patch.object(settings, "rag_rerank_enabled", True), \
          patch.object(settings, "rag_rerank_top_k", 3):
-        reranked = await rag_service._rerank("query", results)
+        reranked = await rag_retrieval._rerank("query", results)
 
     assert len(reranked) == 3  # Falls back to simple truncation
 
@@ -273,13 +281,13 @@ async def test_rerank_fallback_on_error(rag_service):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_rerank_disabled_returns_truncated(rag_service):
+async def test_rerank_disabled_returns_truncated(rag_retrieval):
     """When rag_rerank_enabled is False, _rerank just truncates to top_k."""
     results = [{"chunk": {"id": i}, "similarity": 1.0 - i * 0.1} for i in range(10)]
 
     with patch.object(settings, "rag_rerank_enabled", False), \
          patch.object(settings, "rag_rerank_top_k", 3):
-        reranked = await rag_service._rerank("query", results)
+        reranked = await rag_retrieval._rerank("query", results)
 
     assert len(reranked) == 3
     assert reranked[0]["chunk"]["id"] == 0  # Original order preserved

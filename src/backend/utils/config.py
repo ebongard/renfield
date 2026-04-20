@@ -185,15 +185,6 @@ class Settings(BaseSettings):
     rag_ocr_auto_detect: bool = True          # Auto-detect garbled embedded text and re-run with OCR
     rag_ocr_space_threshold: float = 0.03    # Space ratio below this triggers auto OCR (default 3%)
 
-    # Circles v1 — refactor-first feature flags (Lane A of the second-brain-circles plan).
-    # These flags route retrieval through extracted modules (rag_retrieval.py, kg_retrieval.py,
-    # memory_retrieval.py) instead of the inline code in the legacy megaservices. Default off
-    # during the transition; flipped to True per-deploy after regression tests confirm parity;
-    # removed entirely once all consumers are migrated and the inline code paths are deleted.
-    circles_use_new_rag: bool = False         # Route RAGService.search/get_context through rag_retrieval.RAGRetrieval
-    circles_use_new_kg: bool = False          # Route knowledge_graph_service.get_relevant_context through kg_retrieval.KGRetrieval
-    circles_use_new_memory: bool = False      # Route conversation_memory_service.retrieve* through memory_retrieval.MemoryRetrieval
-
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in
     memory_retrieval_limit: int = Field(default=3, ge=1, le=10)              # Max memories per query

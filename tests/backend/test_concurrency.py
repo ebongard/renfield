@@ -336,103 +336,65 @@ class TestRAGSearchConcurrency:
 
     @pytest.mark.unit
     async def test_parallel_rag_searches(self):
-        """3 parallel RAG search queries should each return independent results."""
+        """3 parallel RAG searches each return independent results via RAGRetrieval."""
         from services.rag_service import RAGService
 
         mock_db = AsyncMock()
         queries = ["Was ist Python?", "Wie funktioniert Docker?", "Was ist Kubernetes?"]
 
-        # Each search needs: get_embedding -> _search_dense -> return results
-        mock_embedding = [0.1] * 768
+        # RAGService.search unconditionally delegates to RAGRetrieval.search
+        # post-Lane C. Mock THAT entry point.
+        call_count = 0
 
-        async def mock_embed(*args, **kwargs):
+        async def mock_retrieval_search(self_inner, query, **kwargs):
+            nonlocal call_count
+            idx = call_count
+            call_count += 1
             await asyncio.sleep(0.01)
-            return {"embedding": mock_embedding}
+            return [
+                {
+                    "chunk": MagicMock(content=f"Result {idx}-{j}", chunk_index=j),
+                    "document": MagicMock(title=f"Doc {idx}"),
+                    "similarity": 0.9 - j * 0.1,
+                }
+                for j in range(3)
+            ]
 
-        mock_client = AsyncMock()
-        mock_client.embed = mock_embed
-
-        with patch('services.rag_service.get_default_client', return_value=mock_client), \
-             patch('services.rag_service.settings') as mock_settings:
-            mock_settings.ollama_embed_model = "nomic-embed-text"
-            mock_settings.rag_top_k = 3
-            mock_settings.rag_similarity_threshold = 0.3
-            mock_settings.rag_hybrid_enabled = False
-            mock_settings.rag_context_window = 0
-            mock_settings.rag_context_window_max = 0
-            mock_settings.ollama_url = "http://localhost:11434"
-
+        with patch("services.rag_retrieval.RAGRetrieval.search", mock_retrieval_search):
             service = RAGService(mock_db)
-            service._ollama_client = mock_client
-
-            # Mock _search_dense to return different results per call
-            call_count = 0
-
-            async def mock_search_dense(query_embedding, top_k, kb_id=None, threshold=None):
-                nonlocal call_count
-                idx = call_count
-                call_count += 1
-                await asyncio.sleep(0.01)
-                return [
-                    {
-                        "chunk": MagicMock(content=f"Result {idx}-{j}", chunk_index=j),
-                        "document": MagicMock(title=f"Doc {idx}"),
-                        "similarity": 0.9 - j * 0.1,
-                    }
-                    for j in range(top_k)
-                ]
-
-            service._search_dense = mock_search_dense
-
-            results = await asyncio.gather(
-                *[service.search(q) for q in queries]
-            )
+            results = await asyncio.gather(*[service.search(q) for q in queries])
 
         assert len(results) == 3
         for result_set in results:
-            assert len(result_set) == 3  # top_k=3
+            assert len(result_set) == 3
 
     @pytest.mark.unit
     async def test_parallel_rag_embedding_failure(self):
-        """If embedding fails for one query, others should still return results."""
+        """Parallel searches: one failing embedding shouldn't sink the others."""
         from services.rag_service import RAGService
 
         mock_db = AsyncMock()
         call_count = 0
 
-        async def mock_get_embedding(self_inner, query):
+        async def mock_retrieval_search(self_inner, query, **kwargs):
             nonlocal call_count
             idx = call_count
             call_count += 1
             if idx == 1:
-                raise RuntimeError("Embedding service down")
-            return [0.1] * 768
+                # RAGRetrieval.search catches embed failures and returns []
+                # via its BM25-only fallback; when BM25 also yields nothing
+                # the outcome is []. Simulate that here.
+                return []
+            return [{"chunk": MagicMock(content="result"), "document": MagicMock(), "similarity": 0.8}]
 
-        with patch.object(RAGService, 'get_embedding', mock_get_embedding), \
-             patch('services.rag_service.settings') as mock_settings:
-            mock_settings.rag_top_k = 2
-            mock_settings.rag_similarity_threshold = 0.3
-            mock_settings.rag_hybrid_enabled = False
-            mock_settings.rag_context_window = 0
-            mock_settings.rag_context_window_max = 0
-
+        with patch("services.rag_retrieval.RAGRetrieval.search", mock_retrieval_search):
             service = RAGService(mock_db)
-
-            # Mock _search_dense for when embedding succeeds
-            async def mock_search_dense(emb, top_k, kb_id=None, threshold=None):
-                return [{"chunk": MagicMock(content="result"), "document": MagicMock(), "similarity": 0.8}]
-
-            service._search_dense = mock_search_dense
-
-            results = await asyncio.gather(
-                *[service.search(f"query {i}") for i in range(3)]
-            )
+            results = await asyncio.gather(*[service.search(f"query {i}") for i in range(3)])
 
         assert len(results) == 3
-        # The failed one should return empty list (search catches embedding errors)
         result_lengths = [len(r) for r in results]
-        assert 0 in result_lengths  # One failed
-        assert result_lengths.count(1) == 2  # Two succeeded
+        assert 0 in result_lengths  # the failed query
+        assert result_lengths.count(1) == 2  # two succeeded
 
 
 # ============================================================================

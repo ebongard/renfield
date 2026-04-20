@@ -67,11 +67,37 @@ docker exec -it renfield-backend alembic downgrade -1
 
 **Request Flow:** User → React Frontend → WebSocket/REST → FastAPI Backend → Intent Recognition → Action Execution → MCP/RAG → Streaming Response
 
-**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing, Notification Privacy, Device Management
+**Subsystems:** Intent Recognition, Agent Loop (ReAct), MCP Integration (8+ servers), RAG/Knowledge Base, Conversation Persistence, Hook System (plugin API), Auth/RPBAC, Presence Detection, Media Follow Me, Speaker Recognition, Knowledge Graph, Paperless Audit, Audio Output Routing, Notification Privacy, Device Management, **Circles (access tiers)**
 
 **Key config:** All via `.env` loaded by `utils/config.py` (Pydantic Settings). Full list: `docs/ENVIRONMENT_VARIABLES.md`.
 
 For architecture questions, use the `architecture-guide` agent.
+
+### Circles v1 (access tiers)
+
+Five-rung ladder on every source row that participates in retrieval:
+
+| tier | name | meaning |
+|---|---|---|
+| 0 | self | owner-only |
+| 1 | trusted | 1-3 closest people |
+| 2 | household | family / housemates |
+| 3 | extended | named outsiders |
+| 4 | public | anyone |
+
+Access to any source row = **OWNER** OR **tier == public** OR **explicit grant** (via `atom_explicit_grants`) OR **tier-reach through circle membership** (via `circle_memberships`). Retrieval modules (`rag_retrieval`, `kg_retrieval`, `memory_retrieval`) push this 4-branch filter into SQL via `services/circle_sql.py`. `AUTH_ENABLED=false` short-circuits the filter (single-user mode sees everything).
+
+Key tables: `atoms` (polymorphic registry), `circles` (per-user dimension config), `circle_memberships`, `atom_explicit_grants`. Denormalized `circle_tier` + `atom_id` columns on `document_chunks`, `kg_entities`, `kg_relations`, `conversation_memories`.
+
+Key services: `services/circle_resolver.py` (PolicyEvaluator + cache), `services/atom_service.py` (upsert + tier cascade), `services/polymorphic_atom_store.py` (cross-source RRF), `services/kb_shares_service.py` (KB-level share → per-chunk grant explosion), `services/circle_sql.py` (shared filter clause builder).
+
+Key routes: `/api/atoms` (unified search + edit), `/api/circles/me/*` (settings, members, review queue), `/api/knowledge-graph/circle-tiers` (localized ladder labels), `/api/knowledge-graph/entities/{id}/circle-tier` (tier patch with cascade to incident relations).
+
+Frontend pages: `/brain` (search), `/brain/review` (owner review queue), `/settings/circles` (members). Shared `TierBadge` + `TierPicker` components use `.tier-badge-{0..4}` utilities from `index.css`.
+
+**Behavioral change vs pre-circles:** `ConversationMemoryService.retrieve()` now respects circle reach — tier-2 household peers see each other's household-tier memories. Previously `user_id == asker_id` filtered strictly. Flag in release notes.
+
+For memory-retrieval callers: pass `user_id=asker_id`. For RAG search: pass `user_id=asker_id` in every `rag.search()` call — `None` reduces to public-tier-only in auth-enabled mode.
 
 ## Testing
 

@@ -6,8 +6,8 @@ Lane C changes:
 - The `_build_scope_filter` (scope/team_id-based) is replaced by
   `_memory_circles_filter` (circle_tier-based). Parity tests dropped because
   the legacy SQL is no longer issued anywhere.
-- `circles_use_new_memory` is now a no-op flag — both ON and OFF route through
-  MemoryRetrieval.
+- `circles_use_new_memory` flag removed entirely; all retrieve_* methods
+  unconditionally route through MemoryRetrieval.
 - `retrieve_for_prompt` no longer accepts `team_ids` (parked for v2 named
   circles).
 """
