@@ -1489,43 +1489,47 @@ class MCPManager:
 
         asker = FederationQueryAsker()
         final_item: dict | None = None
-        async for item in asker.query_peer(peer, query_text):
-            # F4c — relay ProgressChunks to the chat WS sink if one was
-            # threaded in. Enrich with stable peer identity (remote_pubkey)
-            # so the frontend can key status lines per-peer even when the
-            # display name changes or collides. Sink failures must not
-            # abort the tool call — log and continue.
-            if progress_sink is not None and isinstance(item, ProgressChunk):
-                try:
-                    await progress_sink({
-                        "peer_pubkey": peer.remote_pubkey,
-                        "peer_display_name": peer.remote_display_name,
-                        "label": item.label,
-                        "detail": item.detail,
-                        "sequence": item.sequence,
-                    })
-                except Exception as sink_err:  # pragma: no cover — sink is best-effort
-                    logger.warning(
-                        f"Federation progress_sink raised (continuing): {sink_err}"
-                    )
-            if not isinstance(item, ProgressChunk):
-                final_item = item
-            yield item
-
-        # F4d — one audit row per asker.query_peer lifecycle. Write AFTER
-        # the last yield so partial consumers (agent loop aborted mid-
-        # iteration) still get a row. Write failures are swallowed in
-        # write_federation_audit — the user already has their answer.
-        from services.federation_audit import write_federation_audit
-        await write_federation_audit(
-            user_id=user_id,
-            peer_user_id=peer_id_snapshot,
-            peer_pubkey_snapshot=peer_pubkey_snapshot,
-            peer_display_name_snapshot=peer_display_snapshot,
-            query_text=query_text,
-            initiated_at=initiated_at,
-            final_item=final_item,
-        )
+        try:
+            async for item in asker.query_peer(peer, query_text):
+                # F4c — relay ProgressChunks to the chat WS sink if one was
+                # threaded in. Enrich with stable peer identity (remote_pubkey)
+                # so the frontend can key status lines per-peer even when the
+                # display name changes or collides. Sink failures must not
+                # abort the tool call — log and continue.
+                if progress_sink is not None and isinstance(item, ProgressChunk):
+                    try:
+                        await progress_sink({
+                            "peer_pubkey": peer.remote_pubkey,
+                            "peer_display_name": peer.remote_display_name,
+                            "label": item.label,
+                            "detail": item.detail,
+                            "sequence": item.sequence,
+                        })
+                    except Exception as sink_err:  # pragma: no cover — sink is best-effort
+                        logger.warning(
+                            f"Federation progress_sink raised (continuing): {sink_err}"
+                        )
+                if not isinstance(item, ProgressChunk):
+                    final_item = item
+                yield item
+        finally:
+            # F4d — audit write in `finally` so cancellation, caller-side
+            # `aclose()`, or a consumer raising mid-iteration still produces
+            # one audit row per federated query. `final_item` stays None if
+            # we never reached a terminal yield → _classify_final maps that
+            # to `final_status="unknown"` with an explanatory error_message,
+            # which is the honest record of "I asked but we didn't finish".
+            # Write failures are swallowed in write_federation_audit.
+            from services.federation_audit import write_federation_audit
+            await write_federation_audit(
+                user_id=user_id,
+                peer_user_id=peer_id_snapshot,
+                peer_pubkey_snapshot=peer_pubkey_snapshot,
+                peer_display_name_snapshot=peer_display_snapshot,
+                query_text=query_text,
+                initiated_at=initiated_at,
+                final_item=final_item,
+            )
 
     async def _execute_tool_streaming_impl(
         self,

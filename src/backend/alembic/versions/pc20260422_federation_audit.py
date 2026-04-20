@@ -77,18 +77,17 @@ def upgrade() -> None:
             ix["name"] for ix in inspector.get_indexes("federation_query_log")
         }
 
-    if not _has_idx("ix_federation_query_log_user_id"):
-        op.create_index(
-            "ix_federation_query_log_user_id",
-            "federation_query_log",
-            ["user_id"],
-        )
-    if not _has_idx("ix_federation_query_log_initiated_at"):
-        op.create_index(
-            "ix_federation_query_log_initiated_at",
-            "federation_query_log",
-            ["initiated_at"],
-        )
+    # Index choices:
+    #   idx_fed_audit_user_initiated covers the primary list query
+    #     (user_id = ? ORDER BY initiated_at DESC) AND any WHERE user_id = ?
+    #     by leading-column rule. No separate single-column user_id index.
+    #   idx_fed_audit_user_peer covers the ?peer= filter in the API.
+    #   ix_federation_query_log_request_id serves debug lookups by
+    #     request_id (cross-user — admin-tool query).
+    # The retention prune (WHERE initiated_at < cutoff) has no user_id
+    # prefix and will scan; at expected row counts (<10k per user,
+    # 90-day retention) the scan cost is negligible. If that changes,
+    # add a dedicated single-column `initiated_at` index then.
     if not _has_idx("ix_federation_query_log_request_id"):
         op.create_index(
             "ix_federation_query_log_request_id",
@@ -113,6 +112,4 @@ def downgrade() -> None:
     op.drop_index("idx_fed_audit_user_peer", table_name="federation_query_log")
     op.drop_index("idx_fed_audit_user_initiated", table_name="federation_query_log")
     op.drop_index("ix_federation_query_log_request_id", table_name="federation_query_log")
-    op.drop_index("ix_federation_query_log_initiated_at", table_name="federation_query_log")
-    op.drop_index("ix_federation_query_log_user_id", table_name="federation_query_log")
     op.drop_table("federation_query_log")

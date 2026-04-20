@@ -117,8 +117,8 @@ describe('FederationAuditPage', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Am 14. Juni. Sie wird 87.')).toBeInTheDocument();
-      // Truncated fingerprint appears on expansion
-      expect(screen.getByText(new RegExp(MOM_PUBKEY.slice(0, 24)))).toBeInTheDocument();
+      // Truncated fingerprint appears on expansion — 12 chars to match the peers page
+      expect(screen.getByText(new RegExp(MOM_PUBKEY.slice(0, 12)))).toBeInTheDocument();
     });
   });
 

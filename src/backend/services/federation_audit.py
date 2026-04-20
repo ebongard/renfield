@@ -102,7 +102,12 @@ async def write_federation_audit(
     audit rows unambiguously).
     """
     if user_id is None:
-        # Auth-disabled deploys: no asker identity to pin the row to.
+        # Auth-disabled / single-user deploys: no asker identity to pin
+        # the row to. Debug-log once per call so operators can see why
+        # `/brain/audit` stays empty on their deploy.
+        logger.debug(
+            "Federation audit write skipped (user_id=None — auth-disabled deploy)"
+        )
         return
 
     final_status, verified, answer_excerpt, error_message = _classify_final(final_item)

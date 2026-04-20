@@ -449,3 +449,174 @@ class TestAuditIntegration:
 
         assert final["success"] is False
         assert len(audit_calls) == 0
+
+
+# =============================================================================
+# list / prune smoke tests
+# =============================================================================
+
+
+class TestListAndPrune:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_list_empty_returns_empty_list(self, monkeypatch):
+        """No rows for the user → empty list, not a crash."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+
+        session_mock = AsyncMock()
+        session_mock.execute = AsyncMock(return_value=mock_result)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.federation_audit.AsyncSessionLocal",
+            lambda: session_mock,
+        )
+
+        from services.federation_audit import list_audit_for_user
+        rows = await list_audit_for_user(user_id=42)
+        assert rows == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_list_with_peer_filter_attaches_where_clause(self, monkeypatch):
+        """`peer_pubkey` kwarg narrows the query. We can't assert SQL
+        text from a Mock, but we can verify `execute` was called — and
+        that calling with/without the filter hits the same path."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+
+        session_mock = AsyncMock()
+        session_mock.execute = AsyncMock(return_value=mock_result)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.federation_audit.AsyncSessionLocal",
+            lambda: session_mock,
+        )
+
+        from services.federation_audit import list_audit_for_user
+        await list_audit_for_user(user_id=1, peer_pubkey="a" * 64)
+
+        # The filter compiles into the statement passed to execute.
+        assert session_mock.execute.await_count == 1
+        stmt = session_mock.execute.call_args.args[0]
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "peer_pubkey_snapshot" in compiled
+        assert "a" * 64 in compiled
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_prune_zero_expired_returns_zero(self, monkeypatch):
+        """No rows past retention → prune returns 0, no error log."""
+        mock_result = MagicMock()
+        mock_result.rowcount = 0
+
+        session_mock = AsyncMock()
+        session_mock.execute = AsyncMock(return_value=mock_result)
+        session_mock.commit = AsyncMock()
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.federation_audit.AsyncSessionLocal",
+            lambda: session_mock,
+        )
+
+        from services.federation_audit import prune_old_audit_rows
+        deleted = await prune_old_audit_rows(retention_days=90)
+        assert deleted == 0
+
+
+# =============================================================================
+# Cancellation / try-finally semantics (review S1 regression guard)
+# =============================================================================
+
+
+class TestCancellationAuditRow:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_asker_raising_mid_stream_still_writes_audit(
+        self, tmp_path, monkeypatch,
+    ):
+        """Regression guard for review S1: the try/finally in
+        _execute_federation_streaming must ensure one audit row is
+        written even when the asker raises mid-iteration (network
+        blip, internal bug, etc.). final_item stays None so
+        _classify_final maps to `unknown`."""
+        from services.federation_identity import (
+            init_federation_identity,
+            reset_federation_identity_for_tests,
+        )
+        from services.mcp_client import (
+            MCPManager,
+            MCPServerConfig,
+            MCPServerState,
+            MCPToolInfo,
+            MCPTransportType,
+        )
+        from services.mcp_streaming import ProgressChunk
+
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "key")
+
+        manager = MCPManager()
+        config = MCPServerConfig(
+            name="peer_77", transport=MCPTransportType.FEDERATION,
+            streaming=True, peer_user_id=77,
+        )
+        state = MCPServerState(config=config)
+        state.connected = True
+        manager._servers["peer_77"] = state
+        manager._tool_index["mcp.peer_77.query_brain"] = MCPToolInfo(
+            server_name="peer_77", original_name="query_brain",
+            namespaced_name="mcp.peer_77.query_brain", description="", input_schema={},
+        )
+
+        fake_peer = SimpleNamespace(
+            id=77, remote_pubkey="e" * 64, remote_display_name="Uncle",
+            revoked_at=None,
+        )
+        session_mock = AsyncMock()
+        result_mock = MagicMock()
+        result_mock.scalar_one_or_none = lambda: fake_peer
+        session_mock.execute = AsyncMock(return_value=result_mock)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr(
+            "services.database.AsyncSessionLocal", lambda: session_mock,
+        )
+
+        async def fake_query_peer(self, peer, text):
+            yield ProgressChunk(label="retrieving", sequence=1)
+            # Simulated mid-query crash — no terminal dict reached.
+            raise RuntimeError("simulated mid-query abort")
+
+        monkeypatch.setattr(
+            "services.federation_query_asker.FederationQueryAsker.query_peer",
+            fake_query_peer,
+        )
+
+        audit_calls: list[dict] = []
+
+        async def spy(**kwargs):
+            audit_calls.append(kwargs)
+
+        monkeypatch.setattr(
+            "services.federation_audit.write_federation_audit", spy,
+        )
+
+        # The RuntimeError bubbles up to us; the finally must still run
+        # and record the audit row.
+        with pytest.raises(RuntimeError, match="simulated mid-query abort"):
+            async for _ in manager.execute_tool_streaming(
+                "mcp.peer_77.query_brain", {"query": "q"}, user_id=1,
+            ):
+                pass
+
+        assert len(audit_calls) == 1
+        assert audit_calls[0]["user_id"] == 1
+        assert audit_calls[0]["peer_pubkey_snapshot"] == "e" * 64
+        # Terminal yield never reached → final_item None → classified unknown.
+        assert audit_calls[0]["final_item"] is None
+
+        reset_federation_identity_for_tests()

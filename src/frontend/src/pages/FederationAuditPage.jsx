@@ -245,7 +245,7 @@ export default function FederationAuditPage() {
                     <div className="text-xs text-gray-500 dark:text-gray-400 inline-flex items-center gap-2 flex-wrap">
                       <span className="inline-flex items-center gap-1">
                         <Fingerprint className="w-3 h-3" aria-hidden="true" />
-                        <code className="tabular-nums">{entry.peer_pubkey.slice(0, 24)}…</code>
+                        <code className="tabular-nums">{entry.peer_pubkey.slice(0, 12)}…</code>
                       </span>
                       <span>
                         {t(`federationAudit.status.${entry.final_status}`, { defaultValue: entry.final_status })}

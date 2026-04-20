@@ -51,7 +51,12 @@ class FederationAuditListResponse(BaseModel):
 async def list_federation_audit(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    peer_pubkey: str | None = Query(None, min_length=64, max_length=64),
+    peer_pubkey: str | None = Query(
+        None,
+        min_length=64,
+        max_length=64,
+        pattern="^[0-9a-fA-F]{64}$",
+    ),
     current_user: User = Depends(get_current_user),
 ):
     """

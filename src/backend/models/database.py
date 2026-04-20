@@ -1134,7 +1134,10 @@ class FederationQueryLog(Base):
     __tablename__ = "federation_query_log"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # No single-column index on user_id — the composite
+    # `idx_fed_audit_user_initiated` covers `WHERE user_id = ?` queries
+    # via the leading-column rule.
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
 
     # Nullable because peer_users can be deleted while audit survives.
     peer_user_id = Column(
@@ -1152,7 +1155,7 @@ class FederationQueryLog(Base):
     # The user's question. Truncated at write to MAX_QUERY_TEXT_LEN chars.
     query_text = Column(Text, nullable=False)
 
-    initiated_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    initiated_at = Column(DateTime, default=_utcnow, nullable=False)
     finalized_at = Column(DateTime, nullable=True)
 
     # Locked vocabulary: success | expired | failed | unknown. Wider than
