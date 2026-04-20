@@ -1,12 +1,15 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Users, Plus, Trash2, UserCircle } from 'lucide-react';
+import { Link } from 'react-router';
+import { Users, Plus, Trash2, UserCircle, Share2, Inbox } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Modal from '../components/Modal';
 import TierBadge from '../components/TierBadge';
 import TierPicker from '../components/TierPicker';
+import PairInitiatorModal from '../components/PairInitiatorModal';
+import PairResponderModal from '../components/PairResponderModal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 
 export default function CirclesSettingsPage() {
@@ -24,6 +27,8 @@ export default function CirclesSettingsPage() {
 
   // Add-member modal
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showPairInitModal, setShowPairInitModal] = useState(false);
+  const [showPairRespModal, setShowPairRespModal] = useState(false);
   const [addUserId, setAddUserId] = useState('');
   const [addTier, setAddTier] = useState(2);
   const [adding, setAdding] = useState(false);
@@ -256,8 +261,52 @@ export default function CirclesSettingsPage() {
               </ul>
             )}
           </section>
+
+          {/* Federation pairing */}
+          <section className="card space-y-4">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                {t('circles.pairingTitle')}
+              </h2>
+              <p className="text-sm text-gray-600 dark:text-gray-400">
+                {t('circles.pairingSubtitle')}{' '}
+                <Link to="/settings/circles/peers" className="text-primary-600 hover:underline">
+                  {t('circles.pairingManageLinkText')}
+                </Link>
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => setShowPairInitModal(true)}
+                className="btn-primary inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm"
+              >
+                <Share2 className="w-4 h-4" />
+                {t('circles.pairInitiate')}
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowPairRespModal(true)}
+                className="btn-secondary inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm"
+              >
+                <Inbox className="w-4 h-4" />
+                {t('circles.pairAccept')}
+              </button>
+            </div>
+          </section>
         </>
       )}
+
+      <PairInitiatorModal
+        isOpen={showPairInitModal}
+        onClose={() => setShowPairInitModal(false)}
+        onPaired={() => setSuccess(t('circles.pairSuccess'))}
+      />
+      <PairResponderModal
+        isOpen={showPairRespModal}
+        onClose={() => setShowPairRespModal(false)}
+        onPaired={() => setSuccess(t('circles.pairSuccess'))}
+      />
 
       <Modal isOpen={showAddModal} onClose={() => setShowAddModal(false)} title={t('circles.addMember')}>
         <form onSubmit={handleAdd} className="space-y-4">

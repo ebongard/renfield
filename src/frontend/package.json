@@ -21,6 +21,7 @@
     "lucide-react": "^0.563.0",
     "onnxruntime-web": "^1.17.0",
     "openwakeword-wasm-browser": "^0.1.1",
+    "qrcode.react": "^4.2.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-force-graph-2d": "^1.29.1",
