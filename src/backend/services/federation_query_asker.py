@@ -44,6 +44,7 @@ from __future__ import annotations
 import asyncio
 import secrets
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -102,7 +103,9 @@ class FederationQueryAsker:
         # home-scale deployments).
         self._client = client
 
-    async def query_peer(self, peer: PeerUser, query_text: str):
+    async def query_peer(
+        self, peer: PeerUser, query_text: str,
+    ) -> AsyncIterator[ProgressChunk | dict[str, Any]]:
         """
         Drive a federated query against `peer`. Yields ProgressChunks
         during polling and a final FinalResult dict at the end.
@@ -111,70 +114,92 @@ class FederationQueryAsker:
         contract — `{"success": bool, "message": str, "data": Any}` —
         so F3c can drop this into the existing tool-result plumbing
         without a translation layer.
+
+        Cancellation: if the consumer breaks out of the iterator (chat
+        WebSocket drops, agent loop cancels), the owned httpx client is
+        closed via `async with` and any in-flight request is cancelled
+        by asyncio cooperative cancellation.
         """
         endpoint = _select_endpoint(peer)
         if endpoint is None:
             yield _final_error("Peer has no usable transport endpoint")
             return
 
-        owns_client = self._client is None
-        client = self._client or httpx.AsyncClient(
-            timeout=httpx.Timeout(HTTP_TIMEOUT_SECONDS),
+        if self._client is not None:
+            # Injected client (test path) — don't own its lifecycle.
+            async for item in self._run(self._client, peer, endpoint, query_text):
+                yield item
+            return
+
+        # Owned client — `async with` guarantees cleanup even on
+        # GeneratorExit / CancelledError propagating from a consumer abort.
+        client_kwargs: dict[str, Any] = {"timeout": httpx.Timeout(HTTP_TIMEOUT_SECONDS)}
+        verify = _tls_verify_for_peer(peer)
+        if verify is not None:
+            client_kwargs["verify"] = verify
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
+            async for item in self._run(client, peer, endpoint, query_text):
+                yield item
+
+    async def _run(
+        self,
+        client: "httpx.AsyncClient | Any",
+        peer: PeerUser,
+        endpoint: str,
+        query_text: str,
+    ) -> AsyncIterator[ProgressChunk | dict[str, Any]]:
+        """Shared query loop for both owned + injected client paths."""
+        initiate_resp = await self._initiate(client, endpoint, query_text)
+        if initiate_resp is None:
+            yield _final_error("Peer rejected initiate")
+            return
+
+        request_id = initiate_resp.request_id
+        logger.debug(
+            f"Federation query_brain: initiated {request_id} → "
+            f"{endpoint} (peer={peer.remote_display_name})"
         )
-        try:
-            initiate_resp = await self._initiate(client, endpoint, query_text)
-            if initiate_resp is None:
-                yield _final_error("Peer rejected initiate")
+
+        # Poll loop — yield progress until terminal status.
+        sequence = 0
+        deadline = time.time() + MAX_POLL_DURATION_SECONDS
+        last_progress: str | None = None
+
+        while time.time() < deadline:
+            poll_resp = await self._retrieve(client, endpoint, request_id)
+            if poll_resp is None:
+                yield _final_error("Peer poll request failed")
                 return
 
-            request_id = initiate_resp.request_id
-            logger.debug(
-                f"Federation query_brain: initiated {request_id} → "
-                f"{endpoint} (peer={peer.remote_display_name})"
-            )
+            if poll_resp.status == STATUS_PROCESSING:
+                # Only emit a ProgressChunk when the progress label
+                # actually changed — avoid flooding the UI with
+                # redundant "still retrieving" chunks on every poll.
+                if poll_resp.progress and poll_resp.progress != last_progress:
+                    sequence += 1
+                    label = (
+                        poll_resp.progress
+                        if poll_resp.progress in PROGRESS_LABELS
+                        else PROGRESS_LABEL_TOOL_RUNNING
+                    )
+                    yield ProgressChunk(
+                        label=label,
+                        detail={"peer": peer.remote_display_name},
+                        sequence=sequence,
+                    )
+                    last_progress = poll_resp.progress
+                await asyncio.sleep(POLL_INTERVAL_SECONDS)
+                continue
 
-            # Poll loop — yield progress until terminal status.
-            sequence = 0
-            deadline = time.time() + MAX_POLL_DURATION_SECONDS
-            last_progress: str | None = None
+            # Terminal — verify signature AND bind to paired pubkey.
+            yield self._finalize(poll_resp, peer)
+            return
 
-            while time.time() < deadline:
-                poll_resp = await self._retrieve(client, endpoint, request_id)
-                if poll_resp is None:
-                    yield _final_error("Peer poll request failed")
-                    return
-
-                if poll_resp.status == STATUS_PROCESSING:
-                    # Only emit a ProgressChunk when the progress label
-                    # actually changed — avoid flooding the UI with
-                    # redundant "still retrieving" chunks on every poll.
-                    if poll_resp.progress and poll_resp.progress != last_progress:
-                        sequence += 1
-                        label = (
-                            poll_resp.progress
-                            if poll_resp.progress in PROGRESS_LABELS
-                            else PROGRESS_LABEL_TOOL_RUNNING
-                        )
-                        yield ProgressChunk(
-                            label=label,
-                            detail={"peer": peer.remote_display_name},
-                            sequence=sequence,
-                        )
-                        last_progress = poll_resp.progress
-                    await asyncio.sleep(POLL_INTERVAL_SECONDS)
-                    continue
-
-                # Terminal — verify signature before trusting the payload.
-                yield self._finalize(poll_resp)
-                return
-
-            # Ran out of polls without a terminal status.
-            yield _final_error(
-                f"Federation query timed out after {MAX_POLL_DURATION_SECONDS}s"
-            )
-        finally:
-            if owns_client:
-                await client.aclose()
+        # Ran out of polls without a terminal status.
+        yield _final_error(
+            f"Federation query timed out after {MAX_POLL_DURATION_SECONDS}s"
+        )
 
     # -------------------------------------------------------------------------
     # Internals
@@ -256,7 +281,11 @@ class FederationQueryAsker:
             logger.warning(f"Federation retrieve: malformed response from {endpoint}: {e}")
             return None
 
-    def _finalize(self, resp: QueryBrainRetrieveResponse) -> dict[str, Any]:
+    def _finalize(
+        self,
+        resp: QueryBrainRetrieveResponse,
+        peer: PeerUser,
+    ) -> dict[str, Any]:
         """
         Verify responder signature on terminal response + map to
         the MCPManager.execute_tool FinalResult shape.
@@ -264,8 +293,19 @@ class FederationQueryAsker:
         Rejects the answer if:
           - status is EXPIRED (responder discarded our request)
           - status is FAILED (responder hit an error)
+          - status is COMPLETE but responder_pubkey / signature missing
+          - status is COMPLETE but responder_pubkey != peer.remote_pubkey
+            (PAIR-ANCHOR BINDING — see below)
           - status is COMPLETE but signature verification fails
-          - status is COMPLETE but responder_pubkey is missing
+
+        PAIR-ANCHOR BINDING (review CRITICAL #1 fix):
+          The asker trusts `peer.remote_pubkey` — the pubkey the peer
+          presented at F2 pairing time. We do NOT trust
+          `resp.responder_pubkey` by itself; a MITM could replace the
+          whole response with an attacker-signed message carrying the
+          attacker's own pubkey, and Ed25519 verification would pass
+          against that claimed key. The pair anchor closes this hole:
+          only signatures made with the paired peer's key are accepted.
         """
         if resp.status == STATUS_EXPIRED:
             return _final_error("Responder discarded the request (STATUS_EXPIRED)")
@@ -277,6 +317,20 @@ class FederationQueryAsker:
         if not resp.responder_pubkey or not resp.responder_signature:
             return _final_error(
                 "Responder complete response missing pubkey or signature — "
+                "refusing to trust the answer"
+            )
+
+        # PAIR-ANCHOR BINDING — the response's self-claimed pubkey must
+        # match the pubkey we paired with. Otherwise an attacker-signed
+        # response using THEIR own key would verify-against-itself.
+        if resp.responder_pubkey != peer.remote_pubkey:
+            logger.warning(
+                f"Federation query_brain: responder_pubkey "
+                f"({resp.responder_pubkey[:12]}...) does not match paired peer "
+                f"({peer.remote_pubkey[:12]}...) — possible MITM or peer drift"
+            )
+            return _final_error(
+                "Responder pubkey does not match paired peer — "
                 "refusing to trust the answer"
             )
 
@@ -341,3 +395,34 @@ def _select_endpoint(peer: PeerUser) -> str | None:
 def _join(base: str, path: str) -> str:
     """Join base URL + path without duplicating slashes."""
     return f"{base.rstrip('/')}{path}"
+
+
+def _tls_verify_for_peer(peer: PeerUser) -> Any | None:
+    """
+    Resolve the `verify=` parameter for the httpx client based on
+    `peer.transport_config.tls_fingerprint`.
+
+    Policy (review SHOULD-FIX #2):
+    - tls_fingerprint present → future: enforce cert pin via a custom
+      SSLContext that validates against the pinned fingerprint. For v1
+      we log that a pin was configured but use default verification;
+      the Ed25519 pair-anchor binding on the response payload (see
+      _finalize) is the cryptographic ground-truth anyway. Upgrading
+      to real pinning is an F5 hardening task.
+    - no fingerprint → default verification (CA-signed certs work,
+      self-signed don't). Home deployments using Tailscale sidestep
+      this; direct-LAN HTTPS peers will need the fingerprint.
+    - http:// endpoints → httpx does no TLS at all; we log but allow
+      because the Ed25519 response signature provides integrity.
+
+    Returns None when the default should be used (caller omits
+    `verify=` from the client kwargs).
+    """
+    config = peer.transport_config or {}
+    fingerprint = config.get("tls_fingerprint")
+    if fingerprint:
+        logger.info(
+            f"Federation peer {peer.remote_display_name} has tls_fingerprint "
+            f"configured (not yet enforced — F5 hardening task)"
+        )
+    return None

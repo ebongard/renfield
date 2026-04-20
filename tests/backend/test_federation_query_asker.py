@@ -337,8 +337,8 @@ class TestResponderSignatureVerification:
     async def test_wrong_pubkey_rejected(
         self, asker_identity, responder_identity, mock_peer,
     ):
-        """Signature verifies against the attacker's key instead of
-        responder's — asker's verify() returns False."""
+        """Responder claims one pubkey but signs with another — Ed25519
+        verify fails against the claimed pubkey."""
         attacker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
         fake = _FakeClient()
         fake.register(
@@ -366,6 +366,50 @@ class TestResponderSignatureVerification:
         items = [it async for it in asker.query_peer(mock_peer, "q")]
         final = items[-1]
         assert final["success"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_attacker_key_signs_for_itself_rejected_by_pair_anchor(
+        self, asker_identity, mock_peer,
+    ):
+        """CRITICAL regression (review #1): a MITM who replaces the
+        response with a message signed by their OWN key, and sets
+        `responder_pubkey` to that same attacker key, passes raw Ed25519
+        verification (attacker signed + pubkey matches signer) — but
+        the pair-anchor check rejects it because the claimed pubkey
+        doesn't match `peer.remote_pubkey`."""
+        attacker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+        fake = _FakeClient()
+        fake.register(
+            "query_brain/initiate",
+            [_mk_http_200(QueryBrainInitiateResponse(
+                request_id="req-mitm", accepted_at=int(time.time()),
+            ).model_dump())],
+        )
+
+        # Build a response signed by the ATTACKER with the attacker's
+        # OWN pubkey. Raw Ed25519 verify(attacker_pk, attacker_sig, msg)
+        # succeeds — but pair-anchor binding to peer.remote_pubkey
+        # (= the legit responder's pubkey, from F2 pairing) fails.
+        resp = QueryBrainRetrieveResponse(
+            status=STATUS_COMPLETE,
+            answer="MITM answer — trust me bro",
+            provenance=[],
+            answered_at=int(time.time()),
+            responder_pubkey=attacker.public_key_hex(),  # NOT the paired peer's key
+        )
+        resp.responder_signature = attacker.sign(
+            _canonical_bytes(complete_canonical_payload(resp))
+        ).hex()
+
+        fake.register("query_brain/retrieve", [_mk_http_200(resp.model_dump())])
+
+        asker = FederationQueryAsker(client=fake)
+        items = [it async for it in asker.query_peer(mock_peer, "q")]
+        final = items[-1]
+        assert final["success"] is False
+        # Error message mentions the pair-anchor mismatch explicitly
+        assert "match" in final["message"].lower() or "paired" in final["message"].lower()
 
 
 # =============================================================================
@@ -479,6 +523,94 @@ class TestEdgeCases:
         asker = FederationQueryAsker(client=fake)
         items = [it async for it in asker.query_peer(mock_peer, "q")]
         assert items[-1]["success"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_poll_deadline_exceeded_returns_timeout_error(
+        self, asker_identity, mock_peer, monkeypatch,
+    ):
+        """If the responder stays 'processing' past MAX_POLL_DURATION,
+        the asker yields a timeout FinalResult rather than polling
+        forever. Simulate by feeding enough processing responses that
+        the wall clock 'advances' past the deadline via monkey-patched
+        time.time()."""
+        from services import federation_query_asker as fqa
+
+        fake = _FakeClient()
+        fake.register(
+            "query_brain/initiate",
+            [_mk_http_200(QueryBrainInitiateResponse(
+                request_id="req-timeout", accepted_at=int(time.time()),
+            ).model_dump())],
+        )
+        # Infinite processing responses
+        fake.register(
+            "query_brain/retrieve",
+            [_mk_http_200(QueryBrainRetrieveResponse(
+                status=STATUS_PROCESSING, progress=PROGRESS_LABEL_RETRIEVING,
+            ).model_dump()) for _ in range(10)],
+        )
+
+        # Advance clock in large jumps so the deadline is crossed quickly.
+        clock = [time.time()]
+        def fake_time():
+            clock[0] += 30  # 30s per call — deadline (60s) trips after two calls
+            return clock[0]
+        monkeypatch.setattr(fqa.time, "time", fake_time)
+        # Also patch the sleep to no-op so the test runs fast.
+        async def no_sleep(_):
+            return
+        monkeypatch.setattr(fqa.asyncio, "sleep", no_sleep)
+
+        asker = FederationQueryAsker(client=fake)
+        items = [it async for it in asker.query_peer(mock_peer, "q")]
+        final = items[-1]
+        assert final["success"] is False
+        assert "timed out" in final["message"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_consumer_break_closes_owned_client(
+        self, asker_identity, responder_identity, monkeypatch,
+    ):
+        """When the asker doesn't inject a client, the `async with`
+        inside query_peer guarantees cleanup on consumer break.
+        Regression for review SHOULD-FIX #3."""
+        # Patch httpx.AsyncClient to a spy that records aclose calls.
+        close_count = 0
+
+        class _SpyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *a):
+                nonlocal close_count
+                close_count += 1
+                return False
+            async def post(self, url, json=None):
+                # Return a fake initiate response then a processing poll
+                if "initiate" in url:
+                    return _mk_http_200(QueryBrainInitiateResponse(
+                        request_id="req-cancel", accepted_at=int(time.time()),
+                    ).model_dump())
+                return _mk_http_200(QueryBrainRetrieveResponse(
+                    status=STATUS_PROCESSING, progress=PROGRESS_LABEL_RETRIEVING,
+                ).model_dump())
+
+        from services import federation_query_asker as fqa
+        monkeypatch.setattr(fqa.httpx, "AsyncClient", lambda **kwargs: _SpyClient())
+
+        peer = MagicMock()
+        peer.remote_pubkey = responder_identity.public_key_hex()
+        peer.remote_display_name = "Mom"
+        peer.transport_config = {"endpoints": ["http://mom.local:8000"]}
+
+        asker = FederationQueryAsker()  # owned client path
+        it = asker.query_peer(peer, "q")
+        # Consume one progress chunk, then abort.
+        await it.__anext__()
+        await it.aclose()
+
+        assert close_count == 1, "owned httpx client must be closed on consumer break"
 
 
 # =============================================================================
