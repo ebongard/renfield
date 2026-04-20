@@ -152,88 +152,98 @@ def upgrade() -> None:
             f"or run this migration only against PostgreSQL."
         )
 
+    # Idempotency: pre-circles deployments may have run Base.metadata.create_all
+    # via the backend startup path, materialising the new tables but leaving
+    # the source-table columns unchanged. The DDL below tolerates that — every
+    # CREATE TABLE / ADD COLUMN / CREATE INDEX is guarded by an inspector check
+    # so re-running the migration on a partially-created schema is safe.
+    inspector = sa.inspect(bind)
+    existing_tables = set(inspector.get_table_names())
+
+    def _has_col(table: str, col: str) -> bool:
+        if table not in existing_tables:
+            return False
+        return col in {c["name"] for c in inspector.get_columns(table)}
+
+    def _has_idx(table: str, idx_name: str) -> bool:
+        if table not in existing_tables:
+            return False
+        return idx_name in {ix["name"] for ix in inspector.get_indexes(table)}
+
     # =====================================================================
     # 1. NEW TABLES
     # =====================================================================
 
-    op.create_table(
-        "circles",
-        sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column(
-            "dimension_config",
-            sa.JSON(),
-            nullable=False,
-            server_default=HOME_DIMENSION_CONFIG,
-        ),
-        sa.Column(
-            "default_capture_policy",
-            sa.JSON(),
-            nullable=False,
-            server_default=HOME_CAPTURE_POLICY,
-        ),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-    )
+    if "circles" not in existing_tables:
+        op.create_table(
+            "circles",
+            sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
+            sa.Column("dimension_config", sa.JSON(), nullable=False, server_default=HOME_DIMENSION_CONFIG),
+            sa.Column("default_capture_policy", sa.JSON(), nullable=False, server_default=HOME_CAPTURE_POLICY),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        )
 
-    op.create_table(
-        "circle_memberships",
-        sa.Column("circle_owner_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column("member_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column("dimension", sa.String(32), primary_key=True),  # 'tier' | 'tenant' | 'project'
-        sa.Column("value", sa.JSON(), nullable=False),  # int for ladder, str for set
-        sa.Column("granted_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("granted_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-    )
-    op.create_index(
-        "idx_memberships_member",
-        "circle_memberships",
-        ["member_user_id", "circle_owner_id"],
-    )
+    if "circle_memberships" not in existing_tables:
+        op.create_table(
+            "circle_memberships",
+            sa.Column("circle_owner_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
+            sa.Column("member_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
+            sa.Column("dimension", sa.String(32), primary_key=True),  # 'tier' | 'tenant' | 'project'
+            sa.Column("value", sa.JSON(), nullable=False),  # int for ladder, str for set
+            sa.Column("granted_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("granted_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        )
+    if not _has_idx("circle_memberships", "idx_memberships_member"):
+        op.create_index(
+            "idx_memberships_member",
+            "circle_memberships",
+            ["member_user_id", "circle_owner_id"],
+        )
 
     # atoms: polymorphic registry. UUID PK so cross-source identity is stable
     # across migrations, source-table renames, and future v3 KG-as-brain swap.
-    op.create_table(
-        "atoms",
-        sa.Column("atom_id", sa.String(36), primary_key=True),  # UUID as string for sqlite portability
-        sa.Column("atom_type", sa.String(32), nullable=False, index=True),
-        sa.Column("source_table", sa.String(64), nullable=False),
-        sa.Column("source_id", sa.String(64), nullable=False),
-        sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
-        sa.Column("policy", sa.JSON(), nullable=False, server_default='{"tier": 0}'),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint("atom_type", "source_table", "source_id", name="uq_atoms_source"),
-    )
-    op.create_index("idx_atoms_owner", "atoms", ["owner_user_id"])
+    if "atoms" not in existing_tables:
+        op.create_table(
+            "atoms",
+            sa.Column("atom_id", sa.String(36), primary_key=True),  # UUID as string for sqlite portability
+            sa.Column("atom_type", sa.String(32), nullable=False, index=True),
+            sa.Column("source_table", sa.String(64), nullable=False),
+            sa.Column("source_id", sa.String(64), nullable=False),
+            sa.Column("owner_user_id", sa.Integer(), sa.ForeignKey("users.id"), nullable=False, index=True),
+            sa.Column("policy", sa.JSON(), nullable=False, server_default='{"tier": 0}'),
+            sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+            sa.UniqueConstraint("atom_type", "source_table", "source_id", name="uq_atoms_source"),
+        )
+    if not _has_idx("atoms", "idx_atoms_owner"):
+        op.create_index("idx_atoms_owner", "atoms", ["owner_user_id"])
 
-    op.create_table(
-        "atom_explicit_grants",
-        sa.Column("atom_id", sa.String(36), sa.ForeignKey("atoms.atom_id", ondelete="CASCADE"), primary_key=True),
-        sa.Column("granted_to_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
-        sa.Column("permission_level", sa.String(16), nullable=False, server_default="read"),  # 'read' | 'write' | 'admin'
-        sa.Column("granted_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
-        sa.Column("granted_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-    )
-    op.create_index("idx_grants_grantee", "atom_explicit_grants", ["granted_to_user_id"])
+    if "atom_explicit_grants" not in existing_tables:
+        op.create_table(
+            "atom_explicit_grants",
+            sa.Column("atom_id", sa.String(36), sa.ForeignKey("atoms.atom_id", ondelete="CASCADE"), primary_key=True),
+            sa.Column("granted_to_user_id", sa.Integer(), sa.ForeignKey("users.id"), primary_key=True),
+            sa.Column("permission_level", sa.String(16), nullable=False, server_default="read"),  # 'read' | 'write' | 'admin'
+            sa.Column("granted_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=False),
+            sa.Column("granted_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        )
+    if not _has_idx("atom_explicit_grants", "idx_grants_grantee"):
+        op.create_index("idx_grants_grantee", "atom_explicit_grants", ["granted_to_user_id"])
 
     # =====================================================================
     # 2. ADD COLUMNS TO SOURCE TABLES (NULLABLE FK + circle_tier defaults)
     # =====================================================================
 
     # atom_id starts NULLABLE; will be back-filled then made NOT NULL.
-    op.add_column("document_chunks", sa.Column("atom_id", sa.String(36), nullable=True))
-    op.add_column("document_chunks", sa.Column("circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
+    for table in ("document_chunks", "kg_entities", "kg_relations", "conversation_memories"):
+        if not _has_col(table, "atom_id"):
+            op.add_column(table, sa.Column("atom_id", sa.String(36), nullable=True))
+        if not _has_col(table, "circle_tier"):
+            op.add_column(table, sa.Column("circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
 
-    op.add_column("kg_entities", sa.Column("atom_id", sa.String(36), nullable=True))
-    op.add_column("kg_entities", sa.Column("circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
-
-    op.add_column("kg_relations", sa.Column("atom_id", sa.String(36), nullable=True))
-    op.add_column("kg_relations", sa.Column("circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
-
-    op.add_column("conversation_memories", sa.Column("atom_id", sa.String(36), nullable=True))
-    op.add_column("conversation_memories", sa.Column("circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
-
-    op.add_column("knowledge_bases", sa.Column("default_circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
+    if not _has_col("knowledge_bases", "default_circle_tier"):
+        op.add_column("knowledge_bases", sa.Column("default_circle_tier", sa.Integer(), nullable=False, server_default=str(TIER_SELF)))
 
     # =====================================================================
     # 3. BACK-FILL: validate scope values + populate circle_tier
@@ -325,31 +335,23 @@ def upgrade() -> None:
             "WHERE r.subject_id = s.id AND r.user_id IS NULL AND s.user_id IS NOT NULL"
         )
 
-        # Same defense for kg_entities — back-fill from the oldest surviving
-        # user (usually the admin, id=1, but hardening against the case where
-        # that user has been deleted). Any row with NULL user_id at this
-        # point has no clear ownership; assigning to the fallback keeps the
-        # FK valid and surfaces the rows for manual reassignment via
-        # /api/circles/me UI.
-        #
-        # Review NIT #11 fix: the legacy hardcoded `user_id = 1` would
-        # FK-violate on fresh-DB test harnesses where no users exist yet, or
-        # on installations where user id=1 has been deleted.
+        # Compute a fallback user id for every NULL-owner row (kg_entities,
+        # conversation_memories, knowledge_bases). Use MIN(id) for resilience —
+        # the legacy hardcoded `user_id = 1` would FK-violate on fresh-DB test
+        # harnesses where no users exist, or where admin user id=1 was deleted.
+        # Hoisted out so section 4's COALESCE(...) substitutes it as a literal
+        # instead of `0` (which FK-violates against the users table).
         fallback_user_id = bind.exec_driver_sql(
             "SELECT id FROM users ORDER BY id ASC LIMIT 1"
         ).scalar()
         if fallback_user_id is None:
-            # No users exist — the NULL-user rows are orphans from pre-auth
-            # data and have nowhere valid to point. Skip the back-fill; the
-            # atoms upsert below uses COALESCE(user_id, 0) which
-            # FK-violates on 0. Fresh-DB installs never hit this path
-            # because those tables are empty; warn loudly for anyone else.
-            op.get_context().autocommit_block()  # no-op, keeps context
             import logging
             logging.getLogger("alembic").warning(
                 "pc20260420_circles_v1: no users in DB — skipping "
-                "NULL-user backfill for kg_entities / conversation_memories. "
-                "Any legacy rows will fail the atoms FK step."
+                "NULL-user backfill for kg_entities / conversation_memories / "
+                "knowledge_bases. Any legacy rows with NULL ownership cannot "
+                "be migrated to atoms (the FK to users(id) would fail). They "
+                "stay un-atomised; the source rows themselves remain intact."
             )
         else:
             bind.exec_driver_sql(
@@ -359,6 +361,12 @@ def upgrade() -> None:
             bind.exec_driver_sql(
                 f"UPDATE conversation_memories SET user_id = {int(fallback_user_id)} "
                 f"WHERE user_id IS NULL"
+            )
+            # KB owner back-fill: the document_chunks → atoms back-fill below
+            # uses kb.owner_id and FK-violates if it's NULL. Same fallback.
+            bind.exec_driver_sql(
+                f"UPDATE knowledge_bases SET owner_id = {int(fallback_user_id)} "
+                f"WHERE owner_id IS NULL"
             )
 
     # 3e. Populate knowledge_bases.default_circle_tier from is_public.
@@ -379,9 +387,17 @@ def upgrade() -> None:
     # =====================================================================
     # PostgreSQL gen_random_uuid() requires pgcrypto. Fall back to uuid_generate_v4
     # if pgcrypto isn't loaded; raise if neither works.
-    if dialect == "postgresql":
+    #
+    # All COALESCE fallbacks substitute the live `fallback_user_id` (MIN(users.id))
+    # rather than the legacy `0` sentinel — `0` is not a real user and would
+    # FK-violate atoms.owner_user_id → users.id. If no users exist at all
+    # (fallback_user_id is None), the entire section 4 is skipped because
+    # atoms requires a non-null FK target.
+    if dialect == "postgresql" and fallback_user_id is not None:
         # Ensure pgcrypto is available; renfield's prod has it via the docker init.
         bind.exec_driver_sql("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
+        fb = int(fallback_user_id)
 
         # 4a. document_chunks -> atoms
         bind.exec_driver_sql(
@@ -392,7 +408,7 @@ def upgrade() -> None:
             "    'kb_chunk', "
             "    'document_chunks', "
             "    dc.id::text, "
-            "    COALESCE(kb.owner_id, 0), "
+           f"    COALESCE(kb.owner_id, {fb}), "
             "    json_build_object('tier', dc.circle_tier), "
             "    dc.created_at, "
             "    dc.created_at "
@@ -414,7 +430,7 @@ def upgrade() -> None:
             "    'kg_node', "
             "    'kg_entities', "
             "    e.id::text, "
-            "    COALESCE(e.user_id, 0), "
+           f"    COALESCE(e.user_id, {fb}), "
             "    json_build_object('tier', e.circle_tier), "
             "    e.first_seen_at, "
             "    e.last_seen_at "
@@ -434,7 +450,7 @@ def upgrade() -> None:
             "    'kg_edge', "
             "    'kg_relations', "
             "    r.id::text, "
-            "    COALESCE(r.user_id, 0), "
+           f"    COALESCE(r.user_id, {fb}), "
             "    json_build_object('tier', r.circle_tier), "
             "    r.created_at, "
             "    r.created_at "
@@ -454,7 +470,7 @@ def upgrade() -> None:
             "    'conversation_memory', "
             "    'conversation_memories', "
             "    m.id::text, "
-            "    COALESCE(m.user_id, 0), "
+           f"    COALESCE(m.user_id, {fb}), "
             "    json_build_object('tier', m.circle_tier), "
             "    m.created_at, "
             "    m.created_at "
@@ -477,30 +493,25 @@ def upgrade() -> None:
         op.alter_column("kg_relations", "atom_id", nullable=False)
         op.alter_column("conversation_memories", "atom_id", nullable=False)
 
-        op.create_foreign_key(
-            "fk_document_chunks_atom",
-            "document_chunks", "atoms",
-            ["atom_id"], ["atom_id"],
-            ondelete="CASCADE",
-        )
-        op.create_foreign_key(
-            "fk_kg_entities_atom",
-            "kg_entities", "atoms",
-            ["atom_id"], ["atom_id"],
-            ondelete="CASCADE",
-        )
-        op.create_foreign_key(
-            "fk_kg_relations_atom",
-            "kg_relations", "atoms",
-            ["atom_id"], ["atom_id"],
-            ondelete="CASCADE",
-        )
-        op.create_foreign_key(
-            "fk_conversation_memories_atom",
-            "conversation_memories", "atoms",
-            ["atom_id"], ["atom_id"],
-            ondelete="CASCADE",
-        )
+        # FK constraints — guard against re-run on a partially-migrated DB.
+        existing_fks_by_table = {
+            t: {fk["name"] for fk in inspector.get_foreign_keys(t)}
+            for t in ("document_chunks", "kg_entities", "kg_relations", "conversation_memories")
+        }
+        fk_specs = [
+            ("fk_document_chunks_atom", "document_chunks"),
+            ("fk_kg_entities_atom", "kg_entities"),
+            ("fk_kg_relations_atom", "kg_relations"),
+            ("fk_conversation_memories_atom", "conversation_memories"),
+        ]
+        for fk_name, table in fk_specs:
+            if fk_name not in existing_fks_by_table[table]:
+                op.create_foreign_key(
+                    fk_name,
+                    table, "atoms",
+                    ["atom_id"], ["atom_id"],
+                    ondelete="CASCADE",
+                )
 
     # =====================================================================
     # 6. Migrate kb_permissions -> atom_explicit_grants
@@ -557,41 +568,27 @@ def upgrade() -> None:
     if dialect == "postgresql":
         # Drop the scope index first (idx_kg_entities_scope_active) if present.
         bind.exec_driver_sql("DROP INDEX IF EXISTS ix_kg_entities_scope_active")
-        op.drop_column("kg_entities", "scope")
+        if _has_col("kg_entities", "scope"):
+            op.drop_column("kg_entities", "scope")
 
         # KBPermission table drop: rows have already been migrated above.
-        # Cascade the drop of dependent FK constraints automatically.
-        op.drop_table("kb_permissions")
+        if "kb_permissions" in inspector.get_table_names():
+            op.drop_table("kb_permissions")
 
     # =====================================================================
     # 8. Composite indexes for hot-path retrieval (per Finding 4.2)
     # =====================================================================
 
-    op.create_index(
-        "idx_document_chunks_kb_tier",
-        "document_chunks",
-        ["document_id", "circle_tier"],
-    )
-    op.create_index(
-        "idx_kg_entities_owner_tier",
-        "kg_entities",
-        ["user_id", "circle_tier"],
-    )
-    op.create_index(
-        "idx_kg_relations_subj_tier",
-        "kg_relations",
-        ["subject_id", "circle_tier"],
-    )
-    op.create_index(
-        "idx_kg_relations_obj_tier",
-        "kg_relations",
-        ["object_id", "circle_tier"],
-    )
-    op.create_index(
-        "idx_memories_owner_tier",
-        "conversation_memories",
-        ["user_id", "circle_tier", "is_active"],
-    )
+    composite_indexes = [
+        ("idx_document_chunks_kb_tier", "document_chunks", ["document_id", "circle_tier"]),
+        ("idx_kg_entities_owner_tier", "kg_entities", ["user_id", "circle_tier"]),
+        ("idx_kg_relations_subj_tier", "kg_relations", ["subject_id", "circle_tier"]),
+        ("idx_kg_relations_obj_tier", "kg_relations", ["object_id", "circle_tier"]),
+        ("idx_memories_owner_tier", "conversation_memories", ["user_id", "circle_tier", "is_active"]),
+    ]
+    for idx_name, table, cols in composite_indexes:
+        if not _has_idx(table, idx_name):
+            op.create_index(idx_name, table, cols)
 
 
 def downgrade() -> None:

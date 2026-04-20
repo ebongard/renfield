@@ -47,17 +47,36 @@ def upgrade() -> None:
             "USING embedding::vector(768)"
         ))
 
-    # Create HNSW index if it doesn't exist
+    # Create HNSW index if it doesn't exist.
+    # pgvector HNSW caps vector_cosine_ops at 2000 dims; for high-dim
+    # embeddings (qwen3-embedding:4b = 2560) cast to halfvec on the
+    # index side. Detect actual dim from the column metadata.
     result = conn.execute(
         text("SELECT 1 FROM pg_indexes WHERE indexname = 'ix_episodic_embedding_hnsw'")
     )
     if result.scalar() is None:
-        op.execute(text(
-            "CREATE INDEX ix_episodic_embedding_hnsw "
-            "ON episodic_memories "
-            "USING hnsw (embedding vector_cosine_ops) "
-            "WITH (m = 16, ef_construction = 64)"
-        ))
+        # vector(N) reports its dim via atttypmod (after the +4 typmod offset).
+        dim_row = conn.execute(text(
+            "SELECT atttypmod - 4 AS dim FROM pg_attribute "
+            "WHERE attrelid = 'episodic_memories'::regclass "
+            "AND attname = 'embedding'"
+        )).first()
+        dim = int(dim_row.dim) if dim_row and dim_row.dim and dim_row.dim > 0 else 768
+
+        if dim > 2000:
+            op.execute(text(
+                f"CREATE INDEX ix_episodic_embedding_hnsw "
+                f"ON episodic_memories "
+                f"USING hnsw ((embedding::halfvec({dim})) halfvec_cosine_ops) "
+                f"WITH (m = 16, ef_construction = 64)"
+            ))
+        else:
+            op.execute(text(
+                "CREATE INDEX ix_episodic_embedding_hnsw "
+                "ON episodic_memories "
+                "USING hnsw (embedding vector_cosine_ops) "
+                "WITH (m = 16, ef_construction = 64)"
+            ))
 
 
 def downgrade() -> None:
