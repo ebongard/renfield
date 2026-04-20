@@ -1063,6 +1063,51 @@ class AtomExplicitGrant(Base):
     granter = relationship("User", foreign_keys=[granted_by])
 
 
+class PeerUser(Base):
+    """
+    A paired remote Renfield peer — the asker-side record of another
+    Renfield we can federate queries to.
+
+    One row per (local_user, remote_pubkey). The remote pubkey is the
+    stable identifier; display_name is cosmetic (set by the local user,
+    changeable). transport_config carries {endpoint_url, transport,
+    tls_fingerprint, relay_via}. revoked_at is set when the local user
+    unpairs — the row stays for audit, but federated queries to it return
+    401 afterwards.
+
+    Design ref: second-brain-circles v2 pairing protocol, § Pairing
+    Handshake State Machine. F2 of the federation lanes.
+    """
+    __tablename__ = "peer_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    circle_owner_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # 32-byte Ed25519 pubkey, stored as 64-char hex for SQL-friendliness.
+    remote_pubkey = Column(String(64), nullable=False)
+    remote_display_name = Column(String(255), nullable=False)
+    # The remote's user_id on their own Renfield — cosmetic; real identity
+    # is the pubkey. Useful for display ("Mom @ mom's-renfield").
+    remote_user_id = Column(Integer, nullable=True)
+
+    # {endpoint_url, transport, tls_fingerprint, relay_via}
+    transport_config = Column(JSON, nullable=False, default=dict)
+
+    paired_at = Column(DateTime, default=_utcnow, nullable=False)
+    last_seen_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True, index=True)
+
+    __table_args__ = (
+        # Same local user can't pair twice with the same remote pubkey.
+        # Re-pairing after revocation goes through unrevoke or delete+create.
+        Index("uq_peer_users_owner_pubkey", "circle_owner_id", "remote_pubkey", unique=True),
+        # Verify-signature lookups pivot on remote_pubkey across all owners.
+        Index("idx_peer_users_pubkey", "remote_pubkey"),
+    )
+
+    owner = relationship("User", foreign_keys=[circle_owner_id])
+
+
 # ==========================================================================
 # Backwards-compat re-exports from ha_glue.models.database
 # ==========================================================================
