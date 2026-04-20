@@ -14,6 +14,7 @@ import pytest
 
 from services.mcp_client import MCPManager
 from services.mcp_streaming import (
+    FEDERATION_PROGRESS_LABELS,
     PROGRESS_LABEL_COMPLETE,
     PROGRESS_LABEL_RETRIEVING,
     PROGRESS_LABEL_SYNTHESIZING,
@@ -61,6 +62,16 @@ class TestProgressChunk:
         }
         assert required.issubset(PROGRESS_LABELS)
 
+    @pytest.mark.unit
+    def test_federation_subset_excludes_generic_labels(self):
+        # Federation responders MUST NOT emit `tool_running` or
+        # `awaiting_input` — those can leak responder-side user behavior.
+        # F1.3 enforces this at the wire level when the tool is served
+        # by a paired peer; this test guards the policy at the type layer.
+        assert PROGRESS_LABEL_TOOL_RUNNING not in FEDERATION_PROGRESS_LABELS
+        assert "awaiting_input" not in FEDERATION_PROGRESS_LABELS
+        assert FEDERATION_PROGRESS_LABELS.issubset(PROGRESS_LABELS)
+
 
 class TestExecuteToolStreamingYieldOnce:
     """F1.2: default implementation yields exactly one FinalResult."""
@@ -98,21 +109,66 @@ class TestExecuteToolStreamingYieldOnce:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_consumer_can_break_early(self):
-        """Breaking out of the iterator mid-stream must not raise or leak."""
+    async def test_aclose_after_final_yield_is_safe(self):
+        """Closing the iterator after it already produced its final result
+        must be a no-op (the generator is already exhausted)."""
         manager = MCPManager()
         sentinel = {"success": True, "message": "", "data": None}
         with patch.object(manager, "execute_tool", new=AsyncMock(return_value=sentinel)):
             it = manager.execute_tool_streaming("mcp.s.t", {})
             first = await it.__anext__()
-            # Consumer aborts — no further iteration. Must not crash.
+            # Generator is done after the single yield; aclose must not raise.
             await it.aclose()
         assert first == sentinel
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_aclose_before_first_anext_never_invokes_tool(self):
+        """Creating the generator does not start work. Closing it before
+        the first __anext__() MUST NOT call execute_tool at all — the
+        docstring promises this semantic so consumers can defensively
+        construct-then-close without side-effects."""
+        manager = MCPManager()
+        mock_execute = AsyncMock(return_value={"success": True, "message": "", "data": None})
+        with patch.object(manager, "execute_tool", new=mock_execute):
+            it = manager.execute_tool_streaming("mcp.s.t", {})
+            await it.aclose()
+        mock_execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_aclose_mid_call_cancels_background_task(self):
+        """If the consumer closes the iterator while execute_tool is still
+        running, the underlying await is cancelled. The result is discarded
+        (not yielded anywhere)."""
+        import asyncio
+
+        manager = MCPManager()
+        started = asyncio.Event()
+
+        async def slow_tool(*args, **kwargs):
+            started.set()
+            await asyncio.sleep(10)  # would exceed test timeout if not cancelled
+            return {"success": True, "message": "", "data": None}
+
+        with patch.object(manager, "execute_tool", new=AsyncMock(side_effect=slow_tool)):
+            it = manager.execute_tool_streaming("mcp.s.t", {})
+
+            async def consume_first():
+                return await it.__anext__()
+
+            task = asyncio.create_task(consume_first())
+            await started.wait()  # execute_tool is now running
+            await it.aclose()     # close mid-await
+            # The consume task should fail because the generator closed
+            # before yielding anything.
+            with pytest.raises((StopAsyncIteration, asyncio.CancelledError, GeneratorExit)):
+                await task
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_result_shape_matches_execute_tool(self):
-        """FinalResult yielded by streaming path is byte-identical to execute_tool output."""
+        """FinalResult yielded by streaming path equals execute_tool output."""
         manager = MCPManager()
         full_shape = {
             "success": True,
@@ -121,4 +177,6 @@ class TestExecuteToolStreamingYieldOnce:
         }
         with patch.object(manager, "execute_tool", new=AsyncMock(return_value=full_shape)):
             chunks = [c async for c in manager.execute_tool_streaming("mcp.s.t", {})]
-        assert chunks[0] is full_shape  # same object identity — no copy
+        # Equality (not identity) — lets future wrappers add envelope
+        # metadata (trace_id, timing) without breaking this regression guard.
+        assert chunks[0] == full_shape
