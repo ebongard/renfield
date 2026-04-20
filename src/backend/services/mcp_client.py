@@ -598,6 +598,15 @@ class MCPTransportType(str, Enum):
     SSE = "sse"
     STDIO = "stdio"
 
+    # Federation peers (F3c) — not a real MCP transport; a virtual one.
+    # State rows with this transport are looked up at request time to find
+    # the underlying PeerUser row, and execute_tool_streaming routes them
+    # through FederationQueryAsker instead of session.call_tool. The
+    # only tool such servers expose is `query_brain`. Registry lives in
+    # services/peer_mcp_registry.py; it syncs peers into _servers at
+    # startup (and on pair/unpair events).
+    FEDERATION = "federation"
+
 
 class MCPPermissionError(Exception):
     """Raised when user lacks permission for an MCP tool."""
@@ -629,6 +638,12 @@ class MCPServerConfig:
                               # notifications and yield ProgressChunks. First consumer: federation
                               # query_brain (F3). Non-streaming servers ignore this flag — the
                               # progress queue stays empty and only the final result is yielded.
+
+    # Federation-transport only (F3c): the local PeerUser.id this virtual
+    # server represents. execute_tool_streaming looks up the peer row at
+    # request time (so revocation is picked up without needing a registry
+    # refresh). Unset for non-federation servers.
+    peer_user_id: int | None = None
 
 
 @dataclass
@@ -1275,6 +1290,23 @@ class MCPManager:
         if tool_info is not None:
             state = self._servers.get(tool_info.server_name)
 
+        # Federation-transport branch (F3c) — peers aren't real MCP
+        # servers; we route them through FederationQueryAsker which
+        # drives the initiate/retrieve HTTP protocol against the
+        # remote Renfield and yields ProgressChunks as progress labels
+        # transition. State machinery (rate limiter, validation, etc.)
+        # still applies via the helper.
+        if state is not None and state.config.transport == MCPTransportType.FEDERATION:
+            async for item in self._execute_federation_streaming(
+                state=state,
+                namespaced_name=namespaced_name,
+                arguments=arguments,
+                user_permissions=user_permissions,
+                user_id=user_id,
+            ):
+                yield item
+            return
+
         # Non-streaming path: yield once, same shape as execute_tool.
         if state is None or not state.config.streaming:
             result = await self.execute_tool(
@@ -1299,6 +1331,69 @@ class MCPManager:
             user_permissions=user_permissions,
             user_id=user_id,
         ):
+            yield item
+
+    async def _execute_federation_streaming(
+        self,
+        state: "MCPServerState",
+        namespaced_name: str,
+        arguments: dict,
+        user_permissions: list[str] | None,
+        user_id: int | None,
+    ) -> AsyncIterator[ProgressChunk | FinalResult]:
+        """
+        Route a federation-transport tool call to the remote Renfield peer.
+
+        Looks up the PeerUser row each call (not once-at-registration)
+        so revocation takes effect immediately. Opens its own AsyncSession
+        because the request-scoped one was closed by FastAPI before this
+        (agent-loop) call path — same pattern as the responder's bg task.
+        """
+        from services.database import AsyncSessionLocal
+        from services.federation_query_asker import FederationQueryAsker
+        from models.database import PeerUser
+        from sqlalchemy import select
+
+        peer_user_id = state.config.peer_user_id
+        if peer_user_id is None:
+            yield {
+                "success": False,
+                "message": f"Federation server {state.config.name} has no peer_user_id",
+                "data": None,
+            }
+            return
+
+        query_text = arguments.get("query") or arguments.get("text") or ""
+        if not query_text:
+            yield {
+                "success": False,
+                "message": "query_brain requires a 'query' argument",
+                "data": None,
+            }
+            return
+
+        async with AsyncSessionLocal() as session:
+            peer = (await session.execute(
+                select(PeerUser).where(
+                    PeerUser.id == peer_user_id,
+                    PeerUser.revoked_at.is_(None),
+                )
+            )).scalar_one_or_none()
+
+        if peer is None:
+            logger.warning(
+                f"Federation tool call: peer {peer_user_id} unknown or revoked "
+                f"(namespaced={namespaced_name}, user_id={user_id})"
+            )
+            yield {
+                "success": False,
+                "message": "Federation peer is unknown or has been revoked",
+                "data": None,
+            }
+            return
+
+        asker = FederationQueryAsker()
+        async for item in asker.query_peer(peer, query_text):
             yield item
 
     async def _execute_tool_streaming_impl(

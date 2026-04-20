@@ -92,6 +92,7 @@ from services.mcp_streaming import (
     PROGRESS_LABEL_SYNTHESIZING,
 )
 from services.pairing_service import _canonical_bytes
+from utils.config import settings
 
 
 # Request lifecycle: pending rows live here for 60s (or until terminal).
@@ -415,28 +416,76 @@ class FederationQueryResponder:
     async def _synthesize(self, query: str, matches: list) -> str:
         """
         Ask the local LLM to turn retrieved matches into a natural-language
-        answer. Kept narrow: answer is short (<512 tokens) and must NOT
-        echo the asker's raw query back into other capture surfaces
-        (prompt-injection-as-capture defence — design doc § Synthesis
-        isolation).
+        answer.
 
-        F3c TODO: replace this stub with a proper Ollama prompt via
-        utils.llm_client. When wiring that up, revisit the synthesis-
-        isolation rules from the design doc: the asker's query MUST
-        NOT be fed into conversation_memory capture, notification
-        bodies, or any other surface that could persist the peer's
-        text into THIS responder's own atoms.
+        Synthesis isolation (design doc § Synthesis isolation):
+          - The asker's query passes through an LLM prompt ONLY for the
+            purpose of answering from the local snippets. It is NOT
+            persisted back into conversation_memory, notifications, or
+            any other capture surface on this responder. A malicious
+            peer crafting an "ignore previous instructions ..." query
+            therefore cannot coerce us to mutate our own atoms — they
+            only ever shape the answer we ship back to them, which they
+            already have full control over.
+          - Answer is capped at ≤512 tokens via a hard prompt limit AND
+            a 2000-char post-slice (defence in depth).
+
+        Fallback: if Ollama is unreachable or times out, degrade to
+        snippet concatenation so federation still returns SOMETHING
+        rather than a blank answer. Logged as warning for operator
+        visibility.
         """
         if not matches:
             return ""
-        # Minimal v1 synthesis — concatenate snippets + a short instruction.
-        # The snippet is sliced BEFORE the `- ` prefix so the 198-char
-        # cap is on actual content, not prefix+content.
-        snippets = "\n".join(f"- {(m.snippet or '')[:198]}" for m in matches[:5])
-        return (
-            f"Based on what I have: {query}\n"
-            f"Relevant snippets:\n{snippets}"
-        )[:2000]
+
+        # Build snippet context. Cap each to 400 chars so the prompt
+        # stays under typical context-window limits even for 10 matches.
+        snippets_text = "\n".join(
+            f"- {(m.snippet or '')[:400]}" for m in matches[:10]
+        )
+
+        system_msg = (
+            "You are answering a federated query from a trusted peer. "
+            "Answer ONLY from the provided snippets. "
+            "If the snippets do not contain the answer, say 'I don't know from what was shared with you.' "
+            "Do not fabricate details. Do not invent names, dates, or quantities not present in the snippets. "
+            "Keep your answer under 200 words and in the same language as the question."
+        )
+        user_msg = (
+            f"Question: {query}\n\n"
+            f"Snippets from the responder's atoms:\n{snippets_text}"
+        )
+
+        try:
+            from utils.llm_client import extract_response_content, get_default_client
+
+            client = get_default_client()
+            response = await asyncio.wait_for(
+                client.chat(
+                    model=settings.ollama_model,
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    options={
+                        "temperature": 0.2,   # factual, low creativity
+                        "num_predict": 512,    # hard cap on generated tokens
+                    },
+                ),
+                timeout=30.0,  # responder TTL is 60s; synthesis + retrieval + poll-reply must fit
+            )
+            answer = extract_response_content(response) or ""
+        except Exception as e:
+            logger.warning(
+                f"Federation query_brain: Ollama synthesis failed ({e}); "
+                f"falling back to snippet concatenation"
+            )
+            # Fallback stub — same shape as the pre-F3c synthesis. Keeps
+            # federation functional when Ollama is down (a paired peer
+            # still gets provenance + raw snippets to work with).
+            answer = f"Relevant snippets:\n{snippets_text}"
+
+        return answer[:2000]
 
     # -------------------------------------------------------------------------
     # Serialization + signing of terminal responses

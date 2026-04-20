@@ -299,6 +299,21 @@ async def _init_mcp(app: "FastAPI"):
         intent_registry.set_mcp_prompt_tools(prompt_tools)
 
         logger.info(f"✅ MCP Client bereit: {len(mcp_tools)} Tools registriert")
+
+        # Federation peer registry (F3c) — register paired PeerUsers as
+        # virtual FEDERATION-transport MCP servers so the agent loop sees
+        # `mcp.peer_<id>.query_brain` alongside every other MCP tool.
+        # Non-fatal on failure: an empty peer list or schema-migration-
+        # not-yet-applied DB should not block backend startup.
+        try:
+            from services.database import AsyncSessionLocal
+            from services.peer_mcp_registry import sync_peers
+            async with AsyncSessionLocal() as peer_session:
+                await sync_peers(manager, peer_session)
+        except Exception as peer_error:
+            logger.warning(
+                f"Federation peer registry sync skipped at startup: {peer_error}"
+            )
     except Exception as e:
         logger.error(f"MCP Client konnte nicht initialisiert werden: {e}")
         import traceback
