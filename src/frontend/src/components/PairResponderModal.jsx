@@ -157,7 +157,10 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-1">
               {t('circles.pairAcceptStep2Instruction', {
-                name: parsedOffer.display_name,
+                // Fallback to "Unknown peer" — the server's PairingOffer
+                // schema has no min_length on display_name, so "" can
+                // pass Pydantic. Don't render "Accept pairing with ."
+                name: parsedOffer.display_name || t('circles.pairUnknownPeer'),
               })}
             </p>
             <code className="block text-xs text-gray-500 dark:text-gray-400 truncate">
@@ -197,7 +200,11 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
               {t('circles.pairAcceptStep3Instruction')}
             </p>
-            <div className="flex justify-center py-4 bg-white rounded-lg border border-gray-200">
+            <div
+              role="img"
+              aria-label={t('circles.pairQrCodeResponseAria')}
+              className="flex justify-center py-4 bg-white rounded-lg border border-gray-200"
+            >
               <QRCodeSVG value={JSON.stringify(responseData)} size={220} level="M" />
             </div>
             <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">

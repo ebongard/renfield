@@ -101,7 +101,10 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
       return;
     }
     // Minimal shape check — server does the cryptographic verification.
-    for (const key of ['responder_pubkey', 'responder_signature', 'nonce']) {
+    // Server's PairingResponse schema (services/pairing_service.py) names
+    // the signature field `signature`, NOT `responder_signature`. Getting
+    // this wrong would reject every legitimate response client-side.
+    for (const key of ['responder_pubkey', 'signature', 'nonce']) {
       if (typeof parsed[key] !== 'string') {
         setError(t('circles.pairResponseMissingField', { field: key }));
         return;
@@ -165,7 +168,11 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
               {t('circles.pairInitiateStep2Instruction')}
             </p>
-            <div className="flex justify-center py-4 bg-white rounded-lg border border-gray-200">
+            <div
+              role="img"
+              aria-label={t('circles.pairQrCodeOfferAria')}
+              className="flex justify-center py-4 bg-white rounded-lg border border-gray-200"
+            >
               <QRCodeSVG value={JSON.stringify(offer)} size={220} level="M" />
             </div>
             <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
@@ -224,7 +231,12 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
               {parsedResponse.responder_pubkey}
             </code>
           </div>
-          <TierPicker value={tier} onChange={setTier} disabled={loading} />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              {t('circles.pairTierForThem')}
+            </label>
+            <TierPicker value={tier} onChange={setTier} disabled={loading} />
+          </div>
           <div className="flex justify-between gap-2">
             <button
               type="button"

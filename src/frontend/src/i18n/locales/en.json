@@ -1122,8 +1122,8 @@
     "pairAcceptTitle": "Accept a pairing invitation",
     "pairAcceptStep1Instruction": "Paste the invitation JSON the other Renfield sent you (from their QR code or via copy/paste).",
     "pairAcceptStep2Instruction": "Accept pairing with {{name}}. What tier do you want to grant them?",
-    "pairAcceptStep3Instruction": "Show this QR code to the other Renfield to finish the handshake. The pairing is complete only after their side finishes.",
-    "pairAcceptStep3Hint": "You can close this window — the peer will appear in your peer list once the other side completes.",
+    "pairAcceptStep3Instruction": "Show this QR code to the other Renfield so they can finish the handshake.",
+    "pairAcceptStep3Hint": "You can close this window — your side of the pairing is already saved. The other side will finish the handshake after scanning this code.",
     "pairTierForThem": "Tier you grant this peer",
     "pairOffer": "Invitation",
     "pairOfferRequired": "Please paste the invitation JSON.",
@@ -1131,6 +1131,8 @@
     "pairOfferMissingField": "Field \"{{field}}\" is missing from the invitation.",
     "pairOfferExpired": "Invitation expired. Please request a new one.",
     "pairAcceptButton": "Accept pairing",
-    "pairAcceptFailed": "Couldn't accept the invitation."
+    "pairAcceptFailed": "Couldn't accept the invitation.",
+    "pairQrCodeOfferAria": "QR code containing signed pairing invitation",
+    "pairQrCodeResponseAria": "QR code containing signed pairing response"
   }
 }

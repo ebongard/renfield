@@ -25,6 +25,10 @@ export default defineConfig({
       'i18next-browser-languagedetector': path.join(testNodeModules, 'i18next-browser-languagedetector'),
       // lucide icons
       'lucide-react': path.join(testNodeModules, 'lucide-react'),
+      // qrcode.react's real package resolves React from src/frontend/node_modules,
+      // which is a different copy than the aliased test React → duplicate
+      // React dispatchers → null useMemo. Point tests at a no-op stub.
+      'qrcode.react': path.join(__dirname, 'stubs/qrcode.react.js'),
     },
   },
   server: {

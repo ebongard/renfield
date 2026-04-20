@@ -1122,8 +1122,8 @@
     "pairAcceptTitle": "Kopplungs-Einladung annehmen",
     "pairAcceptStep1Instruction": "Füge die Einladung-JSON ein, die dir die andere Renfield-Instanz gesendet hat (aus ihrem QR-Code oder per Kopieren).",
     "pairAcceptStep2Instruction": "Kopplung mit {{name}} annehmen. Welche Kreis-Stufe willst du ihnen geben?",
-    "pairAcceptStep3Instruction": "Zeige diesen QR-Code der anderen Renfield-Instanz, um die Kopplung abzuschließen. Die Kopplung ist erst dann vollständig, wenn die Gegenseite den Handshake abgeschlossen hat.",
-    "pairAcceptStep3Hint": "Du kannst dieses Fenster schließen — der Peer erscheint in deiner Peer-Liste, sobald die andere Seite abschließt.",
+    "pairAcceptStep3Instruction": "Zeige diesen QR-Code der anderen Renfield-Instanz, damit sie den Handshake abschließen kann.",
+    "pairAcceptStep3Hint": "Dieses Fenster kannst du schließen — deine Seite der Kopplung ist bereits gespeichert. Die andere Seite schließt den Handshake ab, sobald sie diesen Code gescannt hat.",
     "pairTierForThem": "Stufe, die du dem Peer gewährst",
     "pairOffer": "Einladung",
     "pairOfferRequired": "Bitte Einladungs-JSON einfügen.",
@@ -1131,6 +1131,8 @@
     "pairOfferMissingField": "Feld \"{{field}}\" fehlt in der Einladung.",
     "pairOfferExpired": "Einladung ist abgelaufen. Bitte eine neue anfragen.",
     "pairAcceptButton": "Kopplung annehmen",
-    "pairAcceptFailed": "Einladung konnte nicht angenommen werden."
+    "pairAcceptFailed": "Einladung konnte nicht angenommen werden.",
+    "pairQrCodeOfferAria": "QR-Code mit signierter Kopplungs-Einladung",
+    "pairQrCodeResponseAria": "QR-Code mit signierter Kopplungs-Antwort"
   }
 }
