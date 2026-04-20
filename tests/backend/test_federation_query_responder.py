@@ -1,0 +1,366 @@
+"""
+Tests for F3a — federation query_brain responder.
+
+Coverage:
+- initiate happy path (verified peer → request_id minted → background task kicked)
+- signature mismatch rejected
+- stale timestamp rejected
+- nonce replay rejected
+- unknown peer rejected (or revoked peer)
+- retrieve pubkey-binding (stolen request_id can't be polled by another peer)
+- retrieve unknown request → STATUS_EXPIRED (not an oracle)
+- progress rate-limited to MAX_PROGRESS_UPDATES
+- terminal response is signed by responder
+"""
+from __future__ import annotations
+
+import asyncio
+import time
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from cryptography.hazmat.primitives.asymmetric import ed25519
+
+from services.federation_identity import (
+    FederationIdentity,
+    get_federation_identity,
+    init_federation_identity,
+    reset_federation_identity_for_tests,
+)
+from services.federation_query_responder import (
+    FederationQueryError,
+    FederationQueryResponder,
+    MAX_PROGRESS_UPDATES,
+    _PendingRequest,
+    _clear_state_for_tests,
+    _pending_requests,
+)
+from services.federation_query_schemas import (
+    STATUS_COMPLETE,
+    STATUS_EXPIRED,
+    STATUS_FAILED,
+    STATUS_PROCESSING,
+    QueryBrainInitiateRequest,
+    QueryBrainRetrieveRequest,
+    complete_canonical_payload,
+    initiate_canonical_payload,
+    retrieve_canonical_payload,
+)
+from services.mcp_streaming import (
+    PROGRESS_LABEL_COMPLETE,
+    PROGRESS_LABEL_RETRIEVING,
+    PROGRESS_LABEL_SYNTHESIZING,
+)
+from services.pairing_service import _canonical_bytes
+
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+@pytest.fixture
+def responder_identity(tmp_path):
+    """Fresh federation identity for the responder side + reset state."""
+    reset_federation_identity_for_tests()
+    init_federation_identity(tmp_path / "responder_key")
+    _clear_state_for_tests()
+    yield get_federation_identity()
+    reset_federation_identity_for_tests()
+    _clear_state_for_tests()
+
+
+@pytest.fixture
+def asker_identity():
+    """Independent asker identity — not the responder's singleton."""
+    priv = ed25519.Ed25519PrivateKey.generate()
+    return FederationIdentity(priv)
+
+
+@pytest.fixture
+def mock_db_with_peer(asker_identity):
+    """AsyncSession mock that returns a matching PeerUser for the asker."""
+    db = MagicMock()
+    peer = MagicMock()
+    peer.id = 77
+    peer.circle_owner_id = 1  # responder's local user
+    peer.remote_pubkey = asker_identity.public_key_hex()
+    peer.remote_user_id = 42
+    peer.revoked_at = None
+
+    db.execute = AsyncMock()
+    # Default: first execute returns peer, subsequent return membership tier
+    membership = MagicMock(value=2)  # responder granted asker tier=2 (household)
+
+    async def execute_side(stmt):
+        result = MagicMock()
+        if "peer_users" in str(stmt):
+            result.scalar_one_or_none = lambda: peer
+        elif "circle_memberships" in str(stmt):
+            result.scalar_one_or_none = lambda: membership
+        else:
+            result.scalar_one_or_none = lambda: None
+        return result
+
+    db.execute.side_effect = execute_side
+    db.commit = AsyncMock()
+    return db
+
+
+# =============================================================================
+# Helpers
+# =============================================================================
+
+
+def _sign_initiate(
+    asker: FederationIdentity,
+    query: str = "what is mom's recipe?",
+    nonce: str | None = None,
+    timestamp: int | None = None,
+) -> QueryBrainInitiateRequest:
+    import secrets
+
+    unsigned = {
+        "version": 1,
+        "asker_pubkey": asker.public_key_hex(),
+        "query": query,
+        "nonce": nonce or secrets.token_hex(16),
+        "timestamp": timestamp if timestamp is not None else int(time.time()),
+    }
+    sig = asker.sign(_canonical_bytes(unsigned)).hex()
+    return QueryBrainInitiateRequest(**unsigned, signature=sig)
+
+
+def _sign_retrieve(
+    asker: FederationIdentity,
+    request_id: str,
+    timestamp: int | None = None,
+) -> QueryBrainRetrieveRequest:
+    unsigned = {
+        "version": 1,
+        "request_id": request_id,
+        "asker_pubkey": asker.public_key_hex(),
+        "timestamp": timestamp if timestamp is not None else int(time.time()),
+    }
+    sig = asker.sign(_canonical_bytes(unsigned)).hex()
+    return QueryBrainRetrieveRequest(**unsigned, signature=sig)
+
+
+# =============================================================================
+# Initiate
+# =============================================================================
+
+
+class TestHandleInitiate:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_happy_path_mints_request_id(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+
+        # Stub out _run_query so we don't need Ollama/PolymorphicAtomStore.
+        responder._run_query = AsyncMock()
+
+        req = _sign_initiate(asker_identity)
+        resp = await responder.handle_initiate(req)
+
+        assert resp.request_id  # UUID-shaped
+        assert len(resp.request_id) == 36  # UUID4 with hyphens
+        assert resp.accepted_at >= 0
+
+        # Pending entry exists with the correct asker_pubkey binding.
+        pending = _pending_requests[resp.request_id]
+        assert pending.asker_pubkey == asker_identity.public_key_hex()
+        assert pending.peer_user_id == 77
+        assert pending.max_visible_tier == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_tampered_signature_rejected(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        req = _sign_initiate(asker_identity)
+        # Flip one byte in the signature
+        bad = bytearray(bytes.fromhex(req.signature))
+        bad[0] ^= 0xFF
+        tampered = QueryBrainInitiateRequest(**{**req.model_dump(), "signature": bad.hex()})
+
+        with pytest.raises(FederationQueryError, match="Signature"):
+            await responder.handle_initiate(tampered)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_stale_timestamp_rejected(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        # 2 minutes in the past — outside ±60s window
+        req = _sign_initiate(asker_identity, timestamp=int(time.time()) - 120)
+        with pytest.raises(FederationQueryError, match="window"):
+            await responder.handle_initiate(req)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_nonce_replay_rejected(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        req1 = _sign_initiate(asker_identity, nonce="deadbeefdeadbeef" * 2)
+        await responder.handle_initiate(req1)
+
+        # Build a second request reusing the same nonce (signer would need
+        # to resign since timestamp changed; we simulate by re-signing the
+        # same nonce at a new moment).
+        req2 = _sign_initiate(asker_identity, nonce="deadbeefdeadbeef" * 2)
+        with pytest.raises(FederationQueryError, match="replay"):
+            await responder.handle_initiate(req2)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unknown_peer_rejected(self, responder_identity, asker_identity):
+        """Asker whose pubkey isn't in peer_users must be rejected."""
+        db = MagicMock()
+        async def no_peer(stmt):
+            r = MagicMock()
+            r.scalar_one_or_none = lambda: None
+            return r
+        db.execute = AsyncMock(side_effect=no_peer)
+        db.commit = AsyncMock()
+
+        responder = FederationQueryResponder(db=db)
+        req = _sign_initiate(asker_identity)
+        with pytest.raises(FederationQueryError, match="Unknown or revoked"):
+            await responder.handle_initiate(req)
+
+
+# =============================================================================
+# Retrieve
+# =============================================================================
+
+
+class TestHandleRetrieve:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_returns_processing_state(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        init_req = _sign_initiate(asker_identity)
+        init_resp = await responder.handle_initiate(init_req)
+
+        poll = _sign_retrieve(asker_identity, init_resp.request_id)
+        resp = await responder.handle_retrieve(poll)
+        assert resp.status == STATUS_PROCESSING
+        assert resp.progress == PROGRESS_LABEL_RETRIEVING
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unknown_request_id_returns_expired(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        """No oracle — non-existent request_id returns the same status
+        as an actually-expired one. An attacker can't enumerate valid ids."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        poll = _sign_retrieve(asker_identity, "not-a-real-request-id")
+        resp = await responder.handle_retrieve(poll)
+        assert resp.status == STATUS_EXPIRED
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_stolen_request_id_rejected_with_different_pubkey(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        """A paired peer who somehow observed another peer's request_id
+        cannot poll it — the pubkey binding closes that hole."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()
+
+        init_req = _sign_initiate(asker_identity)
+        init_resp = await responder.handle_initiate(init_req)
+
+        # A different asker tries to poll (valid signature with THEIR key).
+        attacker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+        poll = _sign_retrieve(attacker, init_resp.request_id)
+        resp = await responder.handle_retrieve(poll)
+        assert resp.status == STATUS_EXPIRED  # uniform — no oracle
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_terminal_response_is_signed(
+        self, responder_identity, asker_identity, mock_db_with_peer,
+    ):
+        """A completed request returns a response signed with responder
+        identity over `complete_canonical_payload`."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        # Inject a completed pending entry manually (skip the bg task).
+        from services.federation_query_responder import _pending_requests
+        from services.atom_types import Provenance
+
+        pending = _PendingRequest(
+            request_id="test-req-1",
+            asker_pubkey=asker_identity.public_key_hex(),
+            peer_user_id=77,
+            asker_local_user_id=42,
+            max_visible_tier=2,
+            query="q",
+            initiated_at=time.time(),
+            status=STATUS_COMPLETE,
+            progress_label=PROGRESS_LABEL_COMPLETE,
+            answer="Mom said pasta.",
+            provenance=[Provenance(
+                atom_id="AAAA-1111",
+                atom_type="conversation_memory",
+                display_label="from mom's recipes",
+                score=0.87,
+            ).redacted_for_remote()],
+            answered_at=time.time(),
+        )
+        _pending_requests[pending.request_id] = pending
+
+        poll = _sign_retrieve(asker_identity, pending.request_id)
+        resp = await responder.handle_retrieve(poll)
+        assert resp.status == STATUS_COMPLETE
+        assert resp.answer == "Mom said pasta."
+        assert resp.responder_pubkey == responder_identity.public_key_hex()
+        assert resp.responder_signature is not None
+
+        # Asker (a third party holding the responder's pubkey) MUST be
+        # able to verify the signature.
+        ok = FederationIdentity.verify(
+            bytes.fromhex(resp.responder_pubkey),
+            bytes.fromhex(resp.responder_signature),
+            _canonical_bytes(complete_canonical_payload(resp)),
+        )
+        assert ok
+
+
+# =============================================================================
+# Progress rate limiting
+# =============================================================================
+
+
+class TestProgressRateLimit:
+    @pytest.mark.unit
+    def test_emit_progress_caps_at_max_updates(
+        self, responder_identity, asker_identity,
+    ):
+        """Traffic-analysis defence: responder can't phase-by-phase
+        telegraph timing beyond a fixed chunk count."""
+        pending = _PendingRequest(
+            request_id="x",
+            asker_pubkey=asker_identity.public_key_hex(),
+            peer_user_id=1,
+            asker_local_user_id=2,
+            max_visible_tier=2,
+            query="q",
+            initiated_at=time.time(),
+        )
+        for i in range(10):
+            FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
+        assert pending.progress_count == MAX_PROGRESS_UPDATES

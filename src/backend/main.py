@@ -25,6 +25,7 @@ from api.routes import (
     chat_upload,
     circles,
     federation_pairing,
+    federation_query,
     feedback,
     intents,
     knowledge,
@@ -179,6 +180,7 @@ app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowl
 app.include_router(atoms.router, prefix="/api/atoms", tags=["Circles - Atoms"])
 app.include_router(circles.router, prefix="/api/circles", tags=["Circles - Membership"])
 app.include_router(federation_pairing.router, prefix="/api/federation", tags=["Federation - Pairing"])
+app.include_router(federation_query.router, prefix="/api/federation", tags=["Federation - Query"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])
