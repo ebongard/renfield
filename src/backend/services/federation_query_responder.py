@@ -66,6 +66,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import PeerUser
 from services.atom_types import Provenance
+from services.database import AsyncSessionLocal
 from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
@@ -140,20 +141,39 @@ class _PendingRequest:
 _pending_requests: dict[str, _PendingRequest] = {}
 _nonce_cache: OrderedDict[str, float] = OrderedDict()
 
+# Strong references to in-flight background tasks. Without this set the
+# asyncio GC can collect the task mid-run; with it, we also have somewhere
+# to join on shutdown (F5 will add graceful-drain support).
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _clear_state_for_tests() -> None:
     """Test-only reset — every test starts with a clean in-memory view."""
     _pending_requests.clear()
     _nonce_cache.clear()
+    # Cancel any lingering bg tasks from a prior test so they don't
+    # later write to the cleared `_pending_requests` dict.
+    for task in list(_background_tasks):
+        task.cancel()
+    _background_tasks.clear()
 
 
 def _prune_expired(now: float | None = None) -> None:
-    """Drop pending requests past TTL. Called on every initiate/retrieve."""
+    """Drop pending requests past TTL. Called on every initiate/retrieve.
+
+    Iterates over a `list(items())` snapshot so a concurrent initiate
+    that adds a new entry mid-iteration can't raise `RuntimeError:
+    dictionary changed size during iteration` (two coroutines can
+    interleave at any await boundary — not today's call path, but an
+    easy foot-gun to leave).
+    """
     t = now if now is not None else time.time()
-    expired = [rid for rid, pr in _pending_requests.items()
+    expired = [rid for rid, pr in list(_pending_requests.items())
                if t - pr.initiated_at > REQUEST_TTL_SECONDS and pr.status == STATUS_PROCESSING]
     for rid in expired:
-        pr = _pending_requests[rid]
+        pr = _pending_requests.get(rid)
+        if pr is None:
+            continue
         pr.status = STATUS_EXPIRED
         logger.debug(f"Federation query_brain: expired {rid} (peer={pr.peer_user_id})")
 
@@ -255,8 +275,12 @@ class FederationQueryResponder:
         )
 
         # Schedule the background work. The task is fire-and-forget —
-        # asker polls via handle_retrieve.
-        asyncio.create_task(self._run_query(request_id))
+        # asker polls via handle_retrieve. We keep a strong reference
+        # in `_background_tasks` so asyncio's GC doesn't collect it
+        # mid-run (add_done_callback removes the ref on completion).
+        task = asyncio.create_task(self._run_query(request_id))
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return QueryBrainInitiateResponse(
             request_id=request_id,
@@ -308,7 +332,16 @@ class FederationQueryResponder:
 
     async def _run_query(self, request_id: str) -> None:
         """Execute retrieval + synthesis in the background. Never raises —
-        exceptions transition the request to STATUS_FAILED instead."""
+        the outer try/except catches everything (including AttributeError
+        on a None pending or ImportError inside _retrieve) and transitions
+        to STATUS_FAILED, so the asker always sees a terminal status
+        before TTL rather than polling into a timeout.
+
+        CRITICAL: opens its OWN AsyncSession. The request-scoped session
+        that `handle_initiate` used is closed by FastAPI's `get_db`
+        dependency when the route returns, long before this bg task
+        runs. Using `self.db` here would hit a closed session every time.
+        """
         pending = _pending_requests.get(request_id)
         if pending is None:
             return
@@ -316,7 +349,10 @@ class FederationQueryResponder:
         try:
             # Transition: retrieving (chunk+KG+memory RRF).
             self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
-            matches = await self._retrieve(pending)
+
+            # Fresh session scoped to this bg task only.
+            async with AsyncSessionLocal() as session:
+                matches = await self._retrieve(session, pending)
 
             # Transition: synthesizing (Ollama call).
             self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
@@ -336,21 +372,39 @@ class FederationQueryResponder:
             pending.answer = answer
             pending.provenance = provenance
             pending.answered_at = time.time()
-            pending.status = STATUS_COMPLETE
+            # Status set LAST so a concurrent retrieve observing
+            # status=COMPLETE is guaranteed to see answer/provenance.
             pending.progress_label = PROGRESS_LABEL_COMPLETE
+            pending.status = STATUS_COMPLETE
+        except asyncio.CancelledError:
+            # Propagate cancellation (from _clear_state_for_tests or
+            # graceful shutdown). Don't mark failed.
+            raise
         except Exception as e:
             logger.error(
                 f"Federation query_brain: background work failed "
                 f"(request_id={request_id}): {e}"
             )
             pending.error_message = str(e)
-            pending.status = STATUS_FAILED
+            # Fill in answered_at on failure too so _serialize_pending's
+            # `int(pending.answered_at or time.time())` reports the
+            # actual failure moment instead of the poll moment.
+            pending.answered_at = time.time()
             pending.progress_label = PROGRESS_LABEL_FAILED
+            pending.status = STATUS_FAILED
 
-    async def _retrieve(self, pending: _PendingRequest):
-        """Run the polymorphic atom query, scoped to what the asker can see."""
+    async def _retrieve(
+        self,
+        session: AsyncSession,
+        pending: _PendingRequest,
+    ):
+        """Run the polymorphic atom query, scoped to what the asker can see.
+
+        Takes a session parameter rather than reading `self.db` — the bg
+        task opens its own session (see _run_query docstring).
+        """
         from services.polymorphic_atom_store import PolymorphicAtomStore
-        store = PolymorphicAtomStore(self.db)
+        store = PolymorphicAtomStore(session)
         return await store.query(
             query_text=pending.query,
             asker_id=pending.asker_local_user_id or 0,
@@ -365,14 +419,20 @@ class FederationQueryResponder:
         echo the asker's raw query back into other capture surfaces
         (prompt-injection-as-capture defence — design doc § Synthesis
         isolation).
+
+        F3c TODO: replace this stub with a proper Ollama prompt via
+        utils.llm_client. When wiring that up, revisit the synthesis-
+        isolation rules from the design doc: the asker's query MUST
+        NOT be fed into conversation_memory capture, notification
+        bodies, or any other surface that could persist the peer's
+        text into THIS responder's own atoms.
         """
         if not matches:
             return ""
         # Minimal v1 synthesis — concatenate snippets + a short instruction.
-        # F3c will replace this with a proper prompt that calls the local
-        # chat model through utils.llm_client. For F3a the shape of the
-        # answer matters more than its polish.
-        snippets = "\n".join(f"- {m.snippet or ''}"[:200] for m in matches[:5])
+        # The snippet is sliced BEFORE the `- ` prefix so the 198-char
+        # cap is on actual content, not prefix+content.
+        snippets = "\n".join(f"- {(m.snippet or '')[:198]}" for m in matches[:5])
         return (
             f"Based on what I have: {query}\n"
             f"Relevant snippets:\n{snippets}"
@@ -447,7 +507,14 @@ class FederationQueryResponder:
 
     async def _lookup_peer(self, asker_pubkey: str) -> PeerUser:
         """Find the PeerUser row that matches this remote pubkey. Must be
-        not-revoked; pairing must have succeeded in F2 first."""
+        not-revoked; pairing must have succeeded in F2 first.
+
+        last_seen_at is updated as a side effect of a successful auth,
+        but its commit failure is NON-FATAL — a transient DB hiccup here
+        must not surface to the caller as an auth failure. A spammy-but-
+        signed peer could also exploit this path to amplify writes;
+        debouncing is a future F5 task.
+        """
         peer = (await self.db.execute(
             select(PeerUser).where(
                 PeerUser.remote_pubkey == asker_pubkey,
@@ -456,9 +523,15 @@ class FederationQueryResponder:
         )).scalar_one_or_none()
         if peer is None:
             raise FederationQueryError("Unknown or revoked peer")
-        # Update last_seen_at as a side effect of a successful auth.
-        peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
-        await self.db.commit()
+        try:
+            peer.last_seen_at = datetime.now(UTC).replace(tzinfo=None)
+            await self.db.commit()
+        except Exception as e:
+            logger.warning(
+                f"Federation query_brain: last_seen_at update failed "
+                f"(peer_id={peer.id}, non-fatal): {e}"
+            )
+            await self.db.rollback()
         return peer
 
     async def _resolve_asker_tier(

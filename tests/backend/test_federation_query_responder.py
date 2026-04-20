@@ -345,6 +345,99 @@ class TestHandleRetrieve:
 # =============================================================================
 
 
+class TestBackgroundTaskSession:
+    """Regression guard for CRITICAL review finding #1 — bg task MUST
+    open its own AsyncSession. Using the request-scoped session would
+    hit a closed-session error after the initiate HTTP handler returns."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_run_query_opens_fresh_session_via_AsyncSessionLocal(
+        self, responder_identity, asker_identity, monkeypatch,
+    ):
+        """Patch AsyncSessionLocal to track whether _run_query opened
+        its own session — if it reuses self.db, the patched factory
+        is never called."""
+        from services import federation_query_responder as fqr
+
+        factory_calls = 0
+        real_factory = fqr.AsyncSessionLocal
+
+        class _TrackedSession:
+            """Minimal async-ctx-mgr stand-in for AsyncSession."""
+            async def __aenter__(self):
+                return MagicMock()
+            async def __aexit__(self, *a):
+                return False
+
+        def factory():
+            nonlocal factory_calls
+            factory_calls += 1
+            return _TrackedSession()
+
+        monkeypatch.setattr(fqr, "AsyncSessionLocal", factory)
+
+        # Inject a ready-to-run pending entry.
+        pending = _PendingRequest(
+            request_id="bg-test-1",
+            asker_pubkey=asker_identity.public_key_hex(),
+            peer_user_id=1,
+            asker_local_user_id=2,
+            max_visible_tier=2,
+            query="q",
+            initiated_at=time.time(),
+        )
+        fqr._pending_requests[pending.request_id] = pending
+
+        responder = FederationQueryResponder(db=MagicMock())
+        # Stub _retrieve + _synthesize so we only exercise the session-
+        # acquisition path.
+        responder._retrieve = AsyncMock(return_value=[])
+        responder._synthesize = AsyncMock(return_value="answer")
+
+        await responder._run_query(pending.request_id)
+
+        assert factory_calls == 1, (
+            "bg task did not open its own session via AsyncSessionLocal — "
+            "the request-scoped session from handle_initiate would already "
+            "be closed. CRITICAL regression."
+        )
+        # And the pending should be marked COMPLETE by the full run.
+        assert pending.status == STATUS_COMPLETE
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_run_query_outer_try_catches_everything(
+        self, responder_identity, asker_identity,
+    ):
+        """If _retrieve raises any Exception (ImportError, KeyError,
+        anything), the outer try/except must still mark the pending
+        as STATUS_FAILED + set answered_at so the asker sees a
+        terminal status instead of polling into TTL."""
+        from services import federation_query_responder as fqr
+
+        pending = _PendingRequest(
+            request_id="bg-test-fail",
+            asker_pubkey=asker_identity.public_key_hex(),
+            peer_user_id=1,
+            asker_local_user_id=2,
+            max_visible_tier=2,
+            query="q",
+            initiated_at=time.time(),
+        )
+        fqr._pending_requests[pending.request_id] = pending
+
+        responder = FederationQueryResponder(db=MagicMock())
+        responder._retrieve = AsyncMock(side_effect=RuntimeError("boom"))
+
+        # Must not raise out of the bg task.
+        await responder._run_query(pending.request_id)
+
+        assert pending.status == STATUS_FAILED
+        assert pending.error_message == "boom"
+        assert pending.answered_at is not None  # set on failure per fix
+
+
 class TestProgressRateLimit:
     @pytest.mark.unit
     def test_emit_progress_caps_at_max_updates(
