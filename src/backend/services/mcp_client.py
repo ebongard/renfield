@@ -19,7 +19,7 @@ import random
 import re
 import time
 from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -1317,7 +1317,6 @@ class MCPManager:
         final FinalResult dict (same shape execute_tool returns).
         """
         from services.mcp_streaming import (
-            PROGRESS_LABEL_FAILED,
             PROGRESS_LABEL_TOOL_RUNNING,
             PROGRESS_LABELS,
         )
@@ -1381,8 +1380,14 @@ class MCPManager:
             call_coro = state.session.call_tool(
                 tool_info.original_name, arguments, progress_callback=progress_cb,
             )
-        except TypeError:
-            # Older MCP SDK without progress_callback kwarg — degrade gracefully.
+        except TypeError as e:
+            # Narrow catch: only swallow the "unexpected keyword argument
+            # 'progress_callback'" case (pre-ProgressFnT MCP SDK). Any other
+            # TypeError (bad arguments type, missing positional, ...) must
+            # bubble up as a FinalResult error so the consumer sees a real
+            # diagnostic instead of a silent retry that re-raises.
+            if "progress_callback" not in str(e):
+                raise
             logger.debug(
                 f"MCP SDK call_tool has no progress_callback kwarg; "
                 f"{namespaced_name} runs without streaming."
@@ -1408,8 +1413,13 @@ class MCPManager:
             while not progress_queue.empty():
                 yield progress_queue.get_nowait()
         except (asyncio.CancelledError, GeneratorExit):
-            # Consumer closed the generator — cancel the tool call.
+            # Consumer closed the generator — cancel the tool call AND await
+            # it (via suppress) so the task-destroyed-but-pending warning
+            # doesn't fire and any transport-level cleanup runs before we
+            # re-raise.
             call_task.cancel()
+            with suppress(BaseException):
+                await call_task
             raise
 
         # === Yield the final result (same format as execute_tool) ===

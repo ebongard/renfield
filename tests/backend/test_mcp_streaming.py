@@ -352,6 +352,22 @@ class TestExecuteToolStreamingWire:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_unrelated_typeerror_is_not_swallowed(self):
+        """Narrow catch: only the 'unexpected keyword progress_callback'
+        TypeError triggers the fallback. Other TypeErrors (e.g. bad
+        arguments type) must propagate instead of silently retrying."""
+        def bad_call_tool(name, arguments, progress_callback=None):
+            # Simulates a genuinely broken call (e.g. arguments type mismatch)
+            # that happens to raise TypeError without mentioning progress_callback.
+            raise TypeError("arguments must be a dict, got list")
+
+        manager = _streaming_manager(bad_call_tool)
+        with pytest.raises(TypeError, match="must be a dict"):
+            async for _ in manager.execute_tool_streaming("mcp.peer1.query_brain", []):
+                pass
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_non_streaming_server_uses_yield_once_path(self):
         """Servers without `streaming: true` take the existing execute_tool
         wrapper path — no progress callback is wired, no chunks emitted."""
