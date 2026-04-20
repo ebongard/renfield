@@ -113,10 +113,25 @@ class TestAtomTier:
 class TestProvenanceRedaction:
     @pytest.mark.unit
     def test_atom_id_wiped(self):
+        # Per PR #402 review OPTIONAL #15: redaction now uses a random UUID4
+        # per call (not a constant zero UUID) so receivers cannot dedupe atoms
+        # across queries by atom_id. Verify the redacted ID is a valid UUID
+        # and is NOT the original.
+        import uuid as _uuid
         p = Provenance(atom_id="abc-123-real", atom_type="kb_chunk", display_label="from doc", score=0.85)
         redacted = p.redacted_for_remote()
-        assert redacted.atom_id == "00000000-0000-0000-0000-000000000000"
         assert redacted.atom_id != p.atom_id
+        # Should parse as a valid UUID4
+        parsed = _uuid.UUID(redacted.atom_id)
+        assert parsed.version == 4
+
+    @pytest.mark.unit
+    def test_atom_id_redaction_is_per_call(self):
+        # Two calls should yield different redacted IDs (no cross-query correlation).
+        p = Provenance(atom_id="x", atom_type="x", display_label="L", score=0.5)
+        first = p.redacted_for_remote().atom_id
+        second = p.redacted_for_remote().atom_id
+        assert first != second
 
     @pytest.mark.unit
     def test_atom_type_preserved(self):
@@ -263,11 +278,11 @@ class TestPolicyEvaluator:
         )
 
     @pytest.mark.unit
-    def test_empty_atom_policy_allows_anyone_with_membership(self):
-        # No restrictions in atom.policy — any asker with ANY membership passes.
-        # (The owner-passes / public-passes / no-membership fail-closed checks live
-        # in CircleResolver, not PolicyEvaluator.)
-        assert PolicyEvaluator.satisfies(
+    def test_empty_atom_policy_fails_closed(self):
+        # Per PR #402 review BLOCKING #5: empty policy is treated as data corruption,
+        # not "no restrictions". Returns False so atoms with bogus empty policies
+        # don't become world-readable to anyone with any membership.
+        assert not PolicyEvaluator.satisfies(
             atom_policy={},
             asker_memberships={"tier": 4},
             dimensions=_HOME_DIMS,

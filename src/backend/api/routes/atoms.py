@@ -158,10 +158,15 @@ async def update_atom_tier(
 
     For kg_node atoms, this cascades to all incident kg_relations
     (each relation's circle_tier becomes MIN(subject.tier, object.tier)).
+
+    Concurrency: uses SELECT FOR UPDATE on the AtomModel row to lock it
+    until the transaction commits, eliminating the TOCTOU between the
+    owner check and the update_tier call (per PR #402 review SHOULD-FIX #6).
     """
-    # Look up atom owner first to enforce owner-only.
+    # SELECT FOR UPDATE locks the row until commit; concurrent deletes/owner
+    # changes block until we're done.
     atom_orm = (await db.execute(
-        select(AtomModel).where(AtomModel.atom_id == atom_id)
+        select(AtomModel).where(AtomModel.atom_id == atom_id).with_for_update()
     )).scalar_one_or_none()
     if atom_orm is None:
         raise HTTPException(status_code=404, detail="Atom not found")
@@ -174,7 +179,7 @@ async def update_atom_tier(
 
     updated = await service.get_atom(atom_id, asker_id=current_user.id)
     if updated is None:
-        # Shouldn't happen — we just verified ownership above — but defend.
+        # Shouldn't happen — we held the row lock through update_tier — defend.
         logger.error(f"Atom {atom_id} disappeared after update_tier — race?")
         raise HTTPException(status_code=500, detail="Atom update failed")
     return AtomResponse.from_atom(updated)

@@ -120,6 +120,21 @@ def upgrade() -> None:
     bind = op.get_bind()
     dialect = bind.dialect.name
 
+    # SQLite-path guard (per PR #402 review BLOCKING #2):
+    # this migration is postgres-only because the back-fill SQL uses
+    # gen_random_uuid(), CTEs with RETURNING, json_build_object, and LEAST() —
+    # none of which work cleanly across SQLite. The test harness uses
+    # Base.metadata.create_all (services/database.py) and bypasses Alembic
+    # entirely, so this NotImplementedError is purely a guardrail against
+    # someone trying to run `alembic upgrade head` against a SQLite dev DB
+    # and getting a half-migrated schema.
+    if dialect != "postgresql":
+        raise NotImplementedError(
+            f"circles v1 migration is postgres-only; got dialect={dialect!r}. "
+            f"Use Base.metadata.create_all for SQLite test harness, "
+            f"or run this migration only against PostgreSQL."
+        )
+
     # =====================================================================
     # 1. NEW TABLES
     # =====================================================================
@@ -256,12 +271,53 @@ def upgrade() -> None:
         )
 
     # 3d. Populate kg_relations.circle_tier from MIN(subject.tier, object.tier).
+    #     Per PR #402 review BLOCKING #1: surface orphan relations explicitly
+    #     before the back-fill so they don't silently stay at tier=0 forever.
     #     Cascade rule for runtime tier changes lives in AtomService.update_tier.
     if dialect == "postgresql":
+        orphan_count = bind.exec_driver_sql(
+            "SELECT COUNT(*) FROM kg_relations r "
+            "WHERE NOT EXISTS (SELECT 1 FROM kg_entities WHERE id = r.subject_id) "
+            "OR NOT EXISTS (SELECT 1 FROM kg_entities WHERE id = r.object_id)"
+        ).scalar()
+        if orphan_count and int(orphan_count) > 0:
+            from loguru import logger as _migration_logger
+            _migration_logger.warning(
+                f"circles v1 migration: found {orphan_count} orphan kg_relations "
+                f"(subject or object missing). They keep circle_tier=0 (self) and "
+                f"will not be updated by AtomService.update_tier KG cascade. "
+                f"Inspect with: SELECT id, subject_id, object_id FROM kg_relations "
+                f"WHERE NOT EXISTS (SELECT 1 FROM kg_entities WHERE id = subject_id) "
+                f"OR NOT EXISTS (SELECT 1 FROM kg_entities WHERE id = object_id);"
+            )
+
         bind.exec_driver_sql(
             "UPDATE kg_relations r SET circle_tier = LEAST(s.circle_tier, o.circle_tier) "
             "FROM kg_entities s, kg_entities o "
             "WHERE r.subject_id = s.id AND r.object_id = o.id"
+        )
+
+        # 3d-bis: Back-fill missing kg_relations.user_id from subject.user_id
+        # so the atoms back-fill (step 4c) doesn't FK-violate on owner_user_id=0.
+        # Per PR #402 review BLOCKING #12 — kg_relations.user_id is nullable and
+        # historical extraction often leaves it NULL; without this back-fill,
+        # COALESCE(r.user_id, 0) writes a non-existent user reference.
+        bind.exec_driver_sql(
+            "UPDATE kg_relations r SET user_id = s.user_id "
+            "FROM kg_entities s "
+            "WHERE r.subject_id = s.id AND r.user_id IS NULL AND s.user_id IS NOT NULL"
+        )
+
+        # Same defense for kg_entities — back-fill from a system user (id=1, the
+        # default admin). Any kg_entities row with NULL user_id at this point
+        # has no clear ownership; assigning to admin keeps the FK valid and
+        # surfaces the rows for manual reassignment via /api/circles/me UI.
+        bind.exec_driver_sql(
+            "UPDATE kg_entities SET user_id = 1 WHERE user_id IS NULL"
+        )
+        # And for conversation_memories — same rationale.
+        bind.exec_driver_sql(
+            "UPDATE conversation_memories SET user_id = 1 WHERE user_id IS NULL"
         )
 
     # 3e. Populate knowledge_bases.default_circle_tier from is_public.
@@ -414,13 +470,38 @@ def upgrade() -> None:
     # share while integrating into the unified circles framework.
 
     if dialect == "postgresql":
+        # Per PR #402 review SHOULD-FIX #8: surface KBs whose permissions
+        # will be silently lost (KB has permissions but no chunks → INNER JOIN
+        # produces zero rows → no atom_explicit_grants written → DROP TABLE
+        # destroys the data forever).
+        orphan_perm_count = bind.exec_driver_sql(
+            "SELECT COUNT(*) FROM kb_permissions kp "
+            "WHERE NOT EXISTS ("
+            "  SELECT 1 FROM documents d "
+            "  JOIN document_chunks dc ON dc.document_id = d.id "
+            "  WHERE d.knowledge_base_id = kp.knowledge_base_id"
+            ")"
+        ).scalar()
+        if orphan_perm_count and int(orphan_perm_count) > 0:
+            from loguru import logger as _migration_logger
+            _migration_logger.warning(
+                f"circles v1 migration: {orphan_perm_count} kb_permissions rows "
+                f"belong to KBs with no chunks — they will be DROPPED with the "
+                f"kb_permissions table and cannot be recovered. Affected users "
+                f"will need to re-share after the KB has its first upload. "
+                f"To inspect: SELECT kp.* FROM kb_permissions kp WHERE NOT EXISTS "
+                f"(SELECT 1 FROM documents d JOIN document_chunks dc "
+                f"ON dc.document_id = d.id WHERE d.knowledge_base_id = "
+                f"kp.knowledge_base_id);"
+            )
+
         bind.exec_driver_sql(
             "INSERT INTO atom_explicit_grants (atom_id, granted_to_user_id, permission_level, granted_by, granted_at) "
             "SELECT "
             "  dc.atom_id, "
             "  kp.user_id, "
             "  kp.permission, "
-            "  COALESCE(kp.granted_by, 0), "
+            "  COALESCE(kp.granted_by, 1), "
             "  kp.created_at "
             "FROM kb_permissions kp "
             "JOIN documents d ON d.knowledge_base_id = kp.knowledge_base_id "

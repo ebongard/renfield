@@ -130,17 +130,21 @@ class Provenance:
         """
         Returns a copy safe to ship over MCP federation.
 
-        - atom_id replaced with a per-query opaque token (zeros out cross-query
-          correlation). Receivers can't dedupe across queries by atom_id.
+        - atom_id replaced with a per-call random UUID4 (per PR #402 review
+          OPTIONAL #15: a constant zero UUID would let receivers dedupe by
+          atom_id across queries — actually worse than no redaction. Random
+          UUID4 per call breaks the correlation entirely while keeping the
+          shape valid for receivers expecting a UUID-formatted string).
         - atom_type stays (informational; reveals shape, not content).
         - display_label stays (intentionally human-readable, e.g., "from
           Granny's recipes" — no chunk text).
         - score rounded to 1 decimal to reduce inference bandwidth (defends
           against side-channel ranking inference).
         """
+        import uuid as _uuid
         return replace(
             self,
-            atom_id="00000000-0000-0000-0000-000000000000",
+            atom_id=str(_uuid.uuid4()),
             score=round(self.score, 1),
         )
 

@@ -371,7 +371,14 @@ async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
 
     Idempotent — safe to call from any endpoint that needs the user's
     dimension config or default capture policy.
+
+    Concurrency: SELECT-then-INSERT is wrapped in try/except IntegrityError
+    per PR #402 review SHOULD-FIX #7. Two simultaneous first hits to /settings
+    from the same user used to crash with PK collision; the loser now re-SELECTs
+    after the winner's INSERT and returns the existing row.
     """
+    from sqlalchemy.exc import IntegrityError
+
     existing = (await db.execute(
         select(Circle).where(Circle.owner_user_id == owner_user_id)
     )).scalar_one_or_none()
@@ -389,6 +396,16 @@ async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
         default_capture_policy={"tier": 0},
     )
     db.add(new_circle)
-    await db.commit()
-    await db.refresh(new_circle)
-    return new_circle
+    try:
+        await db.commit()
+        await db.refresh(new_circle)
+        return new_circle
+    except IntegrityError:
+        # Concurrent writer beat us; re-SELECT and return the existing row.
+        await db.rollback()
+        existing = (await db.execute(
+            select(Circle).where(Circle.owner_user_id == owner_user_id)
+        )).scalar_one_or_none()
+        if existing is None:
+            raise  # Shouldn't happen; surface the error
+        return existing

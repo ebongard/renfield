@@ -78,7 +78,18 @@ class PolicyEvaluator:
         fail closed (no membership in that dimension = no access).
         Dimensions in asker.memberships but NOT referenced by atom.policy
         are ignored (atom doesn't restrict on that dimension).
+
+        EMPTY POLICY ({}) fails closed — an atom with no access dimensions
+        is meaningless (the contract is "policy MUST specify at least one
+        dimension"); treat as data corruption + deny access.
         """
+        if not atom_policy:
+            logger.warning(
+                "PolicyEvaluator.satisfies received empty atom_policy — failing closed. "
+                "This indicates data corruption or a writer that bypassed AtomService."
+            )
+            return False
+
         for dim_name, atom_value in atom_policy.items():
             if dim_name not in dimensions:
                 # atom references a dimension this deployment doesn't have.
@@ -117,18 +128,26 @@ class PolicyEvaluator:
 
 class CircleResolver:
     """
-    Per-session access resolver. Holds the membership cache for one DB session.
+    Per-process access resolver with class-level membership + grant caches.
 
-    Build one per request, not per atom. Cache lives for the request scope
-    (same as the AsyncSession lifecycle).
+    The caches live on the class (not the instance) so writes in one request
+    immediately invalidate cached entries used by other in-flight requests
+    within the same process. Renfield ships one backend container per
+    docker-compose, so process-wide invalidation is sufficient for v1;
+    multi-worker deployments will need Redis pub/sub in a future phase.
+
+    Build a fresh CircleResolver per AsyncSession; the instance is just a
+    convenience handle (db reference + sugar for `cls.invalidate_*`).
     """
+
+    # Class-level caches — shared across all instances in this process.
+    _membership_cache: dict[tuple[int, int], dict[str, Any] | object] = {}
+    # owner_id, member_id -> dict[dimension, value]  OR  _NOT_A_MEMBER sentinel
+    _explicit_grant_cache: dict[tuple[str, int], bool] = {}
+    # (atom_id, asker_id) -> bool (True = explicit grant exists for asker on atom)
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        # owner_id -> dict[dimension, value]  OR  _NOT_A_MEMBER sentinel
-        self._membership_cache: dict[tuple[int, int], dict[str, Any] | object] = {}
-        # atom_id -> bool (True = explicit grant exists for current asker)
-        self._explicit_grant_cache: dict[tuple[str, int], bool] = {}
 
     async def get_dimensions(self, owner_user_id: int) -> dict[str, DimensionSpec]:
         """
@@ -260,21 +279,24 @@ class CircleResolver:
             return None
         return int(tier_value) if isinstance(tier_value, int) else None
 
-    def invalidate_for_atom(self, atom_id: str) -> None:
+    @classmethod
+    def invalidate_for_atom(cls, atom_id: str) -> None:
         """
-        Clear cached explicit-grant entries for this atom across all askers.
+        Clear cached explicit-grant entries for this atom across ALL askers
+        in ALL in-flight requests within this process.
         Call when an atom's tier changes or an explicit grant is added/removed.
         """
-        keys = [k for k in self._explicit_grant_cache if k[0] == atom_id]
+        keys = [k for k in cls._explicit_grant_cache if k[0] == atom_id]
         for k in keys:
-            self._explicit_grant_cache.pop(k, None)
+            cls._explicit_grant_cache.pop(k, None)
 
-    def invalidate_for_membership(self, circle_owner_id: int, member_user_id: int) -> None:
+    @classmethod
+    def invalidate_for_membership(cls, circle_owner_id: int, member_user_id: int) -> None:
         """
-        Clear cached membership for this owner-member pair.
+        Clear cached membership for this owner-member pair across the process.
         Call when CircleMembership is added/updated/deleted.
         """
-        self._membership_cache.pop((circle_owner_id, member_user_id), None)
+        cls._membership_cache.pop((circle_owner_id, member_user_id), None)
 
 
 # Default home dimension config: single 'tier' ladder with the standard 5 tiers.

@@ -86,16 +86,41 @@ class AtomService:
         If atom.atom_id is empty/sentinel, a fresh UUID4 is minted.
         Otherwise an existing atoms row is looked up by (atom_type,
         source_table, source_id) — the unique index — and updated.
+
+        Concurrency: SELECT-then-INSERT is wrapped in try/except IntegrityError
+        per PR #402 review BLOCKING #3. Two concurrent upserts of the same
+        source row will both miss the SELECT, both attempt INSERT, the loser
+        hits the unique constraint — we catch, rollback, re-SELECT, and update
+        the now-existing row.
+
+        Source-row existence: verified BEFORE issuing the source-table UPDATE
+        so we fail-fast on writers passing payload IDs that don't reference a
+        real row (rather than silently creating an orphan atom).
         """
+        from sqlalchemy.exc import IntegrityError
+
         atom_id = atom.atom_id or str(uuid.uuid4())
         tier = int(atom.policy.get("tier", 0))
+        source_table = _table_for_atom_type(atom.atom_type)
+        source_id = _source_id_for(atom)
 
-        # Check if an atoms row already exists for this source.
+        # Verify the source row actually exists. Fail fast on orphan-creation
+        # attempts (writer passed a stale or made-up source ID).
+        source_exists = (await self.db.execute(
+            text(f"SELECT 1 FROM {source_table} WHERE id = :source_id LIMIT 1"),
+            {"source_id": source_id},
+        )).scalar()
+        if source_exists is None:
+            raise ValueError(
+                f"AtomService.upsert_atom: source row {source_table}.id={source_id} "
+                f"does not exist. Refusing to create orphan atom."
+            )
+
         existing = (await self.db.execute(
             select(AtomModel).where(
                 AtomModel.atom_type == atom.atom_type,
-                AtomModel.source_table == _table_for_atom_type(atom.atom_type),
-                AtomModel.source_id == _source_id_for(atom),
+                AtomModel.source_table == source_table,
+                AtomModel.source_id == source_id,
             )
         )).scalar_one_or_none()
 
@@ -107,17 +132,32 @@ class AtomService:
             new_row = AtomModel(
                 atom_id=atom_id,
                 atom_type=atom.atom_type,
-                source_table=_table_for_atom_type(atom.atom_type),
-                source_id=_source_id_for(atom),
+                source_table=source_table,
+                source_id=source_id,
                 owner_user_id=atom.owner_user_id,
                 policy=dict(atom.policy),
             )
             self.db.add(new_row)
-            await self.db.flush()  # populate atom_id without committing
+            try:
+                await self.db.flush()
+            except IntegrityError:
+                # Concurrent writer beat us. Roll back, re-SELECT, update.
+                await self.db.rollback()
+                existing = (await self.db.execute(
+                    select(AtomModel).where(
+                        AtomModel.atom_type == atom.atom_type,
+                        AtomModel.source_table == source_table,
+                        AtomModel.source_id == source_id,
+                    )
+                )).scalar_one_or_none()
+                if existing is None:
+                    # Shouldn't happen — IntegrityError but no row found?
+                    raise
+                existing.policy = dict(atom.policy)
+                existing.updated_at = datetime.now(UTC).replace(tzinfo=None)
+                atom_id = existing.atom_id
 
         # Update the source row's denormalized circle_tier so SQL filters work.
-        source_table = _table_for_atom_type(atom.atom_type)
-        source_id = _source_id_for(atom)
         await self.db.execute(
             text(
                 f"UPDATE {source_table} SET circle_tier = :tier, atom_id = :atom_id "

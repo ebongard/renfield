@@ -92,14 +92,15 @@ class PolymorphicAtomStore:
         kg_task = KGRetrieval(self.db).get_relevant_context(query_text, user_id=asker_id)
         memory_task = MemoryRetrieval(self.db).retrieve(query_text, user_id=asker_id, limit=candidate_k)
 
-        try:
-            rag_results, kg_context, memory_results = await asyncio.gather(
-                rag_task, kg_task, memory_task,
-                return_exceptions=True,
-            )
-        except Exception as e:
-            logger.warning(f"PolymorphicAtomStore: gather failed: {e}")
-            return []
+        # Per PR #402 review SHOULD-FIX #9: gather(return_exceptions=True) does NOT raise,
+        # so the previous try/except wrapper around it was dead code that swallowed
+        # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
+        # Removing the wrapper — exceptions in retrieval modules are converted to []
+        # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
+        rag_results, kg_context, memory_results = await asyncio.gather(
+            rag_task, kg_task, memory_task,
+            return_exceptions=True,
+        )
 
         rag_matches = _wrap_rag_results(rag_results)
         kg_matches = _wrap_kg_context(kg_context)
@@ -139,6 +140,15 @@ def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:
     for rank, result in enumerate(rag_results, start=1):
         chunk = result.get("chunk", {})
         doc = result.get("document", {})
+        # Per PR #402 review SHOULD-FIX #11: warn-log when atom_id is missing
+        # (should never happen post-migration; if it does, the back-fill skipped
+        # this row or a writer bypassed AtomService).
+        if chunk.get("atom_id") is None:
+            logger.warning(
+                f"PolymorphicAtomStore: chunk id={chunk.get('id')} has no atom_id "
+                f"(post-migration this should not happen — back-fill missed this row "
+                f"or writer bypassed AtomService.upsert_atom)"
+            )
         atom_id = chunk.get("atom_id") or f"kb_chunk:{chunk.get('id', 0)}"
         matches.append(
             AtomMatch(
@@ -246,7 +256,9 @@ def _rrf_merge(
         for match in source_list:
             atom_id = match.atom.atom_id
             scores[atom_id] = scores.get(atom_id, 0.0) + 1.0 / (k + match.rank)
-            if atom_id not in matches_by_id:
+            # Per PR #402 review SHOULD-FIX #10: keep the highest-ranked source
+            # (lowest rank value) for the snippet/score, not first-seen.
+            if atom_id not in matches_by_id or match.rank < matches_by_id[atom_id].rank:
                 matches_by_id[atom_id] = match
 
     sorted_ids = sorted(scores.keys(), key=lambda aid: scores[aid], reverse=True)[:top_k]
