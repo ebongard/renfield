@@ -190,9 +190,9 @@ class Settings(BaseSettings):
     # memory_retrieval.py) instead of the inline code in the legacy megaservices. Default off
     # during the transition; flipped to True per-deploy after regression tests confirm parity;
     # removed entirely once all consumers are migrated and the inline code paths are deleted.
-    circles_use_new_rag: bool = False         # Route RAGService.search through rag_retrieval.RAGRetrieval
-    circles_use_new_kg: bool = False          # Route knowledge_graph_service through kg_retrieval (Lane A2, not yet built)
-    circles_use_new_memory: bool = False      # Route conversation_memory_service through memory_retrieval (Lane A3, not yet built)
+    circles_use_new_rag: bool = False         # Route RAGService.search/get_context through rag_retrieval.RAGRetrieval
+    circles_use_new_kg: bool = False          # Route knowledge_graph_service.get_relevant_context through kg_retrieval.KGRetrieval
+    circles_use_new_memory: bool = False      # Route conversation_memory_service.retrieve* through memory_retrieval.MemoryRetrieval
 
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in

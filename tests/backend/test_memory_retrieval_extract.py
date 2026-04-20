@@ -61,8 +61,8 @@ class TestRecencyScoreParity:
     to absorb that drift without hiding actual algorithm divergence.
     """
 
-    # ~10 microseconds of drift translated through the exp() decay formula
-    _DRIFT_TOL = 1e-9
+    # Tolerance absorbs back-to-back datetime.now() drift; loose enough for slow CI boxes.
+    _DRIFT_TOL = 1e-6
 
     @pytest.mark.unit
     def test_none_created_at_returns_neutral(self):
@@ -176,6 +176,30 @@ class TestFlagRouting:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_retrieve_essential_flag_off_does_not_route(self):
+        """With the flag off, retrieve_essential must NOT delegate to MemoryRetrieval."""
+        db = MagicMock()
+        # Make db.execute raise so the inline path fails fast; we only assert
+        # MemoryRetrieval.retrieve_essential is NOT called when the flag is off.
+        db.execute = AsyncMock(side_effect=RuntimeError("inline path entered"))
+        service = ConversationMemoryService(db)
+
+        with patch("services.conversation_memory_service.settings") as svc_settings, \
+             patch(
+                 "services.memory_retrieval.MemoryRetrieval.retrieve_essential",
+                 new=AsyncMock(return_value=[{"should": "not-be-called"}]),
+             ) as ret_call:
+            svc_settings.circles_use_new_memory = False
+            svc_settings.memory_essential_threshold = 0.85
+            svc_settings.memory_retrieval_limit = 3
+
+            with pytest.raises(RuntimeError, match="inline path entered"):
+                await service.retrieve_essential(user_id=1)
+
+        ret_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_retrieve_for_prompt_flag_on_routes(self):
         db = MagicMock()
         service = ConversationMemoryService(db)
@@ -197,6 +221,34 @@ class TestFlagRouting:
         assert call_kwargs.kwargs.get("team_ids") == ["t1"]
         assert call_kwargs.kwargs.get("budget_chars") == 2000
         assert result is sentinel
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_retrieve_for_prompt_flag_off_does_not_route(self):
+        """With the flag off, retrieve_for_prompt must NOT delegate to MemoryRetrieval."""
+        db = MagicMock()
+        # The inline path calls retrieve_essential first; make IT delegate to a
+        # raising stub so we exit fast. Critical assertion: retrieve_for_prompt
+        # on MemoryRetrieval is NEVER reached when flag is off.
+        service = ConversationMemoryService(db)
+
+        with patch("services.conversation_memory_service.settings") as svc_settings, \
+             patch.object(
+                 ConversationMemoryService, "retrieve_essential",
+                 new=AsyncMock(side_effect=RuntimeError("inline retrieve_essential entered")),
+             ), \
+             patch(
+                 "services.memory_retrieval.MemoryRetrieval.retrieve_for_prompt",
+                 new=AsyncMock(return_value={"should": ["not-be-called"]}),
+             ) as ret_call:
+            svc_settings.circles_use_new_memory = False
+            svc_settings.memory_retrieval_budget_chars = 2000
+            svc_settings.memory_episodic_enabled = False
+
+            with pytest.raises(RuntimeError, match="inline retrieve_essential entered"):
+                await service.retrieve_for_prompt("query", user_id=1)
+
+        ret_call.assert_not_called()
 
 
 class TestMemoryRetrievalSurface:

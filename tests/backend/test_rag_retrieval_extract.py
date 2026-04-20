@@ -133,14 +133,14 @@ class TestFormatContextParity:
     @pytest.mark.unit
     def test_format_empty_results(self):
         legacy = RAGService(MagicMock()).format_context_from_results([])
-        new = RAGRetrieval.format_context_from_results([])
+        new = RAGRetrieval(MagicMock()).format_context_from_results([])
         assert legacy == new == ""
 
     @pytest.mark.unit
     def test_format_single_result(self):
         results = [make_result(1, content="The capital of France is Paris.")]
         legacy = RAGService(MagicMock()).format_context_from_results(results)
-        new = RAGRetrieval.format_context_from_results(results)
+        new = RAGRetrieval(MagicMock()).format_context_from_results(results)
         assert legacy == new
         assert "[Quelle 1: doc_1.pdf, Seite 1]" in new
         assert "The capital of France is Paris." in new
@@ -149,7 +149,7 @@ class TestFormatContextParity:
     def test_format_multiple_results_separator(self):
         results = [make_result(1, content="alpha"), make_result(2, content="beta")]
         legacy = RAGService(MagicMock()).format_context_from_results(results)
-        new = RAGRetrieval.format_context_from_results(results)
+        new = RAGRetrieval(MagicMock()).format_context_from_results(results)
         assert legacy == new
         assert "\n\n---\n\n" in new
 
@@ -158,7 +158,7 @@ class TestFormatContextParity:
         results = [make_result(1)]
         results[0]["chunk"]["section_title"] = "Introduction"
         legacy = RAGService(MagicMock()).format_context_from_results(results)
-        new = RAGRetrieval.format_context_from_results(results)
+        new = RAGRetrieval(MagicMock()).format_context_from_results(results)
         assert legacy == new
         assert "Introduction" in new
 

@@ -536,9 +536,14 @@ class RAGRetrieval:
         results = await self.search(query, top_k, knowledge_base_id)
         return self.format_context_from_results(results)
 
-    @staticmethod
-    def format_context_from_results(results: list[dict[str, Any]]) -> str:
-        """Format pre-fetched search results into context string without re-searching."""
+    def format_context_from_results(self, results: list[dict[str, Any]]) -> str:
+        """Format pre-fetched search results into context string without re-searching.
+
+        Kept as instance method (not @staticmethod) to match the original
+        RAGService.format_context_from_results signature exactly. The body
+        does not use self; the instance binding is preserved for API parity
+        and to avoid breaking any subclass that overrides it.
+        """
         if not results:
             return ""
         context_parts = []
