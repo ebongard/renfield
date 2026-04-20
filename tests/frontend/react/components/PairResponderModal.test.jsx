@@ -63,8 +63,9 @@ describe('PairResponderModal', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /weiter|continue/i }));
 
-    // Should display a field-missing error mentioning a missing key
-    expect(screen.getByText(/signature|nonce|display_name/)).toBeInTheDocument();
+    // Iteration order is initiator_pubkey, signature, nonce, display_name.
+    // initiator_pubkey is present → the first missing key flagged is `signature`.
+    expect(screen.getByText(/Feld "signature" fehlt in der Einladung/)).toBeInTheDocument();
   });
 
   it('rejects expired offer', () => {

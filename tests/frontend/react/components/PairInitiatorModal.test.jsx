@@ -123,10 +123,11 @@ describe('PairInitiatorModal', () => {
     fireEvent.change(textarea, { target: { value: JSON.stringify(wrongNonce) } });
     fireEvent.click(screen.getByRole('button', { name: /weiter|continue/i }));
 
-    await waitFor(() => {
-      // wrongNonce error message
-      expect(apiClient.post).toHaveBeenCalledTimes(1); // still only the offer call
-    });
+    // Assert the specific wrong-nonce error copy + user stays on step 2
+    // (tier picker from step 3 must NOT be present).
+    expect(screen.getByText(/nicht zu dieser einladung/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /kopplung abschließen/i })).not.toBeInTheDocument();
+    expect(apiClient.post).toHaveBeenCalledTimes(1); // still only the offer call
   });
 
   it('calls onPaired on successful complete', async () => {

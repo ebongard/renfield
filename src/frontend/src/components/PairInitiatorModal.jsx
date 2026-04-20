@@ -19,9 +19,10 @@ import TierPicker from './TierPicker';
  *      the handshake (POST /api/federation/pair/complete).
  *
  * Step 2 → 3 validation: response JSON must parse as an object with
- * `responder_pubkey` + `responder_signature` + `nonce` echoing the
- * one we offered. The pair-anchor check happens server-side; we
- * validate shape locally for quick failure.
+ * `responder_pubkey` + `signature` + `nonce` echoing the one we
+ * offered. Field name `signature` (not `responder_signature`) matches
+ * the server's PairingResponse schema. The pair-anchor check happens
+ * server-side; we validate shape locally for quick failure.
  */
 const STEP_OFFER = 'offer';
 const STEP_AWAIT_RESPONSE = 'await_response';
@@ -200,7 +201,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
               onChange={(e) => setResponseText(e.target.value)}
               rows={4}
               className="input font-mono text-xs"
-              placeholder='{"nonce":"...","responder_pubkey":"...","responder_signature":"..."}'
+              placeholder='{"nonce":"...","responder_pubkey":"...","signature":"..."}'
             />
           </div>
 
