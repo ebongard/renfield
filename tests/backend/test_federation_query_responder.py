@@ -319,12 +319,13 @@ class TestDepthAndCycleDetection:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_happy_path_with_realistic_depth_and_path(
-        self, mock_db_with_peer, asker_identity,
+        self, mock_db_with_peer, asker_identity, responder_identity,
     ):
         """Sanity: a standard first-hop request (depth=3, path=[asker])
         is accepted. Regression guard against the schema bump breaking
         the common case."""
         responder = FederationQueryResponder(db=mock_db_with_peer)
+        responder._run_query = AsyncMock()  # skip real synthesis
         req = _sign_initiate(asker_identity)  # defaults: depth=3, path=[asker]
 
         resp = await responder.handle_initiate(req)
@@ -334,7 +335,7 @@ class TestDepthAndCycleDetection:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_tampered_path_breaks_signature(
-        self, mock_db_with_peer, asker_identity,
+        self, mock_db_with_peer, asker_identity, responder_identity,
     ):
         """An adversary stripping `path` on the wire (to hide the chain)
         must fail signature verification — the canonical payload covers

@@ -268,11 +268,18 @@ class FederationQueryResponder:
         if not _record_nonce(req.nonce, now=now):
             raise FederationQueryError("Nonce already seen (replay detected)")
 
-        # F5a — depth + cycle detection. Checked AFTER signature
+        # F5a — depth + cycle hardening. Checked AFTER signature
         # verification because the fields are part of the canonical
-        # payload (an adversary can't strip them). The error text here
-        # is uniformly "federation query failed" at the route layer;
-        # we log the specific reason for operators.
+        # payload (an adversary can't strip them). Errors collapse to a
+        # uniform "federation query failed" at the route layer
+        # (federation_query.py) — no oracle; we log the specific reason
+        # for operators.
+        #
+        # We accept any depth >= 0 without decrementing. depth=0 means
+        # "you're the last stop — no further cascade allowed" and we do
+        # the work normally. A future cascader (Renfield doesn't cascade
+        # today) would decrement before forwarding the new fresh-signed
+        # envelope.
         my_pubkey = self.identity.public_key_hex()
         if req.depth < 0:
             logger.warning(
@@ -287,9 +294,11 @@ class FederationQueryResponder:
                 f"path_len={len(req.path)})"
             )
             raise FederationQueryError("Federation cycle detected")
-        # Asker-side hygiene check: path MUST contain asker_pubkey.
-        # This prevents an adversary from stripping the originator
-        # identity out of the chain to hide provenance.
+        # Path-integrity check: the sender's own pubkey MUST be in the
+        # path. This prevents an adversary from stripping the originator
+        # from the chain to hide provenance. Path entries beyond
+        # asker_pubkey are informational (never trust claims); only the
+        # envelope's signature is authoritative.
         if req.asker_pubkey not in req.path:
             logger.warning(
                 f"Federation query rejected: asker_pubkey not in path "

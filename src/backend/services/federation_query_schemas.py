@@ -73,8 +73,22 @@ class QueryBrainInitiateRequest(BaseModel):
     field (version, asker_pubkey, query, nonce, timestamp, depth, path).
     Responder MUST reject requests whose timestamp falls outside a ±60s
     window, must remember the nonce to reject replays, and (F5a) must
-    reject if `depth <= 0` or its own pubkey already appears in `path`
+    reject if `depth < 0` or its own pubkey already appears in `path`
     (cycle).
+
+    F5a design — `depth` and `path` are hardening fields only. They do
+    NOT grant cross-peer trust:
+      - The envelope's `asker_pubkey` IS the sender, signed with the
+        sender's key, bound to the receiver's pair-anchor. That's the
+        only trust anchor.
+      - `path` is a provenance / cycle-defense marker. Entries beyond
+        `asker_pubkey` (if cascade is ever wired) are informational —
+        a receiver never verifies them against its peer table.
+      - Cascade mechanics (if/when added): the cascader signs a fresh
+        envelope AS THE NEW asker (pair-anchor requires it). The
+        original originator's pubkey lives on in `path[0]` for audit
+        and cycle detection, but the new receiver trusts only its
+        directly paired peer.
 
     Version 2 of the envelope adds `depth` + `path` for F5a. Because the
     federation network is pre-production the bump is hard — v1 peers
@@ -86,18 +100,20 @@ class QueryBrainInitiateRequest(BaseModel):
     query: str = Field(..., max_length=4000)
     nonce: str = Field(..., min_length=16)  # 128-bit, hex-encoded
     timestamp: int  # unix seconds; responder rejects > ±60s from its clock
-    # F5a — remaining hop budget. Asker sets to settings.federation_max_depth.
-    # Each responder that cascades transitively MUST send the downstream
-    # request with depth-1. When depth reaches 0, cascading is impossible
-    # but the current hop's work still happens (the 0 is "you're the last
-    # stop"). Responders short-circuit with a terminal failure only if
-    # they receive depth < 0 OR depth < 1 when they intend to cascade.
+    # F5a — remaining hop budget (resource guard). Asker sets to
+    # settings.federation_max_depth. Responder rejects depth<0. A
+    # future cascader decrements before forwarding. depth=0 means
+    # "you're the last stop — no further cascade allowed but do your
+    # own work"; the responder accepts and processes normally.
     depth: int = Field(default=3, ge=0, le=10)
-    # F5a — asker pubkeys already in the call chain. First-hop queries
-    # carry just the originator's pubkey. Each transitive cascader
-    # appends its own pubkey before sending the downstream request.
-    # Responder rejects if its own pubkey is already in this list
-    # (cycle detection).
+    # F5a — cycle-defense + provenance marker. Carries asker pubkeys
+    # already in the call chain. First-hop queries carry
+    # `[originator_pubkey]`. A future cascader appends its own pubkey
+    # when minting the DOWNSTREAM (fresh-signed) envelope, so the
+    # receiver sees the chain. Receivers reject when their own pubkey
+    # is already in the list (cycle) — but DO NOT treat path entries
+    # as trust claims; only the envelope's `asker_pubkey` signature
+    # is authoritative. Max 10 at schema level bounds path growth.
     path: list[str] = Field(default_factory=list, max_length=10)
     signature: str = Field(..., min_length=128, max_length=128)  # hex
 
@@ -168,10 +184,9 @@ def initiate_canonical_payload(req: QueryBrainInitiateRequest) -> dict[str, Any]
     Shared by signer and verifier to avoid byte drift (same pattern as
     pairing_service._canonical_bytes).
 
-    `depth` and `path` are included so an adversary can't strip the
-    cycle-detection fields after the asker signs — mutation would
-    invalidate the signature. `path` is sorted... actually no, path
-    order matters (it's the call chain). We sign the list as-is.
+    `depth` and `path` are signed so an adversary can't strip them
+    after the fact to bypass cycle detection / hop budget. `path` is
+    encoded in order (it's a call chain, not a set).
     """
     return {
         "version": req.version,
