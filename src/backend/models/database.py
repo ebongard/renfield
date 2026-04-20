@@ -140,6 +140,11 @@ class KnowledgeBase(Base):
     # Public KBs are visible to all users with at least kb.shared permission
     is_public = Column(Boolean, default=False, nullable=False)
 
+    # Circles v1: default circle tier for new chunks of this KB.
+    # Per-chunk circle_tier on document_chunks may override this default.
+    # Back-fill from is_public during pc20260420_circles_v1 migration.
+    default_circle_tier = Column(Integer, nullable=False, default=0)
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
@@ -147,7 +152,10 @@ class KnowledgeBase(Base):
     # Beziehungen
     documents = relationship("Document", back_populates="knowledge_base", cascade="all, delete-orphan")
     owner = relationship("User", back_populates="knowledge_bases", foreign_keys=[owner_id])
-    permissions = relationship("KBPermission", back_populates="knowledge_base", cascade="all, delete-orphan")
+    # Note: KBPermission was removed in circles v1 — explicit per-resource shares
+    # now live on AtomExplicitGrant (per-chunk granularity, MAX-permissive with
+    # circle_tier). Migration code in pc20260420_circles_v1_schema.py preserves
+    # legacy permissions by creating one grant per (chunk, user, permission).
 
 
 class Document(Base):
@@ -236,6 +244,13 @@ class DocumentChunk(Base):
 
     # Additional Metadata (JSON für Flexibilität)
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
+
+    # Circles v1: FK to atoms registry + denormalized circle_tier for SQL filter perf.
+    # atom_id populated by AtomService.upsert_atom in a single transaction with the
+    # source-row write. circle_tier defaults to 0 (self) for fresh-DB rows; back-filled
+    # from parent KB's default_circle_tier during pc20260420_circles_v1 migration.
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
 
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
@@ -422,39 +437,45 @@ class KBPermission(Base):
     """
     Per-user permission for a specific Knowledge Base.
 
-    Allows sharing knowledge bases with specific users at different
-    permission levels (read, write, admin).
+    DEPRECATED in circles v1 — the underlying `kb_permissions` table is DROPPED
+    by pc20260420_circles_v1_schema.py. The ORM class is kept here so existing
+    `from models.database import KBPermission` imports continue to resolve at
+    application startup (preventing app-wide ImportError from breaking the boot
+    path). Consumers that issue SQL against this table at runtime (notably the
+    /api/knowledge/bases/{id}/share endpoint in api/routes/knowledge.py) will
+    fail at query-execution time with "table kb_permissions does not exist".
+
+    Replacement: AtomExplicitGrant (defined at the bottom of this file) provides
+    per-resource exception grants at chunk granularity. The migration above
+    creates one AtomExplicitGrant per (chunk, granted_user, permission) for every
+    pre-existing KBPermission row, preserving the data behind the new model.
+
+    Lane C of the second-brain-circles plan rewrites the legacy share routes
+    to use AtomExplicitGrant directly. Until then, callers of /share break by
+    design — Renfield is not yet live with external users (CEO-review HOLD_SCOPE).
     """
     __tablename__ = "kb_permissions"
 
     id = Column(Integer, primary_key=True, index=True)
     knowledge_base_id = Column(Integer, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-
-    # Permission level: read, write, admin
     permission = Column(String(20), nullable=False, default="read")
-
-    # Who granted this permission
     granted_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-
-    # Timestamps
     created_at = Column(DateTime, default=_utcnow)
 
-    # Unique constraint: one permission entry per user per KB
     __table_args__ = (
         Index('idx_kb_permissions_kb_user', 'knowledge_base_id', 'user_id', unique=True),
     )
 
-    # Relationships
-    knowledge_base = relationship("KnowledgeBase", back_populates="permissions")
+    knowledge_base = relationship("KnowledgeBase", foreign_keys=[knowledge_base_id])
     user = relationship("User", foreign_keys=[user_id])
     granter = relationship("User", foreign_keys=[granted_by])
 
 
-# KB Permission Levels
-KB_PERM_READ = "read"      # Can view and use in RAG
-KB_PERM_WRITE = "write"    # Can add/edit documents
-KB_PERM_ADMIN = "admin"    # Can delete, share with others
+# KB Permission Levels (kept for back-compat with code that imports these constants)
+KB_PERM_READ = "read"
+KB_PERM_WRITE = "write"
+KB_PERM_ADMIN = "admin"
 
 KB_PERMISSION_LEVELS = [KB_PERM_READ, KB_PERM_WRITE, KB_PERM_ADMIN]
 
@@ -721,6 +742,13 @@ class ConversationMemory(Base):
     last_accessed_at = Column(DateTime, nullable=True)
     is_active = Column(Boolean, default=True, index=True)
 
+    # Circles v1: FK to atoms registry + denormalized circle_tier for SQL filter perf.
+    # Back-fill from scope='user'->0(self), 'team'->2(household), 'global'->4(public)
+    # in pc20260420_circles_v1 migration. team_id remains on the row (parked for v2
+    # named-circles per Finding 1.2C).
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
 
@@ -812,12 +840,22 @@ class KGEntity(Base):
     first_seen_at = Column(DateTime, default=_utcnow)
     last_seen_at = Column(DateTime, default=_utcnow)
     is_active = Column(Boolean, default=True, index=True)
-    # Scope references either "personal" or a scope name from kg_scopes.yaml
-    scope = Column(String(50), default=KG_SCOPE_PERSONAL, nullable=False, index=True)
+    # Circles v1: scope column SOFT-DROPPED — the underlying SQL column is dropped
+    # by pc20260420_circles_v1_schema.py, but the ORM column declaration is kept
+    # so existing `KGEntity.scope` references in services/knowledge_graph_service.py
+    # and services/kg_retrieval.py don't ImportError at startup. Queries against
+    # `kg_entities.scope` fail at runtime ("column does not exist") until Lane C
+    # rewrites those callers to use `circle_tier` instead.
+    scope = Column(String(50), default=KG_SCOPE_PERSONAL, nullable=True)
+    # FK to atoms registry + denormalized circle_tier for SQL filter perf.
+    # Back-fill from old scope='personal'->0(self), yaml-defined->2(household)
+    # in pc20260420_circles_v1 migration.
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
 
     __table_args__ = (
         Index('ix_kg_entities_user_active', 'user_id', 'is_active'),
-        Index('ix_kg_entities_scope_active', 'scope', 'is_active'),
+        Index('idx_kg_entities_owner_tier', 'user_id', 'circle_tier'),
     )
 
     user = relationship("User", foreign_keys=[user_id])
@@ -844,6 +882,19 @@ class KGRelation(Base):
     source_session_id = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     is_active = Column(Boolean, default=True, index=True)
+
+    # Circles v1: FK to atoms + denormalized circle_tier.
+    # Back-fill from MIN(subject.circle_tier, object.circle_tier) in
+    # pc20260420_circles_v1 migration. Cascade rule for runtime tier changes
+    # lives in AtomService.update_tier (when a kg_node tier changes, all
+    # incident relations recompute their tier in the same transaction).
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        Index('idx_kg_relations_subj_tier', 'subject_id', 'circle_tier'),
+        Index('idx_kg_relations_obj_tier', 'object_id', 'circle_tier'),
+    )
 
     subject = relationship("KGEntity", foreign_keys=[subject_id], back_populates="subject_relations")
     object = relationship("KGEntity", foreign_keys=[object_id], back_populates="object_relations")
@@ -892,6 +943,172 @@ SYSTEM_SETTING_KEYS = [
 # Paperless Document Audit (moved to ha_glue/models/database.py)
 # Radio Favorites (moved to ha_glue/models/database.py)
 # ==========================================================================
+
+
+# ==========================================================================
+# Circles v1 — concentric privacy access model
+# ==========================================================================
+#
+# Schema overview (per design doc and pc20260420_circles_v1_schema.py):
+#
+#   Circle              per-user dimension config + default capture policy
+#   CircleMembership    (owner, member, dimension, value) — F-Generalize
+#   Atom                polymorphic registry: one row per piece of info
+#                       (chunk / kg_node / kg_edge / conversation_memory)
+#                       with a circle policy (JSON) and FK to source row
+#   AtomExplicitGrant   per-resource exception grant (subsumes legacy
+#                       KBPermission; applied alongside circle tier via
+#                       MAX-permissive semantics)
+#
+# The five tier indices map to DESIGN.md tier visual language:
+#   0 = self        (deepest crimson  #a5162f)
+#   1 = trusted     (brand crimson    #e63e54)
+#   2 = household   (cream            #f0e6d3)
+#   3 = extended    (light turquoise  #71fbd0)
+#   4 = public      (deep turquoise   #00937c)
+
+# Tier integer constants — keep in sync with the alembic migration and
+# CircleResolver. Public surface for callers that need to reference tiers
+# without hard-coding integers.
+TIER_SELF = 0
+TIER_TRUSTED = 1
+TIER_HOUSEHOLD = 2
+TIER_EXTENDED = 3
+TIER_PUBLIC = 4
+
+# Atom type discriminators — one per source table the polymorphic registry
+# wraps. Keep in sync with PolymorphicAtomStore source dispatch.
+ATOM_TYPE_KB_CHUNK = "kb_chunk"
+ATOM_TYPE_KG_NODE = "kg_node"
+ATOM_TYPE_KG_EDGE = "kg_edge"
+ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
+
+# Atom explicit grant permission levels — mirrors the legacy KB_PERM_*
+# values for migration parity.
+ATOM_GRANT_READ = "read"
+ATOM_GRANT_WRITE = "write"
+ATOM_GRANT_ADMIN = "admin"
+
+
+class Circle(Base):
+    """
+    Per-user circle configuration: dimension definitions + default capture policy.
+
+    One row per user that has circles enabled. The dimension_config is a JSON
+    blob that defines the access dimensions for this user's circles (e.g.,
+    {"tier": {"shape": "ladder", "values": [...]}}). For households, only
+    the 'tier' dimension is configured; for enterprise deployments (per Reva),
+    additional 'tenant' or 'project' dimensions can be added.
+
+    The default_capture_policy says what circle membership new atoms are
+    captured at by default for THIS user — privacy-positive default is
+    {"tier": 0} (self).
+    """
+    __tablename__ = "circles"
+
+    owner_user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    dimension_config = Column(JSON, nullable=False)
+    default_capture_policy = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    owner = relationship("User", foreign_keys=[owner_user_id])
+
+
+class CircleMembership(Base):
+    """
+    Per-user-per-dimension membership entry in another user's circles.
+
+    Generalized for F-Generalize: dimension is 'tier' for ladder access (depth-
+    based: self/trusted/household/extended/public) or 'tenant'/'project' for
+    orthogonal-set access (multi-tenant SaaS, matrix orgs).
+
+    Composite PK on (circle_owner, member, dimension) lets a member be in
+    multiple dimensions of the same owner's circles simultaneously
+    (e.g., dimension='tier' value=2 AND dimension='project' value='falcon').
+    """
+    __tablename__ = "circle_memberships"
+
+    circle_owner_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    member_user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    dimension = Column(String(32), primary_key=True)  # 'tier' | 'tenant' | 'project'
+    value = Column(JSON, nullable=False)  # int for ladder, str for set
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    granted_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("idx_memberships_member", "member_user_id", "circle_owner_id"),
+    )
+
+    owner = relationship("User", foreign_keys=[circle_owner_id])
+    member = relationship("User", foreign_keys=[member_user_id])
+    granter = relationship("User", foreign_keys=[granted_by])
+
+
+class Atom(Base):
+    """
+    Polymorphic registry: one row per piece of information that wears a circle.
+
+    Acts as the unified identity layer over heterogeneous source tables
+    (document_chunks, kg_entities, kg_relations, conversation_memories).
+    Source rows carry a denormalized circle_tier for SQL filter performance,
+    but `atoms.policy` is the canonical access policy.
+
+    UUID atom_id is stored as String(36) for portable cross-dialect storage
+    (sqlite test harness + postgres production).
+
+    Source-row writers MUST go through AtomService.upsert_atom — direct
+    INSERTs to source tables are forbidden by code review and a CI lint.
+    """
+    __tablename__ = "atoms"
+
+    atom_id = Column(String(36), primary_key=True)
+    atom_type = Column(String(32), nullable=False, index=True)
+    source_table = Column(String(64), nullable=False)
+    source_id = Column(String(64), nullable=False)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    policy = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("atom_type", "source_table", "source_id", name="uq_atoms_source"),
+        Index("idx_atoms_owner", "owner_user_id"),
+    )
+
+    owner = relationship("User", foreign_keys=[owner_user_id])
+    explicit_grants = relationship(
+        "AtomExplicitGrant",
+        back_populates="atom",
+        cascade="all, delete-orphan",
+    )
+
+
+class AtomExplicitGrant(Base):
+    """
+    Per-resource exception grant — subsumes the legacy KBPermission table.
+
+    Applied alongside circle-tier access via MAX-permissive semantics
+    (see CircleResolver.can_access_atom): an asker has access to an atom if
+    EITHER an explicit grant exists for them OR their tier reaches the atom's
+    circle_tier. Solves the "share THIS one document with THIS one person
+    without changing their tier" use case (the Notion/Drive/Dropbox pattern).
+    """
+    __tablename__ = "atom_explicit_grants"
+
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), primary_key=True)
+    granted_to_user_id = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    permission_level = Column(String(16), nullable=False, default=ATOM_GRANT_READ)
+    granted_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    granted_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("idx_grants_grantee", "granted_to_user_id"),
+    )
+
+    atom = relationship("Atom", back_populates="explicit_grants")
+    grantee = relationship("User", foreign_keys=[granted_to_user_id])
+    granter = relationship("User", foreign_keys=[granted_by])
 
 
 # ==========================================================================
