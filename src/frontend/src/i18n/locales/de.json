@@ -1101,6 +1101,7 @@
     "peerHoursAgo": "vor {{n}} Std.",
     "peerDaysAgo": "vor {{n}} Tagen",
     "revokePeer": "Kopplung aufheben",
+    "peerShowAudit": "Anfragen an diesen Peer anzeigen",
     "revokePeerTitle": "Kopplung aufheben?",
     "revokePeerConfirm": "Kopplung zu {{name}} wirklich beenden? Diese Renfield-Instanz kann danach nicht mehr auf deine geteilten Informationen zugreifen.",
     "peerRevoked": "Kopplung zu {{name}} beendet.",
@@ -1142,5 +1143,27 @@
     "pairAcceptFailed": "Einladung konnte nicht angenommen werden.",
     "pairQrCodeOfferAria": "QR-Code mit signierter Kopplungs-Einladung",
     "pairQrCodeResponseAria": "QR-Code mit signierter Kopplungs-Antwort"
+  },
+  "federationAudit": {
+    "title": "Föderations-Verlauf",
+    "subtitle": "Alle Anfragen, die du an gekoppelte Renfield-Instanzen gestellt hast.",
+    "loadFailed": "Verlauf konnte nicht geladen werden.",
+    "retentionNote": "Einträge werden 90 Tage aufbewahrt und danach automatisch entfernt.",
+    "filteredByPeer": "Gefiltert auf {{name}}.",
+    "clearFilter": "Filter entfernen",
+    "managePeersLink": "Peers verwalten →",
+    "emptyHeadline": "Noch keine föderierten Anfragen",
+    "emptyHint": "Sobald du eine Frage an ein gekoppeltes Renfield stellst, erscheint sie hier.",
+    "queryLabel": "Deine Frage",
+    "answerLabel": "Antwort",
+    "errorLabel": "Fehler",
+    "durationSubSecond": "< 1 Sek.",
+    "durationSeconds": "{{n}} Sek.",
+    "durationMinutes": "{{n}} Min.",
+    "status": {
+      "success": "Erfolgreich beantwortet",
+      "failed": "Fehlgeschlagen",
+      "unknown": "Status unbekannt (abgebrochen)"
+    }
   }
 }

@@ -234,6 +234,30 @@ def _schedule_upload_cleanup():
     )
 
 
+def _schedule_federation_audit_cleanup():
+    """F4d — periodic retention prune of the federation query audit log.
+
+    Pivots on `initiated_at`; hourly cadence matches the upload cleanup
+    pattern. Swallows exceptions the same way so the poller keeps
+    running across transient DB hiccups.
+    """
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(3600)  # 1 hour
+                from services.federation_audit import prune_old_audit_rows
+
+                await prune_old_audit_rows()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Federation audit cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info("Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)")
+
+
 def _schedule_notification_poller(app):
     """Start the MCP notification poller for servers with notifications enabled."""
     if not settings.notification_poller_enabled:
@@ -526,6 +550,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_notification_poller(app)
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
+    _schedule_federation_audit_cleanup()
 
     # Presence / paperless audit / media follow / conversation handoff /
     # Zeroconf satellite discovery are bootstrapped by ha_glue via its

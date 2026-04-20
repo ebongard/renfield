@@ -24,6 +24,7 @@ from api.routes import (
     chat,
     chat_upload,
     circles,
+    federation_audit,
     federation_pairing,
     federation_query,
     feedback,
@@ -181,6 +182,7 @@ app.include_router(atoms.router, prefix="/api/atoms", tags=["Circles - Atoms"])
 app.include_router(circles.router, prefix="/api/circles", tags=["Circles - Membership"])
 app.include_router(federation_pairing.router, prefix="/api/federation", tags=["Federation - Pairing"])
 app.include_router(federation_query.router, prefix="/api/federation", tags=["Federation - Query"])
+app.include_router(federation_audit.router, prefix="/api/federation", tags=["Federation - Audit"])
 
 # WebSocket Routers
 app.include_router(chat_router, tags=["WebSocket Chat"])

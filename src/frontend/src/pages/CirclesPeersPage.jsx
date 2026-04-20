@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
-import { Users, Trash2, Clock, Fingerprint } from 'lucide-react';
+import { Users, Trash2, Clock, Fingerprint, History } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -155,6 +155,14 @@ export default function CirclesPeersPage() {
                 </div>
               </div>
               <div className="sm:ml-4 sm:flex-shrink-0 flex items-center gap-2 mt-3 sm:mt-0">
+                <Link
+                  to={`/brain/audit?peer=${encodeURIComponent(peer.remote_pubkey)}`}
+                  className="btn-icon btn-icon-ghost"
+                  title={t('circles.peerShowAudit')}
+                  aria-label={t('circles.peerShowAudit')}
+                >
+                  <History className="w-4 h-4" />
+                </Link>
                 <button
                   type="button"
                   onClick={() => handleRevoke(peer)}

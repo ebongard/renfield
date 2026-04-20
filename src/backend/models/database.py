@@ -1108,6 +1108,78 @@ class PeerUser(Base):
     owner = relationship("User", foreign_keys=[circle_owner_id])
 
 
+class FederationQueryLog(Base):
+    """
+    Asker-side audit row for each federated query.
+
+    One row per `FederationQueryAsker.query_peer` lifecycle: initiate →
+    poll → finalize. Written by `_execute_federation_streaming` in
+    mcp_client after the asker's terminal yield, so revoked peers,
+    HTTP errors, and signature failures are all captured.
+
+    Privacy: rows are strictly scoped to `user_id` (the asker). The
+    responder has no visibility into this log — responder-side audit
+    (who asked me) is a separate future feature. `query_text` and
+    `answer_excerpt` are stored because a user-facing "what did I ask"
+    feed needs them; both are truncated at write to bound row size.
+
+    Retention: a lifecycle task prunes rows older than
+    `FEDERATION_AUDIT_RETENTION_DAYS` (default 90). `peer_user_id` is
+    nullable + FK-ON-DELETE-SET-NULL so unpairing doesn't cascade-delete
+    historical queries; `peer_pubkey_snapshot` + `peer_display_name_snapshot`
+    preserve who we asked even after the peer_users row is gone.
+
+    Design ref: F4d of the v2 federation lanes.
+    """
+    __tablename__ = "federation_query_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+
+    # Nullable because peer_users can be deleted while audit survives.
+    peer_user_id = Column(
+        Integer, ForeignKey("peer_users.id", ondelete="SET NULL"), nullable=True,
+    )
+    # Snapshots — the peer's identity AT THE TIME of the query. If the
+    # display name changes later or the row is deleted, this still shows
+    # what the user saw when they asked.
+    peer_pubkey_snapshot = Column(String(64), nullable=False)
+    peer_display_name_snapshot = Column(String(255), nullable=False)
+
+    # The asker's own request_id (uuid-ish string from /initiate).
+    request_id = Column(String(64), nullable=True, index=True)
+
+    # The user's question. Truncated at write to MAX_QUERY_TEXT_LEN chars.
+    query_text = Column(Text, nullable=False)
+
+    initiated_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    finalized_at = Column(DateTime, nullable=True)
+
+    # Locked vocabulary: success | expired | failed | unknown. Wider than
+    # FEDERATION_PROGRESS_LABELS on purpose — this captures the asker's
+    # terminal determination, not the responder's progress label.
+    final_status = Column(String(16), nullable=False)
+    # Whether the responder's Ed25519 signature AND pair-anchor both
+    # validated. False on terminal paths that never reached verification
+    # (HTTP error, revoked peer, timeout) as well as on explicit failure.
+    verified_signature = Column(Boolean, nullable=False, default=False)
+
+    # Truncated final answer for at-a-glance display. None on failure paths.
+    answer_excerpt = Column(Text, nullable=True)
+    # Error text on non-success paths. None on success.
+    error_message = Column(Text, nullable=True)
+
+    __table_args__ = (
+        # Primary list query: "my queries, newest first".
+        Index("idx_fed_audit_user_initiated", "user_id", "initiated_at"),
+        # Per-peer filter: "show me everything I've asked Mom".
+        Index("idx_fed_audit_user_peer", "user_id", "peer_pubkey_snapshot"),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    peer = relationship("PeerUser", foreign_keys=[peer_user_id])
+
+
 # ==========================================================================
 # Backwards-compat re-exports from ha_glue.models.database
 # ==========================================================================

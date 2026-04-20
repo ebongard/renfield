@@ -76,7 +76,9 @@ class TestFederationRouting:
         manager._tool_index["mcp.peer_7.query_brain"] = tool
 
         # Stub the PeerUser lookup + FederationQueryAsker at import time.
-        fake_peer = SimpleNamespace(id=7, remote_display_name="Mom", revoked_at=None)
+        fake_peer = SimpleNamespace(
+            id=7, remote_pubkey="a" * 64, remote_display_name="Mom", revoked_at=None,
+        )
         session_mock = AsyncMock()
         result_mock = MagicMock()
         result_mock.scalar_one_or_none = lambda: fake_peer
@@ -207,7 +209,9 @@ class TestFederationRouting:
             namespaced_name="mcp.peer_5.query_brain", description="", input_schema={},
         )
 
-        fake_peer = SimpleNamespace(id=5, remote_display_name="Dad", revoked_at=None)
+        fake_peer = SimpleNamespace(
+            id=5, remote_pubkey="b" * 64, remote_display_name="Dad", revoked_at=None,
+        )
         session_mock = AsyncMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: fake_peer

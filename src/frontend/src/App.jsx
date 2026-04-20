@@ -34,6 +34,7 @@ const BrainPage = lazy(() => import('./pages/BrainPage'));
 const BrainReviewPage = lazy(() => import('./pages/BrainReviewPage'));
 const CirclesSettingsPage = lazy(() => import('./pages/CirclesSettingsPage'));
 const CirclesPeersPage = lazy(() => import('./pages/CirclesPeersPage'));
+const FederationAuditPage = lazy(() => import('./pages/FederationAuditPage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -95,6 +96,11 @@ function AppRoutes() {
             <Route path="/brain/review" element={
               <ProtectedRoute>
                 <BrainReviewPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/brain/audit" element={
+              <ProtectedRoute>
+                <FederationAuditPage />
               </ProtectedRoute>
             } />
             <Route path="/settings/circles" element={

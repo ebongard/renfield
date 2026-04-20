@@ -1101,6 +1101,7 @@
     "peerHoursAgo": "{{n}}h ago",
     "peerDaysAgo": "{{n}}d ago",
     "revokePeer": "Revoke pairing",
+    "peerShowAudit": "Show queries to this peer",
     "revokePeerTitle": "Revoke pairing?",
     "revokePeerConfirm": "Really end pairing with {{name}}? This Renfield will no longer be able to query your shared atoms.",
     "peerRevoked": "Pairing with {{name}} revoked.",
@@ -1142,5 +1143,27 @@
     "pairAcceptFailed": "Couldn't accept the invitation.",
     "pairQrCodeOfferAria": "QR code containing signed pairing invitation",
     "pairQrCodeResponseAria": "QR code containing signed pairing response"
+  },
+  "federationAudit": {
+    "title": "Federation history",
+    "subtitle": "Every query you've sent to a paired Renfield.",
+    "loadFailed": "Couldn't load audit history.",
+    "retentionNote": "Entries are kept for 90 days and then automatically removed.",
+    "filteredByPeer": "Filtered to {{name}}.",
+    "clearFilter": "Clear filter",
+    "managePeersLink": "Manage peers →",
+    "emptyHeadline": "No federated queries yet",
+    "emptyHint": "Once you ask a paired Renfield a question, it shows up here.",
+    "queryLabel": "Your question",
+    "answerLabel": "Answer",
+    "errorLabel": "Error",
+    "durationSubSecond": "< 1 sec",
+    "durationSeconds": "{{n}} sec",
+    "durationMinutes": "{{n}} min",
+    "status": {
+      "success": "Answered successfully",
+      "failed": "Failed",
+      "unknown": "Unknown status (cancelled)"
+    }
   }
 }
