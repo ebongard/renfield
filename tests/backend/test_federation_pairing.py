@@ -254,31 +254,13 @@ class TestNonceCache:
 
 
 class TestCompleteHandshake:
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_replay_rejected(self, tmp_identity, mock_user):
-        """Replay: use the same valid response twice. Second call fails
-        because the nonce was consumed on the first call."""
-        from unittest.mock import AsyncMock
-
-        db = MagicMock()
-        db.execute = AsyncMock()
-        db.commit = AsyncMock()
-        db.refresh = AsyncMock()
-        db.add = MagicMock()
-
-        svc = PairingService(db=db)
-
-        # Create an offer so the nonce lives in the cache
-        offer = svc.create_offer(current_user=mock_user)
-
-        # Build a matching (responder-signed) response using the SAME
-        # identity as a second peer — for this test we use our own key
-        # as if we were both sides (the signature check just needs key+
-        # signature to match — identity of the signer is validated separately).
+    def _make_signed_response(self, tmp_identity, nonce, **overrides):
+        """Build a legitimate responder-signed PairingResponse. Helper
+        for test scenarios that need a valid (or selectively invalid)
+        response without duplicating the sign-roundtrip boilerplate."""
         unsigned = {
             "version": 1,
-            "nonce": offer.nonce,
+            "nonce": nonce,
             "responder_pubkey": tmp_identity.public_key_hex(),
             "responder_user_id": 99,
             "responder_display_name": "Mom",
@@ -286,12 +268,24 @@ class TestCompleteHandshake:
             "my_tier_for_you": 2,
             "accepted_at": int(time.time()),
         }
+        unsigned.update(overrides)
         signature = tmp_identity.sign(_canonical_bytes(unsigned)).hex()
-        response = PairingResponse(**unsigned, signature=signature)
+        return PairingResponse(**unsigned, signature=signature)
 
-        # Mock _upsert_peer_user + _upsert_circle_membership + _get_or_create_circle
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_replay_rejected(self, tmp_identity, mock_user, monkeypatch):
+        """Replay: use the same valid response twice. Second call fails
+        because the nonce was consumed on the first call."""
+        from unittest.mock import AsyncMock
         from services import pairing_service as ps
-        ps._get_or_create_circle = AsyncMock(return_value=MagicMock())
+
+        svc = PairingService(db=MagicMock())
+        offer = svc.create_offer(current_user=mock_user)
+        response = self._make_signed_response(tmp_identity, nonce=offer.nonce)
+
+        # monkeypatch — auto-restored on teardown, no cross-test leak.
+        monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
         svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
         svc._upsert_circle_membership = AsyncMock()
 
@@ -304,22 +298,128 @@ class TestCompleteHandshake:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_bad_tier_rejected(self, tmp_identity, mock_user):
+    async def test_bad_tier_rejected(self, tmp_identity, mock_user, monkeypatch):
         from unittest.mock import AsyncMock
+        from services import pairing_service as ps
+
         svc = PairingService(db=MagicMock())
         offer = svc.create_offer(current_user=mock_user)
-        unsigned = {
-            "version": 1,
-            "nonce": offer.nonce,
-            "responder_pubkey": tmp_identity.public_key_hex(),
-            "responder_user_id": 99,
-            "responder_display_name": "Mom",
-            "accepted_endpoints": [],
-            "my_tier_for_you": 2,
-            "accepted_at": int(time.time()),
-        }
-        sig = tmp_identity.sign(_canonical_bytes(unsigned)).hex()
-        response = PairingResponse(**unsigned, signature=sig)
+        response = self._make_signed_response(tmp_identity, nonce=offer.nonce)
+        monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
+        svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
+        svc._upsert_circle_membership = AsyncMock()
 
         with pytest.raises(PairingError, match="Tier must be"):
             await svc.complete_handshake(mock_user, response, their_tier_for_me=5)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_forged_signature_does_not_burn_nonce(
+        self, tmp_identity, mock_user, monkeypatch,
+    ):
+        """DoS-guard regression (review SHOULD-FIX #3): an attacker who
+        guesses the nonce but can't forge a valid signature must NOT
+        consume the legitimate user's nonce. Signature verify runs
+        before the nonce pop — a forged attempt leaves the nonce
+        available for the real responder's follow-up."""
+        from unittest.mock import AsyncMock
+        from services import pairing_service as ps
+
+        svc = PairingService(db=MagicMock())
+        offer = svc.create_offer(current_user=mock_user)
+
+        # Build a response with a tampered signature (flip a byte).
+        legit = self._make_signed_response(tmp_identity, nonce=offer.nonce)
+        bad_sig = bytearray(bytes.fromhex(legit.signature))
+        bad_sig[0] ^= 0xFF
+        forged = PairingResponse(**{**legit.model_dump(), "signature": bad_sig.hex()})
+
+        monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
+        svc._upsert_peer_user = AsyncMock(return_value=MagicMock(id=1))
+        svc._upsert_circle_membership = AsyncMock()
+
+        # Forged attempt is rejected via signature check, NOT nonce check
+        with pytest.raises(PairingError, match="signature"):
+            await svc.complete_handshake(mock_user, forged, their_tier_for_me=3)
+
+        # Legit response with the same nonce STILL succeeds — nonce survived
+        await svc.complete_handshake(mock_user, legit, their_tier_for_me=3)
+
+
+class TestFullHandshakeRoundtrip:
+    """End-to-end: create_offer → accept_offer → complete_handshake.
+
+    Uses TWO distinct FederationIdentity instances — initiator and
+    responder — to exercise real cross-identity verification. Without
+    this scenario, the three primitives pass individually but a
+    mismatch between any two (shared canonical fn, shared key-loading
+    path) would go unnoticed.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_full_roundtrip(self, tmp_path, monkeypatch):
+        from unittest.mock import AsyncMock
+        from services import pairing_service as ps
+        from services.federation_identity import (
+            FederationIdentity,
+            reset_federation_identity_for_tests,
+            init_federation_identity,
+            get_federation_identity,
+        )
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+
+        _clear_nonce_cache_for_tests()
+
+        # Initiator side: load-or-create a fresh identity at path A.
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "initiator_key")
+        initiator_identity = get_federation_identity()
+        alice = MagicMock(id=1, username="alice")
+
+        # Build an independent responder identity directly (no singleton).
+        # We feed its signatures into accept_offer by monkey-patching the
+        # service's self.identity on a responder-side PairingService.
+        responder_priv = ed25519.Ed25519PrivateKey.generate()
+        responder_identity = FederationIdentity(responder_priv)
+        bob = MagicMock(id=2, username="bob")
+
+        # Step 1: Alice creates an offer.
+        svc_alice = PairingService(db=MagicMock())
+        offer = svc_alice.create_offer(current_user=alice)
+        assert offer.initiator_pubkey == initiator_identity.public_key_hex()
+
+        # Step 2: Bob accepts. Route his PairingService through a mocked
+        # DB + a replaced identity (simulating a second host).
+        svc_bob = PairingService(db=MagicMock())
+        svc_bob.identity = responder_identity  # as if this were Bob's Renfield
+        monkeypatch.setattr(ps, "_get_or_create_circle", AsyncMock(return_value=MagicMock()))
+        svc_bob._upsert_peer_user = AsyncMock(return_value=MagicMock(id=10))
+        svc_bob._upsert_circle_membership = AsyncMock()
+
+        response = await svc_bob.accept_offer(
+            current_user=bob, offer=offer, my_tier_for_you=2,
+        )
+        assert response.nonce == offer.nonce
+        assert response.responder_pubkey == responder_identity.public_key_hex()
+
+        # Step 3: Alice verifies + completes. Crucial: the signature
+        # covering `response` was made by responder_identity, but
+        # verify() must succeed using response.responder_pubkey as the
+        # key material — that's the whole point of peer identity.
+        svc_alice._upsert_peer_user = AsyncMock(return_value=MagicMock(id=20))
+        svc_alice._upsert_circle_membership = AsyncMock()
+
+        peer = await svc_alice.complete_handshake(
+            current_user=alice, response=response, their_tier_for_me=3,
+        )
+        assert peer is not None
+
+        # Alice persisted bob as her peer + bob persisted alice as his peer.
+        svc_alice._upsert_peer_user.assert_awaited_once()
+        svc_bob._upsert_peer_user.assert_awaited_once()
+        # Both sides also issued a CircleMembership (at the respective tiers).
+        svc_alice._upsert_circle_membership.assert_awaited_once()
+        svc_bob._upsert_circle_membership.assert_awaited_once()
+
+        reset_federation_identity_for_tests()

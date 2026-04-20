@@ -140,39 +140,59 @@ def _load_or_generate(path: Path) -> FederationIdentity:
     """
     Read the 32-byte private key from `path`, or generate one and
     write it with 0600 perms. Never logs the key material.
+
+    Race-safe across processes: in-process callers serialize via
+    `_instance_lock`, but two backend workers (gunicorn first-boot,
+    parallel pytest-xdist workers, etc.) could both race through the
+    `path.exists()` check. O_CREAT|O_EXCL picks one winner; the
+    loser catches FileExistsError and re-reads the file the winner
+    just wrote.
     """
+    from cryptography.hazmat.primitives.serialization import (
+        Encoding,
+        NoEncryption,
+        PrivateFormat,
+    )
+
     path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
+
+    def _load_existing() -> FederationIdentity:
         raw = path.read_bytes()
         if len(raw) != 32:
             raise ValueError(
                 f"federation_identity: {path} exists but is {len(raw)} bytes, "
                 f"expected 32 (Ed25519 private key). Refusing to overwrite."
             )
-        private_key = ed25519.Ed25519PrivateKey.from_private_bytes(raw)
+        return FederationIdentity(ed25519.Ed25519PrivateKey.from_private_bytes(raw))
+
+    if path.exists():
+        identity = _load_existing()
         logger.info(f"🔑 Federation identity loaded from {path}")
-    else:
-        private_key = ed25519.Ed25519PrivateKey.generate()
-        from cryptography.hazmat.primitives.serialization import (
-            Encoding,
-            NoEncryption,
-            PrivateFormat,
-        )
-        raw = private_key.private_bytes(
-            encoding=Encoding.Raw,
-            format=PrivateFormat.Raw,
-            encryption_algorithm=NoEncryption(),
-        )
-        # Write with 0600 atomically: create in exclusive-O_CREAT to avoid
-        # a brief window where another process could read a world-readable
-        # file while we chmod.
+        return identity
+
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    raw = private_key.private_bytes(
+        encoding=Encoding.Raw,
+        format=PrivateFormat.Raw,
+        encryption_algorithm=NoEncryption(),
+    )
+    try:
         fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        try:
-            os.write(fd, raw)
-        finally:
-            os.close(fd)
+    except FileExistsError:
+        # Another process raced us to the create. Their key is now on
+        # disk; read it (they had no way to tell us which pubkey they
+        # wrote, so our in-memory `private_key` is discarded).
         logger.info(
-            f"🔑 Federation identity generated at {path} "
-            f"(pubkey={private_key.public_key().public_bytes_raw().hex()[:12]}...)"
+            f"🔑 Federation identity: lost create race at {path}; "
+            f"loading the winner's key"
         )
+        return _load_existing()
+    try:
+        os.write(fd, raw)
+    finally:
+        os.close(fd)
+    logger.info(
+        f"🔑 Federation identity generated at {path} "
+        f"(pubkey={private_key.public_key().public_bytes_raw().hex()[:12]}...)"
+    )
     return FederationIdentity(private_key)

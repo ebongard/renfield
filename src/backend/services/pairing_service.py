@@ -270,13 +270,19 @@ class PairingService:
         initiator-side PeerUser row. `their_tier_for_me` is the tier the
         initiator's local user wants to grant the responder (completes
         the bidirectional trust — two independent tiers, one per direction).
+
+        Check order matters: signature FIRST (non-mutating), then nonce
+        pop (single-use mutation). A forged signature submitted with a
+        guessed nonce would otherwise burn the legitimate user's nonce
+        and DoS their in-flight pairing. Signature verify is cheap and
+        catches 100% of forged responses before we touch state.
         """
-        # Nonce-bind the signature verification to this user before doing
-        # anything else. Uniform PairingError on any failure — no oracle.
+        # Signature verification first — non-mutating, catches forgeries.
+        self._verify_response(response)
+
+        # Only now consume the nonce (single-use, user-bound).
         if not _pop_cached_nonce(response.nonce, current_user.id):
             raise PairingError("Handshake nonce expired, unknown, or issued to a different user")
-
-        self._verify_response(response)
 
         if not (0 <= their_tier_for_me <= 4):
             raise PairingError("Tier must be between 0 and 4")
@@ -428,12 +434,36 @@ class PairingService:
 
 def _canonical_bytes(payload: dict[str, Any]) -> bytes:
     """
-    Canonical JSON (sorted keys, compact separators) is the byte sequence
-    the Ed25519 signature covers on both ends. Any mismatch between signer
-    and verifier canonicalisation means every signature fails — keep this
-    one implementation across create_offer, accept_offer, complete_handshake.
+    Canonical JSON (sorted keys, compact separators, ASCII-escaped,
+    NaN/Infinity rejected) is the byte sequence the Ed25519 signature
+    covers on both ends. Any mismatch between signer and verifier
+    canonicalisation means every signature fails — keep this one
+    implementation across create_offer, accept_offer, complete_handshake.
+
+    Explicit flags defend against:
+      - `allow_nan=False`: Python's json.dumps emits non-standard
+        `NaN`/`Infinity` literals by default; most non-Python JSON
+        libraries reject them. Even though F2 only runs Python peers,
+        the signature must survive any later peer written in Go/Rust/
+        Node (Reva enterprise deployments — per project memory).
+        A malicious initiator embedding `float("nan")` into
+        `offered_endpoints` would produce a signature that non-Python
+        peers can never re-verify.
+      - `ensure_ascii=True`: matches the default, made explicit so
+        peers that override it (to support non-ASCII display names
+        natively) don't silently drift.
+
+    Consumers must ensure `offered_endpoints`/`accepted_endpoints` carry
+    only JSON-safe primitives (str/int/bool/None/list/dict). Pydantic's
+    dict passthrough doesn't reject floats — callers own that validation.
     """
-    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 async def _get_or_create_circle(db: AsyncSession, owner_user_id: int) -> Circle:
