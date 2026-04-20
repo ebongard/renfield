@@ -92,25 +92,41 @@ class TestListPeers:
 class TestTierForPeer:
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_returns_public_when_no_membership(self):
+    async def test_returns_private_when_no_membership(self):
+        """Fail-closed: missing membership row → tier 0 (self), not 4 (public).
+        A UI showing 'public' for a data-integrity bug would mislead the
+        owner into thinking they shared broadly."""
         db = MagicMock()
         r = MagicMock()
         r.scalar_one_or_none = lambda: None
         db.execute = AsyncMock(return_value=r)
 
         tier = await _tier_for_peer(db, owner_id=1, remote_user_id=99)
-        assert tier == 4  # defensive fallback
+        assert tier == 0
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_returns_public_when_remote_user_id_missing(self):
+    async def test_returns_private_when_remote_user_id_missing(self):
+        """Fail-closed for missing remote_user_id. Also: no DB query issued."""
         db = MagicMock()
         db.execute = AsyncMock()
 
         tier = await _tier_for_peer(db, owner_id=1, remote_user_id=None)
-        assert tier == 4
-        # Should not have issued a query
+        assert tier == 0
         db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_returns_private_on_non_integer_value(self):
+        """Malformed membership.value → 0, not 4."""
+        db = MagicMock()
+        membership = MagicMock(value="not-a-number")
+        r = MagicMock()
+        r.scalar_one_or_none = lambda: membership
+        db.execute = AsyncMock(return_value=r)
+
+        tier = await _tier_for_peer(db, owner_id=1, remote_user_id=99)
+        assert tier == 0
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -239,3 +255,88 @@ class TestRevokePeer:
         # Must not raise — revoke is committed even when sync fails.
         await revoke_peer(peer_id=1, request=req, db=db, current_user=user)
         assert peer.revoked_at is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_purges_in_flight_requests_for_revoked_peer(self):
+        """BLOCKING #1 regression: revoked peer must not be able to poll
+        /retrieve for requests they initiated before revocation. The
+        revoke flow purges every _pending_requests entry bound to the
+        peer's pubkey."""
+        from services.federation_query_responder import (
+            _pending_requests,
+            _clear_state_for_tests,
+            _PendingRequest,
+        )
+
+        _clear_state_for_tests()
+
+        peer_pubkey = "a" * 64
+        peer = _peer_row(id_=1, owner_id=42, pubkey=peer_pubkey, remote_user_id=99)
+
+        # Seed two pending requests from this peer + one from a different peer
+        _pending_requests["req-from-peer-1"] = _PendingRequest(
+            request_id="req-from-peer-1",
+            asker_pubkey=peer_pubkey,
+            peer_user_id=1, asker_local_user_id=99, max_visible_tier=2,
+            query="q1", initiated_at=0,
+        )
+        _pending_requests["req-from-peer-2"] = _PendingRequest(
+            request_id="req-from-peer-2",
+            asker_pubkey=peer_pubkey,
+            peer_user_id=1, asker_local_user_id=99, max_visible_tier=2,
+            query="q2", initiated_at=0,
+        )
+        _pending_requests["req-from-other"] = _PendingRequest(
+            request_id="req-from-other",
+            asker_pubkey="b" * 64,  # different peer
+            peer_user_id=2, asker_local_user_id=100, max_visible_tier=2,
+            query="q3", initiated_at=0,
+        )
+
+        db = MagicMock()
+        r = MagicMock()
+        r.scalar_one_or_none = lambda: peer
+        db.execute = AsyncMock(return_value=r)
+        db.commit = AsyncMock()
+
+        req = _mock_request()
+        user = MagicMock(id=42)
+
+        await revoke_peer(peer_id=1, request=req, db=db, current_user=user)
+
+        # Peer's 2 pending requests gone; other peer's 1 request survives.
+        assert "req-from-peer-1" not in _pending_requests
+        assert "req-from-peer-2" not in _pending_requests
+        assert "req-from-other" in _pending_requests
+
+        _clear_state_for_tests()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_invalidates_circle_resolver_cache(self, monkeypatch):
+        """BLOCKING #2 regression: CircleResolver's class-level
+        (owner, member) → tier cache must be invalidated on revoke so
+        any in-flight handler drops the stale pre-revocation tier."""
+        peer = _peer_row(id_=1, owner_id=42, remote_user_id=99)
+        db = MagicMock()
+        r = MagicMock()
+        r.scalar_one_or_none = lambda: peer
+        db.execute = AsyncMock(return_value=r)
+        db.commit = AsyncMock()
+
+        invalidated_with: list[tuple[int, int]] = []
+
+        def fake_invalidate(cls, owner_id, member_user_id):
+            invalidated_with.append((owner_id, member_user_id))
+
+        from services.circle_resolver import CircleResolver
+        monkeypatch.setattr(
+            CircleResolver, "invalidate_for_membership",
+            classmethod(fake_invalidate),
+        )
+
+        user = MagicMock(id=42)
+        await revoke_peer(peer_id=1, request=_mock_request(), db=db, current_user=user)
+
+        assert invalidated_with == [(42, 99)]

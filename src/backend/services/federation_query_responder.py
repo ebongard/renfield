@@ -159,6 +159,29 @@ def _clear_state_for_tests() -> None:
     _background_tasks.clear()
 
 
+def purge_requests_for_pubkey(asker_pubkey: str) -> int:
+    """
+    Drop every in-flight pending request bound to `asker_pubkey`.
+
+    Called by `revoke_peer` so a revoked peer cannot poll /retrieve
+    and receive an answer for a request they initiated before the
+    revocation. Also cancels their background _run_query tasks so
+    they don't finish and write answers into (now-discarded) pending
+    entries.
+
+    Returns count of discarded requests.
+    """
+    discarded = [
+        rid for rid, pr in list(_pending_requests.items())
+        if pr.asker_pubkey == asker_pubkey
+    ]
+    for rid in discarded:
+        _pending_requests.pop(rid, None)
+    # Bg tasks whose pending entry has vanished will find `pending is None`
+    # at the top of _run_query and return quietly — no cancellation needed.
+    return len(discarded)
+
+
 def _prune_expired(now: float | None = None) -> None:
     """Drop pending requests past TTL. Called on every initiate/retrieve.
 

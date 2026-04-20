@@ -177,9 +177,19 @@ async def complete_pair_handshake(
 async def _tier_for_peer(
     db: AsyncSession, owner_id: int, remote_user_id: int | None,
 ) -> int:
-    """Look up the tier this owner granted the given peer at pair time."""
+    """Look up the tier this owner granted the given peer at pair time.
+
+    Fail-closed fallback: returns tier 0 (self / most private) on any
+    data-integrity failure (missing membership row, non-integer value,
+    missing remote_user_id). Tier 4 would mean PUBLIC, which is the
+    opposite of defensive — a row displayed with a permissive tier
+    badge on the peers page could mislead the owner into thinking
+    they'd shared broadly when the underlying record is missing. The
+    F2 pairing flow always writes a membership, so this fallback only
+    fires on data-integrity bugs, and 0 is the safer wrong answer.
+    """
     if remote_user_id is None:
-        return 4  # public — should not happen for paired peers, defensive default
+        return 0
     row = (await db.execute(
         select(CircleMembership).where(
             CircleMembership.circle_owner_id == owner_id,
@@ -188,11 +198,11 @@ async def _tier_for_peer(
         )
     )).scalar_one_or_none()
     if row is None:
-        return 4
+        return 0
     try:
         return int(row.value)
     except (TypeError, ValueError):
-        return 4
+        return 0
 
 
 @router.get("/peers", response_model=PeerListResponse)
@@ -269,6 +279,29 @@ async def revoke_peer(
         )
 
     await db.commit()
+
+    # Invalidate the CircleResolver class-level cache so any in-flight
+    # handler that already cached (owner, member) → tier drops the stale
+    # entry. Without this, retrieval paths keep resolving the peer at
+    # their pre-revocation reach until process restart.
+    if peer.remote_user_id is not None:
+        from services.circle_resolver import CircleResolver
+        CircleResolver.invalidate_for_membership(
+            current_user.id, peer.remote_user_id,
+        )
+
+    # Purge in-flight pending query_brain requests bound to this peer's
+    # pubkey. Without this, a revoked peer could still poll /retrieve
+    # with a request_id from before the revocation and get an answer —
+    # handle_retrieve doesn't re-check revoked_at (the check is in
+    # handle_initiate only). Purging here closes that window in O(pending).
+    from services.federation_query_responder import purge_requests_for_pubkey
+    discarded = purge_requests_for_pubkey(peer.remote_pubkey)
+    if discarded:
+        logger.info(
+            f"🔗 Purged {discarded} in-flight query_brain request(s) "
+            f"for revoked peer {peer.remote_display_name}"
+        )
 
     # Refresh the MCP registry so `mcp.peer_<id>.query_brain` disappears
     # from the agent loop. Non-fatal on failure — the DB is authoritative
