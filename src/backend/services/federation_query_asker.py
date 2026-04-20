@@ -211,13 +211,24 @@ class FederationQueryAsker:
         endpoint: str,
         query_text: str,
     ) -> QueryBrainInitiateResponse | None:
-        """Sign + POST the initiate request. Returns None on HTTP error."""
+        """Sign + POST the initiate request. Returns None on HTTP error.
+
+        F5a — first-hop queries carry `depth=settings.federation_max_depth`
+        and `path=[my_pubkey]`. Any future transitive cascade from a
+        responder must decrement depth and append its own pubkey before
+        re-signing; the asker side (here) never cascades, so we always
+        start fresh.
+        """
+        from utils.config import settings as _settings
+        my_pubkey = self.identity.public_key_hex()
         unsigned = {
-            "version": 1,
-            "asker_pubkey": self.identity.public_key_hex(),
+            "version": 2,
+            "asker_pubkey": my_pubkey,
             "query": query_text,
             "nonce": secrets.token_hex(16),
             "timestamp": int(time.time()),
+            "depth": _settings.federation_max_depth,
+            "path": [my_pubkey],
         }
         signature = self.identity.sign(_canonical_bytes(unsigned)).hex()
         req = QueryBrainInitiateRequest(**unsigned, signature=signature)

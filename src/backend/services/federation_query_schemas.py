@@ -70,15 +70,35 @@ class QueryBrainInitiateRequest(BaseModel):
     Asker-signed request to kick off a federated query.
 
     Signature covers the canonical-JSON encoding of every non-signature
-    field (asker_pubkey, query, nonce, timestamp). Responder MUST
-    reject requests whose timestamp falls outside a ±60s window and
-    must remember the nonce to reject replays.
+    field (version, asker_pubkey, query, nonce, timestamp, depth, path).
+    Responder MUST reject requests whose timestamp falls outside a ±60s
+    window, must remember the nonce to reject replays, and (F5a) must
+    reject if `depth <= 0` or its own pubkey already appears in `path`
+    (cycle).
+
+    Version 2 of the envelope adds `depth` + `path` for F5a. Because the
+    federation network is pre-production the bump is hard — v1 peers
+    will be rejected at signature verification (the canonical payload
+    shape differs). No backwards-compat shim.
     """
-    version: int = 1
+    version: int = 2
     asker_pubkey: str = Field(..., min_length=64, max_length=64)  # hex
     query: str = Field(..., max_length=4000)
     nonce: str = Field(..., min_length=16)  # 128-bit, hex-encoded
     timestamp: int  # unix seconds; responder rejects > ±60s from its clock
+    # F5a — remaining hop budget. Asker sets to settings.federation_max_depth.
+    # Each responder that cascades transitively MUST send the downstream
+    # request with depth-1. When depth reaches 0, cascading is impossible
+    # but the current hop's work still happens (the 0 is "you're the last
+    # stop"). Responders short-circuit with a terminal failure only if
+    # they receive depth < 0 OR depth < 1 when they intend to cascade.
+    depth: int = Field(default=3, ge=0, le=10)
+    # F5a — asker pubkeys already in the call chain. First-hop queries
+    # carry just the originator's pubkey. Each transitive cascader
+    # appends its own pubkey before sending the downstream request.
+    # Responder rejects if its own pubkey is already in this list
+    # (cycle detection).
+    path: list[str] = Field(default_factory=list, max_length=10)
     signature: str = Field(..., min_length=128, max_length=128)  # hex
 
 
@@ -147,6 +167,11 @@ def initiate_canonical_payload(req: QueryBrainInitiateRequest) -> dict[str, Any]
     Return the dict over which `signature` is Ed25519-signed by the asker.
     Shared by signer and verifier to avoid byte drift (same pattern as
     pairing_service._canonical_bytes).
+
+    `depth` and `path` are included so an adversary can't strip the
+    cycle-detection fields after the asker signs — mutation would
+    invalidate the signature. `path` is sorted... actually no, path
+    order matters (it's the call chain). We sign the list as-is.
     """
     return {
         "version": req.version,
@@ -154,6 +179,8 @@ def initiate_canonical_payload(req: QueryBrainInitiateRequest) -> dict[str, Any]
         "query": req.query,
         "nonce": req.nonce,
         "timestamp": req.timestamp,
+        "depth": req.depth,
+        "path": list(req.path),  # copy so later mutations don't alias
     }
 
 

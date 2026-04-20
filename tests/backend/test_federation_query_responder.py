@@ -117,15 +117,26 @@ def _sign_initiate(
     query: str = "what is mom's recipe?",
     nonce: str | None = None,
     timestamp: int | None = None,
+    depth: int = 3,
+    path: list[str] | None = None,
 ) -> QueryBrainInitiateRequest:
+    """Build a signed v2 initiate envelope.
+
+    `path` defaults to `[asker.pubkey]` — the realistic first-hop shape
+    after F5a. Tests that want to exercise cycle detection pass an
+    explicit `path` carrying the responder's own pubkey.
+    """
     import secrets
 
+    my_pubkey = asker.public_key_hex()
     unsigned = {
-        "version": 1,
-        "asker_pubkey": asker.public_key_hex(),
+        "version": 2,
+        "asker_pubkey": my_pubkey,
         "query": query,
         "nonce": nonce or secrets.token_hex(16),
         "timestamp": timestamp if timestamp is not None else int(time.time()),
+        "depth": depth,
+        "path": path if path is not None else [my_pubkey],
     }
     sig = asker.sign(_canonical_bytes(unsigned)).hex()
     return QueryBrainInitiateRequest(**unsigned, signature=sig)
@@ -136,6 +147,8 @@ def _sign_retrieve(
     request_id: str,
     timestamp: int | None = None,
 ) -> QueryBrainRetrieveRequest:
+    # Retrieve envelope is unchanged by F5a (depth/path live only on
+    # /initiate) so version stays 1 for the poll request.
     unsigned = {
         "version": 1,
         "request_id": request_id,
@@ -235,6 +248,105 @@ class TestHandleInitiate:
         req = _sign_initiate(asker_identity)
         with pytest.raises(FederationQueryError, match="Unknown or revoked"):
             await responder.handle_initiate(req)
+
+
+# =============================================================================
+# F5a — depth + cycle detection
+# =============================================================================
+
+
+class TestDepthAndCycleDetection:
+    @pytest.mark.unit
+    def test_negative_depth_rejected_at_parse_time(self, asker_identity):
+        """Pydantic ge=0 on the `depth` field is the first line of
+        defense: a wire-level request with negative depth can't even
+        reach handle_initiate. The handler's own `depth < 0` branch is
+        defense-in-depth for any future non-HTTP entry point."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError, match="greater_than_equal"):
+            _sign_initiate(asker_identity, depth=-1)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_depth_zero_accepted_as_leaf(
+        self, mock_db_with_peer, asker_identity, responder_identity,
+    ):
+        """depth=0 means 'you're the last hop — do the work but don't
+        cascade'. Valid at initiate time; cascading from here would be
+        a responder-side bug, not an asker-side one."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        req = _sign_initiate(asker_identity, depth=0)
+
+        resp = await responder.handle_initiate(req)
+        assert resp.request_id
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_cycle_rejected_when_own_pubkey_in_path(
+        self, mock_db_with_peer, asker_identity, responder_identity,
+    ):
+        """Responder sees its own pubkey in path → refuses to process.
+        This is the defense against A→B→C→B chains."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        my_pubkey = responder_identity.public_key_hex()
+        asker_pubkey = asker_identity.public_key_hex()
+        # Path includes the responder already — mimics a transitive
+        # request that looped back.
+        req = _sign_initiate(
+            asker_identity,
+            path=[asker_pubkey, my_pubkey],
+        )
+
+        with pytest.raises(FederationQueryError, match="cycle"):
+            await responder.handle_initiate(req)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_asker_pubkey_missing_from_path_rejected(
+        self, mock_db_with_peer, asker_identity, responder_identity,
+    ):
+        """Path must include asker_pubkey — stripping it is an attempt
+        to erase the originator from the call chain, which would let
+        an adversary anonymize queries."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        # Sign with a path that omits the asker's own pubkey.
+        req = _sign_initiate(asker_identity, path=["c" * 64])
+
+        with pytest.raises(FederationQueryError, match="path|asker_pubkey"):
+            await responder.handle_initiate(req)
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_happy_path_with_realistic_depth_and_path(
+        self, mock_db_with_peer, asker_identity,
+    ):
+        """Sanity: a standard first-hop request (depth=3, path=[asker])
+        is accepted. Regression guard against the schema bump breaking
+        the common case."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        req = _sign_initiate(asker_identity)  # defaults: depth=3, path=[asker]
+
+        resp = await responder.handle_initiate(req)
+        assert resp.request_id
+        assert resp.accepted_at
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_tampered_path_breaks_signature(
+        self, mock_db_with_peer, asker_identity,
+    ):
+        """An adversary stripping `path` on the wire (to hide the chain)
+        must fail signature verification — the canonical payload covers
+        path, so any mutation invalidates the sig."""
+        responder = FederationQueryResponder(db=mock_db_with_peer)
+        req = _sign_initiate(asker_identity)
+
+        tampered = QueryBrainInitiateRequest(
+            **{**req.model_dump(), "path": []},
+        )
+        with pytest.raises(FederationQueryError, match="Signature"):
+            await responder.handle_initiate(tampered)
 
 
 # =============================================================================

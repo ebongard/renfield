@@ -225,6 +225,14 @@ class Settings(BaseSettings):
     chat_upload_cleanup_enabled: bool = False
     chat_upload_email_account: str = "primary"
 
+    # Federation (v2 — F5a depth + cycle detection)
+    # Max number of federation hops a query can traverse before
+    # responders reject with "too deep". 1 = direct asker→responder
+    # only (no transitive). Default 3 matches the household assumption
+    # of at most A→B→C→D chains; larger values widen the reach but
+    # also the latency + trust surface.
+    federation_max_depth: int = Field(default=3, ge=1, le=10)
+
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
 

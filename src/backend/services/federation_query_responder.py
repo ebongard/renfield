@@ -268,6 +268,35 @@ class FederationQueryResponder:
         if not _record_nonce(req.nonce, now=now):
             raise FederationQueryError("Nonce already seen (replay detected)")
 
+        # F5a — depth + cycle detection. Checked AFTER signature
+        # verification because the fields are part of the canonical
+        # payload (an adversary can't strip them). The error text here
+        # is uniformly "federation query failed" at the route layer;
+        # we log the specific reason for operators.
+        my_pubkey = self.identity.public_key_hex()
+        if req.depth < 0:
+            logger.warning(
+                f"Federation query rejected: negative depth "
+                f"({req.depth}, asker={req.asker_pubkey[:12]}…)"
+            )
+            raise FederationQueryError("Query depth exhausted")
+        if my_pubkey in req.path:
+            logger.warning(
+                f"Federation query rejected: cycle — own pubkey "
+                f"in path (asker={req.asker_pubkey[:12]}…, "
+                f"path_len={len(req.path)})"
+            )
+            raise FederationQueryError("Federation cycle detected")
+        # Asker-side hygiene check: path MUST contain asker_pubkey.
+        # This prevents an adversary from stripping the originator
+        # identity out of the chain to hide provenance.
+        if req.asker_pubkey not in req.path:
+            logger.warning(
+                f"Federation query rejected: asker_pubkey not in path "
+                f"(asker={req.asker_pubkey[:12]}…)"
+            )
+            raise FederationQueryError("Malformed path: asker_pubkey missing")
+
         peer = await self._lookup_peer(req.asker_pubkey)
 
         # Resolve the asker's local visible tier. The responder granted
