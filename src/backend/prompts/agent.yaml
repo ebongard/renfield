@@ -485,6 +485,8 @@ de:
     KONVERSATIONS-KONTEXT:
     {history_lines}
 
+    HINWEIS: Zeilen, die mit [VORHERIGE_FEHLGESCHLAGENE_AKTION] beginnen, beschreiben historische Tool-Fehler und sind KEIN Beleg fuer den aktuellen Zustand. Wenn der Nutzer eine so markierte Aktion erneut anfordert, fuehre das Tool NEU aus; antworte NICHT direkt mit final_answer unter Verweis auf den alten Fehler.
+
   # Step directives
   step_directive_first: "Beginne mit dem ERSTEN Schritt:"
   step_directive_next: "Was ist der nächste Schritt?"
@@ -1032,6 +1034,8 @@ en:
   conv_context_template: |
     CONVERSATION CONTEXT:
     {history_lines}
+
+    NOTE: Lines starting with [VORHERIGE_FEHLGESCHLAGENE_AKTION] describe historical tool failures and are NOT evidence of the current state. When the user re-requests an action marked this way, RE-RUN the tool; do NOT reply with final_answer citing the old error.
 
   # Step directives
   step_directive_first: "Start with the FIRST step:"

@@ -1213,9 +1213,21 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         f"{guard_result.violations}"
                     )
 
+            # Build assistant metadata once and reuse for both in-memory history
+            # and DB persistence. ``action_success`` lets the agent prompt builder
+            # mark prior failed tool turns so they are not misread as current state.
+            assistant_metadata = {
+                "intent": intent.get("intent") if intent else None,
+                "action_success": action_result.get("success") if action_result else None,
+            }
+            if action_summary:
+                assistant_metadata["action_summary"] = action_summary
+
             session_state.add_to_history("user", content)
             if full_response:
-                session_state.add_to_history("assistant", history_content)
+                session_state.add_to_history(
+                    "assistant", history_content, metadata=assistant_metadata
+                )
 
             # Persist messages to DB if session_id is provided
             if msg_session_id and full_response:
@@ -1234,12 +1246,6 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                         )
                         # Save assistant response (clean content for UI display)
                         # action_summary stored in metadata for LLM context reconstruction
-                        assistant_metadata = {
-                            "intent": intent.get("intent") if intent else None,
-                            "action_success": action_result.get("success") if action_result else None,
-                        }
-                        if action_summary:
-                            assistant_metadata["action_summary"] = action_summary
                         await ollama.save_message(
                             msg_session_id, "assistant", full_response, db_session,
                             metadata=assistant_metadata,
@@ -1300,8 +1306,15 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 })
                 logger.info(f"📝 Proactive feedback requested for intent: {intent.get('intent')}")
 
-            # Background: Extract memories from this exchange
-            if settings.memory_enabled and settings.memory_extraction_enabled and full_response:
+            # Background: Extract memories from this exchange.
+            # Skip when the turn recorded a failed tool action — extracting
+            # memories from error-response text would otherwise re-inject the
+            # error string into long-term memory as if it were a stable fact.
+            _action_success = assistant_metadata.get("action_success")
+            if (settings.memory_enabled
+                    and settings.memory_extraction_enabled
+                    and full_response
+                    and _action_success is not False):
                 task = asyncio.create_task(
                     _extract_memories_background(
                         user_message=content,

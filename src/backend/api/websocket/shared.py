@@ -60,9 +60,18 @@ class ConversationSessionState:
             return False
         return (time() - self.last_rag_timestamp) < self.CONTEXT_TIMEOUT_SECONDS
 
-    def add_to_history(self, role: str, content: str):
-        """Add a message to the conversation history."""
-        self.conversation_history.append({"role": role, "content": content})
+    def add_to_history(self, role: str, content: str, metadata: dict | None = None):
+        """Add a message to the conversation history.
+
+        When ``metadata`` is provided it is stored alongside role/content so
+        downstream consumers (e.g. the agent prompt builder) can distinguish
+        successful from failed tool-backed turns. Kept optional for callers
+        that don't track action outcomes.
+        """
+        entry: dict = {"role": role, "content": content}
+        if metadata is not None:
+            entry["metadata"] = metadata
+        self.conversation_history.append(entry)
         # Keep only last N messages in memory
         if len(self.conversation_history) > self.MAX_HISTORY_MESSAGES:
             self.conversation_history = self.conversation_history[-self.MAX_HISTORY_MESSAGES:]

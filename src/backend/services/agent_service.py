@@ -857,6 +857,15 @@ class AgentService:
             for msg in recent:
                 role = "User" if msg.get("role") == "user" else "Assistant"
                 content = _compress_history_message(msg.get("content", ""))
+                # Mark assistant turns where the tool action failed. Without
+                # this marker the LLM has no way to tell a transient past
+                # failure (config bug, network blip) from the current state
+                # and tends to short-circuit to final_answer on retry. The
+                # marker is explicit so the conv_context_template hint can
+                # instruct the LLM to disregard it as current evidence.
+                if (msg.get("role") == "assistant"
+                        and (msg.get("metadata") or {}).get("action_success") is False):
+                    content = f"[VORHERIGE_FEHLGESCHLAGENE_AKTION] {content}"
                 history_lines.append(f"  {role}: {content}")
             conv_context = prompt_manager.get(
                 "agent", "conv_context_template", lang=lang,

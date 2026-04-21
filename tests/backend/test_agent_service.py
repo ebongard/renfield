@@ -874,6 +874,80 @@ class TestAgentServiceRun:
         assert "KONVERSATIONS-KONTEXT" in prompt_content
         assert "Was ist das Wetter?" in prompt_content
 
+    async def _capture_prompt(self, history):
+        """Run one agent turn with the given history and return the rendered prompt."""
+        registry = self._make_registry()
+        ollama = self._make_ollama_mock([
+            '{"action": "final_answer", "answer": "OK", "reason": "Done"}'
+        ])
+        executor = self._make_executor_mock()
+
+        chat_calls = []
+        original_chat = ollama.client.chat
+
+        async def capturing_chat(**kwargs):
+            chat_calls.append(kwargs)
+            return await original_chat(**kwargs)
+
+        ollama.client.chat = capturing_chat
+        _shared_agent_client.chat = capturing_chat
+
+        agent = AgentService(registry, max_steps=5)
+        await collect_steps(
+            agent,
+            message="Bitte das Dokument erneut hochladen",
+            ollama=ollama,
+            executor=executor,
+            conversation_history=history,
+        )
+        assert chat_calls, "Expected at least one LLM call"
+        return chat_calls[0]["messages"][1]["content"]
+
+    @pytest.mark.unit
+    async def test_failed_action_history_marker_present(self):
+        """Prior assistant turn with action_success=False is marked in conv_context.
+
+        Regression guard for the ``stale 403`` bug: without the marker the LLM
+        treats the persisted error as the current state and short-circuits to
+        final_answer on the next turn instead of retrying the tool.
+        """
+        history = [
+            {"role": "user", "content": "Lade das Dokument hoch"},
+            {
+                "role": "assistant",
+                "content": "Fehler beim Hochladen: 403 Forbidden.",
+                "metadata": {"intent": "documents", "action_success": False},
+            },
+        ]
+        prompt_content = await self._capture_prompt(history)
+        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" in prompt_content
+        # The historical failure text is still visible (marker does not drop context)
+        assert "403" in prompt_content
+
+    @pytest.mark.unit
+    async def test_successful_action_history_unmarked(self):
+        """Successful prior turns must NOT carry the failed-action marker."""
+        history = [
+            {"role": "user", "content": "Suche nach Rechnungen"},
+            {
+                "role": "assistant",
+                "content": "5 Rechnungen gefunden.",
+                "metadata": {"intent": "documents", "action_success": True},
+            },
+        ]
+        prompt_content = await self._capture_prompt(history)
+        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" not in prompt_content
+
+    @pytest.mark.unit
+    async def test_history_without_metadata_unmarked(self):
+        """Entries that predate the metadata contract (no metadata key) stay unmarked."""
+        history = [
+            {"role": "user", "content": "Wie ist das Wetter?"},
+            {"role": "assistant", "content": "15°C in Berlin."},
+        ]
+        prompt_content = await self._capture_prompt(history)
+        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" not in prompt_content
+
 
 # ============================================================================
 # Test AgentService — Timeout and Safety
