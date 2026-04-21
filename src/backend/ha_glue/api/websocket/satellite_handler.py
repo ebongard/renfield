@@ -571,9 +571,24 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
                     logger.info(f"💬 Response: '{response_text[:100]}...'")
 
+                    # Build assistant metadata once for both in-memory history and DB
+                    # persistence. ``action_success`` lets the agent prompt builder mark
+                    # prior failed tool turns so they are not misread as current state
+                    # (see #430). The ollama client's pydantic Message model silently
+                    # drops unknown keys, so keeping metadata on the in-memory dict does
+                    # not leak into the LLM call.
+                    assistant_metadata = {
+                        "intent": intent.get("intent") if intent else None,
+                        "action_success": action_result.get("success") if action_result else None,
+                    }
+
                     # Update in-memory conversation history (keep max 5 exchanges = 10 messages)
                     satellite_conversation_history.append({"role": "user", "content": text})
-                    satellite_conversation_history.append({"role": "assistant", "content": response_text})
+                    satellite_conversation_history.append({
+                        "role": "assistant",
+                        "content": response_text,
+                        "metadata": assistant_metadata,
+                    })
                     if len(satellite_conversation_history) > 10:
                         satellite_conversation_history[:] = satellite_conversation_history[-10:]
 
@@ -591,10 +606,7 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
                                 )
                                 await ollama.save_message(
                                     satellite_db_session_id, "assistant", response_text, db_session,
-                                    metadata={
-                                        "intent": intent.get("intent") if intent else None,
-                                        "action_success": action_result.get("success") if action_result else None
-                                    }
+                                    metadata=assistant_metadata,
                                 )
                                 logger.debug(f"💾 Satellite messages saved to DB: {satellite_db_session_id}")
                         except Exception as e:
