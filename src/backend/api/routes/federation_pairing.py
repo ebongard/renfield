@@ -296,7 +296,7 @@ async def revoke_peer(
     # handle_retrieve doesn't re-check revoked_at (the check is in
     # handle_initiate only). Purging here closes that window in O(pending).
     from services.federation_query_responder import purge_requests_for_pubkey
-    discarded = purge_requests_for_pubkey(peer.remote_pubkey)
+    discarded = await purge_requests_for_pubkey(peer.remote_pubkey)
     if discarded:
         logger.info(
             f"🔗 Purged {discarded} in-flight query_brain request(s) "

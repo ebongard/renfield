@@ -55,9 +55,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections import OrderedDict
-from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -70,6 +68,13 @@ from services.database import AsyncSessionLocal
 from services.federation_identity import (
     FederationIdentity,
     get_federation_identity,
+)
+from services.federation_pending_store import (
+    NONCE_WINDOW_SECONDS,
+    REQUEST_TTL_SECONDS,
+    _PendingRequest,
+    get_pending_store,
+    reset_store_for_tests,
 )
 from services.federation_query_schemas import (
     STATUS_COMPLETE,
@@ -94,13 +99,6 @@ from services.mcp_streaming import (
 from services.pairing_service import _canonical_bytes
 from utils.config import settings
 
-
-# Request lifecycle: pending rows live here for 60s (or until terminal).
-REQUEST_TTL_SECONDS = 60
-# Replay defence: nonces remembered for the ±60s window + a grace period.
-NONCE_WINDOW_SECONDS = 60
-NONCE_CACHE_MAX = 4096
-
 # Max progress transitions per request (traffic-analysis defence).
 MAX_PROGRESS_UPDATES = 4
 
@@ -119,110 +117,64 @@ class FederationQueryError(Exception):
 # =============================================================================
 
 
-@dataclass
-class _PendingRequest:
-    """One in-flight federated query, kept until terminal or TTL expiry."""
-    request_id: str
-    asker_pubkey: str
-    peer_user_id: int              # PeerUser.id (the responder-side row)
-    asker_local_user_id: int | None  # membership.member_user_id (None if not member)
-    max_visible_tier: int           # how deep the asker can reach
-    query: str
-    initiated_at: float
-    status: str = STATUS_PROCESSING
-    progress_label: str = PROGRESS_LABEL_RETRIEVING
-    progress_count: int = 0
-    answer: str | None = None
-    provenance: list[Provenance] = field(default_factory=list)
-    answered_at: float | None = None
-    error_message: str | None = None
-
-
-# Single process scope. F5 hardening task: persist to Redis for multi-worker.
-_pending_requests: dict[str, _PendingRequest] = {}
-_nonce_cache: OrderedDict[str, float] = OrderedDict()
-
 # Strong references to in-flight background tasks. Without this set the
 # asyncio GC can collect the task mid-run; with it, we also have somewhere
 # to join on shutdown (F5 will add graceful-drain support).
 _background_tasks: set[asyncio.Task] = set()
 
 
-def _clear_state_for_tests() -> None:
-    """Test-only reset — every test starts with a clean in-memory view."""
-    _pending_requests.clear()
-    _nonce_cache.clear()
+# `_PendingRequest` is now defined in services.federation_pending_store
+# (shared by both the in-memory and Redis backends). Re-exported above
+# for type-hint compatibility with code that imports it from here.
+
+
+async def _clear_state_for_tests() -> None:
+    """Test-only reset — every test starts with a clean view of the
+    pending store + nonce cache, regardless of which backend is in use."""
+    await get_pending_store().clear_for_tests()
     # Cancel any lingering bg tasks from a prior test so they don't
-    # later write to the cleared `_pending_requests` dict.
+    # later write to the (now-cleared) store.
     for task in list(_background_tasks):
         task.cancel()
     _background_tasks.clear()
 
 
-def purge_requests_for_pubkey(asker_pubkey: str) -> int:
+async def purge_requests_for_pubkey(asker_pubkey: str) -> int:
     """
     Drop every in-flight pending request bound to `asker_pubkey`.
 
     Called by `revoke_peer` so a revoked peer cannot poll /retrieve
     and receive an answer for a request they initiated before the
-    revocation. Also cancels their background _run_query tasks so
-    they don't finish and write answers into (now-discarded) pending
-    entries.
+    revocation. Bg tasks whose pending entry has vanished will find
+    `pending is None` at the top of _run_query and return quietly —
+    no cancellation needed.
 
     Returns count of discarded requests.
     """
-    discarded = [
-        rid for rid, pr in list(_pending_requests.items())
-        if pr.asker_pubkey == asker_pubkey
-    ]
-    for rid in discarded:
-        _pending_requests.pop(rid, None)
-    # Bg tasks whose pending entry has vanished will find `pending is None`
-    # at the top of _run_query and return quietly — no cancellation needed.
-    return len(discarded)
+    store = get_pending_store()
+    pending = await store.list_for_pubkey(asker_pubkey)
+    rids = [pr.request_id for pr in pending]
+    await store.delete_many(rids)
+    return len(rids)
 
 
-def _prune_expired(now: float | None = None) -> None:
+async def _prune_expired(now: float | None = None) -> None:
     """Drop pending requests past TTL. Called on every initiate/retrieve.
 
-    Iterates over a `list(items())` snapshot so a concurrent initiate
-    that adds a new entry mid-iteration can't raise `RuntimeError:
-    dictionary changed size during iteration` (two coroutines can
-    interleave at any await boundary — not today's call path, but an
-    easy foot-gun to leave).
+    With the Redis backend, Redis EXPIRE handles eviction directly;
+    this becomes a no-op there. The in-memory backend still does
+    explicit pruning.
     """
-    t = now if now is not None else time.time()
-    expired = [rid for rid, pr in list(_pending_requests.items())
-               if t - pr.initiated_at > REQUEST_TTL_SECONDS and pr.status == STATUS_PROCESSING]
-    for rid in expired:
-        pr = _pending_requests.get(rid)
-        if pr is None:
-            continue
-        pr.status = STATUS_EXPIRED
-        logger.debug(f"Federation query_brain: expired {rid} (peer={pr.peer_user_id})")
+    await get_pending_store().prune_expired(now=now)
 
 
-def _record_nonce(nonce: str, now: float) -> bool:
+async def _record_nonce(nonce: str, now: float) -> bool:
     """
-    Returns True iff the nonce is new. Evicts old entries past the
-    window so the cache stays bounded. LRU-ordered by insertion time.
+    Returns True iff the nonce is new. Delegates to the configured
+    store so multi-worker deploys (Redis backend) get cross-worker
+    replay defense.
     """
-    # Drop entries outside the timestamp window — they're outside the
-    # replay-rejection window anyway.
-    while _nonce_cache:
-        oldest_nonce, oldest_at = next(iter(_nonce_cache.items()))
-        if now - oldest_at > NONCE_WINDOW_SECONDS:
-            _nonce_cache.pop(oldest_nonce, None)
-        else:
-            break
-
-    if nonce in _nonce_cache:
-        return False
-    if len(_nonce_cache) >= NONCE_CACHE_MAX:
-        # Shouldn't happen in practice; evict oldest to make room.
-        _nonce_cache.popitem(last=False)
-    _nonce_cache[nonce] = now
-    return True
+    return await get_pending_store().record_nonce(nonce, now)
 
 
 # =============================================================================
@@ -265,7 +217,7 @@ class FederationQueryResponder:
                 "Timestamp outside ±60s window (clock skew or replay)"
             )
 
-        if not _record_nonce(req.nonce, now=now):
+        if not await _record_nonce(req.nonce, now=now):
             raise FederationQueryError("Nonce already seen (replay detected)")
 
         # F5b — inbound rate limit keyed by asker_pubkey. Checked AFTER
@@ -338,8 +290,8 @@ class FederationQueryResponder:
         )
 
         request_id = str(uuid.uuid4())
-        _prune_expired(now=now)
-        _pending_requests[request_id] = _PendingRequest(
+        await _prune_expired(now=now)
+        await get_pending_store().put(_PendingRequest(
             request_id=request_id,
             asker_pubkey=req.asker_pubkey,
             peer_user_id=peer.id,
@@ -347,7 +299,7 @@ class FederationQueryResponder:
             max_visible_tier=max_visible_tier,
             query=req.query,
             initiated_at=now,
-        )
+        ))
 
         # Schedule the background work. The task is fire-and-forget —
         # asker polls via handle_retrieve. We keep a strong reference
@@ -381,8 +333,8 @@ class FederationQueryResponder:
         if abs(now - req.timestamp) > NONCE_WINDOW_SECONDS:
             raise FederationQueryError("Poll timestamp outside window")
 
-        _prune_expired(now=now)
-        pending = _pending_requests.get(req.request_id)
+        await _prune_expired(now=now)
+        pending = await get_pending_store().get(req.request_id)
         if pending is None:
             # Uniform: treat unknown + expired identically — no
             # existence-oracle on request_ids.
@@ -417,20 +369,21 @@ class FederationQueryResponder:
         dependency when the route returns, long before this bg task
         runs. Using `self.db` here would hit a closed session every time.
         """
-        pending = _pending_requests.get(request_id)
+        store = get_pending_store()
+        pending = await store.get(request_id)
         if pending is None:
             return
 
         try:
             # Transition: retrieving (chunk+KG+memory RRF).
-            self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
+            await self._emit_progress(pending, PROGRESS_LABEL_RETRIEVING)
 
             # Fresh session scoped to this bg task only.
             async with AsyncSessionLocal() as session:
                 matches = await self._retrieve(session, pending)
 
             # Transition: synthesizing (Ollama call).
-            self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
+            await self._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
             answer = await self._synthesize(pending.query, matches)
 
             # Build redacted provenance list for the response.
@@ -451,6 +404,7 @@ class FederationQueryResponder:
             # status=COMPLETE is guaranteed to see answer/provenance.
             pending.progress_label = PROGRESS_LABEL_COMPLETE
             pending.status = STATUS_COMPLETE
+            await store.save(pending)
         except asyncio.CancelledError:
             # Propagate cancellation (from _clear_state_for_tests or
             # graceful shutdown). Don't mark failed.
@@ -467,6 +421,7 @@ class FederationQueryResponder:
             pending.answered_at = time.time()
             pending.progress_label = PROGRESS_LABEL_FAILED
             pending.status = STATUS_FAILED
+            await store.save(pending)
 
     async def _retrieve(
         self,
@@ -681,9 +636,12 @@ class FederationQueryResponder:
             return 0
 
     @staticmethod
-    def _emit_progress(pending: _PendingRequest, label: str) -> None:
-        """Update progress label (rate-limited to MAX_PROGRESS_UPDATES)."""
+    async def _emit_progress(pending: _PendingRequest, label: str) -> None:
+        """Update progress label (rate-limited to MAX_PROGRESS_UPDATES).
+        Writes through to the pending store so other workers polling
+        /retrieve see the new label."""
         if pending.progress_count >= MAX_PROGRESS_UPDATES:
             return
         pending.progress_label = label
         pending.progress_count += 1
+        await get_pending_store().save(pending)

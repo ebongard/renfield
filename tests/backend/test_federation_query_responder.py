@@ -27,13 +27,16 @@ from services.federation_identity import (
     init_federation_identity,
     reset_federation_identity_for_tests,
 )
+from services.federation_pending_store import (
+    _PendingRequest,
+    get_pending_store,
+    reset_store_for_tests,
+)
 from services.federation_query_responder import (
     FederationQueryError,
     FederationQueryResponder,
     MAX_PROGRESS_UPDATES,
-    _PendingRequest,
     _clear_state_for_tests,
-    _pending_requests,
 )
 from services.federation_query_schemas import (
     STATUS_COMPLETE,
@@ -60,14 +63,16 @@ from services.pairing_service import _canonical_bytes
 
 
 @pytest.fixture
-def responder_identity(tmp_path):
+async def responder_identity(tmp_path):
     """Fresh federation identity for the responder side + reset state."""
     reset_federation_identity_for_tests()
     init_federation_identity(tmp_path / "responder_key")
-    _clear_state_for_tests()
+    reset_store_for_tests()  # Force re-select of InMemory backend each test
+    await _clear_state_for_tests()
     yield get_federation_identity()
     reset_federation_identity_for_tests()
-    _clear_state_for_tests()
+    await _clear_state_for_tests()
+    reset_store_for_tests()
 
 
 @pytest.fixture
@@ -183,7 +188,8 @@ class TestHandleInitiate:
         assert resp.accepted_at >= 0
 
         # Pending entry exists with the correct asker_pubkey binding.
-        pending = _pending_requests[resp.request_id]
+        pending = await get_pending_store().get(resp.request_id)
+        assert pending is not None
         assert pending.asker_pubkey == asker_identity.public_key_hex()
         assert pending.peer_user_id == 77
         assert pending.max_visible_tier == 2
@@ -412,7 +418,6 @@ class TestHandleRetrieve:
         identity over `complete_canonical_payload`."""
         responder = FederationQueryResponder(db=mock_db_with_peer)
         # Inject a completed pending entry manually (skip the bg task).
-        from services.federation_query_responder import _pending_requests
         from services.atom_types import Provenance
 
         pending = _PendingRequest(
@@ -434,7 +439,7 @@ class TestHandleRetrieve:
             ).redacted_for_remote()],
             answered_at=time.time(),
         )
-        _pending_requests[pending.request_id] = pending
+        await get_pending_store().put(pending)
 
         poll = _sign_retrieve(asker_identity, pending.request_id)
         resp = await responder.handle_retrieve(poll)
@@ -500,7 +505,7 @@ class TestBackgroundTaskSession:
             query="q",
             initiated_at=time.time(),
         )
-        fqr._pending_requests[pending.request_id] = pending
+        await get_pending_store().put(pending)
 
         responder = FederationQueryResponder(db=MagicMock())
         # Stub _retrieve + _synthesize so we only exercise the session-
@@ -515,8 +520,9 @@ class TestBackgroundTaskSession:
             "the request-scoped session from handle_initiate would already "
             "be closed. CRITICAL regression."
         )
-        # And the pending should be marked COMPLETE by the full run.
-        assert pending.status == STATUS_COMPLETE
+        # Re-fetch because the bg task saves back through the store.
+        pending_after = await get_pending_store().get(pending.request_id)
+        assert pending_after.status == STATUS_COMPLETE
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -538,7 +544,7 @@ class TestBackgroundTaskSession:
             query="q",
             initiated_at=time.time(),
         )
-        fqr._pending_requests[pending.request_id] = pending
+        await get_pending_store().put(pending)
 
         responder = FederationQueryResponder(db=MagicMock())
         responder._retrieve = AsyncMock(side_effect=RuntimeError("boom"))
@@ -546,14 +552,16 @@ class TestBackgroundTaskSession:
         # Must not raise out of the bg task.
         await responder._run_query(pending.request_id)
 
-        assert pending.status == STATUS_FAILED
-        assert pending.error_message == "boom"
-        assert pending.answered_at is not None  # set on failure per fix
+        pending_after = await get_pending_store().get(pending.request_id)
+        assert pending_after.status == STATUS_FAILED
+        assert pending_after.error_message == "boom"
+        assert pending_after.answered_at is not None  # set on failure per fix
 
 
 class TestProgressRateLimit:
+    @pytest.mark.asyncio
     @pytest.mark.unit
-    def test_emit_progress_caps_at_max_updates(
+    async def test_emit_progress_caps_at_max_updates(
         self, responder_identity, asker_identity,
     ):
         """Traffic-analysis defence: responder can't phase-by-phase
@@ -567,6 +575,7 @@ class TestProgressRateLimit:
             query="q",
             initiated_at=time.time(),
         )
+        await get_pending_store().put(pending)
         for i in range(10):
-            FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
+            await FederationQueryResponder._emit_progress(pending, PROGRESS_LABEL_SYNTHESIZING)
         assert pending.progress_count == MAX_PROGRESS_UPDATES

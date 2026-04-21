@@ -244,6 +244,14 @@ class Settings(BaseSettings):
     # use, tight enough that abuse is obvious.
     federation_responder_rate_per_minute: int = Field(default=30, ge=1, le=600)
 
+    # Federation (F5c — Redis-backed pending requests).
+    # Default off: single-backend deploys (the Renfield default) keep
+    # the in-memory store with no behavioral change. Flip on for
+    # multi-worker deploys so a poll landing on a different worker
+    # than the initiate can still read state, AND so nonce dedup works
+    # across workers (replay defense).
+    federation_pending_use_redis: bool = False
+
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
 
