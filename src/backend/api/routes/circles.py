@@ -37,7 +37,7 @@ from models.database import (
     CircleMembership,
     User,
 )
-from services.auth_service import get_current_user
+from services.auth_service import get_user_or_default
 from services.circle_resolver import CircleResolver
 from services.database import get_db
 
@@ -102,7 +102,7 @@ class AtomReviewResponse(BaseModel):
 @router.get("/me/settings", response_model=CircleSettingsResponse)
 async def get_settings(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Return the authenticated user's circle settings."""
     circle = await _get_or_create_circle(db, current_user.id)
@@ -119,7 +119,7 @@ async def get_settings(
 async def update_settings(
     body: UpdateSettingsRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Partial update of dimension_config and/or default_capture_policy."""
     circle = await _get_or_create_circle(db, current_user.id)
@@ -147,7 +147,7 @@ async def update_settings(
 @router.get("/me/members", response_model=list[MembershipResponse])
 async def list_members(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     List every member across every dimension of my circles.
@@ -193,7 +193,7 @@ async def list_members(
 async def add_member(
     body: AddMemberRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Add a member to one of my dimensions (or update if already present)."""
     if body.member_user_id == current_user.id:
@@ -246,7 +246,7 @@ async def update_member(
     user_id: int,
     body: UpdateMemberRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Change one dimension's value for a member."""
     existing = (await db.execute(
@@ -285,7 +285,7 @@ async def remove_member(
     user_id: int,
     dimension: str | None = None,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Remove a member from a specific dimension (?dimension=tier),
@@ -320,7 +320,7 @@ async def atoms_for_review(
     days: int = 7,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Brain Review Queue — atoms captured in the last N days, owner-only.

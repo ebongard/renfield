@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import Atom as AtomModel, User
 from services.atom_service import AtomService
 from services.atom_types import Atom
-from services.auth_service import get_current_user
+from services.auth_service import get_user_or_default
 from services.circle_resolver import CircleResolver, atom_from_orm
 from services.database import get_db
 from services.polymorphic_atom_store import PolymorphicAtomStore
@@ -94,7 +94,7 @@ async def query_atoms(
     q: str = "",
     top_k: int = 20,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Query atoms accessible to the current user.
@@ -130,7 +130,7 @@ async def query_atoms(
 async def get_atom(
     atom_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Fetch a single atom by ID.
@@ -151,7 +151,7 @@ async def update_atom_tier(
     atom_id: str,
     body: UpdateTierRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Change an atom's circle policy. Owner-only.
@@ -189,7 +189,7 @@ async def update_atom_tier(
 async def delete_atom(
     atom_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Soft-delete an atom (marks source row inactive). Owner-only.
