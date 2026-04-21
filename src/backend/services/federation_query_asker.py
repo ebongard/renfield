@@ -151,6 +151,29 @@ class FederationQueryAsker:
         query_text: str,
     ) -> AsyncIterator[ProgressChunk | dict[str, Any]]:
         """Shared query loop for both owned + injected client paths."""
+        # F5d — TLS cert-pin pre-flight. If the peer has a fingerprint
+        # configured, verify it BEFORE any federation request flows.
+        # Mismatch aborts with a clear error; the actual httpx client
+        # already runs with verify=False in this case (see
+        # _tls_verify_for_peer), so the pin check here is the only
+        # transport-layer trust anchor.
+        config = peer.transport_config or {}
+        pinned = config.get("tls_fingerprint")
+        if pinned:
+            from services.federation_cert_pin import verify_peer_cert_fingerprint
+            matched, actual = await verify_peer_cert_fingerprint(endpoint, pinned)
+            if not matched:
+                logger.warning(
+                    f"Federation cert-pin MISMATCH for peer "
+                    f"{peer.remote_display_name} ({endpoint}): "
+                    f"expected={pinned[:16]}… actual={actual[:16] if actual else 'unreachable'}…"
+                )
+                yield _final_error(
+                    "Peer TLS fingerprint mismatch — refusing query "
+                    "(possible MITM or peer cert rotation)"
+                )
+                return
+
         initiate_resp = await self._initiate(client, endpoint, query_text)
         if initiate_resp is None:
             yield _final_error("Peer rejected initiate")
@@ -418,27 +441,23 @@ def _tls_verify_for_peer(peer: PeerUser) -> Any | None:
     Resolve the `verify=` parameter for the httpx client based on
     `peer.transport_config.tls_fingerprint`.
 
-    Policy (review SHOULD-FIX #2):
-    - tls_fingerprint present → future: enforce cert pin via a custom
-      SSLContext that validates against the pinned fingerprint. For v1
-      we log that a pin was configured but use default verification;
-      the Ed25519 pair-anchor binding on the response payload (see
-      _finalize) is the cryptographic ground-truth anyway. Upgrading
-      to real pinning is an F5 hardening task.
-    - no fingerprint → default verification (CA-signed certs work,
-      self-signed don't). Home deployments using Tailscale sidestep
-      this; direct-LAN HTTPS peers will need the fingerprint.
+    Policy (F5d — cert pinning enforced):
+    - tls_fingerprint present → return False so httpx skips CA
+      validation. The asker performs the real fingerprint check
+      via `verify_peer_cert_fingerprint` BEFORE issuing federation
+      requests; mismatch aborts with a clear error.
+    - no fingerprint → return None (httpx uses default CA-bundle
+      verification). Home deployments behind Tailscale sidestep
+      TLS entirely; direct-LAN HTTPS peers without a pin rely on
+      a CA-signed cert.
     - http:// endpoints → httpx does no TLS at all; we log but allow
       because the Ed25519 response signature provides integrity.
-
-    Returns None when the default should be used (caller omits
-    `verify=` from the client kwargs).
     """
     config = peer.transport_config or {}
     fingerprint = config.get("tls_fingerprint")
     if fingerprint:
-        logger.info(
-            f"Federation peer {peer.remote_display_name} has tls_fingerprint "
-            f"configured (not yet enforced — F5 hardening task)"
-        )
+        # Pin is checked separately via a TLS probe; tell httpx not to
+        # also validate against the system CA store (the peer's cert
+        # is typically self-signed in this case).
+        return False
     return None
