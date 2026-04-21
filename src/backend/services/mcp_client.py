@@ -1479,6 +1479,27 @@ class MCPManager:
             }
             return
 
+        # F5b — outbound rate limit keyed by peer.remote_pubkey. Before
+        # we spend any time on the asker, check that we haven't already
+        # fired too many queries at this peer in the last minute. Hit
+        # surfaces as a FinalResult failure (no retry) — the agent loop
+        # will see it as a normal tool error and move on.
+        from services.federation_rate_limits import acquire_asker_token
+        if not await acquire_asker_token(peer.remote_pubkey):
+            logger.warning(
+                f"Federation asker rate limit hit for peer "
+                f"{peer.remote_display_name} ({peer.remote_pubkey[:12]}…)"
+            )
+            yield {
+                "success": False,
+                "message": (
+                    f"Rate limit reached for peer "
+                    f"{peer.remote_display_name}. Try again in a moment."
+                ),
+                "data": None,
+            }
+            return
+
         # F4d — snapshot peer identity at query time so later display-name
         # changes or peer deletion don't rewrite history.
         from datetime import UTC, datetime as _dt

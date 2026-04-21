@@ -233,6 +233,17 @@ class Settings(BaseSettings):
     # also the latency + trust surface.
     federation_max_depth: int = Field(default=3, ge=1, le=10)
 
+    # Federation (F5b — rate limits).
+    # Asker-side: max initiate calls per minute per paired peer. Throttles
+    # how fast THIS Renfield can hammer a single remote peer. At 60/min
+    # (default) a reasonable upper bound is 1 query/sec sustained.
+    federation_asker_rate_per_minute: int = Field(default=60, ge=1, le=600)
+    # Responder-side: max initiate calls per minute from any one asker
+    # pubkey. Defense against a compromised-or-rogue paired peer flooding
+    # us. 30/min (default) is 0.5 QPS sustained — generous for household
+    # use, tight enough that abuse is obvious.
+    federation_responder_rate_per_minute: int = Field(default=30, ge=1, le=600)
+
     # Monitoring
     metrics_enabled: bool = False  # Enable Prometheus /metrics endpoint
 

@@ -268,6 +268,19 @@ class FederationQueryResponder:
         if not _record_nonce(req.nonce, now=now):
             raise FederationQueryError("Nonce already seen (replay detected)")
 
+        # F5b — inbound rate limit keyed by asker_pubkey. Checked AFTER
+        # signature + timestamp + nonce so an unauthenticated flood
+        # can't probe the limiter state by pubkey. A valid signature
+        # is required to land in the rate-limit bucket at all, so the
+        # bucket's state is private to each authenticated peer.
+        from services.federation_rate_limits import acquire_responder_token
+        if not await acquire_responder_token(req.asker_pubkey):
+            logger.warning(
+                f"Federation responder rate limit hit for asker "
+                f"{req.asker_pubkey[:12]}…"
+            )
+            raise FederationQueryError("Rate limit exceeded for this asker")
+
         # F5a — depth + cycle hardening. Checked AFTER signature
         # verification because the fields are part of the canonical
         # payload (an adversary can't strip them). Errors collapse to a
