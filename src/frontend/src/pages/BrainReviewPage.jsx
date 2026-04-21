@@ -155,8 +155,25 @@ export default function BrainReviewPage() {
                       {t('circles.capturedAt')}: {formatDate(atom.created_at)}
                     </span>
                   </div>
-                  <code className="block text-xs text-gray-500 dark:text-gray-400 break-all">
-                    {atom.atom_id}
+                  {/* Human-readable label resolved by the backend from
+                      the atom's source row. UUID is kept visible but
+                      demoted to a fingerprint so debugging is still
+                      possible. */}
+                  {atom.title && (
+                    <p className="font-medium text-gray-900 dark:text-white truncate">
+                      {atom.title}
+                    </p>
+                  )}
+                  {atom.preview && (
+                    <p className="text-sm text-gray-600 dark:text-gray-300 line-clamp-2">
+                      {atom.preview}
+                    </p>
+                  )}
+                  <code
+                    className="block text-[10px] text-gray-400 dark:text-gray-500 truncate"
+                    title={atom.atom_id}
+                  >
+                    {atom.atom_id.slice(0, 8)}…
                   </code>
                 </div>
                 <div className="sm:ml-4 sm:flex-shrink-0">

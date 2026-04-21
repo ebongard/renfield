@@ -35,6 +35,10 @@ from models.database import (
     Atom as AtomModel,
     Circle,
     CircleMembership,
+    ConversationMemory,
+    DocumentChunk,
+    KGEntity,
+    KGRelation,
     User,
 )
 from services.auth_service import get_user_or_default
@@ -86,12 +90,26 @@ class UpdateMemberRequest(BaseModel):
 
 
 class AtomReviewResponse(BaseModel):
-    """Atom in the Brain Review Queue — owner-only view."""
+    """Atom in the Brain Review Queue — owner-only view.
+
+    `title` + `preview` are human-readable fields the UI renders
+    instead of the raw atom_id UUID. An owner gating an atom's tier
+    needs to see WHAT is being gated, not a hex id.
+
+    Resolution per atom_type:
+      - kg_node        → entity.name                + entity.description
+      - kg_edge        → "subj predicate obj"       + (empty preview)
+      - kb_chunk       → documents.filename         + chunk.content[:200]
+      - conversation_memory → "Conversation 2026-04-19" + content[:200]
+      - unknown        → atom_type label            + (empty preview)
+    """
     atom_id: str
     atom_type: str
     policy: dict[str, Any]
     tier: int
     created_at: datetime
+    title: str
+    preview: str | None = None
 
 
 # =============================================================================
@@ -344,6 +362,10 @@ async def atoms_for_review(
         .limit(limit)
     )).scalars().all()
 
+    # Enrich with human-readable title + preview per source table. One
+    # bulk query per atom_type keeps the N+1 risk in check even when
+    # the review queue is filled with a mix of kg + chunk atoms.
+    labels = await _resolve_review_labels(db, rows)
     return [
         AtomReviewResponse(
             atom_id=r.atom_id,
@@ -351,9 +373,132 @@ async def atoms_for_review(
             policy=r.policy or {"tier": 0},
             tier=int((r.policy or {"tier": 0}).get("tier", 0)),
             created_at=r.created_at,
+            title=labels[r.atom_id][0],
+            preview=labels[r.atom_id][1],
         )
         for r in rows
     ]
+
+
+async def _resolve_review_labels(
+    db: AsyncSession, atoms: list[AtomModel],
+) -> dict[str, tuple[str, str | None]]:
+    """Bulk-resolve (title, preview) for a list of atoms by atom_type.
+
+    Returns a dict keyed by atom_id. Falls back to
+    ("unknown {atom_type}", None) for atoms whose source row is
+    missing (e.g., source table was deleted after the atom was
+    written — cleanup job not wired yet).
+
+    Kept private to this module because the mapping is review-UI-
+    specific: `kg_edge` renders the predicate, not the row id; that's
+    not how the knowledge-graph page labels relations.
+    """
+    PREVIEW_MAX = 200
+
+    # Group atoms by source_table so we can do one SELECT per table.
+    by_table: dict[str, list[AtomModel]] = {}
+    for a in atoms:
+        by_table.setdefault(a.source_table, []).append(a)
+
+    out: dict[str, tuple[str, str | None]] = {}
+
+    def _truncate(s: str | None) -> str | None:
+        if not s:
+            return None
+        s = s.strip()
+        return s if len(s) <= PREVIEW_MAX else s[: PREVIEW_MAX - 1] + "…"
+
+    # --- kg_entities ---
+    kg_node_atoms = by_table.get("kg_entities", [])
+    if kg_node_atoms:
+        source_ids = [int(a.source_id) for a in kg_node_atoms if a.source_id.isdigit()]
+        ents = {}
+        if source_ids:
+            rows = (await db.execute(
+                select(KGEntity).where(KGEntity.id.in_(source_ids))
+            )).scalars().all()
+            ents = {e.id: e for e in rows}
+        for a in kg_node_atoms:
+            e = ents.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if e is not None:
+                out[a.atom_id] = (e.name, _truncate(e.description))
+            else:
+                out[a.atom_id] = (f"Unknown entity ({a.source_id})", None)
+
+    # --- kg_relations ---
+    kg_edge_atoms = by_table.get("kg_relations", [])
+    if kg_edge_atoms:
+        source_ids = [int(a.source_id) for a in kg_edge_atoms if a.source_id.isdigit()]
+        rels = {}
+        if source_ids:
+            # Eager-load subject + object so we can read their names.
+            from sqlalchemy.orm import selectinload
+            rows = (await db.execute(
+                select(KGRelation)
+                .where(KGRelation.id.in_(source_ids))
+                .options(
+                    selectinload(KGRelation.subject),
+                    selectinload(KGRelation.object),
+                )
+            )).scalars().all()
+            rels = {r.id: r for r in rows}
+        for a in kg_edge_atoms:
+            r = rels.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if r is not None and r.subject is not None and r.object is not None:
+                title = f"{r.subject.name} {r.predicate} {r.object.name}"
+                out[a.atom_id] = (title, None)
+            else:
+                out[a.atom_id] = (f"Unknown relation ({a.source_id})", None)
+
+    # --- document_chunks ---
+    chunk_atoms = by_table.get("document_chunks", [])
+    if chunk_atoms:
+        source_ids = [int(a.source_id) for a in chunk_atoms if a.source_id.isdigit()]
+        chunks = {}
+        if source_ids:
+            from sqlalchemy.orm import selectinload
+            rows = (await db.execute(
+                select(DocumentChunk)
+                .where(DocumentChunk.id.in_(source_ids))
+                .options(selectinload(DocumentChunk.document))
+            )).scalars().all()
+            chunks = {c.id: c for c in rows}
+        for a in chunk_atoms:
+            c = chunks.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if c is not None:
+                doc = getattr(c, "document", None)
+                title = (doc.title if doc and getattr(doc, "title", None) else None) \
+                    or (doc.filename if doc else None) \
+                    or "Document chunk"
+                out[a.atom_id] = (title, _truncate(c.content))
+            else:
+                out[a.atom_id] = (f"Unknown chunk ({a.source_id})", None)
+
+    # --- conversation_memories ---
+    memory_atoms = by_table.get("conversation_memories", [])
+    if memory_atoms:
+        source_ids = [int(a.source_id) for a in memory_atoms if a.source_id.isdigit()]
+        mems = {}
+        if source_ids:
+            rows = (await db.execute(
+                select(ConversationMemory).where(ConversationMemory.id.in_(source_ids))
+            )).scalars().all()
+            mems = {m.id: m for m in rows}
+        for a in memory_atoms:
+            m = mems.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if m is not None:
+                stamp = m.created_at.strftime("%Y-%m-%d %H:%M") if m.created_at else "?"
+                out[a.atom_id] = (f"Memory · {stamp}", _truncate(m.content))
+            else:
+                out[a.atom_id] = (f"Unknown memory ({a.source_id})", None)
+
+    # Backstop — any atom_type we don't have a resolver for gets a
+    # generic label so the row still renders useful info.
+    for a in atoms:
+        out.setdefault(a.atom_id, (f"Unknown {a.atom_type}", None))
+
+    return out
 
 
 # =============================================================================
