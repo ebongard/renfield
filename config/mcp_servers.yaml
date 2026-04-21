@@ -251,11 +251,18 @@ servers:
     env:
       PAPERLESS_API_URL: "${PAPERLESS_API_URL:-}"
       PAPERLESS_API_TOKEN: "${PAPERLESS_API_TOKEN:-}"
+    # Note: ``upload_document`` is intentionally NOT exposed to the agent
+    # prompt. The agent has no access to raw file bytes, so when it saw this
+    # tool it hallucinated placeholder base64 ("base64_encoded_content_of...")
+    # and Paperless rejected the garbage with HTTP 400. User-attached files go
+    # through ``internal.forward_attachment_to_paperless`` (platform tool) which
+    # reads the real bytes from chat_uploads storage. This MCP tool remains
+    # discoverable for direct code paths (chat_upload.forward_to_paperless HTTP
+    # endpoint) — prompt_tools only filters the agent-visible list.
     prompt_tools:
       - search_documents
       - get_document
       - update_document
-      - upload_document
     examples:
       de:
         - "Suche nach Rechnungen in Paperless"

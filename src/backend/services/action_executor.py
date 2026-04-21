@@ -69,6 +69,17 @@ class ActionExecutor:
             from services.knowledge_tool import knowledge_search
             return await knowledge_search(parameters)
 
+        # Platform-owned internal tool: forward a chat attachment to Paperless.
+        # The agent passes only the attachment_id; the tool reads real file
+        # bytes from storage and calls mcp.paperless.upload_document under the
+        # hood. This removes the base64-hallucination surface the LLM had when
+        # it saw mcp.paperless.upload_document directly.
+        if intent == "internal.forward_attachment_to_paperless":
+            from services.chat_upload_tool import forward_attachment_to_paperless
+            return await forward_attachment_to_paperless(
+                parameters, mcp_manager=self.mcp_manager
+            )
+
         # Other `internal.*` intents (room resolution, media playback,
         # presence, radio) live in ha_glue and are dispatched via the
         # `execute_tool` hook. Platform-only deploys without ha_glue fall

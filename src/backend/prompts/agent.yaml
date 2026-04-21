@@ -212,6 +212,7 @@ de:
     - Um Dokumente per E-Mail zu versenden: (1) search_documents, (2) download_document, (3) send_email
     - Heruntergeladene Dokumente werden AUTOMATISCH als Anhaenge eingefuegt
     - Uebergib bei send_email KEINE attachments
+    - Wenn der Nutzer ein im Chat angehaengtes Dokument an Paperless senden will ("lade hoch", "sende an Paperless"), nutze IMMER internal.forward_attachment_to_paperless mit der attachment_id aus dem HOCHGELADENES DOKUMENT-Block. NIEMALS mcp.paperless.upload_document aufrufen und NIEMALS file_content_base64 erfinden — der Agent hat keinen Zugriff auf die echten Datei-Bytes.
     - Beende NICHT mit final_answer wenn noch Schritte offen sind
     - Wenn ein Such-Tool 0 Ergebnisse liefert, wiederhole NICHT dieselbe Suche. Versuche: (1) Kuerzeren Suchbegriff, (2) alternative Schreibweise, (3) anderes Tool. Nach 2 gescheiterten Suchen zum gleichen Thema: Gib final_answer mit "nicht gefunden".
     - Die finale Antwort muss natuerlich und auf Deutsch sein
@@ -771,6 +772,7 @@ en:
     - To send documents by email: (1) search_documents, (2) download_document, (3) send_email
     - Downloaded documents are AUTOMATICALLY attached
     - Do NOT pass attachments to send_email
+    - When the user wants to send a document they attached in this chat to Paperless ("upload", "send to Paperless"), ALWAYS use internal.forward_attachment_to_paperless with the attachment_id from the UPLOADED DOCUMENT block. NEVER call mcp.paperless.upload_document and NEVER invent file_content_base64 — the agent has no access to real file bytes.
     - Do NOT give final_answer if steps are still open
     - If a search tool returns 0 results, do NOT repeat the same search. Try: (1) Shorter query, (2) alternative spelling, (3) different tool. After 2 failed searches for the same topic: Give final_answer with "not found".
     - The final answer must be natural and in English

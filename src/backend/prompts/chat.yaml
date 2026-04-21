@@ -50,18 +50,18 @@ de:
     Widerspreche ihnen nicht, es sei denn der Benutzer korrigiert dich explizit.
 
   document_context_section: |
-    HOCHGELADENES DOKUMENT ({filename}, {file_size}):
+    HOCHGELADENES DOKUMENT [attachment_id={attachment_id}] ({filename}, {file_size}):
     {document_text}
 
-    WICHTIG: Der Benutzer hat dieses Dokument hochgeladen. Beantworte Fragen basierend auf dem Dokumentinhalt. Zitiere relevante Stellen wenn moeglich.
+    WICHTIG: Der Benutzer hat dieses Dokument hochgeladen. Beantworte Fragen basierend auf dem Dokumentinhalt. Zitiere relevante Stellen wenn moeglich. Will der Nutzer das Dokument weiterleiten (z.B. an Paperless), nutze die oben angegebene attachment_id.
 
   document_context_multi_section: |
     HOCHGELADENE DOKUMENTE ({count} Dateien):
     {documents}
 
-    WICHTIG: Der Benutzer hat diese Dokumente hochgeladen. Beantworte Fragen basierend auf den Dokumentinhalten. Zitiere relevante Stellen und nenne das jeweilige Dokument.
+    WICHTIG: Der Benutzer hat diese Dokumente hochgeladen. Beantworte Fragen basierend auf den Dokumentinhalten. Zitiere relevante Stellen und nenne das jeweilige Dokument. Will der Nutzer ein Dokument weiterleiten, nutze die pro Dokument angegebene attachment_id.
 
-  document_separator: "--- DOKUMENT: {filename} ({file_size}) ---\n{document_text}"
+  document_separator: "--- DOKUMENT [attachment_id={attachment_id}]: {filename} ({file_size}) ---\n{document_text}"
 
   personality_context: |
     KOMMUNIKATIONSSTIL:
@@ -125,18 +125,18 @@ en:
     Don't contradict them unless the user explicitly corrects you.
 
   document_context_section: |
-    UPLOADED DOCUMENT ({filename}, {file_size}):
+    UPLOADED DOCUMENT [attachment_id={attachment_id}] ({filename}, {file_size}):
     {document_text}
 
-    IMPORTANT: The user has uploaded this document. Answer questions based on the document content. Cite relevant passages when possible.
+    IMPORTANT: The user has uploaded this document. Answer questions based on the document content. Cite relevant passages when possible. If the user wants to forward the document (e.g. to Paperless), use the attachment_id shown above.
 
   document_context_multi_section: |
     UPLOADED DOCUMENTS ({count} files):
     {documents}
 
-    IMPORTANT: The user has uploaded these documents. Answer questions based on the document contents. Cite relevant passages and name the respective document.
+    IMPORTANT: The user has uploaded these documents. Answer questions based on the document contents. Cite relevant passages and name the respective document. If the user wants to forward a document, use the attachment_id shown for each.
 
-  document_separator: "--- DOCUMENT: {filename} ({file_size}) ---\n{document_text}"
+  document_separator: "--- DOCUMENT [attachment_id={attachment_id}]: {filename} ({file_size}) ---\n{document_text}"
 
   personality_context: |
     COMMUNICATION STYLE:

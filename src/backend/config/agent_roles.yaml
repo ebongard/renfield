@@ -36,7 +36,7 @@ roles:
       de: "Dokumente und E-Mail: Suche in Wissensdatenbank und Paperless, Download, Versand"
       en: "Documents and email: search knowledge base and Paperless, download, send"
     mcp_servers: [paperless, email]
-    internal_tools: [internal.knowledge_search]
+    internal_tools: [internal.knowledge_search, internal.forward_attachment_to_paperless]
     max_steps: 8
     prompt_key: agent_prompt_documents
 

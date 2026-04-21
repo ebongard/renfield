@@ -316,6 +316,7 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
             text = doc.extracted_text[:max_chars] if doc.extracted_text else ""
             return prompt_manager.get(
                 "chat", "document_context_section", lang=lang,
+                attachment_id=str(doc.id),
                 filename=doc.filename or "document",
                 file_size=_format_file_size(doc.file_size),
                 document_text=text,
@@ -328,6 +329,7 @@ async def _fetch_document_context(attachment_ids: list[int], lang: str) -> str:
             text = doc.extracted_text[:per_doc_chars] if doc.extracted_text else ""
             section = prompt_manager.get(
                 "chat", "document_separator", lang=lang,
+                attachment_id=str(doc.id),
                 filename=doc.filename or "document",
                 file_size=_format_file_size(doc.file_size),
                 document_text=text,

@@ -83,9 +83,12 @@ class AgentToolRegistry:
         Args:
             internal_filter: If set, only register these tool names. None = all.
         """
+        from services.chat_upload_tool import CHAT_UPLOAD_TOOLS
         from services.knowledge_tool import KNOWLEDGE_TOOL
 
-        for name, definition in KNOWLEDGE_TOOL.items():
+        platform_tools: dict = {**KNOWLEDGE_TOOL, **CHAT_UPLOAD_TOOLS}
+
+        for name, definition in platform_tools.items():
             if internal_filter is not None and name not in internal_filter:
                 continue
 
