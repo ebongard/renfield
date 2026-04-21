@@ -73,7 +73,24 @@ docker exec -it renfield-backend alembic downgrade -1
 
 For architecture questions, use the `architecture-guide` agent.
 
+### Platform-owned internal agent tools
+
+The agent loop sees a mix of MCP tools (`mcp.<server>.<tool>`) and `internal.*` tools. Internal tools are platform-level wrappers that bundle multi-step workflows or chain MCP calls with real server-side state. Two live on the platform core (rest live in `ha_glue`):
+
+| Tool | Purpose | Source |
+|---|---|---|
+| `internal.knowledge_search` | Semantic RAG search over the user's knowledge base | `services/knowledge_tool.py` |
+| `internal.forward_attachment_to_paperless` | Forward a chat-attached file to Paperless using real server-stored bytes — prevents the LLM from handling base64 payloads it can't actually see | `services/chat_upload_tool.py` |
+
+Dispatch for both is a special case in `services/action_executor.py` that injects dependencies the generic `intent.startswith("internal.")` hook path cannot provide (`mcp_manager`, `session_id`).
+
+### Agent stale-error marker
+
+Failed tool turns are persisted with `action_success: False` in message metadata. The `conv_context` builder in `services/agent_service.py` prepends `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` to those assistant messages when re-injecting history into the next agent turn. The `conv_context_template` in `prompts/agent.yaml` carries a hint telling the LLM to treat marker lines as historical, not as current state — so a repeated user request retries the tool instead of echoing the old error.
+
 ### Circles v1 (access tiers)
+
+Detailed user-facing and architectural documentation: [`docs/CIRCLES.md`](docs/CIRCLES.md). Narrative of the broader knowledge system (the four subsystems circles protect): [`docs/SECOND_BRAIN.md`](docs/SECOND_BRAIN.md). Code-level summary below.
 
 Five-rung ladder on every source row that participates in retrieval:
 

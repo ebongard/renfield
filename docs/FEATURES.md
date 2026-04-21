@@ -28,6 +28,13 @@ Renfield ist ein vollständig offline-fähiger, selbst-gehosteter **digitaler As
 - **Volltext-Suche**: Durchsuche frühere Konversationen
 - **Satellite-Sessions**: Tägliche Sessions für Voice-Commands
 
+### Dateianhänge & Weiterleitung an Paperless
+- **Paperclip-Upload**: Nutzer hängen Dateien im Chat-Eingabefeld an; `POST /api/chat_upload` speichert sie, OCR läuft asynchron
+- **OCR-Text im Kontext**: Der Agent sieht den extrahierten Text per `document_context`-Prompt-Block inklusive `[attachment_id=N]`-Marker pro Datei
+- **Natürliche Weiterleitung nach Paperless**: „Lade diese Rechnung nach Paperless hoch" → Agent ruft `internal.forward_attachment_to_paperless(attachment_id=N)` auf; die Datei wird **direkt von Server-Storage** gelesen und als echte Bytes zum Paperless-MCP geleitet — der Agent handhabt nie Base64-Inhalte und kann daher nichts halluzinieren
+- **Session-Scope**: Die Attachment-Lookup ist auf die Chat-Session des Nutzers beschränkt — kein Cross-Session-Zugriff auf fremde Uploads
+- **HTTP-Fallback**: `POST /api/chat_upload/{id}/paperless` als direkter Endpoint für Frontend-Buttons (ohne LLM im Loop)
+
 ## Sprach-Interface
 
 ### Speech-to-Text (STT)
@@ -56,6 +63,23 @@ Siehe [SPEAKER_RECOGNITION.md](SPEAKER_RECOGNITION.md) für Details.
 - **Audio-Ausgabe**: Antwort wird per TTS über DLNA-Renderer oder Satellite-Speaker abgespielt
 
 Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Details.
+
+## Second Brain — Persönliches Wissensnetz
+
+Renfield pflegt für jeden Nutzer ein persönliches Wissenssystem aus vier Informationsarten — Dokument-Chunks (RAG), Conversation Memories, Knowledge-Graph-Entities und -Relations — die über eine gemeinsame Atom-Registry ansprechbar sind. Cross-Source-Suche unter `/brain` fusioniert die vier Quellen via Reciprocal Rank Fusion.
+
+Siehe [SECOND_BRAIN.md](SECOND_BRAIN.md) für den narrativen Überblick und das Ingestion-Flow.
+
+## Zugriffsebenen (Circles)
+
+Eigentum und Sichtbarkeit wird über die **Circles** modelliert — eine fünfstufige Leiter (`self`, `trusted`, `household`, `extended`, `public`), die die reale Weitergabe-Intuition abbildet: etwas gehört mir, etwas meinen Vertrauten, etwas dem Haushalt, etwas benannten Externen, ein kleiner Teil öffentlich.
+
+- Jedes Atom trägt **eine** Tier-Zuweisung
+- Pro-Eigentümer-Dimension: Alice' `trusted` ist nicht Bobs `trusted`
+- Vier-Zweig-Zugriffsregel: OWNER ∨ PUBLIC ∨ EXPLICIT GRANT ∨ TIER-REACH
+- `AUTH_ENABLED=false` short-circuited den Filter (Single-User-Mode)
+
+Siehe [CIRCLES.md](CIRCLES.md) für Datenmodell, Services, Routen und Frontend-Seiten.
 
 ## Konversations-Gedächtnis (Langzeit)
 
@@ -169,6 +193,10 @@ Einfache Medien-Befehle (`stop`, `pause`, `play`, `skip`, `weiter`, `leiser`, `l
 
 Der Agent bricht automatisch ab, wenn wiederholte Suchen (z.B. Jellyfin-Suche) keine neuen Ergebnisse liefern. Verhindert Endlos-Schleifen bei nicht-vorhandenen Medien.
 
+### Stale-Tool-Error-Schutz
+
+Frühere fehlgeschlagene Aktionen werden im `KONVERSATIONS-KONTEXT` mit dem Marker `[VORHERIGE_FEHLGESCHLAGENE_AKTION]` gekennzeichnet. Der Agent-Prompt weist explizit darauf hin, dass solche historischen Fehler **nicht** den aktuellen Zustand belegen — fordert der Nutzer dieselbe Aktion erneut an, wird das Tool neu ausgeführt statt mit einer alten Fehlermeldung zu antworten. Der Marker wird aus dem `action_success`-Metadatum am Message-Turn abgeleitet.
+
 ### Konfiguration
 
 ```env
@@ -223,7 +251,7 @@ Alle externen Integrationen laufen als MCP-Server. Tools werden automatisch als 
 | **jellyfin** | stdio (Python) | Media Server | 13 (Musik, Filme, Serien) |
 | **dlna** | streamable_http | DLNA Renderer (Gapless Queue Playback) | 7 (Play, Stop, Queue, Transport) |
 | **n8n** | stdio (npx) | Workflow Automation | 12 (Workflow CRUD, Templates) |
-| **paperless** | stdio (Python) | Dokumenten-Management | 1+ |
+| **paperless** | stdio (Python) | Dokumenten-Management | 4 agentsichtbar (search, get, update, download); `upload_document` ist bewusst nicht im Agent-Prompt — siehe `internal.forward_attachment_to_paperless` |
 | **email** | stdio (Python) | Multi-Account IMAP/SMTP | 4 (List, Search, Read, Send) |
 | **homeassistant** | streamable_http | Smart Home | 5+ (Steuerung, Status) |
 
