@@ -330,7 +330,6 @@ async def _init_mcp(app: "FastAPI"):
         # Non-fatal on failure: an empty peer list or schema-migration-
         # not-yet-applied DB should not block backend startup.
         try:
-            from services.database import AsyncSessionLocal
             from services.peer_mcp_registry import sync_peers
             async with AsyncSessionLocal() as peer_session:
                 await sync_peers(manager, peer_session)
