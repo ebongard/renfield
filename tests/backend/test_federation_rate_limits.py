@@ -109,6 +109,23 @@ class TestRegistries:
         # B is untouched.
         assert await acquire_asker_token("b" * 64) is True
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_concurrent_first_acquire_creates_one_bucket(self):
+        """Belt-and-suspenders: many concurrent first-acquires for the
+        same key must end up sharing ONE bucket (the double-checked
+        lock pattern). If two coroutines both lost the lock race and
+        each created their own bucket, one would be discarded and the
+        rate limit would silently double for that key."""
+        import asyncio
+        results = await asyncio.gather(
+            *[acquire_asker_token("z" * 64) for _ in range(20)]
+        )
+        # All should succeed (default 60/min budget, 20 < 60).
+        assert all(results)
+        # Critically: exactly one bucket created.
+        assert len(_asker_outbound) == 1
+
 
 # =============================================================================
 # Integration — asker-side block surfaces as FinalResult failure

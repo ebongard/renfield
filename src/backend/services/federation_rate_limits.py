@@ -27,6 +27,12 @@ Cleanup:
   lifetime — no cleanup needed. If we ever face a public/open-enrollment
   deploy the registry grows unbounded; LRU-evict keyed by last-acquire
   time would be the fix. Out of scope for F5b.
+
+Runtime config:
+  `settings.federation_*_rate_per_minute` is read ONCE per key on
+  first-acquire. Changing the env var at runtime does NOT rebuild
+  existing buckets — the new rate only applies to keys that haven't
+  been seen yet. A backend restart picks up the new value cleanly.
 """
 from __future__ import annotations
 
