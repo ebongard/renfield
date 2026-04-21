@@ -366,7 +366,7 @@ export default function CirclesSettingsPage() {
         </form>
       </Modal>
 
-      <ConfirmDialogComponent />
+      {ConfirmDialogComponent}
     </div>
   );
 }
