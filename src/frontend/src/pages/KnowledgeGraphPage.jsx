@@ -172,7 +172,7 @@ export default function KnowledgeGraphPage() {
     if (activeTab === 'entities') loadEntities();
     else if (activeTab === 'relations') loadRelations();
     else if (activeTab === 'stats') loadStats();
-  }, [activeTab, entitiesPage, relationsPage, typeFilter, searchQuery, scopeFilter, entityFilter]);
+  }, [activeTab, entitiesPage, relationsPage, typeFilter, searchQuery, tierFilter, entityFilter]);
 
   // Edit entity
   const openEditModal = (entity) => {
