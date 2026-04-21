@@ -86,6 +86,26 @@ async def _route_satellite_tts_output(
         await satellite_manager.send_tts_audio(session_id, tts_audio, is_final=True)
 
 
+def _build_assistant_metadata(
+    intent: dict | None,
+    action_result: dict | None,
+) -> dict:
+    """Shape for both in-memory satellite history and DB save.
+
+    ``action_success`` lets ``agent_service._build_agent_prompt`` mark prior
+    failed tool turns with ``[VORHERIGE_FEHLGESCHLAGENE_AKTION]`` so a stale
+    error string cannot masquerade as current state on the next turn.
+    See #430 (web-chat path) and #431 (this satellite path).
+
+    Returns a fresh dict each call — callers may mutate/annotate the result
+    without affecting other sites.
+    """
+    return {
+        "intent": intent.get("intent") if intent else None,
+        "action_success": action_result.get("success") if action_result else None,
+    }
+
+
 @router.websocket("/ws/satellite")
 async def satellite_websocket(
     websocket: WebSocket,
@@ -571,16 +591,10 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
                     logger.info(f"💬 Response: '{response_text[:100]}...'")
 
-                    # Build assistant metadata once for both in-memory history and DB
-                    # persistence. ``action_success`` lets the agent prompt builder mark
-                    # prior failed tool turns so they are not misread as current state
-                    # (see #430). The ollama client's pydantic Message model silently
-                    # drops unknown keys, so keeping metadata on the in-memory dict does
-                    # not leak into the LLM call.
-                    assistant_metadata = {
-                        "intent": intent.get("intent") if intent else None,
-                        "action_success": action_result.get("success") if action_result else None,
-                    }
+                    # The ollama client's pydantic Message model silently drops unknown
+                    # keys, so keeping ``metadata`` on the in-memory dict is safe — it
+                    # never reaches the LLM, only the agent prompt builder and the DB.
+                    assistant_metadata = _build_assistant_metadata(intent, action_result)
 
                     # Update in-memory conversation history (keep max 5 exchanges = 10 messages)
                     satellite_conversation_history.append({"role": "user", "content": text})
