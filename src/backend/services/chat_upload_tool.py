@@ -57,7 +57,11 @@ CHAT_UPLOAD_TOOLS: dict = {
 }
 
 
-async def forward_attachment_to_paperless(params: dict, mcp_manager=None) -> dict:
+async def forward_attachment_to_paperless(
+    params: dict,
+    mcp_manager=None,
+    session_id: str | None = None,
+) -> dict:
     """Read a ChatUpload from server storage and forward it to Paperless.
 
     Args:
@@ -65,6 +69,12 @@ async def forward_attachment_to_paperless(params: dict, mcp_manager=None) -> dic
             correspondent, document_type, tags optional).
         mcp_manager: MCPManager instance, injected by ActionExecutor. Needed
             to invoke ``mcp.paperless.upload_document`` with real base64.
+        session_id: Chat session the request came from. When provided, the
+            DB lookup is scoped to attachments uploaded within the same
+            session — prevents a crafted prompt from referencing an
+            attachment_id belonging to another user's conversation. When
+            ``None`` (single-user dev setup, auth disabled), the check is
+            skipped.
 
     Returns a standard agent-tool result dict: ``success``, ``message``,
     ``action_taken``, and ``data`` with ``task_id``, ``attachment_id``, and
@@ -100,9 +110,15 @@ async def forward_attachment_to_paperless(params: dict, mcp_manager=None) -> dic
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                select(ChatUpload).where(ChatUpload.id == attachment_id)
-            )
+            query = select(ChatUpload).where(ChatUpload.id == attachment_id)
+            # Session scoping: when the caller provides a session_id, the
+            # attachment must belong to that session. A mismatch is reported
+            # as "not found" rather than "forbidden" — the agent doesn't
+            # need to distinguish, and the softer message avoids leaking
+            # the existence of attachments belonging to other sessions.
+            if session_id is not None:
+                query = query.where(ChatUpload.session_id == session_id)
+            result = await db.execute(query)
             upload = result.scalar_one_or_none()
 
         if not upload:

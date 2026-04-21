@@ -41,21 +41,36 @@ def _teardown_stubs(added: list[str]) -> None:
         sys.modules.pop(mod_name, None)
 
 
-def _make_upload(file_path: str | None, filename: str = "Invoice-001.pdf"):
+def _make_upload(
+    file_path: str | None,
+    filename: str = "Invoice-001.pdf",
+    session_id: str | None = "session-abc",
+):
     """Build a stand-in for a ``ChatUpload`` ORM row."""
     upload = MagicMock()
     upload.id = 42
     upload.filename = filename
     upload.file_path = file_path
+    upload.session_id = session_id
     return upload
 
 
-def _mock_db_returning(upload):
-    """Mock AsyncSessionLocal + query result returning the given upload (or None)."""
+def _mock_db_returning(upload, captured_query_holder: list | None = None):
+    """Mock AsyncSessionLocal + query result returning the given upload (or None).
+
+    When ``captured_query_holder`` is a list, the executed ``select`` statement
+    is appended to it so tests can assert on the resulting WHERE clause.
+    """
     mock_db = AsyncMock()
     mock_result = MagicMock()
     mock_result.scalar_one_or_none = MagicMock(return_value=upload)
-    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    async def _capture_execute(stmt):
+        if captured_query_holder is not None:
+            captured_query_holder.append(stmt)
+        return mock_result
+
+    mock_db.execute = _capture_execute
 
     @asynccontextmanager
     async def mock_session():
@@ -249,6 +264,81 @@ class TestForwardAttachmentToPaperless:
             assert "Invalid base64" in result["message"]
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.unit
+    async def test_session_scope_filters_query(self):
+        """When session_id is passed, the DB query must include a
+        ``session_id ==`` clause to scope the lookup to the user's own
+        conversation. Without scoping the agent could reference
+        attachments from other sessions just by guessing the integer id.
+        """
+        # Upload is "found" (non-None) but we only care that the query
+        # carried the scoping clause — the tool will go on to try a
+        # filesystem read and fail, which is fine for this assertion.
+        upload = _make_upload(file_path="/tmp/nonexistent-scope-test")
+        captured: list = []
+        stubs = _stub_db_module()
+        try:
+            with patch(
+                "services.database.AsyncSessionLocal",
+                _mock_db_returning(upload, captured_query_holder=captured),
+                create=True,
+            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                await forward_attachment_to_paperless(
+                    {"attachment_id": 42},
+                    mcp_manager=AsyncMock(),
+                    session_id="session-abc",
+                )
+        finally:
+            _teardown_stubs(stubs)
+        assert len(captured) == 1, "expected exactly one DB query"
+        # The literal-compiled SQL exposes both SELECT projection and WHERE
+        # clauses. ``session_id`` appears in the SELECT list of every query
+        # (it's a column), so we count occurrences: an unscoped query has
+        # 1 mention (projection), a scoped query has 2 (projection + WHERE).
+        from sqlalchemy.dialects import sqlite
+        compiled = str(captured[0].compile(
+            compile_kwargs={"literal_binds": True},
+            dialect=sqlite.dialect(),
+        ))
+        assert compiled.count("session_id") >= 2, (
+            f"query must include session_id in WHERE clause when scoped; got:\n{compiled}"
+        )
+
+    @pytest.mark.unit
+    async def test_session_scope_none_skips_filter(self):
+        """Backwards-compat: without session_id, no scoping filter is added.
+
+        Covers legacy call sites and single-user dev setups where auth is off.
+        """
+        upload = _make_upload(file_path="/tmp/nonexistent-no-scope")
+        captured: list = []
+        stubs = _stub_db_module()
+        try:
+            with patch(
+                "services.database.AsyncSessionLocal",
+                _mock_db_returning(upload, captured_query_holder=captured),
+                create=True,
+            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                await forward_attachment_to_paperless(
+                    {"attachment_id": 42},
+                    mcp_manager=AsyncMock(),
+                    # no session_id
+                )
+        finally:
+            _teardown_stubs(stubs)
+        assert len(captured) == 1
+        from sqlalchemy.dialects import sqlite
+        compiled = str(captured[0].compile(
+            compile_kwargs={"literal_binds": True},
+            dialect=sqlite.dialect(),
+        ))
+        # session_id appears in the SELECT projection of every query (it's
+        # a column). Scoping adds it to the WHERE clause, doubling the count.
+        # Without scoping we expect exactly 1 mention.
+        assert compiled.count("session_id") == 1, (
+            f"no session scoping should be added when session_id is None; got:\n{compiled}"
+        )
 
     @pytest.mark.unit
     async def test_malformed_mcp_message_still_succeeds_with_null_task_id(self):

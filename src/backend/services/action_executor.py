@@ -11,9 +11,14 @@ from loguru import logger
 class ActionExecutor:
     """Führt Intents aus und gibt Ergebnisse zurück"""
 
-    def __init__(self, mcp_manager=None):
+    def __init__(self, mcp_manager=None, session_id: str | None = None):
         # MCP system (handles HA, n8n, camera, weather, search, news, etc.)
         self.mcp_manager = mcp_manager
+        # Chat session id (WebSocket session), used by ownership-sensitive
+        # internal tools like ``forward_attachment_to_paperless`` to scope
+        # DB lookups to the user's own conversation. Optional for backwards
+        # compatibility with callers that don't carry session context.
+        self.session_id = session_id
 
     async def execute(
         self,
@@ -74,10 +79,16 @@ class ActionExecutor:
         # bytes from storage and calls mcp.paperless.upload_document under the
         # hood. This removes the base64-hallucination surface the LLM had when
         # it saw mcp.paperless.upload_document directly.
+        #
+        # ``session_id`` is forwarded so the tool can scope the DB lookup to
+        # the current user's conversation — prevents a crafted prompt from
+        # addressing an attachment uploaded in someone else's session.
         if intent == "internal.forward_attachment_to_paperless":
             from services.chat_upload_tool import forward_attachment_to_paperless
             return await forward_attachment_to_paperless(
-                parameters, mcp_manager=self.mcp_manager
+                parameters,
+                mcp_manager=self.mcp_manager,
+                session_id=self.session_id,
             )
 
         # Other `internal.*` intents (room resolution, media playback,

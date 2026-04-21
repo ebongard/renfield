@@ -937,7 +937,7 @@ async def websocket_endpoint(
                         agent_used = True
                         orchestrated = True
                         logger.info(f"🎼 Orchestrator: {len(sub_queries)} sub-queries → {[sq.get('role') for sq in sub_queries]}")
-                        executor = ActionExecutor(mcp_manager=mcp_manager)
+                        executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
                         agent_tool_results = []
                         async for step in orchestrator.run_orchestrated(
                             sub_queries=sub_queries,
@@ -1012,7 +1012,7 @@ async def websocket_endpoint(
                         internal_filter=role.internal_tools,
                     )
                     agent = AgentService(tool_registry, role=role)
-                    executor = ActionExecutor(mcp_manager=mcp_manager)
+                    executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
 
                     agent_tool_results = []
 
@@ -1116,7 +1116,7 @@ async def websocket_endpoint(
                         intent_used = intent_candidate
                         break
 
-                    executor = ActionExecutor(mcp_manager=mcp_mgr)
+                    executor = ActionExecutor(mcp_manager=mcp_mgr, session_id=msg_session_id)
                     candidate_result = await executor.execute(
                         intent_candidate, user_permissions=user_permissions,
                         user_id=user_id,
