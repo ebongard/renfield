@@ -18,7 +18,6 @@ Coverage:
 from __future__ import annotations
 
 import hashlib
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -69,6 +68,21 @@ class TestFirstHttpsUrl:
         """Non-string/dict entries are ignored (forward-compat)."""
         eps = [42, None, {"url": "https://mom.local:8443"}]
         assert _first_https_url(eps) == "https://mom.local:8443"
+
+    @pytest.mark.unit
+    def test_uppercase_scheme_accepted(self):
+        """Scheme match is case-insensitive — `HTTPS://` is valid."""
+        assert _first_https_url(["HTTPS://mom.local:8443"]) == "HTTPS://mom.local:8443"
+
+    @pytest.mark.unit
+    def test_picks_first_of_multiple_https(self):
+        """When several HTTPS endpoints are advertised, we pin the
+        first one. Future enhancement: rank by reachability."""
+        eps = [
+            {"url": "https://a.local:8443"},
+            {"url": "https://b.local:8443"},
+        ]
+        assert _first_https_url(eps) == "https://a.local:8443"
 
 
 # =============================================================================
@@ -124,11 +138,33 @@ class TestProbeFingerprint:
 class TestWithTofuFingerprint:
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_empty_endpoints_returns_bare_config(self):
-        """No endpoints → no pin, no probe attempt."""
+    async def test_empty_endpoints_returns_bare_config_and_warns(self, monkeypatch):
+        """No endpoints → no pin, no probe attempt. Warning logged so
+        operators can distinguish 'probe failed' from 'peer never
+        advertised an endpoint' — both block federation queries but
+        the fix is different. Loguru doesn't feed pytest's caplog, so
+        we intercept the logger directly."""
+        warnings_seen: list[str] = []
+
+        def fake_warning(msg, *a, **kw):
+            warnings_seen.append(str(msg))
+
+        import services.pairing_service as ps_mod
+        monkeypatch.setattr(ps_mod.logger, "warning", fake_warning)
+
         config = await _with_tofu_fingerprint([])
         assert config == {"endpoints": []}
         assert "tls_fingerprint" not in config
+        combined = " ".join(w.lower() for w in warnings_seen)
+        assert "endpoint" in combined
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_none_endpoints_returns_bare_config(self):
+        """None (missing field) is treated as empty — same outcome,
+        same warning, no crash."""
+        config = await _with_tofu_fingerprint(None)
+        assert config == {"endpoints": []}
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -148,7 +184,7 @@ class TestWithTofuFingerprint:
         async def fake_probe(url, *, timeout=5.0):
             return "a" * 64
         monkeypatch.setattr(
-            "services.federation_cert_pin.probe_peer_cert_fingerprint",
+            "services.pairing_service.probe_peer_cert_fingerprint",
             fake_probe,
         )
 
@@ -166,7 +202,7 @@ class TestWithTofuFingerprint:
         async def fake_probe(url, *, timeout=5.0):
             return None
         monkeypatch.setattr(
-            "services.federation_cert_pin.probe_peer_cert_fingerprint",
+            "services.pairing_service.probe_peer_cert_fingerprint",
             fake_probe,
         )
 
@@ -212,7 +248,7 @@ class TestPairingServiceTofuIntegration:
         async def fake_probe(url, *, timeout=5.0):
             return "b" * 64
         monkeypatch.setattr(
-            "services.federation_cert_pin.probe_peer_cert_fingerprint",
+            "services.pairing_service.probe_peer_cert_fingerprint",
             fake_probe,
         )
 
@@ -297,7 +333,7 @@ class TestPairingServiceTofuIntegration:
         async def fake_probe(url, *, timeout=5.0):
             return "c" * 64
         monkeypatch.setattr(
-            "services.federation_cert_pin.probe_peer_cert_fingerprint",
+            "services.pairing_service.probe_peer_cert_fingerprint",
             fake_probe,
         )
 
@@ -379,7 +415,7 @@ class TestPairingServiceTofuIntegration:
             probe_called = True
             return "deadbeef"
         monkeypatch.setattr(
-            "services.federation_cert_pin.probe_peer_cert_fingerprint",
+            "services.pairing_service.probe_peer_cert_fingerprint",
             fake_probe,
         )
 

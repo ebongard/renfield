@@ -45,6 +45,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.federation_cert_pin import probe_peer_cert_fingerprint
+
 from models.database import (
     Circle,
     CircleMembership,
@@ -158,7 +160,15 @@ def _clear_nonce_cache_for_tests() -> None:
 # =============================================================================
 
 
-async def _with_tofu_fingerprint(endpoints: list[dict]) -> dict:
+# Pair-time probe timeout is tighter than the runtime F5d default:
+# LAN + Tailscale LAN peers handshake in <500ms; 2s is enough margin
+# without making the user wait on a stalled probe. A failed probe
+# still succeeds the pairing (no pin) — worst case is federation
+# queries later fall back to default CA validation.
+_TOFU_PROBE_TIMEOUT_SECONDS = 2.0
+
+
+async def _with_tofu_fingerprint(endpoints: list[Any] | None) -> dict:
     """
     Build a `transport_config` dict from the peer's advertised endpoints,
     optionally enriched with a TLS cert SHA-256 captured at pair time.
@@ -175,14 +185,28 @@ async def _with_tofu_fingerprint(endpoints: list[dict]) -> dict:
     `tls_fingerprint` and F5d falls back to default CA validation
     (which won't work for self-signed deploys, but the operator at
     least sees "couldn't probe" in the pairing logs).
+
+    An empty endpoints list is logged separately — pairing succeeds
+    but no federation query to this peer will succeed until an endpoint
+    is added. The distinction matters so operators can tell "probe
+    failed" apart from "the other side never advertised an endpoint".
     """
-    config: dict = {"endpoints": endpoints}
+    config: dict = {"endpoints": endpoints or []}
+    if not endpoints:
+        logger.warning(
+            "Pairing: peer advertised no endpoints — federation queries "
+            "to them will fail until an endpoint is added to their "
+            "PeerUser.transport_config"
+        )
+        return config
+
     first_url = _first_https_url(endpoints)
     if not first_url:
         return config
 
-    from services.federation_cert_pin import probe_peer_cert_fingerprint
-    fingerprint = await probe_peer_cert_fingerprint(first_url)
+    fingerprint = await probe_peer_cert_fingerprint(
+        first_url, timeout=_TOFU_PROBE_TIMEOUT_SECONDS,
+    )
     if fingerprint:
         config["tls_fingerprint"] = fingerprint
         logger.info(
@@ -197,10 +221,11 @@ async def _with_tofu_fingerprint(endpoints: list[dict]) -> dict:
     return config
 
 
-def _first_https_url(endpoints: list[dict]) -> str | None:
-    """Extract the first https:// URL from a list of endpoint dicts.
-    Endpoint shapes tolerated: `{"url": ...}`, `{"endpoint_url": ...}`,
-    or bare strings in the list."""
+def _first_https_url(endpoints: list[Any] | None) -> str | None:
+    """Extract the first https:// URL from a list of endpoint entries.
+    Entries tolerated: bare strings, `{"url": ...}`, `{"endpoint_url": ...}`.
+    Anything else (None, non-str/dict, protocol-less hostnames, ws://)
+    is skipped. Scheme match is case-insensitive."""
     for ep in endpoints or []:
         if isinstance(ep, str):
             url = ep
@@ -208,7 +233,7 @@ def _first_https_url(endpoints: list[dict]) -> str | None:
             url = ep.get("url") or ep.get("endpoint_url")
         else:
             continue
-        if url and str(url).startswith("https://"):
+        if url and str(url).lower().startswith("https://"):
             return str(url)
     return None
 
