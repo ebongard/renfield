@@ -48,6 +48,80 @@ def _normalize_fingerprint(s: str) -> str:
     return s.replace(":", "").replace(" ", "")
 
 
+async def probe_peer_cert_fingerprint(
+    endpoint_url: str,
+    *,
+    timeout: float = 5.0,
+) -> str | None:
+    """
+    Open a one-shot TLS connection to `endpoint_url` and return the
+    peer's leaf certificate SHA-256 as lowercase hex (no separators).
+
+    Returns None for:
+      - non-HTTPS endpoints (nothing to pin)
+      - TCP/TLS failures (host down, refused, timeout)
+      - peers that don't present a certificate or aren't speaking TLS
+
+    Used for two purposes:
+      - F5d verification — caller compares against a stored pin.
+      - F5e TOFU auto-pinning — caller stores the return value in
+        `PeerUser.transport_config.tls_fingerprint` at pairing time,
+        making every subsequent query verify against it.
+    """
+    parsed = urlparse(endpoint_url)
+    if parsed.scheme != "https":
+        return None
+    host = parsed.hostname
+    port = parsed.port or 443
+    if not host:
+        logger.warning(f"Federation cert-pin: malformed endpoint {endpoint_url}")
+        return None
+
+    # CERT_NONE because we're either doing our own fingerprint
+    # validation (F5d) or TOFU-capturing whatever cert is presented
+    # (F5e). CA validity isn't the question we're answering.
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port, ssl=ctx),
+            timeout=timeout,
+        )
+    except (OSError, asyncio.TimeoutError) as e:
+        logger.warning(
+            f"Federation cert-pin: could not connect to {host}:{port} for "
+            f"pre-flight: {e}"
+        )
+        return None
+
+    try:
+        ssl_obj = writer.get_extra_info("ssl_object")
+        if ssl_obj is None:
+            logger.warning(
+                f"Federation cert-pin: no SSL context on connection to "
+                f"{host}:{port} (server speaks plain TCP?)"
+            )
+            return None
+        cert_der = ssl_obj.getpeercert(binary_form=True)
+        if not cert_der:
+            logger.warning(
+                f"Federation cert-pin: peer {host}:{port} did not "
+                f"present a certificate"
+            )
+            return None
+        return hashlib.sha256(cert_der).hexdigest().lower()
+    finally:
+        writer.close()
+        try:
+            await writer.wait_closed()
+        except Exception:  # noqa: BLE001
+            # Tearing down the probe socket cleanly is best-effort;
+            # any error here doesn't affect the verification result.
+            pass
+
+
 async def verify_peer_cert_fingerprint(
     endpoint_url: str,
     expected_fingerprint_hex: str,
@@ -74,54 +148,10 @@ async def verify_peer_cert_fingerprint(
         # Nothing to pin on plain HTTP; let the request proceed and
         # let the Ed25519 response signature do the integrity work.
         return True, None
-    host = parsed.hostname
-    port = parsed.port or 443
-    if not host:
-        logger.warning(f"Federation cert-pin: malformed endpoint {endpoint_url}")
+
+    actual = await probe_peer_cert_fingerprint(endpoint_url, timeout=timeout)
+    if actual is None:
+        # probe_peer_cert_fingerprint already logged the specific failure.
         return False, None
-
-    # CERT_NONE because we're doing our own fingerprint validation;
-    # CA validity isn't the question we're answering.
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-
-    try:
-        reader, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port, ssl=ctx),
-            timeout=timeout,
-        )
-    except (OSError, asyncio.TimeoutError) as e:
-        logger.warning(
-            f"Federation cert-pin: could not connect to {host}:{port} for "
-            f"pre-flight: {e}"
-        )
-        return False, None
-
-    try:
-        ssl_obj = writer.get_extra_info("ssl_object")
-        if ssl_obj is None:
-            logger.warning(
-                f"Federation cert-pin: no SSL context on connection to "
-                f"{host}:{port} (server speaks plain TCP?)"
-            )
-            return False, None
-        cert_der = ssl_obj.getpeercert(binary_form=True)
-        if not cert_der:
-            logger.warning(
-                f"Federation cert-pin: peer {host}:{port} did not "
-                f"present a certificate"
-            )
-            return False, None
-        actual = hashlib.sha256(cert_der).hexdigest()
-        expected_norm = _normalize_fingerprint(expected_fingerprint_hex)
-        actual_norm = _normalize_fingerprint(actual)
-        return actual_norm == expected_norm, actual_norm
-    finally:
-        writer.close()
-        try:
-            await writer.wait_closed()
-        except Exception:  # noqa: BLE001
-            # Tearing down the probe socket cleanly is best-effort;
-            # any error here doesn't affect the verification result.
-            pass
+    expected_norm = _normalize_fingerprint(expected_fingerprint_hex)
+    return actual == expected_norm, actual
