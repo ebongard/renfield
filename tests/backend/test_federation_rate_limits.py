@@ -240,7 +240,7 @@ class TestResponderSideIntegration:
         reset_for_tests()
         reset_federation_identity_for_tests()
         init_federation_identity(tmp_path / "responder_key")
-        _clear_state_for_tests()
+        await _clear_state_for_tests()
 
         asker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
         asker_pubkey = asker.public_key_hex()
@@ -297,5 +297,5 @@ class TestResponderSideIntegration:
             await responder.handle_initiate(build_req(secrets.token_hex(16)))
 
         reset_federation_identity_for_tests()
-        _clear_state_for_tests()
+        await _clear_state_for_tests()
         reset_for_tests()

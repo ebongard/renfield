@@ -59,6 +59,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -204,7 +205,25 @@ class FederationQueryResponder:
         """
         Verify asker signature + freshness + peer authorization, mint a
         request_id, and kick off the background query+synthesis work.
+
+        F5c — any `RedisError` raised by the pending store (when Redis
+        backend is enabled and Redis is unreachable) is translated to
+        `FederationQueryError("Federation store unavailable")` so the
+        route layer returns the same uniform 400 as any other
+        rejection — no storage-state oracle surfaced to the peer.
         """
+        try:
+            return await self._handle_initiate(req)
+        except RedisError as e:
+            logger.error(f"Federation pending-store unavailable on initiate: {e}")
+            raise FederationQueryError("Federation store unavailable") from e
+
+    async def _handle_initiate(
+        self,
+        req: QueryBrainInitiateRequest,
+    ) -> QueryBrainInitiateResponse:
+        """Real initiate logic — separated so the outer wrapper can
+        translate storage errors without re-indenting the body."""
         self._verify_signature(
             pubkey_hex=req.asker_pubkey,
             signature_hex=req.signature,
@@ -322,7 +341,21 @@ class FederationQueryResponder:
         self,
         req: QueryBrainRetrieveRequest,
     ) -> QueryBrainRetrieveResponse:
-        """Verify poll signature + pubkey binding, return current state."""
+        """Verify poll signature + pubkey binding, return current state.
+
+        F5c — same RedisError translation as handle_initiate.
+        """
+        try:
+            return await self._handle_retrieve(req)
+        except RedisError as e:
+            logger.error(f"Federation pending-store unavailable on retrieve: {e}")
+            raise FederationQueryError("Federation store unavailable") from e
+
+    async def _handle_retrieve(
+        self,
+        req: QueryBrainRetrieveRequest,
+    ) -> QueryBrainRetrieveResponse:
+        """Real retrieve logic — see `_handle_initiate` for the split."""
         self._verify_signature(
             pubkey_hex=req.asker_pubkey,
             signature_hex=req.signature,
@@ -639,7 +672,15 @@ class FederationQueryResponder:
     async def _emit_progress(pending: _PendingRequest, label: str) -> None:
         """Update progress label (rate-limited to MAX_PROGRESS_UPDATES).
         Writes through to the pending store so other workers polling
-        /retrieve see the new label."""
+        /retrieve see the new label.
+
+        Single-writer invariant: only the bg `_run_query` task that
+        owns this request mutates `pending`. Other workers READ via
+        `store.get()` but never call this. If a future "admin cancel"
+        path needs to mutate from a non-owner worker, it must use a
+        store-level CAS rather than the in-memory mutate-then-save
+        sequence here.
+        """
         if pending.progress_count >= MAX_PROGRESS_UPDATES:
             return
         pending.progress_label = label

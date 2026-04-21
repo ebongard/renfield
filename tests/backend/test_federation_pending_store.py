@@ -345,3 +345,78 @@ class TestRedisStore:
         assert await redis_store.get("r1") is None
         # Re-recording the nonce should succeed → proves cleared.
         assert await redis_store.record_nonce("n1", time.time()) is True
+
+
+# =============================================================================
+# Redis-error → uniform 400 translation (responder-level)
+# =============================================================================
+
+
+class TestRedisErrorTranslation:
+    """Reviewer S1 — when the Redis backend is enabled and Redis is
+    unreachable, responder methods must translate `RedisError` into
+    `FederationQueryError` so the route layer returns a uniform 400
+    rather than leaking a 500 stack trace."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_handle_initiate_translates_redis_error(self, monkeypatch, tmp_path):
+        from redis.exceptions import ConnectionError as RedisConnectionError
+
+        from services.federation_identity import (
+            init_federation_identity,
+            reset_federation_identity_for_tests,
+        )
+        from services.federation_query_responder import (
+            FederationQueryError,
+            FederationQueryResponder,
+        )
+        from services.federation_query_schemas import QueryBrainInitiateRequest
+
+        reset_federation_identity_for_tests()
+        init_federation_identity(tmp_path / "responder_key")
+
+        # Stub the store so any operation raises ConnectionError.
+        class BrokenStore:
+            async def record_nonce(self, *a, **k):
+                raise RedisConnectionError("simulated outage")
+            async def get(self, *a, **k): raise RedisConnectionError()
+            async def put(self, *a, **k): raise RedisConnectionError()
+            async def save(self, *a, **k): raise RedisConnectionError()
+            async def list_for_pubkey(self, *a, **k): raise RedisConnectionError()
+            async def delete_many(self, *a, **k): raise RedisConnectionError()
+            async def prune_expired(self, *a, **k): raise RedisConnectionError()
+            async def clear_for_tests(self): pass
+
+        monkeypatch.setattr(
+            "services.federation_query_responder.get_pending_store",
+            lambda: BrokenStore(),
+        )
+
+        # Build a syntactically valid request (signature must verify so
+        # we reach the nonce-record step where the store is touched).
+        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from services.federation_identity import FederationIdentity
+        from services.pairing_service import _canonical_bytes
+        asker = FederationIdentity(ed25519.Ed25519PrivateKey.generate())
+        unsigned = {
+            "version": 2,
+            "asker_pubkey": asker.public_key_hex(),
+            "query": "q",
+            "nonce": "deadbeefdeadbeef" * 2,
+            "timestamp": int(time.time()),
+            "depth": 3,
+            "path": [asker.public_key_hex()],
+        }
+        sig = asker.sign(_canonical_bytes(unsigned)).hex()
+        req = QueryBrainInitiateRequest(**unsigned, signature=sig)
+
+        from unittest.mock import MagicMock
+        responder = FederationQueryResponder(db=MagicMock())
+
+        # Must surface as the uniform federation error, NOT a raw
+        # ConnectionError that would become a 500 at the route layer.
+        with pytest.raises(FederationQueryError, match="store unavailable"):
+            await responder.handle_initiate(req)
+
+        reset_federation_identity_for_tests()

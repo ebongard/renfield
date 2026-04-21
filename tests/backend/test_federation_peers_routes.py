@@ -261,38 +261,41 @@ class TestRevokePeer:
     async def test_purges_in_flight_requests_for_revoked_peer(self):
         """BLOCKING #1 regression: revoked peer must not be able to poll
         /retrieve for requests they initiated before revocation. The
-        revoke flow purges every _pending_requests entry bound to the
-        peer's pubkey."""
-        from services.federation_query_responder import (
-            _pending_requests,
-            _clear_state_for_tests,
+        revoke flow purges every pending entry bound to the peer's
+        pubkey via the pending store."""
+        from services.federation_pending_store import (
             _PendingRequest,
+            get_pending_store,
+            reset_store_for_tests,
         )
+        from services.federation_query_responder import _clear_state_for_tests
 
-        _clear_state_for_tests()
+        reset_store_for_tests()
+        await _clear_state_for_tests()
+        store = get_pending_store()
 
         peer_pubkey = "a" * 64
         peer = _peer_row(id_=1, owner_id=42, pubkey=peer_pubkey, remote_user_id=99)
 
-        # Seed two pending requests from this peer + one from a different peer
-        _pending_requests["req-from-peer-1"] = _PendingRequest(
+        # Seed two pending requests from this peer + one from a different peer.
+        await store.put(_PendingRequest(
             request_id="req-from-peer-1",
             asker_pubkey=peer_pubkey,
             peer_user_id=1, asker_local_user_id=99, max_visible_tier=2,
             query="q1", initiated_at=0,
-        )
-        _pending_requests["req-from-peer-2"] = _PendingRequest(
+        ))
+        await store.put(_PendingRequest(
             request_id="req-from-peer-2",
             asker_pubkey=peer_pubkey,
             peer_user_id=1, asker_local_user_id=99, max_visible_tier=2,
             query="q2", initiated_at=0,
-        )
-        _pending_requests["req-from-other"] = _PendingRequest(
+        ))
+        await store.put(_PendingRequest(
             request_id="req-from-other",
             asker_pubkey="b" * 64,  # different peer
             peer_user_id=2, asker_local_user_id=100, max_visible_tier=2,
             query="q3", initiated_at=0,
-        )
+        ))
 
         db = MagicMock()
         r = MagicMock()
@@ -306,11 +309,12 @@ class TestRevokePeer:
         await revoke_peer(peer_id=1, request=req, db=db, current_user=user)
 
         # Peer's 2 pending requests gone; other peer's 1 request survives.
-        assert "req-from-peer-1" not in _pending_requests
-        assert "req-from-peer-2" not in _pending_requests
-        assert "req-from-other" in _pending_requests
+        assert await store.get("req-from-peer-1") is None
+        assert await store.get("req-from-peer-2") is None
+        assert await store.get("req-from-other") is not None
 
-        _clear_state_for_tests()
+        await _clear_state_for_tests()
+        reset_store_for_tests()
 
     @pytest.mark.asyncio
     @pytest.mark.unit

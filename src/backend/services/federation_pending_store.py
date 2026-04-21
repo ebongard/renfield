@@ -52,7 +52,9 @@ if TYPE_CHECKING:
 REQUEST_TTL_SECONDS = 60
 NONCE_WINDOW_SECONDS = 60
 NONCE_GRACE_SECONDS = 60          # how long past the window we still remember
-NONCE_CACHE_MAX = 4096            # in-memory only — Redis bound is via TTL
+# In-memory only — the Redis backend bounds growth via TTL rather than
+# a size cap. Tuning this here has no effect on multi-worker deploys.
+NONCE_CACHE_MAX = 4096
 
 _REDIS_PENDING_PREFIX = "fed:pending:"
 _REDIS_NONCE_PREFIX = "fed:nonce:"
@@ -238,8 +240,19 @@ class RedisPendingStore:
     async def save(self, pending: _PendingRequest) -> None:
         # Mutations from the bg task — re-serialize and write through.
         # The asker-set entry was already created by put(); we don't
-        # touch it here. TTL refresh on save() so a long-running
-        # synthesis doesn't get evicted mid-flight.
+        # touch it here.
+        #
+        # TTL refresh: every save() resets the key's expiry to
+        # REQUEST_TTL_SECONDS + 5s. Net effect: a synthesis that
+        # emits 4 progress updates plus a terminal save can keep
+        # the key alive past the in-memory `initiated_at + TTL`
+        # window. This is a deliberate UX improvement (the asker
+        # gets a fair poll window AFTER terminal status, not just
+        # from initiation) but is a documented divergence from the
+        # InMemory backend's strict initiated_at-based expiry.
+        # Bounded in practice by MAX_PROGRESS_UPDATES (4) +
+        # synthesis timeout — a stuck request can't keep claiming
+        # storage indefinitely.
         body = json.dumps(_to_jsonable(pending))
         await self._r.set(
             self._pending_key(pending.request_id), body,
@@ -247,12 +260,15 @@ class RedisPendingStore:
         )
 
     async def list_for_pubkey(self, asker_pubkey: str) -> list[_PendingRequest]:
+        # `services.redis_client` constructs the client with
+        # `decode_responses=True`, so `smembers` returns `set[str]` —
+        # no bytes-decode dance needed.
         rids = await self._r.smembers(self._asker_set_key(asker_pubkey))
         if not rids:
             return []
         result: list[_PendingRequest] = []
         for rid in rids:
-            pr = await self.get(rid if isinstance(rid, str) else rid.decode())
+            pr = await self.get(rid)
             if pr is not None:
                 result.append(pr)
         return result
@@ -303,7 +319,13 @@ _store: PendingStore | None = None
 def get_pending_store() -> PendingStore:
     """Return the process-wide store. First call selects the backend
     based on `settings.federation_pending_use_redis`. Subsequent calls
-    reuse the same instance."""
+    reuse the same instance.
+
+    Backend choice is sticky for the process lifetime. Flipping
+    `federation_pending_use_redis` at runtime requires a backend
+    restart to take effect. Tests can call `reset_store_for_tests()`
+    to force re-selection (e.g., to swap backends within one process).
+    """
     global _store
     if _store is None:
         if settings.federation_pending_use_redis:
