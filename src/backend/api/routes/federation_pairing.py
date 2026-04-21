@@ -29,7 +29,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import CircleMembership, PeerUser, User
-from services.auth_service import get_current_user
+from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.federation_identity import get_federation_identity
 from services.pairing_service import (
@@ -100,7 +100,7 @@ class PeerListResponse(BaseModel):
 
 @router.get("/identity", response_model=IdentityResponse)
 async def get_identity(
-    _current_user: User = Depends(get_current_user),
+    _current_user: User = Depends(get_user_or_default),
 ):
     """Return this Renfield's Ed25519 public key (for peer display + debugging)."""
     return IdentityResponse(pubkey_hex=get_federation_identity().public_key_hex())
@@ -110,7 +110,7 @@ async def get_identity(
 async def create_pair_offer(
     body: CreateOfferRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Initiator step 1 — create a signed offer. Stateless until accepted."""
     svc = PairingService(db)
@@ -125,7 +125,7 @@ async def create_pair_offer(
 async def accept_pair_offer(
     body: AcceptOfferRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Responder step 2 — verify offer + create PeerUser + sign response."""
     svc = PairingService(db)
@@ -146,7 +146,7 @@ async def accept_pair_offer(
 async def complete_pair_handshake(
     body: CompleteHandshakeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Initiator step 3 — verify response + create PeerUser. Pairing is live afterwards."""
     svc = PairingService(db)
@@ -208,7 +208,7 @@ async def _tier_for_peer(
 @router.get("/peers", response_model=PeerListResponse)
 async def list_peers(
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """List the authenticated user's paired peers (non-revoked only).
 
@@ -243,7 +243,7 @@ async def revoke_peer(
     peer_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Revoke a paired peer. Side effects:
       - PeerUser.revoked_at := now (the row stays for audit trail)

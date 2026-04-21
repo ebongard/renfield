@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 
 from models.database import User
-from services.auth_service import get_current_user
+from services.auth_service import get_user_or_default
 from services.federation_audit import list_audit_for_user
 
 
@@ -57,7 +57,7 @@ async def list_federation_audit(
         max_length=64,
         pattern="^[0-9a-fA-F]{64}$",
     ),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """
     Return this user's own federation query audit, newest first.

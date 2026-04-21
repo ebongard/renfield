@@ -298,6 +298,50 @@ def require_auth(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def get_user_or_default(
+    current_user: User | None = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    FastAPI dependency for routes that need a concrete User but
+    support auth-disabled single-user deploys.
+
+    - Auth enabled + authenticated → returns the User.
+    - Auth enabled + missing/invalid token → 401 (raised by
+      `get_current_user` before we run).
+    - Auth disabled (AUTH_ENABLED=false) → resolves to the admin
+      user (or the first user by id if `admin` is gone). Matches
+      the Circles-v1 "single-user mode sees everything" pattern
+      documented in CLAUDE.md.
+
+    Use this for routes that need to scope data by user_id and
+    must also work on solo / home deploys where auth is off.
+    """
+    if current_user is not None:
+        return current_user
+
+    # Auth-disabled: resolve to the admin user.
+    admin = (await db.execute(
+        select(User).where(User.username == "admin").limit(1)
+    )).scalar_one_or_none()
+    if admin is not None:
+        return admin
+    # Admin was deleted/renamed — fall back to the first user by id.
+    first = (await db.execute(
+        select(User).order_by(User.id).limit(1)
+    )).scalar_one_or_none()
+    if first is not None:
+        return first
+    # No users at all — this is a bootstrap-edge deploy; fail loud.
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Auth is disabled and no users exist — bootstrap a user via "
+            "`/api/auth/register` or seed the DB before using this endpoint."
+        ),
+    )
+
+
 # =============================================================================
 # Permission Checking Dependencies
 # =============================================================================
