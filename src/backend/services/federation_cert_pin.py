@@ -39,9 +39,13 @@ from loguru import logger
 
 
 def _normalize_fingerprint(s: str) -> str:
-    """Strip `:` separators and lowercase. Tolerates the openssl
-    `AA:BB:CC:...` format and the no-separator `aabbcc...` form."""
-    return s.replace(":", "").replace(" ", "").lower()
+    """Strip `:` separators and `sha256:` algorithm prefix, lowercase.
+    Tolerates the openssl `AA:BB:CC:...` format, the no-separator
+    `aabbcc...` form, and the curl/SPKI-style `sha256:AA:BB:...`."""
+    s = s.lower().strip()
+    if s.startswith("sha256:"):
+        s = s[len("sha256:"):]
+    return s.replace(":", "").replace(" ", "")
 
 
 async def verify_peer_cert_fingerprint(

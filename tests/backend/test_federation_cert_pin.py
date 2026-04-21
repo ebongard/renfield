@@ -49,6 +49,15 @@ class TestNormalize:
     def test_already_normalized(self):
         assert _normalize_fingerprint("aabbcc") == "aabbcc"
 
+    @pytest.mark.unit
+    def test_strips_sha256_algorithm_prefix(self):
+        """curl / SPKI-style `sha256:AA:BB:...` should normalize to the
+        same hex as the bare openssl form."""
+        with_prefix = "sha256:AA:BB:CC:DD"
+        without = "AA:BB:CC:DD"
+        assert _normalize_fingerprint(with_prefix) == _normalize_fingerprint(without)
+        assert _normalize_fingerprint(with_prefix) == "aabbccdd"
+
 
 # =============================================================================
 # verify_peer_cert_fingerprint — pure paths
@@ -149,6 +158,29 @@ class TestVerifyFingerprint:
         )
         assert ok is False
         assert actual == observed_sha
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_empty_cert_bytes_returns_false(self, monkeypatch):
+        """An unusual TLS peer that completes the handshake but doesn't
+        actually present a cert (b''). Must fail closed — we can't
+        pin nothing."""
+        ssl_obj = MagicMock()
+        ssl_obj.getpeercert.return_value = b""
+        writer = MagicMock()
+        writer.get_extra_info.return_value = ssl_obj
+        writer.close = MagicMock()
+        writer.wait_closed = AsyncMock()
+
+        async def fake_open(*a, **kw):
+            return MagicMock(), writer
+        monkeypatch.setattr("asyncio.open_connection", fake_open)
+
+        ok, actual = await verify_peer_cert_fingerprint(
+            "https://empty-cert.example:443", "ab" * 32,
+        )
+        assert ok is False
+        assert actual is None
 
     @pytest.mark.asyncio
     @pytest.mark.unit

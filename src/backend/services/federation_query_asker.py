@@ -102,6 +102,13 @@ class FederationQueryAsker:
         # query; long-running pooled client shared across queries is a
         # future optimization if query rate warrants it (it won't for
         # home-scale deployments).
+        #
+        # F5d caveat for any future caller passing an injected client:
+        # if the peer has `tls_fingerprint` set, the client MUST be
+        # constructed with `limits=httpx.Limits(max_keepalive_connections=0)`
+        # so each request opens a fresh TLS handshake the pin pre-flight
+        # just verified. Otherwise a pooled keepalive connection from a
+        # prior query could outlast a cert rotation and bypass the pin.
         self._client = client
 
     async def query_peer(
@@ -452,6 +459,14 @@ def _tls_verify_for_peer(peer: PeerUser) -> Any | None:
       a CA-signed cert.
     - http:// endpoints → httpx does no TLS at all; we log but allow
       because the Ed25519 response signature provides integrity.
+
+    Operator note: a self-signed home deploy with `https://` endpoint
+    AND no `tls_fingerprint` will silently fail at the TLS handshake
+    (httpx default CA validation rejects self-signed certs). Three
+    fixes, in preference order:
+      1. Set `tls_fingerprint` on the peer (F5d, recommended).
+      2. Run the peer behind Tailscale (no TLS, no CA needed).
+      3. Use a CA-signed cert (Let's Encrypt over a public DNS name).
     """
     config = peer.transport_config or {}
     fingerprint = config.get("tls_fingerprint")
