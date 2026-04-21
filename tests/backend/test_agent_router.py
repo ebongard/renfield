@@ -292,6 +292,53 @@ class TestParseRoles:
         assert roles["general"].model is None
         assert roles["general"].ollama_url is None
 
+    @pytest.mark.unit
+    def test_native_function_calling_default_false(self):
+        """A role that does not set the flag gets native_function_calling=False."""
+        roles = _parse_roles(SAMPLE_CONFIG)
+        for role in roles.values():
+            assert role.native_function_calling is False
+
+    @pytest.mark.unit
+    def test_native_function_calling_opt_in(self):
+        """Setting native_function_calling: true in YAML is parsed."""
+        config = {
+            "roles": {
+                "experimental": {
+                    "description": {"de": "x", "en": "x"},
+                    "mcp_servers": [],
+                    "prompt_key": "agent_prompt",
+                    "native_function_calling": True,
+                },
+                "normal": {
+                    "description": {"de": "y", "en": "y"},
+                    "mcp_servers": [],
+                    "prompt_key": "agent_prompt",
+                },
+            }
+        }
+        roles = _parse_roles(config)
+        assert roles["experimental"].native_function_calling is True
+        assert roles["normal"].native_function_calling is False
+
+    @pytest.mark.unit
+    def test_native_function_calling_accepts_truthy_values(self):
+        """Truthy strings / 1 coerce to True, falsy to False (YAML may parse loosely)."""
+        config = {
+            "roles": {
+                "a": {"description": {"de": "a", "en": "a"}, "mcp_servers": [],
+                      "prompt_key": "agent_prompt", "native_function_calling": 1},
+                "b": {"description": {"de": "b", "en": "b"}, "mcp_servers": [],
+                      "prompt_key": "agent_prompt", "native_function_calling": 0},
+                "c": {"description": {"de": "c", "en": "c"}, "mcp_servers": [],
+                      "prompt_key": "agent_prompt", "native_function_calling": None},
+            }
+        }
+        roles = _parse_roles(config)
+        assert roles["a"].native_function_calling is True
+        assert roles["b"].native_function_calling is False
+        assert roles["c"].native_function_calling is False
+
 
 # ============================================================================
 # Test _filter_available_roles

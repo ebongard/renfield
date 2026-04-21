@@ -382,3 +382,148 @@ class TestSelectRelevantTools:
         assert any(n.startswith("mcp.paperless") for n in names)
         assert any(n.startswith("mcp.email") for n in names)
         assert any(n.startswith("mcp.homeassistant") for n in names)
+
+
+# ============================================================================
+# Native Function Calling plumbing — sanitize/unsanitize + build_tools_schema
+# ============================================================================
+
+
+class TestSanitizeToolName:
+    """Round-trip between dotted MCP names and native-FC-compatible names."""
+
+    @pytest.mark.unit
+    def test_mcp_namespaced_name_is_sanitized(self):
+        from services.agent_tools import sanitize_tool_name
+        assert sanitize_tool_name("mcp.release.list_releases") == "mcp__release__list_releases"
+
+    @pytest.mark.unit
+    def test_already_valid_name_passes_through(self):
+        """A bare name that already matches ^[a-zA-Z0-9_-]+$ is unchanged."""
+        from services.agent_tools import sanitize_tool_name
+        assert sanitize_tool_name("list_global_roles") == "list_global_roles"
+        assert sanitize_tool_name("find-stuff") == "find-stuff"
+
+    @pytest.mark.unit
+    def test_unsanitize_reverses_sanitize(self):
+        from services.agent_tools import sanitize_tool_name, unsanitize_tool_name
+        orig = "mcp.jira.search_issues"
+        assert unsanitize_tool_name(sanitize_tool_name(orig)) == orig
+
+    @pytest.mark.unit
+    def test_unsanitize_is_idempotent_for_bare_names(self):
+        """Calling unsanitize on names without '__' is a no-op."""
+        from services.agent_tools import unsanitize_tool_name
+        assert unsanitize_tool_name("list_global_roles") == "list_global_roles"
+
+
+class TestBuildToolsSchema:
+    """OpenAI-format tools schema for native function calling."""
+
+    def _make_mcp_tool(self, name: str, description: str, input_schema: dict) -> MagicMock:
+        tool = MagicMock()
+        tool.namespaced_name = name
+        tool.server_name = name.split(".")[1] if name.startswith("mcp.") else name
+        tool.description = description
+        tool.input_schema = input_schema
+        return tool
+
+    def _make_registry_with_tools(self, tools):
+        mcp_manager = MagicMock()
+        mcp_manager.get_all_tools.return_value = tools
+        return AgentToolRegistry(mcp_manager=mcp_manager)
+
+    @pytest.mark.unit
+    def test_returns_openai_tools_format(self):
+        """Schema entries have {type: function, function: {name, description, parameters}}."""
+        tool = self._make_mcp_tool(
+            "mcp.release.list_releases",
+            "List releases",
+            {"type": "object", "properties": {"active": {"type": "boolean"}}},
+        )
+        registry = self._make_registry_with_tools([tool])
+        schema = registry.build_tools_schema()
+
+        assert len(schema) == 1
+        entry = schema[0]
+        assert entry["type"] == "function"
+        assert entry["function"]["name"] == "mcp__release__list_releases"
+        assert entry["function"]["description"] == "List releases"
+        assert entry["function"]["parameters"]["properties"]["active"]["type"] == "boolean"
+
+    @pytest.mark.unit
+    def test_empty_registry_returns_empty_list(self):
+        registry = self._make_registry_with_tools([])
+        assert registry.build_tools_schema() == []
+
+    @pytest.mark.unit
+    def test_preselection_filters_output(self):
+        """Passing a subset of tools scopes the schema to just those."""
+        t1 = self._make_mcp_tool("mcp.a.foo", "foo", {"type": "object", "properties": {}})
+        t2 = self._make_mcp_tool("mcp.a.bar", "bar", {"type": "object", "properties": {}})
+        registry = self._make_registry_with_tools([t1, t2])
+        preselected = {"mcp.a.foo": registry.get_tool("mcp.a.foo")}
+        schema = registry.build_tools_schema(preselected)
+        assert len(schema) == 1
+        assert schema[0]["function"]["name"] == "mcp__a__foo"
+
+    @pytest.mark.unit
+    def test_full_input_schema_is_preserved(self):
+        """Nested schemas with required fields and typed properties pass through intact."""
+        input_schema = {
+            "type": "object",
+            "properties": {
+                "release_id": {"type": "string", "description": "Full release ID"},
+                "limit": {"type": "integer", "minimum": 1},
+            },
+            "required": ["release_id"],
+        }
+        tool = self._make_mcp_tool("mcp.release.get_release", "Get release", input_schema)
+        registry = self._make_registry_with_tools([tool])
+        schema = registry.build_tools_schema()
+        assert schema[0]["function"]["parameters"] == input_schema
+
+    @pytest.mark.unit
+    def test_tool_without_input_schema_gets_synthesised_schema(self):
+        """ToolDefinition with only flattened parameters gets a minimal fallback."""
+        registry = AgentToolRegistry()
+        registry._tools["plugin.custom"] = ToolDefinition(
+            name="plugin.custom",
+            description="Plugin-registered tool",
+            parameters={"x": "description of x", "y": "description of y"},
+            input_schema=None,
+        )
+        schema = registry.build_tools_schema()
+        assert schema[0]["function"]["name"] == "plugin__custom"
+        params = schema[0]["function"]["parameters"]
+        assert params["type"] == "object"
+        assert params["properties"]["x"]["type"] == "string"
+        assert params["properties"]["x"]["description"] == "description of x"
+        assert params["properties"]["y"]["type"] == "string"
+
+
+class TestToolDefinitionInputSchema:
+    """input_schema preservation through registration."""
+
+    @pytest.mark.unit
+    def test_mcp_registration_preserves_input_schema(self):
+        """When an MCP tool is registered, the full JSON Schema is retained on
+        the ToolDefinition so build_tools_schema can emit it verbatim."""
+        input_schema = {
+            "type": "object",
+            "properties": {"entity_id": {"type": "string"}},
+            "required": ["entity_id"],
+        }
+        mcp_tool = MagicMock()
+        mcp_tool.namespaced_name = "mcp.homeassistant.turn_on"
+        mcp_tool.server_name = "homeassistant"
+        mcp_tool.description = "Turn on a device"
+        mcp_tool.input_schema = input_schema
+
+        mcp_manager = MagicMock()
+        mcp_manager.get_all_tools.return_value = [mcp_tool]
+        registry = AgentToolRegistry(mcp_manager=mcp_manager)
+
+        tool = registry.get_tool("mcp.homeassistant.turn_on")
+        assert tool is not None
+        assert tool.input_schema == input_schema

@@ -67,6 +67,15 @@ class AgentRole:
     sub_intent_definitions: dict[str, dict[str, str]] | None = None  # From config
     utterances: list[str] | None = None  # Example utterances for semantic fast-path
     keyword_boost: list[str] | None = None  # Keywords that boost this role in semantic router
+    # Opt-in Native Function Calling (OpenAI-style `tools=[]`) for this role.
+    # Default False → ReAct (tool descriptions embedded in the prompt, model
+    # emits JSON action) — the production path. When True AND the agent
+    # client reports supports_native_tools, AgentService passes a tools
+    # schema on every chat call and consumes `message.tool_calls` directly.
+    # Benchmarks show current-generation models regress accuracy in NFC
+    # mode (qwen3.5:27b 8/9 → 6/9, qwen3.6:35b 9/9 → 6/9); keep this flag
+    # at False unless a specific role + model pairing benchmarks clean.
+    native_function_calling: bool = False
 
 
 # Pre-built fallback roles
@@ -142,6 +151,7 @@ def _parse_roles(config: dict) -> dict[str, AgentRole]:
             sub_intent_definitions=sub_intent_definitions,
             utterances=utterances,
             keyword_boost=keyword_boost,
+            native_function_calling=bool(role_data.get("native_function_calling", False)),
         )
         roles[name] = role
 

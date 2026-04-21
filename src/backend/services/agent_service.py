@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from loguru import logger
 
-from services.agent_tools import AgentToolRegistry
+from services.agent_tools import AgentToolRegistry, unsanitize_tool_name
 from services.prompt_manager import prompt_manager
 from utils.circuit_breaker import agent_circuit_breaker
 from utils.config import settings
@@ -592,6 +592,96 @@ class AgentService:
         self._prompt_key = (role.prompt_key if role else None) or "agent_prompt"
         self._preselected_tools: dict | None = None
 
+    def _should_use_native_fc(self, agent_client) -> bool:
+        """Whether this step should use native function calling.
+
+        Requires both the role to opt in (``native_function_calling: true``
+        in ``config/agent_roles.yaml``) AND the agent client to advertise
+        ``supports_native_tools = True``. Default is False so the ReAct
+        path stays unchanged for every role that hasn't explicitly opted in.
+
+        Benchmarks (docs/qwen3.6-benchmark-full-2026-04-21.md and
+        docs/native-fc-benchmark-2026-04-16.md) show Native FC regresses
+        tool-selection accuracy on both qwen3.5:27b and qwen3.6:35b. Keep
+        the flag off unless a specific role + model pairing benchmarks
+        clean in your own data.
+        """
+        role_enabled = bool(getattr(self.role, "native_function_calling", False))
+        client_capable = bool(getattr(agent_client, "supports_native_tools", False))
+        return role_enabled and client_capable
+
+    @staticmethod
+    def _native_fc_parsed(raw_response) -> tuple[dict | None, str]:
+        """Extract an agent-loop `parsed` dict from a native-FC response.
+
+        Returns ``(parsed, response_text)`` where ``response_text`` is the
+        assistant content used for token tracking + logging, and ``parsed``
+        is one of:
+
+        - ``{"action": "<tool>", "parameters": {...}, "reason": "native_fc"}``
+          when the model emitted tool_calls (first call used; additional
+          calls are logged and ignored for parity with the ReAct loop).
+        - ``{"action": "final_answer", "answer": "<text>", "reason": "native_fc"}``
+          when the model emitted assistant content and no tool_calls.
+        - ``None`` when neither tool_calls nor content is present — caller
+          handles via the existing retry-nudge branch.
+
+        Handles both attribute-style (``raw_response.message.tool_calls``)
+        and dict-style (``raw_response["message"]["tool_calls"]``) responses
+        because different LLM client adapters (OpenAI vs Ollama vs Anthropic)
+        return slightly different shapes.
+        """
+        # Normalise the response envelope.
+        msg = getattr(raw_response, "message", None)
+        if msg is None and isinstance(raw_response, dict):
+            msg = raw_response.get("message") or {}
+        if msg is None:
+            return None, ""
+
+        def _field(obj, key, default=None):
+            if hasattr(obj, key):
+                return getattr(obj, key, default)
+            if isinstance(obj, dict):
+                return obj.get(key, default)
+            return default
+
+        content = _field(msg, "content", "") or ""
+        tool_calls = _field(msg, "tool_calls", None)
+
+        if tool_calls:
+            # Take the first call; the existing agent loop processes one tool per step.
+            tc = tool_calls[0]
+            fn = _field(tc, "function", {}) or {}
+            name = _field(fn, "name", "") or ""
+            args = _field(fn, "arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args) if args else {}
+                except json.JSONDecodeError:
+                    args = {}
+            if not isinstance(args, dict):
+                args = {}
+            if len(tool_calls) > 1:
+                logger.debug(
+                    f"Native FC: {len(tool_calls)} tool_calls in one response, "
+                    f"using the first ({name}); ignoring the rest"
+                )
+            parsed = {
+                "action": unsanitize_tool_name(name),
+                "parameters": args,
+                "reason": "native_fc",
+            }
+            return parsed, content
+
+        if content:
+            return {
+                "action": "final_answer",
+                "answer": content,
+                "reason": "native_fc",
+            }, content
+
+        return None, ""
+
     async def _preselect_tools(
         self,
         message: str,
@@ -1073,6 +1163,19 @@ class AgentService:
         }
         json_system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
 
+        # Native function calling — opt-in per role AND requires the agent client
+        # to advertise `supports_native_tools`. Default path stays on ReAct.
+        use_native_fc = self._should_use_native_fc(agent_client)
+        native_fc_tools: list[dict] | None = None
+        if use_native_fc:
+            native_fc_tools = self.tool_registry.build_tools_schema(
+                self._preselected_tools
+            )
+            logger.info(
+                f"🔧 Native function calling ON for role '{getattr(self.role, 'name', '?')}' "
+                f"({len(native_fc_tools)} tools in schema)"
+            )
+
         for step_num in range(1, self.max_steps + 1):
             # Check total timeout
             elapsed = time.monotonic() - start_time
@@ -1107,6 +1210,9 @@ class AgentService:
             # Call LLM with per-step timeout
             try:
                 classification_kwargs = get_classification_chat_kwargs(agent_model)
+                chat_kwargs: dict = dict(classification_kwargs)
+                if use_native_fc and native_fc_tools:
+                    chat_kwargs["tools"] = native_fc_tools
                 raw_response = await asyncio.wait_for(
                     agent_client.chat(
                         model=agent_model,
@@ -1115,11 +1221,18 @@ class AgentService:
                             {"role": "user", "content": prompt},
                         ],
                         options=llm_options,
-                        **classification_kwargs,
+                        **chat_kwargs,
                     ),
                     timeout=self.step_timeout,
                 )
-                response_text = extract_response_content(raw_response) or ""
+                if use_native_fc:
+                    # Response carries tool_calls or content; parse to the
+                    # same {action, parameters, reason} shape the rest of
+                    # the loop consumes.
+                    _fc_parsed, response_text = self._native_fc_parsed(raw_response)
+                else:
+                    _fc_parsed = None
+                    response_text = extract_response_content(raw_response) or ""
                 await agent_circuit_breaker.record_success()
 
                 # Track token usage
@@ -1147,8 +1260,13 @@ class AgentService:
                 yield self._build_fallback_answer(context, step_num, str(e), lang=lang)
                 return
 
-            # Parse JSON response
-            parsed = _parse_agent_json(response_text)
+            # Parse the response. Native FC path returns `parsed` directly
+            # from structured tool_calls; ReAct path extracts JSON from the
+            # text content.
+            if use_native_fc:
+                parsed = _fc_parsed
+            else:
+                parsed = _parse_agent_json(response_text)
 
             # Treat JSON without "action" field as malformed (LLM output just parameters)
             if parsed and "action" not in parsed:
@@ -1162,6 +1280,9 @@ class AgentService:
                 retry_nudge = prompt_manager.get("agent", "retry_nudge", lang=lang)
                 nudge = prompt + retry_nudge
                 try:
+                    retry_kwargs: dict = dict(classification_kwargs)
+                    if use_native_fc and native_fc_tools:
+                        retry_kwargs["tools"] = native_fc_tools
                     retry_response = await asyncio.wait_for(
                         agent_client.chat(
                             model=agent_model,
@@ -1170,14 +1291,17 @@ class AgentService:
                                 {"role": "user", "content": nudge},
                             ],
                             options=llm_options_retry,
-                            **classification_kwargs,
+                            **retry_kwargs,
                         ),
                         timeout=self.step_timeout,
                     )
-                    response_text = extract_response_content(retry_response) or ""
+                    if use_native_fc:
+                        parsed, response_text = self._native_fc_parsed(retry_response)
+                    else:
+                        response_text = extract_response_content(retry_response) or ""
+                        parsed = _parse_agent_json(response_text)
                     context.track_tokens(nudge, response_text)
                     logger.info(f"🔄 Agent step {step_num} retry ({len(response_text)} chars): {response_text[:200]}")
-                    parsed = _parse_agent_json(response_text)
                 except Exception as e:
                     logger.warning(f"🔄 Agent step {step_num} retry failed: {e}")
 

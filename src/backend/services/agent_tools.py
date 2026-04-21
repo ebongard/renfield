@@ -11,6 +11,7 @@ which tools it can call.
 Tool filtering is handled by AgentRouter which classifies messages into
 roles (smart_home, research, documents, etc.) with pre-defined MCP server lists.
 """
+import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
@@ -20,12 +21,49 @@ if TYPE_CHECKING:
     from services.mcp_client import MCPManager
 
 
+# --- Tool name sanitization ------------------------------------------------
+# OpenAI / Ollama / most native-FC backends require tool names to match
+# ^[a-zA-Z0-9_-]+$. MCP namespaces use dots (e.g. "mcp.release.list_releases"),
+# which would be rejected. We round-trip by swapping dots for double
+# underscores during the request and reversing on the response.
+_SANITIZED_NAME_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Convert a dotted tool name to a native-FC-compatible identifier.
+
+    `mcp.release.list_releases` → `mcp__release__list_releases`.
+    Already-valid names pass through unchanged.
+    """
+    if _SANITIZED_NAME_RE.match(name):
+        return name
+    return name.replace(".", "__")
+
+
+def unsanitize_tool_name(name: str) -> str:
+    """Reverse of :func:`sanitize_tool_name`.
+
+    Collapses `__` back to `.`. Safe to call on names that were never
+    sanitized (idempotent for names without `__`).
+    """
+    return name.replace("__", ".")
+
+
 @dataclass
 class ToolDefinition:
-    """Definition of a tool available to the Agent."""
+    """Definition of a tool available to the Agent.
+
+    `parameters` is the flattened {param_name: description_str} form used by
+    the ReAct prompt builder. `input_schema` is the full JSON Schema from the
+    underlying tool source (MCP's input_schema, internal tool declarations,
+    plugin-registered tools). It is preserved so native function-calling
+    (OpenAI-style `tools=[]`) can emit proper JSON-Schema to the LLM without
+    a lossy round-trip through the flattened form.
+    """
     name: str
     description: str
     parameters: dict[str, str] = field(default_factory=dict)  # param_name -> description
+    input_schema: dict | None = None  # full JSON Schema, for native function calling
 
 
 class AgentToolRegistry:
@@ -138,6 +176,7 @@ class AgentToolRegistry:
                 name=mcp_tool.namespaced_name,
                 description=mcp_tool.description,
                 parameters=params,
+                input_schema=mcp_tool.input_schema,
             )
             self._tools[tool.name] = tool
             logger.debug(f"MCP agent tool registered: {tool.name}")
@@ -196,3 +235,54 @@ class AgentToolRegistry:
                 lines.append(f"- {tool.name}: {tool.description}")
 
         return "\n".join(lines)
+
+    def build_tools_schema(
+        self,
+        tools: dict[str, "ToolDefinition"] | None = None,
+    ) -> list[dict]:
+        """Build an OpenAI-format tools array for native function calling.
+
+        Produces the shape expected by OpenAI `/v1/chat/completions`, Ollama
+        `/api/chat`, llama.cpp `/v1/chat/completions`, vLLM, and Anthropic
+        (which is normalised to the same shape by AnthropicClient). Tool
+        names are sanitized via :func:`sanitize_tool_name` so they match
+        `^[a-zA-Z0-9_-]+$`. The caller is responsible for un-sanitizing
+        names on the response side before dispatching to the executor.
+
+        Falls back to a synthesised JSON Schema from the flattened
+        `parameters` dict when `input_schema` is absent (older tools
+        registered before the schema was preserved).
+
+        Args:
+            tools: Optional subset of registered tools to expose. None means
+                all registered tools.
+
+        Returns:
+            List of `{"type": "function", "function": {name, description, parameters}}`
+            dicts. Empty list if no tools are registered or selected.
+        """
+        tool_set = tools if tools is not None else self._tools
+        result: list[dict] = []
+        for tool in tool_set.values():
+            if tool.input_schema is not None:
+                schema = tool.input_schema
+            else:
+                # Synthesize a minimal schema from the flattened parameters.
+                # All params typed as string because we lost the original
+                # type info; the LLM still gets enough to call sanely.
+                schema = {
+                    "type": "object",
+                    "properties": {
+                        param: {"type": "string", "description": desc}
+                        for param, desc in tool.parameters.items()
+                    },
+                }
+            result.append({
+                "type": "function",
+                "function": {
+                    "name": sanitize_tool_name(tool.name),
+                    "description": tool.description,
+                    "parameters": schema,
+                },
+            })
+        return result

@@ -1944,3 +1944,170 @@ class TestTokenContextVars:
         # Real budget for a greeting is well under threshold
         assert budget["truncated"] is False
         assert budget["passes"] == []
+
+
+# ============================================================================
+# Native Function Calling — parse helpers and capability detection
+# ============================================================================
+
+
+class TestNativeFCParsed:
+    """Unit tests for AgentService._native_fc_parsed — the tool_calls → parsed
+    dict converter. Exercised with three shapes: tool_calls present, content
+    only, neither present.
+    """
+
+    @pytest.mark.unit
+    def test_tool_calls_attribute_style(self):
+        """OpenAI-style dict-or-obj response with tool_calls produces an action dict."""
+        from types import SimpleNamespace
+        raw = SimpleNamespace(
+            message=SimpleNamespace(
+                content="",
+                tool_calls=[
+                    SimpleNamespace(function=SimpleNamespace(
+                        name="mcp__release__list_releases",
+                        arguments='{"query": "REL-100"}',
+                    ))
+                ],
+            )
+        )
+        parsed, text = AgentService._native_fc_parsed(raw)
+        assert parsed == {
+            "action": "mcp.release.list_releases",
+            "parameters": {"query": "REL-100"},
+            "reason": "native_fc",
+        }
+        assert text == ""
+
+    @pytest.mark.unit
+    def test_tool_calls_dict_style(self):
+        """Ollama-style dict response (arguments already parsed)."""
+        raw = {
+            "message": {
+                "content": "",
+                "tool_calls": [
+                    {"function": {
+                        "name": "mcp__jira__search_issues",
+                        "arguments": {"jql": "project=REVA"},
+                    }}
+                ],
+            }
+        }
+        parsed, text = AgentService._native_fc_parsed(raw)
+        assert parsed["action"] == "mcp.jira.search_issues"
+        assert parsed["parameters"] == {"jql": "project=REVA"}
+        assert parsed["reason"] == "native_fc"
+        assert text == ""
+
+    @pytest.mark.unit
+    def test_content_only_yields_final_answer(self):
+        """When the model emits only assistant text, it's the final answer."""
+        from types import SimpleNamespace
+        raw = SimpleNamespace(
+            message=SimpleNamespace(content="Hier sind die Ergebnisse.", tool_calls=None)
+        )
+        parsed, text = AgentService._native_fc_parsed(raw)
+        assert parsed == {
+            "action": "final_answer",
+            "answer": "Hier sind die Ergebnisse.",
+            "reason": "native_fc",
+        }
+        assert text == "Hier sind die Ergebnisse."
+
+    @pytest.mark.unit
+    def test_empty_response_returns_none(self):
+        """No tool_calls, no content → caller falls through to retry nudge."""
+        from types import SimpleNamespace
+        raw = SimpleNamespace(message=SimpleNamespace(content="", tool_calls=None))
+        parsed, text = AgentService._native_fc_parsed(raw)
+        assert parsed is None
+        assert text == ""
+
+    @pytest.mark.unit
+    def test_multiple_tool_calls_takes_first(self):
+        """Parity with the ReAct loop which processes one tool per step."""
+        from types import SimpleNamespace
+        raw = SimpleNamespace(
+            message=SimpleNamespace(
+                content="",
+                tool_calls=[
+                    SimpleNamespace(function=SimpleNamespace(
+                        name="first_tool", arguments="{}",
+                    )),
+                    SimpleNamespace(function=SimpleNamespace(
+                        name="second_tool", arguments="{}",
+                    )),
+                ],
+            )
+        )
+        parsed, _ = AgentService._native_fc_parsed(raw)
+        assert parsed["action"] == "first_tool"
+
+    @pytest.mark.unit
+    def test_malformed_arguments_string_yields_empty_dict(self):
+        """If the backend returns invalid JSON for arguments, treat as {}."""
+        from types import SimpleNamespace
+        raw = SimpleNamespace(
+            message=SimpleNamespace(
+                content="",
+                tool_calls=[
+                    SimpleNamespace(function=SimpleNamespace(
+                        name="list_global_roles", arguments="not json at all",
+                    ))
+                ],
+            )
+        )
+        parsed, _ = AgentService._native_fc_parsed(raw)
+        assert parsed["parameters"] == {}
+
+
+class TestShouldUseNativeFC:
+    """Opt-in gate: role flag AND client capability must both be true."""
+
+    def _make_registry(self):
+        from services.agent_tools import AgentToolRegistry
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+
+    @pytest.mark.unit
+    def test_default_off_when_no_role_flag(self):
+        """A role without native_function_calling=True keeps ReAct regardless of client."""
+        from services.agent_router import AgentRole
+        role = AgentRole(name="r", description={"de": "r", "en": "r"})
+        agent = AgentService(self._make_registry(), role=role)
+        client_with = MagicMock(supports_native_tools=True)
+        client_without = MagicMock(spec=[])
+        assert agent._should_use_native_fc(client_with) is False
+        assert agent._should_use_native_fc(client_without) is False
+
+    @pytest.mark.unit
+    def test_default_off_when_no_role_at_all(self):
+        """An AgentService with role=None never activates NFC."""
+        agent = AgentService(self._make_registry(), role=None)
+        client_with = MagicMock(supports_native_tools=True)
+        assert agent._should_use_native_fc(client_with) is False
+
+    @pytest.mark.unit
+    def test_on_when_role_opts_in_and_client_capable(self):
+        from services.agent_router import AgentRole
+        role = AgentRole(
+            name="r", description={"de": "r", "en": "r"},
+            native_function_calling=True,
+        )
+        agent = AgentService(self._make_registry(), role=role)
+        client = MagicMock(supports_native_tools=True)
+        assert agent._should_use_native_fc(client) is True
+
+    @pytest.mark.unit
+    def test_off_when_role_opts_in_but_client_incapable(self):
+        """Graceful fallback: if client doesn't expose supports_native_tools, stay on ReAct."""
+        from services.agent_router import AgentRole
+        role = AgentRole(
+            name="r", description={"de": "r", "en": "r"},
+            native_function_calling=True,
+        )
+        agent = AgentService(self._make_registry(), role=role)
+        client_no_attr = MagicMock(spec=[])
+        client_false = MagicMock(supports_native_tools=False)
+        assert agent._should_use_native_fc(client_no_attr) is False
+        assert agent._should_use_native_fc(client_false) is False
