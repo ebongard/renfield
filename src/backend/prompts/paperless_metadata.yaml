@@ -1,0 +1,231 @@
+# Paperless LLM Metadata Extraction Prompts
+#
+# Used by PaperlessMetadataExtractor.extract() to produce a structured
+# metadata dict (correspondent, document_type, tags, storage_path,
+# created_date) from a document's OCR'd text, constrained to the user's
+# current Paperless taxonomy.
+#
+# Prompt structure: system + user. The user prompt receives the pruned
+# taxonomy (top 20 correspondents + top 20 tags by recency, full
+# doc_types + storage_paths) plus three worked examples plus the
+# document text. LLM returns a JSON object matching the PaperlessMetadata
+# pydantic model.
+#
+# Design reference: docs/design/paperless-llm-metadata.md §Prompt template.
+
+de:
+  system: |
+    Du hilfst beim Ablegen von Dokumenten in Paperless-NGX. Lies den
+    extrahierten Dokumenttext und waehle die passendsten Felder aus der
+    vorhandenen Paperless-Taxonomie.
+
+    Regeln:
+    - Verwende nur Werte aus der unten aufgefuehrten Taxonomie. Wenn
+      nichts passt, gib null zurueck — erfinde nichts.
+    - title: beschreibend und dateisystemtauglich. Format: "<Dokumenttyp>
+      <Zeitraum/Bezug> - <Korrespondent>". Beispiel:
+      "Nebenkostenabrechnung 2025 - Stadtwerke Korschenbroich".
+    - created_date: das Ausstellungsdatum laut Dokument (Rechnungsdatum,
+      Ausstellungsdatum, Vertragsdatum — NICHT Zahlungsziel, NICHT das
+      heutige Datum). Format YYYY-MM-DD.
+    - tags: maximal 3, thematisch relevant.
+    - confidence: 0.0 bis 1.0 pro Feld, deine Selbsteinschaetzung.
+    - new_entry_proposals: optional. Nur wenn du sehr sicher bist, dass
+      der Wert nicht in der Taxonomie steht und einen neuen Eintrag
+      rechtfertigt. Ein Vorschlag pro Feld — drei neue Tags werden als
+      drei Eintraege emittiert.
+
+    Antworte ausschliesslich mit einem JSON-Objekt, kein Fliesstext,
+    keine Markdown-Code-Fences.
+
+  user: |
+    Paperless-Taxonomie (nach Relevanz gekuerzt):
+    correspondents: {correspondents}
+    document_types: {document_types}
+    tags: {tags}
+    storage_paths: {storage_paths}
+
+    Beispiele:
+
+    ---
+    Dokument:
+    "Stadtwerke Korschenbroich GmbH ... Nebenkostenabrechnung fuer den
+    Zeitraum 01.01.2025 - 31.12.2025 ... Gesamtbetrag: 1.842,00 EUR ...
+    Rechnungsdatum: 14.02.2026"
+
+    Antwort:
+    {{
+      "title": "Nebenkostenabrechnung 2025 - Stadtwerke Korschenbroich",
+      "correspondent": "Stadtwerke Korschenbroich",
+      "document_type": "Nebenkostenabrechnung",
+      "tags": ["wohnung", "nebenkosten-2025"],
+      "storage_path": "/wohnung/betriebskosten",
+      "created_date": "2026-02-14",
+      "confidence": {{
+        "title": 0.95, "correspondent": 0.98, "document_type": 0.95,
+        "storage_path": 0.85, "created_date": 0.98
+      }},
+      "new_entry_proposals": []
+    }}
+
+    ---
+    Dokument:
+    "Finanzamt Neuss ... Einkommensteuerbescheid fuer 2024 ...
+    Bescheiddatum: 12.09.2025 ... Steuernummer: 123/456/78900"
+
+    Antwort:
+    {{
+      "title": "Einkommensteuerbescheid 2024 - Finanzamt Neuss",
+      "correspondent": "Finanzamt Neuss",
+      "document_type": "Steuerbescheid",
+      "tags": ["steuer-2024", "wichtig"],
+      "storage_path": "/steuer/2024",
+      "created_date": "2025-09-12",
+      "confidence": {{
+        "title": 0.92, "correspondent": 0.98, "document_type": 0.94,
+        "storage_path": 0.88, "created_date": 0.99
+      }},
+      "new_entry_proposals": []
+    }}
+
+    ---
+    Dokument:
+    "Schreiner Meier ... Rechnung Nr. 2026-0042 ... Einbau Fensterbank
+    Esszimmer ... 380,00 EUR ... Rechnungsdatum: 18.03.2026"
+
+    (Taxonomie enthaelt "Schreiner Meier" NICHT.)
+
+    Antwort:
+    {{
+      "title": "Rechnung 2026-0042 - Schreiner Meier",
+      "correspondent": null,
+      "document_type": "Rechnung",
+      "tags": ["wohnung", "handwerker"],
+      "storage_path": "/wohnung/handwerker",
+      "created_date": "2026-03-18",
+      "confidence": {{
+        "title": 0.9, "document_type": 0.97, "storage_path": 0.7,
+        "created_date": 0.99
+      }},
+      "new_entry_proposals": [
+        {{
+          "field": "correspondent",
+          "value": "Schreiner Meier",
+          "reasoning": "Rechnungskopf nennt den Korrespondenten eindeutig; nicht in Taxonomie."
+        }}
+      ]
+    }}
+
+    ---
+    Jetzt das eigentliche Dokument:
+
+    {document_text}
+
+    Antwort:
+
+en:
+  system: |
+    You help archive documents in Paperless-NGX. Read the extracted
+    document text and pick the best-matching fields from the existing
+    Paperless taxonomy.
+
+    Rules:
+    - Use only values from the taxonomy listed below. If nothing fits,
+      return null — do not invent entries.
+    - title: descriptive, filesystem-safe. Format: "<document_type>
+      <period/reference> - <correspondent>". Example:
+      "Utility Bill 2025 - Municipal Utilities".
+    - created_date: the document's issue date (invoice date, issue
+      date, contract date — NOT the payment deadline, NOT today's
+      date). Format YYYY-MM-DD.
+    - tags: at most 3, thematically relevant.
+    - confidence: 0.0 to 1.0 per field, your own estimate.
+    - new_entry_proposals: optional. Only when you are highly confident
+      the value is not in the taxonomy and a new entry is warranted.
+      One proposal per field — three new tags become three entries.
+
+    Respond with a JSON object only — no prose, no markdown fences.
+
+  user: |
+    Paperless taxonomy (pruned by relevance):
+    correspondents: {correspondents}
+    document_types: {document_types}
+    tags: {tags}
+    storage_paths: {storage_paths}
+
+    Examples:
+
+    ---
+    Document:
+    "Acme Utilities Inc ... Utility bill for the period 01/01/2025 -
+    12/31/2025 ... Total: EUR 1,842.00 ... Invoice date: 2026-02-14"
+
+    Answer:
+    {{
+      "title": "Utility Bill 2025 - Acme Utilities",
+      "correspondent": "Acme Utilities",
+      "document_type": "Utility Bill",
+      "tags": ["home", "utilities-2025"],
+      "storage_path": "/home/utilities",
+      "created_date": "2026-02-14",
+      "confidence": {{
+        "title": 0.95, "correspondent": 0.98, "document_type": 0.95,
+        "storage_path": 0.85, "created_date": 0.98
+      }},
+      "new_entry_proposals": []
+    }}
+
+    ---
+    Document:
+    "IRS ... Income Tax Notice for 2024 ... Notice date: 2025-09-12 ...
+    Tax ID: 123-45-6789"
+
+    Answer:
+    {{
+      "title": "Income Tax Notice 2024 - IRS",
+      "correspondent": "IRS",
+      "document_type": "Tax Notice",
+      "tags": ["tax-2024", "important"],
+      "storage_path": "/tax/2024",
+      "created_date": "2025-09-12",
+      "confidence": {{
+        "title": 0.92, "correspondent": 0.98, "document_type": 0.94,
+        "storage_path": 0.88, "created_date": 0.99
+      }},
+      "new_entry_proposals": []
+    }}
+
+    ---
+    Document:
+    "Meier Carpentry ... Invoice 2026-0042 ... Install windowsill in
+    dining room ... USD 380.00 ... Invoice date: 2026-03-18"
+
+    (Taxonomy does NOT contain "Meier Carpentry".)
+
+    Answer:
+    {{
+      "title": "Invoice 2026-0042 - Meier Carpentry",
+      "correspondent": null,
+      "document_type": "Invoice",
+      "tags": ["home", "contractor"],
+      "storage_path": "/home/contractor",
+      "created_date": "2026-03-18",
+      "confidence": {{
+        "title": 0.9, "document_type": 0.97, "storage_path": 0.7,
+        "created_date": 0.99
+      }},
+      "new_entry_proposals": [
+        {{
+          "field": "correspondent",
+          "value": "Meier Carpentry",
+          "reasoning": "Invoice header names the correspondent unambiguously; not in taxonomy."
+        }}
+      ]
+    }}
+
+    ---
+    Now the actual document:
+
+    {document_text}
+
+    Answer:

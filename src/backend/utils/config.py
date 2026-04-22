@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     ollama_fallback_url: str = ""                 # Fallback Ollama URL if primary is unreachable (e.g. http://host.docker.internal:11434)
     ollama_vision_model: str = ""                  # Vision-capable model (e.g. "minicpm-v"). Empty = vision disabled.
     ollama_vision_url: str | None = None         # Separate Ollama URL for vision model (default: ollama_url)
+    # Paperless metadata extraction — per docs/design/paperless-llm-metadata.md
+    # § 2. Vision-first on scanned docs, Docling text-layer shortcut for
+    # plain-text PDFs/docx/md. Empty → falls back to ollama_vision_model,
+    # then ollama_chat_model. The extractor uses whichever is set.
+    paperless_extraction_model: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
     # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
