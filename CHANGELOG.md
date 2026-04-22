@@ -4,6 +4,37 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ---
 
+## [v2.1.0] — 2026-04-22
+
+Stabilisierung von `v2.0.0` mit einer architektonischen Nachkorrektur und zwei zuvor unentdeckten Access-Control-Lücken. Die namensgebende Änderung — **Atoms per Document** — verschiebt die Eigentumsgranularität der Circles-Schicht vom Chunk zum Dokument. Inhaltlich semantisch sauberer (ein Dokument ist eine Informationseinheit, ein Chunk ist ein Retrieval-Fragment); technisch reduziert es die KB-Share-Explosion um zwei bis drei Größenordnungen.
+
+### ⚠ Aufwärtskompatibilität
+
+- **Migration `pc20260423_atoms_per_document`**: Neue Spalten `documents.atom_id` (FK → `atoms`, `ON DELETE SET NULL`) + `documents.circle_tier`. Per-Chunk-`atom_id` auf `document_chunks` entfällt; `circle_tier` bleibt dort als denormalisiertes Mirror für den Hot-Path-Filter. Bestand wird per `MIN(chunk.circle_tier)` konservativ auf das Dokument kollabiert. Eine Pre-Migration-Gate bricht den Upgrade ab, falls ein Dokument Chunks mit heterogenen Tiers besitzt — kein stiller Tier-Up-Leak. Downgrade rekonstruiert Per-Chunk-Atoms aus dem Dokument-Tier (verlustbehaftet für zwischenzeitliche Per-Chunk-Diversität; dokumentiert).
+- **Atom-Typ `kb_chunk` ist zurückgezogen**: Nach dem Upgrade existiert kein `kb_chunk`-Atom mehr; Schreiber produzieren nur noch `kb_document`. Externe Tools, die `atom_explicit_grants` oder die `/api/atoms`-Liste parsen, sehen ab jetzt Document-anchored Rows.
+- **KB-Share-Semantik**: `kb_shares_service.revoke_kb_share` liefert jetzt einen Rowcount pro Dokument, nicht pro Chunk (typisch zwei bis drei Größenordnungen kleiner). Aufrufer, die `removed > 0` prüfen, bleiben korrekt; Aufrufer, die den exakten Count inspizieren, müssen ihn neu kalibrieren.
+
+### Hinzugefügt
+
+- **Atoms-per-Document** (Kernbeitrag dieses Release) — Design-Dokument in [`docs/design/atoms-granularity.md`](docs/design/atoms-granularity.md). Retrieval aggregiert Chunk-Treffer nun am Dokument, damit ein langes Dokument den Cross-Source-RRF nicht mit eigenen Chunks überflutet ([#444](https://github.com/ebongard/renfield/pull/444)).
+- **Per-Role Native Function Calling Toggle** (opt-in, default OFF) — `native_function_calling: true` in `config/agent_roles.yaml` aktiviert OpenAI-style `tools=[]` für eine Rolle. Zwei Benchmarks (2026-04-16 + 2026-04-21) zeigen ReAct weiterhin überlegen bei Tool-Selection-Accuracy, deshalb bleibt der Default aus. Scaffolding für zukünftige A/B-Tests ([#422](https://github.com/ebongard/renfield/pull/422)).
+- **Routing-Dashboard im Admin-Nav** — `/admin/routing` war seit [#370](https://github.com/ebongard/renfield/pull/370) registriert, aber über die UI nicht erreichbar. Nav-Eintrag `GitBranch` unter `nav.routingDashboard`, permission-gated auf `admin` ([#452](https://github.com/ebongard/renfield/pull/452)).
+- **Atoms-Review-Labels für KB-Dokumente** — `_resolve_review_labels` in `/api/circles/me/atoms-for-review` resolved `kb_document`-Atoms nun über die `documents`-Tabelle (Titel oder Dateiname + Preview aus dem ersten Chunk).
+
+### Behoben
+
+- **KG-Entitäten und -Relationen landen jetzt in der `atoms`-Registry**: Der Writer in `KnowledgeGraphService` hatte den Atoms-Insert nicht mit dem Source-Row-Insert verknüpft — frisch extrahierte Entitäten + Relationen waren deshalb für Circles-basierte Zugriffsprüfung unsichtbar, obwohl sie in `kg_entities` / `kg_relations` korrekt geschrieben wurden. Shared `AtomService.create_with_source` + `finalize_source_id` Helpers, gemeinsam genutzt von RAG-, KG- und Memory-Writern ([#441](https://github.com/ebongard/renfield/pull/441), closes [#438](https://github.com/ebongard/renfield/issues/438)).
+- **Chat-Upload-Endpoints prüfen den Eigentümer**: `POST /api/chat/upload/{id}/paperless`, `/email`, `/index` suchten `ChatUpload` nur per id ohne Ownership-Check. In Multi-User-Setups konnte Nutzer A durch Raten der ID Dateien von Nutzer B an Paperless weiterleiten oder per Mail versenden. Neuer `_get_owned_upload`-Helper joint `chat_uploads → conversations` und filtert über `user_id`. Soft-404 auf Cross-User-Probe, nicht 403 (verrät nicht, dass die ID existiert) ([#442](https://github.com/ebongard/renfield/pull/442), closes [#434](https://github.com/ebongard/renfield/issues/434)).
+- **Alembic-Migration-DDL-Safety**: `DROP INDEX IF EXISTS` auf Postgres-Pfad, weil `ix_document_chunks_atom_id` nur auf Dev-DBs existiert (über ORM create_all erzeugt), nicht auf Prod (dort wurde er nie explizit angelegt). Das alte `try/except` lag innerhalb von `op.batch_alter_table`, wo Batch-Mode die DDL bis `__exit__` zurückstellt — der Except fängt nur Fehler beim Anlegen des Ops, nicht beim Ausführen der gesammelten SQL ([#451](https://github.com/ebongard/renfield/pull/451)).
+- **Duplikate Config-Dateien entfernt**: `src/backend/config/` enthielt eine veraltete Kopie von Dateien, die längst in den Haupt-Config-Pfaden lebten ([#439](https://github.com/ebongard/renfield/pull/439), closes [#437](https://github.com/ebongard/renfield/issues/437)).
+
+### Entwicklung
+
+- **Reference-Resolver-Tests** — 24 Unit-Tests für `services.reference_resolver` (load / compile / resolve, inklusive YAML-Fehler-Pfade und kreuzdomain-Ambiguität) ([#373](https://github.com/ebongard/renfield/pull/373)).
+- **Follow-up-Issues** aus dem `/review` zu [#444](https://github.com/ebongard/renfield/pull/444) erfasst: Caller-Authz in `upsert_atom` + `share_kb` ([#445](https://github.com/ebongard/renfield/issues/445)), Placeholder-Orphan-Reaper für `create_with_source` ([#446](https://github.com/ebongard/renfield/issues/446)), Migration-Integration-Tests ([#447](https://github.com/ebongard/renfield/issues/447)), Owner-Resolver-Helper extrahieren ([#448](https://github.com/ebongard/renfield/issues/448)), `ATOM_TYPE_*` Konstanten an allen Call-Sites ([#449](https://github.com/ebongard/renfield/issues/449)), `DISTINCT ON` in `_resolve_review_labels` ([#450](https://github.com/ebongard/renfield/issues/450)).
+
+---
+
 ## [v2.0.0] — 2026-04-21
 
 Erste Major-Version seit `v1.0.0`. Der Sprung reflektiert drei generationelle Architektur-Schritte — **Circles / Second Brain**, **Federation v2**, **Async Worker-Split** — sowie die Umstellung auf **k8s** als Produktions-Topologie.
