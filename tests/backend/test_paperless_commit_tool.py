@@ -30,6 +30,12 @@ from services.paperless_commit_tool import (
     paperless_commit_upload,
 )
 
+# Side-effect import — some tests patch
+# ``services.paperless_metadata_extractor._invalidate_taxonomy_cache``.
+# The attribute is resolved at patch time, so the module must be loaded
+# before ``unittest.mock.patch`` runs or it raises AttributeError.
+import services.paperless_metadata_extractor  # noqa: F401  # side-effect
+
 
 # ===========================================================================
 # Token classification
