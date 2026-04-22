@@ -819,6 +819,170 @@ class TestChatUploadEmail:
 # Phase 4: Cleanup Endpoint Tests
 # ============================================================================
 
+class TestChatUploadOwnership:
+    """Ownership scoping on the /upload/{id}/paperless, /email, /index endpoints.
+
+    Regression guard for #434 — in multi-user (AUTH_ENABLED=true) setups,
+    an authenticated user A could previously forward user B's chat upload
+    to Paperless/email by guessing the integer id. All three endpoints now
+    scope the ChatUpload lookup via Conversation.user_id.
+    """
+
+    @pytest.mark.backend
+    async def test_paperless_rejects_cross_user_upload(
+        self, async_client: AsyncClient, db_session: AsyncSession, test_user
+    ):
+        """Authenticated user B cannot forward an upload owned by user A."""
+        from main import app
+        from models.database import Conversation, User
+        from services.auth_service import get_optional_user
+
+        # User A uploaded a file tied to conversation C_A
+        user_a_conv = Conversation(session_id="sess-A", user_id=test_user.id)
+        db_session.add(user_a_conv)
+        await db_session.commit()
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test")
+            tmp_path = f.name
+        try:
+            upload = ChatUpload(
+                session_id="sess-A",
+                filename="secret.pdf",
+                file_type="pdf",
+                file_size=200,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            # A different user (B) attempts to forward
+            user_b = User(
+                username="user_b", email="b@test",
+                password_hash="x", role_id=test_user.role_id,
+            )
+            db_session.add(user_b)
+            await db_session.commit()
+            await db_session.refresh(user_b)
+
+            app.dependency_overrides[get_optional_user] = lambda: user_b
+            try:
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/paperless"
+                )
+            finally:
+                app.dependency_overrides.pop(get_optional_user, None)
+
+            # Soft 404 — don't leak existence to cross-user probes
+            assert response.status_code == 404
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_paperless_accepts_owner(
+        self, async_client: AsyncClient, db_session: AsyncSession, test_user
+    ):
+        """The owning user CAN forward their own upload (happy path)."""
+        from main import app
+        from models.database import Conversation
+        from services.auth_service import get_optional_user
+
+        conv = Conversation(session_id="sess-owner", user_id=test_user.id)
+        db_session.add(conv)
+        await db_session.commit()
+
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 mine")
+            tmp_path = f.name
+        try:
+            upload = ChatUpload(
+                session_id="sess-owner",
+                filename="mine.pdf",
+                file_type="pdf",
+                file_size=200,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            import json
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({
+                    "success": True,
+                    "data": {"task_id": "t-1", "title": "mine.pdf", "filename": "mine.pdf"},
+                }),
+            }
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+            app.state.mcp_manager = mock_manager
+            app.dependency_overrides[get_optional_user] = lambda: test_user
+            try:
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/paperless"
+                )
+            finally:
+                app.state.mcp_manager = None
+                app.dependency_overrides.pop(get_optional_user, None)
+
+            assert response.status_code == 200
+            assert response.json()["paperless_task_id"] == "t-1"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_anonymous_bypass_when_auth_disabled(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Without an authenticated user (AUTH_ENABLED=false), the scoping
+        filter is skipped — matches single-user dev-mode convention."""
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 solo")
+            tmp_path = f.name
+        try:
+            upload = ChatUpload(
+                session_id="sess-solo",
+                filename="solo.pdf",
+                file_type="pdf",
+                file_size=200,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            # No dep override → get_optional_user returns None by default in tests
+            import json
+            from main import app
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({
+                    "success": True,
+                    "data": {"task_id": "t-solo"},
+                }),
+            }
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+            app.state.mcp_manager = mock_manager
+            try:
+                response = await async_client.post(
+                    f"/api/chat/upload/{upload.id}/paperless"
+                )
+            finally:
+                app.state.mcp_manager = None
+            assert response.status_code == 200
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+
 class TestChatUploadCleanup:
     """Tests for DELETE /api/chat/upload/cleanup and _cleanup_uploads"""
 

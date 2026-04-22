@@ -21,6 +21,7 @@ from models.database import (
     UPLOAD_STATUS_COMPLETED,
     UPLOAD_STATUS_FAILED,
     ChatUpload,
+    Conversation,
     KnowledgeBase,
 )
 from services.auth_service import get_optional_user
@@ -167,18 +168,42 @@ async def upload_chat_document(
 # ============================================================================
 
 
+async def _get_owned_upload(
+    db: AsyncSession,
+    upload_id: int,
+    user,
+) -> ChatUpload | None:
+    """Fetch a ChatUpload, scoped to the authenticated user's conversations.
+
+    Ownership model: ChatUpload rows carry ``session_id`` only; the link back
+    to a user runs through ``Conversation.user_id``. We join chat_uploads →
+    conversations and filter by the authenticated user's id.
+
+    When ``user`` is None (AUTH_ENABLED=false or anonymous dev setup), the
+    scoping filter is skipped — matches the single-user fallback convention
+    established in #433. In auth-enabled multi-user mode, a cross-user lookup
+    returns None (soft 404) rather than a 403, so the response doesn't leak
+    the existence of other users' uploads.
+    """
+    query = select(ChatUpload).where(ChatUpload.id == upload_id)
+    if user is not None:
+        query = query.join(
+            Conversation, Conversation.session_id == ChatUpload.session_id,
+        ).where(Conversation.user_id == user.id)
+    result = await db.execute(query)
+    return result.scalar_one_or_none()
+
+
 @router.post("/upload/{upload_id}/index", response_model=IndexResponse)
 async def index_chat_upload(
     upload_id: int,
     request: IndexRequest,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
 ):
     """Index a chat upload into a RAG knowledge base."""
-    # Fetch upload
-    result = await db.execute(
-        select(ChatUpload).where(ChatUpload.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
+    # Fetch upload (scoped to the authenticated user's conversations)
+    upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
@@ -232,13 +257,11 @@ async def forward_to_paperless(
     upload_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
 ):
     """Forward a chat upload to Paperless-NGX via MCP."""
-    # Fetch upload
-    result = await db.execute(
-        select(ChatUpload).where(ChatUpload.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
+    # Fetch upload (scoped to the authenticated user's conversations)
+    upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
@@ -301,13 +324,11 @@ async def forward_via_email(
     email_request: EmailForwardRequest,
     request: Request,
     db: AsyncSession = Depends(get_db),
+    user=Depends(get_optional_user),
 ):
     """Forward a chat upload via Email MCP."""
-    # Fetch upload
-    result = await db.execute(
-        select(ChatUpload).where(ChatUpload.id == upload_id)
-    )
-    upload = result.scalar_one_or_none()
+    # Fetch upload (scoped to the authenticated user's conversations)
+    upload = await _get_owned_upload(db, upload_id, user)
     if not upload:
         raise HTTPException(status_code=404, detail="Upload not found")
 
