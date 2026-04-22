@@ -28,7 +28,7 @@ de:
     - created_date: das Ausstellungsdatum laut Dokument (Rechnungsdatum,
       Ausstellungsdatum, Vertragsdatum — NICHT Zahlungsziel, NICHT das
       heutige Datum). Format YYYY-MM-DD.
-    - tags: maximal 3, thematisch relevant.
+    - tags: maximal 5, thematisch relevant.
     - confidence: 0.0 bis 1.0 pro Feld, deine Selbsteinschaetzung.
     - new_entry_proposals: optional. Nur wenn du sehr sicher bist, dass
       der Wert nicht in der Taxonomie steht und einen neuen Eintrag
@@ -138,7 +138,7 @@ en:
     - created_date: the document's issue date (invoice date, issue
       date, contract date — NOT the payment deadline, NOT today's
       date). Format YYYY-MM-DD.
-    - tags: at most 3, thematically relevant.
+    - tags: at most 5, thematically relevant.
     - confidence: 0.0 to 1.0 per field, your own estimate.
     - new_entry_proposals: optional. Only when you are highly confident
       the value is not in the taxonomy and a new entry is warranted.

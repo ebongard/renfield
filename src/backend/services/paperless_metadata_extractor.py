@@ -47,7 +47,7 @@ ASCII flow — single extraction call:
         │      on one-candidate-within-threshold, flags ambiguous)
         │   3. strict membership check (drops misses that weren't
         │      flagged as new_entry_proposals)
-        │   4. clamp created_date (1900-01-01 ... today+1y)
+        │   4. clamp created_date (today-10y ... today+1y)
         │   5. cap tags at 5
         │
         ▼
@@ -56,6 +56,8 @@ ASCII flow — single extraction call:
 from __future__ import annotations
 
 import json
+import re
+import time
 import unicodedata
 from datetime import date, timedelta
 from pathlib import Path
@@ -65,6 +67,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, ValidationError
 from rapidfuzz.distance import Levenshtein
 
+from models.database import ChatUpload
 from services.prompt_manager import prompt_manager
 from utils.config import settings
 from utils.llm_client import (
@@ -83,29 +86,75 @@ from utils.llm_client import (
 _TOP_CORRESPONDENTS = 20
 _TOP_TAGS = 20
 
-# Fuzzy-match threshold. Levenshtein distance <= this many edits counts
-# as a near-match. 2 = "Stadtwerke Korschenbroich GmbH" can normalise to
-# "Stadtwerke Korschenbroich" (strip trailing "GmbH" costs ~5 edits —
-# actually above threshold, will land as a proposal; that's fine).
-# Shorter strings at distance 2 can match too-loosely, so we also cap
-# at <= 20% of the longer string's length.
+# Fuzzy-match thresholds. Levenshtein distance <= this many edits counts
+# as a near-match. Short strings at distance 2 can match too-loosely,
+# so we also cap at <= 20% of the longer string's length.
+#
+# Levenshtein alone doesn't catch corporate-suffix variations like
+# "Stadtwerke Korschenbroich GmbH" → "Stadtwerke Korschenbroich" (5
+# deletions, over threshold). _CORPORATE_SUFFIXES strips those
+# suffixes before comparison so the design doc's motivating case
+# actually works.
 _FUZZY_MAX_DISTANCE = 2
 _FUZZY_MAX_RATIO = 0.2
 
+# Case-insensitive; matched at the tail after normalisation. Each entry
+# is a standalone token that may appear at the end of a correspondent
+# string, optionally followed by punctuation. The list covers the
+# German + US/UK forms a household Paperless is likely to see; add more
+# as needed.
+_CORPORATE_SUFFIX_PATTERN = re.compile(
+    r"\s*(?:"
+    r"gmbh|ag|kg|kgaa|se|ohg|ug|mbh|e\.v\.|ev|"           # German
+    r"inc\.?|llc\.?|llp\.?|ltd\.?|plc\.?|corp\.?|co\.?|&\s*co\.?|"  # US / UK
+    r"s\.?\s*a\.?|s\.?\s*l\.?|s\.?\s*r\.?\s*l\.?|"         # Romance
+    r"b\.?\s*v\.?|n\.?\s*v\.?"                              # Dutch
+    r")\s*[.,]?\s*$",
+    re.IGNORECASE,
+)
+
+# Per-field confidence gate for new_entry_proposals. Below this the LLM
+# is too uncertain to justify surfacing a create-proposal to the user —
+# drop the proposal silently. Matches the design doc's § Validation
+# step 3 wording.
+_PROPOSAL_CONFIDENCE_MIN = 0.6
+
 # Taxonomy cache TTL (in memory, per-process). 10 min balances freshness
 # with API-call cost. Invalidated on successful create_* via the MCP
-# server's own cache flush + Redis TTL here.
+# server's own cache flush; cross-pod consistency is a v2 concern.
 _TAXONOMY_CACHE_TTL_S = 600
 
 # OCR text char cap fed to the LLM. Enough for the first few pages of a
 # typical document; longer is rarely informative and costs context budget.
 _MAX_DOC_CHARS = 12_000
 
-# created_date sanity clamps — documents dated outside this window are
-# OCR errors (1847 parsed from a page number, 2189 parsed from invoice
-# line). Today + 1 year to accommodate post-dated contracts / receipts
-# scanned slightly in advance.
-_DATE_MIN = date(1900, 1, 1)
+# created_date sanity clamps. Design § Validation step 4 says "10 years
+# past, 1 year future." Computed fresh per call so tests that freeze
+# the clock see the right window.
+_DATE_PAST_YEARS = 10
+_DATE_FUTURE_DAYS = 365
+
+
+# ---------------------------------------------------------------------------
+# Module-level taxonomy cache
+# ---------------------------------------------------------------------------
+#
+# Lives at module scope (not on the extractor instance) so that
+# per-request PaperlessMetadataExtractor instances share the warm
+# cache. Typical request creates a fresh extractor → previously the
+# cache reset every time; now the 10-min TTL actually works.
+#
+# Shape: {"fetched_at": float_epoch, "taxonomy": PaperlessTaxonomy}
+# Empty dict == no cache yet.
+_TAXONOMY_CACHE: dict[str, Any] = {}
+
+
+def _invalidate_taxonomy_cache() -> None:
+    """Flush the cache. Called when a create_* succeeds (the commit
+    tool in PR 2b) so freshly-added entries show up in the next
+    extraction without waiting for the TTL.
+    """
+    _TAXONOMY_CACHE.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -184,19 +233,41 @@ def _normalise(value: str) -> str:
     return unicodedata.normalize("NFKC", value).strip().casefold()
 
 
+def _strip_corporate_suffix(value: str) -> str:
+    """Drop one trailing corporate suffix (GmbH, Inc, LLC, …) from a
+    normalised string.
+
+    The LLM often emits "Stadtwerke Korschenbroich GmbH" when the
+    taxonomy has "Stadtwerke Korschenbroich" — a Levenshtein distance
+    of 5 that would blow past the fuzzy threshold. Stripping the
+    suffix before comparison brings distance to 0, trivial hit.
+
+    Only strips one suffix (non-greedy tail) and only when it's the
+    last token. "Foo GmbH Bar" stays unchanged (legitimately
+    different entity).
+    """
+    if not value:
+        return value
+    return _CORPORATE_SUFFIX_PATTERN.sub("", value).strip()
+
+
 def _fuzzy_match(llm_value: str, taxonomy: list[str]) -> str | None:
     """Return the canonical taxonomy entry near-matching ``llm_value``.
 
-    - Exact match after normalisation → return canonical spelling.
-    - Exactly one entry within edit-distance and ratio thresholds →
-      return canonical spelling.
-    - Zero candidates → return None (caller should treat as proposal).
-    - Two-or-more candidates within threshold → return None (ambiguous;
-      caller flags as proposal and surfaces the alternatives).
+    Three passes, each resolving to the canonical spelling or falling
+    through to the next:
 
-    Rationale for the two thresholds: a raw Levenshtein of 2 would match
-    "Bob" to "Bo" (33% distance) which isn't a near-miss, it's a
-    different word. Gating on ratio <= 0.2 prevents tiny-string false
+    1. Exact match after normalisation.
+    2. Exact match after corporate-suffix stripping on both sides
+       (catches "Stadtwerke Korschenbroich GmbH" → "Stadtwerke
+       Korschenbroich", the design doc's canonical case).
+    3. Levenshtein distance ≤ 2 AND edit-ratio ≤ 0.2 against every
+       normalised taxonomy entry. Exactly one candidate within
+       threshold → canonical. Zero or multiple (ambiguous) → None.
+
+    Rationale for the two thresholds on pass 3: a raw Levenshtein of 2
+    would match "Bob" to "Bo" (33% distance) which isn't a near-miss,
+    it's a different word. The ratio cap prevents tiny-string false
     positives while leaving longer strings room to absorb small typos.
     """
     if not llm_value or not taxonomy:
@@ -206,11 +277,30 @@ def _fuzzy_match(llm_value: str, taxonomy: list[str]) -> str | None:
     if not normalised_llm:
         return None
 
-    # Exact pass first — cheap, catches the common case where the LLM
-    # emits a taxonomy entry verbatim.
+    # Pass 1 — exact after casefold + NFKC. Catches the common case
+    # where the LLM emits a taxonomy entry verbatim.
     for entry in taxonomy:
         if _normalise(entry) == normalised_llm:
             return entry
+
+    # Pass 2 — exact match after corporate-suffix stripping. The
+    # stripping is symmetric: drop suffixes from both sides so
+    # "Stadtwerke GmbH" in the taxonomy still matches "Stadtwerke"
+    # from the LLM and vice versa.
+    stripped_llm = _strip_corporate_suffix(normalised_llm)
+    if stripped_llm and stripped_llm != normalised_llm:
+        for entry in taxonomy:
+            stripped_entry = _strip_corporate_suffix(_normalise(entry))
+            if stripped_entry == stripped_llm:
+                return entry
+    # Also try: LLM emits "Stadtwerke", taxonomy has "Stadtwerke GmbH".
+    # Suffix strip on the taxonomy side catches this.
+    for entry in taxonomy:
+        normalised_entry = _normalise(entry)
+        stripped_entry = _strip_corporate_suffix(normalised_entry)
+        if stripped_entry and stripped_entry != normalised_entry:
+            if stripped_entry == normalised_llm:
+                return entry
 
     # Fuzzy pass with both absolute and ratio constraints.
     candidates: list[str] = []
@@ -302,10 +392,16 @@ def prune_taxonomy(
 # ---------------------------------------------------------------------------
 
 
+def _date_min() -> date:
+    """Computed fresh per call so tests that freeze the clock see the
+    right floor. Design § Validation step 4: ten years past."""
+    return date.today() - timedelta(days=_DATE_PAST_YEARS * 365)
+
+
 def _date_max() -> date:
-    """Computed fresh per call so tests that freeze the clock via
-    ``pytest-freezegun`` or similar see the right ceiling."""
-    return date.today() + timedelta(days=365)
+    """Computed fresh per call so tests that freeze the clock see the
+    right ceiling. Design § Validation step 4: one year future."""
+    return date.today() + timedelta(days=_DATE_FUTURE_DAYS)
 
 
 def validate_extraction(
@@ -322,7 +418,7 @@ def validate_extraction(
        the proposal survives for user review.
     3. Strict taxonomy membership — after fuzzy, assert the value is in
        the list. Defence-in-depth; should never drop here.
-    4. ``created_date`` clamped to [1900-01-01, today+1y].
+    4. ``created_date`` clamped to [today-10y, today+1y].
     5. ``tags`` truncated at 5.
     """
     # Step 1 — parse. Any shape error raises; caller catches.
@@ -334,9 +430,43 @@ def validate_extraction(
         # enough that appending is more useful than replacing.
         raise ValueError(f"Malformed LLM output: {exc}") from exc
 
-    # Group the LLM's proposals by field for quick lookup during fuzzy
-    # fallback — if the LLM flagged "correspondent" as proposal, we
-    # don't need to silently drop the field value too.
+    # Confidence-gate the proposals first. Design § Validation step 3:
+    # proposals below _PROPOSAL_CONFIDENCE_MIN (0.6) are dropped
+    # silently — the LLM is too uncertain to justify surfacing a
+    # create-proposal to the user. Check confidence per-field: a low
+    # confidence on the FIELD (e.g. confidence.correspondent = 0.2)
+    # drops any proposals for that field.
+    high_confidence_proposals: list[NewEntryProposal] = []
+    for proposal in metadata.new_entry_proposals:
+        # The LLM emits confidence keyed by field name (singular for
+        # fields, plural "tags" for the list). Proposal.field is always
+        # singular ("correspondent", "document_type", "tag",
+        # "storage_path") per the Literal typing.
+        confidence_key = proposal.field
+        # For tag proposals, the LLM's confidence is usually keyed
+        # "tags" in its response. Accept either.
+        confidence = metadata.confidence.get(confidence_key)
+        if confidence is None and proposal.field == "tag":
+            confidence = metadata.confidence.get("tags")
+        if confidence is None:
+            # LLM didn't emit confidence for this field. Be permissive
+            # — drop-silent would lose useful signal when the model
+            # forgets the confidence block. Let the proposal survive.
+            high_confidence_proposals.append(proposal)
+            continue
+        if confidence >= _PROPOSAL_CONFIDENCE_MIN:
+            high_confidence_proposals.append(proposal)
+        else:
+            logger.debug(
+                "Dropping low-confidence proposal (%.2f < %.2f): %s=%r",
+                confidence, _PROPOSAL_CONFIDENCE_MIN,
+                proposal.field, proposal.value,
+            )
+    metadata.new_entry_proposals = high_confidence_proposals
+
+    # Group the surviving proposals by field for quick lookup during
+    # fuzzy fallback — if the LLM flagged "correspondent" as proposal,
+    # we don't need to silently drop the field value too.
     proposed_fields = {p.field for p in metadata.new_entry_proposals}
 
     # Step 2 + 3 — fuzzy + strict membership.
@@ -372,9 +502,10 @@ def validate_extraction(
             logger.debug("Dropping tag not in taxonomy: %r", tag)
     metadata.tags = validated_tags[:5]  # Step 5 — cap
 
-    # Step 4 — date clamps.
+    # Step 4 — date clamps. Both bounds are computed fresh per call so
+    # tests with a frozen clock see the window they expect.
     if metadata.created_date is not None:
-        if metadata.created_date < _DATE_MIN or metadata.created_date > _date_max():
+        if metadata.created_date < _date_min() or metadata.created_date > _date_max():
             logger.warning(
                 "Dropping created_date out of range: %s",
                 metadata.created_date,
@@ -478,10 +609,9 @@ class PaperlessMetadataExtractor:
         self.mcp_manager = mcp_manager
         self._llm_client = llm_client
         self._document_processor = document_processor
-        # Per-process taxonomy cache. Entry shape:
-        # {"fetched_at": float_epoch, "taxonomy": PaperlessTaxonomy,
-        #  "correspondents_full": list[str], ...}
-        self._taxonomy_cache: dict[str, Any] = {}
+        # Taxonomy cache is at module level (_TAXONOMY_CACHE) so repeated
+        # per-request extractor instances share the warm cache — the
+        # 10-minute TTL only makes sense across instances.
 
     # -- Extraction entry point --
 
@@ -561,10 +691,15 @@ class PaperlessMetadataExtractor:
     # -- Helpers (overridable for testing) --
 
     async def _load_upload(self, attachment_id: int, session_id: str | None):
-        """Lookup with session-scoping (see #442)."""
+        """Lookup with session-scoping (see #442).
+
+        ``AsyncSessionLocal`` stays a local import because importing
+        ``services.database`` at module level triggers engine creation,
+        which forces every caller (including unit tests) to have a
+        Postgres-ready env. Session-scoped fetch avoids that cost.
+        """
         from sqlalchemy import select
 
-        from models.database import ChatUpload
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
@@ -610,18 +745,15 @@ class PaperlessMetadataExtractor:
             logger.warning("No MCP manager wired; cannot fetch Paperless taxonomy")
             return None
 
-        import time as _time
-        now = _time.time()
-        cached = self._taxonomy_cache.get("entry")
+        now = time.time()
+        cached = _TAXONOMY_CACHE.get("entry")
         if cached and (now - cached["fetched_at"]) < _TAXONOMY_CACHE_TTL_S:
             return cached["taxonomy"]
 
-        # The MCP server exposes list_storage_paths + list_custom_fields
-        # today; for correspondents / document_types / tags we query
-        # Paperless directly via search_documents or via dedicated
-        # helpers the MCP server could add. For PR 2a we leverage the
-        # taxonomy cache that PR 1 warms up via _ensure_caches — the
-        # list_* tools return the already-resolved lists.
+        # The MCP server exposes list_correspondents, list_document_types,
+        # list_tags, list_storage_paths (v1.3.0+). Taxonomy cache on the
+        # MCP server side is shared across tools — one round-trip per
+        # dimension on a cold cache, zero on warm.
         try:
             correspondents = await self._list_via_mcp("list_correspondents")
             document_types = await self._list_via_mcp("list_document_types")
@@ -639,7 +771,7 @@ class PaperlessMetadataExtractor:
             tags=tags,
             storage_paths=storage_paths,
         )
-        self._taxonomy_cache["entry"] = {"fetched_at": now, "taxonomy": taxonomy}
+        _TAXONOMY_CACHE["entry"] = {"fetched_at": now, "taxonomy": taxonomy}
         return taxonomy
 
     async def _list_via_mcp(
@@ -652,25 +784,38 @@ class PaperlessMetadataExtractor:
         """Thin wrapper: call ``mcp.paperless.{tool_name}`` and return
         the list of names.
 
-        The MCP server today has ``list_storage_paths`` (returns
-        ``{"paths": [{"id": ..., "path": ...}]}``) and
-        ``list_custom_fields``. For the three dimensions the audit V2 PR
-        doesn't yet have dedicated list tools for (correspondents,
-        document_types, tags), we fall back to scraping the MCP server's
-        in-memory cache via a well-known diagnostic tool name — this
-        gap is explicitly flagged in the design doc and filled in
-        PR 2b's MCP-server additions if needed. For now, unknown tools
-        return an empty list; the extractor gracefully falls through
-        with fewer dimensions rather than crashing.
+        Requires ``renfield-mcp-paperless`` v1.3.0 or later, which
+        exposes ``list_correspondents`` / ``list_document_types`` /
+        ``list_tags`` / ``list_storage_paths`` as read-only wrappers
+        around the MCP server's already-populated taxonomy caches.
+
+        On any failure path (tool not found, transport error, JSON
+        parse failure, unexpected payload shape), returns an empty
+        list AND logs at WARNING so the "empty taxonomy in prod"
+        failure mode is visible in logs rather than silently degraded.
+        The extractor falls through with fewer dimensions rather than
+        crashing the whole pipeline.
         """
         full_name = f"mcp.paperless.{tool_name}"
         try:
             result = await self.mcp_manager.execute_tool(full_name, {})
         except Exception as exc:
-            logger.debug("MCP tool %s unavailable: %s", full_name, exc)
+            logger.warning("MCP tool %s unreachable: %s", full_name, exc)
             return []
 
         if not result or not result.get("success"):
+            # Distinguish "unknown tool" (MCP server too old) from
+            # "tool ran but errored" so the ops signal is clear.
+            err = (result or {}).get("message") or "no message"
+            err_str = err if isinstance(err, str) else str(err)
+            if "unknown" in err_str.lower() or "not found" in err_str.lower():
+                logger.warning(
+                    "MCP tool %s not available — is the MCP server at "
+                    "v1.3.0 or later? (got: %s)",
+                    full_name, err_str[:120],
+                )
+            else:
+                logger.warning("MCP tool %s failed: %s", full_name, err_str[:120])
             return []
 
         inner_msg = result.get("message")
@@ -679,15 +824,27 @@ class PaperlessMetadataExtractor:
             try:
                 payload = json.loads(inner_msg)
             except json.JSONDecodeError:
+                logger.warning(
+                    "MCP tool %s returned non-JSON message: %r",
+                    full_name, inner_msg[:120],
+                )
                 return []
         elif isinstance(inner_msg, dict):
             payload = inner_msg
 
         if not isinstance(payload, dict):
+            logger.warning(
+                "MCP tool %s returned unexpected payload shape: %s",
+                full_name, type(payload).__name__,
+            )
             return []
 
         items = payload.get(field) or []
         if not isinstance(items, list):
+            logger.warning(
+                "MCP tool %s field %r is not a list: %s",
+                full_name, field, type(items).__name__,
+            )
             return []
 
         names: list[str] = []

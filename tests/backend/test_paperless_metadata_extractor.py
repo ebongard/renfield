@@ -88,11 +88,47 @@ class TestFuzzyMatch:
         assert _fuzzy_match("Stadtwerke Korschenbroic", taxonomy) == "Stadtwerke Korschenbroich"
 
     @pytest.mark.unit
-    def test_distance_over_threshold_drops(self):
+    def test_corporate_suffix_stripped_before_comparison(self):
+        """The design doc's motivating case: LLM emits the full legal
+        name (with GmbH/AG/Inc suffix) while the taxonomy stores the
+        short form. Levenshtein distance would be too high; the
+        suffix-strip pass catches it."""
         taxonomy = ["Stadtwerke Korschenbroich"]
-        # "Stadtwerke Korschenbroich GmbH" adds " GmbH" = 5 chars. Over
-        # the max-distance threshold → no match.
-        assert _fuzzy_match("Stadtwerke Korschenbroich GmbH", taxonomy) is None
+        # GmbH — German form
+        assert _fuzzy_match("Stadtwerke Korschenbroich GmbH", taxonomy) == "Stadtwerke Korschenbroich"
+
+    @pytest.mark.unit
+    def test_corporate_suffix_symmetric(self):
+        """Works either direction: LLM drops the suffix that's in the
+        taxonomy, OR LLM adds a suffix the taxonomy doesn't have."""
+        assert _fuzzy_match("Stadtwerke", ["Stadtwerke GmbH"]) == "Stadtwerke GmbH"
+        assert _fuzzy_match("Stadtwerke GmbH", ["Stadtwerke"]) == "Stadtwerke"
+
+    @pytest.mark.unit
+    def test_corporate_suffix_many_forms(self):
+        taxonomy = ["Acme"]
+        for suffix in ["GmbH", "AG", "Inc.", "LLC", "Ltd", "Corp", "S.A.", "B.V.", "e.V."]:
+            assert _fuzzy_match(f"Acme {suffix}", taxonomy) == "Acme", (
+                f"Suffix {suffix!r} should strip to 'Acme'"
+            )
+
+    @pytest.mark.unit
+    def test_corporate_suffix_only_at_tail(self):
+        """Don't strip mid-string occurrences — 'Foo GmbH Bar' stays
+        as a legitimately different entity."""
+        taxonomy = ["Acme"]
+        # "Acme GmbH Deutschland" — GmbH not at tail, full string
+        # different from "Acme", no match.
+        assert _fuzzy_match("Acme GmbH Deutschland", taxonomy) is None
+
+    @pytest.mark.unit
+    def test_truly_different_strings_still_drop(self):
+        """Suffix stripping must not create false positives. Two
+        different entities should still fail to match."""
+        taxonomy = ["Stadtwerke Korschenbroich"]
+        # "Stadtwerke Köln GmbH" strips to "Stadtwerke Köln" which is
+        # still distance > threshold from "Stadtwerke Korschenbroich".
+        assert _fuzzy_match("Stadtwerke Köln GmbH", taxonomy) is None
 
     @pytest.mark.unit
     def test_short_string_ratio_guard(self):
@@ -318,17 +354,35 @@ class TestValidateExtraction:
         assert len(result.tags) == 5
 
     @pytest.mark.unit
-    def test_created_date_before_1900_dropped(self):
-        """Documents dated 1847 are OCR errors."""
+    def test_created_date_more_than_10_years_past_dropped(self):
+        """Design § Validation step 4: 10 years past is the floor.
+        Documents dated older than that are OCR errors (1985 parsed
+        from prose, 1847 from a page number)."""
+        old = (date.today() - timedelta(days=365 * 15)).isoformat()
         raw = {
             "title": "T",
             "correspondent": None,
             "document_type": "Rechnung",
             "tags": [],
-            "created_date": "1847-03-14",
+            "created_date": old,
         }
         result = validate_extraction(raw, _taxonomy())
         assert result.created_date is None
+
+    @pytest.mark.unit
+    def test_created_date_within_10_years_past_accepted(self):
+        """A doc dated 8 years ago is still plausibly a real receipt
+        the user is archiving late."""
+        recent = (date.today() - timedelta(days=365 * 8)).isoformat()
+        raw = {
+            "title": "T",
+            "correspondent": None,
+            "document_type": "Rechnung",
+            "tags": [],
+            "created_date": recent,
+        }
+        result = validate_extraction(raw, _taxonomy())
+        assert result.created_date is not None
 
     @pytest.mark.unit
     def test_created_date_too_far_future_dropped(self):
@@ -657,6 +711,240 @@ class TestExtractorIntegration:
 
         assert result.error is not None
         assert "model" in result.error.lower() or "fehlgeschlagen" in result.error.lower()
+
+
+# ===========================================================================
+# Confidence-gated proposals
+# ===========================================================================
+
+
+class TestConfidenceGating:
+    @pytest.mark.unit
+    def test_high_confidence_proposal_survives(self):
+        """Confidence ≥ 0.6 on the field name → proposal passes."""
+        raw = {
+            "title": "T",
+            "correspondent": "Schreiner Meier",
+            "document_type": "Rechnung",
+            "tags": [],
+            "confidence": {"correspondent": 0.85},
+            "new_entry_proposals": [
+                {"field": "correspondent", "value": "Schreiner Meier",
+                 "reasoning": "Rechnungskopf."},
+            ],
+        }
+        result = validate_extraction(raw, _taxonomy())
+        assert len(result.new_entry_proposals) == 1
+        assert result.new_entry_proposals[0].value == "Schreiner Meier"
+
+    @pytest.mark.unit
+    def test_low_confidence_proposal_dropped(self):
+        """Confidence < 0.6 on the proposal field → dropped."""
+        raw = {
+            "title": "T",
+            "correspondent": "Unsichtbar Ltd",
+            "document_type": "Rechnung",
+            "tags": [],
+            "confidence": {"correspondent": 0.3},
+            "new_entry_proposals": [
+                {"field": "correspondent", "value": "Unsichtbar Ltd",
+                 "reasoning": "Unsicher, ob so gelesen."},
+            ],
+        }
+        result = validate_extraction(raw, _taxonomy())
+        assert result.new_entry_proposals == []
+
+    @pytest.mark.unit
+    def test_missing_confidence_permissive(self):
+        """No confidence entry for the proposal field → be permissive
+        (don't drop). Keeps the signal when the LLM forgets the
+        confidence block entirely."""
+        raw = {
+            "title": "T",
+            "correspondent": "Schreiner Meier",
+            "document_type": "Rechnung",
+            "tags": [],
+            # No confidence entry at all.
+            "new_entry_proposals": [
+                {"field": "correspondent", "value": "Schreiner Meier",
+                 "reasoning": "..."},
+            ],
+        }
+        result = validate_extraction(raw, _taxonomy())
+        assert len(result.new_entry_proposals) == 1
+
+    @pytest.mark.unit
+    def test_tag_proposal_uses_plural_confidence_key(self):
+        """The LLM often keys confidence as 'tags' (plural list) even
+        though proposals are singular 'tag'. Accept either."""
+        raw = {
+            "title": "T",
+            "tags": [],
+            "confidence": {"tags": 0.9},
+            "new_entry_proposals": [
+                {"field": "tag", "value": "new-tag",
+                 "reasoning": "..."},
+            ],
+        }
+        result = validate_extraction(raw, _taxonomy())
+        assert len(result.new_entry_proposals) == 1
+
+
+# ===========================================================================
+# Malformed individual fields — partial-shape failures
+# ===========================================================================
+
+
+class TestPartialShapeFailures:
+    @pytest.mark.unit
+    def test_malformed_date_string_raises(self):
+        """Invalid date string — pydantic rejects. More common than
+        tag-type mismatch in real LLM output."""
+        raw = {
+            "title": "T",
+            "tags": [],
+            "created_date": "not-a-date",
+        }
+        with pytest.raises(ValueError):
+            validate_extraction(raw, _taxonomy())
+
+    @pytest.mark.unit
+    def test_malformed_proposal_shape_raises(self):
+        """Proposal with a wrong field name (not in Literal)."""
+        raw = {
+            "title": "T",
+            "tags": [],
+            "new_entry_proposals": [
+                {"field": "not-a-real-field", "value": "x", "reasoning": "y"},
+            ],
+        }
+        with pytest.raises(ValueError):
+            validate_extraction(raw, _taxonomy())
+
+
+# ===========================================================================
+# Module-level taxonomy cache
+# ===========================================================================
+
+
+class TestTaxonomyCacheIsModuleScoped:
+    """Regression guard: the cache lives at module scope so different
+    extractor instances share it. Previously each instance had its
+    own empty dict and the TTL was effectively dead."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_cache_shared_across_instances(self):
+        from services import paperless_metadata_extractor as pme
+
+        # Reset cache state for this test.
+        pme._TAXONOMY_CACHE.clear()
+
+        mcp_calls: list[str] = []
+
+        async def _mcp_execute(tool_name: str, params: dict):
+            mcp_calls.append(tool_name)
+            if "correspondents" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "A"}]}'}
+            if "document_types" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "T"}]}'}
+            if "tags" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "t"}]}'}
+            if "storage_paths" in tool_name:
+                return {"success": True, "message": '{"paths": [{"path": "/x"}]}'}
+            return {"success": False}
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=_mcp_execute)
+
+        # First extractor instance — cold cache, 4 MCP calls.
+        ext1 = pme.PaperlessMetadataExtractor(mcp_manager=mcp)
+        tax1 = await ext1._fetch_taxonomy()
+        first_call_count = len(mcp_calls)
+        assert first_call_count == 4
+        assert tax1 is not None
+
+        # Second instance — warm cache, zero MCP calls.
+        ext2 = pme.PaperlessMetadataExtractor(mcp_manager=mcp)
+        tax2 = await ext2._fetch_taxonomy()
+        assert len(mcp_calls) == first_call_count  # no new calls
+        assert tax2 is not None
+        # Same data (identity not guaranteed, but equal).
+        assert tax2.correspondents == tax1.correspondents
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_invalidate_forces_refetch(self):
+        from services import paperless_metadata_extractor as pme
+
+        pme._TAXONOMY_CACHE.clear()
+
+        call_count = {"n": 0}
+
+        async def _mcp_execute(tool_name: str, params: dict):
+            call_count["n"] += 1
+            if "correspondents" in tool_name:
+                return {"success": True, "message": '{"items": []}'}
+            if "document_types" in tool_name:
+                return {"success": True, "message": '{"items": []}'}
+            if "tags" in tool_name:
+                return {"success": True, "message": '{"items": []}'}
+            if "storage_paths" in tool_name:
+                return {"success": True, "message": '{"paths": []}'}
+            return {"success": False}
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=_mcp_execute)
+
+        ext = pme.PaperlessMetadataExtractor(mcp_manager=mcp)
+        await ext._fetch_taxonomy()
+        first = call_count["n"]
+
+        # Invalidate → next fetch re-queries MCP.
+        pme._invalidate_taxonomy_cache()
+        await ext._fetch_taxonomy()
+        assert call_count["n"] == first * 2
+
+
+# ===========================================================================
+# _list_via_mcp — log surface for unknown-tool path
+# ===========================================================================
+
+
+class TestListViaMcpLogging:
+    """The 'MCP server too old' case must log at WARNING so ops can
+    see the empty-taxonomy degradation instead of silently shipping
+    broken extractions."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unknown_tool_logs_warning_with_version_hint(self, caplog):
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": False,
+            "message": "Unknown MCP tool: mcp.paperless.list_correspondents",
+        })
+        ext = PaperlessMetadataExtractor(mcp_manager=mcp)
+
+        import logging
+        with caplog.at_level(logging.WARNING, logger="loguru"):
+            result = await ext._list_via_mcp("list_correspondents")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_non_json_message_handled(self):
+        """If the MCP response message is unparseable, return [] and
+        don't crash."""
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": "<!DOCTYPE html><html>502 Bad Gateway",
+        })
+        ext = PaperlessMetadataExtractor(mcp_manager=mcp)
+        result = await ext._list_via_mcp("list_correspondents")
+        assert result == []
 
 
 # ===========================================================================
