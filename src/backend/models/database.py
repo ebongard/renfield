@@ -199,6 +199,14 @@ class Document(Base):
     created_at = Column(DateTime, default=_utcnow)
     processed_at = Column(DateTime, nullable=True)
 
+    # Circles v2 (atoms-per-document): the access-control unit moved from
+    # per-chunk to per-document (see docs/design/atoms-granularity.md). The
+    # atoms row carries atom_type='kb_document' and owner/policy; chunks no
+    # longer carry atom_id themselves but keep a denormalized circle_tier
+    # mirrored from this column for fast SQL retrieval filters.
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
+
     # Beziehungen
     knowledge_base = relationship("KnowledgeBase", back_populates="documents")
     chunks = relationship("DocumentChunk", back_populates="document", cascade="all, delete-orphan")
@@ -245,11 +253,15 @@ class DocumentChunk(Base):
     # Additional Metadata (JSON für Flexibilität)
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
 
-    # Circles v1: FK to atoms registry + denormalized circle_tier for SQL filter perf.
-    # atom_id populated by AtomService.upsert_atom in a single transaction with the
-    # source-row write. circle_tier defaults to 0 (self) for fresh-DB rows; back-filled
-    # from parent KB's default_circle_tier during pc20260420_circles_v1 migration.
-    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
+    # Circles v2 (atoms-per-document): chunks no longer carry atom_id. The
+    # access-control unit is the parent Document — retrieval joins chunks →
+    # documents and filters on documents.atom_id / documents.circle_tier.
+    # circle_tier is kept here as a denormalized mirror of
+    # Document.circle_tier so existing pgvector queries that filter on the
+    # chunk-level tier continue to work without the JOIN for hot paths.
+    # AtomService.update_tier on a kb_document atom cascades into this
+    # column via UPDATE document_chunks SET circle_tier=? WHERE document_id=?.
+    # (Dropped in pc20260423_atoms_per_document migration.)
     circle_tier = Column(Integer, nullable=False, default=0)
 
     # Timestamps
@@ -930,10 +942,15 @@ TIER_PUBLIC = 4
 
 # Atom type discriminators — one per source table the polymorphic registry
 # wraps. Keep in sync with PolymorphicAtomStore source dispatch.
-ATOM_TYPE_KB_CHUNK = "kb_chunk"
+ATOM_TYPE_KB_DOCUMENT = "kb_document"
 ATOM_TYPE_KG_NODE = "kg_node"
 ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
+# Legacy constant retained for back-compat with existing imports (mostly tests
+# and old alembic migrations). Not used in new writer code paths — the atom_type
+# 'kb_chunk' is no longer written by RAGService after the atoms-per-document
+# migration (pc20260423_atoms_per_document).
+ATOM_TYPE_KB_CHUNK = "kb_chunk"
 
 # Atom explicit grant permission levels — mirrors the legacy KB_PERM_*
 # values for migration parity.

@@ -36,6 +36,7 @@ from models.database import (
     Circle,
     CircleMembership,
     ConversationMemory,
+    Document,
     DocumentChunk,
     KGEntity,
     KGRelation,
@@ -451,7 +452,45 @@ async def _resolve_review_labels(
             else:
                 out[a.atom_id] = (f"Unknown relation ({a.source_id})", None)
 
-    # --- document_chunks ---
+    # --- documents (kb_document atoms, post pc20260423) ---
+    doc_atoms = by_table.get("documents", [])
+    if doc_atoms:
+        source_ids = [int(a.source_id) for a in doc_atoms if a.source_id.isdigit()]
+        docs = {}
+        first_chunks: dict[int, DocumentChunk] = {}
+        if source_ids:
+            rows = (await db.execute(
+                select(Document).where(Document.id.in_(source_ids))
+            )).scalars().all()
+            docs = {d.id: d for d in rows}
+            # Pull a preview chunk per document (lowest chunk_index) for the
+            # review-UI snippet. Chunks no longer carry atoms, so we fetch
+            # through document_chunks directly.
+            chunk_rows = (await db.execute(
+                select(DocumentChunk)
+                .where(DocumentChunk.document_id.in_(source_ids))
+                .order_by(
+                    DocumentChunk.document_id.asc(),
+                    DocumentChunk.chunk_index.asc(),
+                )
+            )).scalars().all()
+            for c in chunk_rows:
+                first_chunks.setdefault(c.document_id, c)
+        for a in doc_atoms:
+            d = docs.get(int(a.source_id)) if a.source_id.isdigit() else None
+            if d is not None:
+                title = (d.title if getattr(d, "title", None) else None) \
+                    or d.filename \
+                    or "Document"
+                preview = first_chunks.get(d.id)
+                snippet = _truncate(preview.content) if preview else None
+                out[a.atom_id] = (title, snippet)
+            else:
+                out[a.atom_id] = (f"Unknown document ({a.source_id})", None)
+
+    # --- document_chunks (legacy pre-pc20260423 atoms; post-migration this
+    #     list is empty because the migration deleted kb_chunk atoms, but we
+    #     keep the branch for defensive reading of any straggler data) ---
     chunk_atoms = by_table.get("document_chunks", [])
     if chunk_atoms:
         source_ids = [int(a.source_id) for a in chunk_atoms if a.source_id.isdigit()]

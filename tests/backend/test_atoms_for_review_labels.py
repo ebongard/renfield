@@ -9,7 +9,7 @@ tier for an unlabeled hex string. The response now includes a
 Covers:
 - kg_node → entity.name + description
 - kg_edge → "subject predicate object"
-- kb_chunk → document.filename + chunk.content
+- kb_document → document.filename + chunk.content
 - conversation_memory → "Memory · YYYY-MM-DD HH:MM" + content
 - orphan source_id → "Unknown … (id)" fallback (no crash)
 - mixed atom types → each gets its type-specific label, no bleed
@@ -72,9 +72,9 @@ class TestResolveReviewLabels:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_kb_chunk_prefers_document_title_then_filename(self):
-        atom_with_title = _atom("c1", "kb_chunk", "document_chunks", "10")
-        atom_without_title = _atom("c2", "kb_chunk", "document_chunks", "11")
+    async def test_kb_document_prefers_document_title_then_filename(self):
+        atom_with_title = _atom("c1", "kb_document", "document_chunks", "10")
+        atom_without_title = _atom("c2", "kb_document", "document_chunks", "11")
 
         doc_titled = SimpleNamespace(title="Nebenkostenabrechnung 2025", filename="NK_2025.pdf")
         doc_untitled = SimpleNamespace(title=None, filename="mysterium.pdf")

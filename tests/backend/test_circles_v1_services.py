@@ -51,7 +51,7 @@ def _atom(atom_id="x", policy=None, owner=42) -> Atom:
         policy = {"tier": 2}
     return Atom(
         atom_id=atom_id,
-        atom_type="kb_chunk",
+        atom_type="kb_document",
         owner_user_id=owner,
         policy=policy,
         created_at=datetime.now(UTC).replace(tzinfo=None),
@@ -112,7 +112,7 @@ class TestAtomTier:
         now = datetime.now(UTC).replace(tzinfo=None)
         atom = Atom.from_mutable(
             atom_id="x",
-            atom_type="kb_chunk",
+            atom_type="kb_document",
             owner_user_id=42,
             policy=source_policy,
             created_at=now,
@@ -128,7 +128,7 @@ class TestAtomTier:
         now = datetime.now(UTC).replace(tzinfo=None)
         atom = Atom.from_mutable(
             atom_id="x",
-            atom_type="kb_chunk",
+            atom_type="kb_document",
             owner_user_id=42,
             policy={"tier": 0},
             created_at=now,
@@ -153,7 +153,7 @@ class TestProvenanceRedaction:
         # across queries by atom_id. Verify the redacted ID is a valid UUID
         # and is NOT the original.
         import uuid as _uuid
-        p = Provenance(atom_id="abc-123-real", atom_type="kb_chunk", display_label="from doc", score=0.85)
+        p = Provenance(atom_id="abc-123-real", atom_type="kb_document", display_label="from doc", score=0.85)
         redacted = p.redacted_for_remote()
         assert redacted.atom_id != p.atom_id
         # Should parse as a valid UUID4
@@ -404,7 +404,7 @@ class TestSourceWrapping:
         }]
         result = _wrap_rag_results(rag_results)
         assert len(result) == 1
-        assert result[0].atom.atom_type == "kb_chunk"
+        assert result[0].atom.atom_type == "kb_document"
         assert result[0].atom.atom_id == "atom-7"
         assert result[0].atom.policy == {"tier": 2}
         assert result[0].score == 0.91
@@ -420,7 +420,7 @@ class TestSourceWrapping:
             "similarity": 0.5,
         }]
         result = _wrap_rag_results(rag_results)
-        assert result[0].atom.atom_id == "kb_chunk:42"
+        assert result[0].atom.atom_id == "kb_document:42"
 
     @pytest.mark.unit
     def test_kg_wrapper_handles_exception_input(self):

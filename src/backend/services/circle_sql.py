@@ -184,15 +184,20 @@ def document_chunks_circles_filter(
     asker_id: int,
     *,
     chunk_alias: str = "dc",
+    doc_alias: str = "d",
     kb_alias: str = "kb",
 ) -> tuple[str, dict[str, Any]]:
     """
     Returns (clause, params) for circle-filtering document_chunks.
 
-    Tier comes from `dc.circle_tier` (denormalized per-chunk so chunk-level
-    re-tiering is honored). Ownership comes from `kb.owner_id` because chunks
-    don't carry a user_id directly. Callers MUST include the JOIN to
-    knowledge_bases under `kb_alias` (or override the alias).
+    Post-atoms-per-document (pc20260423): the access-control unit is the
+    parent Document. ``atom_explicit_grants`` hang on ``atoms`` rows with
+    ``source_table='documents'``, so the explicit-grant EXISTS check must
+    match against ``d.id`` (not ``dc.id``). Tier stays on ``dc.circle_tier``
+    (denormalized mirror of ``d.circle_tier``) for the hot-path similarity
+    filter. Ownership still comes from ``kb.owner_id`` (documents inherit
+    from KB owner). Callers MUST join knowledge_bases under ``kb_alias``
+    AND documents under ``doc_alias``.
 
     Example:
         clause, params = document_chunks_circles_filter(asker_id=42)
@@ -203,13 +208,13 @@ def document_chunks_circles_filter(
             WHERE ... AND ({clause})
         '''
     """
-    src = "document_chunks"
+    src = "documents"
     clause = circles_filter_clause(
         table_alias=chunk_alias,
         owner_col="owner_id",
         tier_col="circle_tier",
         source_table_value=src,
         owner_table_alias=kb_alias,
-        source_id_expr=f"{chunk_alias}.id",
+        source_id_expr=f"{doc_alias}.id",
     )
     return clause, circles_filter_params(asker_id, source_table_value=src)

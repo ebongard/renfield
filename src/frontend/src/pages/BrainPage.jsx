@@ -8,7 +8,7 @@ import Badge from '../components/Badge';
 import TierBadge from '../components/TierBadge';
 
 const ATOM_TYPE_COLORS = {
-  kb_chunk: 'blue',
+  kb_document: 'blue',
   kg_node: 'amber',
   kg_edge: 'purple',
   conversation_memory: 'teal',

@@ -50,6 +50,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     Atom as AtomModel,
+    ATOM_TYPE_KB_DOCUMENT,
     ATOM_TYPE_KG_EDGE,
     ATOM_TYPE_KG_NODE,
 )
@@ -60,7 +61,7 @@ from services.circle_resolver import CircleResolver, atom_from_orm
 # Source table → discriminator atom_type → row id column map.
 # Used by update_tier to dispatch the denormalized circle_tier write.
 _SOURCE_TABLE_TIER_UPDATE = {
-    "document_chunks": "id",
+    "documents": "id",          # kb_document atom → documents.circle_tier + cascade to chunks
     "kg_entities": "id",
     "kg_relations": "id",
     "conversation_memories": "id",
@@ -168,6 +169,72 @@ class AtomService:
         await self.db.commit()
         return atom_id
 
+    async def create_with_source(
+        self,
+        *,
+        atom_type: str,
+        owner_user_id: int,
+        tier: int,
+    ) -> str:
+        """Pre-create an atoms row before the source row exists.
+
+        Source-table writers for every type EXCEPT ``kb_document`` hit a
+        chicken-and-egg: their ``atom_id`` column is NOT NULL + non-deferrable
+        FK to ``atoms.atom_id`` (pc20260420_circles_v1_schema.py), but the
+        source row's PK is auto-incremented and only known after flush. This
+        method seeds the atoms row with a unique placeholder ``source_id``;
+        the caller invokes :meth:`finalize_source_id` after flushing the
+        source row to patch the real PK.
+
+        Returns the minted atom_id. Intended call pattern:
+
+            atom_id = await atom_svc.create_with_source(
+                atom_type="conversation_memory",
+                owner_user_id=42, tier=0,
+            )
+            memory = ConversationMemory(..., atom_id=atom_id, circle_tier=0)
+            self.db.add(memory); await self.db.flush()
+            await atom_svc.finalize_source_id(atom_id, memory.id)
+
+        For ``kb_document`` atoms, Documents are registered BEFORE chunks
+        and their own FK is nullable (see post-pc20260423 schema), so the
+        placeholder dance still applies because Document.atom_id is set
+        to the minted atom_id at creation time before the document row is
+        flushed. RAGService uses this helper the same way.
+        """
+        atom_id = str(uuid.uuid4())
+        source_table = _table_for_atom_type(atom_type)
+        placeholder = f"__pending__{atom_id}"
+        now = datetime.now(UTC).replace(tzinfo=None)
+        atom_row = AtomModel(
+            atom_id=atom_id,
+            atom_type=atom_type,
+            source_table=source_table,
+            source_id=placeholder,
+            owner_user_id=int(owner_user_id),
+            policy={"tier": int(tier)},
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(atom_row)
+        await self.db.flush()
+        return atom_id
+
+    async def finalize_source_id(self, atom_id: str, source_id: int | str) -> None:
+        """Replace the placeholder ``source_id`` on an atoms row with the
+        real PK now that the source row has been flushed.
+
+        Paired with :meth:`create_with_source`. Callers MUST invoke this
+        after the source-row flush; skipping it leaves the atoms row
+        pointing at a ``__pending__<uuid>`` placeholder that retrieval
+        will never find a match for.
+        """
+        atom = (await self.db.execute(
+            select(AtomModel).where(AtomModel.atom_id == atom_id)
+        )).scalar_one()
+        atom.source_id = str(source_id)
+        await self.db.flush()
+
     async def update_tier(self, atom_id: str, new_policy: dict[str, Any]) -> None:
         """
         Update atom.policy + cascade to source row's denormalized circle_tier.
@@ -194,6 +261,19 @@ class AtomService:
             ),
             {"tier": new_tier, "source_id": atom_orm.source_id},
         )
+
+        # kb_document cascade: propagate the new tier to every chunk of
+        # this document in the SAME transaction — otherwise retrieval would
+        # read stale document_chunks.circle_tier and leak chunks at the old
+        # tier until someone noticed (Risk A from the design doc review).
+        if atom_orm.atom_type == ATOM_TYPE_KB_DOCUMENT:
+            await self.db.execute(
+                text(
+                    "UPDATE document_chunks SET circle_tier = :tier "
+                    "WHERE document_id = :doc_id"
+                ),
+                {"tier": new_tier, "doc_id": int(atom_orm.source_id)},
+            )
 
         # KG node cascade: incident relations recompute MIN(subject, object).
         if atom_orm.atom_type == ATOM_TYPE_KG_NODE:
@@ -287,9 +367,16 @@ class AtomService:
 
 
 def _table_for_atom_type(atom_type: str) -> str:
-    """Map atom_type discriminator → source table name."""
+    """Map atom_type discriminator → source table name.
+
+    Post-atoms-per-document migration (pc20260423): the RAG access-control
+    unit is ``kb_document`` / ``documents``. The legacy ``kb_chunk`` mapping
+    is retained only so old atoms rows are still reachable for read/delete;
+    writers should not produce ``kb_chunk`` atoms anymore.
+    """
     table_map = {
-        "kb_chunk": "document_chunks",
+        "kb_document": "documents",
+        "kb_chunk": "document_chunks",  # legacy; see note above
         "kg_node": "kg_entities",
         "kg_edge": "kg_relations",
         "conversation_memory": "conversation_memories",
@@ -302,12 +389,13 @@ def _table_for_atom_type(atom_type: str) -> str:
 def _source_id_for(atom: Atom) -> str:
     """Extract the source row's primary key as a string."""
     payload = atom.payload or {}
-    # Prefer explicit chunk_id / entity_id / relation_id / memory_id keys
-    for key in ("chunk_id", "entity_id", "relation_id", "memory_id"):
+    # Prefer explicit document_id / chunk_id / entity_id / relation_id /
+    # memory_id keys (ordered most-specific first).
+    for key in ("document_id", "chunk_id", "entity_id", "relation_id", "memory_id"):
         if key in payload:
             return str(payload[key])
     # Fall back to the atom's stored source_id placeholder if set elsewhere
     raise ValueError(
         f"Cannot determine source_id for atom {atom.atom_type}: "
-        f"payload missing chunk_id/entity_id/relation_id/memory_id"
+        f"payload missing document_id/chunk_id/entity_id/relation_id/memory_id"
     )

@@ -132,49 +132,69 @@ def _now() -> datetime:
 
 
 def _wrap_rag_results(rag_results: Any) -> list[AtomMatch]:
-    """Convert RAGRetrieval.search output -> list[AtomMatch]."""
+    """Convert RAGRetrieval.search output -> list[AtomMatch].
+
+    Post-atoms-per-document (pc20260423): emits one AtomMatch per unique
+    DOCUMENT, not per chunk. Multiple chunks of the same document that
+    matched the query collapse to a single match carrying the best-scoring
+    chunk's snippet. This keeps the polymorphic Cross-Source RRF fusion
+    fair — documents compete on equal footing with KG entities and
+    memories, rather than a long document flooding the top-K with its own
+    chunks.
+    """
     if isinstance(rag_results, Exception) or not rag_results:
         return []
-    matches = []
+
+    # Group chunk results by document atom_id, keeping the highest similarity
+    # per document. RAGRetrieval.search returns chunks sorted by similarity
+    # desc; we preserve that order when collapsing.
     now = _now()
-    for rank, result in enumerate(rag_results, start=1):
+    seen_atoms: dict[str, AtomMatch] = {}
+    next_rank = 1
+    for result in rag_results:
         chunk = result.get("chunk", {})
         doc = result.get("document", {})
-        # Per PR #402 review SHOULD-FIX #11: warn-log when atom_id is missing
-        # (should never happen post-migration; if it does, the back-fill skipped
-        # this row or a writer bypassed AtomService).
-        if chunk.get("atom_id") is None:
+
+        doc_atom_id = doc.get("atom_id")
+        if doc_atom_id is None:
             logger.warning(
-                f"PolymorphicAtomStore: chunk id={chunk.get('id')} has no atom_id "
-                f"(post-migration this should not happen — back-fill missed this row "
-                f"or writer bypassed AtomService.upsert_atom)"
+                f"PolymorphicAtomStore: document id={doc.get('id')} has no atom_id "
+                f"(post-migration this should not happen — back-fill missed this "
+                f"row or writer bypassed AtomService.create_with_source)"
             )
-        atom_id = chunk.get("atom_id") or f"kb_chunk:{chunk.get('id', 0)}"
-        matches.append(
-            AtomMatch(
-                atom=Atom(
-                    atom_id=str(atom_id),
-                    atom_type="kb_chunk",
-                    owner_user_id=0,
-                    policy={"tier": chunk.get("circle_tier", 0)},
-                    created_at=now,
-                    updated_at=now,
-                    payload={
-                        "chunk_id": chunk.get("id"),
-                        "document_id": doc.get("id"),
-                        "content": chunk.get("content", ""),
-                        "page_number": chunk.get("page_number"),
-                        "section_title": chunk.get("section_title"),
-                        "document_filename": doc.get("filename", ""),
-                        "document_title": doc.get("title"),
-                    },
-                ),
-                score=float(result.get("similarity", 0.0)),
-                snippet=chunk.get("content", "")[:200],
-                rank=rank,
-            )
+            doc_atom_id = f"kb_document:{doc.get('id', 0)}"
+        atom_id = str(doc_atom_id)
+
+        if atom_id in seen_atoms:
+            continue  # already have a higher-scoring chunk for this document
+
+        similarity = float(result.get("similarity", 0.0))
+        seen_atoms[atom_id] = AtomMatch(
+            atom=Atom(
+                atom_id=atom_id,
+                atom_type="kb_document",
+                owner_user_id=0,
+                # Chunks carry the denormalized tier from their document;
+                # either side gives the same value, chunk-side is cheap.
+                policy={"tier": chunk.get("circle_tier", doc.get("circle_tier", 0))},
+                created_at=now,
+                updated_at=now,
+                payload={
+                    "document_id": doc.get("id"),
+                    "best_chunk_id": chunk.get("id"),
+                    "content": chunk.get("content", ""),
+                    "page_number": chunk.get("page_number"),
+                    "section_title": chunk.get("section_title"),
+                    "document_filename": doc.get("filename", ""),
+                    "document_title": doc.get("title"),
+                },
+            ),
+            score=similarity,
+            snippet=chunk.get("content", "")[:200],
+            rank=next_rank,
         )
-    return matches
+        next_rank += 1
+    return list(seen_atoms.values())
 
 
 def _wrap_kg_context(kg_context: Any) -> list[AtomMatch]:

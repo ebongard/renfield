@@ -203,8 +203,11 @@ class RAGRetrieval:
                 dc.chunk_type,
                 dc.chunk_metadata,
                 dc.parent_chunk_id,
+                dc.circle_tier,
                 d.filename,
                 d.title as doc_title,
+                d.atom_id as doc_atom_id,
+                d.circle_tier as doc_circle_tier,
                 1 - (dc.embedding <=> CAST(:embedding AS vector)) as similarity
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
@@ -238,11 +241,14 @@ class RAGRetrieval:
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
                     "parent_chunk_id": getattr(row, "parent_chunk_id", None),
+                    "circle_tier": getattr(row, "circle_tier", 0),
                 },
                 "document": {
                     "id": row.document_id,
                     "filename": row.filename,
                     "title": row.doc_title or row.filename,
+                    "atom_id": getattr(row, "doc_atom_id", None),
+                    "circle_tier": getattr(row, "doc_circle_tier", 0),
                 },
                 "similarity": round(similarity, 4),
             })
@@ -279,8 +285,11 @@ class RAGRetrieval:
                 dc.chunk_type,
                 dc.chunk_metadata,
                 dc.parent_chunk_id,
+                dc.circle_tier,
                 d.filename,
                 d.title as doc_title,
+                d.atom_id as doc_atom_id,
+                d.circle_tier as doc_circle_tier,
                 ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
@@ -314,11 +323,14 @@ class RAGRetrieval:
                     "section_title": row.section_title,
                     "chunk_type": row.chunk_type,
                     "parent_chunk_id": getattr(row, "parent_chunk_id", None),
+                    "circle_tier": getattr(row, "circle_tier", 0),
                 },
                 "document": {
                     "id": row.document_id,
                     "filename": row.filename,
                     "title": row.doc_title or row.filename,
+                    "atom_id": getattr(row, "doc_atom_id", None),
+                    "circle_tier": getattr(row, "doc_circle_tier", 0),
                 },
                 "similarity": round(float(row.rank), 6),
             }

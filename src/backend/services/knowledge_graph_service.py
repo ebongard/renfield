@@ -140,56 +140,12 @@ class KnowledgeGraphService:
         self._fallback_owner_id = int(fallback)
         return self._fallback_owner_id
 
-    async def _create_atom_for_new_source(
-        self,
-        atom_type: str,
-        owner_user_id: int,
-        tier: int,
-    ) -> str:
-        """Pre-create an ``atoms`` row before inserting the source row.
-
-        The source-table ``atom_id`` columns carry a NOT NULL constraint and
-        a non-deferrable FK back to ``atoms.atom_id`` (per the
-        pc20260420_circles_v1 migration). That means the atoms row must
-        already exist when the source-row INSERT fires. The source row's
-        primary key is auto-incremented and only known after flush, so we
-        seed ``atoms.source_id`` with a unique placeholder; the caller
-        invokes :meth:`_finalize_atom_source_id` after flushing the source
-        row to overwrite the placeholder with the real PK.
+    def _atom_service(self):
+        """Lazy AtomService bound to the same DB session. Shared helper for
+        create_with_source / finalize_source_id (see atom_service.py).
         """
-        from datetime import UTC, datetime
-        import uuid as _uuid
-        from models.database import Atom as AtomORM
-        atom_id = str(_uuid.uuid4())
-        source_table = {
-            "kg_node": "kg_entities",
-            "kg_edge": "kg_relations",
-        }[atom_type]
-        placeholder = f"__pending__{atom_id}"
-        now = datetime.now(UTC).replace(tzinfo=None)
-        atom_row = AtomORM(
-            atom_id=atom_id,
-            atom_type=atom_type,
-            source_table=source_table,
-            source_id=placeholder,
-            owner_user_id=int(owner_user_id),
-            policy={"tier": int(tier)},
-            created_at=now,
-            updated_at=now,
-        )
-        self.db.add(atom_row)
-        await self.db.flush()
-        return atom_id
-
-    async def _finalize_atom_source_id(self, atom_id: str, source_id: int) -> None:
-        """Replace the placeholder ``source_id`` on an atoms row with the
-        freshly-flushed source-row's primary key."""
-        from models.database import Atom as AtomORM
-        atom = (await self.db.execute(
-            select(AtomORM).where(AtomORM.atom_id == atom_id)
-        )).scalar_one()
-        atom.source_id = str(source_id)
-        await self.db.flush()
+        from services.atom_service import AtomService
+        return AtomService(self.db)
 
     async def _get_ollama_client(self):
         if self._ollama_client is None:
@@ -463,7 +419,7 @@ class KnowledgeGraphService:
         # that actually runs.
         atom_id: str | None = None
         if owner_id is not None:
-            atom_id = await self._create_atom_for_new_source(
+            atom_id = await self._atom_service().create_with_source(
                 atom_type="kg_node",
                 owner_user_id=owner_id,
                 tier=default_tier,
@@ -480,7 +436,7 @@ class KnowledgeGraphService:
         self.db.add(entity)
         await self.db.flush()
         if atom_id is not None:
-            await self._finalize_atom_source_id(atom_id, entity.id)
+            await self._atom_service().finalize_source_id(atom_id, entity.id)
         logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id} atom_id={atom_id}")
         return entity
 
@@ -592,7 +548,7 @@ class KnowledgeGraphService:
         owner_id = await self._resolve_owner_user_id(user_id)
         atom_id: str | None = None
         if owner_id is not None:
-            atom_id = await self._create_atom_for_new_source(
+            atom_id = await self._atom_service().create_with_source(
                 atom_type="kg_edge",
                 owner_user_id=owner_id,
                 tier=relation_tier,
@@ -610,7 +566,7 @@ class KnowledgeGraphService:
         self.db.add(relation)
         await self.db.flush()
         if atom_id is not None:
-            await self._finalize_atom_source_id(atom_id, relation.id)
+            await self._atom_service().finalize_source_id(atom_id, relation.id)
         logger.debug(
             f"KG: New relation {subject_id} --{predicate}--> {object_id} "
             f"atom_id={atom_id} tier={relation_tier}"

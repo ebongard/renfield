@@ -1081,7 +1081,7 @@
     "removeMember": "Remove member",
     "removeMemberConfirm": "Remove {{name}} from all circles?",
     "atomType": {
-      "kb_chunk": "Document",
+      "kb_document": "Document",
       "kg_node": "Entity",
       "kg_edge": "Relation",
       "conversation_memory": "Memory"

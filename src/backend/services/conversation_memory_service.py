@@ -72,6 +72,36 @@ class ConversationMemoryService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self._ollama_client = None
+        # Cached fallback admin id for atoms registration when save() is
+        # called without an authenticated user_id (single-user mode). See
+        # _resolve_owner_user_id.
+        self._fallback_owner_id: int | None = None
+
+    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
+        """Resolve a non-null atoms owner, or None if no users exist.
+
+        Matches pc20260420_circles_v1_schema.py back-fill: explicit user_id,
+        else first user (admin), else None (empty-users-table dev setups
+        where atom registration is skipped).
+        """
+        if user_id is not None:
+            return user_id
+        if self._fallback_owner_id is not None:
+            return self._fallback_owner_id
+        from models.database import User
+        result = await self.db.execute(
+            select(User.id).order_by(User.id.asc()).limit(1)
+        )
+        fallback = result.scalar()
+        if fallback is None:
+            return None
+        self._fallback_owner_id = int(fallback)
+        return self._fallback_owner_id
+
+    def _atom_service(self):
+        """Lazy AtomService bound to the same DB session."""
+        from services.atom_service import AtomService
+        return AtomService(self.db)
 
     async def _get_ollama_client(self):
         """Lazy initialization of Ollama client for embeddings."""
@@ -144,10 +174,27 @@ class ConversationMemoryService:
                 # Deactivate the least important memory
                 await self._deactivate_least_important(user_id)
 
+        # Atom-first ordering: conversation_memories.atom_id is NOT NULL +
+        # non-deferrable FK, so the atoms row must exist before the source
+        # INSERT. See AtomService.create_with_source for the 3-phase
+        # contract. owner_id is None only in fresh-DB dev setups; atom
+        # registration is then skipped and memory.atom_id stays NULL
+        # (ORM column is nullable, test SQLite lets this through).
+        owner_id = await self._resolve_owner_user_id(user_id)
+        default_tier = 0  # self — owner promotes via /api/atoms
+        atom_id: str | None = None
+        atom_svc = self._atom_service()
+        if owner_id is not None:
+            atom_id = await atom_svc.create_with_source(
+                atom_type="conversation_memory",
+                owner_user_id=owner_id,
+                tier=default_tier,
+            )
+
         memory = ConversationMemory(
             content=content,
             category=category,
-            user_id=user_id,
+            user_id=owner_id,
             embedding=embedding,
             importance=importance,
             source_session_id=source_session_id,
@@ -158,9 +205,13 @@ class ConversationMemoryService:
             team_id=team_id,
             confidence=confidence,
             trigger_pattern=trigger_pattern,
+            atom_id=atom_id,
+            circle_tier=default_tier,
         )
         self.db.add(memory)
         await self.db.flush()
+        if atom_id is not None:
+            await atom_svc.finalize_source_id(atom_id, memory.id)
 
         await self._record_history(
             memory_id=memory.id,

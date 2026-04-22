@@ -1081,7 +1081,7 @@
     "removeMember": "Mitglied entfernen",
     "removeMemberConfirm": "{{name}} aus allen Kreisen entfernen?",
     "atomType": {
-      "kb_chunk": "Dokument",
+      "kb_document": "Dokument",
       "kg_node": "Entität",
       "kg_edge": "Beziehung",
       "conversation_memory": "Erinnerung"

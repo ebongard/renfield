@@ -58,6 +58,36 @@ class RAGService:
         self.db = db
         self.processor = DocumentProcessor()
         self._ollama_client = None
+        # Cached admin fallback id for atoms registration when the parent KB
+        # has no explicit owner (legacy rows / pre-auth KBs). Resolved lazily.
+        self._fallback_owner_id: int | None = None
+
+    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
+        """Resolve a non-null atoms owner, or None when no users exist.
+
+        Matches pc20260420_circles_v1_schema.py back-fill logic: prefer the
+        explicit owner, else fall back to the first user (admin). Returns
+        None only in empty-users fresh-DB dev setups so callers can skip
+        atom registration (e.g. pre-bootstrap unit tests).
+        """
+        if user_id is not None:
+            return user_id
+        if self._fallback_owner_id is not None:
+            return self._fallback_owner_id
+        from models.database import User
+        result = await self.db.execute(
+            select(User.id).order_by(User.id.asc()).limit(1)
+        )
+        fallback = result.scalar()
+        if fallback is None:
+            return None
+        self._fallback_owner_id = int(fallback)
+        return self._fallback_owner_id
+
+    def _atom_service(self):
+        """Lazy AtomService bound to the same DB session."""
+        from services.atom_service import AtomService
+        return AtomService(self.db)
 
     async def _get_ollama_client(self):
         """Lazy initialization des Ollama Clients"""
@@ -186,19 +216,60 @@ class RAGService:
         ``process_existing_document`` (#388). The ``ingest_document``
         wrapper still exists for callers that need synchronous ingestion
         (currently chat upload, reindex) — those run Docling in-process.
+
+        Circles v2 (atoms-per-document): the atoms registry row is created
+        here, at the same time as the Document, so every document that
+        exists in the DB is access-controlled from the first commit. Chunks
+        created later inherit ``circle_tier`` from the document.
         """
         actual_filename = filename or os.path.basename(file_path)
+
+        # Resolve KB owner + default tier for the atoms registration.
+        kb_owner_id: int | None = None
+        kb_default_tier = 0
+        if knowledge_base_id is not None:
+            kb_info = (await self.db.execute(
+                select(KnowledgeBase.owner_id, KnowledgeBase.default_circle_tier)
+                .where(KnowledgeBase.id == knowledge_base_id)
+            )).first()
+            if kb_info is not None:
+                kb_owner_id = kb_info.owner_id
+                kb_default_tier = int(kb_info.default_circle_tier or 0)
+
+        atom_owner = await self._resolve_owner_user_id(kb_owner_id)
+
+        # Pre-create the atoms row so the Document.atom_id FK has a valid
+        # target when the document INSERT fires. Skipped only in empty-users
+        # dev setups (pre-bootstrap), which leaves doc.atom_id NULL on
+        # SQLite test DBs — prod always has the bootstrap admin.
+        atom_id: str | None = None
+        atom_svc = self._atom_service()
+        if atom_owner is not None:
+            atom_id = await atom_svc.create_with_source(
+                atom_type="kb_document",
+                owner_user_id=atom_owner,
+                tier=kb_default_tier,
+            )
+
         doc = Document(
             file_path=file_path,
             filename=actual_filename,
             knowledge_base_id=knowledge_base_id,
             file_hash=file_hash,
             status=DOC_STATUS_PENDING,
+            atom_id=atom_id,
+            circle_tier=kb_default_tier,
         )
         self.db.add(doc)
         await self.db.commit()
         await self.db.refresh(doc)
-        logger.info(f"Dokument erstellt: ID={doc.id}, Datei={actual_filename}, status=pending")
+        if atom_id is not None:
+            await atom_svc.finalize_source_id(atom_id, doc.id)
+            await self.db.commit()
+        logger.info(
+            f"Dokument erstellt: ID={doc.id}, Datei={actual_filename}, "
+            f"status=pending, atom_id={atom_id}, tier={kb_default_tier}"
+        )
         return doc
 
     async def process_existing_document(
@@ -264,6 +335,15 @@ class RAGService:
                 chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
             else:
                 chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
+
+            # Post-atoms-per-document (#pc20260423): chunks no longer carry
+            # their own atom_id. They inherit circle_tier from the parent
+            # Document — set here so retrieval's hot-path SQL filter (which
+            # reads document_chunks.circle_tier without a JOIN) stays valid
+            # even between document-level tier changes and the subsequent
+            # AtomService.update_tier cascade.
+            for chunk in chunk_objects:
+                chunk.circle_tier = int(doc.circle_tier or 0)
 
             chunk_count = len(chunk_objects)
             if chunk_objects:

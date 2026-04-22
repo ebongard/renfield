@@ -60,6 +60,9 @@ async def share_kb(
             f"(expected one of {sorted(_PERM_RANK)})"
         )
 
+    # Post-atoms-per-document (pc20260423): one grant per DOCUMENT, not per
+    # chunk. The KB-share explosion size drops from O(chunks) to O(documents);
+    # for a typical book-sized KB that's 2-3 orders of magnitude smaller.
     now = datetime.now(UTC).replace(tzinfo=None)
     await db.execute(
         text(
@@ -67,9 +70,8 @@ async def share_kb(
             "  (atom_id, granted_to_user_id, permission_level, granted_by, granted_at) "
             "SELECT a.atom_id, :target, :perm, :granter, :now "
             "FROM atoms a "
-            "JOIN document_chunks dc ON a.source_id = dc.id::text "
-            "JOIN documents d ON dc.document_id = d.id "
-            "WHERE a.source_table = 'document_chunks' "
+            "JOIN documents d ON a.source_id = d.id::text "
+            "WHERE a.source_table = 'documents' "
             "  AND d.knowledge_base_id = :kb_id "
             "ON CONFLICT (atom_id, granted_to_user_id) DO UPDATE "
             "  SET permission_level = EXCLUDED.permission_level, "
@@ -104,11 +106,10 @@ async def revoke_kb_share(
     result = await db.execute(
         text(
             "DELETE FROM atom_explicit_grants g "
-            "USING atoms a, document_chunks dc, documents d "
+            "USING atoms a, documents d "
             "WHERE g.atom_id = a.atom_id "
-            "  AND a.source_table = 'document_chunks' "
-            "  AND a.source_id = dc.id::text "
-            "  AND dc.document_id = d.id "
+            "  AND a.source_table = 'documents' "
+            "  AND a.source_id = d.id::text "
             "  AND d.knowledge_base_id = :kb_id "
             "  AND g.granted_to_user_id = :target"
         ),
@@ -136,15 +137,14 @@ async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
     """
     result = await db.execute(
         text(
-            "WITH latest_per_chunk AS ("
+            "WITH latest_per_doc AS ("
             "  SELECT DISTINCT ON (g.granted_to_user_id, g.atom_id) "
             "    g.granted_to_user_id, g.atom_id, g.permission_level, "
             "    g.granted_by, g.granted_at "
             "  FROM atom_explicit_grants g "
             "  JOIN atoms a ON g.atom_id = a.atom_id "
-            "  JOIN document_chunks dc ON a.source_id = dc.id::text "
-            "  JOIN documents d ON dc.document_id = d.id "
-            "  WHERE a.source_table = 'document_chunks' "
+            "  JOIN documents d ON a.source_id = d.id::text "
+            "  WHERE a.source_table = 'documents' "
             "    AND d.knowledge_base_id = :kb_id "
             "  ORDER BY g.granted_to_user_id, g.atom_id, g.granted_at DESC "
             "), "
@@ -153,19 +153,19 @@ async def list_kb_shares(db: AsyncSession, kb_id: int) -> list[dict[str, Any]]:
             "         MAX(CASE permission_level "
             "             WHEN 'admin' THEN 3 WHEN 'write' THEN 2 ELSE 1 END) AS rank, "
             "         MAX(granted_at) AS latest_at "
-            "  FROM latest_per_chunk "
+            "  FROM latest_per_doc "
             "  GROUP BY granted_to_user_id "
             ") "
             "SELECT DISTINCT ON (r.granted_to_user_id) "
             "       r.granted_to_user_id AS user_id, "
             "       r.rank, "
             "       r.latest_at AS granted_at, "
-            "       lpc.granted_by "
+            "       lpd.granted_by "
             "FROM ranked r "
-            "JOIN latest_per_chunk lpc "
-            "  ON lpc.granted_to_user_id = r.granted_to_user_id "
-            "  AND lpc.granted_at = r.latest_at "
-            "ORDER BY r.granted_to_user_id, lpc.granted_by NULLS LAST"
+            "JOIN latest_per_doc lpd "
+            "  ON lpd.granted_to_user_id = r.granted_to_user_id "
+            "  AND lpd.granted_at = r.latest_at "
+            "ORDER BY r.granted_to_user_id, lpd.granted_by NULLS LAST"
         ),
         {"kb_id": kb_id},
     )
@@ -193,9 +193,8 @@ async def get_user_kb_permission_level(
             "             WHEN 'admin' THEN 3 WHEN 'write' THEN 2 ELSE 1 END) AS rank "
             "FROM atom_explicit_grants g "
             "JOIN atoms a ON g.atom_id = a.atom_id "
-            "JOIN document_chunks dc ON a.source_id = dc.id::text "
-            "JOIN documents d ON dc.document_id = d.id "
-            "WHERE a.source_table = 'document_chunks' "
+            "JOIN documents d ON a.source_id = d.id::text "
+            "WHERE a.source_table = 'documents' "
             "  AND d.knowledge_base_id = :kb_id "
             "  AND g.granted_to_user_id = :user_id"
         ),
@@ -208,15 +207,14 @@ async def get_user_kb_permission_level(
 
 
 async def list_user_shared_kb_ids(db: AsyncSession, user_id: int) -> set[int]:
-    """KB IDs the user has any chunk-level grant on."""
+    """KB IDs the user has any document-level grant on."""
     result = await db.execute(
         text(
             "SELECT DISTINCT d.knowledge_base_id "
             "FROM atom_explicit_grants g "
             "JOIN atoms a ON g.atom_id = a.atom_id "
-            "JOIN document_chunks dc ON a.source_id = dc.id::text "
-            "JOIN documents d ON dc.document_id = d.id "
-            "WHERE a.source_table = 'document_chunks' "
+            "JOIN documents d ON a.source_id = d.id::text "
+            "WHERE a.source_table = 'documents' "
             "  AND g.granted_to_user_id = :user_id "
             "  AND d.knowledge_base_id IS NOT NULL"
         ),

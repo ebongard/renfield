@@ -39,7 +39,7 @@ def _existing_source_row(scalar=1):
     return res
 
 
-def _new_atom(atom_type="kb_chunk", payload=None) -> Atom:
+def _new_atom(atom_type="kb_document", payload=None) -> Atom:
     return Atom(
         atom_id="",  # triggers UUID mint
         atom_type=atom_type,
@@ -117,10 +117,10 @@ class TestUpdateTier:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_kb_chunk_writes_source_tier_only(self):
+    async def test_kb_document_writes_source_tier_only(self):
         session = _mock_session()
         atom_orm = MagicMock()
-        atom_orm.atom_type = "kb_chunk"
+        atom_orm.atom_type = "kb_document"
         atom_orm.source_table = "document_chunks"
         atom_orm.source_id = "99"
         session.execute = AsyncMock(side_effect=[
@@ -130,7 +130,7 @@ class TestUpdateTier:
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("atom-x", {"tier": 3})
 
-        # 2 executes: SELECT atom, UPDATE source. No cascade for kb_chunk.
+        # 2 executes: SELECT atom, UPDATE source. No cascade for kb_document.
         assert session.execute.await_count == 2
         session.commit.assert_awaited_once()
 
