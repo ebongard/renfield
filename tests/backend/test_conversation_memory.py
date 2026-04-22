@@ -317,6 +317,51 @@ class TestConversationMemoryServiceSave:
             assert result.content == "New important memory"
 
 
+class TestConversationMemoryAtomRegistration:
+    """New memories must register in the atoms table so they participate in
+    circle-aware retrieval. Regression guard for #440 — conversation_memories.atom_id
+    is NOT NULL + FK to atoms.atom_id in production; without pre-creating the
+    atoms row, every save failed silently with IntegrityError."""
+
+    @pytest.mark.unit
+    async def test_save_creates_atom_row_for_authenticated_user(
+        self, memory_service, db_session, test_user
+    ):
+        """Memory saved with an authenticated user produces a matching atoms row."""
+        from models.database import Atom as AtomORM
+        from sqlalchemy import select as _select
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="user loves late-night debugging",
+                category="fact",
+                user_id=test_user.id,
+            )
+        assert memory is not None
+        assert memory.atom_id is not None, "memory must carry an atom_id"
+        atom = (await db_session.execute(
+            _select(AtomORM).where(AtomORM.atom_id == memory.atom_id)
+        )).scalar_one()
+        assert atom.atom_type == "conversation_memory"
+        assert atom.source_table == "conversation_memories"
+        assert atom.source_id == str(memory.id)
+        assert atom.owner_user_id == test_user.id
+        assert atom.policy["tier"] == 0
+
+    @pytest.mark.unit
+    async def test_save_skips_atom_when_no_users_exist(
+        self, memory_service, db_session
+    ):
+        """Empty-users-table dev path: memory is still saved, atom_id stays None."""
+        with patch.object(memory_service, '_get_embedding', return_value=None):
+            memory = await memory_service.save(
+                content="stateless dev note",
+                category="fact",
+                user_id=None,
+            )
+        assert memory is not None
+        assert memory.atom_id is None
+
+
 class TestConversationMemoryServiceRetrieve:
     """Tests for ConversationMemoryService.retrieve()."""
 

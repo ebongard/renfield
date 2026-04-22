@@ -58,6 +58,36 @@ class RAGService:
         self.db = db
         self.processor = DocumentProcessor()
         self._ollama_client = None
+        # Cached fallback admin id for atoms registration when the KB has
+        # no explicit owner (legacy rows / pre-auth KBs). Resolved lazily.
+        self._fallback_owner_id: int | None = None
+
+    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
+        """Resolve a non-null atoms owner, or None when no users exist.
+
+        Matches pc20260420_circles_v1_schema.py back-fill logic. When the
+        parent KB has an explicit owner we use it; otherwise we fall back
+        to the first user (admin). Returns None only on empty-users-table
+        dev setups so callers can skip atom registration.
+        """
+        if user_id is not None:
+            return user_id
+        if self._fallback_owner_id is not None:
+            return self._fallback_owner_id
+        from models.database import User
+        result = await self.db.execute(
+            select(User.id).order_by(User.id.asc()).limit(1)
+        )
+        fallback = result.scalar()
+        if fallback is None:
+            return None
+        self._fallback_owner_id = int(fallback)
+        return self._fallback_owner_id
+
+    def _atom_service(self):
+        """Lazy AtomService bound to the same DB session."""
+        from services.atom_service import AtomService
+        return AtomService(self.db)
 
     async def _get_ollama_client(self):
         """Lazy initialization des Ollama Clients"""
@@ -260,10 +290,37 @@ class RAGService:
             if progress is not None:
                 await progress.set_stage("embedding")
             sem = asyncio.Semaphore(5)
+
+            # Resolve KB owner + default tier for the atoms registration.
+            # document_chunks.atom_id is NOT NULL + non-deferrable FK to
+            # atoms.atom_id (pc20260420_circles_v1_schema.py), so each chunk
+            # needs an atoms row to exist before its INSERT fires. See
+            # services.atom_service.AtomService.create_with_source.
+            kb_info = (await self.db.execute(
+                select(KnowledgeBase.owner_id, KnowledgeBase.default_circle_tier)
+                .where(KnowledgeBase.id == doc.knowledge_base_id)
+            )).first()
+            kb_owner_id = kb_info.owner_id if kb_info else None
+            kb_tier = int(kb_info.default_circle_tier) if kb_info else 0
+            # Empty-users-table / legacy KB without owner → fall back to admin
+            # (first user id), matching the migration's back-fill pattern.
+            atom_owner = await self._resolve_owner_user_id(kb_owner_id)
+
             if settings.rag_parent_child_enabled:
                 chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
             else:
                 chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
+
+            # Atom registration (serial — concurrent session writes are unsafe).
+            atom_svc = self._atom_service()
+            if atom_owner is not None:
+                for chunk in chunk_objects:
+                    chunk.atom_id = await atom_svc.create_with_source(
+                        atom_type="kb_chunk",
+                        owner_user_id=atom_owner,
+                        tier=kb_tier,
+                    )
+                    chunk.circle_tier = kb_tier
 
             chunk_count = len(chunk_objects)
             if chunk_objects:
@@ -273,6 +330,14 @@ class RAGService:
             doc.status = DOC_STATUS_COMPLETED
             doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()
+
+            # Finalize atoms.source_id now that chunk PKs exist (atom_owner
+            # was None on empty-users fresh-DB dev setups — skip finalize in
+            # that case since we never created atoms).
+            if atom_owner is not None:
+                for chunk in chunk_objects:
+                    await atom_svc.finalize_source_id(chunk.atom_id, chunk.id)
+                await self.db.commit()
 
             # Populate search_vector for Full-Text Search (bulk update).
             fts_config = settings.rag_hybrid_fts_config

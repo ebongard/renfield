@@ -72,6 +72,38 @@ class ConversationMemoryService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self._ollama_client = None
+        # Cached fallback owner id (see _resolve_owner_user_id). Used for the
+        # 3-phase atom write when save() is called without an authenticated
+        # user_id — matches the migration's back-fill pattern.
+        self._fallback_owner_id: int | None = None
+
+    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
+        """Return a non-null owner for atom rows, or None if no users exist.
+
+        Single-user setups (AUTH_ENABLED=false) call save() without a user_id.
+        The atoms row needs a non-null owner, so we fall back to the first
+        user (matches pc20260420_circles_v1_schema.py:344). Returns None
+        only for empty-users-table dev setups where atom registration is
+        skipped and the memory is written with ``atom_id=None``.
+        """
+        if user_id is not None:
+            return user_id
+        if self._fallback_owner_id is not None:
+            return self._fallback_owner_id
+        from models.database import User
+        result = await self.db.execute(
+            select(User.id).order_by(User.id.asc()).limit(1)
+        )
+        fallback = result.scalar()
+        if fallback is None:
+            return None
+        self._fallback_owner_id = int(fallback)
+        return self._fallback_owner_id
+
+    def _atom_service(self):
+        """Lazy AtomService for the same DB session."""
+        from services.atom_service import AtomService
+        return AtomService(self.db)
 
     async def _get_ollama_client(self):
         """Lazy initialization of Ollama client for embeddings."""
@@ -144,10 +176,26 @@ class ConversationMemoryService:
                 # Deactivate the least important memory
                 await self._deactivate_least_important(user_id)
 
+        # Atom-first ordering: conversation_memories.atom_id is NOT NULL +
+        # non-deferrable FK, so the atoms row must exist before the INSERT.
+        # See services.atom_service.AtomService.create_with_source for the
+        # 3-phase contract. owner_id can be None only in fresh-DB dev setups;
+        # atom registration is then skipped and memory.atom_id stays NULL
+        # (ORM column is nullable, test SQLite lets this through).
+        owner_id = await self._resolve_owner_user_id(user_id)
+        default_tier = 0  # self — owner can promote via /api/atoms
+        atom_id: str | None = None
+        if owner_id is not None:
+            atom_id = await self._atom_service().create_with_source(
+                atom_type="conversation_memory",
+                owner_user_id=owner_id,
+                tier=default_tier,
+            )
+
         memory = ConversationMemory(
             content=content,
             category=category,
-            user_id=user_id,
+            user_id=owner_id,
             embedding=embedding,
             importance=importance,
             source_session_id=source_session_id,
@@ -158,9 +206,13 @@ class ConversationMemoryService:
             team_id=team_id,
             confidence=confidence,
             trigger_pattern=trigger_pattern,
+            atom_id=atom_id,
+            circle_tier=default_tier,
         )
         self.db.add(memory)
         await self.db.flush()
+        if atom_id is not None:
+            await self._atom_service().finalize_source_id(atom_id, memory.id)
 
         await self._record_history(
             memory_id=memory.id,

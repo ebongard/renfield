@@ -168,6 +168,63 @@ class AtomService:
         await self.db.commit()
         return atom_id
 
+    async def create_with_source(
+        self,
+        *,
+        atom_type: str,
+        owner_user_id: int,
+        tier: int,
+    ) -> str:
+        """Pre-create an atoms row before the source row exists.
+
+        Source-table ``atom_id`` columns carry NOT NULL + non-deferrable FK
+        (pc20260420_circles_v1_schema.py). The source row's PK is
+        auto-incremented and only known after flush, but the atoms row must
+        already exist when the source-row INSERT fires. This method seeds
+        the atoms row with a placeholder ``source_id``; the caller invokes
+        :meth:`finalize_source_id` after flushing the source row to patch
+        the real PK.
+
+        Returns the minted atom_id. Call sequence for a new source row:
+
+            atom_id = await atom_service.create_with_source(
+                atom_type="kg_node", owner_user_id=42, tier=0,
+            )
+            entity = KGEntity(..., atom_id=atom_id, circle_tier=0)
+            self.db.add(entity); await self.db.flush()
+            await atom_service.finalize_source_id(atom_id, entity.id)
+
+        This is the shared primitive used by KnowledgeGraphService,
+        RAGService, and ConversationMemoryService to satisfy the atoms
+        invariant on writes.
+        """
+        atom_id = str(uuid.uuid4())
+        source_table = _table_for_atom_type(atom_type)
+        placeholder = f"__pending__{atom_id}"
+        now = datetime.now(UTC).replace(tzinfo=None)
+        atom_row = AtomModel(
+            atom_id=atom_id,
+            atom_type=atom_type,
+            source_table=source_table,
+            source_id=placeholder,
+            owner_user_id=int(owner_user_id),
+            policy={"tier": int(tier)},
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(atom_row)
+        await self.db.flush()
+        return atom_id
+
+    async def finalize_source_id(self, atom_id: str, source_id: int | str) -> None:
+        """Replace the placeholder source_id on an atoms row with the real PK
+        (see :meth:`create_with_source`)."""
+        atom = (await self.db.execute(
+            select(AtomModel).where(AtomModel.atom_id == atom_id)
+        )).scalar_one()
+        atom.source_id = str(source_id)
+        await self.db.flush()
+
     async def update_tier(self, atom_id: str, new_policy: dict[str, Any]) -> None:
         """
         Update atom.policy + cascade to source row's denormalized circle_tier.
