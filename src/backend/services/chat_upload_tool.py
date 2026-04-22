@@ -170,7 +170,7 @@ async def forward_attachment_to_paperless(
     try:
         from sqlalchemy import select
 
-        from models.database import ChatUpload, PaperlessPendingConfirm, User
+        from models.database import ChatUpload, PaperlessPendingConfirm
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
@@ -285,7 +285,10 @@ async def forward_attachment_to_paperless(
                 confirm_token=confirm_token,
                 attachment_id=attachment_id,
                 session_id=session_id or "unknown",
-                user_id=user_id or 0,  # 0 = "auth-disabled mode"; see migration
+                # user_id is nullable — None lands when AUTH_ENABLED=false.
+                # The counter-increment on successful commit guards against
+                # this (paperless_commit_tool skips when user_id is None).
+                user_id=user_id,
                 llm_output=llm_output_for_persist,
                 post_fuzzy_output=post_fuzzy,
                 proposals=[p.model_dump() for p in extraction_result.metadata.new_entry_proposals],

@@ -38,10 +38,12 @@ import json
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import delete, select, update
 
-from models.database import ChatUpload, PaperlessPendingConfirm, User
-from services.database import AsyncSessionLocal
+# NB: SQLAlchemy + ORM-model + session-factory imports are done lazily
+# inside each function. Importing ``services.database`` at module level
+# triggers engine creation at import time, which breaks clean-env unit
+# tests and mirrors the exact anti-pattern PR #428 fixed for
+# ``_init_mcp``.
 
 
 # Approve / abort token families. Case-insensitive, whitespace-stripped.
@@ -111,6 +113,12 @@ async def paperless_commit_upload(
             "action_taken": False,
         }
 
+    # Lazy imports — see module-level note on why.
+    from sqlalchemy import select
+
+    from models.database import PaperlessPendingConfirm
+    from services.database import AsyncSessionLocal
+
     # Look up the pending row (session-scoped).
     async with AsyncSessionLocal() as db:
         query = select(PaperlessPendingConfirm).where(
@@ -148,7 +156,7 @@ async def paperless_commit_upload(
 
 
 async def _commit_approved(
-    pending: PaperlessPendingConfirm,
+    pending,
     *,
     mcp_manager: Any,
     user_id: int | None,
@@ -157,6 +165,16 @@ async def _commit_approved(
     upload_document, then write the confirm-diff, increment the
     cold-start counter, and delete the pending row.
     """
+    from sqlalchemy import delete, update
+
+    from models.database import (
+        ChatUpload,
+        PaperlessExtractionExample,
+        PaperlessPendingConfirm,
+        User,
+    )
+    from services.database import AsyncSessionLocal
+
     post_fuzzy = pending.post_fuzzy_output or {}
     proposals = pending.proposals or []
     llm_output = pending.llm_output or {}
@@ -223,6 +241,18 @@ async def _commit_approved(
         upload = await db.get(ChatUpload, pending.attachment_id)
 
     if upload is None or not upload.file_path:
+        # ChatUpload vanished (manual purge, sweeper, or FK cascade
+        # elsewhere). The FK is ON DELETE CASCADE so the pending row
+        # would normally be gone too — but if the row survived via a
+        # broken file_path on disk, drop it explicitly so we don't
+        # strand orphaned pending_confirms.
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                delete(PaperlessPendingConfirm).where(
+                    PaperlessPendingConfirm.confirm_token == pending.confirm_token
+                )
+            )
+            await db.commit()
         return {
             "success": False,
             "message": "Anhang nicht mehr verfügbar.",
@@ -279,9 +309,11 @@ async def _commit_approved(
     inner: dict[str, Any] = {}
     if isinstance(inner_msg, str):
         try:
-            inner = json.loads(inner_msg) or {}
+            parsed = json.loads(inner_msg)
         except (json.JSONDecodeError, TypeError):
-            inner = {}
+            parsed = None
+        if isinstance(parsed, dict):
+            inner = parsed
     elif isinstance(inner_msg, dict):
         inner = inner_msg
 
@@ -313,7 +345,6 @@ async def _commit_approved(
                 user_approved[field] = value
 
         if user_approved != post_fuzzy:
-            from models.database import PaperlessExtractionExample
             example = PaperlessExtractionExample(
                 doc_text=_truncate_doc_text(pending),
                 llm_output=llm_output,
@@ -372,9 +403,14 @@ async def _commit_approved(
     }
 
 
-async def _abort_pending(pending: PaperlessPendingConfirm) -> dict:
+async def _abort_pending(pending) -> dict:
     """User said 'nein'. Delete the ChatUpload bytes + row + the
     pending confirm. Nothing lands in Paperless."""
+    from sqlalchemy import delete
+
+    from models.database import ChatUpload, PaperlessPendingConfirm
+    from services.database import AsyncSessionLocal
+
     attachment_id = pending.attachment_id
 
     async with AsyncSessionLocal() as db:
@@ -406,12 +442,17 @@ async def _abort_pending(pending: PaperlessPendingConfirm) -> dict:
     }
 
 
-async def _handle_ambiguous_response(pending: PaperlessPendingConfirm) -> dict:
+async def _handle_ambiguous_response(pending) -> dict:
     """User said something that wasn't 'ja' or 'nein'.
 
     v1 keeps it simple: bump edit_rounds, if budget remains ask again;
     otherwise force-abort. Real correction parsing lands in a later PR.
     """
+    from sqlalchemy import update
+
+    from models.database import PaperlessPendingConfirm
+    from services.database import AsyncSessionLocal
+
     async with AsyncSessionLocal() as db:
         await db.execute(
             update(PaperlessPendingConfirm)
@@ -441,7 +482,7 @@ async def _handle_ambiguous_response(pending: PaperlessPendingConfirm) -> dict:
     }
 
 
-def _truncate_doc_text(pending: PaperlessPendingConfirm, max_chars: int = 8000) -> str:
+def _truncate_doc_text(pending, max_chars: int = 8000) -> str:
     """Doc text lives in the pending row's post_fuzzy_output metadata
     indirectly. For v1 we pull it from the llm_output's original
     payload, which the extractor persists alongside the metadata.

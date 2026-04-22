@@ -119,12 +119,17 @@ def upgrade() -> None:
             nullable=False,
             index=True,
         ),
-        sa.Column("session_id", sa.String(64), nullable=False, index=True),
+        # String(128) matches ChatUpload.session_id — smaller widths break
+        # at insert time when the real session id exceeds the cap.
+        sa.Column("session_id", sa.String(128), nullable=False, index=True),
+        # Nullable to support AUTH_ENABLED=false (single-user dev setup
+        # where the agent's user_id may be None). When non-null the FK
+        # + CASCADE still cleans up if the user is deleted.
         sa.Column(
             "user_id",
             sa.Integer(),
             sa.ForeignKey("users.id", ondelete="CASCADE"),
-            nullable=False,
+            nullable=True,
         ),
         sa.Column("llm_output", sa.JSON(), nullable=False),
         sa.Column("post_fuzzy_output", sa.JSON(), nullable=False),

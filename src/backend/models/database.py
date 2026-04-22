@@ -329,11 +329,17 @@ class PaperlessPendingConfirm(Base):
         nullable=False,
         index=True,
     )
-    session_id = Column(String(64), nullable=False, index=True)
+    # Width matches ChatUpload.session_id — smaller truncates/fails on
+    # real Postgres when session ids exceed 64 chars.
+    session_id = Column(String(128), nullable=False, index=True)
+    # Nullable so AUTH_ENABLED=false (single-user dev) works: the tool
+    # gets user_id=None from the executor and stores NULL here rather
+    # than crashing on the FK constraint. Cold-start counter
+    # increments skip for NULL users.
     user_id = Column(
         Integer,
         ForeignKey("users.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
     )
     # Raw LLM response (pre-fuzzy, pre-validation). Needed for diff
     # computation when the user approves and the post-fuzzy differs.

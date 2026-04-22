@@ -359,6 +359,62 @@ class TestForwardAttachmentColdStart:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_cold_start_with_user_id_none_persists_pending(self, tmp_path):
+        """AUTH_ENABLED=false: user_id is None. Pending row must still
+        persist (user_id column is nullable) — regression guard for B1
+        (previous code passed ``user_id or 0`` which triggered an FK
+        violation against a non-existent user row 0)."""
+        upload = _upload_stub(tmp_path, filename="rechnung.pdf", size=200_000)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()
+
+        extractor_result = SimpleNamespace(
+            metadata=SimpleNamespace(
+                title="T", correspondent="Stadtwerke",
+                document_type="Rechnung", tags=["wohnung"],
+                storage_path="/x", created_date=None,
+                new_entry_proposals=[],
+                model_dump=lambda: {
+                    "title": "T", "correspondent": "Stadtwerke",
+                    "document_type": "Rechnung", "tags": ["wohnung"],
+                    "storage_path": "/x", "created_date": None,
+                    "new_entry_proposals": [],
+                },
+            ),
+            doc_text="doc",
+            error=None,
+        )
+
+        session_factory = _make_session_factory(upload, capture_writes=True)
+
+        with patch(
+            "services.chat_upload_tool._run_extraction",
+            AsyncMock(return_value=extractor_result),
+        ):
+            with patch(
+                "services.chat_upload_tool._get_confirms_used",
+                AsyncMock(return_value=0),
+            ):
+                with patch(
+                    "services.database.AsyncSessionLocal",
+                    session_factory,
+                ):
+                    result = await forward_attachment_to_paperless(
+                        {"attachment_id": 42},
+                        mcp_manager=mcp, session_id="s", user_id=None,
+                    )
+
+        assert result["success"] is True
+        assert result["data"]["action_required"] == "paperless_confirm"
+        # Grab the persisted PaperlessPendingConfirm — user_id must be
+        # None, not 0.
+        writes = session_factory.captured_adds  # type: ignore[attr-defined]
+        pending_rows = [w for w in writes if type(w).__name__ == "PaperlessPendingConfirm"]
+        assert pending_rows, "Pending confirm row was not persisted"
+        assert pending_rows[0].user_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_silent_upload_when_past_cold_start_cap(self, tmp_path):
         upload = _upload_stub(tmp_path)
         mcp = MagicMock()

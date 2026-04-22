@@ -95,7 +95,7 @@ class TestUnknownToken:
         mcp = MagicMock()
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=None),
         ):
             result = await paperless_commit_upload(
@@ -152,7 +152,7 @@ class TestApprovePath:
         })
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             result = await paperless_commit_upload(
@@ -203,7 +203,7 @@ class TestApprovePath:
         mcp.execute_tool = AsyncMock(side_effect=responses)
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             # Patch the taxonomy-cache invalidation import so it doesn't
@@ -260,7 +260,7 @@ class TestApprovePath:
         mcp.execute_tool = AsyncMock(side_effect=responses)
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             with patch(
@@ -305,7 +305,7 @@ class TestApproveMessageShape:
         })
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             result = await paperless_commit_upload(
@@ -341,7 +341,7 @@ class TestAbortPath:
         mcp.execute_tool = AsyncMock()  # should never fire
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             result = await paperless_commit_upload(
@@ -366,7 +366,7 @@ class TestAbortPath:
         mcp.execute_tool = AsyncMock()
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
             result = await paperless_commit_upload(
@@ -397,7 +397,7 @@ class TestAmbiguousResponse:
         mcp.execute_tool = AsyncMock()
 
         with patch(
-            "services.paperless_commit_tool.AsyncSessionLocal",
+            "services.database.AsyncSessionLocal",
             _make_session_factory(
                 pending=pending, upload=None,
                 pending_after_update=_make_pending(
