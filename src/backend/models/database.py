@@ -307,6 +307,76 @@ class ChatUpload(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class PaperlessPendingConfirm(Base):
+    """Transient state between paperless-confirm tool turns.
+
+    ``forward_attachment_to_paperless`` writes one of these rows during
+    the cold-start window (first N uploads per user) when it needs the
+    user's approval before firing the final Paperless upload.
+    ``paperless_commit_upload`` reads the row, fires the upload on
+    "ja" / deletes it on "nein", and cleans up.
+
+    Abandoned rows (user walks away, never answers) get swept after
+    24 h by the PR 4 cleanup job. See
+    ``docs/design/paperless-llm-metadata.md`` § Confirm flow state machine.
+    """
+    __tablename__ = "paperless_pending_confirms"
+
+    confirm_token = Column(String(36), primary_key=True)  # uuid4
+    attachment_id = Column(
+        Integer,
+        ForeignKey("chat_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    session_id = Column(String(64), nullable=False, index=True)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    # Raw LLM response (pre-fuzzy, pre-validation). Needed for diff
+    # computation when the user approves and the post-fuzzy differs.
+    llm_output = Column(JSON, nullable=False)
+    # Post-fuzzy, post-validation. This is what the user sees and
+    # approves in the confirm preview.
+    post_fuzzy_output = Column(JSON, nullable=False)
+    # new_entry_proposals[] — surfaces in the confirm message as
+    # "Neu anlegen: Stadtwerke Köln".
+    proposals = Column(JSON, nullable=False, default=list, server_default="[]")
+    # Caps the ambiguous-response loop so a user who keeps typing
+    # "hmmm" can't pin the row indefinitely.
+    edit_rounds = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, default=_utcnow)
+
+
+class PaperlessExtractionExample(Base):
+    """Correction-feedback source. Primary fill: confirm-time diffs
+    written by ``paperless_commit_upload`` when the user approves an
+    extraction with non-trivial new-entry proposals. Secondary fill:
+    the PR 4 sweeper reading Paperless-UI edits within 1 h of upload.
+
+    PR 3 reads the table to augment future extraction prompts with
+    the N most relevant past corrections (embedding similarity over
+    ``doc_text``). See
+    ``docs/design/paperless-llm-metadata.md`` § Correction feedback loop.
+    """
+    __tablename__ = "paperless_extraction_examples"
+
+    id = Column(Integer, primary_key=True)
+    doc_text = Column(Text, nullable=False)
+    llm_output = Column(JSON, nullable=False)
+    user_approved = Column(JSON, nullable=False)
+    # 'confirm_diff' (primary), 'paperless_ui_sweep' (secondary, PR 4),
+    # or 'seed' for any manually-seeded starter examples.
+    source = Column(String(32), nullable=False, index=True)
+    # Set by PR 4's no-re-edit filter when a ui_sweep correction turns
+    # out to be taxonomy drift rather than an extraction error. The
+    # prompt-augmentation reader ignores superseded rows.
+    superseded = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime, default=_utcnow)
+
+
 # Document Processing Status Constants
 DOC_STATUS_PENDING = "pending"
 DOC_STATUS_PROCESSING = "processing"
@@ -410,6 +480,12 @@ class User(Base):
     media_follow_enabled = Column(Boolean, default=True, nullable=False, server_default="true")
     personality_style = Column(String(20), default="freundlich", nullable=False, server_default="freundlich")
     personality_prompt = Column(Text, nullable=True)  # Free-text personality fine-tuning
+
+    # Cold-start counter for the Paperless LLM-metadata confirm flow.
+    # Increments on each successful upload that went through the confirm
+    # step; once >= N (10), the confirm is skipped and extraction runs
+    # silently. See docs/design/paperless-llm-metadata.md § 5.
+    paperless_confirms_used = Column(Integer, nullable=False, default=0, server_default="0")
 
     # Optional link to Speaker for voice authentication
     speaker_id = Column(Integer, ForeignKey("speakers.id"), nullable=True, unique=True)

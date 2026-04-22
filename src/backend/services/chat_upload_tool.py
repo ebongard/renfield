@@ -25,10 +25,31 @@ from __future__ import annotations
 
 import base64
 import json
+import mimetypes
+import re
+import uuid
 from pathlib import Path
 
 from loguru import logger
 
+
+# Cold-start window for the LLM-metadata confirm flow. Design doc § 5:
+# first N uploads per user require explicit confirm; after that the
+# system trusts itself and extraction runs silently. N=10 is
+# conservative — covers "first two weeks of household use" at ~1
+# upload/day without becoming permanent friction.
+_COLD_START_CONFIRM_N = 10
+
+# Skip-metadata heuristic. The agent can pass ``skip_metadata=True``
+# explicitly when the user said "ohne Metadaten". The tool itself also
+# defensively auto-skips for files that look like memes / screenshots
+# / photos — the extraction pipeline adds latency that's pure loss on
+# those.
+_SCREENSHOT_FILENAME_RE = re.compile(
+    r"^(?:screenshot|screen[\s_.-]?shot|img[_-]?\d+|photo|meme|selfie)",
+    re.IGNORECASE,
+)
+_IMAGE_AUTOSKIP_SIZE_BYTES = 500 * 1024  # 500 KB
 
 CHAT_UPLOAD_TOOLS: dict = {
     "internal.forward_attachment_to_paperless": {
@@ -38,7 +59,12 @@ CHAT_UPLOAD_TOOLS: dict = {
             "attachment_id shown in the UPLOADED DOCUMENT section of this prompt. "
             "Do NOT pass file_content_base64 — the tool does that internally from "
             "real file bytes. Preferred over mcp.paperless.upload_document for "
-            "user-attached files."
+            "user-attached files. "
+            "During the user's first 10 archives, this tool will return "
+            "action_required=paperless_confirm with a preview for the user to "
+            "approve — relay the message verbatim to the user, then on their "
+            "next message call internal.paperless_commit_upload with the "
+            "confirm_token and the user's response."
         ),
         "parameters": {
             "attachment_id": (
@@ -52,33 +78,71 @@ CHAT_UPLOAD_TOOLS: dict = {
             "correspondent": "Optional Paperless correspondent name",
             "document_type": "Optional Paperless document type name",
             "tags": "Optional list of tag names",
+            "skip_metadata": (
+                "Optional boolean. Set True to skip LLM metadata extraction "
+                "(e.g. for memes, screenshots, or when the user explicitly "
+                "says 'ohne Metadaten'). Defaults to False — the tool also "
+                "auto-skips based on file shape (small image files, "
+                "screenshot-like filenames)."
+            ),
         },
     },
 }
+
+
+def _should_auto_skip_metadata(filename: str, file_size: int) -> bool:
+    """Deterministic heuristic for skipping the extraction pipeline on
+    files that clearly aren't archival documents.
+
+    Triggers on:
+      - small image files (likely photos / memes / screenshots)
+      - filenames matching common screenshot / photo patterns
+    Does NOT trigger on PDFs / docx / txt / md regardless of size —
+    those are always real documents.
+    """
+    if _SCREENSHOT_FILENAME_RE.match(filename):
+        return True
+    mime, _ = mimetypes.guess_type(filename)
+    if mime and mime.startswith("image/") and file_size < _IMAGE_AUTOSKIP_SIZE_BYTES:
+        return True
+    return False
 
 
 async def forward_attachment_to_paperless(
     params: dict,
     mcp_manager=None,
     session_id: str | None = None,
+    user_id: int | None = None,
 ) -> dict:
-    """Read a ChatUpload from server storage and forward it to Paperless.
+    """Forward a chat attachment to Paperless with optional LLM metadata
+    extraction and cold-start confirm.
+
+    Flow depends on the user's cold-start state and the ``skip_metadata``
+    flag:
+
+      1. ``skip_metadata=True`` (or auto-heuristic triggers) → bare
+         upload, no extraction, no confirm. Identical behaviour to
+         pre-PR-2b.
+      2. User's ``paperless_confirms_used >= _COLD_START_CONFIRM_N`` →
+         the system trusts itself: run extraction silently, upload
+         with extracted metadata, no user confirm.
+      3. User is inside the cold-start window → run extraction, persist
+         ``paperless_pending_confirms`` row, return
+         ``action_required=paperless_confirm`` with a German preview
+         the agent relays to the user. The user's next message is
+         their response; the agent should then call
+         ``internal.paperless_commit_upload`` to finalise.
 
     Args:
-        params: Tool parameters from the agent (attachment_id required; title,
-            correspondent, document_type, tags optional).
-        mcp_manager: MCPManager instance, injected by ActionExecutor. Needed
-            to invoke ``mcp.paperless.upload_document`` with real base64.
-        session_id: Chat session the request came from. When provided, the
-            DB lookup is scoped to attachments uploaded within the same
-            session — prevents a crafted prompt from referencing an
-            attachment_id belonging to another user's conversation. When
-            ``None`` (single-user dev setup, auth disabled), the check is
-            skipped.
-
-    Returns a standard agent-tool result dict: ``success``, ``message``,
-    ``action_taken``, and ``data`` with ``task_id``, ``attachment_id``, and
-    ``filename`` on success.
+        params: ``attachment_id`` (required), optional ``title``,
+            ``correspondent`` / ``document_type`` / ``tags`` (passed
+            through as-is if skipping), and ``skip_metadata`` bool.
+        mcp_manager: MCPManager, injected by ActionExecutor.
+        session_id: Chat session; scopes the DB lookup per #442.
+        user_id: Authenticated user id; used to read/increment the
+            cold-start counter. When ``None`` (single-user /
+            auth-disabled), the cold-start check is bypassed and
+            extraction always runs with confirm.
     """
     attachment_id_raw = params.get("attachment_id")
     if attachment_id_raw is None:
@@ -106,16 +170,11 @@ async def forward_attachment_to_paperless(
     try:
         from sqlalchemy import select
 
-        from models.database import ChatUpload
+        from models.database import ChatUpload, PaperlessPendingConfirm, User
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
             query = select(ChatUpload).where(ChatUpload.id == attachment_id)
-            # Session scoping: when the caller provides a session_id, the
-            # attachment must belong to that session. A mismatch is reported
-            # as "not found" rather than "forbidden" — the agent doesn't
-            # need to distinguish, and the softer message avoids leaking
-            # the existence of attachments belonging to other sessions.
             if session_id is not None:
                 query = query.where(ChatUpload.session_id == session_id)
             result = await db.execute(query)
@@ -138,58 +197,117 @@ async def forward_attachment_to_paperless(
                 "action_taken": False,
             }
 
-        # Synchronous read is fine here — typical chat attachments are small
-        # enough (< 10 MB) that blocking for a few ms is simpler than the
-        # aiofiles dep tree, and this tool is already inside an async context
-        # that can tolerate the brief pause.
-        with open(upload.file_path, "rb") as f:
-            file_bytes = f.read()
-        file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
+        # Decide whether to skip extraction. Agent-passed flag wins;
+        # auto-heuristic catches cases the agent didn't think to flag.
+        skip_metadata = bool(params.get("skip_metadata"))
+        if not skip_metadata:
+            file_size = upload.file_size or 0
+            if _should_auto_skip_metadata(upload.filename, file_size):
+                skip_metadata = True
+                logger.debug(
+                    "Auto-skipping metadata extraction for %s (size=%d)",
+                    upload.filename, file_size,
+                )
 
-        tool_params: dict = {
-            "title": params.get("title") or upload.filename,
-            "filename": upload.filename,
-            "file_content_base64": file_content_base64,
+        # Pass-through params that override extraction output (agent
+        # already knows the answer for these — no need to ask the LLM).
+        agent_overrides = {
+            k: params[k] for k in ("title", "correspondent", "document_type", "tags")
+            if params.get(k)
         }
-        if params.get("correspondent"):
-            tool_params["correspondent"] = params["correspondent"]
-        if params.get("document_type"):
-            tool_params["document_type"] = params["document_type"]
-        if params.get("tags"):
-            tool_params["tags"] = params["tags"]
 
-        mcp_result = await mcp_manager.execute_tool(
-            "mcp.paperless.upload_document", tool_params
+        if skip_metadata:
+            # Path 1: bare upload, no extraction. Identical to pre-PR-2b
+            # behaviour. Used for memes / screenshots / user-explicit opt-out.
+            return await _direct_upload(
+                upload=upload,
+                mcp_manager=mcp_manager,
+                params=agent_overrides,
+            )
+
+        # Run extraction.
+        extraction_result = await _run_extraction(
+            attachment_id=attachment_id,
+            session_id=session_id,
+            mcp_manager=mcp_manager,
+            user_lang=_infer_lang(upload),
         )
+        if extraction_result is None or extraction_result.error:
+            # Extraction failed — fall back to bare upload with a
+            # user-visible note. Matches the design's fallback-on-everything
+            # philosophy.
+            err = extraction_result.error if extraction_result else "Extractor unavailable"
+            logger.warning(
+                "Metadata extraction failed for attachment %d: %s — bare upload",
+                attachment_id, err,
+            )
+            direct = await _direct_upload(
+                upload=upload, mcp_manager=mcp_manager, params=agent_overrides,
+            )
+            # Annotate the success message so the user knows.
+            if direct.get("success"):
+                direct["message"] = (
+                    f"{direct['message']} "
+                    f"(ohne Metadaten-Extraktion: {err})"
+                )
+            return direct
 
-        if not mcp_result or not mcp_result.get("success"):
-            detail = (mcp_result or {}).get("message") or "unknown error"
-            return {
-                "success": False,
-                "message": f"Paperless upload failed: {detail}",
-                "action_taken": False,
-            }
+        # Merge agent overrides into the extracted metadata (agent
+        # wins). For example, if the user said "archive as Rechnung"
+        # the agent passes document_type=Rechnung even if the LLM
+        # guessed otherwise.
+        post_fuzzy = extraction_result.metadata.model_dump()
+        post_fuzzy.update(agent_overrides)
 
-        # Paperless MCP returns {"task_id": ..., "title": ..., "filename": ...}
-        # wrapped inside MCPManager.execute_tool's ``message`` field as JSON.
-        task_id: str | None = None
-        inner_msg = mcp_result.get("message")
-        if isinstance(inner_msg, str):
-            try:
-                inner = json.loads(inner_msg)
-                if isinstance(inner, dict):
-                    task_id = inner.get("task_id")
-            except (json.JSONDecodeError, TypeError):
-                pass
+        # Cold-start gate. User is inside the window → confirm
+        # required; otherwise silent upload with extracted metadata.
+        confirms_used = await _get_confirms_used(user_id)
+        if confirms_used >= _COLD_START_CONFIRM_N:
+            # Path 2: trusted silent upload with extracted metadata.
+            return await _direct_upload(
+                upload=upload,
+                mcp_manager=mcp_manager,
+                params=_extraction_to_upload_params(post_fuzzy),
+            )
+
+        # Path 3: cold-start confirm. Persist a pending row and return
+        # the preview — agent relays to user, who answers in the next
+        # turn and the agent calls paperless_commit_upload.
+        confirm_token = str(uuid.uuid4())
+        llm_output_for_persist = dict(extraction_result.metadata.model_dump())
+        # Stash doc_text alongside llm_output so the commit tool can
+        # write it into paperless_extraction_examples without another
+        # extraction run.
+        llm_output_for_persist["_doc_text"] = extraction_result.doc_text
+
+        async with AsyncSessionLocal() as db:
+            pending = PaperlessPendingConfirm(
+                confirm_token=confirm_token,
+                attachment_id=attachment_id,
+                session_id=session_id or "unknown",
+                user_id=user_id or 0,  # 0 = "auth-disabled mode"; see migration
+                llm_output=llm_output_for_persist,
+                post_fuzzy_output=post_fuzzy,
+                proposals=[p.model_dump() for p in extraction_result.metadata.new_entry_proposals],
+            )
+            db.add(pending)
+            await db.commit()
+
+        preview_text = _render_confirm_message(
+            filename=upload.filename,
+            metadata=post_fuzzy,
+            proposals=extraction_result.metadata.new_entry_proposals,
+        )
 
         return {
             "success": True,
-            "message": f"Sent to Paperless: {upload.filename}",
-            "action_taken": True,
+            "message": preview_text,
+            "action_taken": False,  # upload not yet committed
             "data": {
+                "action_required": "paperless_confirm",
+                "confirm_token": confirm_token,
                 "attachment_id": attachment_id,
                 "filename": upload.filename,
-                "task_id": task_id,
             },
         }
     except Exception as e:
@@ -199,3 +317,191 @@ async def forward_attachment_to_paperless(
             "message": f"Forward to Paperless failed: {e!s}",
             "action_taken": False,
         }
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+async def _direct_upload(
+    upload,
+    *,
+    mcp_manager,
+    params: dict,
+) -> dict:
+    """Bare Paperless upload via the MCP tool. Used by the skip-metadata
+    path and by the post-cold-start silent path."""
+    with open(upload.file_path, "rb") as f:
+        file_bytes = f.read()
+    file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
+
+    tool_params: dict = {
+        "title": params.get("title") or upload.filename,
+        "filename": upload.filename,
+        "file_content_base64": file_content_base64,
+    }
+    for key in ("correspondent", "document_type", "tags",
+                "storage_path", "created_date", "custom_fields"):
+        val = params.get(key)
+        if val:
+            tool_params[key] = val
+
+    mcp_result = await mcp_manager.execute_tool(
+        "mcp.paperless.upload_document", tool_params
+    )
+
+    if not mcp_result or not mcp_result.get("success"):
+        detail = (mcp_result or {}).get("message") or "unknown error"
+        return {
+            "success": False,
+            "message": f"Paperless upload failed: {detail}",
+            "action_taken": False,
+        }
+
+    # Parse the envelope to extract task_id etc.
+    task_id: str | None = None
+    document_id: int | None = None
+    patch_state: str | None = None
+    inner_msg = mcp_result.get("message")
+    if isinstance(inner_msg, str):
+        try:
+            inner = json.loads(inner_msg)
+            if isinstance(inner, dict):
+                task_id = inner.get("task_id")
+                document_id = inner.get("document_id")
+                patch_state = inner.get("post_upload_patch")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return {
+        "success": True,
+        "message": f"Sent to Paperless: {upload.filename}",
+        "action_taken": True,
+        "data": {
+            "attachment_id": upload.id,
+            "filename": upload.filename,
+            "task_id": task_id,
+            "document_id": document_id,
+            "post_upload_patch": patch_state,
+        },
+    }
+
+
+async def _run_extraction(
+    *,
+    attachment_id: int,
+    session_id: str | None,
+    mcp_manager,
+    user_lang: str,
+):
+    """Run the PaperlessMetadataExtractor; return its ExtractionResult
+    or None if the extractor module can't be loaded."""
+    try:
+        from services.paperless_metadata_extractor import PaperlessMetadataExtractor
+    except Exception as exc:  # pragma: no cover
+        logger.warning("Extractor module import failed: %s", exc)
+        return None
+    extractor = PaperlessMetadataExtractor(mcp_manager=mcp_manager)
+    try:
+        return await extractor.extract(
+            attachment_id=attachment_id,
+            session_id=session_id,
+            lang=user_lang,
+        )
+    except Exception as exc:
+        logger.warning("Extractor call failed: %s", exc)
+        return None
+
+
+async def _get_confirms_used(user_id: int | None) -> int:
+    """Read ``users.paperless_confirms_used`` for the cold-start check.
+
+    Returns 0 when ``user_id`` is None (auth-disabled dev) so extraction
+    always runs with confirm in that mode — the operator can decide to
+    flip the flag via the admin UI once they're comfortable.
+    """
+    if user_id is None:
+        return 0
+    from sqlalchemy import select
+
+    from models.database import User
+    from services.database import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(User.paperless_confirms_used).where(User.id == user_id)
+        )
+        value = result.scalar()
+    return int(value or 0)
+
+
+def _extraction_to_upload_params(post_fuzzy: dict) -> dict:
+    """Translate extractor output to the params shape
+    ``mcp.paperless.upload_document`` expects."""
+    out: dict = {}
+    for key in ("title", "correspondent", "document_type", "storage_path",
+                "created_date"):
+        val = post_fuzzy.get(key)
+        if val:
+            out[key] = val
+    tags = post_fuzzy.get("tags") or []
+    if tags:
+        out["tags"] = list(tags)
+    return out
+
+
+def _infer_lang(upload) -> str:
+    """Pick a prompt language. v1 defaults to German because the
+    household audience is DE-primary; English doc filenames get EN.
+    Crude heuristic — doesn't matter much, the LLM handles either."""
+    filename_lower = (upload.filename or "").lower()
+    en_hints = ("invoice", "receipt", "statement", "contract", "letter")
+    if any(h in filename_lower for h in en_hints):
+        return "en"
+    return "de"
+
+
+def _render_confirm_message(
+    *,
+    filename: str,
+    metadata: dict,
+    proposals: list,
+) -> str:
+    """Build the German confirm preview the agent relays to the user.
+
+    Matches the shape documented in the design doc § 5 confirm UX.
+    Missing fields render as "—" so the user sees what the LLM couldn't
+    decide and can either approve the gaps or abort.
+    """
+    def _display(value):
+        if value is None or value == "":
+            return "—"
+        if isinstance(value, list):
+            return ", ".join(str(v) for v in value) if value else "—"
+        return str(value)
+
+    proposals_line = "keine"
+    if proposals:
+        parts = []
+        for p in proposals:
+            field = p.field if hasattr(p, "field") else p.get("field")
+            value = p.value if hasattr(p, "value") else p.get("value")
+            parts.append(f"{field}: {value}")
+        proposals_line = "; ".join(parts)
+
+    return (
+        f"Ich möchte das Dokument so ablegen:\n"
+        f"\n"
+        f"  Datei:             {filename}\n"
+        f"  Titel:             {_display(metadata.get('title'))}\n"
+        f"  Korrespondent:     {_display(metadata.get('correspondent'))}\n"
+        f"  Dokumenttyp:       {_display(metadata.get('document_type'))}\n"
+        f"  Tags:              {_display(metadata.get('tags'))}\n"
+        f"  Speicherpfad:      {_display(metadata.get('storage_path'))}\n"
+        f"  Ausstellungsdatum: {_display(metadata.get('created_date'))}\n"
+        f"\n"
+        f"  Neu anzulegen:     {proposals_line}\n"
+        f"\n"
+        f"Passt das so? Antworte mit `ja` zum Ablegen oder `nein` zum Abbrechen."
+    )

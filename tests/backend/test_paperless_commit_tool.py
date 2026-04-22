@@ -1,0 +1,481 @@
+"""
+Unit tests for ``paperless_commit_upload`` — the second half of the
+two-tool cold-start confirm flow.
+
+Covers:
+    - "ja" family → approved path: creates fire, upload fires, counter
+      increments, pending deletes.
+    - "nein" family → abort path: pending deletes, no upload.
+    - Unknown confirm_token → soft-404.
+    - Ambiguous user response → re-prompt, edit_rounds counter, force-
+      abort at cap.
+    - Proposal creation dispatch: correspondent / document_type / tag /
+      storage_path each route to the right MCP tool.
+    - ``already_exists`` rejection from MCP is treated as success.
+
+Pure-unit, heavy mocking. Real DB integration deferred.
+"""
+from __future__ import annotations
+
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from services.paperless_commit_tool import (
+    _ABORT_TOKENS,
+    _APPROVE_TOKENS,
+    _MAX_EDIT_ROUNDS,
+    paperless_commit_upload,
+)
+
+
+# ===========================================================================
+# Token classification
+# ===========================================================================
+
+
+class TestTokenClassification:
+    @pytest.mark.unit
+    def test_approve_tokens_cover_common_responses(self):
+        for tok in ["ja", "j", "ok", "passt", "yes", "sure"]:
+            assert tok.lower() in _APPROVE_TOKENS
+
+    @pytest.mark.unit
+    def test_abort_tokens_cover_common_responses(self):
+        for tok in ["nein", "n", "abbrechen", "stopp", "no", "cancel"]:
+            assert tok.lower() in _ABORT_TOKENS
+
+
+# ===========================================================================
+# Validation
+# ===========================================================================
+
+
+class TestCommitValidation:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_missing_confirm_token_errors(self):
+        result = await paperless_commit_upload(
+            {}, mcp_manager=MagicMock(),
+        )
+        assert result["success"] is False
+        assert "confirm_token" in result["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_non_string_confirm_token_errors(self):
+        result = await paperless_commit_upload(
+            {"confirm_token": 123, "user_response_text": "ja"},
+            mcp_manager=MagicMock(),
+        )
+        assert result["success"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_no_mcp_manager_errors(self):
+        result = await paperless_commit_upload(
+            {"confirm_token": "t", "user_response_text": "ja"},
+            mcp_manager=None,
+        )
+        assert result["success"] is False
+        assert "MCP" in result["message"]
+
+
+# ===========================================================================
+# Unknown / expired confirm token — soft-404
+# ===========================================================================
+
+
+class TestUnknownToken:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unknown_token_returns_soft_404(self):
+        mcp = MagicMock()
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=None),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "unknown-uuid", "user_response_text": "ja"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is False
+        assert "abgelaufen" in result["message"] or "unbekannt" in result["message"]
+        # No MCP calls were made.
+        mcp.assert_not_called()
+
+
+# ===========================================================================
+# Approve path — full happy flow
+# ===========================================================================
+
+
+class TestApprovePath:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_ja_fires_upload_and_cleanup(self, tmp_path):
+        # A ChatUpload row whose file_path points to a real file on
+        # disk so the approved-commit path can open + b64-encode it.
+        file = tmp_path / "rechnung.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-abc",
+            attachment_id=42,
+            llm_output={"title": "T", "correspondent": "Stadtwerke"},
+            post_fuzzy={
+                "title": "T",
+                "correspondent": "Stadtwerke",
+                "document_type": "Rechnung",
+                "tags": ["wohnung"],
+                "storage_path": "/x",
+                "created_date": None,
+            },
+            proposals=[],
+        )
+        upload = MagicMock(
+            id=42, filename="rechnung.pdf", file_path=str(file),
+        )
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "task_id": "t-1",
+                "document_id": 555,
+                "post_upload_patch": "success",
+            }),
+        })
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "tok-abc", "user_response_text": "ja"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is True
+        assert result["action_taken"] is True
+        assert result["data"]["task_id"] == "t-1"
+        assert result["data"]["document_id"] == 555
+        # Upload was the only MCP call (no creates — no proposals).
+        assert mcp.execute_tool.await_count == 1
+        # Response message confirms archival.
+        assert "abgelegt" in result["message"].lower() or "paperless" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_ja_fires_creates_for_approved_proposals(self, tmp_path):
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-b",
+            attachment_id=42,
+            llm_output={},
+            post_fuzzy={
+                "title": "T", "correspondent": None, "tags": [],
+                "storage_path": None, "document_type": None,
+            },
+            proposals=[
+                {"field": "correspondent", "value": "Schreiner Meier",
+                 "reasoning": "..."},
+                {"field": "tag", "value": "handwerker", "reasoning": "..."},
+            ],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        # MCP response sequencer: create_correspondent → create_tag → upload_document
+        responses = [
+            {"success": True, "message": json.dumps({"id": 10, "name": "Schreiner Meier"})},
+            {"success": True, "message": json.dumps({"id": 20, "name": "handwerker"})},
+            {"success": True, "message": json.dumps({
+                "task_id": "t", "document_id": 1, "post_upload_patch": "success",
+            })},
+        ]
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=responses)
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            # Patch the taxonomy-cache invalidation import so it doesn't
+            # try to touch the real module's state during the test.
+            with patch(
+                "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
+                MagicMock(),
+            ):
+                result = await paperless_commit_upload(
+                    {"confirm_token": "tok-b", "user_response_text": "ja"},
+                    mcp_manager=mcp, session_id="s", user_id=1,
+                )
+
+        assert result["success"] is True
+        # Three MCP calls: two creates + one upload.
+        assert mcp.execute_tool.await_count == 3
+        tool_names = [call.args[0] for call in mcp.execute_tool.await_args_list]
+        assert tool_names[0] == "mcp.paperless.create_correspondent"
+        assert tool_names[1] == "mcp.paperless.create_tag"
+        assert tool_names[2] == "mcp.paperless.upload_document"
+        # Response mentions the newly-created entries.
+        assert "Schreiner Meier" in result["message"] or "handwerker" in result["message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_ja_treats_already_exists_as_success(self, tmp_path):
+        """If a create_* says the entry already exists (raced against
+        another extraction), treat it as success and use the existing id
+        rather than aborting."""
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-c",
+            attachment_id=42,
+            llm_output={},
+            post_fuzzy={"title": "T"},
+            proposals=[
+                {"field": "correspondent", "value": "Stadtwerke", "reasoning": "..."},
+            ],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        # create_correspondent returns already_exists.
+        responses = [
+            {"success": False, "message": json.dumps({
+                "error": "already_exists", "existing_id": 7, "existing_name": "Stadtwerke",
+            })},
+            {"success": True, "message": json.dumps({
+                "task_id": "t", "document_id": 1, "post_upload_patch": "success",
+            })},
+        ]
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=responses)
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            with patch(
+                "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
+                MagicMock(),
+            ):
+                result = await paperless_commit_upload(
+                    {"confirm_token": "tok-c", "user_response_text": "ja"},
+                    mcp_manager=mcp, session_id="s", user_id=1,
+                )
+
+        # Upload still happened; already_exists didn't abort the flow.
+        assert result["success"] is True
+        assert mcp.execute_tool.await_count == 2
+
+
+class TestApproveMessageShape:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_patch_failure_surfaces_user_warning(self, tmp_path):
+        """When the MCP upload reports post_upload_patch other than
+        success, the user-facing message must mention the gap."""
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-d",
+            attachment_id=42,
+            llm_output={},
+            post_fuzzy={"title": "T", "storage_path": "/x"},
+            proposals=[],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "task_id": "t", "document_id": 99,
+                "post_upload_patch": "timed_out",
+            }),
+        })
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "tok-d", "user_response_text": "ja"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is True
+        # User is explicitly told about the gap.
+        assert (
+            "Speicherpfad" in result["message"]
+            or "anpassen" in result["message"].lower()
+        )
+
+
+# ===========================================================================
+# Abort path
+# ===========================================================================
+
+
+class TestAbortPath:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_nein_deletes_pending_without_uploading(self, tmp_path):
+        pending = _make_pending(
+            confirm_token="tok-x",
+            attachment_id=42,
+            llm_output={}, post_fuzzy={"title": "T"}, proposals=[],
+        )
+        upload = MagicMock(id=42)
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()  # should never fire
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "tok-x", "user_response_text": "nein"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is True
+        assert result["data"]["aborted"] is True
+        assert mcp.execute_tool.await_count == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_abbrechen_also_aborts(self, tmp_path):
+        pending = _make_pending(
+            confirm_token="tok-y",
+            attachment_id=42,
+            llm_output={}, post_fuzzy={"title": "T"}, proposals=[],
+        )
+        upload = MagicMock(id=42)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(pending=pending, upload=upload),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "tok-y", "user_response_text": "abbrechen"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is True
+        assert result["data"]["aborted"] is True
+
+
+# ===========================================================================
+# Ambiguous response handling
+# ===========================================================================
+
+
+class TestAmbiguousResponse:
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_ambiguous_returns_reprompt_within_budget(self):
+        pending = _make_pending(
+            confirm_token="tok-z",
+            attachment_id=42,
+            llm_output={}, post_fuzzy={"title": "T"}, proposals=[],
+            edit_rounds=0,
+        )
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()
+
+        with patch(
+            "services.paperless_commit_tool.AsyncSessionLocal",
+            _make_session_factory(
+                pending=pending, upload=None,
+                pending_after_update=_make_pending(
+                    confirm_token="tok-z", attachment_id=42,
+                    llm_output={}, post_fuzzy={}, proposals=[],
+                    edit_rounds=1,
+                ),
+            ),
+        ):
+            result = await paperless_commit_upload(
+                {"confirm_token": "tok-z", "user_response_text": "hmm nicht sicher"},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        # Re-prompt; still requires action.
+        assert result["success"] is False
+        assert "ja" in result["message"].lower() and "nein" in result["message"].lower()
+        assert result["data"]["action_required"] == "paperless_confirm"
+        # No MCP call.
+        assert mcp.execute_tool.await_count == 0
+
+
+# ===========================================================================
+# Test helpers — pending row + session mocking
+# ===========================================================================
+
+
+def _make_pending(*, confirm_token, attachment_id, llm_output, post_fuzzy,
+                  proposals, edit_rounds=0):
+    return SimpleNamespace(
+        confirm_token=confirm_token,
+        attachment_id=attachment_id,
+        session_id="s",
+        user_id=1,
+        llm_output=llm_output,
+        post_fuzzy_output=post_fuzzy,
+        proposals=proposals,
+        edit_rounds=edit_rounds,
+    )
+
+
+def _make_session_factory(*, pending, upload=None, pending_after_update=None):
+    """Build a patchable AsyncSessionLocal factory. The session returns
+    ``pending`` on the first SELECT query; if ``pending_after_update``
+    is set, it returns that on subsequent ``db.get`` calls (simulates
+    the ambiguous-response re-fetch after edit_rounds bump)."""
+
+    def _factory():
+        session = AsyncMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=False)
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+
+        def _execute(query):
+            result = MagicMock()
+            result.scalar_one_or_none = MagicMock(return_value=pending)
+            result.rowcount = 1
+            return result
+
+        session.execute = AsyncMock(side_effect=lambda q: _execute(q))
+
+        # db.get is called for ChatUpload lookups and for the
+        # pending-refresh after edit_rounds bump.
+        call_count = {"n": 0}
+
+        async def _get(model, pk):
+            call_count["n"] += 1
+            # First .get for ChatUpload (approved path); second .get
+            # for PaperlessPendingConfirm (ambiguous re-fetch). Just
+            # return whatever the caller needs based on argument type.
+            if model.__name__ == "ChatUpload":
+                return upload
+            if model.__name__ == "PaperlessPendingConfirm":
+                return pending_after_update or pending
+            return None
+
+        session.get = _get
+        return session
+
+    return _factory

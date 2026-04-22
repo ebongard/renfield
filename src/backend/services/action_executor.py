@@ -89,6 +89,21 @@ class ActionExecutor:
                 parameters,
                 mcp_manager=self.mcp_manager,
                 session_id=self.session_id,
+                user_id=user_id,
+            )
+
+        # Paperless commit (second half of the two-tool confirm flow).
+        # Reads a pending-confirm row created by forward_attachment_to_paperless
+        # during the cold-start window (first N uploads) and finalises the
+        # upload on user "ja" / aborts on "nein". See
+        # docs/design/paperless-llm-metadata.md § Confirm flow state machine.
+        if intent == "internal.paperless_commit_upload":
+            from services.paperless_commit_tool import paperless_commit_upload
+            return await paperless_commit_upload(
+                parameters,
+                mcp_manager=self.mcp_manager,
+                session_id=self.session_id,
+                user_id=user_id,
             )
 
         # Other `internal.*` intents (room resolution, media playback,
