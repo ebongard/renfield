@@ -1,6 +1,6 @@
 # LLM-driven Paperless Metadata Extraction
 
-**Status:** Design proposal, revision 3.1 (2026-04-22, implementation-ready)
+**Status:** Design proposal, revision 3.2 (2026-04-22, implementation in progress)
 **Owner:** evdb
 **Related:** [`services/chat_upload_tool.py`](../../src/backend/services/chat_upload_tool.py),
 [`renfield-mcp-paperless/server.py`](https://github.com/ebongard/renfield-mcp-paperless/blob/main/renfield_mcp_paperless/server.py),
@@ -84,8 +84,10 @@ internal.forward_attachment_to_paperless(attachment_id [, title, skip_metadata])
     ▼
 mcp.paperless.upload_document(title, bytes, correspondent, document_type, tags,
                               storage_path, created_date, custom_fields)
-    │   (MCP tool issues an internal PATCH for storage_path / custom_fields
-    │    after the initial post returns the document id — agent sees one call)
+    │   (MCP tool polls Paperless's consume queue for up to 30 s, then
+    │    issues an internal PATCH for storage_path / created_date /
+    │    custom_fields — agent sees one call, sees a warning back if the
+    │    poll times out or the PATCH retries are exhausted)
     ▼
 Paperless consumes. Fields the LLM filled are honored; any still-null
 field gets Paperless's built-in classifier as the fallback.
@@ -788,9 +790,10 @@ for everything else** — without these, Renfield-side extraction has
 nowhere to send the fields it extracts. Ship first.
 
 1. `upload_document` — accept `storage_path`, `created_date`,
-   `custom_fields`; when `storage_path` or `custom_fields` is set, issue
-   an internal `PATCH /api/documents/{id}/` after the initial post
-   returns the new document id. Agent sees one tool call.
+   `custom_fields`; when any of the three is set, run a post-upload
+   `PATCH /api/documents/{id}/` to apply them. See
+   [§ post-upload PATCH semantics](#post-upload-patch-semantics) below
+   for the task-polling detail.
 2. `create_correspondent(name: str) -> dict`
 3. `create_document_type(name: str) -> dict`
 4. `create_tag(name: str, color: str | None = None) -> dict`
@@ -799,6 +802,40 @@ nowhere to send the fields it extracts. Ship first.
 All creation tools validate against existing entries to prevent
 duplicates (`_resolve_name_to_id` returns an id → reject as "already
 exists" instead of creating a second one).
+
+#### Post-upload PATCH semantics
+
+Paperless's `POST /api/documents/post_document/` is an **async** endpoint.
+It returns a Celery **task id**, not the document id — Paperless queues
+the upload for OCR + consumption and the document row only appears in the
+DB once the task completes.
+
+To run the post-upload PATCH, the MCP tool has to:
+
+1. `POST /api/documents/post_document/` → get task_id (existing behavior)
+2. Poll `GET /api/tasks/?task_id=X` until `status=SUCCESS` and
+   `related_document` is populated (typically < 10 s for text PDFs,
+   up to 30 s for image-PDFs with OCR)
+3. `PATCH /api/documents/{document_id}/` with storage_path / created_date
+   / custom_fields, with exponential-backoff retry (3 attempts:
+   0.5 s → 1.5 s → 4.5 s; retries 5xx + transport errors, bails on 4xx)
+
+All three phases happen inside the same MCP tool call. From the agent's
+perspective it's one `upload_document` invocation.
+
+Three failure modes the response makes visible to the caller:
+
+- `post_upload_patch: "timed_out"` — task didn't complete within the
+  polling window (default 30 s). Document exists in Paperless, but the
+  extra metadata wasn't applied. Caller surfaces in the user message.
+- `post_upload_patch: "retries_exhausted"` — task completed, PATCH failed
+  3× (5xx or transport). Same user-surface treatment.
+- `post_upload_patch: "unknown_storage_path"` — the passed name doesn't
+  resolve to any known id. Fails fast **before** polling to avoid wasting
+  the 30 s window when the PATCH can't succeed anyway.
+
+Implementation reference: see `renfield-mcp-paperless` PR #5 for the
+`_poll_task_for_document_id` + `_patch_document_with_retry` helpers.
 
 ### Database tables
 
@@ -965,11 +1002,14 @@ PR 2 merge score, the PR blocks until investigated.
 ## Implementation plan
 
 **PR 1** — `renfield-mcp-paperless` additions (`feat: storage_path +
-create-taxonomy tools`):
+create-taxonomy tools`, [PR #5](https://github.com/ebongard/renfield-mcp-paperless/pull/5)):
   - `upload_document` accepts storage_path / created_date / custom_fields
-    with internal PATCH follow-up. Retry-with-backoff (3 tries,
-    exponential) on the PATCH; surface failure explicitly if all retries
-    exhausted.
+    with post-upload PATCH. Because Paperless's post_document is async,
+    the tool polls `/api/tasks/?task_id=X` (up to 30 s) to resolve the
+    document id, then PATCHes with retry-with-backoff (3 tries,
+    0.5/1.5/4.5 s). Surfaces `post_upload_patch: timed_out` or
+    `retries_exhausted` back to the caller. See
+    [§ Post-upload PATCH semantics](#post-upload-patch-semantics).
   - `create_correspondent`, `create_document_type`, `create_tag`,
     `create_storage_path` tools
   - Parallelise the 4 taxonomy fetches in `_ensure_caches` via
@@ -1075,6 +1115,21 @@ LLM for the rest.
 Otherwise, don't build it. Simpler is better.
 
 ## Reviewer concerns
+
+**Revision 3.2** — correction from implementation reality of
+[PR #5](https://github.com/ebongard/renfield-mcp-paperless/pull/5):
+
+- **Post-upload PATCH requires task polling.** Rev 3.1 said the MCP
+  tool would "issue PATCH after post returns the document id." That
+  assumed Paperless's `post_document` returned the document id
+  synchronously. It doesn't — it returns a Celery task id, and the
+  document row only exists after the consume task completes.
+  Implementation polls `/api/tasks/?task_id=X` for up to 30 s before
+  giving up. Added new
+  [§ Post-upload PATCH semantics](#post-upload-patch-semantics) +
+  updated the Proposed flow diagram + PR 1 description.
+- Linked PR 1 scope in § Implementation plan to the actual shipped
+  PR so implementers can cross-reference.
 
 **Revision 3** incorporated /plan-eng-review + outside-voice subagent
 feedback. Key changes from rev 2:
