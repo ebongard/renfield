@@ -93,13 +93,18 @@ def upgrade() -> None:
         "documents",
         ["atom_id"],
     )
+    # ondelete=SET NULL (not CASCADE): atoms are metadata descriptors for
+    # documents, not their parents. Deleting an atom (admin cleanup, /api/atoms
+    # DELETE) must NOT nuke the Document + every chunk. The reverse direction
+    # — deleting a Document — is handled by the app's delete_document which
+    # explicitly cleans up the atom beforehand.
     op.create_foreign_key(
         "fk_documents_atom",
         "documents",
         "atoms",
         ["atom_id"],
         ["atom_id"],
-        ondelete="CASCADE",
+        ondelete="SET NULL",
     )
 
     # ---------------------------------------------------------------------
@@ -128,6 +133,12 @@ def upgrade() -> None:
 
             # One atoms row per existing document. Tier = MIN(chunks.tier).
             # Documents with no chunks fall back to kb.default_circle_tier.
+            #
+            # ON CONFLICT ON CONSTRAINT uq_atoms_source DO NOTHING makes the
+            # back-fill idempotent: re-running after a partial-rollback that
+            # left some kb_document atoms behind won't create duplicates. The
+            # unique constraint exists on atoms(atom_type, source_table,
+            # source_id) from pc20260420_circles_v1_schema.
             bind.exec_driver_sql(
                 "WITH new_atoms AS ("
                 "  INSERT INTO atoms (atom_id, atom_type, source_table, source_id, "
@@ -148,12 +159,27 @@ def upgrade() -> None:
                 "    NOW() "
                 "  FROM documents d "
                 "  JOIN knowledge_bases kb ON kb.id = d.knowledge_base_id "
+                "  ON CONFLICT ON CONSTRAINT uq_atoms_source DO NOTHING "
                 "  RETURNING atom_id, source_id"
                 ") "
                 "UPDATE documents d "
                 "SET atom_id = new_atoms.atom_id "
                 "FROM new_atoms "
                 "WHERE d.id::text = new_atoms.source_id"
+            )
+
+            # Defensive second UPDATE: catches any document whose atom already
+            # existed (ON CONFLICT skipped) — rare but possible on a re-run
+            # after a partial ROLLBACK that left atoms behind. Pairs docs →
+            # existing atoms via the unique constraint's lookup key.
+            bind.exec_driver_sql(
+                "UPDATE documents d "
+                "SET atom_id = a.atom_id "
+                "FROM atoms a "
+                "WHERE a.atom_type = 'kb_document' "
+                "  AND a.source_table = 'documents' "
+                "  AND a.source_id = d.id::text "
+                "  AND d.atom_id IS NULL"
             )
 
             # Denormalize the tier onto documents.circle_tier
@@ -164,8 +190,11 @@ def upgrade() -> None:
                 "WHERE d.atom_id = a.atom_id"
             )
 
-            # Make atom_id NOT NULL now that every existing row has one
-            op.alter_column("documents", "atom_id", nullable=False)
+            # Leave documents.atom_id nullable to match the ORM and the
+            # empty-users bootstrap path (create_all on fresh SQLite + first-
+            # run Postgres before any user exists). Application invariant:
+            # RAGService.create_document_record always populates atom_id when
+            # at least one user is in the DB — see services/rag_service.py.
 
     else:  # sqlite (tests)
         # On SQLite tests we don't run back-fill; Base.metadata.create_all

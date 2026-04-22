@@ -44,12 +44,15 @@ async def test_share_kb_emits_upsert_with_join_chain():
 
     db.execute.assert_called_once()
     sql_text = str(db.execute.call_args.args[0])
-    # The join chain hits atoms → document_chunks → documents
+    # Post pc20260423: grants anchor on documents (one grant per doc), not
+    # per chunk. The join chain is atoms → documents directly.
     assert "INSERT INTO atom_explicit_grants" in sql_text
     assert "FROM atoms a" in sql_text
-    assert "JOIN document_chunks dc" in sql_text
-    assert "JOIN documents d" in sql_text
-    assert "WHERE a.source_table = 'document_chunks'" in sql_text
+    assert "JOIN documents d ON a.source_id = d.id::text" in sql_text
+    assert "WHERE a.source_table = 'documents'" in sql_text
+    # Chunks must not appear anywhere — regression guard against reverting
+    # the atoms-per-document granularity change.
+    assert "document_chunks" not in sql_text
     # Idempotent upsert
     assert "ON CONFLICT" in sql_text
     # Bind params
@@ -128,8 +131,8 @@ async def test_list_kb_shares_uses_distinct_on_for_paired_granter():
     sql = str(db.execute.call_args.args[0])
     # DISTINCT ON ensures one row per user, paired correctly.
     assert "DISTINCT ON" in sql
-    # latest_per_chunk CTE picks most-recent grant per (user, chunk).
-    assert "latest_per_chunk" in sql
+    # Post pc20260423: CTE picks most-recent grant per (user, document).
+    assert "latest_per_doc" in sql
     # The legacy arbitrary MAX(granted_by) must not appear.
     assert "MAX(granted_by)" not in sql.replace(" ", "")
     assert "MAX(g.granted_by)" not in sql

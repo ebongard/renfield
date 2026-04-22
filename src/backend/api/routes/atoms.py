@@ -1,5 +1,5 @@
 """
-Atoms API — read/edit access to atoms (kb_chunks, kg_nodes, kg_edges,
+Atoms API — read/edit access to atoms (kb_documents, kg_nodes, kg_edges,
 conversation_memories) through the unified circles framework.
 
 All endpoints require authentication. Access checks use CircleResolver:

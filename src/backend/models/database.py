@@ -942,15 +942,12 @@ TIER_PUBLIC = 4
 
 # Atom type discriminators — one per source table the polymorphic registry
 # wraps. Keep in sync with PolymorphicAtomStore source dispatch.
+# 'kb_chunk' was retired in pc20260423_atoms_per_document; historical alembic
+# migrations hard-code that string literal where they still need it.
 ATOM_TYPE_KB_DOCUMENT = "kb_document"
 ATOM_TYPE_KG_NODE = "kg_node"
 ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
-# Legacy constant retained for back-compat with existing imports (mostly tests
-# and old alembic migrations). Not used in new writer code paths — the atom_type
-# 'kb_chunk' is no longer written by RAGService after the atoms-per-document
-# migration (pc20260423_atoms_per_document).
-ATOM_TYPE_KB_CHUNK = "kb_chunk"
 
 # Atom explicit grant permission levels — mirrors the legacy KB_PERM_*
 # values for migration parity.

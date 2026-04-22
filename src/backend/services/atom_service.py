@@ -49,10 +49,10 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
-    Atom as AtomModel,
     ATOM_TYPE_KB_DOCUMENT,
     ATOM_TYPE_KG_EDGE,
     ATOM_TYPE_KG_NODE,
+    Atom as AtomModel,
 )
 from services.atom_types import Atom
 from services.circle_resolver import CircleResolver, atom_from_orm
@@ -369,14 +369,15 @@ class AtomService:
 def _table_for_atom_type(atom_type: str) -> str:
     """Map atom_type discriminator → source table name.
 
-    Post-atoms-per-document migration (pc20260423): the RAG access-control
-    unit is ``kb_document`` / ``documents``. The legacy ``kb_chunk`` mapping
-    is retained only so old atoms rows are still reachable for read/delete;
-    writers should not produce ``kb_chunk`` atoms anymore.
+    Post-atoms-per-document (pc20260423): ``kb_chunk`` is deliberately absent
+    — the migration deletes every ``kb_chunk`` atom, ``document_chunks.atom_id``
+    no longer exists, and ``upsert_atom``'s generic ``UPDATE … SET atom_id``
+    would fail on that column. Any writer that still produces ``kb_chunk``
+    atoms will raise ``ValueError`` here loudly rather than silently corrupting
+    state downstream.
     """
     table_map = {
         "kb_document": "documents",
-        "kb_chunk": "document_chunks",  # legacy; see note above
         "kg_node": "kg_entities",
         "kg_edge": "kg_relations",
         "conversation_memory": "conversation_memories",

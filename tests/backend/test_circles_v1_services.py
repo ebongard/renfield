@@ -389,23 +389,31 @@ class TestSourceWrapping:
         assert _wrap_rag_results(None) == []
 
     @pytest.mark.unit
-    def test_rag_wrapper_extracts_chunk_fields(self):
+    def test_rag_wrapper_extracts_document_fields(self):
+        """Post pc20260423: the atom id + owner live on the document, not
+        on the chunk. Chunks contribute content/snippet + denormalized tier.
+        """
         rag_results = [{
             "chunk": {
                 "id": 7,
                 "content": "The cat sat on the mat.",
                 "page_number": 3,
                 "section_title": "Pets",
-                "atom_id": "atom-7",
                 "circle_tier": 2,
             },
-            "document": {"id": 1, "filename": "cats.pdf", "title": "Cat Lore"},
+            "document": {
+                "id": 1,
+                "filename": "cats.pdf",
+                "title": "Cat Lore",
+                "atom_id": "doc-atom-1",
+                "circle_tier": 2,
+            },
             "similarity": 0.91,
         }]
         result = _wrap_rag_results(rag_results)
         assert len(result) == 1
         assert result[0].atom.atom_type == "kb_document"
-        assert result[0].atom.atom_id == "atom-7"
+        assert result[0].atom.atom_id == "doc-atom-1"
         assert result[0].atom.policy == {"tier": 2}
         assert result[0].score == 0.91
         assert "cat sat" in result[0].snippet
@@ -413,14 +421,53 @@ class TestSourceWrapping:
 
     @pytest.mark.unit
     def test_rag_wrapper_falls_back_to_synthetic_atom_id_when_missing(self):
-        # Pre-migration data won't have atom_id populated yet; use synthetic id.
+        # Defensive fallback when document.atom_id is absent (shouldn't happen
+        # post-migration, but we log a warning and synthesize rather than crash).
         rag_results = [{
             "chunk": {"id": 42, "content": "x"},
             "document": {"id": 1, "filename": "y", "title": "z"},
             "similarity": 0.5,
         }]
         result = _wrap_rag_results(rag_results)
-        assert result[0].atom.atom_id == "kb_document:42"
+        assert result[0].atom.atom_id == "kb_document:1"
+        assert result[0].atom.atom_type == "kb_document"
+
+    @pytest.mark.unit
+    def test_rag_wrapper_collapses_chunks_to_one_atom_per_document(self):
+        """Post pc20260423: multiple chunk hits from the same document
+        collapse to ONE AtomMatch carrying the best-scoring chunk's snippet.
+        Without this, a single long document floods cross-source RRF with
+        its own chunks and starves KG / memory results.
+        """
+        rag_results = [
+            {
+                "chunk": {"id": 1, "content": "first para", "circle_tier": 0},
+                "document": {"id": 42, "filename": "a.pdf", "title": "A",
+                             "atom_id": "doc-42", "circle_tier": 0},
+                "similarity": 0.95,
+            },
+            {
+                "chunk": {"id": 2, "content": "second para", "circle_tier": 0},
+                "document": {"id": 42, "filename": "a.pdf", "title": "A",
+                             "atom_id": "doc-42", "circle_tier": 0},
+                "similarity": 0.80,
+            },
+            {
+                "chunk": {"id": 3, "content": "B chunk", "circle_tier": 0},
+                "document": {"id": 99, "filename": "b.pdf", "title": "B",
+                             "atom_id": "doc-99", "circle_tier": 0},
+                "similarity": 0.70,
+            },
+        ]
+        result = _wrap_rag_results(rag_results)
+        assert len(result) == 2
+        # Best-scoring chunk wins for doc-42 — snippet from chunk id=1.
+        doc42 = next(r for r in result if r.atom.atom_id == "doc-42")
+        assert doc42.score == 0.95
+        assert "first para" in doc42.snippet
+        assert doc42.atom.payload["best_chunk_id"] == 1
+        # Ranks reassigned sequentially after collapse.
+        assert sorted(r.rank for r in result) == [1, 2]
 
     @pytest.mark.unit
     def test_kg_wrapper_handles_exception_input(self):

@@ -117,21 +117,32 @@ class TestUpdateTier:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_kb_document_writes_source_tier_only(self):
+    async def test_kb_document_cascades_to_document_chunks(self):
+        """Post pc20260423: kb_document tier changes MUST propagate to every
+        chunk's denormalized circle_tier in the same transaction — otherwise
+        the hot-path SQL filter keeps reading stale chunk tiers and leaks
+        chunks at the old tier (Risk A from docs/design/atoms-granularity.md).
+        """
         session = _mock_session()
         atom_orm = MagicMock()
         atom_orm.atom_type = "kb_document"
-        atom_orm.source_table = "document_chunks"
+        atom_orm.source_table = "documents"
         atom_orm.source_id = "99"
         session.execute = AsyncMock(side_effect=[
             MagicMock(scalar_one_or_none=MagicMock(return_value=atom_orm)),
-            MagicMock(),  # UPDATE source.circle_tier
+            MagicMock(),  # UPDATE documents.circle_tier
+            MagicMock(),  # UPDATE document_chunks.circle_tier — cascade
         ])
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("atom-x", {"tier": 3})
 
-        # 2 executes: SELECT atom, UPDATE source. No cascade for kb_document.
-        assert session.execute.await_count == 2
+        # 3 executes: SELECT atom + UPDATE documents + UPDATE document_chunks.
+        assert session.execute.await_count == 3
+        cascade_sql = str(session.execute.await_args_list[2].args[0])
+        assert "UPDATE document_chunks" in cascade_sql
+        assert "document_id = :doc_id" in cascade_sql
+        binds = session.execute.await_args_list[2].args[1]
+        assert binds == {"tier": 3, "doc_id": 99}
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio

@@ -124,7 +124,8 @@ class Atom:
     but if you need defensive immutability across boundaries, use from_mutable.
     """
     atom_id: str            # UUID4 as 36-char string
-    atom_type: str          # one of {'kb_chunk', 'kg_node', 'kg_edge', 'conversation_memory'}
+    atom_type: str          # one of {'kb_document', 'kg_node', 'kg_edge', 'conversation_memory'}
+                            # ('kb_chunk' is a retired legacy value, see pc20260423)
     owner_user_id: int
     policy: dict[str, Any]
     created_at: datetime

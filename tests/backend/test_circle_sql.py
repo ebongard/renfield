@@ -128,25 +128,32 @@ class TestConversationMemoriesWrapper:
 
 class TestDocumentChunksWrapper:
     def test_owner_from_kb_tier_from_chunk(self):
+        """Post pc20260423 (atoms-per-document): the access-control unit is
+        the parent Document, so the grant subquery anchors on ``documents``
+        with source_id = d.id. Tier still comes from the chunk row (fast
+        denormalized path — avoids the chunk→document JOIN in the hot
+        similarity filter). Ownership still comes from kb.owner_id.
+        """
         clause, params = document_chunks_circles_filter(asker_id=42)
         # Owner branch references kb.owner_id, not dc.user_id
         assert "kb.owner_id = :asker_id" in clause
-        # Tier check is on chunk row
+        # Tier check is on chunk row (denormalized)
         assert "dc.circle_tier = :asker_id_pub" in clause
         # Membership reaches kb.owner_id
         assert "m.circle_owner_id = kb.owner_id" in clause
-        # Grant subquery anchored on document_chunks (bound, not interpolated)
+        # Grant subquery anchored on documents (document-level atoms)
         assert "a.source_table = :asker_id_src" in clause
-        assert "a.source_id = (dc.id)::text" in clause
+        assert "a.source_id = (d.id)::text" in clause
         assert params == {
-            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "document_chunks",
+            "asker_id": 42, "asker_id_pub": TIER_PUBLIC, "asker_id_src": "documents",
         }
 
     def test_custom_aliases(self):
         clause, _ = document_chunks_circles_filter(
-            asker_id=42, chunk_alias="chunks", kb_alias="bases",
+            asker_id=42, chunk_alias="chunks", doc_alias="doc", kb_alias="bases",
         )
         assert "bases.owner_id = :asker_id" in clause
         assert "chunks.circle_tier = :asker_id_pub" in clause
         assert "m.circle_owner_id = bases.owner_id" in clause
-        assert "a.source_id = (chunks.id)::text" in clause
+        # Grant anchor follows the doc_alias now, not the chunk_alias.
+        assert "a.source_id = (doc.id)::text" in clause
