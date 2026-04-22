@@ -109,6 +109,87 @@ class KnowledgeGraphService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self._ollama_client = None
+        # Cached fallback owner id — resolved lazily via _resolve_owner_user_id
+        # when a writer doesn't carry an authenticated user (auth disabled, or
+        # background jobs extracted from anonymous context). Matches the
+        # migration's back-fill pattern: "first user by id" (see
+        # pc20260420_circles_v1_schema.py:344).
+        self._fallback_owner_id: int | None = None
+
+    async def _resolve_owner_user_id(self, user_id: int | None) -> int | None:
+        """Resolve a non-null owner for atom rows, or None if unavailable.
+
+        Falls back to the first user's id when ``user_id`` is None — matches
+        the migration's back-fill pattern (pc20260420_circles_v1_schema.py:344).
+        Returns None only in dev setups (empty users table) where atom
+        registration is skipped and the source row is written with
+        ``atom_id=None``. Production always has the admin user from
+        bootstrap, so this is never None in real deploys.
+        """
+        if user_id is not None:
+            return user_id
+        if self._fallback_owner_id is not None:
+            return self._fallback_owner_id
+        from models.database import User
+        result = await self.db.execute(
+            select(User.id).order_by(User.id.asc()).limit(1)
+        )
+        fallback = result.scalar()
+        if fallback is None:
+            return None
+        self._fallback_owner_id = int(fallback)
+        return self._fallback_owner_id
+
+    async def _create_atom_for_new_source(
+        self,
+        atom_type: str,
+        owner_user_id: int,
+        tier: int,
+    ) -> str:
+        """Pre-create an ``atoms`` row before inserting the source row.
+
+        The source-table ``atom_id`` columns carry a NOT NULL constraint and
+        a non-deferrable FK back to ``atoms.atom_id`` (per the
+        pc20260420_circles_v1 migration). That means the atoms row must
+        already exist when the source-row INSERT fires. The source row's
+        primary key is auto-incremented and only known after flush, so we
+        seed ``atoms.source_id`` with a unique placeholder; the caller
+        invokes :meth:`_finalize_atom_source_id` after flushing the source
+        row to overwrite the placeholder with the real PK.
+        """
+        from datetime import UTC, datetime
+        import uuid as _uuid
+        from models.database import Atom as AtomORM
+        atom_id = str(_uuid.uuid4())
+        source_table = {
+            "kg_node": "kg_entities",
+            "kg_edge": "kg_relations",
+        }[atom_type]
+        placeholder = f"__pending__{atom_id}"
+        now = datetime.now(UTC).replace(tzinfo=None)
+        atom_row = AtomORM(
+            atom_id=atom_id,
+            atom_type=atom_type,
+            source_table=source_table,
+            source_id=placeholder,
+            owner_user_id=int(owner_user_id),
+            policy={"tier": int(tier)},
+            created_at=now,
+            updated_at=now,
+        )
+        self.db.add(atom_row)
+        await self.db.flush()
+        return atom_id
+
+    async def _finalize_atom_source_id(self, atom_id: str, source_id: int) -> None:
+        """Replace the placeholder ``source_id`` on an atoms row with the
+        freshly-flushed source-row's primary key."""
+        from models.database import Atom as AtomORM
+        atom = (await self.db.execute(
+            select(AtomORM).where(AtomORM.atom_id == atom_id)
+        )).scalar_one()
+        atom.source_id = str(source_id)
+        await self.db.flush()
 
     async def _get_ollama_client(self):
         if self._ollama_client is None:
@@ -366,16 +447,41 @@ class KnowledgeGraphService:
         # promote later via /api/atoms/{id}/tier. The scope column is gone
         # but the model declaration retains it for back-compat (Lane C
         # cleanup will remove the ORM stub).
+        #
+        # Atom registration order matters here: the kg_entities.atom_id
+        # column is NOT NULL with a non-deferrable FK to atoms.atom_id, so
+        # the atoms row must exist BEFORE the entity INSERT (see #438).
+        # We pre-create with a placeholder source_id, INSERT the entity
+        # carrying the just-minted atom_id, then patch the atoms row's
+        # source_id once entity.id is known.
+        owner_id = await self._resolve_owner_user_id(user_id)
+        default_tier = 0
+        # owner_id is None only in dev/test setups with an empty users table;
+        # in that path we skip atom registration and write the entity with
+        # atom_id=None (the source-row ORM column is nullable). Production
+        # always has the bootstrap admin, so the atom-backed path is the one
+        # that actually runs.
+        atom_id: str | None = None
+        if owner_id is not None:
+            atom_id = await self._create_atom_for_new_source(
+                atom_type="kg_node",
+                owner_user_id=owner_id,
+                tier=default_tier,
+            )
         entity = KGEntity(
-            user_id=user_id,
+            user_id=owner_id,
             name=name,
             entity_type=entity_type if entity_type in KG_ENTITY_TYPES else "thing",
             description=description,
             embedding=embedding,
+            atom_id=atom_id,
+            circle_tier=default_tier,
         )
         self.db.add(entity)
         await self.db.flush()
-        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id}")
+        if atom_id is not None:
+            await self._finalize_atom_source_id(atom_id, entity.id)
+        logger.debug(f"KG: New entity '{name}' ({entity_type}) id={entity.id} atom_id={atom_id}")
         return entity
 
     async def _find_similar_entity(
@@ -472,17 +578,43 @@ class KnowledgeGraphService:
             await self.db.flush()
             return existing
 
+        # Inherit the relation's circle_tier from MIN(subject_tier, object_tier)
+        # — the relation can be no more visible than the more-restricted endpoint
+        # (CEO Finding E cascade rule, mirrors AtomService.update_tier:198-210).
+        endpoints = (await self.db.execute(
+            select(KGEntity.circle_tier).where(KGEntity.id.in_([subject_id, object_id]))
+        )).scalars().all()
+        relation_tier = min(endpoints) if endpoints else 0
+
+        # Same atom-first ordering as _get_or_create_entity: kg_relations.atom_id
+        # is NOT NULL with a non-deferrable FK, so the atoms row is pre-created
+        # with a placeholder source_id and patched after the relation flushes.
+        owner_id = await self._resolve_owner_user_id(user_id)
+        atom_id: str | None = None
+        if owner_id is not None:
+            atom_id = await self._create_atom_for_new_source(
+                atom_type="kg_edge",
+                owner_user_id=owner_id,
+                tier=relation_tier,
+            )
         relation = KGRelation(
-            user_id=user_id,
+            user_id=owner_id,
             subject_id=subject_id,
             predicate=predicate,
             object_id=object_id,
             confidence=confidence,
             source_session_id=source_session_id,
+            atom_id=atom_id,
+            circle_tier=relation_tier,
         )
         self.db.add(relation)
         await self.db.flush()
-        logger.debug(f"KG: New relation {subject_id} --{predicate}--> {object_id}")
+        if atom_id is not None:
+            await self._finalize_atom_source_id(atom_id, relation.id)
+        logger.debug(
+            f"KG: New relation {subject_id} --{predicate}--> {object_id} "
+            f"atom_id={atom_id} tier={relation_tier}"
+        )
         return relation
 
     # =========================================================================

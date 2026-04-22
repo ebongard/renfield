@@ -166,6 +166,99 @@ class TestResolveEntity:
 # Save Relation
 # ==========================================================================
 
+class TestAtomRegistration:
+    """New entities and relations must register with the atoms table so they
+    participate in circle-aware retrieval. Regression guard for #438 — the
+    kg_entities.atom_id / kg_relations.atom_id columns are NOT NULL + FK to
+    atoms.atom_id in production; without pre-creating the atoms row, every
+    KG extraction after a document ingest failed with an IntegrityError."""
+
+    @pytest.mark.unit
+    async def test_new_entity_gets_atom_id_when_user_exists(
+        self, kg_service, db_session, test_user
+    ):
+        """When a user is present, a new entity gets an atom_id and a matching
+        atoms row (source_id points at the entity PK, atom_type='kg_node')."""
+        from models.database import Atom as AtomORM
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        result = await kg_service.resolve_entity(
+            "Acme", "organization", user_id=test_user.id,
+        )
+
+        assert result.atom_id is not None, "new entity must carry an atom_id"
+        atom = (await db_session.execute(
+            select(AtomORM).where(AtomORM.atom_id == result.atom_id)
+        )).scalar_one()
+        assert atom.atom_type == "kg_node"
+        assert atom.source_table == "kg_entities"
+        assert atom.source_id == str(result.id)  # placeholder was patched
+        assert atom.owner_user_id == test_user.id
+        assert atom.policy["tier"] == 0
+
+    @pytest.mark.unit
+    async def test_new_relation_gets_atom_id(
+        self, kg_service, db_session, test_user
+    ):
+        """save_relation creates the matching atoms row with atom_type='kg_edge'
+        and the source_id pointing at the relation's PK after flush."""
+        from models.database import Atom as AtomORM
+        # Route resolve_entity through the service so both entities get atoms.
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+        subj = await kg_service.resolve_entity("Alice", "person", user_id=test_user.id)
+        obj = await kg_service.resolve_entity("Bob", "person", user_id=test_user.id)
+
+        relation = await kg_service.save_relation(
+            subject_id=subj.id,
+            predicate="knows",
+            object_id=obj.id,
+            user_id=test_user.id,
+        )
+
+        assert relation.atom_id is not None
+        atom = (await db_session.execute(
+            select(AtomORM).where(AtomORM.atom_id == relation.atom_id)
+        )).scalar_one()
+        assert atom.atom_type == "kg_edge"
+        assert atom.source_table == "kg_relations"
+        assert atom.source_id == str(relation.id)
+        assert atom.owner_user_id == test_user.id
+
+    @pytest.mark.unit
+    async def test_relation_tier_inherits_from_min_endpoint(
+        self, kg_service, db_session, test_user
+    ):
+        """Relation circle_tier = MIN(subject.tier, object.tier) — the relation
+        can be no more visible than the stricter endpoint (CEO Finding E)."""
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+        subj = await kg_service.resolve_entity("S", "person", user_id=test_user.id)
+        obj = await kg_service.resolve_entity("O", "person", user_id=test_user.id)
+        # Promote subject to tier 3 so the MIN is 0 (object) — visibility limited.
+        subj.circle_tier = 3
+        await db_session.flush()
+
+        relation = await kg_service.save_relation(
+            subject_id=subj.id, predicate="k", object_id=obj.id, user_id=test_user.id,
+        )
+        assert relation.circle_tier == 0
+
+    @pytest.mark.unit
+    async def test_empty_users_table_skips_atom_registration(
+        self, kg_service, db_session
+    ):
+        """Dev / fresh-DB case with no users yet: the entity is still written
+        (atom_id stays None) instead of exploding. Production always has the
+        bootstrap admin, so this path only kicks in for seed scripts / tests."""
+        # Ensure users table is empty for this test (no test_user fixture).
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        result = await kg_service.resolve_entity("Ghost", "concept", user_id=None)
+
+        assert result.atom_id is None, "no owner available → no atom row created"
+        # Entity still usable — it just doesn't participate in circles retrieval.
+        assert result.name == "Ghost"
+
+
 class TestSaveRelation:
     """Tests for KnowledgeGraphService.save_relation()."""
 
