@@ -219,19 +219,30 @@ def upgrade() -> None:
         bind.exec_driver_sql(
             "DELETE FROM atoms WHERE atom_type = 'kb_chunk'"
         )
-
-    # Drop the atom_id column on all dialects — ORM doesn't declare it
-    # anymore, so leaving it would cause create_all() on fresh SQLite DBs
-    # to produce different schemas than the migrated Postgres prod DB.
-    with op.batch_alter_table("document_chunks") as batch:
-        try:
-            batch.drop_index("ix_document_chunks_atom_id")
-        except Exception:
-            pass  # index may not exist on older dev DBs
-        try:
-            batch.drop_column("atom_id")
-        except Exception:
-            pass  # column may not exist on fresh SQLite create_all DBs
+        # IF EXISTS needed because the b-tree index was only created on dev
+        # DBs built via Base.metadata.create_all (the ORM had index=True).
+        # Prod was built via pc20260420_circles_v1_schema which only added
+        # the FK — Postgres does not auto-create an index for simple FKs,
+        # so there's nothing to drop. Using raw DDL because `batch_alter_table`
+        # defers execution until __exit__, where try/except around the
+        # op-building call cannot catch the deferred DDL error.
+        bind.exec_driver_sql("DROP INDEX IF EXISTS ix_document_chunks_atom_id")
+        bind.exec_driver_sql(
+            "ALTER TABLE document_chunks DROP COLUMN IF EXISTS atom_id"
+        )
+    else:
+        # SQLite (tests) — ALTER TABLE DROP COLUMN requires table rebuild via
+        # batch mode; try/except works here because batch materializes the
+        # CREATE TABLE … INSERT … DROP TABLE synchronously.
+        with op.batch_alter_table("document_chunks") as batch:
+            try:
+                batch.drop_index("ix_document_chunks_atom_id")
+            except Exception:
+                pass
+            try:
+                batch.drop_column("atom_id")
+            except Exception:
+                pass
 
 
 def downgrade() -> None:
