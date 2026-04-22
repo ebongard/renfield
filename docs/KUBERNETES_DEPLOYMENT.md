@@ -170,7 +170,7 @@ OLLAMA_EMBED_MODEL: qwen3-embedding:4b
 # + satellite version (SATELLITE_LATEST_VERSION)
 ```
 
-A separate ConfigMap `renfield-mcp-config` overlays the `config/` directory with the repo-root versions of `mcp_servers.yaml`, `agent_roles.yaml`, and `kg_scopes.yaml` — the backend image contains a stale copy under `src/backend/config/` that would otherwise mask the live config.
+A separate ConfigMap `renfield-mcp-config` provides the runtime versions of `mcp_servers.yaml`, `agent_roles.yaml`, `kg_scopes.yaml`, and `mail_accounts.yaml` mounted at `/app/config/`. The image no longer ships duplicates of these files (#437) — the ConfigMap is the only source on the cluster, the top-level `config/` directory is the only source in the repo. Rebuild the ConfigMap from `config/*.yaml` whenever the top-level files change.
 
 ## TLS / HTTPS
 
