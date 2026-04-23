@@ -557,12 +557,19 @@ def render_prompt(
     doc_text: str,
     taxonomy: PaperlessTaxonomy,
     lang: str = "de",
+    learned_examples: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Build (system, user) messages for the LLM call.
 
     Taxonomy lists render as comma-separated inline strings; the prompt
     template doesn't try to pretty-print them because LLMs tolerate
     either shape and CSV keeps the token count down.
+
+    *learned_examples* are confirm-diff entries fetched by the
+    PR 3 retriever. They get rendered into a small block between the
+    seed examples and the input document so the LLM can mimic the
+    correction patterns. ``None`` or empty list = no learned-example
+    block (placeholder collapses).
     """
     system = prompt_manager.get(
         "paperless_metadata", "system",
@@ -577,8 +584,73 @@ def render_prompt(
         tags=", ".join(taxonomy.tags) or "(none)",
         storage_paths=", ".join(taxonomy.storage_paths) or "(none)",
         document_text=doc_text[:_MAX_DOC_CHARS],
+        learned_examples=_format_learned_examples(learned_examples or [], lang=lang),
     )
     return system, user
+
+
+# Per-example doc snippet length. Bigger than the seed examples on
+# purpose — these are real corrections and the document context helps
+# the LLM see why the field was changed. Two examples × 600 chars =
+# ~1.2k extra tokens worst case, which fits comfortably in the
+# extraction model's context.
+_LEARNED_DOC_SNIPPET_CHARS = 600
+
+
+def _format_learned_examples(
+    examples: list[dict[str, Any]],
+    *,
+    lang: str,
+) -> str:
+    """Render learned (confirm-diff) examples as an in-context block.
+
+    Empty list returns an empty string so the prompt placeholder
+    collapses cleanly. We deliberately do NOT include confidence or
+    new_entry_proposals — confirm-diffs only carry final approved
+    fields, and showing fake confidences would teach the wrong pattern.
+    """
+    if not examples:
+        return ""
+
+    if lang == "de":
+        header = "Frühere Korrekturen aus diesem Haushalt (LLM-Vorschlag → vom Nutzer bestätigt):"
+        doc_label = "Dokument"
+        llm_label = "LLM-Vorschlag"
+        approved_label = "Bestätigt"
+    else:
+        header = "Past corrections from this household (LLM proposal → user-confirmed):"
+        doc_label = "Document"
+        llm_label = "LLM proposal"
+        approved_label = "Confirmed"
+
+    parts: list[str] = [header, ""]
+    for ex in examples:
+        snippet = (ex.get("doc_text") or "")[:_LEARNED_DOC_SNIPPET_CHARS]
+        if snippet and len(ex.get("doc_text") or "") > _LEARNED_DOC_SNIPPET_CHARS:
+            snippet += "..."
+        # JSON shape matches the response format the LLM is asked to
+        # emit, sans confidence/new_entry_proposals (those only apply
+        # to fresh extractions, not historical confirms).
+        llm_json = json.dumps(_strip_confidence(ex.get("llm_output") or {}), ensure_ascii=False)
+        approved_json = json.dumps(ex.get("user_approved") or {}, ensure_ascii=False)
+        parts.append("---")
+        parts.append(f'{doc_label}: "{snippet}"')
+        parts.append(f"{llm_label}: {llm_json}")
+        parts.append(f"{approved_label}: {approved_json}")
+        parts.append("")
+    return "\n".join(parts)
+
+
+def _strip_confidence(payload: dict[str, Any]) -> dict[str, Any]:
+    """Drop noisy fields from a stored llm_output before showing it as
+    a worked example. Confidence and new_entry_proposals reflect the
+    historical extraction's state, not the corrected outcome — keeping
+    them in the example would reinforce uncertainty rather than the
+    correction itself."""
+    out = dict(payload)
+    out.pop("confidence", None)
+    out.pop("new_entry_proposals", None)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -653,9 +725,17 @@ class PaperlessMetadataExtractor:
                 error="Paperless-Taxonomie nicht erreichbar; Metadaten-Extraktion uebersprungen.",
             )
 
-        # 4. Render prompt + call LLM.
+        # 4. Fetch learned examples from past confirm-diffs (PR 3).
+        # Failure / empty result is silent — the seed examples in the
+        # YAML still cover the cold-start case.
+        learned_examples = await self._fetch_learned_examples(doc_text)
+
+        # 5. Render prompt + call LLM.
         system, user = render_prompt(
-            doc_text=doc_text, taxonomy=taxonomy, lang=lang,
+            doc_text=doc_text,
+            taxonomy=taxonomy,
+            lang=lang,
+            learned_examples=learned_examples,
         )
         try:
             raw = await self._call_llm(system, user)
@@ -733,6 +813,20 @@ class PaperlessMetadataExtractor:
             file_path, max_chars=_MAX_DOC_CHARS,
         )
         return text or ""
+
+    async def _fetch_learned_examples(self, doc_text: str) -> list[dict[str, Any]]:
+        """Pull past confirm-diffs similar to *doc_text* for prompt
+        augmentation. Lazy import to keep the retriever optional in
+        test envs and to avoid pulling pgvector/Ollama deps at module
+        import time."""
+        try:
+            from services.paperless_example_retriever import fetch_relevant_examples
+            return await fetch_relevant_examples(doc_text, limit=2)
+        except Exception as exc:
+            # Should never happen — the retriever already swallows its
+            # own errors. Defensive belt-and-braces.
+            logger.warning("Learned-example retrieval skipped: %s", exc)
+            return []
 
     async def _fetch_taxonomy(self) -> PaperlessTaxonomy | None:
         """Query the MCP server's list_* tools for the current taxonomy.

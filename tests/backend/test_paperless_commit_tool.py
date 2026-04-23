@@ -120,6 +120,20 @@ class TestUnknownToken:
 # ===========================================================================
 
 
+@pytest.fixture(autouse=True)
+def _stub_embed_doc_text():
+    """The PR-3 commit-tool path embeds doc_text before persisting an
+    extraction example row. In a unit test we never want that call to
+    reach a real Ollama; default-stub returns None which lands a NULL
+    embedding (still a valid row). Tests that assert on the embedding
+    value override this fixture locally."""
+    with patch(
+        "services.paperless_example_retriever.embed_doc_text",
+        AsyncMock(return_value=None),
+    ):
+        yield
+
+
 class TestApprovePath:
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -281,6 +295,138 @@ class TestApprovePath:
         # Upload still happened; already_exists didn't abort the flow.
         assert result["success"] is True
         assert mcp.execute_tool.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_persist_path_writes_embedding_when_diff(self, tmp_path):
+        """User-approved fields differ from post-fuzzy → an example row
+        is persisted with doc_text_embedding populated by the retriever's
+        embed call (PR 3)."""
+        from models.database import PaperlessExtractionExample
+
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-emb",
+            attachment_id=42,
+            llm_output={"_doc_text": "Stadtwerke Rechnung", "correspondent": "Telekom"},
+            post_fuzzy={"title": "T", "correspondent": None, "tags": [],
+                        "storage_path": None, "document_type": None},
+            proposals=[
+                {"field": "correspondent", "value": "Stadtwerke",
+                 "reasoning": "..."},
+            ],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        responses = [
+            {"success": True, "message": json.dumps({"id": 1, "name": "Stadtwerke"})},
+            {"success": True, "message": json.dumps({
+                "task_id": "t", "document_id": 1, "post_upload_patch": "success",
+            })},
+        ]
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=responses)
+
+        session_factory = _make_session_factory(pending=pending, upload=upload)
+        # Capture writes — the test asserts the example row was added.
+        adds: list = []
+        original_factory = session_factory
+
+        def _capturing_factory():
+            session = original_factory()
+            session.add = MagicMock(side_effect=lambda obj: adds.append(obj))
+            return session
+
+        # Override the autouse stub: this test wants embed to return a
+        # real-shaped vector so we can assert it lands on the row.
+        fake_embedding = [0.0] * 8
+        with patch(
+            "services.paperless_example_retriever.embed_doc_text",
+            AsyncMock(return_value=fake_embedding),
+        ):
+            with patch(
+                "services.database.AsyncSessionLocal", _capturing_factory,
+            ):
+                with patch(
+                    "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
+                    MagicMock(),
+                ):
+                    result = await paperless_commit_upload(
+                        {"confirm_token": "tok-emb", "user_response_text": "ja"},
+                        mcp_manager=mcp, session_id="s", user_id=1,
+                    )
+
+        assert result["success"] is True
+        examples = [a for a in adds if isinstance(a, PaperlessExtractionExample)]
+        assert len(examples) == 1, f"Expected 1 example row, got {len(examples)}"
+        assert examples[0].doc_text_embedding == fake_embedding
+        assert examples[0].source == "confirm_diff"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_persist_path_handles_embed_failure(self, tmp_path):
+        """Embed returns None (Ollama down) → example row still gets
+        persisted with doc_text_embedding=None. Raw diff signal is
+        preserved even when the learning index can't catch up."""
+        from models.database import PaperlessExtractionExample
+
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-no-emb",
+            attachment_id=42,
+            llm_output={"_doc_text": "doc", "correspondent": "Telekom"},
+            post_fuzzy={"title": "T", "correspondent": None, "tags": [],
+                        "storage_path": None, "document_type": None},
+            proposals=[
+                {"field": "correspondent", "value": "Stadtwerke",
+                 "reasoning": "..."},
+            ],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        responses = [
+            {"success": True, "message": json.dumps({"id": 1, "name": "Stadtwerke"})},
+            {"success": True, "message": json.dumps({
+                "task_id": "t", "document_id": 1, "post_upload_patch": "success",
+            })},
+        ]
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(side_effect=responses)
+
+        adds: list = []
+        original_factory = _make_session_factory(pending=pending, upload=upload)
+
+        def _capturing_factory():
+            session = original_factory()
+            session.add = MagicMock(side_effect=lambda obj: adds.append(obj))
+            return session
+
+        # Default autouse fixture already returns None for embed —
+        # explicit here for readability.
+        with patch(
+            "services.paperless_example_retriever.embed_doc_text",
+            AsyncMock(return_value=None),
+        ):
+            with patch(
+                "services.database.AsyncSessionLocal", _capturing_factory,
+            ):
+                with patch(
+                    "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
+                    MagicMock(),
+                ):
+                    result = await paperless_commit_upload(
+                        {"confirm_token": "tok-no-emb", "user_response_text": "ja"},
+                        mcp_manager=mcp, session_id="s", user_id=1,
+                    )
+
+        assert result["success"] is True
+        examples = [a for a in adds if isinstance(a, PaperlessExtractionExample)]
+        assert len(examples) == 1
+        assert examples[0].doc_text_embedding is None
 
 
 class TestApproveMessageShape:

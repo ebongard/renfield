@@ -345,11 +345,19 @@ async def _commit_approved(
                 user_approved[field] = value
 
         if user_approved != post_fuzzy:
+            doc_text = _truncate_doc_text(pending)
+            # PR 3: embed at write time so the row is retrievable as a
+            # learning example on subsequent extractions. Embed failure
+            # is non-fatal — the row still captures the raw diff signal,
+            # just won't surface via similarity until a backfill runs.
+            from services.paperless_example_retriever import embed_doc_text
+            doc_text_embedding = await embed_doc_text(doc_text)
             example = PaperlessExtractionExample(
-                doc_text=_truncate_doc_text(pending),
+                doc_text=doc_text,
                 llm_output=llm_output,
                 user_approved=user_approved,
                 source="confirm_diff",
+                doc_text_embedding=doc_text_embedding,
             )
             db.add(example)
 

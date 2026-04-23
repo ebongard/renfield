@@ -518,6 +518,85 @@ class TestRenderPrompt:
         # User prompt must not contain the full 20k A's.
         assert "A" * 20_000 not in user
 
+    @pytest.mark.unit
+    def test_no_learned_examples_collapses_placeholder(self):
+        """Empty / None learned_examples must not leave a literal
+        ``{learned_examples}`` placeholder in the rendered prompt —
+        prompt_manager uses SafeDict for partial substitution, so the
+        renderer has to pass the empty string explicitly."""
+        taxonomy = PaperlessTaxonomy()
+        _, user = render_prompt(doc_text="doc", taxonomy=taxonomy)
+        assert "{learned_examples}" not in user
+        _, user2 = render_prompt(doc_text="doc", taxonomy=taxonomy, learned_examples=[])
+        assert "{learned_examples}" not in user2
+        # Header line should not appear when there are no examples.
+        assert "Frühere Korrekturen" not in user
+        assert "Past corrections" not in user
+
+    @pytest.mark.unit
+    def test_learned_examples_render_in_prompt(self):
+        """Learned examples appear with doc snippet, LLM proposal, and
+        confirmed JSON. Confidence + new_entry_proposals are stripped
+        from the LLM proposal so they don't pollute the example."""
+        taxonomy = PaperlessTaxonomy()
+        learned = [
+            {
+                "doc_text": "Stadtwerke Korschenbroich Rechnung 2025",
+                "llm_output": {
+                    "correspondent": "Telekom",
+                    "confidence": {"correspondent": 0.7},  # must be stripped
+                    "new_entry_proposals": [{"field": "x"}],  # must be stripped
+                },
+                "user_approved": {"correspondent": "Deutsche Telekom"},
+                "source": "confirm_diff",
+            },
+        ]
+        _, user = render_prompt(
+            doc_text="other doc", taxonomy=taxonomy, lang="de",
+            learned_examples=learned,
+        )
+        assert "Frühere Korrekturen" in user
+        assert "Stadtwerke Korschenbroich" in user
+        assert "Deutsche Telekom" in user
+        assert "Telekom" in user
+        # Confidence + proposals must not leak into the rendered example.
+        assert "confidence" not in user.lower()
+        assert "new_entry_proposals" not in user
+
+    @pytest.mark.unit
+    def test_learned_example_doc_truncated(self):
+        """A learned example with a doc_text larger than the snippet
+        cap must be truncated and ellipsised, not dumped wholesale."""
+        taxonomy = PaperlessTaxonomy()
+        big = "X" * 5000
+        learned = [{
+            "doc_text": big,
+            "llm_output": {"correspondent": "A"},
+            "user_approved": {"correspondent": "B"},
+            "source": "confirm_diff",
+        }]
+        _, user = render_prompt(
+            doc_text="doc", taxonomy=taxonomy, learned_examples=learned,
+        )
+        assert "X" * 5000 not in user
+        assert "..." in user
+
+    @pytest.mark.unit
+    def test_learned_examples_english_header(self):
+        taxonomy = PaperlessTaxonomy()
+        learned = [{
+            "doc_text": "doc snippet",
+            "llm_output": {"correspondent": "A"},
+            "user_approved": {"correspondent": "B"},
+            "source": "confirm_diff",
+        }]
+        _, user = render_prompt(
+            doc_text="doc", taxonomy=taxonomy, lang="en",
+            learned_examples=learned,
+        )
+        assert "Past corrections" in user
+        assert "Frühere Korrekturen" not in user
+
 
 # ===========================================================================
 # End-to-end extract() — every dependency mocked
@@ -525,6 +604,18 @@ class TestRenderPrompt:
 
 
 class TestExtractorIntegration:
+    @pytest.fixture(autouse=True)
+    def _stub_retriever(self):
+        """Default: no learned examples. The PR-3 retriever is patched
+        across all integration tests so they don't try to hit a real
+        Ollama for the embedding step. Individual tests that want to
+        verify learned-example flow patch it again locally."""
+        with patch(
+            "services.paperless_example_retriever.fetch_relevant_examples",
+            AsyncMock(return_value=[]),
+        ):
+            yield
+
     def _mock_upload(self, tmp_path):
         """Create a ChatUpload-shaped mock with a real file on disk."""
         file = tmp_path / "test.pdf"
@@ -576,7 +667,8 @@ class TestExtractorIntegration:
         extractor._load_upload = AsyncMock(return_value=upload)
 
         # settings.paperless_extraction_model needs to be set so the
-        # model-picker doesn't raise.
+        # model-picker doesn't raise. Retriever is stubbed by the class
+        # autouse fixture.
         with patch("services.paperless_metadata_extractor.settings") as s:
             s.paperless_extraction_model = "qwen3:8b"
             s.ollama_vision_model = ""
@@ -590,6 +682,75 @@ class TestExtractorIntegration:
         assert result.metadata.document_type == "Rechnung"
         assert result.metadata.storage_path == "/wohnung/betriebskosten"
         assert result.doc_text.startswith("Stadtwerke")
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_extract_passes_learned_examples_to_prompt(self, tmp_path):
+        """When the retriever returns past confirm-diffs, those flow
+        into the LLM prompt as additional in-context examples."""
+        upload = self._mock_upload(tmp_path)
+
+        captured_prompts: dict[str, str] = {}
+
+        async def _capture_chat(model, messages, **kwargs):
+            # messages = [{"role": "system", ...}, {"role": "user", ...}]
+            captured_prompts["user"] = messages[-1]["content"]
+            return SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"title": "T", "correspondent": "Stadtwerke Korschenbroich", '
+                            '"document_type": "Rechnung", "tags": [], '
+                            '"storage_path": null, "created_date": null, '
+                            '"new_entry_proposals": []}',
+                ),
+            )
+
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(side_effect=_capture_chat)
+
+        doc_proc = MagicMock()
+        doc_proc.extract_text_only = AsyncMock(return_value="Stadtwerke Korschenbroich Rechnung")
+
+        mcp = MagicMock()
+        async def _mcp_execute(tool_name, params):
+            if "correspondents" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "Stadtwerke Korschenbroich"}]}'}
+            if "document_types" in tool_name:
+                return {"success": True, "message": '{"items": [{"name": "Rechnung"}]}'}
+            if "tags" in tool_name:
+                return {"success": True, "message": '{"items": []}'}
+            if "storage_paths" in tool_name:
+                return {"success": True, "message": '{"paths": []}'}
+            return {"success": False}
+        mcp.execute_tool = AsyncMock(side_effect=_mcp_execute)
+
+        extractor = PaperlessMetadataExtractor(
+            mcp_manager=mcp, llm_client=llm_client, document_processor=doc_proc,
+        )
+        extractor._load_upload = AsyncMock(return_value=upload)
+
+        learned = [{
+            "doc_text": "ALTE Stadtwerke Rechnung",
+            "llm_output": {"correspondent": "Stadtwerke"},
+            "user_approved": {"correspondent": "Stadtwerke Korschenbroich"},
+            "source": "confirm_diff",
+        }]
+
+        with patch("services.paperless_metadata_extractor.settings") as s, \
+             patch(
+                 "services.paperless_example_retriever.fetch_relevant_examples",
+                 AsyncMock(return_value=learned),
+             ):
+            s.paperless_extraction_model = "qwen3:8b"
+            s.ollama_vision_model = ""
+            s.ollama_chat_model = ""
+            await extractor.extract(
+                attachment_id=1, session_id="s", lang="de",
+            )
+
+        # Prompt that reached the LLM contains the learned correction.
+        assert "Frühere Korrekturen" in captured_prompts["user"]
+        assert "ALTE Stadtwerke" in captured_prompts["user"]
+        assert "Stadtwerke Korschenbroich" in captured_prompts["user"]
 
     @pytest.mark.asyncio
     @pytest.mark.unit

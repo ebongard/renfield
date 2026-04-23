@@ -380,6 +380,14 @@ class PaperlessExtractionExample(Base):
     # out to be taxonomy drift rather than an extraction error. The
     # prompt-augmentation reader ignores superseded rows.
     superseded = Column(Boolean, nullable=False, default=False, server_default="false")
+    # PR 3: doc_text embedding for similarity retrieval. Nullable so
+    # rows persisted before the embedding step succeeds (or pre-PR 3
+    # rows) are still kept for the raw diff signal — they just won't
+    # surface via the retriever.
+    doc_text_embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
     created_at = Column(DateTime, default=_utcnow)
 
 
