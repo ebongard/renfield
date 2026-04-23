@@ -559,9 +559,15 @@ class TestRenderPrompt:
         assert "Stadtwerke Korschenbroich" in user
         assert "Deutsche Telekom" in user
         assert "Telekom" in user
-        # Confidence + proposals must not leak into the rendered example.
-        assert "confidence" not in user.lower()
-        assert "new_entry_proposals" not in user
+        # Confidence + proposals must not leak into the LLM-proposal
+        # JSON we just rendered. The seed examples baked into the YAML
+        # legitimately contain ``"confidence": {...}`` so we have to
+        # scope this assertion to the learned-example block.
+        block_start = user.index("Frühere Korrekturen")
+        block_end = user.index("Jetzt das eigentliche Dokument")
+        block = user[block_start:block_end]
+        assert "confidence" not in block.lower()
+        assert "new_entry_proposals" not in block
 
     @pytest.mark.unit
     def test_learned_example_doc_truncated(self):
