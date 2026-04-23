@@ -269,6 +269,9 @@ async def forward_attachment_to_paperless(
                 upload=upload,
                 mcp_manager=mcp_manager,
                 params=_extraction_to_upload_params(post_fuzzy),
+                track_for_sweep=True,
+                user_id=user_id,
+                doc_text=extraction_result.doc_text,
             )
 
         # Path 3: cold-start confirm. Persist a pending row and return
@@ -333,9 +336,19 @@ async def _direct_upload(
     *,
     mcp_manager,
     params: dict,
+    track_for_sweep: bool = False,
+    user_id: int | None = None,
+    doc_text: str | None = None,
 ) -> dict:
     """Bare Paperless upload via the MCP tool. Used by the skip-metadata
-    path and by the post-cold-start silent path."""
+    path and by the post-cold-start silent path.
+
+    When *track_for_sweep* is True (silent-past-cap path), and the upload
+    succeeds with a document_id, persist a ``paperless_upload_tracking``
+    row so the PR 4 UI-edit sweeper can later detect and learn from user
+    edits in the Paperless UI. Skip-metadata + extraction-failed paths
+    leave this off — there's no extraction to compare against, so no
+    training signal to capture."""
     with open(upload.file_path, "rb") as f:
         file_bytes = f.read()
     file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
@@ -377,6 +390,28 @@ async def _direct_upload(
                 patch_state = inner.get("post_upload_patch")
         except (json.JSONDecodeError, TypeError):
             pass
+
+    # PR 4: persist tracking row on the silent-past-cap path so the
+    # UI-edit sweeper has a baseline to diff against. Skipped when
+    # track_for_sweep=False (skip-metadata + extraction-failed paths —
+    # no extracted metadata, nothing to compare against).
+    if track_for_sweep and document_id is not None:
+        from models.database import PaperlessUploadTracking
+        from services.database import AsyncSessionLocal
+        try:
+            async with AsyncSessionLocal() as db:
+                db.add(PaperlessUploadTracking(
+                    chat_upload_id=upload.id,
+                    paperless_document_id=int(document_id),
+                    user_id=user_id,
+                    original_metadata=dict(params),
+                    doc_text=doc_text,
+                ))
+                await db.commit()
+        except Exception as exc:
+            # Tracking-row persistence must not block the user's upload
+            # success path — it's purely a learning-loop concern.
+            logger.warning("Upload-tracking persist failed: %s", exc)
 
     return {
         "success": True,

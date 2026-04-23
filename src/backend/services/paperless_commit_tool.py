@@ -366,9 +366,26 @@ async def _commit_approved(
             user_id=user_id,
         )
 
+    # Step 3.5 — build the upload-tracking row (PR 4). Only if we
+    # actually got a document_id back; without it the sweeper has
+    # nothing to fetch. ``doc_text`` here feeds the future ui_sweep
+    # row if the user edits in the Paperless UI within 1 h.
+    tracking_row = None
+    if document_id is not None:
+        from models.database import PaperlessUploadTracking
+        tracking_row = PaperlessUploadTracking(
+            chat_upload_id=pending.attachment_id,
+            paperless_document_id=int(document_id),
+            user_id=user_id,
+            original_metadata=dict(user_approved),
+            doc_text=_truncate_doc_text(pending) if pending else None,
+        )
+
     async with AsyncSessionLocal() as db:
         if diff_row is not None:
             db.add(diff_row)
+        if tracking_row is not None:
+            db.add(tracking_row)
 
         # Step 4 — increment the cold-start counter. Design: increment
         # ONLY on successful upload, and only when we actually know the

@@ -428,6 +428,113 @@ class TestApprovePath:
         assert len(examples) == 1
         assert examples[0].doc_text_embedding is None
 
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_persist_path_writes_upload_tracking_row(self, tmp_path):
+        """PR 4: a successful upload (document_id returned) must
+        persist a PaperlessUploadTracking row so the UI-edit sweeper
+        has a baseline to diff against later."""
+        from models.database import PaperlessUploadTracking
+
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-track",
+            attachment_id=42,
+            llm_output={"_doc_text": "Stadtwerke Rechnung", "title": "T"},
+            post_fuzzy={"title": "T", "correspondent": "Stadtwerke",
+                        "document_type": "Rechnung", "tags": ["wohnung"],
+                        "storage_path": None, "created_date": None},
+            proposals=[],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True, "message": json.dumps({
+                "task_id": "t", "document_id": 999,
+                "post_upload_patch": "success",
+            }),
+        })
+
+        adds: list = []
+        original_factory = _make_session_factory(pending=pending, upload=upload)
+
+        def _capturing_factory():
+            session = original_factory()
+            session.add = MagicMock(side_effect=lambda obj: adds.append(obj))
+            return session
+
+        with patch(
+            "services.paperless_example_retriever.embed_doc_text",
+            AsyncMock(return_value=None),
+        ):
+            with patch(
+                "services.database.AsyncSessionLocal", _capturing_factory,
+            ):
+                result = await paperless_commit_upload(
+                    {"confirm_token": "tok-track", "user_response_text": "ja"},
+                    mcp_manager=mcp, session_id="s", user_id=1,
+                )
+
+        assert result["success"] is True
+        tracking = [a for a in adds if isinstance(a, PaperlessUploadTracking)]
+        assert len(tracking) == 1
+        assert tracking[0].paperless_document_id == 999
+        assert tracking[0].chat_upload_id == 42
+        assert tracking[0].user_id == 1
+        assert tracking[0].original_metadata["correspondent"] == "Stadtwerke"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_persist_path_skips_tracking_when_no_document_id(self, tmp_path):
+        """If Paperless accepted the upload but returned no
+        document_id (edge: bare task_id response, pre-resolve), the
+        sweeper has nothing to fetch — skip the tracking row."""
+        from models.database import PaperlessUploadTracking
+
+        file = tmp_path / "f.pdf"
+        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
+
+        pending = _make_pending(
+            confirm_token="tok-notrack",
+            attachment_id=42,
+            llm_output={"_doc_text": "doc"},
+            post_fuzzy={"title": "T"},
+            proposals=[],
+        )
+        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True, "message": json.dumps({"task_id": "t"}),
+        })
+
+        adds: list = []
+        original_factory = _make_session_factory(pending=pending, upload=upload)
+
+        def _capturing_factory():
+            session = original_factory()
+            session.add = MagicMock(side_effect=lambda obj: adds.append(obj))
+            return session
+
+        with patch(
+            "services.paperless_example_retriever.embed_doc_text",
+            AsyncMock(return_value=None),
+        ):
+            with patch(
+                "services.database.AsyncSessionLocal", _capturing_factory,
+            ):
+                result = await paperless_commit_upload(
+                    {"confirm_token": "tok-notrack", "user_response_text": "ja"},
+                    mcp_manager=mcp, session_id="s", user_id=1,
+                )
+
+        assert result["success"] is True
+        tracking = [a for a in adds if isinstance(a, PaperlessUploadTracking)]
+        assert tracking == []
+
 
 class TestApproveMessageShape:
     @pytest.mark.asyncio

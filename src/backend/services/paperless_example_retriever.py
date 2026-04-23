@@ -88,6 +88,8 @@ async def fetch_relevant_examples(
         return []
 
     try:
+        from sqlalchemy import case
+
         async with AsyncSessionLocal() as db:
             # cosine_distance comes from pgvector.sqlalchemy. Lower is
             # more similar. We don't filter by a distance threshold —
@@ -95,21 +97,27 @@ async def fetch_relevant_examples(
             # marginal cost, and a hard threshold tuned without data
             # would be guesswork at this stage.
             #
-            # Source filter: PR 3 ships before PR 4 so today the column
-            # only ever holds 'confirm_diff'. Pinning the filter here
-            # keeps it that way — once PR 4 adds ``paperless_ui_sweep``
-            # rows, someone has to come back and decide whether to
-            # include them (with what weighting). Blocking the
-            # forward-compat gap today is better than silently picking
-            # up lower-quality UI-sweep rows the day PR 4 lands.
+            # Source ordering (PR 4): both ``confirm_diff`` and
+            # ``paperless_ui_sweep`` rows are eligible, but we prefer
+            # the former. Confirm-diffs carry higher signal: the user
+            # explicitly answered "ja" to a specific proposal, while
+            # UI-sweep rows are reconstructed from a later edit and
+            # can't distinguish extraction corrections from taxonomy
+            # drift. The ORDER BY flips this into a lexicographic
+            # sort: confirm_diff rows come first, then ui_sweep rows,
+            # tie-broken by similarity.
+            source_preference = case(
+                (PaperlessExtractionExample.source == "confirm_diff", 0),
+                else_=1,
+            )
             stmt = (
                 select(PaperlessExtractionExample)
                 .where(PaperlessExtractionExample.superseded.is_(False))
                 .where(PaperlessExtractionExample.doc_text_embedding.is_not(None))
-                .where(PaperlessExtractionExample.source == "confirm_diff")
                 .where(PaperlessExtractionExample.user_id == user_id)
                 .order_by(
-                    PaperlessExtractionExample.doc_text_embedding.cosine_distance(embedding)
+                    source_preference,
+                    PaperlessExtractionExample.doc_text_embedding.cosine_distance(embedding),
                 )
                 .limit(limit)
             )

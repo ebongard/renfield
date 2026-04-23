@@ -401,6 +401,44 @@ class PaperlessExtractionExample(Base):
     created_at = Column(DateTime, default=_utcnow)
 
 
+class PaperlessUploadTracking(Base):
+    """Records every successful Paperless upload so the PR 4 UI-edit
+    sweeper can detect when the user later edits the metadata in the
+    Paperless UI.
+
+    Row is inserted after ``mcp.paperless.upload_document`` returns
+    a document_id (both the confirm-flow path in ``paperless_commit_tool``
+    and the silent-past-cap path in ``chat_upload_tool``). Once the
+    sweeper has compared the stored ``original_metadata`` against the
+    live Paperless state, ``swept_at`` is set and the row becomes
+    inert.
+    """
+    __tablename__ = "paperless_upload_tracking"
+
+    id = Column(Integer, primary_key=True)
+    chat_upload_id = Column(
+        Integer,
+        ForeignKey("chat_uploads.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    paperless_document_id = Column(Integer, nullable=False)
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    uploaded_at = Column(DateTime, nullable=False, default=_utcnow)
+    # Exactly what we sent to Paperless — the diff baseline.
+    original_metadata = Column(JSON, nullable=False)
+    # OCR extract the extractor saw. Persisted so a later ui_sweep row
+    # carries the same doc_text shape as a confirm_diff row would.
+    doc_text = Column(Text, nullable=True)
+    # NULL until the sweeper processes this row.
+    swept_at = Column(DateTime, nullable=True, index=True)
+
+
 # Document Processing Status Constants
 DOC_STATUS_PENDING = "pending"
 DOC_STATUS_PROCESSING = "processing"
