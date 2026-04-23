@@ -229,6 +229,7 @@ async def forward_attachment_to_paperless(
         extraction_result = await _run_extraction(
             attachment_id=attachment_id,
             session_id=session_id,
+            user_id=user_id,
             mcp_manager=mcp_manager,
             user_lang=_infer_lang(upload),
         )
@@ -395,6 +396,7 @@ async def _run_extraction(
     *,
     attachment_id: int,
     session_id: str | None,
+    user_id: int | None,
     mcp_manager,
     user_lang: str,
 ):
@@ -410,6 +412,7 @@ async def _run_extraction(
         return await extractor.extract(
             attachment_id=attachment_id,
             session_id=session_id,
+            user_id=user_id,
             lang=user_lang,
         )
     except Exception as exc:

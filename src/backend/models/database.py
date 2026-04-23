@@ -388,6 +388,16 @@ class PaperlessExtractionExample(Base):
         Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
         nullable=True,
     )
+    # PR 3: owner-only scoping. Nullable to support AUTH_ENABLED=false
+    # dev setups where the agent has no user_id. Retrieval filters on
+    # this column so user A's corrections never surface in user B's
+    # extraction prompt.
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     created_at = Column(DateTime, default=_utcnow)
 
 

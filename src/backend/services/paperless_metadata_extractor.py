@@ -613,43 +613,58 @@ def _format_learned_examples(
         return ""
 
     if lang == "de":
-        header = "Frühere Korrekturen aus diesem Haushalt (LLM-Vorschlag → vom Nutzer bestätigt):"
+        header = "Frühere Korrekturen des Nutzers (LLM-Vorschlag → bestätigt):"
         doc_label = "Dokument"
         llm_label = "LLM-Vorschlag"
         approved_label = "Bestätigt"
     else:
-        header = "Past corrections from this household (LLM proposal → user-confirmed):"
+        header = "Past corrections by this user (LLM proposal → confirmed):"
         doc_label = "Document"
         llm_label = "LLM proposal"
         approved_label = "Confirmed"
 
     parts: list[str] = [header, ""]
     for ex in examples:
-        snippet = (ex.get("doc_text") or "")[:_LEARNED_DOC_SNIPPET_CHARS]
-        if snippet and len(ex.get("doc_text") or "") > _LEARNED_DOC_SNIPPET_CHARS:
+        raw = ex.get("doc_text") or ""
+        snippet = raw[:_LEARNED_DOC_SNIPPET_CHARS]
+        if snippet and len(raw) > _LEARNED_DOC_SNIPPET_CHARS:
             snippet += "..."
+        # json.dumps for the snippet so embedded quotes, newlines, and
+        # potential worked-example-injection text (``\n---\nConfirmed:
+        # ...``) get properly escaped instead of breaking the prompt
+        # structure. Without this, an attacker who controls the source
+        # document could synthesize a fake "Bestätigt" line that fools
+        # the LLM into emitting attacker-chosen metadata.
+        snippet_json = json.dumps(snippet, ensure_ascii=False)
         # JSON shape matches the response format the LLM is asked to
         # emit, sans confidence/new_entry_proposals (those only apply
         # to fresh extractions, not historical confirms).
-        llm_json = json.dumps(_strip_confidence(ex.get("llm_output") or {}), ensure_ascii=False)
+        llm_json = json.dumps(_strip_example_noise(ex.get("llm_output") or {}), ensure_ascii=False)
         approved_json = json.dumps(ex.get("user_approved") or {}, ensure_ascii=False)
         parts.append("---")
-        parts.append(f'{doc_label}: "{snippet}"')
+        parts.append(f"{doc_label}: {snippet_json}")
         parts.append(f"{llm_label}: {llm_json}")
         parts.append(f"{approved_label}: {approved_json}")
         parts.append("")
     return "\n".join(parts)
 
 
-def _strip_confidence(payload: dict[str, Any]) -> dict[str, Any]:
+def _strip_example_noise(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop noisy fields from a stored llm_output before showing it as
-    a worked example. Confidence and new_entry_proposals reflect the
-    historical extraction's state, not the corrected outcome — keeping
-    them in the example would reinforce uncertainty rather than the
-    correction itself."""
+    a worked example.
+
+    - ``confidence`` / ``new_entry_proposals`` reflect the historical
+      extraction's state, not the corrected outcome — keeping them
+      would reinforce uncertainty rather than the correction itself.
+    - ``_doc_text`` is the pending-confirm scratchpad copy of the full
+      (up to 8 KB) document text. Leaving it in would double the
+      document inside the prompt (once as the snippet, once inside the
+      LLM-proposal JSON) and leak the untruncated text.
+    """
     out = dict(payload)
     out.pop("confidence", None)
     out.pop("new_entry_proposals", None)
+    out.pop("_doc_text", None)
     return out
 
 
@@ -692,6 +707,7 @@ class PaperlessMetadataExtractor:
         *,
         attachment_id: int,
         session_id: str | None,
+        user_id: int | None = None,
         lang: str = "de",
     ) -> ExtractionResult:
         """Run the full pipeline on a ChatUpload and return structured
@@ -727,8 +743,9 @@ class PaperlessMetadataExtractor:
 
         # 4. Fetch learned examples from past confirm-diffs (PR 3).
         # Failure / empty result is silent — the seed examples in the
-        # YAML still cover the cold-start case.
-        learned_examples = await self._fetch_learned_examples(doc_text)
+        # YAML still cover the cold-start case. user_id scopes to the
+        # asker's own corrections; other households are invisible.
+        learned_examples = await self._fetch_learned_examples(doc_text, user_id)
 
         # 5. Render prompt + call LLM.
         system, user = render_prompt(
@@ -814,14 +831,16 @@ class PaperlessMetadataExtractor:
         )
         return text or ""
 
-    async def _fetch_learned_examples(self, doc_text: str) -> list[dict[str, Any]]:
+    async def _fetch_learned_examples(
+        self, doc_text: str, user_id: int | None,
+    ) -> list[dict[str, Any]]:
         """Pull past confirm-diffs similar to *doc_text* for prompt
         augmentation. Lazy import to keep the retriever optional in
         test envs and to avoid pulling pgvector/Ollama deps at module
         import time."""
         try:
             from services.paperless_example_retriever import fetch_relevant_examples
-            return await fetch_relevant_examples(doc_text, limit=2)
+            return await fetch_relevant_examples(doc_text, user_id=user_id, limit=2)
         except Exception as exc:
             # Should never happen — the retriever already swallows its
             # own errors. Defensive belt-and-braces.

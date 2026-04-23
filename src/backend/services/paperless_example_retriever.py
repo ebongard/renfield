@@ -45,6 +45,7 @@ _EMBED_TIMEOUT_S = 5.0
 async def fetch_relevant_examples(
     doc_text: str,
     *,
+    user_id: int | None,
     limit: int = 2,
 ) -> list[dict[str, Any]]:
     """Return up to *limit* past corrections most similar to *doc_text*.
@@ -52,6 +53,11 @@ async def fetch_relevant_examples(
     Each entry is a dict with keys ``llm_output`` and ``user_approved``
     (the JSON payloads persisted by the commit tool). The caller decides
     how to render them; this function only handles retrieval.
+
+    *user_id* scopes the query to the asker's own corrections. Passing
+    ``None`` (AUTH_ENABLED=false dev mode) disables owner-scoping and
+    returns matches across all NULL-user rows — the only rows that
+    exist in that mode anyway. Never cross the user boundary.
 
     Returns ``[]`` if:
       - input is empty/blank,
@@ -88,10 +94,20 @@ async def fetch_relevant_examples(
             # the prompt can absorb a couple of mediocre matches with
             # marginal cost, and a hard threshold tuned without data
             # would be guesswork at this stage.
+            #
+            # Source filter: PR 3 ships before PR 4 so today the column
+            # only ever holds 'confirm_diff'. Pinning the filter here
+            # keeps it that way — once PR 4 adds ``paperless_ui_sweep``
+            # rows, someone has to come back and decide whether to
+            # include them (with what weighting). Blocking the
+            # forward-compat gap today is better than silently picking
+            # up lower-quality UI-sweep rows the day PR 4 lands.
             stmt = (
                 select(PaperlessExtractionExample)
                 .where(PaperlessExtractionExample.superseded.is_(False))
                 .where(PaperlessExtractionExample.doc_text_embedding.is_not(None))
+                .where(PaperlessExtractionExample.source == "confirm_diff")
+                .where(PaperlessExtractionExample.user_id == user_id)
                 .order_by(
                     PaperlessExtractionExample.doc_text_embedding.cosine_distance(embedding)
                 )

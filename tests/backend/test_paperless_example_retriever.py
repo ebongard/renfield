@@ -29,14 +29,14 @@ class TestInputGuards:
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_blank_doc_text_returns_empty(self):
-        assert await fetch_relevant_examples("") == []
-        assert await fetch_relevant_examples("   \n\t  ") == []
+        assert await fetch_relevant_examples("", user_id=1) == []
+        assert await fetch_relevant_examples("   \n\t  ", user_id=1) == []
 
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_zero_limit_returns_empty(self):
-        assert await fetch_relevant_examples("real text", limit=0) == []
-        assert await fetch_relevant_examples("real text", limit=-1) == []
+        assert await fetch_relevant_examples("real text", user_id=1, limit=0) == []
+        assert await fetch_relevant_examples("real text", user_id=1, limit=-1) == []
 
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ class TestEmbedFailure:
             "services.paperless_example_retriever._embed_doc_text",
             AsyncMock(side_effect=RuntimeError("ollama down")),
         ):
-            result = await fetch_relevant_examples("doc text")
+            result = await fetch_relevant_examples("doc text", user_id=1)
         assert result == []
 
     @pytest.mark.asyncio
@@ -64,7 +64,7 @@ class TestEmbedFailure:
             "services.paperless_example_retriever._embed_doc_text",
             AsyncMock(return_value=None),
         ):
-            result = await fetch_relevant_examples("doc text")
+            result = await fetch_relevant_examples("doc text", user_id=1)
         assert result == []
 
 
@@ -109,13 +109,55 @@ class TestDBQuery:
                 "services.database.AsyncSessionLocal",
                 self._make_session_factory([row]),
             ):
-                result = await fetch_relevant_examples("Stadtwerke")
+                result = await fetch_relevant_examples("Stadtwerke", user_id=1)
 
         assert len(result) == 1
         assert result[0]["doc_text"] == "Stadtwerke Rechnung 2025"
         assert result[0]["llm_output"]["correspondent"] == "Telekom"
         assert result[0]["user_approved"]["correspondent"] == "Deutsche Telekom"
         assert result[0]["source"] == "confirm_diff"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_query_filters_by_user_id(self):
+        """Regression guard: the retriever MUST scope to the asker's
+        user_id. Without this, household user A's corrections leak
+        into user B's extraction prompts."""
+        captured: dict = {}
+
+        def _factory():
+            session = AsyncMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+
+            async def _capture_stmt(stmt):
+                captured["stmt"] = stmt
+                result = MagicMock()
+                scalars = MagicMock()
+                scalars.all = MagicMock(return_value=[])
+                result.scalars = MagicMock(return_value=scalars)
+                return result
+
+            session.execute = AsyncMock(side_effect=_capture_stmt)
+            return session
+
+        with patch(
+            "services.paperless_example_retriever._embed_doc_text",
+            AsyncMock(return_value=[0.1] * 8),
+        ):
+            with patch("services.database.AsyncSessionLocal", _factory):
+                await fetch_relevant_examples("doc text", user_id=42)
+
+        # Rendered SQL must include the user_id predicate. We don't
+        # assert the exact clause shape — just that 42 appears in the
+        # compiled query params.
+        stmt = captured.get("stmt")
+        assert stmt is not None
+        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+        assert "user_id" in compiled.lower()
+        assert "42" in compiled
+        # Source filter also lands.
+        assert "confirm_diff" in compiled
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -137,7 +179,7 @@ class TestDBQuery:
                 "services.database.AsyncSessionLocal",
                 _factory,
             ):
-                result = await fetch_relevant_examples("Stadtwerke")
+                result = await fetch_relevant_examples("Stadtwerke", user_id=1)
         assert result == []
 
     @pytest.mark.asyncio
@@ -151,7 +193,7 @@ class TestDBQuery:
                 "services.database.AsyncSessionLocal",
                 self._make_session_factory([]),
             ):
-                result = await fetch_relevant_examples("Stadtwerke")
+                result = await fetch_relevant_examples("Stadtwerke", user_id=1)
         assert result == []
 
 

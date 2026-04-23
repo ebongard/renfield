@@ -1,4 +1,4 @@
-"""Paperless extraction examples — add doc_text embedding for retrieval
+"""Paperless extraction examples — embedding column + per-user scoping
 
 Revision ID: pc20260425_paperless_examples_embedding
 Revises: pc20260424_paperless_metadata_tables
@@ -12,16 +12,21 @@ the top-N most similar past confirm-diffs by document similarity and
 prepends them to future extraction prompts as in-context learning
 examples.
 
-Why a separate column instead of an existing embedding service:
-The example rows are short, bounded (≤ 8 KB doc_text via the
-PR-2 truncation), and queried in a tight retrieval loop during every
-extraction. A dedicated column with a vector index keeps that hot path
-single-table — no joins, no cross-service round trips.
+Two columns are added here:
 
-Dim 2560 matches the production embedding stack (qwen3-embedding:4b,
-locked by cce1984705df). HNSW via halfvec cast is the same workaround
-used everywhere else in this codebase to clear the 2000-dim regular-vector
-index ceiling.
+1. ``doc_text_embedding`` — vector for cosine-similarity retrieval.
+   A dedicated column with a vector index keeps the retrieval hot-path
+   single-table: no joins, no cross-service round trips. Dim 2560
+   matches the production embedding stack (qwen3-embedding:4b, locked
+   by cce1984705df). HNSW via halfvec cast clears the 2000-dim
+   regular-vector index ceiling.
+
+2. ``user_id`` — privacy guard. Without this column every household
+   user's corrections flow into every other user's extraction prompt,
+   which is the same leak pattern ConversationMemoryService had before
+   Circles v1. Owner-only scoping is the conservative default;
+   household-tier relaxation lives with the broader Circles
+   integration (deferred).
 """
 import sqlalchemy as sa
 from alembic import op
@@ -45,9 +50,9 @@ _EMBEDDING_DIM = 2560
 
 
 def upgrade() -> None:
-    # Column. Nullable: rows written before PR 3 (none in production yet,
-    # but defensive) carry NULL; the retriever simply ignores rows with
-    # NULL embeddings.
+    # Embedding column. Nullable: rows written before PR 3 (none in
+    # production yet, but defensive) carry NULL; the retriever ignores
+    # rows with NULL embeddings.
     if PGVECTOR_AVAILABLE:
         op.add_column(
             "paperless_extraction_examples",
@@ -61,6 +66,21 @@ def upgrade() -> None:
             "paperless_extraction_examples",
             sa.Column("doc_text_embedding", sa.Text(), nullable=True),
         )
+
+    # user_id — owner-only retrieval scoping. Nullable to accommodate
+    # the AUTH_ENABLED=false single-user path (same rule as
+    # paperless_pending_confirms). FK with ON DELETE CASCADE so deleting
+    # a user purges their correction corpus.
+    op.add_column(
+        "paperless_extraction_examples",
+        sa.Column(
+            "user_id",
+            sa.Integer(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            nullable=True,
+            index=True,
+        ),
+    )
 
     # HNSW index via halfvec cast (same trick as cce1984705df) — regular
     # vector indexes hit the 2000-dim ceiling at 2560. m=16 / ef=64 is
@@ -76,4 +96,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS idx_paperless_examples_embedding_hnsw")
+    op.drop_column("paperless_extraction_examples", "user_id")
     op.drop_column("paperless_extraction_examples", "doc_text_embedding")

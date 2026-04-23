@@ -321,45 +321,54 @@ async def _commit_approved(
     document_id = inner.get("document_id")
     patch_state = inner.get("post_upload_patch")
 
-    # Step 3 — write the confirm-diff (if any) to
-    # paperless_extraction_examples. Diff is against the post-fuzzy
-    # LLM output, not the raw output. In v1 the user can only approve
-    # or abort, so the diff shape is either empty (unchanged) or
-    # reflects the created-proposals (LLM said null, user approved
-    # a new entry creation).
-    async with AsyncSessionLocal() as db:
-        user_approved = dict(post_fuzzy)
-        # If the user approved new-entry proposals, the approved fields
-        # now carry the newly-created names.
-        for field, value in created_entries.items():
-            if field == "tag":
-                # Tag proposals feed the tags list — append if not
-                # already there. Post-fuzzy tags list carries the
-                # taxonomy-hit tags; the new tag is one we just
-                # created.
-                existing_tags = list(user_approved.get("tags") or [])
-                if value not in existing_tags:
-                    existing_tags.append(value)
-                user_approved["tags"] = existing_tags
-            else:
-                user_approved[field] = value
+    # Step 3 — compute the approved field set + embed the doc_text
+    # BEFORE opening the write session. The embed call is up to 5 s
+    # (see retriever ``_EMBED_TIMEOUT_S``); holding a DB connection
+    # across it would tie up the pool for no reason. Post-PR-3 the
+    # session is only open for the actual writes.
+    user_approved = dict(post_fuzzy)
+    for field, value in created_entries.items():
+        if field == "tag":
+            # Tag proposals feed the tags list — append if not already
+            # there. Post-fuzzy tags list carries the taxonomy-hit
+            # tags; the new tag is one we just created.
+            existing_tags = list(user_approved.get("tags") or [])
+            if value not in existing_tags:
+                existing_tags.append(value)
+            user_approved["tags"] = existing_tags
+        else:
+            user_approved[field] = value
 
-        if user_approved != post_fuzzy:
-            doc_text = _truncate_doc_text(pending)
-            # PR 3: embed at write time so the row is retrievable as a
-            # learning example on subsequent extractions. Embed failure
-            # is non-fatal — the row still captures the raw diff signal,
-            # just won't surface via similarity until a backfill runs.
-            from services.paperless_example_retriever import embed_doc_text
-            doc_text_embedding = await embed_doc_text(doc_text)
-            example = PaperlessExtractionExample(
-                doc_text=doc_text,
-                llm_output=llm_output,
-                user_approved=user_approved,
-                source="confirm_diff",
-                doc_text_embedding=doc_text_embedding,
-            )
-            db.add(example)
+    diff_row: PaperlessExtractionExample | None = None
+    if user_approved != post_fuzzy:
+        doc_text = _truncate_doc_text(pending)
+        # PR 3: embed at write time so the row is retrievable as a
+        # learning example on subsequent extractions. Embed failure
+        # is non-fatal — the row still captures the raw diff signal,
+        # just won't surface via similarity until a backfill runs.
+        #
+        # Strip the ``_doc_text`` scratchpad key from ``llm_output``
+        # before persisting: leaving it in would double the document
+        # inside every future prompt (once as the snippet, once inside
+        # the rendered LLM-proposal JSON) and leak the untruncated
+        # text — the snippet is already capped at 600 chars.
+        from services.paperless_example_retriever import embed_doc_text
+        doc_text_embedding = await embed_doc_text(doc_text)
+        llm_output_for_persist = {
+            k: v for k, v in llm_output.items() if k != "_doc_text"
+        }
+        diff_row = PaperlessExtractionExample(
+            doc_text=doc_text,
+            llm_output=llm_output_for_persist,
+            user_approved=user_approved,
+            source="confirm_diff",
+            doc_text_embedding=doc_text_embedding,
+            user_id=user_id,
+        )
+
+    async with AsyncSessionLocal() as db:
+        if diff_row is not None:
+            db.add(diff_row)
 
         # Step 4 — increment the cold-start counter. Design: increment
         # ONLY on successful upload, and only when we actually know the
