@@ -149,15 +149,18 @@ class TestDBQuery:
                 await fetch_relevant_examples("doc text", user_id=42)
 
         # Rendered SQL must include the user_id predicate. We don't
-        # assert the exact clause shape — just that 42 appears in the
-        # compiled query params.
+        # use literal_binds here because pgvector's Vector type can't
+        # render itself literally — compile without that flag and
+        # inspect the param dict instead.
         stmt = captured.get("stmt")
         assert stmt is not None
-        compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
-        assert "user_id" in compiled.lower()
-        assert "42" in compiled
-        # Source filter also lands.
-        assert "confirm_diff" in compiled
+        compiled = stmt.compile()
+        sql = str(compiled)
+        params = compiled.params
+        assert "user_id" in sql.lower()
+        assert 42 in params.values()
+        # Source filter also lands in the params (string).
+        assert "confirm_diff" in params.values()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
