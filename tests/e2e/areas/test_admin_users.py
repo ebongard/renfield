@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -61,7 +62,7 @@ class TestAdminUsersPageRenders:
 
 class TestAdminUsersCRUD:
     def test_create_and_delete_user_via_api(self, created_user_ids):
-        unique = f"e2e-user-{int(time.time())}"
+        unique = f"e2e-user-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_user({
                 "username": unique,
@@ -92,7 +93,7 @@ class TestAdminUsersCRUD:
     def test_created_user_appears_in_ui_table(
         self, admin_users_page, created_user_ids,
     ):
-        unique = f"e2e-ui-{int(time.time())}"
+        unique = f"e2e-ui-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_user({
                 "username": unique,

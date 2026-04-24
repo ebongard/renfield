@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -64,7 +65,7 @@ class TestRolesPageRenders:
 
 class TestRolesCRUD:
     def test_create_and_delete_role(self, created_role_ids):
-        name = f"e2e-role-{int(time.time())}"
+        name = f"e2e-role-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_role({
                 "name": name,
@@ -90,7 +91,7 @@ class TestRolesCRUD:
         )
 
     def test_created_role_appears_in_ui(self, roles_page, created_role_ids):
-        name = f"e2e-ui-role-{int(time.time())}"
+        name = f"e2e-ui-role-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_role({
                 "name": name,

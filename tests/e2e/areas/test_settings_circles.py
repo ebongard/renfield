@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import httpx
 import pytest
@@ -124,7 +125,7 @@ class TestCircleMembers:
 
     def test_add_member_at_tier_trusted_persists(self):
         """POST a test member at tier 1 → GET returns them at tier 1."""
-        test_name = f"e2e-member-{int(time.time())}"
+        test_name = f"e2e-member-{uuid.uuid4().hex[:8]}"
         try:
             _post("/api/circles/me/members", {
                 "display_name": test_name,

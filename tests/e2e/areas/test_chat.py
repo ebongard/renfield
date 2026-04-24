@@ -24,6 +24,7 @@ import re
 import shutil
 import tempfile
 import time
+import uuid
 
 import pytest
 
@@ -168,8 +169,10 @@ class TestChatPageRenders:
         assert send_btn.is_disabled()
 
     def test_websocket_connects(self, chat_page):
-        """The Verbunden/Connected badge shows once the WS handshake
-        succeeded — if it stays on 'Verbindung…', the chat is dead."""
+        """Canary for the WS handshake. Deliberately uses the plain
+        `chat_page` fixture (not `ws_connected_chat_page`) so a broken
+        WS fails this ONE test hard while every other WS-dependent
+        test skips cleanly. One clear signal, not N noisy failures."""
         chat_page.wait_for_selector(
             "text=Verbunden",
             timeout=15_000,
@@ -201,6 +204,9 @@ class TestChatSendMessage:
     def test_send_simple_question_gets_reply(
         self, ws_connected_chat_page, created_session_ids,
     ):
+        """Happy path: type → send → Renfield replies. Assert BOTH the
+        user message and assistant message are visible in the transcript,
+        and a conversation row appears in the backend API."""
         chat_page = ws_connected_chat_page
         """Happy path: type → send → Renfield replies. Assert BOTH the
         user message and assistant message are visible in the transcript,
@@ -242,9 +248,9 @@ class TestChatSendMessage:
     def test_new_chat_button_resets_transcript(
         self, ws_connected_chat_page, created_session_ids,
     ):
-        chat_page = ws_connected_chat_page
         """After a reply, clicking 'Neuer Chat' clears the transcript and
         the empty state returns."""
+        chat_page = ws_connected_chat_page
         textarea = chat_page.locator("#chat-input").first
         textarea.fill("Kurztest: Hallo.")
         chat_page.keyboard.press("Enter")
@@ -255,7 +261,9 @@ class TestChatSendMessage:
         if conversations:
             created_session_ids.append(conversations[0]["session_id"])
 
-        chat_page.get_by_role("button", name=re.compile(r"Neuer Chat")).click()
+        # Anchor the label so this doesn't false-match a conversation
+        # titled something like "Neuer Chat heute gestartet".
+        chat_page.get_by_role("button", name="Neuer Chat", exact=True).click()
         chat_page.wait_for_selector(
             "text=Starte ein Gespräch mit Renfield",
             timeout=5_000,
@@ -305,7 +313,7 @@ class TestChatFileUploadToPaperless:
 
         # Step 2: ask the agent to forward to Paperless
         unique_title = (
-            f"e2e-test-{int(time.time())}-"
+            f"e2e-test-{uuid.uuid4().hex[:8]}-"
             f"{os.path.basename(test_pdf_path).rsplit('.', 1)[0]}"
         )
         textarea = chat_page.locator("#chat-input").first
@@ -398,12 +406,12 @@ class TestConversationSidebar:
     def test_sent_message_appears_in_sidebar(
         self, ws_connected_chat_page, created_session_ids,
     ):
-        chat_page = ws_connected_chat_page
         """After sending, the first-user-message preview shows up in the
         sidebar — regression guard for the K3 audit finding (empty
         preview because the API bypassed list_all)."""
+        chat_page = ws_connected_chat_page
         textarea = chat_page.locator("#chat-input").first
-        unique_msg = f"Sidebar-test-{int(time.time())}"
+        unique_msg = f"Sidebar-test-{uuid.uuid4().hex[:8]}"
         textarea.fill(unique_msg)
         chat_page.keyboard.press("Enter")
         TestChatSendMessage()._wait_for_agent_reply(chat_page, timeout_s=120.0)
@@ -428,12 +436,12 @@ class TestConversationSidebar:
     def test_delete_button_removes_conversation(
         self, ws_connected_chat_page, created_session_ids,
     ):
-        chat_page = ws_connected_chat_page
         """Deleting a conversation from the sidebar calls the backend AND
         removes the row from the DOM."""
+        chat_page = ws_connected_chat_page
         # Seed a fresh conversation
         textarea = chat_page.locator("#chat-input").first
-        unique = f"delete-test-{int(time.time())}"
+        unique = f"delete-test-{uuid.uuid4().hex[:8]}"
         textarea.fill(unique)
         chat_page.keyboard.press("Enter")
         TestChatSendMessage()._wait_for_agent_reply(chat_page, timeout_s=120.0)

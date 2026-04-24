@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -68,7 +69,7 @@ class TestTasksAPIRoundTrip:
     admin auth); assert UI then reflects the state."""
 
     def test_create_task_via_api_appears_in_list(self, created_task_ids):
-        title = f"e2e-task-{int(time.time())}"
+        title = f"e2e-task-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_task({
                 "title": title,
@@ -90,7 +91,7 @@ class TestTasksAPIRoundTrip:
         ), f"Task {title!r} not in list after create — API state diverged from create response"
 
     def test_created_task_appears_in_ui(self, tasks_page, created_task_ids):
-        title = f"e2e-ui-task-{int(time.time())}"
+        title = f"e2e-ui-task-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_task({"title": title, "description": ""})
         except Exception as e:

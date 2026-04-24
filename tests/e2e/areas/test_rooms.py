@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -59,7 +60,7 @@ class TestRoomsPageRenders:
 
 class TestRoomsCreateDelete:
     def test_create_and_delete_room_round_trip(self, created_room_ids):
-        name = f"e2e-room-{int(time.time())}"
+        name = f"e2e-room-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_room({"name": name})
         except Exception as e:
@@ -81,7 +82,7 @@ class TestRoomsCreateDelete:
         )
 
     def test_created_room_appears_in_ui(self, rooms_page, created_room_ids):
-        name = f"e2e-ui-room-{int(time.time())}"
+        name = f"e2e-ui-room-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_room({"name": name})
         except Exception as e:

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -65,7 +66,7 @@ class TestSpeakersPageRenders:
 
 class TestSpeakersCRUD:
     def test_create_rename_delete_speaker(self, created_speaker_ids):
-        name = f"e2e-speaker-{int(time.time())}"
+        name = f"e2e-speaker-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_speaker({"name": name})
         except Exception as e:
@@ -92,7 +93,7 @@ class TestSpeakersCRUD:
     def test_created_speaker_appears_in_ui(
         self, speakers_page, created_speaker_ids,
     ):
-        name = f"e2e-ui-speaker-{int(time.time())}"
+        name = f"e2e-ui-speaker-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_speaker({"name": name})
         except Exception as e:

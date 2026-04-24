@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 import time
+import uuid
 
 import pytest
 
@@ -70,7 +71,7 @@ class TestMemoryPageRenders:
 
 class TestMemoryCreateDelete:
     def test_create_and_delete_memory_round_trip(self, created_memory_ids):
-        marker = f"e2e-mem-{int(time.time())}"
+        marker = f"e2e-mem-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_memory({
                 "content": f"{marker} — test memory written by e2e.",
@@ -98,7 +99,7 @@ class TestMemoryCreateDelete:
         )
 
     def test_created_memory_surfaces_in_ui(self, memory_page, created_memory_ids):
-        marker = f"e2e-ui-mem-{int(time.time())}"
+        marker = f"e2e-ui-mem-{uuid.uuid4().hex[:8]}"
         try:
             created = api.create_memory({
                 "content": f"{marker} — surface test",

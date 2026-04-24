@@ -16,6 +16,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+import uuid
 
 import pytest
 
@@ -43,7 +44,7 @@ def test_pdf_with_unique_content(tmp_path):
     """A valid PDF carrying a UUID-like string so we can search for it
     without colliding with existing corpus content."""
     pdf = tmp_path / "e2e-knowledge.pdf"
-    marker = f"e2e-marker-{int(time.time())}-kaisergranat"
+    marker = f"e2e-marker-{uuid.uuid4().hex[:8]}-kaisergranat"
     # Minimal valid PDF with text content containing the marker. Real
     # PDF parsing needs a proper stream object, but Docling's OCR path
     # will pick up the marker even from a sparse PDF.
