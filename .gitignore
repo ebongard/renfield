@@ -89,8 +89,14 @@ site/.astro/
 # Ephemeral screenshots (design review, knowledge graph, etc.)
 kg-graph-*.png
 
-# Local task management
-tasks/
+# Local task management — contents are scratch, but the shared plan
+# files (master index + audit + Reva roadmap) are versioned so the
+# team has one source of truth for what's open. Use tasks/*, not
+# tasks/, so the negations below can re-include specific files.
+tasks/*
+!tasks/todo.md
+!tasks/reva-plan.md
+!tasks/audit-findings-plan.md
 .mcp.json
 .gstack/
 
