@@ -387,6 +387,81 @@ class TestKnowledgeBaseAPI:
         data = response.json()
         assert isinstance(data, list)
 
+    @pytest.mark.unit
+    async def test_list_knowledge_bases_batches_permission_lookups(self, monkeypatch):
+        """Audit K2 regression guard: when list_knowledge_bases resolves
+        permissions for N KBs, `get_user_kb_permission_levels` is called at
+        most ONCE — not N times (the pre-fix behavior that fired one
+        atom_explicit_grants query per KB in the response loop)."""
+        from api.routes import knowledge as route_mod
+        from services import kb_shares_service
+        from unittest.mock import AsyncMock, MagicMock
+
+        call_counter = {"n": 0}
+
+        async def fake_levels(db, user_id, kb_ids=None):
+            call_counter["n"] += 1
+            ids = list(kb_ids) if kb_ids is not None else []
+            return {kb_id: "write" for kb_id in ids}
+
+        monkeypatch.setattr(
+            kb_shares_service, "get_user_kb_permission_levels", fake_levels
+        )
+
+        # 10 shared KBs, none owned by the asker — forces the route into the
+        # batched grants path (not the "owner" early return).
+        fake_kbs = [
+            MagicMock(
+                id=i, name=f"kb{i}", description="", is_active=True,
+                is_public=False, owner_id=99,
+                created_at=None, updated_at=None,
+            )
+            for i in range(1, 11)
+        ]
+        shared_ids = {kb.id for kb in fake_kbs}
+
+        async def fake_shared_ids(db, user_id):
+            return shared_ids
+
+        monkeypatch.setattr(
+            kb_shares_service, "list_user_shared_kb_ids", fake_shared_ids
+        )
+
+        monkeypatch.setattr(route_mod.settings, "auth_enabled", True)
+
+        fake_user = MagicMock()
+        fake_user.id = 42
+        fake_user.get_permissions = lambda: set()
+
+        fake_rag = MagicMock()
+        fake_rag.list_knowledge_bases = AsyncMock(return_value=fake_kbs)
+
+        fake_db = MagicMock()
+        empty_owners = MagicMock()
+        empty_owners.all = lambda: []
+        fake_db.execute = AsyncMock(return_value=empty_owners)
+
+        from models import permissions as perms_mod
+
+        def grant_all(user_perms, perm):
+            # Reject KB_ALL so the code reaches the batched grant lookup;
+            # reject KB_NONE so it doesn't early-return empty. Anything else
+            # (KB_SHARED, KB_OWN) — allow.
+            if perm in (perms_mod.Permission.KB_ALL, perms_mod.Permission.KB_NONE):
+                return False
+            return True
+
+        monkeypatch.setattr(route_mod, "has_permission", grant_all)
+
+        result = await route_mod.list_knowledge_bases(
+            rag=fake_rag, user=fake_user, db=fake_db
+        )
+
+        # All 10 KBs surfaced, one batch call — not ten per-KB calls.
+        assert len(result) == 10
+        assert call_counter["n"] == 1
+        assert all(kb.permission == "write" for kb in result)
+
     @pytest.mark.integration
     async def test_create_knowledge_base_endpoint(self, async_client: AsyncClient):
         """Testet POST /api/knowledge/bases"""

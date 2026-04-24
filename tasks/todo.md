@@ -22,10 +22,9 @@ Reva Enterprise Teams-bot depends on Renfield internals that were removed or cha
 - **Items:** Semantic Router in AgentRouter · XML delimiter tags in prompts · Episodic Memory · Memory source/scope/confidence fields · Procedural memory category · `_serialize_for_prompt()` · `utils/request_context.py` · `prompt_hashes` on PromptManager
 - **Also two MODERATE signature changes** (AgentService.__init__, token budget, `retrieve_for_prompt()` return format) documented in the same file §11-§13.
 
-### KRITISCH audit findings (K1-K7)
-Performance + security gaps flagged in systematic audit; each is production-exposed today.
-- **Primary source:** `tasks/audit-findings-plan.md` §KRITISCH, §Priorisierte Roadmap Phase 1
-- **Items:** K1-K3 three N+1 query bugs (knowledge.py, conversation_service.py) · K4 .env.example at 17% coverage · K5 missing `SecretStr` on sensitive Settings fields · K6 production Docker Secrets incomplete · K7 `EXTERNAL_URL`/`EXTERNAL_WS_URL` referenced but undefined
+### KRITISCH audit findings (K1-K7) — RESOLVED (branch `audit/k1-k7`, PR pending)
+Closed in one branch: K2 got a batched permission lookup; K1/K3 were already fixed before the audit was written; K4 is a full .env.example rewrite covering 100% of Settings + ha_glue; K5 converted the last plaintext secret (`presence_webhook_secret`) to SecretStr; K6 added the two missing Docker Secrets to both prod compose files + the generator script; K7 documented EXTERNAL_URL/EXTERNAL_WS_URL as Vite build args.
+- **Primary source:** `tasks/audit-findings-plan.md` §KRITISCH (now marked done)
 
 ---
 

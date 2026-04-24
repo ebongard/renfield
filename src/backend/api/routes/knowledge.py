@@ -810,10 +810,43 @@ async def list_knowledge_bases(
         )
         owner_map = {row.id: row.username for row in owner_result.all()}
 
+    # Fixes audit K2: previously `get_user_kb_permission(kb, ...)` was called
+    # in the loop below, firing one atom_explicit_grants query per KB. The
+    # batch helper pulls every grant in a single GROUP BY, and the rest of
+    # the permission rules (owner / kb.all / public+kb.shared) resolve from
+    # data we already have in memory.
+    grants_by_kb: dict[int, str] = {}
+    user_has_kb_all = False
+    user_has_kb_shared = False
+    if settings.auth_enabled and user:
+        user_perms = user.get_permissions()
+        user_has_kb_all = has_permission(user_perms, Permission.KB_ALL)
+        user_has_kb_shared = has_permission(user_perms, Permission.KB_SHARED)
+        kb_ids_for_grants = [kb.id for kb in accessible_bases]
+        if kb_ids_for_grants and not user_has_kb_all:
+            from services.kb_shares_service import get_user_kb_permission_levels
+            grants_by_kb = await get_user_kb_permission_levels(
+                db, user.id, kb_ids_for_grants
+            )
+
+    def _resolve_permission(kb: KnowledgeBase) -> str | None:
+        if not settings.auth_enabled or not user:
+            return "admin"
+        if user_has_kb_all:
+            return "admin"
+        if kb.owner_id == user.id:
+            return "owner"
+        grant = grants_by_kb.get(kb.id)
+        if grant:
+            return grant
+        if getattr(kb, "is_public", False) and user_has_kb_shared:
+            return "read"
+        return None
+
     # Build response with user-specific info
     response = []
     for kb in accessible_bases:
-        perm = await get_user_kb_permission(kb, user, db) if user else "admin"
+        perm = _resolve_permission(kb)
         owner_username = owner_map.get(kb.owner_id) if kb.owner_id else None
 
         response.append(KnowledgeBaseResponse(

@@ -91,6 +91,16 @@ prompt_secret "home_assistant_token" "Home Assistant Long-Lived Access Token:"
 prompt_secret "openweather_api_key" "OpenWeatherMap API Key (https://openweathermap.org/api):"
 prompt_secret "newsapi_key" "NewsAPI Key (https://newsapi.org/):"
 prompt_secret "jellyfin_api_key" "Jellyfin API Key:"
+prompt_secret "jellyfin_token" "Jellyfin Access Token (optional, leer = ueberspringen):"
+prompt_secret "jellyfin_base_url" "Jellyfin Base URL (z.B. http://jellyfin.local:8096):"
+prompt_secret "jellyfin_user_id" "Jellyfin User ID (GUID):"
+prompt_secret "n8n_api_key" "n8n API Key (Settings → API → Create API Key):"
+prompt_secret "paperless_api_token" "Paperless-NGX API Token:"
+prompt_secret "mail_primary_password" "Mail primary account IMAP/SMTP password:"
+
+echo ""
+echo "3. Auto-generierte Shared Secrets (Webhooks, etc.):"
+generate_token "presence_webhook_secret" 32
 
 echo ""
 echo "=== Fertig ==="

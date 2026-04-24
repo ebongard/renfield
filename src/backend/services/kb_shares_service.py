@@ -221,3 +221,42 @@ async def list_user_shared_kb_ids(db: AsyncSession, user_id: int) -> set[int]:
         {"user_id": user_id},
     )
     return {int(r[0]) for r in result.fetchall()}
+
+
+async def get_user_kb_permission_levels(
+    db: AsyncSession,
+    user_id: int,
+    kb_ids: list[int] | set[int] | None = None,
+) -> dict[int, str]:
+    """Batch-fixes audit K2: replaces the per-KB `get_user_kb_permission_level`
+    loop with a single GROUP-BY query. Returns {kb_id: "read"|"write"|"admin"}
+    for every KB the user has any grant on. KBs without a grant are absent.
+
+    If `kb_ids` is provided, the result is restricted to that subset (still
+    one query); `None` returns the full map for the user.
+    """
+    params: dict[str, Any] = {"user_id": user_id}
+    sql = (
+        "SELECT d.knowledge_base_id, "
+        "       MAX(CASE g.permission_level "
+        "             WHEN 'admin' THEN 3 WHEN 'write' THEN 2 ELSE 1 END) AS rank "
+        "FROM atom_explicit_grants g "
+        "JOIN atoms a ON g.atom_id = a.atom_id "
+        "JOIN documents d ON a.source_id = d.id::text "
+        "WHERE a.source_table = 'documents' "
+        "  AND g.granted_to_user_id = :user_id "
+        "  AND d.knowledge_base_id IS NOT NULL"
+    )
+    if kb_ids is not None:
+        if not kb_ids:
+            return {}
+        sql += " AND d.knowledge_base_id = ANY(:kb_ids)"
+        params["kb_ids"] = list(kb_ids)
+    sql += " GROUP BY d.knowledge_base_id"
+
+    result = await db.execute(text(sql), params)
+    rank_to_perm = {1: "read", 2: "write", 3: "admin"}
+    return {
+        int(row.knowledge_base_id): rank_to_perm[int(row.rank)]
+        for row in result.fetchall()
+    }

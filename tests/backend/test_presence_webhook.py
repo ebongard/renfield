@@ -5,6 +5,16 @@ Tests for presence webhook dispatcher.
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import SecretStr
+
+
+def _mock_ha_glue_settings(**overrides):
+    base = {
+        "presence_webhook_url": "http://n8n.local/webhook/presence",
+        "presence_webhook_secret": None,
+    }
+    base.update(overrides)
+    return type("S", (), base)()
 
 
 @pytest.mark.unit
@@ -12,11 +22,6 @@ class TestPresenceWebhook:
     @pytest.mark.asyncio
     async def test_dispatch_posts_to_url(self):
         """Webhook POSTs event payload to configured URL."""
-        mock_settings = type("S", (), {
-            "presence_webhook_url": "http://n8n.local/webhook/presence",
-            "presence_webhook_secret": "",
-        })()
-
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = lambda: None
@@ -24,8 +29,11 @@ class TestPresenceWebhook:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch("services.presence_webhook.settings", mock_settings):
-            import services.presence_webhook as mod
+        with patch(
+            "ha_glue.services.presence_webhook.ha_glue_settings",
+            _mock_ha_glue_settings(),
+        ):
+            import ha_glue.services.presence_webhook as mod
             mod._client = mock_client
 
             await mod._dispatch("presence_enter_room", user_id=1, room_id=10)
@@ -38,17 +46,11 @@ class TestPresenceWebhook:
         assert payload["user_id"] == 1
         assert payload["room_id"] == 10
 
-        # Cleanup
         mod._client = None
 
     @pytest.mark.asyncio
     async def test_dispatch_includes_secret_header(self):
-        """When secret configured, X-Webhook-Secret header is sent."""
-        mock_settings = type("S", (), {
-            "presence_webhook_url": "http://n8n.local/webhook/presence",
-            "presence_webhook_secret": "my-secret-token",
-        })()
-
+        """When SecretStr secret configured, X-Webhook-Secret header carries the plaintext."""
         mock_response = AsyncMock()
         mock_response.status_code = 200
         mock_response.raise_for_status = lambda: None
@@ -56,8 +58,11 @@ class TestPresenceWebhook:
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(return_value=mock_response)
 
-        with patch("services.presence_webhook.settings", mock_settings):
-            import services.presence_webhook as mod
+        with patch(
+            "ha_glue.services.presence_webhook.ha_glue_settings",
+            _mock_ha_glue_settings(presence_webhook_secret=SecretStr("my-secret-token")),
+        ):
+            import ha_glue.services.presence_webhook as mod
             mod._client = mock_client
 
             await mod._dispatch("presence_leave_room", user_id=1, room_id=10)
@@ -66,40 +71,32 @@ class TestPresenceWebhook:
         headers = call_args[1]["headers"]
         assert headers["X-Webhook-Secret"] == "my-secret-token"
 
-        # Cleanup
         mod._client = None
 
     @pytest.mark.asyncio
     async def test_dispatch_error_logged_not_raised(self):
         """Network error doesn't propagate (fire-and-forget)."""
-        mock_settings = type("S", (), {
-            "presence_webhook_url": "http://n8n.local/webhook/presence",
-            "presence_webhook_secret": "",
-        })()
-
         mock_client = AsyncMock()
         mock_client.post = AsyncMock(side_effect=Exception("Connection refused"))
 
-        with patch("services.presence_webhook.settings", mock_settings):
-            import services.presence_webhook as mod
+        with patch(
+            "ha_glue.services.presence_webhook.ha_glue_settings",
+            _mock_ha_glue_settings(),
+        ):
+            import ha_glue.services.presence_webhook as mod
             mod._client = mock_client
 
-            # Should not raise
             await mod._dispatch("presence_enter_room", user_id=1, room_id=10)
 
-        # Cleanup
         mod._client = None
 
     def test_register_skipped_when_no_url(self):
         """No URL configured → no hooks registered."""
-        mock_settings = type("S", (), {
-            "presence_webhook_url": "",
-            "presence_webhook_secret": "",
-        })()
-
-        with patch("services.presence_webhook.settings", mock_settings), \
-             patch("services.presence_webhook.register_hook") as mock_register:
-            import services.presence_webhook as mod
+        with patch(
+            "ha_glue.services.presence_webhook.ha_glue_settings",
+            _mock_ha_glue_settings(presence_webhook_url=""),
+        ), patch("ha_glue.services.presence_webhook.register_hook") as mock_register:
+            import ha_glue.services.presence_webhook as mod
             mod.register_presence_webhooks()
 
         mock_register.assert_not_called()

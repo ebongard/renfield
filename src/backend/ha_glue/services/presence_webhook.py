@@ -18,7 +18,7 @@ async def _dispatch(event: str, **kwargs):
 
     headers = {"Content-Type": "application/json"}
     if ha_glue_settings.presence_webhook_secret:
-        headers["X-Webhook-Secret"] = ha_glue_settings.presence_webhook_secret
+        headers["X-Webhook-Secret"] = ha_glue_settings.presence_webhook_secret.get_secret_value()
 
     payload = {"event": event, **kwargs}
     try:

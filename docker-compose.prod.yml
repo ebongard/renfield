@@ -101,9 +101,11 @@ services:
       - jellyfin_api_key
       - jellyfin_token
       - jellyfin_base_url
+      - jellyfin_user_id
       - n8n_api_key
       - paperless_api_token
       - mail_primary_password
+      - presence_webhook_secret
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite  # For OTA update package building
@@ -160,9 +162,11 @@ services:
       - jellyfin_api_key
       - jellyfin_token
       - jellyfin_base_url
+      - jellyfin_user_id
       - n8n_api_key
       - paperless_api_token
       - mail_primary_password
+      - presence_webhook_secret
     volumes:
       - ./src/backend:/app
       - ./src/satellite:/app/satellite
@@ -278,9 +282,13 @@ secrets:
     file: ./secrets/jellyfin_token
   jellyfin_base_url:
     file: ./secrets/jellyfin_base_url
+  jellyfin_user_id:
+    file: ./secrets/jellyfin_user_id
   n8n_api_key:
     file: ./secrets/n8n_api_key
   paperless_api_token:
     file: ./secrets/paperless_api_token
   mail_primary_password:
     file: ./secrets/mail_primary_password
+  presence_webhook_secret:
+    file: ./secrets/presence_webhook_secret

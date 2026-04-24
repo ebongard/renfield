@@ -17,43 +17,41 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 
 ## KRITISCH (7)
 
-### K1. N+1 Query: KB Permissions Listing
-- **Datei:** `api/routes/knowledge.py:760-790`
-- **Problem:** Loop queries User table per KBPermission (2 queries per iteration)
-- **Fix:** Use `selectinload(KBPermission.user)` or explicit JOIN
-- **Impact:** 10 permissions = 20 extra queries
+Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett).
 
-### K2. N+1 Query: KB Access Check
-- **Datei:** `api/routes/knowledge.py:487-503`
-- **Problem:** Queries KBPermission table per KB in loop
-- **Fix:** Batch-load all user permissions in one query upfront
-- **Impact:** 50 KBs = 50 extra queries
+### K1. N+1 Query: KB Permissions Listing — RESOLVED (pre-existing fix)
+- **Datei:** `api/routes/knowledge.py::list_kb_permissions` (heute ~Zeile 1124)
+- **Status:** Die Ursprungs-Beobachtung war zum Auditzeitpunkt bereits behoben. Die heutige Implementation lädt alle referenzierten User in **einer** Abfrage per `select(User).where(User.id.in_(all_user_ids))`; pro Share gibt es keine zweite User-Query.
+- **Verifikation:** `tests/backend/test_kb_shares_service.py::test_list_kb_shares_*` deckt die Aggregat-SQL ab.
 
-### K3. N+1 Query: Conversation List
-- **Datei:** `services/conversation_service.py:254-268`
-- **Problem:** 2 queries per conversation (count + first message)
-- **Fix:** Window functions or aggregation in single query
-- **Impact:** 50 conversations = 100 extra queries
+### K2. N+1 Query: KB Access Check — FIXED
+- **Datei:** `api/routes/knowledge.py::list_knowledge_bases` (~Zeile 761) + `services/kb_shares_service.py`
+- **Problem:** `get_user_kb_permission(kb, user, db)` wurde je KB in der Response-Schleife aufgerufen → pro KB eine `atom_explicit_grants`-Query.
+- **Fix:** Neuer Batch-Helper `get_user_kb_permission_levels(db, user_id, kb_ids)` lädt alle Grants mit einem `GROUP BY` in **einer** Query. Die uebrigen Permission-Regeln (Owner / KB_ALL / public+KB_SHARED) kommen aus In-Memory-Daten ohne zusaetzliche DB-Rundtrips.
+- **Regression-Guard:** `tests/backend/test_kb_shares_service.py::test_get_user_kb_permission_levels_*` plus `tests/backend/test_knowledge.py::TestKnowledgeBaseAPI::test_list_knowledge_bases_batches_permission_lookups`.
 
-### K4. .env.example covers only 17% of Settings
-- **Datei:** `.env.example` (22 of 126 variables documented)
-- **Problem:** New deployments lack guidance for 104 configuration options
-- **Fix:** Expand .env.example with all variables, grouped and commented
+### K3. N+1 Query: Conversation List — RESOLVED (pre-existing fix)
+- **Datei:** `services/conversation_service.py::list_all` (~Zeile 434)
+- **Status:** Ebenfalls bereits gefixt: `message_count` kommt aus einem Count-Subquery, der `preview` aus einem `ROW_NUMBER() OVER (...)`-Window. Eine einzige SQL-Anweisung pro Seite.
+- **Verifikation:** `tests/backend/test_conversation_service.py::TestListAll` deckt Pagination, Sortierung, User-Filter und Preview-Semantik ab.
 
-### K5. No SecretStr for sensitive fields
-- **Datei:** `utils/config.py`
-- **Problem:** Passwords, tokens, API keys typed as `str` — visible in logs/repr
-- **Fix:** Change to `SecretStr` for postgres_password, secret_key, all tokens
+### K4. .env.example covers only 17% of Settings — FIXED
+- **Datei:** `.env.example`
+- **Fix:** Komplett-Rewrite als gruppierte Referenz aller ~240 Felder (Platform + `HaGlueSettings`). Jede Section kommentiert die Default-Werte und Produktions-Hinweise (Docker Secrets, SecretStr, Profile-Toggles).
 
-### K6. Production Docker Secrets incomplete
-- **Datei:** `docker-compose.prod.yml`
-- **Problem:** Email passwords, JELLYFIN_USER_ID, SEARXNG credentials missing from secrets
-- **Fix:** Add all sensitive values to Docker Secrets
+### K5. No SecretStr for sensitive fields — FIXED
+- **Datei:** `utils/config.py`, `ha_glue/utils/config.py`
+- **Status:** Passwoerter, Tokens und API-Keys sind durchgehend `SecretStr`:
+  `postgres_password`, `secret_key`, `default_admin_password`, `mail_primary_password`, `n8n_api_key` (platform) sowie `home_assistant_token`, `paperless_api_token`, `jellyfin_api_key`, `jellyfin_token` (ha_glue). Restliche Luecke `presence_webhook_secret` wurde auf `SecretStr | None` umgestellt; Consumer (`ha_glue/services/presence_webhook.py`) ruft `.get_secret_value()`.
+- **Regression-Guard:** `tests/backend/test_presence_webhook.py` verwendet jetzt `SecretStr("my-secret-token")`.
 
-### K7. EXTERNAL_URL / EXTERNAL_WS_URL undefined
-- **Datei:** `docker-compose.prod.yml`
-- **Problem:** Frontend references `${EXTERNAL_URL}` but it's never defined anywhere
-- **Fix:** Document in .env.example, add to Settings class
+### K6. Production Docker Secrets incomplete — FIXED
+- **Dateien:** `docker-compose.prod.yml`, `docker-compose.prod-cpu.yml`, `bin/generate-secrets.sh`
+- **Fix:** `jellyfin_user_id` und `presence_webhook_secret` zu Secrets-Liste und `secrets:`-Block in beiden Compose-Dateien hinzugefuegt. `generate-secrets.sh` prompt't jetzt auch fuer `jellyfin_token`, `jellyfin_base_url`, `jellyfin_user_id`, `n8n_api_key`, `paperless_api_token`, `mail_primary_password` und auto-generiert `presence_webhook_secret`.
+
+### K7. EXTERNAL_URL / EXTERNAL_WS_URL undefined — FIXED
+- **Dateien:** `.env.example`, `docker-compose.prod*.yml`
+- **Fix:** Variablen sind dokumentiert in `.env.example` (Section "Frontend build-time variables") mit Beispiel-Werten + Erklaerung, dass es Vite-Build-Args sind, die in das PWA-Bundle einkompiliert werden. Kein Settings-Feld noetig (kein Backend-Consumer); leere Werte sind default-fallback fuer Same-Origin-Deploys hinter Nginx.
 
 ---
 
@@ -228,14 +226,17 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 ## Priorisierte Roadmap
 
 ### Phase 1: Performance & Security (DB + Config)
-- [ ] K1-K3: Fix N+1 queries (knowledge.py, conversation_service.py)
-- [ ] K5: SecretStr for sensitive Settings fields
-- [ ] K6-K7: Complete Docker Secrets + define EXTERNAL_URL
+- [x] K1: verified pre-existing fix (batched user lookup in list_kb_permissions)
+- [x] K2: batched permission lookup in list_knowledge_bases
+- [x] K3: verified pre-existing fix (single-query list_all with window function)
+- [x] K5: SecretStr for sensitive Settings fields (presence_webhook_secret closed the last gap)
+- [x] K6: complete Docker Secrets (jellyfin_user_id, presence_webhook_secret)
+- [x] K7: define EXTERNAL_URL / EXTERNAL_WS_URL in .env.example
 - [ ] W1: Configure DB connection pool
 - [ ] W12: Fix alembic.ini credentials
 
 ### Phase 2: Konfiguration aufraumen
-- [ ] K4: Expand .env.example to 100% coverage
+- [x] K4: Expand .env.example to 100% coverage
 - [ ] W5: Extract hardcoded timeouts to Settings
 - [ ] W6: Agent/Router LLM options from YAML, not Python hardcodes
 - [ ] W7-W8: Circuit breaker + cache TTLs configurable

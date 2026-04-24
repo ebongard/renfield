@@ -92,7 +92,7 @@ class HaGlueSettings(BaseSettings):
     presence_rssi_threshold: int = -80                  # dBm, signals weaker than this are ignored
     presence_household_roles: str = "Admin,Familie"     # Roles considered household members for privacy TTS
     presence_webhook_url: str = ""                      # URL to POST presence events (empty = disabled)
-    presence_webhook_secret: str = ""                   # Shared secret for webhook auth (X-Webhook-Secret header)
+    presence_webhook_secret: SecretStr | None = None    # Shared secret for webhook auth (X-Webhook-Secret header)
     presence_analytics_retention_days: int = 90         # Days to keep presence events for analytics
 
     # === Media Follow Me (playback follows user between rooms) ===

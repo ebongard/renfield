@@ -176,3 +176,63 @@ async def test_list_user_shared_kb_ids_returns_set_of_ints():
 
     assert isinstance(ids, set)
     assert ids == {7, 42, 101}
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_get_user_kb_permission_levels_batches_into_one_query():
+    """Audit K2 regression guard: a list of KBs resolves with exactly one
+    SQL execute call regardless of how many KBs are passed in."""
+    db = MagicMock()
+    fake_result = MagicMock()
+    fake_result.fetchall.return_value = [
+        MagicMock(knowledge_base_id=1, rank=3),
+        MagicMock(knowledge_base_id=2, rank=2),
+        MagicMock(knowledge_base_id=3, rank=1),
+    ]
+    db.execute = AsyncMock(return_value=fake_result)
+
+    levels = await kb_shares_service.get_user_kb_permission_levels(
+        db, user_id=42, kb_ids=[1, 2, 3, 4, 5]
+    )
+
+    db.execute.assert_awaited_once()
+    assert levels == {1: "admin", 2: "write", 3: "read"}
+    # GROUP BY must be present — single query, not per-KB
+    sql = str(db.execute.call_args.args[0])
+    assert "GROUP BY d.knowledge_base_id" in sql
+    assert "ANY(:kb_ids)" in sql
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_get_user_kb_permission_levels_empty_kb_ids_short_circuits():
+    db = MagicMock()
+    db.execute = AsyncMock()
+
+    levels = await kb_shares_service.get_user_kb_permission_levels(
+        db, user_id=42, kb_ids=[]
+    )
+
+    assert levels == {}
+    db.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_get_user_kb_permission_levels_none_returns_all_grants():
+    db = MagicMock()
+    fake_result = MagicMock()
+    fake_result.fetchall.return_value = [
+        MagicMock(knowledge_base_id=7, rank=2),
+    ]
+    db.execute = AsyncMock(return_value=fake_result)
+
+    levels = await kb_shares_service.get_user_kb_permission_levels(
+        db, user_id=42, kb_ids=None
+    )
+
+    assert levels == {7: "write"}
+    sql = str(db.execute.call_args.args[0])
+    # Without a kb_ids filter, the ANY() clause is absent
+    assert "ANY(:kb_ids)" not in sql
