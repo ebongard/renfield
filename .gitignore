@@ -95,7 +95,6 @@ kg-graph-*.png
 # tasks/, so the negations below can re-include specific files.
 tasks/*
 !tasks/todo.md
-!tasks/reva-plan.md
 !tasks/audit-findings-plan.md
 .mcp.json
 .gstack/
