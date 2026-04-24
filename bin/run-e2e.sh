@@ -58,7 +58,7 @@ python3 -m pytest \
     --html="$REPORT_PATH" \
     --self-contained-html \
     --junitxml="$JUNIT_PATH" \
-    "${PYTEST_ARGS[@]}" || EXIT=$?
+    ${PYTEST_ARGS[@]+"${PYTEST_ARGS[@]}"} || EXIT=$?
 
 echo ""
 echo "Report: file://$REPO_ROOT/$REPORT_PATH"
