@@ -18,6 +18,8 @@ import pytest
 
 from services.paperless_ui_edit_sweeper import (
     _MIN_AGE_BEFORE_SWEEP,
+    _TRUNCATION_MARKER,
+    _TruncatedResponseError,
     _detect_edit,
     _normalise_field,
     run_abandoned_confirm_sweep,
@@ -164,6 +166,112 @@ class TestDetectEdit:
             },
         )
         assert diff is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_late_edit_outside_window_dropped(self):
+        """Paperless ``modified`` > uploaded_at + 1h15m → taxonomy
+        drift, not an extraction correction. Drop silently so the
+        learning corpus doesn't absorb a late re-categorisation."""
+        uploaded_at = datetime(2026, 4, 23, 10, 0, 0)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "title": "T", "correspondent": "Deutsche Telekom",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x", "created_date": "2026-02-14",
+                # Edit landed 5 hours after upload.
+                "modified": "2026-04-23T15:00:00Z",
+            }),
+        })
+        diff = await _detect_edit(
+            mcp_manager=mcp,
+            document_id=42,
+            uploaded_at=uploaded_at,
+            original={
+                "title": "T", "correspondent": "Telekom",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x", "created_date": "2026-02-14",
+            },
+        )
+        assert diff is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_edit_within_window_returns_diff(self):
+        """Edit timestamp inside the 1h15m window → legit correction."""
+        uploaded_at = datetime(2026, 4, 23, 10, 0, 0)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "title": "T", "correspondent": "Deutsche Telekom",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x", "created_date": "2026-02-14",
+                "modified": "2026-04-23T10:45:00Z",
+            }),
+        })
+        diff = await _detect_edit(
+            mcp_manager=mcp,
+            document_id=42,
+            uploaded_at=uploaded_at,
+            original={
+                "title": "T", "correspondent": "Telekom",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x", "created_date": "2026-02-14",
+            },
+        )
+        assert diff is not None
+        assert diff["correspondent"] == "Deutsche Telekom"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_missing_modified_falls_through(self):
+        """If ``modified`` isn't in the response, we can't window-check.
+        Fall through to the field diff — losing some filter quality but
+        not corrupting the learning signal."""
+        uploaded_at = datetime(2026, 4, 23, 10, 0, 0)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "title": "T", "correspondent": "Deutsche Telekom",
+                # no "modified" key
+            }),
+        })
+        diff = await _detect_edit(
+            mcp_manager=mcp,
+            document_id=42,
+            uploaded_at=uploaded_at,
+            original={"title": "T", "correspondent": "Telekom"},
+        )
+        assert diff is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_truncated_response_raises_sentinel(self):
+        """MCP truncates large get_document responses at 10 KB. A
+        byte-truncated body can either fail JSON parsing (silently
+        looks like no-diff) or parse as a partial dict (silently
+        looks like a blanked field). Either corrupts the learning
+        corpus. _detect_edit must raise the sentinel so the caller
+        stamps swept_at without writing an example row."""
+        mcp = MagicMock()
+        # Simulate the literal marker _truncate_response appends.
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": (
+                '{"title": "T", "correspondent": "Stadtwerke"'
+                + _TRUNCATION_MARKER + ' (exceeded 10KB limit)]'
+            ),
+        })
+        with pytest.raises(_TruncatedResponseError):
+            await _detect_edit(
+                mcp_manager=mcp,
+                document_id=999,
+                original={"title": "T", "correspondent": "Stadtwerke"},
+            )
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -357,6 +465,62 @@ class TestRunSweepTick:
         assert counts["expired"] == 1
         assert counts["edits_detected"] == 0
         mcp.execute_tool.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_truncated_response_counted_and_stamped(self):
+        """Truncation is deterministic per doc — stamp swept_at so we
+        stop re-hitting the same oversize document every hour, and
+        count it separately from real errors for observability."""
+        tracking = _make_tracking()
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": (
+                '{"title": "T"' + _TRUNCATION_MARKER + ' (10KB)]'
+            ),
+        })
+        factory = _make_session_factory([tracking])
+
+        with patch("services.database.AsyncSessionLocal", factory):
+            counts = await run_sweep_tick(mcp_manager=mcp)
+
+        assert counts["truncated"] == 1
+        assert counts["errors"] == 0
+        assert counts["edits_detected"] == 0
+        # No example row written — truncated body is uncomparable.
+        from models.database import PaperlessExtractionExample
+        example_rows = [
+            a for a in factory.added  # type: ignore[attr-defined]
+            if isinstance(a, PaperlessExtractionExample)
+        ]
+        assert example_rows == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_concurrent_tick_skipped_not_double_processed(self):
+        """Two ticks in flight at once would SELECT the same unswept
+        rows, double-MCP-fetch, and double-persist. The in-process
+        lock must serialise them; the second call returns immediately
+        with skipped=1 and without running the body."""
+        import asyncio as _asyncio
+
+        from services import paperless_ui_edit_sweeper as sweeper_mod
+
+        # Hold the lock ourselves so run_sweep_tick sees it as busy.
+        await sweeper_mod._sweep_lock.acquire()
+        try:
+            mcp = MagicMock()
+            mcp.execute_tool = AsyncMock()
+
+            counts = await run_sweep_tick(mcp_manager=mcp)
+
+            assert counts.get("skipped") == 1
+            assert counts["candidates"] == 0
+            # Body never ran — no MCP call, no DB session opened.
+            mcp.execute_tool.assert_not_awaited()
+        finally:
+            sweeper_mod._sweep_lock.release()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
