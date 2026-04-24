@@ -929,10 +929,14 @@ CALENDAR_ENABLED=true
 | `NEWSAPI_KEY` | NewsAPI Key | `secrets/newsapi_key` |
 | `JELLYFIN_TOKEN` | Jellyfin API Token | `secrets/jellyfin_token` |
 | `JELLYFIN_BASE_URL` | Jellyfin Server URL | `secrets/jellyfin_base_url` |
+| `JELLYFIN_USER_ID` | Jellyfin User-GUID | `secrets/jellyfin_user_id` |
 | `N8N_API_KEY` | n8n API Key | `secrets/n8n_api_key` |
 | `HOME_ASSISTANT_TOKEN` | HA Long-Lived Access Token | `secrets/home_assistant_token` |
 | `PAPERLESS_API_TOKEN` | Paperless-NGX API Token | `secrets/paperless_api_token` |
 | `MAIL_PRIMARY_PASSWORD` | Email IMAP/SMTP Passwort (primary mail account from `mail_accounts.yaml`) | `secrets/mail_primary_password` |
+| `PRESENCE_WEBHOOK_SECRET` | Shared-Secret für `X-Webhook-Secret` Header bei ausgehenden Presence-Webhooks | `secrets/presence_webhook_secret` |
+
+> Die kanonische Liste inkl. Consumer-Mapping und Upgrade-Hinweise liegt in [`docs/SECRETS_MANAGEMENT.md`](SECRETS_MANAGEMENT.md). Optionale Integration-Secrets (alles ausser den drei Core-Secrets) dürfen als leere Placeholder-Datei existieren — der Stack bleibt startfähig, das Feature deaktiviert sich einfach.
 
 ### MCP-Server URLs (nicht-sensitiv, in .env)
 
@@ -1244,9 +1248,11 @@ PAPERLESS_API_URL=http://paperless.local:8000
 # NEWSAPI_KEY=...             → secrets/newsapi_key
 # JELLYFIN_TOKEN=...          → secrets/jellyfin_token
 # JELLYFIN_BASE_URL=...       → secrets/jellyfin_base_url
+# JELLYFIN_USER_ID=...        → secrets/jellyfin_user_id
 # N8N_API_KEY=...             → secrets/n8n_api_key
 # PAPERLESS_API_TOKEN=...     → secrets/paperless_api_token
 # MAIL_PRIMARY_PASSWORD=...   → secrets/mail_primary_password
+# PRESENCE_WEBHOOK_SECRET=... → secrets/presence_webhook_secret  (auto-gen via generate-secrets.sh)
 
 ```
 

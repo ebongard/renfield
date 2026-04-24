@@ -52,7 +52,12 @@ generate_token() {
     echo "  [OK]   $name (generiert)"
 }
 
-# Hilfsfunktion: Interaktive Eingabe
+# Hilfsfunktion: Interaktive Eingabe.
+# Leere Eingabe → es wird eine leere Placeholder-Datei angelegt. Dadurch bleibt
+# `docker compose -f docker-compose.prod*.yml up` startfaehig auch wenn ein
+# optionales Integration-Secret (Jellyfin, Presence, ...) nicht konfiguriert
+# ist. Pydantic's `SecretStr | None` liest eine leere Datei als falsy und das
+# Feature deaktiviert sich automatisch.
 prompt_secret() {
     local name="$1"
     local description="$2"
@@ -68,7 +73,9 @@ prompt_secret() {
     read -rp "  $name: " value
 
     if [ -z "$value" ]; then
-        echo "  [SKIP] $name (leer, übersprungen)"
+        : > "$file"
+        chmod 600 "$file"
+        echo "  [OK]   $name (leer — Placeholder, Feature bleibt deaktiviert)"
         return
     fi
 

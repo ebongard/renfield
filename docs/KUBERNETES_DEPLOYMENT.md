@@ -142,6 +142,8 @@ The `renfield-secrets` Secret holds:
 | `n8n-api-key` | n8n workflow API |
 | `paperless-api-token` | Paperless-ngx |
 | `mail-regfish-password` | Email (Regfish) |
+| `mail-primary-password` | Primary mail account (IMAP/SMTP, read by the backend + mail MCP) |
+| `presence-webhook-secret` | Shared secret signed into the `X-Webhook-Secret` header when the backend dispatches presence events to `PRESENCE_WEBHOOK_URL` — only required if presence webhooks are enabled |
 
 Apply imperatively with real values rather than committing `secrets.yaml`:
 
