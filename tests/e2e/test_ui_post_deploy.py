@@ -159,7 +159,11 @@ def test_all():
         # ============================================================
         print("\n🏥 6. Health Check (sanitized errors)")
         try:
-            page.goto(f"{BASE_URL}/api/health/ready", wait_until="networkidle", timeout=10000)
+            # Health routes are mounted at the root (`/health` + `/health/ready`),
+            # not under `/api/*`. The readiness probe returns a JSON body with
+            # `"status": "healthy|unhealthy|degraded"` that the assertions below
+            # match on.
+            page.goto(f"{BASE_URL}/health/ready", wait_until="networkidle", timeout=10000)
             body = page.locator("body").inner_text()
             page.screenshot(path=f"{SCREENSHOTS}/06_health.png")
 
