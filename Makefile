@@ -180,6 +180,11 @@ test-local: ## Run tests locally (requires local Python env)
 test-manual-ollama: ## Run manual Ollama connection test
 	@./tests/manual/test_ollama_connection.sh
 
+test-e2e-browser: ## Run browser-based E2E suite against renfield.local + HTML report
+	@echo "$(BLUE)Running E2E browser suite against https://renfield.local ...$(NC)"
+	@./bin/run-e2e.sh
+	@echo "$(GREEN)✓ E2E run complete — see tests/e2e/reports/$(NC)"
+
 # ============================================================================
 # Lint & Format Commands
 # ============================================================================
