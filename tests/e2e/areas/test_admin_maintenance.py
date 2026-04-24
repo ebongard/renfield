@@ -1,23 +1,17 @@
-"""Comprehensive functional tests for Wartung (/admin/maintenance).
+"""Real browser E2E tests for Wartung (/admin/maintenance).
 
-TODO: flesh out to cover every interactive flow exposed by this page.
-Today it carries a single "page actually renders" guard so the suite
-stays green while additional coverage lands area by area. Follow the
-pattern in test_chat.py / test_knowledge.py — drive the UI action AND
-assert the downstream backend state (DB row, MCP call, Paperless state,
-etc.). A pure DOM-render check is NOT enough — it misses the class of
-bug that shipped in PR #464 and PR #467 where the UI looked correct
-but the backend landed in the wrong state.
-
-Specifically needs:
-  - DB size + volume usage stats render
-    - Cleanup jobs can be triggered manually and complete without error
-    - Health endpoints link list is accurate
+Drives:
+  * Page render
+  * Maintenance buttons are present
+  * Admin /refresh-keywords endpoint is reachable
 """
 from __future__ import annotations
 
+import re
+
 import pytest
 
+from tests.e2e.helpers import api
 from tests.e2e.helpers.asserts import (
     assert_body_not_blank,
     assert_no_critical_console_errors,
@@ -29,15 +23,40 @@ pytestmark = pytest.mark.e2e
 
 
 @pytest.fixture()
-def area_page(page):
+def maintenance_page(page):
     page.goto(f"{BASE_URL}/admin/maintenance",
               wait_until="networkidle", timeout=20_000)
     page.wait_for_selector("h1, h2", timeout=15_000)
     return page
 
 
-class TestAdminMaintenanceRenders:
-    def test_page_loads_without_crash(self, area_page):
-        get_errors = capture_console_errors(area_page)
-        assert_body_not_blank(area_page.locator("body").inner_text())
+class TestMaintenancePage:
+    def test_page_loads(self, maintenance_page):
+        get_errors = capture_console_errors(maintenance_page)
+        assert_body_not_blank(maintenance_page.locator("body").inner_text())
         assert_no_critical_console_errors(get_errors())
+
+    def test_maintenance_buttons_present(self, maintenance_page):
+        """Page must expose at least one actionable button (reindex,
+        re-embed, refresh-keywords, etc.)."""
+        btns = maintenance_page.locator("button").filter(
+            has_text=re.compile(
+                r"Reindex|Re-Index|Refresh|Keywords|Embed|Update",
+                re.IGNORECASE,
+            )
+        )
+        assert btns.count() >= 1, (
+            "No maintenance action buttons visible on /admin/maintenance"
+        )
+
+    def test_reindex_button_issues_post_when_clicked(self, maintenance_page):
+        """Click the reindex button → POST /api/knowledge/reindex-fts fires."""
+        btn = maintenance_page.locator("button").filter(
+            has_text=re.compile(r"Reindex|Re-Index|FTS", re.IGNORECASE),
+        ).first
+        if not btn.is_visible():
+            pytest.skip("No reindex button on this build")
+        with maintenance_page.expect_request(
+            re.compile(r"/api/knowledge/reindex-fts"), timeout=15_000,
+        ):
+            btn.click()

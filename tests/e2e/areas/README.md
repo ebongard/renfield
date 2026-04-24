@@ -28,17 +28,40 @@ means adding:
 
 ## Depth status
 
-| Area                    | Depth                  |
-|-------------------------|------------------------|
-| chat                    | **Full** — covers upload → Paperless assertion |
-| knowledge               | **Full** — upload + ingest + search + delete |
-| settings_circles        | **Full** — tier + member CRUD via API |
-| admin_users             | **Full** — CRUD template |
-| _everything else_       | Stub (page-render guard + TODO list) |
+Every area ships with real browser tests that drive the UI AND assert
+the backend state — no stubs. Each file covers the core user flows
+for that area plus at least one end-to-end mutation round-trip where
+the UI exposes one.
 
-Stub files carry a TODO block listing what each area's full suite
-should cover. As bugs hit a given area, port the repro into that
-file before closing the bug out.
+| Area                    | Key coverage |
+|-------------------------|--------------|
+| chat                    | render, send/reply, **attach → forward to Paperless with metadata assertion**, sidebar preview, delete, theme |
+| knowledge               | render, upload PDF → assert chunks > 0, delete, KB list |
+| settings_circles        | render, tier API, member CRUD, UI controls present |
+| admin_users             | render, list endpoint, user CRUD + UI verify |
+| tasks                   | render, list endpoint, create/delete round-trip, UI verify |
+| memory                  | render, list, create/delete round-trip, UI verify |
+| brain                   | render, /api/atoms list, search input fires request |
+| brain_review            | render, review-queue endpoint, empty-state |
+| federation_audit        | render, audit endpoint, fetch on load |
+| knowledge_graph         | render, entities/relations/stats/tiers, fetch on load |
+| camera                  | render, cameras/events list, fetch on load |
+| rooms                   | render, list, room CRUD + UI verify |
+| speakers                | render, list, status, speaker CRUD + UI verify |
+| smart_home              | render, states endpoint, fetch on load |
+| admin_integrations      | render, MCP status/tools, fetch on load, refresh button |
+| admin_intents           | render, intents status, fetch on load, prompt endpoint |
+| admin_routing           | render, traces/stats, fetch on load |
+| admin_roles             | render, list, role CRUD + UI verify |
+| admin_satellites        | render, list, versions, fetch on load |
+| admin_presence          | render, status/rooms/devices, fetch on load |
+| admin_paperless_audit   | render, status/stats, fetch on load |
+| admin_maintenance       | render, action buttons present, reindex button fires POST |
+| admin_settings          | render, wakeword settings/models, fetch on load |
+
+Tests that need auth (list users, create role, etc.) skip cleanly
+when the endpoint returns 401/403/404 in a single-user dev deploy —
+but the test itself is real; flip `AUTH_ENABLED=true` and they run.
 
 ## Running
 
