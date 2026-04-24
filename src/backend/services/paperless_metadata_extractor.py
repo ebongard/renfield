@@ -757,7 +757,7 @@ class PaperlessMetadataExtractor:
         try:
             raw = await self._call_llm(system, user)
         except Exception as exc:
-            logger.warning("LLM call for metadata extraction failed: %s", exc)
+            logger.warning(f"LLM call for metadata extraction failed: {exc}")
             return ExtractionResult(
                 metadata=PaperlessMetadata(),
                 doc_text=doc_text,
@@ -776,7 +776,7 @@ class PaperlessMetadataExtractor:
         try:
             metadata = validate_extraction(parsed, taxonomy)
         except ValueError as exc:
-            logger.warning("Metadata validation failed: %s", exc)
+            logger.warning(f"Metadata validation failed: {exc}")
             return ExtractionResult(
                 metadata=PaperlessMetadata(),
                 doc_text=doc_text,
@@ -809,7 +809,7 @@ class PaperlessMetadataExtractor:
         if upload is None:
             return None
         if not upload.file_path or not Path(upload.file_path).is_file():
-            logger.warning("ChatUpload %s file missing on disk: %r", attachment_id, upload.file_path)
+            logger.warning(f"ChatUpload {attachment_id} file missing on disk: {upload.file_path!r}")
             return None
         return upload
 
@@ -844,7 +844,7 @@ class PaperlessMetadataExtractor:
         except Exception as exc:
             # Should never happen — the retriever already swallows its
             # own errors. Defensive belt-and-braces.
-            logger.warning("Learned-example retrieval skipped: %s", exc)
+            logger.warning(f"Learned-example retrieval skipped: {exc}")
             return []
 
     async def _fetch_taxonomy(self) -> PaperlessTaxonomy | None:
@@ -875,7 +875,7 @@ class PaperlessMetadataExtractor:
                 "list_storage_paths", field="paths", value_key="path",
             )
         except Exception as exc:
-            logger.warning("Taxonomy fetch failed: %s", exc)
+            logger.warning(f"Taxonomy fetch failed: {exc}")
             return None
 
         taxonomy = prune_taxonomy(
@@ -913,7 +913,7 @@ class PaperlessMetadataExtractor:
         try:
             result = await self.mcp_manager.execute_tool(full_name, {})
         except Exception as exc:
-            logger.warning("MCP tool %s unreachable: %s", full_name, exc)
+            logger.warning(f"MCP tool {full_name} unreachable: {exc}")
             return []
 
         if not result or not result.get("success"):
@@ -928,7 +928,7 @@ class PaperlessMetadataExtractor:
                     full_name, err_str[:120],
                 )
             else:
-                logger.warning("MCP tool %s failed: %s", full_name, err_str[:120])
+                logger.warning(f"MCP tool {full_name} failed: {err_str[:120]}")
             return []
 
         inner_msg = result.get("message")
@@ -938,8 +938,7 @@ class PaperlessMetadataExtractor:
                 payload = json.loads(inner_msg)
             except json.JSONDecodeError:
                 logger.warning(
-                    "MCP tool %s returned non-JSON message: %r",
-                    full_name, inner_msg[:120],
+                    f"MCP tool {full_name} returned non-JSON message: {inner_msg[:120]!r}"
                 )
                 return []
         elif isinstance(inner_msg, dict):
@@ -947,16 +946,16 @@ class PaperlessMetadataExtractor:
 
         if not isinstance(payload, dict):
             logger.warning(
-                "MCP tool %s returned unexpected payload shape: %s",
-                full_name, type(payload).__name__,
+                f"MCP tool {full_name} returned unexpected payload shape: "
+                f"{type(payload).__name__}"
             )
             return []
 
         items = payload.get(field) or []
         if not isinstance(items, list):
             logger.warning(
-                "MCP tool %s field %r is not a list: %s",
-                full_name, field, type(items).__name__,
+                f"MCP tool {full_name} field {field!r} is not a list: "
+                f"{type(items).__name__}"
             )
             return []
 
@@ -973,11 +972,22 @@ class PaperlessMetadataExtractor:
     async def _call_llm(self, system: str, user: str) -> str:
         """Single LLM call with the classification kwargs (low
         temperature, deterministic). Returns raw response text.
+
+        Model resolution: explicit paperless_extraction_model override first,
+        then ollama_chat_model — NOT the vision model. This is a text-only
+        call (the upstream `_extract_text` hands us Docling-extracted text),
+        so a vision model adds no capability and in practice some qwen3-vl
+        builds ignore ``think=False``, trapping the JSON answer inside the
+        thinking buffer and producing an empty content field. Bug seen in
+        prod 2026-04-24 with qwen3-vl:8b; the bare-upload fallback hid the
+        failure from the user. The vision-model path is a PR 2b refinement
+        (scanned-doc image input); when it ships it will pick its own model
+        explicitly rather than reusing this text path.
         """
         model = (
             settings.paperless_extraction_model
-            or settings.ollama_vision_model
             or settings.ollama_chat_model
+            or settings.ollama_vision_model
         )
         if not model:
             raise RuntimeError("No extraction model configured")

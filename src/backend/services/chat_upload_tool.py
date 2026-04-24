@@ -239,8 +239,8 @@ async def forward_attachment_to_paperless(
             # philosophy.
             err = extraction_result.error if extraction_result else "Extractor unavailable"
             logger.warning(
-                "Metadata extraction failed for attachment %d: %s — bare upload",
-                attachment_id, err,
+                f"Metadata extraction failed for attachment {attachment_id}: "
+                f"{err} — bare upload"
             )
             direct = await _direct_upload(
                 upload=upload, mcp_manager=mcp_manager, params=agent_overrides,
@@ -411,7 +411,7 @@ async def _direct_upload(
         except Exception as exc:
             # Tracking-row persistence must not block the user's upload
             # success path — it's purely a learning-loop concern.
-            logger.warning("Upload-tracking persist failed: %s", exc)
+            logger.warning(f"Upload-tracking persist failed: {exc}")
 
     return {
         "success": True,
@@ -440,7 +440,7 @@ async def _run_extraction(
     try:
         from services.paperless_metadata_extractor import PaperlessMetadataExtractor
     except Exception as exc:  # pragma: no cover
-        logger.warning("Extractor module import failed: %s", exc)
+        logger.warning(f"Extractor module import failed: {exc}")
         return None
     extractor = PaperlessMetadataExtractor(mcp_manager=mcp_manager)
     try:
@@ -451,7 +451,7 @@ async def _run_extraction(
             lang=user_lang,
         )
     except Exception as exc:
-        logger.warning("Extractor call failed: %s", exc)
+        logger.warning(f"Extractor call failed: {exc}")
         return None
 
 
