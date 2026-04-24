@@ -253,11 +253,15 @@ class AtomService:
         atom_orm.policy = dict(new_policy)
         atom_orm.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
-        # Cascade to source row.
+        # Cascade to source row. `atom.source_id` is always stored as
+        # TEXT (polymorphic across source tables), but most source tables
+        # have an INTEGER `id` column — asyncpg refuses to encode a Python
+        # str as int4, producing a 500. Compare via `id::text` so this
+        # works for any source-table id type (int, bigint, uuid, text).
         await self.db.execute(
             text(
                 f"UPDATE {atom_orm.source_table} SET circle_tier = :tier "
-                f"WHERE id = :source_id"
+                f"WHERE id::text = :source_id"
             ),
             {"tier": new_tier, "source_id": atom_orm.source_id},
         )

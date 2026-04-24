@@ -117,6 +117,40 @@ class TestUpdateTier:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_source_cascade_uses_text_cast_for_int_id_tables(self):
+        """Regression for prod 500 on PATCH /api/atoms/{id}/tier.
+
+        ``atom.source_id`` is TEXT (polymorphic across source tables),
+        but most source tables (documents, kg_entities, memories...)
+        have an INTEGER ``id`` column. asyncpg refuses to encode a
+        Python str as int4 and the whole PATCH 500s. The fix: compare
+        via ``id::text = :source_id`` so the SQL works regardless of
+        the source table's id type.
+        """
+        session = _mock_session()
+        atom_orm = MagicMock()
+        atom_orm.atom_type = "kb_document"
+        atom_orm.source_table = "documents"
+        atom_orm.source_id = "99"
+        session.execute = AsyncMock(side_effect=[
+            MagicMock(scalar_one_or_none=MagicMock(return_value=atom_orm)),
+            MagicMock(),
+            MagicMock(),
+        ])
+        svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
+        await svc.update_tier("atom-x", {"tier": 3})
+
+        cascade_sql = str(session.execute.await_args_list[1].args[0])
+        assert "id::text = :source_id" in cascade_sql, (
+            f"Generic source cascade must cast id to text. SQL was: {cascade_sql}"
+        )
+        # Bind param is passed through as-is (a str) — no callers need
+        # to preconvert to int.
+        binds = session.execute.await_args_list[1].args[1]
+        assert binds == {"tier": 3, "source_id": "99"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_kb_document_cascades_to_document_chunks(self):
         """Post pc20260423: kb_document tier changes MUST propagate to every
         chunk's denormalized circle_tier in the same transaction — otherwise
