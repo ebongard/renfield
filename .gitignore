@@ -105,3 +105,10 @@ config/import_rules.yaml
 
 # Session artifacts (gstack /retro, /office-hours scratch)
 .context/
+
+# E2E browser test artifacts (regenerated on every run)
+tests/e2e/reports/
+tests/e2e/screenshots/
+tests/e2e/test-screenshots/
+tests/e2e/results/
+.playwright-mcp/
