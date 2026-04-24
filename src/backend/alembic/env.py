@@ -169,6 +169,44 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    # Pre-migration bootstrap: ensure `alembic_version.version_num` is wide
+    # enough for our revision ID convention. Renfield uses human-readable
+    # IDs like `pc20260424_paperless_metadata_tables` which run up to ~40
+    # chars — Alembic's default column width is VARCHAR(32), so the first
+    # UPDATE would fail with `StringDataRightTruncationError` on a fresh
+    # DB and on any existing DB that still has the old 32-char column.
+    #
+    # Two idempotent operations handle both cases:
+    #   1. CREATE TABLE IF NOT EXISTS with VARCHAR(64) — covers fresh
+    #      installs. If the table already exists, this is a no-op and the
+    #      pre-existing column width is preserved.
+    #   2. Conditional ALTER to widen — covers existing installs that
+    #      were provisioned before this bootstrap existed (e.g. the prod
+    #      DB before PR 2a). Checks information_schema to stay idempotent.
+    #
+    # Both run in the same connection that Alembic will then configure;
+    # they're committed implicitly by the wrapping greenlet_spawn /
+    # asyncpg auto-commit semantics before `context.run_migrations()`
+    # opens its own transactions per migration.
+    connection.exec_driver_sql(
+        "CREATE TABLE IF NOT EXISTS alembic_version ("
+        "  version_num VARCHAR(64) NOT NULL,"
+        "  CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
+        ")"
+    )
+    connection.exec_driver_sql(
+        "DO $$ BEGIN "
+        "  IF (SELECT character_maximum_length "
+        "      FROM information_schema.columns "
+        "      WHERE table_name='alembic_version' "
+        "        AND column_name='version_num') < 64 "
+        "  THEN "
+        "    ALTER TABLE alembic_version "
+        "    ALTER COLUMN version_num TYPE VARCHAR(64); "
+        "  END IF; "
+        "END $$;"
+    )
+
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
