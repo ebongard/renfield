@@ -87,6 +87,30 @@ CHAT_UPLOAD_TOOLS: dict = {
             ),
         },
     },
+    "internal.paperless_commit_upload": {
+        "description": (
+            "Second half of the cold-start confirm flow. Call this AFTER the "
+            "user replies to a paperless_confirm preview produced by "
+            "internal.forward_attachment_to_paperless. Reads the pending row "
+            "by confirm_token, parses the user's response (ja / nein / inline "
+            "edits like 'tags: foo, bar'), and finalises the upload to "
+            "Paperless. Until this tool is wired into the agent registry, the "
+            "cold-start confirm flow gets stuck after step 1 with "
+            "'Unbekanntes Tool: internal.paperless_commit_upload'."
+        ),
+        "parameters": {
+            "confirm_token": (
+                "UUID returned in the data.confirm_token field of the "
+                "preceding forward_attachment_to_paperless response. Required."
+            ),
+            "user_response_text": (
+                "The user's verbatim reply to the confirm preview. Accepts "
+                "'ja' / 'yes' to commit as-shown, 'nein' / 'no' to abort, or "
+                "an inline edit like 'tags: rechnung, 2026' / "
+                "'correspondent: Anthropic'. Required."
+            ),
+        },
+    },
 }
 
 

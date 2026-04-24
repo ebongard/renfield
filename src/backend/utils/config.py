@@ -138,7 +138,7 @@ class Settings(BaseSettings):
     mcp_refresh_interval: int = 60        # Background refresh interval (seconds)
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
-    mcp_max_response_size: int = Field(default=10240, ge=1024, le=524288)  # 10KB max response
+    mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop

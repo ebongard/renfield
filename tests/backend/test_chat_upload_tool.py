@@ -374,3 +374,41 @@ class TestForwardAttachmentToPaperless:
             assert result["data"]["task_id"] is None
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+
+# ===========================================================================
+# Tool registry — both halves of the cold-start confirm flow must register
+# ===========================================================================
+
+
+@pytest.mark.unit
+def test_chat_upload_tools_declares_both_confirm_flow_steps():
+    """Regression for the prod 'Unbekanntes Tool: internal.paperless_commit_upload'
+    error. The cold-start confirm flow has TWO steps:
+
+      1. internal.forward_attachment_to_paperless (creates pending row)
+      2. internal.paperless_commit_upload (reads the pending row + commits)
+
+    action_executor.py dispatches both, but the agent's tool registry
+    builds its tool list from CHAT_UPLOAD_TOOLS. Step 2 was missing
+    from the registry, so the agent never saw it as a valid action and
+    the flow got stuck at "Unbekanntes Tool" after step 1's preview.
+
+    This test fails fast if either tool is removed from CHAT_UPLOAD_TOOLS.
+    """
+    from services.chat_upload_tool import CHAT_UPLOAD_TOOLS
+
+    assert "internal.forward_attachment_to_paperless" in CHAT_UPLOAD_TOOLS, (
+        "forward_attachment_to_paperless missing from CHAT_UPLOAD_TOOLS"
+    )
+    assert "internal.paperless_commit_upload" in CHAT_UPLOAD_TOOLS, (
+        "paperless_commit_upload missing from CHAT_UPLOAD_TOOLS — "
+        "the agent will fail with 'Unbekanntes Tool' after the user "
+        "replies to a paperless_confirm preview."
+    )
+
+    commit = CHAT_UPLOAD_TOOLS["internal.paperless_commit_upload"]
+    # The two parameters the action_executor reads from `params`:
+    # confirm_token (required) and user_response_text.
+    assert "confirm_token" in commit["parameters"]
+    assert "user_response_text" in commit["parameters"]

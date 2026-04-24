@@ -541,16 +541,32 @@ def _truncate_response(text: str, max_size: int = MAX_RESPONSE_SIZE) -> str:
                     else:
                         hi = mid - 1
                 data[array_key] = slimmed[:best]
-                result = json.dumps(data, ensure_ascii=False)
+                # Embed the truncation note INSIDE the JSON envelope so
+                # downstream callers that do `json.loads(message)` (e.g.
+                # paperless_metadata_extractor._list_via_mcp) still
+                # succeed. A human-readable suffix appended after the
+                # closing brace was producing
+                # `MCP tool ... returned non-JSON message` warnings and
+                # a silent fall-through to "empty taxonomy" extraction
+                # — which masked the size issue for months.
                 if best < total:
-                    result += f"\n\n[... Showing {best} of {total} results]"
-                return result
+                    data["_truncation"] = {
+                        "showing": best,
+                        "total": total,
+                        "note": f"Showing {best} of {total} results",
+                    }
+                return json.dumps(data, ensure_ascii=False)
     except (json.JSONDecodeError, TypeError, KeyError):
         pass
 
-    # Fallback: byte-level truncation (reuse pre-encoded bytes)
+    # Fallback: byte-level truncation. For non-JSON MCP responses (rare),
+    # the human-readable suffix is fine — there's nothing structured to
+    # parse. The size in the message is computed live so it stays
+    # accurate when MAX_RESPONSE_SIZE changes.
     truncated = text_bytes[:max_size - 50].decode('utf-8', errors='ignore')
-    return truncated + "\n\n[... Response truncated (exceeded 10KB limit)]"
+    return truncated + (
+        f"\n\n[... Response truncated (exceeded {max_size // 1024}KB limit)]"
+    )
 
 
 # Regex pattern to detect and redact credentials in MCP responses.
