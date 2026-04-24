@@ -387,6 +387,7 @@ class TestKnowledgeBaseAPI:
         data = response.json()
         assert isinstance(data, list)
 
+    @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_list_knowledge_bases_batches_permission_lookups(self, monkeypatch):
         """Audit K2 regression guard: when list_knowledge_bases resolves
@@ -395,6 +396,7 @@ class TestKnowledgeBaseAPI:
         atom_explicit_grants query per KB in the response loop)."""
         from api.routes import knowledge as route_mod
         from services import kb_shares_service
+        from types import SimpleNamespace
         from unittest.mock import AsyncMock, MagicMock
 
         call_counter = {"n": 0}
@@ -409,9 +411,11 @@ class TestKnowledgeBaseAPI:
         )
 
         # 10 shared KBs, none owned by the asker — forces the route into the
-        # batched grants path (not the "owner" early return).
+        # batched grants path (not the "owner" early return). SimpleNamespace
+        # (not MagicMock) because Pydantic validates the response fields and
+        # MagicMock's reserved `name` attribute would leak through.
         fake_kbs = [
-            MagicMock(
+            SimpleNamespace(
                 id=i, name=f"kb{i}", description="", is_active=True,
                 is_public=False, owner_id=99,
                 created_at=None, updated_at=None,
@@ -429,9 +433,7 @@ class TestKnowledgeBaseAPI:
 
         monkeypatch.setattr(route_mod.settings, "auth_enabled", True)
 
-        fake_user = MagicMock()
-        fake_user.id = 42
-        fake_user.get_permissions = lambda: set()
+        fake_user = SimpleNamespace(id=42, get_permissions=lambda: set())
 
         fake_rag = MagicMock()
         fake_rag.list_knowledge_bases = AsyncMock(return_value=fake_kbs)
