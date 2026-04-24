@@ -315,7 +315,7 @@ class TestForwardAttachmentColdStart:
                 storage_path="/x",
                 created_date=None,
                 new_entry_proposals=[],
-                model_dump=lambda: {
+                model_dump=lambda **_kw: {
                     "title": "T",
                     "correspondent": "Stadtwerke",
                     "document_type": "Rechnung",
@@ -374,7 +374,7 @@ class TestForwardAttachmentColdStart:
                 document_type="Rechnung", tags=["wohnung"],
                 storage_path="/x", created_date=None,
                 new_entry_proposals=[],
-                model_dump=lambda: {
+                model_dump=lambda **_kw: {
                     "title": "T", "correspondent": "Stadtwerke",
                     "document_type": "Rechnung", "tags": ["wohnung"],
                     "storage_path": "/x", "created_date": None,
@@ -415,6 +415,89 @@ class TestForwardAttachmentColdStart:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_created_date_serialised_as_iso_string_for_json_columns(
+        self, tmp_path,
+    ):
+        """Regression for prod 2026-04-24: ``forward_attachment_to_paperless``
+        persisted ``post_fuzzy_output`` / ``llm_output`` via
+        ``pydantic.model_dump()`` (default mode) — which leaves
+        ``created_date`` as a ``datetime.date`` object. SQLAlchemy's JSON
+        encoder can't handle it, the INSERT 500s with
+        ``TypeError: Object of type date is not JSON serializable``,
+        and the tool reports ``Forward to Paperless failed: …``.
+
+        Fix: ``model_dump(mode="json")`` forces ISO-string serialisation
+        of every date in the payload BEFORE it reaches the JSON column.
+        This test asserts the persisted dict is JSON-serialisable.
+        """
+        import json
+        from datetime import date
+        import services.chat_upload_tool as cut_mod
+
+        upload = _upload_stub(tmp_path, filename="rechnung.pdf", size=200_000)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()
+
+        # Real pydantic model with a real date — so model_dump(mode="json")
+        # matters. SimpleNamespace mocks would hide the bug.
+        from services.paperless_metadata_extractor import (
+            ExtractionResult, PaperlessMetadata,
+        )
+        extractor_result = ExtractionResult(
+            metadata=PaperlessMetadata(
+                title="Rechnung 2026",
+                correspondent="Anthropic, PBC",
+                document_type="Rechnung",
+                tags=["Rechnung", "2026"],
+                created_date=date(2026, 4, 24),
+                new_entry_proposals=[],
+            ),
+            doc_text="doc",
+            error=None,
+        )
+
+        session_factory = _make_session_factory(upload, capture_writes=True)
+
+        with patch(
+            "services.chat_upload_tool._run_extraction",
+            AsyncMock(return_value=extractor_result),
+        ), patch(
+            "services.chat_upload_tool._get_confirms_used",
+            AsyncMock(return_value=0),
+        ), patch(
+            "services.database.AsyncSessionLocal",
+            session_factory,
+        ):
+            result = await forward_attachment_to_paperless(
+                {"attachment_id": 42},
+                mcp_manager=mcp, session_id="s", user_id=None,
+            )
+
+        assert result["success"] is True, (
+            f"forward_attachment_to_paperless failed: {result}"
+        )
+        writes = session_factory.captured_adds  # type: ignore[attr-defined]
+        pending_rows = [
+            w for w in writes if type(w).__name__ == "PaperlessPendingConfirm"
+        ]
+        assert pending_rows, "Pending confirm row was not persisted"
+        row = pending_rows[0]
+        # Every dict that flows into a JSON column must round-trip through
+        # json.dumps without a TypeError.
+        for field_name in ("llm_output", "post_fuzzy_output", "proposals"):
+            payload = getattr(row, field_name)
+            try:
+                json.dumps(payload)
+            except TypeError as exc:
+                pytest.fail(
+                    f"{field_name} contains a non-JSON-serialisable value "
+                    f"({exc}). Full payload: {payload!r}"
+                )
+        # Specifically: created_date is an ISO string, not a date object.
+        assert row.post_fuzzy_output.get("created_date") == "2026-04-24"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_silent_upload_when_past_cold_start_cap(self, tmp_path):
         upload = _upload_stub(tmp_path)
         mcp = MagicMock()
@@ -428,7 +511,7 @@ class TestForwardAttachmentColdStart:
                 document_type="Rechnung", tags=["wohnung"],
                 storage_path="/x", created_date=None,
                 new_entry_proposals=[],
-                model_dump=lambda: {
+                model_dump=lambda **_kw: {
                     "title": "T", "correspondent": "Stadtwerke",
                     "document_type": "Rechnung", "tags": ["wohnung"],
                     "storage_path": "/x",
@@ -483,7 +566,7 @@ class TestForwardAttachmentExtractionFailure:
                 title=None, correspondent=None, document_type=None,
                 tags=[], storage_path=None, created_date=None,
                 new_entry_proposals=[],
-                model_dump=lambda: {},
+                model_dump=lambda **_kw: {},
             ),
             doc_text="",
             error="Konnte Dokument nicht lesen (OCR lieferte keinen Text).",

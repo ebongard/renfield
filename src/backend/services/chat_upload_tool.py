@@ -254,10 +254,13 @@ async def forward_attachment_to_paperless(
             return direct
 
         # Merge agent overrides into the extracted metadata (agent
-        # wins). For example, if the user said "archive as Rechnung"
-        # the agent passes document_type=Rechnung even if the LLM
-        # guessed otherwise.
-        post_fuzzy = extraction_result.metadata.model_dump()
+        # wins). `mode="json"` serialises pydantic dates to ISO
+        # strings so the dict is safe to write into a JSON column
+        # downstream (paperless_pending_confirms.post_fuzzy_output).
+        # Without it, `created_date` comes back as a datetime.date
+        # which SQLAlchemy's default JSON encoder can't handle and
+        # the whole INSERT fails.
+        post_fuzzy = extraction_result.metadata.model_dump(mode="json")
         post_fuzzy.update(agent_overrides)
 
         # Cold-start gate. User is inside the window → confirm
@@ -278,7 +281,11 @@ async def forward_attachment_to_paperless(
         # the preview — agent relays to user, who answers in the next
         # turn and the agent calls paperless_commit_upload.
         confirm_token = str(uuid.uuid4())
-        llm_output_for_persist = dict(extraction_result.metadata.model_dump())
+        # Same `mode="json"` reason as post_fuzzy above — these dicts
+        # flow into the paperless_pending_confirms.llm_output /
+        # .proposals JSON columns; any datetime.date inside would kill
+        # the INSERT.
+        llm_output_for_persist = extraction_result.metadata.model_dump(mode="json")
         # Stash doc_text alongside llm_output so the commit tool can
         # write it into paperless_extraction_examples without another
         # extraction run.
@@ -295,7 +302,10 @@ async def forward_attachment_to_paperless(
                 user_id=user_id,
                 llm_output=llm_output_for_persist,
                 post_fuzzy_output=post_fuzzy,
-                proposals=[p.model_dump() for p in extraction_result.metadata.new_entry_proposals],
+                proposals=[
+                    p.model_dump(mode="json")
+                    for p in extraction_result.metadata.new_entry_proposals
+                ],
             )
             db.add(pending)
             await db.commit()
