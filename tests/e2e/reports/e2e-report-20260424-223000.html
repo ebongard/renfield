@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8"/>
+    <title id="head-title">e2e-report-20260424-223000.html</title>
+      <style type="text/css">body {
+  font-family: Helvetica, Arial, sans-serif;
+  font-size: 12px;
+  /* do not increase min-width as some may use split screens */
+  min-width: 800px;
+  color: #999;
+}
+
+h1 {
+  font-size: 24px;
+  color: black;
+}
+
+h2 {
+  font-size: 16px;
+  color: black;
+}
+
+p {
+  color: black;
+}
+
+a {
+  color: #999;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/******************************
+ * SUMMARY INFORMATION
+ ******************************/
+#environment td {
+  padding: 5px;
+  border: 1px solid #e6e6e6;
+  vertical-align: top;
+}
+#environment tr:nth-child(odd) {
+  background-color: #f6f6f6;
+}
+#environment ul {
+  margin: 0;
+  padding: 0 20px;
+}
+
+/******************************
+ * TEST RESULT COLORS
+ ******************************/
+span.passed,
+.passed .col-result {
+  color: green;
+}
+
+span.skipped,
+span.xfailed,
+span.rerun,
+.skipped .col-result,
+.xfailed .col-result,
+.rerun .col-result {
+  color: orange;
+}
+
+span.error,
+span.failed,
+span.xpassed,
+.error .col-result,
+.failed .col-result,
+.xpassed .col-result {
+  color: red;
+}
+
+.col-links__extra {
+  margin-right: 3px;
+}
+
+/******************************
+ * RESULTS TABLE
+ *
+ * 1. Table Layout
+ * 2. Extra
+ * 3. Sorting items
+ *
+ ******************************/
+/*------------------
+ * 1. Table Layout
+ *------------------*/
+#results-table {
+  border: 1px solid #e6e6e6;
+  color: #999;
+  font-size: 12px;
+  width: 100%;
+}
+#results-table th,
+#results-table td {
+  padding: 5px;
+  border: 1px solid #e6e6e6;
+  text-align: left;
+}
+#results-table th {
+  font-weight: bold;
+}
+
+/*------------------
+ * 2. Extra
+ *------------------*/
+.logwrapper {
+  max-height: 230px;
+  overflow-y: scroll;
+  background-color: #e6e6e6;
+}
+.logwrapper.expanded {
+  max-height: none;
+}
+.logwrapper.expanded .logexpander:after {
+  content: "collapse [-]";
+}
+.logwrapper .logexpander {
+  z-index: 1;
+  position: sticky;
+  top: 10px;
+  width: max-content;
+  border: 1px solid;
+  border-radius: 3px;
+  padding: 5px 7px;
+  margin: 10px 0 10px calc(100% - 80px);
+  cursor: pointer;
+  background-color: #e6e6e6;
+}
+.logwrapper .logexpander:after {
+  content: "expand [+]";
+}
+.logwrapper .logexpander:hover {
+  color: #000;
+  border-color: #000;
+}
+.logwrapper .log {
+  min-height: 40px;
+  position: relative;
+  top: -50px;
+  height: calc(100% + 50px);
+  border: 1px solid #e6e6e6;
+  color: black;
+  display: block;
+  font-family: "Courier New", Courier, monospace;
+  padding: 5px;
+  padding-right: 80px;
+  white-space: pre-wrap;
+}
+
+div.media {
+  border: 1px solid #e6e6e6;
+  float: right;
+  height: 240px;
+  margin: 0 5px;
+  overflow: hidden;
+  width: 320px;
+}
+
+.media-container {
+  display: grid;
+  grid-template-columns: 25px auto 25px;
+  align-items: center;
+  flex: 1 1;
+  overflow: hidden;
+  height: 200px;
+}
+
+.media-container--fullscreen {
+  grid-template-columns: 0px auto 0px;
+}
+
+.media-container__nav--right,
+.media-container__nav--left {
+  text-align: center;
+  cursor: pointer;
+}
+
+.media-container__viewport {
+  cursor: pointer;
+  text-align: center;
+  height: inherit;
+}
+.media-container__viewport img,
+.media-container__viewport video {
+  object-fit: cover;
+  width: 100%;
+  max-height: 100%;
+}
+
+.media__name,
+.media__counter {
+  display: flex;
+  flex-direction: row;
+  justify-content: space-around;
+  flex: 0 0 25px;
+  align-items: center;
+}
+
+.collapsible td:not(.col-links) {
+  cursor: pointer;
+}
+.collapsible td:not(.col-links):hover::after {
+  color: #bbb;
+  font-style: italic;
+  cursor: pointer;
+}
+
+.col-result {
+  width: 130px;
+}
+.col-result:hover::after {
+  content: " (hide details)";
+}
+
+.col-result.collapsed:hover::after {
+  content: " (show details)";
+}
+
+#environment-header h2:hover::after {
+  content: " (hide details)";
+  color: #bbb;
+  font-style: italic;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+#environment-header.collapsed h2:hover::after {
+  content: " (show details)";
+  color: #bbb;
+  font-style: italic;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/*------------------
+ * 3. Sorting items
+ *------------------*/
+.sortable {
+  cursor: pointer;
+}
+.sortable.desc:after {
+  content: " ";
+  position: relative;
+  left: 5px;
+  bottom: -12.5px;
+  border: 10px solid #4caf50;
+  border-bottom: 0;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+.sortable.asc:after {
+  content: " ";
+  position: relative;
+  left: 5px;
+  bottom: 12.5px;
+  border: 10px solid #4caf50;
+  border-top: 0;
+  border-left-color: transparent;
+  border-right-color: transparent;
+}
+
+.hidden, .summary__reload__button.hidden {
+  display: none;
+}
+
+.summary__data {
+  flex: 0 0 550px;
+}
+.summary__reload {
+  flex: 1 1;
+  display: flex;
+  justify-content: center;
+}
+.summary__reload__button {
+  flex: 0 0 300px;
+  display: flex;
+  color: white;
+  font-weight: bold;
+  background-color: #4caf50;
+  text-align: center;
+  justify-content: center;
+  align-items: center;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.summary__reload__button:hover {
+  background-color: #46a049;
+}
+.summary__spacer {
+  flex: 0 0 550px;
+}
+
+.controls {
+  display: flex;
+  justify-content: space-between;
+}
+
+.filters,
+.collapse {
+  display: flex;
+  align-items: center;
+}
+.filters button,
+.collapse button {
+  color: #999;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.filters button:hover,
+.collapse button:hover {
+  color: #ccc;
+}
+
+.filter__label {
+  margin-right: 10px;
+}
+
+      </style>
+    
+  </head>
+  <body>
+    <h1 id="title">e2e-report-20260424-223000.html</h1>
+    <p>Report generated on 24-Apr-2026 at 22:34:35 by <a href="https://pypi.python.org/pypi/pytest-html">pytest-html</a>
+        v4.2.0</p>
+    <div id="environment-header">
+      <h2>Environment</h2>
+    </div>
+    <table id="environment"></table>
+    <!-- TEMPLATES -->
+      <template id="template_environment_row">
+      <tr>
+        <td></td>
+        <td></td>
+      </tr>
+    </template>
+    <template id="template_results-table__body--empty">
+      <tbody class="results-table-row">
+        <tr id="not-found-message">
+          <td colspan="4">No results found. Check the filters.</td>
+        </tr>
+      </tbody>
+    </template>
+    <template id="template_results-table__tbody">
+      <tbody class="results-table-row">
+        <tr class="collapsible">
+        </tr>
+        <tr class="extras-row">
+          <td class="extra" colspan="4">
+            <div class="extraHTML"></div>
+            <div class="media">
+              <div class="media-container">
+                  <div class="media-container__nav--left">&lt;</div>
+                  <div class="media-container__viewport">
+                    <img src="" />
+                    <video controls>
+                      <source src="" type="video/mp4">
+                    </video>
+                  </div>
+                  <div class="media-container__nav--right">&gt;</div>
+                </div>
+                <div class="media__name"></div>
+                <div class="media__counter"></div>
+            </div>
+            <div class="logwrapper">
+              <div class="logexpander"></div>
+              <div class="log"></div>
+            </div>
+          </td>
+        </tr>
+      </tbody>
+    </template>
+    <!-- END TEMPLATES -->
+    <div class="summary">
+      <div class="summary__data">
+        <h2>Summary</h2>
+        <div class="additional-summary prefix">
+        </div>
+        <p class="run-count">86 tests took 00:04:35.</p>
+        <p class="filter">(Un)check the boxes to filter the results.</p>
+        <div class="summary__reload">
+          <div class="summary__reload__button hidden" onclick="location.reload()">
+            <div>There are still tests running. <br />Reload this page to get the latest results!</div>
+          </div>
+        </div>
+        <div class="summary__spacer"></div>
+        <div class="controls">
+          <div class="filters">
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="failed" >
+            <span class="failed">13 Failed,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="passed" >
+            <span class="passed">73 Passed,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="skipped" >
+            <span class="skipped">19 Skipped,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="xfailed" disabled>
+            <span class="xfailed">0 Expected failures,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="xpassed" disabled>
+            <span class="xpassed">0 Unexpected passes,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="error" disabled>
+            <span class="error">0 Errors,</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="rerun" disabled>
+            <span class="rerun">0 Reruns</span>
+            <input checked="true" class="filter" name="filter_checkbox" type="checkbox" data-test-result="retried" disabled>
+            <span class="retried">0 Retried,</span>
+          </div>
+          <div class="collapse">
+            <button id="show_all_details">Show all details</button>&nbsp;/&nbsp;<button id="hide_all_details">Hide all details</button>
+          </div>
+        </div>
+      </div>
+      <div class="additional-summary summary">
+      </div>
+      <div class="additional-summary postfix">
+      </div>
+    </div>
+    <table id="results-table">
+      <thead id="results-table-head">
+        <tr>
+          <th class="sortable" data-column-type="result">Result</th>
+          <th class="sortable" data-column-type="testId">Test</th>
+          <th class="sortable" data-column-type="duration">Duration</th>
+          <th>Links</th>
+        </tr>
+      </thead>
+    </table>
+  <footer>
+    <div id="data-container" data-jsonblob="{&#34;environment&#34;: {&#34;Python&#34;: &#34;3.14.4&#34;, &#34;Platform&#34;: &#34;macOS-15.6.1-arm64-arm-64bit-Mach-O&#34;, &#34;Packages&#34;: {&#34;pytest&#34;: &#34;9.0.3&#34;, &#34;pluggy&#34;: &#34;1.6.0&#34;}, &#34;Plugins&#34;: {&#34;metadata&#34;: &#34;3.1.1&#34;, &#34;html&#34;: &#34;4.2.0&#34;, &#34;anyio&#34;: &#34;4.13.0&#34;}}, &#34;tests&#34;: {&#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_status_endpoint_returns_shape&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_status_endpoint_returns_shape&#34;, &#34;duration&#34;: &#34;25 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_status_endpoint_returns_shape&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;25 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_tools_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_tools_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;15 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_mcp_tools_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;15 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_fetches_mcp_status_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_fetches_mcp_status_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_page_fetches_mcp_status_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_refresh_button_issues_post&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_refresh_button_issues_post&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_integrations.py::TestIntegrationsPage::test_refresh_button_issues_post&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_intents_status_endpoint&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_intents_status_endpoint&#34;, &#34;duration&#34;: &#34;9 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_intents_status_endpoint&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;9 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_admin_intents.py:43: in test_intents_status_endpoint\n    assert any(k in result for k in\nE   assert False\nE    +  where False = any(&amp;lt;generator object TestIntentsPage.test_intents_status_endpoint.&amp;lt;locals&amp;gt;.&amp;lt;genexpr&amp;gt; at 0x106ecea40&amp;gt;)\n&#34;}], &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_fetches_intents_status_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_fetches_intents_status_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_page_fetches_intents_status_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_prompt_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_prompt_endpoint_responds&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_intents.py::TestIntentsPage::test_prompt_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_page_loads&#34;, &#34;duration&#34;: &#34;961 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;961 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_maintenance_buttons_present&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_maintenance_buttons_present&#34;, &#34;duration&#34;: &#34;954 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_maintenance_buttons_present&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;954 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_reindex_button_issues_post_when_clicked&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_reindex_button_issues_post_when_clicked&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_maintenance.py::TestMaintenancePage::test_reindex_button_issues_post_when_clicked&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_loads&#34;, &#34;duration&#34;: &#34;941 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;941 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_status_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_status_endpoint_responds&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_status_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_stats_endpoint_has_counts&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_stats_endpoint_has_counts&#34;, &#34;duration&#34;: &#34;17 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_stats_endpoint_has_counts&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;17 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_fetches_status_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_fetches_status_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_paperless_audit.py::TestPaperlessAuditPage::test_page_fetches_status_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_loads&#34;, &#34;duration&#34;: &#34;959 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;959 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_status_endpoint&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_status_endpoint&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_status_endpoint&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_rooms_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_rooms_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_rooms_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_devices_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_devices_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_devices_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_fetches_rooms_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_fetches_rooms_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_presence.py::TestPresencePage::test_page_fetches_rooms_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;967 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;967 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_admin_roles.py:50: in test_page_loads\n    assert roles_page.get_by_role(\nE   AssertionError: assert False\nE    +  where False = is_visible()\nE    +    where is_visible = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/roles&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Rollen|Roles/i] &amp;gt;&amp;gt; nth=0&amp;#x27;&amp;gt;.is_visible\nE    +      where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/roles&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Rollen|Roles/i] &amp;gt;&amp;gt; nth=0&amp;#x27;&amp;gt; = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/roles&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Rollen|Roles/i]&amp;#x27;&amp;gt;.first\nE    +        where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/roles&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Rollen|Roles/i]&amp;#x27;&amp;gt; = get_by_role(&amp;#x27;heading&amp;#x27;, name=re.compile(&amp;#x27;Rollen|Roles&amp;#x27;, re.IGNORECASE))\nE    +          where get_by_role = &amp;lt;Page url=&amp;#x27;https://renfield.local/admin/roles&amp;#x27;&amp;gt;.get_by_role\nE    +          and   re.compile(&amp;#x27;Rollen|Roles&amp;#x27;, re.IGNORECASE) = &amp;lt;function compile at 0x102ff9900&amp;gt;(&amp;#x27;Rollen|Roles&amp;#x27;, re.IGNORECASE)\nE    +            where &amp;lt;function compile at 0x102ff9900&amp;gt; = re.compile\nE    +            and   re.IGNORECASE = re.IGNORECASE\n&#34;}], &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_roles_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_roles_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;10 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_roles_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;10 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_permissions_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_permissions_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_roles.py::TestRolesPageRenders::test_permissions_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_create_and_delete_role&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_create_and_delete_role&#34;, &#34;duration&#34;: &#34;9 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_create_and_delete_role&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;9 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_admin_roles.py&amp;#x27;, 75, &amp;quot;Skipped: create_role schema/auth: Client error &amp;#x27;400 Bad Request&amp;#x27; for url &amp;#x27;https://renfield.local/api/roles&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_created_role_appears_in_ui&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_created_role_appears_in_ui&#34;, &#34;duration&#34;: &#34;980 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_roles.py::TestRolesCRUD::test_created_role_appears_in_ui&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;980 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_admin_roles.py&amp;#x27;, 101, &amp;quot;Skipped: create_role schema/auth: Client error &amp;#x27;400 Bad Request&amp;#x27; for url &amp;#x27;https://renfield.local/api/roles&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_loads&#34;, &#34;duration&#34;: &#34;936 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;936 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_traces_endpoint&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_traces_endpoint&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_traces_endpoint&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/helpers/api.py&amp;#x27;, 53, &amp;#x27;Skipped: GET /api/admin/routing-traces returned 404&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_stats_endpoint&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_stats_endpoint&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_routing_stats_endpoint&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/helpers/api.py&amp;#x27;, 53, &amp;#x27;Skipped: GET /api/admin/routing-stats returned 404&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_fetches_traces_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_fetches_traces_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_routing.py::TestRoutingDashboard::test_page_fetches_traces_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_admin_routing.py:59: in test_page_fetches_traces_on_load\n    assert_no_critical_console_errors(get_errors())\ntests/e2e/helpers/asserts.py:34: in assert_no_critical_console_errors\n    assert not critical, (\n           ^^^^^^^^^^^^\nE   AssertionError: Critical console errors on this page:\nE     - Failed to load resource: the server responded with a status of 404 ()\nE     - Failed to load resource: the server responded with a status of 404 ()\nE     - API Error: ke\nE     - Failed to fetch routing data: ke\nE     - API Error: ke\n&#34;}], &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_loads&#34;, &#34;duration&#34;: &#34;943 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;943 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_satellites_endpoint_returns_envelope&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_satellites_endpoint_returns_envelope&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_satellites_endpoint_returns_envelope&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_versions_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_versions_endpoint_responds&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_versions_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_fetches_satellites_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_fetches_satellites_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_satellites.py::TestSatellitesPage::test_page_fetches_satellites_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_loads&#34;, &#34;duration&#34;: &#34;944 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;944 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_settings_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_settings_endpoint_responds&#34;, &#34;duration&#34;: &#34;9 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_settings_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;9 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_models_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_models_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;6 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_wakeword_models_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;6 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_fetches_wakeword_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_fetches_wakeword_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_settings.py::TestAdminSettingsPage::test_page_fetches_wakeword_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_loads_without_crash&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_loads_without_crash&#34;, &#34;duration&#34;: &#34;939 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_loads_without_crash&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;939 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_admin_users.py:50: in test_loads_without_crash\n    assert admin_users_page.get_by_role(\nE   AssertionError: assert False\nE    +  where False = is_visible()\nE    +    where is_visible = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/users&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Benutzer|Users/i] &amp;gt;&amp;gt; nth=0&amp;#x27;&amp;gt;.is_visible\nE    +      where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/users&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Benutzer|Users/i] &amp;gt;&amp;gt; nth=0&amp;#x27;&amp;gt; = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/users&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Benutzer|Users/i]&amp;#x27;&amp;gt;.first\nE    +        where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/admin/users&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=heading[name=/Benutzer|Users/i]&amp;#x27;&amp;gt; = get_by_role(&amp;#x27;heading&amp;#x27;, name=re.compile(&amp;#x27;Benutzer|Users&amp;#x27;, re.IGNORECASE))\nE    +          where get_by_role = &amp;lt;Page url=&amp;#x27;https://renfield.local/admin/users&amp;#x27;&amp;gt;.get_by_role\nE    +          and   re.compile(&amp;#x27;Benutzer|Users&amp;#x27;, re.IGNORECASE) = &amp;lt;function compile at 0x102ff9900&amp;gt;(&amp;#x27;Benutzer|Users&amp;#x27;, re.IGNORECASE)\nE    +            where &amp;lt;function compile at 0x102ff9900&amp;gt; = re.compile\nE    +            and   re.IGNORECASE = re.IGNORECASE\n&#34;}], &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_list_endpoint_returns_envelope&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_list_endpoint_returns_envelope&#34;, &#34;duration&#34;: &#34;12 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_users.py::TestAdminUsersPageRenders::test_list_endpoint_returns_envelope&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;12 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_create_and_delete_user_via_api&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_create_and_delete_user_via_api&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_create_and_delete_user_via_api&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_admin_users.py&amp;#x27;, 72, &amp;quot;Skipped: create_user schema/auth: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/users&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_created_user_appears_in_ui_table&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_created_user_appears_in_ui_table&#34;, &#34;duration&#34;: &#34;934 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_admin_users.py::TestAdminUsersCRUD::test_created_user_appears_in_ui_table&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;934 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_admin_users.py&amp;#x27;, 103, &amp;quot;Skipped: create_user schema/auth: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/users&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;935 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;935 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_search_input_is_present&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_search_input_is_present&#34;, &#34;duration&#34;: &#34;926 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_search_input_is_present&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;926 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_brain.py:50: in test_search_input_is_present\n    assert search.is_visible(), &amp;quot;No search input visible on /brain&amp;quot;\nE   AssertionError: No search input visible on /brain\nE   assert False\nE    +  where False = is_visible()\nE    +    where is_visible = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/brain&amp;#x27;&amp;gt; selector=&amp;quot;input[type=&amp;#x27;search&amp;#x27;], input[placeholder*=&amp;#x27;uche&amp;#x27;], input[placeholder*=&amp;#x27;earch&amp;#x27;], textarea &amp;gt;&amp;gt; nth=0&amp;quot;&amp;gt;.is_visible\n&#34;}], &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_atoms_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_atoms_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain.py::TestBrainPageRenders::test_atoms_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_brain.py::TestBrainSearch::test_empty_search_does_not_crash&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain.py::TestBrainSearch::test_empty_search_does_not_crash&#34;, &#34;duration&#34;: &#34;00:00:31&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain.py::TestBrainSearch::test_empty_search_does_not_crash&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:31&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_brain.py:70: in test_empty_search_does_not_crash\n    search.fill(&amp;quot;&amp;quot;)\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:15983: in fill\n    self._sync(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_locator.py:215: in fill\n    return await self._frame.fill(self._selector, strict=True, **params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:607: in fill\n    await self._fill(**locals_to_params(locals()))\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:619: in _fill\n    await self._channel.send(&amp;quot;fill&amp;quot;, self._timeout, locals_to_params(locals()))\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call\n    raise rewrite_error(error, f&amp;quot;{parsed_st[&amp;#x27;apiName&amp;#x27;]}: {error}&amp;quot;) from None\nE   playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded.\nE   Call log:\nE     - waiting for locator(&amp;quot;input[type=&amp;#x27;search&amp;#x27;], input[placeholder*=&amp;#x27;uche&amp;#x27;], input[placeholder*=&amp;#x27;earch&amp;#x27;], textarea&amp;quot;).first\n&#34;}], &#34;tests/e2e/areas/test_brain.py::TestBrainSearch::test_keyword_search_request_issues&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain.py::TestBrainSearch::test_keyword_search_request_issues&#34;, &#34;duration&#34;: &#34;00:00:31&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain.py::TestBrainSearch::test_keyword_search_request_issues&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:31&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_brain.py:88: in test_keyword_search_request_issues\n    search.fill(&amp;quot;rechnung&amp;quot;)\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:15983: in fill\n    self._sync(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_locator.py:215: in fill\n    return await self._frame.fill(self._selector, strict=True, **params)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:607: in fill\n    await self._fill(**locals_to_params(locals()))\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:619: in _fill\n    await self._channel.send(&amp;quot;fill&amp;quot;, self._timeout, locals_to_params(locals()))\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call\n    raise rewrite_error(error, f&amp;quot;{parsed_st[&amp;#x27;apiName&amp;#x27;]}: {error}&amp;quot;) from None\nE   playwright._impl._errors.TimeoutError: Locator.fill: Timeout 30000ms exceeded.\nE   Call log:\nE     - waiting for locator(&amp;quot;input[type=&amp;#x27;search&amp;#x27;], input[placeholder*=&amp;#x27;uche&amp;#x27;], input[placeholder*=&amp;#x27;earch&amp;#x27;], textarea&amp;quot;).first\n&#34;}], &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_review_queue_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_review_queue_endpoint_responds&#34;, &#34;duration&#34;: &#34;42 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain_review.py::TestBrainReviewPageRenders::test_review_queue_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;42 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewEmptyState::test_empty_queue_shows_clean_empty_state&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_brain_review.py::TestBrainReviewEmptyState::test_empty_queue_shows_clean_empty_state&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_brain_review.py::TestBrainReviewEmptyState::test_empty_queue_shows_clean_empty_state&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_loads&#34;, &#34;duration&#34;: &#34;944 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;944 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_cameras_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_cameras_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;12 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_camera.py::TestCameraPage::test_cameras_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;12 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_cameras_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_cameras_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_cameras_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_events_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_events_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_camera.py::TestCameraPage::test_page_fetches_events_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_loads_and_shows_empty_state&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_loads_and_shows_empty_state&#34;, &#34;duration&#34;: &#34;651 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_loads_and_shows_empty_state&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;651 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_chat.py:137: in test_loads_and_shows_empty_state\n    assert chat_page.get_by_text(\nE   assert False\nE    +  where False = is_visible()\nE    +    where is_visible = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt; selector=&amp;#x27;internal:text=&amp;quot;Starte ein Gespr\\\\u00e4ch mit Renfield&amp;quot;i&amp;#x27;&amp;gt;.is_visible\nE    +      where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt; selector=&amp;#x27;internal:text=&amp;quot;Starte ein Gespr\\\\u00e4ch mit Renfield&amp;quot;i&amp;#x27;&amp;gt; = get_by_text(&amp;#x27;Starte ein Gespr\\xe4ch mit Renfield&amp;#x27;)\nE    +        where get_by_text = &amp;lt;Page url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt;.get_by_text\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_input_controls_present_and_enabled&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_input_controls_present_and_enabled&#34;, &#34;duration&#34;: &#34;640 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_input_controls_present_and_enabled&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;640 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_chat.py:156: in test_input_controls_present_and_enabled\n    assert chat_page.get_by_role(\nE   AssertionError: assert False\nE    +  where False = is_visible()\nE    +    where is_visible = &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=button[name=/Datei anh/i]&amp;#x27;&amp;gt;.is_visible\nE    +      where &amp;lt;Locator frame=&amp;lt;Frame name= url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt; selector=&amp;#x27;internal:role=button[name=/Datei anh/i]&amp;#x27;&amp;gt; = get_by_role(&amp;#x27;button&amp;#x27;, name=re.compile(&amp;#x27;Datei anh&amp;#x27;, re.IGNORECASE))\nE    +        where get_by_role = &amp;lt;Page url=&amp;#x27;https://renfield.local/&amp;#x27;&amp;gt;.get_by_role\nE    +        and   re.compile(&amp;#x27;Datei anh&amp;#x27;, re.IGNORECASE) = &amp;lt;function compile at 0x102ff9900&amp;gt;(&amp;#x27;Datei anh&amp;#x27;, re.IGNORECASE)\nE    +          where &amp;lt;function compile at 0x102ff9900&amp;gt; = re.compile\nE    +          and   re.IGNORECASE = re.IGNORECASE\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_websocket_connects&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_websocket_connects&#34;, &#34;duration&#34;: &#34;00:00:16&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatPageRenders::test_websocket_connects&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:16&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_chat.py:173: in test_websocket_connects\n    chat_page.wait_for_selector(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector\n    self._sync(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector\n    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector\n    await self._channel.send(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call\n    raise rewrite_error(error, f&amp;quot;{parsed_st[&amp;#x27;apiName&amp;#x27;]}: {error}&amp;quot;) from None\nE   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.\nE   Call log:\nE     - waiting for locator(&amp;quot;text=Verbunden&amp;quot;) to be visible\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_send_simple_question_gets_reply&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_send_simple_question_gets_reply::setup&#34;, &#34;duration&#34;: &#34;00:00:09&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_send_simple_question_gets_reply::setup&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:09&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_chat.py&amp;#x27;, 201, &amp;#x27;Skipped: Chat WebSocket did not connect in this browser/cert combination \u2014 WS-dependent send tests skipped. Add a trusted TLS cert or run against a deploy with one.&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_new_chat_button_resets_transcript&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_new_chat_button_resets_transcript::setup&#34;, &#34;duration&#34;: &#34;00:00:09&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatSendMessage::test_new_chat_button_resets_transcript::setup&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:09&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_chat.py&amp;#x27;, 242, &amp;#x27;Skipped: Chat WebSocket did not connect in this browser/cert combination \u2014 WS-dependent send tests skipped. Add a trusted TLS cert or run against a deploy with one.&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_chat_upload_forwards_with_extracted_metadata&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_chat_upload_forwards_with_extracted_metadata::setup&#34;, &#34;duration&#34;: &#34;00:00:09&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_chat_upload_forwards_with_extracted_metadata::setup&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:09&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_chat.py&amp;#x27;, 285, &amp;#x27;Skipped: Chat WebSocket did not connect in this browser/cert combination \u2014 WS-dependent send tests skipped. Add a trusted TLS cert or run against a deploy with one.&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_upload_rejects_oversized_file&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_upload_rejects_oversized_file&#34;, &#34;duration&#34;: &#34;902 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatFileUploadToPaperless::test_upload_rejects_oversized_file&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;902 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_sent_message_appears_in_sidebar&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_sent_message_appears_in_sidebar::setup&#34;, &#34;duration&#34;: &#34;00:00:09&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_sent_message_appears_in_sidebar::setup&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:09&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_chat.py&amp;#x27;, 398, &amp;#x27;Skipped: Chat WebSocket did not connect in this browser/cert combination \u2014 WS-dependent send tests skipped. Add a trusted TLS cert or run against a deploy with one.&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_delete_button_removes_conversation&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_delete_button_removes_conversation::setup&#34;, &#34;duration&#34;: &#34;00:00:09&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestConversationSidebar::test_delete_button_removes_conversation::setup&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:09&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_chat.py&amp;#x27;, 428, &amp;#x27;Skipped: Chat WebSocket did not connect in this browser/cert combination \u2014 WS-dependent send tests skipped. Add a trusted TLS cert or run against a deploy with one.&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_chat.py::TestChatTheme::test_theme_toggle_flips_dark_class&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_chat.py::TestChatTheme::test_theme_toggle_flips_dark_class&#34;, &#34;duration&#34;: &#34;700 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_chat.py::TestChatTheme::test_theme_toggle_flips_dark_class&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;700 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_page_loads&#34;, &#34;duration&#34;: &#34;953 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;953 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_audit_endpoint_returns_envelope&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_audit_endpoint_returns_envelope&#34;, &#34;duration&#34;: &#34;11 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_audit_endpoint_returns_envelope&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;11 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_triggers_audit_fetch_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_triggers_audit_fetch_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_federation_audit.py::TestFederationAuditPage::test_triggers_audit_fetch_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_loads_with_stats_grid&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_loads_with_stats_grid&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_loads_with_stats_grid&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_kb_list_endpoint_returns_array&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_kb_list_endpoint_returns_array&#34;, &#34;duration&#34;: &#34;10 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_kb_list_endpoint_returns_array&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;10 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_documents_endpoint_returns_array&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_documents_endpoint_returns_array&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge.py::TestKnowledgePageRenders::test_documents_endpoint_returns_array&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgeUploadFlow::test_upload_pdf_appears_in_backend_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgeUploadFlow::test_upload_pdf_appears_in_backend_list&#34;, &#34;duration&#34;: &#34;00:01:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge.py::TestKnowledgeUploadFlow::test_upload_pdf_appears_in_backend_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:01:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgeDelete::test_delete_document_removes_from_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge.py::TestKnowledgeDelete::test_delete_document_removes_from_list&#34;, &#34;duration&#34;: &#34;00:00:06&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge.py::TestKnowledgeDelete::test_delete_document_removes_from_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:06&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_entities_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_entities_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;32 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_entities_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;32 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_relations_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_relations_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;25 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_relations_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;25 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_stats_endpoint_has_counts&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_stats_endpoint_has_counts&#34;, &#34;duration&#34;: &#34;10 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_stats_endpoint_has_counts&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;10 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_circle_tiers_endpoint_returns_five_entries&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_circle_tiers_endpoint_returns_five_entries&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphRenders::test_circle_tiers_endpoint_returns_five_entries&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_entities_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_entities_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_entities_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_stats_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_stats_on_load&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_knowledge_graph.py::TestKnowledgeGraphFetches::test_page_fetches_stats_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:11&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:11&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_memory.py:53: in test_page_loads\n    memory_page.wait_for_selector(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector\n    self._sync(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector\n    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector\n    await self._channel.send(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call\n    raise rewrite_error(error, f&amp;quot;{parsed_st[&amp;#x27;apiName&amp;#x27;]}: {error}&amp;quot;) from None\nE   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 10000ms exceeded.\nE   Call log:\nE     - waiting for locator(&amp;quot;h1:has-text(&amp;#x27;Erinnerungen&amp;#x27;), h2:has-text(&amp;#x27;Erinnerungen&amp;#x27;), h1:has-text(&amp;#x27;Memory&amp;#x27;), h2:has-text(&amp;#x27;Memory&amp;#x27;)&amp;quot;) to be visible\n&#34;}], &#34;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_memory_list_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_memory_list_endpoint_responds&#34;, &#34;duration&#34;: &#34;10 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryPageRenders::test_memory_list_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;10 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_create_and_delete_memory_round_trip&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_create_and_delete_memory_round_trip&#34;, &#34;duration&#34;: &#34;195 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_create_and_delete_memory_round_trip&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;195 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_memory.py:88: in test_create_and_delete_memory_round_trip\n    assert any(marker in (m.get(&amp;quot;content&amp;quot;) or &amp;quot;&amp;quot;) for m in memories), (\nE   AssertionError: Marker &amp;#x27;e2e-mem-1777062850&amp;#x27; not found in memory list after create\nE   assert False\nE    +  where False = any(&amp;lt;generator object TestMemoryCreateDelete.test_create_and_delete_memory_round_trip.&amp;lt;locals&amp;gt;.&amp;lt;genexpr&amp;gt; at 0x10b5e45e0&amp;gt;)\n&#34;}, {&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_create_and_delete_memory_round_trip::teardown&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_create_and_delete_memory_round_trip::teardown&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/helpers/api.py&amp;#x27;, 92, &amp;#x27;Skipped: DELETE /api/memory/1 returned 404&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_created_memory_surfaces_in_ui&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Failed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_created_memory_surfaces_in_ui&#34;, &#34;duration&#34;: &#34;00:00:12&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Failed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_created_memory_surfaces_in_ui&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:12&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;tests/e2e/areas/test_memory.py:115: in test_created_memory_surfaces_in_ui\n    memory_page.wait_for_selector(f&amp;quot;text={marker}&amp;quot;, timeout=10_000)\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector\n    self._sync(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector\n    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector\n    await self._channel.send(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send\n    return await self._connection.wrap_api_call(\n/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call\n    raise rewrite_error(error, f&amp;quot;{parsed_st[&amp;#x27;apiName&amp;#x27;]}: {error}&amp;quot;) from None\nE   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 10000ms exceeded.\nE   Call log:\nE     - waiting for locator(&amp;quot;text=e2e-ui-mem-1777062851&amp;quot;) to be visible\n&#34;}, {&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_created_memory_surfaces_in_ui::teardown&#34;, &#34;duration&#34;: &#34;27 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_memory.py::TestMemoryCreateDelete::test_created_memory_surfaces_in_ui::teardown&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;27 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/helpers/api.py&amp;#x27;, 92, &amp;#x27;Skipped: DELETE /api/memory/2 returned 404&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:01&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:01&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_rooms_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_rooms_endpoint_responds&#34;, &#34;duration&#34;: &#34;11 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_rooms.py::TestRoomsPageRenders::test_rooms_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;11 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_create_and_delete_room_round_trip&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_create_and_delete_room_round_trip&#34;, &#34;duration&#34;: &#34;42 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_create_and_delete_room_round_trip&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;42 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_created_room_appears_in_ui&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_created_room_appears_in_ui&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_rooms.py::TestRoomsCreateDelete::test_created_room_appears_in_ui&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_loads_and_shows_tier_labels&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_loads_and_shows_tier_labels&#34;, &#34;duration&#34;: &#34;972 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_loads_and_shows_tier_labels&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;972 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_tier_labels_endpoint_returns_five_entries&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_tier_labels_endpoint_returns_five_entries&#34;, &#34;duration&#34;: &#34;8 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_settings_circles.py::TestCirclesPageRenders::test_tier_labels_endpoint_returns_five_entries&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;8 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_settings_circles.py::TestCircleMembers::test_add_member_at_tier_trusted_persists&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_settings_circles.py::TestCircleMembers::test_add_member_at_tier_trusted_persists&#34;, &#34;duration&#34;: &#34;17 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_settings_circles.py::TestCircleMembers::test_add_member_at_tier_trusted_persists&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;17 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_settings_circles.py&amp;#x27;, 134, &amp;#x27;Skipped: add_member unavailable: 422&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesUIControls::test_has_member_management_controls&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_settings_circles.py::TestCirclesUIControls::test_has_member_management_controls&#34;, &#34;duration&#34;: &#34;966 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_settings_circles.py::TestCirclesUIControls::test_has_member_management_controls&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;966 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_loads&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_states_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_states_endpoint_responds&#34;, &#34;duration&#34;: &#34;32 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_states_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;32 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_smart_home.py&amp;#x27;, 44, &amp;#x27;Skipped: states endpoint returned unexpected shape&amp;#x27;)\n&#34;}], &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_fetches_states_on_load&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_fetches_states_on_load&#34;, &#34;duration&#34;: &#34;00:00:02&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_smart_home.py::TestSmartHomePage::test_page_fetches_states_on_load&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;00:00:02&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_page_loads&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_page_loads&#34;, &#34;duration&#34;: &#34;954 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_page_loads&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;954 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speakers_endpoint_returns_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speakers_endpoint_returns_list&#34;, &#34;duration&#34;: &#34;11 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speakers_endpoint_returns_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;11 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speaker_status_endpoint&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speaker_status_endpoint&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_speakers.py::TestSpeakersPageRenders::test_speaker_status_endpoint&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_create_rename_delete_speaker&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_create_rename_delete_speaker&#34;, &#34;duration&#34;: &#34;7 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_create_rename_delete_speaker&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;7 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_speakers.py&amp;#x27;, 72, &amp;quot;Skipped: create_speaker schema/auth: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/speakers&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_created_speaker_appears_in_ui&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_created_speaker_appears_in_ui&#34;, &#34;duration&#34;: &#34;952 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_speakers.py::TestSpeakersCRUD::test_created_speaker_appears_in_ui&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;952 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_speakers.py&amp;#x27;, 99, &amp;quot;Skipped: create_speaker schema/auth: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/speakers&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_page_loads_and_lists_tasks&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_page_loads_and_lists_tasks&#34;, &#34;duration&#34;: &#34;918 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_page_loads_and_lists_tasks&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;918 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_backend_tasks_endpoint_responds&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Passed&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_backend_tasks_endpoint_responds&#34;, &#34;duration&#34;: &#34;9 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Passed&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_tasks.py::TestTasksPageRenders::test_backend_tasks_endpoint_responds&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;9 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;No log output captured.&#34;}], &#34;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_create_task_via_api_appears_in_list&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_create_task_via_api_appears_in_list&#34;, &#34;duration&#34;: &#34;6 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_create_task_via_api_appears_in_list&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;6 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_tasks.py&amp;#x27;, 79, &amp;quot;Skipped: create_task schema mismatch or unauthenticated: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/tasks/create&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}], &#34;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_created_task_appears_in_ui&#34;: [{&#34;extras&#34;: [], &#34;result&#34;: &#34;Skipped&#34;, &#34;testId&#34;: &#34;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_created_task_appears_in_ui&#34;, &#34;duration&#34;: &#34;948 ms&#34;, &#34;resultsTableRow&#34;: [&#34;&lt;td class=\&#34;col-result\&#34;&gt;Skipped&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-testId\&#34;&gt;tests/e2e/areas/test_tasks.py::TestTasksAPIRoundTrip::test_created_task_appears_in_ui&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-duration\&#34;&gt;948 ms&lt;/td&gt;&#34;, &#34;&lt;td class=\&#34;col-links\&#34;&gt;&lt;/td&gt;&#34;], &#34;log&#34;: &#34;(&amp;#x27;/Users/evdb/projects.ai/renfield/tests/e2e/areas/test_tasks.py&amp;#x27;, 97, &amp;quot;Skipped: create_task schema or auth: Client error &amp;#x27;422 Unprocessable Entity&amp;#x27; for url &amp;#x27;https://renfield.local/api/tasks/create&amp;#x27;\\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/422&amp;quot;)\n&#34;}]}, &#34;renderCollapsed&#34;: [&#34;passed&#34;], &#34;initialSort&#34;: &#34;result&#34;, &#34;title&#34;: &#34;e2e-report-20260424-223000.html&#34;}"></div>
+    <script>
+      (function(){function r(e,n,t){function o(i,f){if(!n[i]){if(!e[i]){var c="function"==typeof require&&require;if(!f&&c)return c(i,!0);if(u)return u(i,!0);var a=new Error("Cannot find module '"+i+"'");throw a.code="MODULE_NOT_FOUND",a}var p=n[i]={exports:{}};e[i][0].call(p.exports,function(r){var n=e[i][1][r];return o(n||r)},p,p.exports,r,e,n,t)}return n[i].exports}for(var u="function"==typeof require&&require,i=0;i<t.length;i++)o(t[i]);return o}return r})()({1:[function(require,module,exports){
+const { getCollapsedCategory, setCollapsedIds } = require('./storage.js')
+
+class DataManager {
+    setManager(data) {
+        const collapsedCategories = [...getCollapsedCategory(data.renderCollapsed)]
+        const collapsedIds = []
+        const tests = Object.values(data.tests).flat().map((test, index) => {
+            const collapsed = collapsedCategories.includes(test.result.toLowerCase())
+            const id = `test_${index}`
+            if (collapsed) {
+                collapsedIds.push(id)
+            }
+            return {
+                ...test,
+                id,
+                collapsed,
+            }
+        })
+        const dataBlob = { ...data, tests }
+        this.data = { ...dataBlob }
+        this.renderData = { ...dataBlob }
+        setCollapsedIds(collapsedIds)
+    }
+
+    get allData() {
+        return { ...this.data }
+    }
+
+    resetRender() {
+        this.renderData = { ...this.data }
+    }
+
+    setRender(data) {
+        this.renderData.tests = [...data]
+    }
+
+    toggleCollapsedItem(id) {
+        this.renderData.tests = this.renderData.tests.map((test) =>
+            test.id === id ? { ...test, collapsed: !test.collapsed } : test,
+        )
+    }
+
+    set allCollapsed(collapsed) {
+        this.renderData = { ...this.renderData, tests: [...this.renderData.tests.map((test) => (
+            { ...test, collapsed }
+        ))] }
+    }
+
+    get testSubset() {
+        return [...this.renderData.tests]
+    }
+
+    get environment() {
+        return this.renderData.environment
+    }
+
+    get initialSort() {
+        return this.data.initialSort
+    }
+}
+
+module.exports = {
+    manager: new DataManager(),
+}
+
+},{"./storage.js":8}],2:[function(require,module,exports){
+const mediaViewer = require('./mediaviewer.js')
+const templateEnvRow = document.getElementById('template_environment_row')
+const templateResult = document.getElementById('template_results-table__tbody')
+
+function htmlToElements(html) {
+    const temp = document.createElement('template')
+    temp.innerHTML = html
+    return temp.content.childNodes
+}
+
+const find = (selector, elem) => {
+    if (!elem) {
+        elem = document
+    }
+    return elem.querySelector(selector)
+}
+
+const findAll = (selector, elem) => {
+    if (!elem) {
+        elem = document
+    }
+    return [...elem.querySelectorAll(selector)]
+}
+
+const dom = {
+    getStaticRow: (key, value) => {
+        const envRow = templateEnvRow.content.cloneNode(true)
+        const isObj = typeof value === 'object' && value !== null
+        const values = isObj ? Object.keys(value).map((k) => `${k}: ${value[k]}`) : null
+
+        const valuesElement = htmlToElements(
+            values ? `<ul>${values.map((val) => `<li>${val}</li>`).join('')}<ul>` : `<div>${value}</div>`)[0]
+        const td = findAll('td', envRow)
+        td[0].textContent = key
+        td[1].appendChild(valuesElement)
+
+        return envRow
+    },
+    getResultTBody: ({ testId, id, log, extras, resultsTableRow, tableHtml, result, collapsed }) => {
+        const resultBody = templateResult.content.cloneNode(true)
+        resultBody.querySelector('tbody').classList.add(result.toLowerCase())
+        resultBody.querySelector('tbody').id = testId
+        resultBody.querySelector('.collapsible').dataset.id = id
+
+        resultsTableRow.forEach((html) => {
+            const t = document.createElement('template')
+            t.innerHTML = html
+            resultBody.querySelector('.collapsible').appendChild(t.content)
+        })
+
+        if (log) {
+            // Wrap lines starting with "E" with span.error to color those lines red
+            const wrappedLog = log.replace(/^E.*$/gm, (match) => `<span class="error">${match}</span>`)
+            resultBody.querySelector('.log').innerHTML = wrappedLog
+        } else {
+            resultBody.querySelector('.log').remove()
+        }
+
+        if (collapsed) {
+            resultBody.querySelector('.collapsible > .col-result')?.classList.add('collapsed')
+            resultBody.querySelector('.extras-row').classList.add('hidden')
+        } else {
+            resultBody.querySelector('.collapsible > .col-result')?.classList.remove('collapsed')
+        }
+
+        const media = []
+        extras?.forEach(({ name, format_type, content }) => {
+            if (['image', 'video'].includes(format_type)) {
+                media.push({ path: content, name, format_type })
+            }
+
+            if (format_type === 'html') {
+                resultBody.querySelector('.extraHTML').insertAdjacentHTML('beforeend', `<div>${content}</div>`)
+            }
+        })
+        mediaViewer.setup(resultBody, media)
+
+        // Add custom html from the pytest_html_results_table_html hook
+        tableHtml?.forEach((item) => {
+            resultBody.querySelector('td[class="extra"]').insertAdjacentHTML('beforeend', item)
+        })
+
+        return resultBody
+    },
+}
+
+module.exports = {
+    dom,
+    htmlToElements,
+    find,
+    findAll,
+}
+
+},{"./mediaviewer.js":6}],3:[function(require,module,exports){
+const { manager } = require('./datamanager.js')
+const { doSort } = require('./sort.js')
+const storageModule = require('./storage.js')
+
+const getFilteredSubSet = (filter) =>
+    manager.allData.tests.filter(({ result }) => filter.includes(result.toLowerCase()))
+
+const doInitFilter = () => {
+    const currentFilter = storageModule.getVisible()
+    const filteredSubset = getFilteredSubSet(currentFilter)
+    manager.setRender(filteredSubset)
+}
+
+const doFilter = (type, show) => {
+    if (show) {
+        storageModule.showCategory(type)
+    } else {
+        storageModule.hideCategory(type)
+    }
+
+    const currentFilter = storageModule.getVisible()
+    const filteredSubset = getFilteredSubSet(currentFilter)
+    manager.setRender(filteredSubset)
+
+    const sortColumn = storageModule.getSort()
+    doSort(sortColumn, true)
+}
+
+module.exports = {
+    doFilter,
+    doInitFilter,
+}
+
+},{"./datamanager.js":1,"./sort.js":7,"./storage.js":8}],4:[function(require,module,exports){
+const { redraw, bindEvents, renderStatic } = require('./main.js')
+const { doInitFilter } = require('./filter.js')
+const { doInitSort } = require('./sort.js')
+const { manager } = require('./datamanager.js')
+const data = JSON.parse(document.getElementById('data-container').dataset.jsonblob)
+
+function init() {
+    manager.setManager(data)
+    doInitFilter()
+    doInitSort()
+    renderStatic()
+    redraw()
+    bindEvents()
+}
+
+init()
+
+},{"./datamanager.js":1,"./filter.js":3,"./main.js":5,"./sort.js":7}],5:[function(require,module,exports){
+const { dom, find, findAll } = require('./dom.js')
+const { manager } = require('./datamanager.js')
+const { doSort } = require('./sort.js')
+const { doFilter } = require('./filter.js')
+const {
+    getVisible,
+    getCollapsedIds,
+    setCollapsedIds,
+    getSort,
+    getSortDirection,
+    possibleFilters,
+} = require('./storage.js')
+
+const removeChildren = (node) => {
+    while (node.firstChild) {
+        node.removeChild(node.firstChild)
+    }
+}
+
+const renderStatic = () => {
+    const renderEnvironmentTable = () => {
+        const environment = manager.environment
+        const rows = Object.keys(environment).map((key) => dom.getStaticRow(key, environment[key]))
+        const table = document.getElementById('environment')
+        removeChildren(table)
+        rows.forEach((row) => table.appendChild(row))
+    }
+    renderEnvironmentTable()
+}
+
+const addItemToggleListener = (elem) => {
+    elem.addEventListener('click', ({ target }) => {
+        const id = target.parentElement.dataset.id
+        manager.toggleCollapsedItem(id)
+
+        const collapsedIds = getCollapsedIds()
+        if (collapsedIds.includes(id)) {
+            const updated = collapsedIds.filter((item) => item !== id)
+            setCollapsedIds(updated)
+        } else {
+            collapsedIds.push(id)
+            setCollapsedIds(collapsedIds)
+        }
+        redraw()
+    })
+}
+
+const renderContent = (tests) => {
+    const sortAttr = getSort(manager.initialSort)
+    const sortAsc = JSON.parse(getSortDirection())
+    const rows = tests.map(dom.getResultTBody)
+    const table = document.getElementById('results-table')
+    const tableHeader = document.getElementById('results-table-head')
+
+    const newTable = document.createElement('table')
+    newTable.id = 'results-table'
+
+    // remove all sorting classes and set the relevant
+    findAll('.sortable', tableHeader).forEach((elem) => elem.classList.remove('asc', 'desc'))
+    tableHeader.querySelector(`.sortable[data-column-type="${sortAttr}"]`)?.classList.add(sortAsc ? 'desc' : 'asc')
+    newTable.appendChild(tableHeader)
+
+    if (!rows.length) {
+        const emptyTable = document.getElementById('template_results-table__body--empty').content.cloneNode(true)
+        newTable.appendChild(emptyTable)
+    } else {
+        rows.forEach((row) => {
+            if (!!row) {
+                findAll('.collapsible td:not(.col-links', row).forEach(addItemToggleListener)
+                find('.logexpander', row).addEventListener('click',
+                    (evt) => evt.target.parentNode.classList.toggle('expanded'),
+                )
+                newTable.appendChild(row)
+            }
+        })
+    }
+
+    table.replaceWith(newTable)
+}
+
+const renderDerived = () => {
+    const currentFilter = getVisible()
+    possibleFilters.forEach((result) => {
+        const input = document.querySelector(`input[data-test-result="${result}"]`)
+        input.checked = currentFilter.includes(result)
+    })
+}
+
+const bindEvents = () => {
+    const filterColumn = (evt) => {
+        const { target: element } = evt
+        const { testResult } = element.dataset
+
+        doFilter(testResult, element.checked)
+        const collapsedIds = getCollapsedIds()
+        const updated = manager.renderData.tests.map((test) => {
+            return {
+                ...test,
+                collapsed: collapsedIds.includes(test.id),
+            }
+        })
+        manager.setRender(updated)
+        redraw()
+    }
+
+    const header = document.getElementById('environment-header')
+    header.addEventListener('click', () => {
+        const table = document.getElementById('environment')
+        table.classList.toggle('hidden')
+        header.classList.toggle('collapsed')
+    })
+
+    findAll('input[name="filter_checkbox"]').forEach((elem) => {
+        elem.addEventListener('click', filterColumn)
+    })
+
+    findAll('.sortable').forEach((elem) => {
+        elem.addEventListener('click', (evt) => {
+            const { target: element } = evt
+            const { columnType } = element.dataset
+            doSort(columnType)
+            redraw()
+        })
+    })
+
+    document.getElementById('show_all_details').addEventListener('click', () => {
+        manager.allCollapsed = false
+        setCollapsedIds([])
+        redraw()
+    })
+    document.getElementById('hide_all_details').addEventListener('click', () => {
+        manager.allCollapsed = true
+        const allIds = manager.renderData.tests.map((test) => test.id)
+        setCollapsedIds(allIds)
+        redraw()
+    })
+}
+
+const redraw = () => {
+    const { testSubset } = manager
+
+    renderContent(testSubset)
+    renderDerived()
+}
+
+module.exports = {
+    redraw,
+    bindEvents,
+    renderStatic,
+}
+
+},{"./datamanager.js":1,"./dom.js":2,"./filter.js":3,"./sort.js":7,"./storage.js":8}],6:[function(require,module,exports){
+class MediaViewer {
+    constructor(assets) {
+        this.assets = assets
+        this.index = 0
+    }
+
+    nextActive() {
+        this.index = this.index === this.assets.length - 1 ? 0 : this.index + 1
+        return [this.activeFile, this.index]
+    }
+
+    prevActive() {
+        this.index = this.index === 0 ? this.assets.length - 1 : this.index -1
+        return [this.activeFile, this.index]
+    }
+
+    get currentIndex() {
+        return this.index
+    }
+
+    get activeFile() {
+        return this.assets[this.index]
+    }
+}
+
+
+const setup = (resultBody, assets) => {
+    if (!assets.length) {
+        resultBody.querySelector('.media').classList.add('hidden')
+        return
+    }
+
+    const mediaViewer = new MediaViewer(assets)
+    const container = resultBody.querySelector('.media-container')
+    const leftArrow = resultBody.querySelector('.media-container__nav--left')
+    const rightArrow = resultBody.querySelector('.media-container__nav--right')
+    const mediaName = resultBody.querySelector('.media__name')
+    const counter = resultBody.querySelector('.media__counter')
+    const imageEl = resultBody.querySelector('img')
+    const sourceEl = resultBody.querySelector('source')
+    const videoEl = resultBody.querySelector('video')
+
+    const setImg = (media, index) => {
+        if (media?.format_type === 'image') {
+            imageEl.src = media.path
+
+            imageEl.classList.remove('hidden')
+            videoEl.classList.add('hidden')
+        } else if (media?.format_type === 'video') {
+            sourceEl.src = media.path
+
+            videoEl.classList.remove('hidden')
+            imageEl.classList.add('hidden')
+        }
+
+        mediaName.innerText = media?.name
+        counter.innerText = `${index + 1} / ${assets.length}`
+    }
+    setImg(mediaViewer.activeFile, mediaViewer.currentIndex)
+
+    const moveLeft = () => {
+        const [media, index] = mediaViewer.prevActive()
+        setImg(media, index)
+    }
+    const doRight = () => {
+        const [media, index] = mediaViewer.nextActive()
+        setImg(media, index)
+    }
+    const openImg = () => {
+        window.open(mediaViewer.activeFile.path, '_blank')
+    }
+    if (assets.length === 1) {
+        container.classList.add('media-container--fullscreen')
+    } else {
+        leftArrow.addEventListener('click', moveLeft)
+        rightArrow.addEventListener('click', doRight)
+    }
+    imageEl.addEventListener('click', openImg)
+}
+
+module.exports = {
+    setup,
+}
+
+},{}],7:[function(require,module,exports){
+const { manager } = require('./datamanager.js')
+const storageModule = require('./storage.js')
+
+const genericSort = (list, key, ascending, customOrder) => {
+    let sorted
+    if (customOrder) {
+        sorted = list.sort((a, b) => {
+            const aValue = a.result.toLowerCase()
+            const bValue = b.result.toLowerCase()
+
+            const aIndex = customOrder.findIndex((item) => item.toLowerCase() === aValue)
+            const bIndex = customOrder.findIndex((item) => item.toLowerCase() === bValue)
+
+            // Compare the indices to determine the sort order
+            return aIndex - bIndex
+        })
+    } else {
+        sorted = list.sort((a, b) => a[key] === b[key] ? 0 : a[key] > b[key] ? 1 : -1)
+    }
+
+    if (ascending) {
+        sorted.reverse()
+    }
+    return sorted
+}
+
+const durationSort = (list, ascending) => {
+    const parseDuration = (duration) => {
+        if (duration.includes(':')) {
+            // If it's in the format "HH:mm:ss"
+            const [hours, minutes, seconds] = duration.split(':').map(Number)
+            return (hours * 3600 + minutes * 60 + seconds) * 1000
+        } else {
+            // If it's in the format "nnn ms"
+            return parseInt(duration)
+        }
+    }
+    const sorted = list.sort((a, b) => parseDuration(a['duration']) - parseDuration(b['duration']))
+    if (ascending) {
+        sorted.reverse()
+    }
+    return sorted
+}
+
+const doInitSort = () => {
+    const type = storageModule.getSort(manager.initialSort)
+    const ascending = storageModule.getSortDirection()
+    const list = manager.testSubset
+    const initialOrder = ['Error', 'Failed', 'Rerun', 'XFailed', 'XPassed', 'Skipped', 'Passed']
+
+    storageModule.setSort(type)
+    storageModule.setSortDirection(ascending)
+
+    if (type?.toLowerCase() === 'original') {
+        manager.setRender(list)
+    } else {
+        let sortedList
+        switch (type) {
+        case 'duration':
+            sortedList = durationSort(list, ascending)
+            break
+        case 'result':
+            sortedList = genericSort(list, type, ascending, initialOrder)
+            break
+        default:
+            sortedList = genericSort(list, type, ascending)
+            break
+        }
+        manager.setRender(sortedList)
+    }
+}
+
+const doSort = (type, skipDirection) => {
+    const newSortType = storageModule.getSort(manager.initialSort) !== type
+    const currentAsc = storageModule.getSortDirection()
+    let ascending
+    if (skipDirection) {
+        ascending = currentAsc
+    } else {
+        ascending = newSortType ? false : !currentAsc
+    }
+    storageModule.setSort(type)
+    storageModule.setSortDirection(ascending)
+
+    const list = manager.testSubset
+    const sortedList = type === 'duration' ? durationSort(list, ascending) : genericSort(list, type, ascending)
+    manager.setRender(sortedList)
+}
+
+module.exports = {
+    doInitSort,
+    doSort,
+}
+
+},{"./datamanager.js":1,"./storage.js":8}],8:[function(require,module,exports){
+const possibleFilters = [
+    'passed',
+    'skipped',
+    'failed',
+    'error',
+    'xfailed',
+    'xpassed',
+    'rerun',
+]
+
+const getVisible = () => {
+    const url = new URL(window.location.href)
+    const settings = new URLSearchParams(url.search).get('visible')
+    const lower = (item) => {
+        const lowerItem = item.toLowerCase()
+        if (possibleFilters.includes(lowerItem)) {
+            return lowerItem
+        }
+        return null
+    }
+    return settings === null ?
+        possibleFilters :
+        [...new Set(settings?.split(',').map(lower).filter((item) => item))]
+}
+
+const hideCategory = (categoryToHide) => {
+    const url = new URL(window.location.href)
+    const visibleParams = new URLSearchParams(url.search).get('visible')
+    const currentVisible = visibleParams ? visibleParams.split(',') : [...possibleFilters]
+    const settings = [...new Set(currentVisible)].filter((f) => f !== categoryToHide).join(',')
+
+    url.searchParams.set('visible', settings)
+    window.history.pushState({}, null, unescape(url.href))
+}
+
+const showCategory = (categoryToShow) => {
+    if (typeof window === 'undefined') {
+        return
+    }
+    const url = new URL(window.location.href)
+    const currentVisible = new URLSearchParams(url.search).get('visible')?.split(',').filter(Boolean) ||
+        [...possibleFilters]
+    const settings = [...new Set([categoryToShow, ...currentVisible])]
+    const noFilter = possibleFilters.length === settings.length || !settings.length
+
+    noFilter ? url.searchParams.delete('visible') : url.searchParams.set('visible', settings.join(','))
+    window.history.pushState({}, null, unescape(url.href))
+}
+
+const getSort = (initialSort) => {
+    const url = new URL(window.location.href)
+    let sort = new URLSearchParams(url.search).get('sort')
+    if (!sort) {
+        sort = initialSort || 'result'
+    }
+    return sort
+}
+
+const setSort = (type) => {
+    const url = new URL(window.location.href)
+    url.searchParams.set('sort', type)
+    window.history.pushState({}, null, unescape(url.href))
+}
+
+const getCollapsedCategory = (renderCollapsed) => {
+    let categories
+    if (typeof window !== 'undefined') {
+        const url = new URL(window.location.href)
+        const collapsedItems = new URLSearchParams(url.search).get('collapsed')
+        switch (true) {
+        case !renderCollapsed && collapsedItems === null:
+            categories = ['passed']
+            break
+        case collapsedItems?.length === 0 || /^["']{2}$/.test(collapsedItems):
+            categories = []
+            break
+        case /^all$/.test(collapsedItems) || collapsedItems === null && /^all$/.test(renderCollapsed):
+            categories = [...possibleFilters]
+            break
+        default:
+            categories = collapsedItems?.split(',').map((item) => item.toLowerCase()) || renderCollapsed
+            break
+        }
+    } else {
+        categories = []
+    }
+    return categories
+}
+
+const getSortDirection = () => JSON.parse(sessionStorage.getItem('sortAsc')) || false
+const setSortDirection = (ascending) => sessionStorage.setItem('sortAsc', ascending)
+
+const getCollapsedIds = () => JSON.parse(sessionStorage.getItem('collapsedIds')) || []
+const setCollapsedIds = (list) => sessionStorage.setItem('collapsedIds', JSON.stringify(list))
+
+module.exports = {
+    getVisible,
+    hideCategory,
+    showCategory,
+    getCollapsedIds,
+    setCollapsedIds,
+    getSort,
+    setSort,
+    getSortDirection,
+    setSortDirection,
+    getCollapsedCategory,
+    possibleFilters,
+}
+
+},{}]},{},[4]);
+    </script>
+  </footer>
+  </body>
+</html>

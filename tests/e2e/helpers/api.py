@@ -94,18 +94,25 @@ def delete(path: str, *, skip_on_status: tuple[int, ...] = ()) -> None:
             r.raise_for_status()
 
 
-# --- Conversations (/api/conversations) --------------------------------
+# --- Conversations (/api/chat/conversations + /api/chat/session/{id}) -
+# Chat router is mounted at /api/chat, so /conversations is where the
+# list lives, and DELETE /session/{id} is the per-conversation teardown.
 
 def list_conversations(*, limit: int = 10) -> list[dict[str, Any]]:
-    return get("/api/conversations", params={"limit": limit})
+    result = get("/api/chat/conversations", params={"limit": limit})
+    # Envelope is {"conversations": [...]} on current builds; legacy
+    # builds returned a plain list.
+    if isinstance(result, dict):
+        return result.get("conversations", [])
+    return result
 
 
 def get_conversation(session_id: str) -> dict[str, Any]:
-    return get(f"/api/conversations/{session_id}")
+    return get(f"/api/chat/conversation/{session_id}/summary")
 
 
 def delete_conversation(session_id: str) -> None:
-    delete(f"/api/conversations/{session_id}")
+    delete(f"/api/chat/session/{session_id}")
 
 
 # --- Knowledge base (/api/knowledge) -----------------------------------

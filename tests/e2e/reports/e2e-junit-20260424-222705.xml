@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="7" skipped="1" tests="10" time="83.035" timestamp="2026-04-24T22:27:05.505089+02:00" hostname="demeter.local"><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_loads_and_shows_empty_state" time="1.001"><failure message="assert False&#10; +  where False = is_visible()&#10; +    where is_visible = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:text=&quot;Starte ein Gespr\\u00e4ch mit Renfield&quot;i'&gt;.is_visible&#10; +      where &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:text=&quot;Starte ein Gespr\\u00e4ch mit Renfield&quot;i'&gt; = get_by_text('Starte ein Gespr\xe4ch mit Renfield')&#10; +        where get_by_text = &lt;Page url='https://renfield.local/'&gt;.get_by_text">tests/e2e/areas/test_chat.py:123: in test_loads_and_shows_empty_state
+    assert chat_page.get_by_text(
+E   assert False
+E    +  where False = is_visible()
+E    +    where is_visible = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:text="Starte ein Gespr\\u00e4ch mit Renfield"i'&gt;.is_visible
+E    +      where &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:text="Starte ein Gespr\\u00e4ch mit Renfield"i'&gt; = get_by_text('Starte ein Gespr\xe4ch mit Renfield')
+E    +        where get_by_text = &lt;Page url='https://renfield.local/'&gt;.get_by_text</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_input_controls_present_and_enabled" time="0.678"><failure message="AssertionError: assert False&#10; +  where False = is_visible()&#10; +    where is_visible = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=button[name=/Datei anh/i]'&gt;.is_visible&#10; +      where &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=button[name=/Datei anh/i]'&gt; = get_by_role('button', name=re.compile('Datei anh', re.IGNORECASE))&#10; +        where get_by_role = &lt;Page url='https://renfield.local/'&gt;.get_by_role&#10; +        and   re.compile('Datei anh', re.IGNORECASE) = &lt;function compile at 0x104db9900&gt;('Datei anh', re.IGNORECASE)&#10; +          where &lt;function compile at 0x104db9900&gt; = re.compile&#10; +          and   re.IGNORECASE = re.IGNORECASE">tests/e2e/areas/test_chat.py:142: in test_input_controls_present_and_enabled
+    assert chat_page.get_by_role(
+E   AssertionError: assert False
+E    +  where False = is_visible()
+E    +    where is_visible = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=button[name=/Datei anh/i]'&gt;.is_visible
+E    +      where &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=button[name=/Datei anh/i]'&gt; = get_by_role('button', name=re.compile('Datei anh', re.IGNORECASE))
+E    +        where get_by_role = &lt;Page url='https://renfield.local/'&gt;.get_by_role
+E    +        and   re.compile('Datei anh', re.IGNORECASE) = &lt;function compile at 0x104db9900&gt;('Datei anh', re.IGNORECASE)
+E    +          where &lt;function compile at 0x104db9900&gt; = re.compile
+E    +          and   re.IGNORECASE = re.IGNORECASE</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_websocket_connects" time="15.651"><failure message="playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible">tests/e2e/areas/test_chat.py:159: in test_websocket_connects
+    chat_page.wait_for_selector(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatSendMessage" name="test_send_simple_question_gets_reply" time="0.665"><failure message="AssertionError: Expected ≥2 messages (user + assistant), got 1&#10;assert 1 &gt;= 2&#10; +  where 1 = count()&#10; +    where count = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=article'&gt;.count">tests/e2e/areas/test_chat.py:210: in test_send_simple_question_gets_reply
+    assert articles.count() &gt;= 2, (
+E   AssertionError: Expected ≥2 messages (user + assistant), got 1
+E   assert 1 &gt;= 2
+E    +  where 1 = count()
+E    +    where count = &lt;Locator frame=&lt;Frame name= url='https://renfield.local/'&gt; selector='internal:role=article'&gt;.count</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatSendMessage" name="test_new_chat_button_resets_transcript" time="30.697"><failure message="playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.&#10;Call log:&#10;  - waiting for get_by_role(&quot;button&quot;, name=re.compile(r&quot;Neuer Chat&quot;))">tests/e2e/areas/test_chat.py:242: in test_new_chat_button_resets_transcript
+    chat_page.get_by_role("button", name=re.compile(r"Neuer Chat")).click()
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:15631: in click
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_locator.py:162: in click
+    return await self._frame._click(self._selector, strict=True, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:566: in _click
+    await self._channel.send("click", self._timeout, locals_to_params(locals()))
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+E   Call log:
+E     - waiting for get_by_role("button", name=re.compile(r"Neuer Chat"))</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatFileUploadToPaperless" name="test_chat_upload_forwards_with_extracted_metadata" time="0.669"><skipped type="pytest.skip" message="PAPERLESS_API_URL / PAPERLESS_API_TOKEN not set">/Users/evdb/projects.ai/renfield/tests/e2e/helpers/paperless.py:36: PAPERLESS_API_URL / PAPERLESS_API_TOKEN not set</skipped></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatFileUploadToPaperless" name="test_upload_rejects_oversized_file" time="1.273" /><testcase classname="tests.e2e.areas.test_chat.TestConversationSidebar" name="test_sent_message_appears_in_sidebar" time="0.697"><failure message="AssertionError: No conversation in sidebar has a preview containing 'Sidebar-test-1777062476'. Previews seen: ['Kurztest: Hallo.', 'Lade das Dokument nach Paperless', 'Welche Rechnungen von Wehrmann haben wir?', 'Zeige mir alle DNLA Renderer']&#10;assert None is not None">tests/e2e/areas/test_chat.py:403: in test_sent_message_appears_in_sidebar
+    assert first is not None, (
+E   AssertionError: No conversation in sidebar has a preview containing 'Sidebar-test-1777062476'. Previews seen: ['Kurztest: Hallo.', 'Lade das Dokument nach Paperless', 'Welche Rechnungen von Wehrmann haben wir?', 'Zeige mir alle DNLA Renderer']
+E   assert None is not None</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestConversationSidebar" name="test_delete_button_removes_conversation" time="30.688"><failure message="playwright._impl._errors.TimeoutError: Locator.hover: Timeout 30000ms exceeded.&#10;Call log:&#10;  - waiting for get_by_role(&quot;button&quot;, name=re.compile(r&quot;Konversation:.*delete\-test\-1777062477&quot;)).first">tests/e2e/areas/test_chat.py:432: in test_delete_button_removes_conversation
+    list_item.hover()
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:17035: in hover
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_locator.py:460: in hover
+    return await self._frame.hover(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:741: in hover
+    await self._channel.send("hover", self._timeout, locals_to_params(locals()))
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Locator.hover: Timeout 30000ms exceeded.
+E   Call log:
+E     - waiting for get_by_role("button", name=re.compile(r"Konversation:.*delete\-test\-1777062477")).first</failure></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatTheme" name="test_theme_toggle_flips_dark_class" time="0.768" /></testsuite></testsuites>

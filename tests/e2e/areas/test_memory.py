@@ -1,3 +1,4 @@
+
 """Real browser E2E tests for Erinnerungen (/memory).
 
 Drives:
@@ -47,10 +48,14 @@ def created_memory_ids():
 class TestMemoryPageRenders:
     def test_page_loads(self, memory_page):
         get_errors = capture_console_errors(memory_page)
+        # i18n strings lazy-load; wait explicitly for the translated
+        # heading instead of sampling the DOM at a single moment.
+        memory_page.wait_for_selector(
+            "h1:has-text('Erinnerungen'), h2:has-text('Erinnerungen'), "
+            "h1:has-text('Memory'), h2:has-text('Memory')",
+            timeout=10_000,
+        )
         assert_body_not_blank(memory_page.locator("body").inner_text())
-        assert memory_page.get_by_role(
-            "heading", name=re.compile(r"Erinnerungen|Memory", re.IGNORECASE),
-        ).first.is_visible()
         assert_no_critical_console_errors(get_errors())
 
     def test_memory_list_endpoint_responds(self):

@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="10" failures="0" skipped="0" tests="10" time="157.465" timestamp="2026-04-24T22:22:16.115600+02:00" hostname="demeter.local"><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_loads_and_shows_empty_state" time="15.991"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_input_controls_present_and_enabled" time="15.638"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatPageRenders" name="test_websocket_connects" time="15.640"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatSendMessage" name="test_send_simple_question_gets_reply" time="15.629"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatSendMessage" name="test_new_chat_button_resets_transcript" time="15.664"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatFileUploadToPaperless" name="test_chat_upload_forwards_with_extracted_metadata" time="15.640"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatFileUploadToPaperless" name="test_upload_rejects_oversized_file" time="15.633"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestConversationSidebar" name="test_sent_message_appears_in_sidebar" time="15.644"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestConversationSidebar" name="test_delete_button_removes_conversation" time="15.645"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase><testcase classname="tests.e2e.areas.test_chat.TestChatTheme" name="test_theme_toggle_flips_dark_class" time="15.660"><error message="failed on setup with &quot;playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.&#10;Call log:&#10;  - waiting for locator(&quot;text=Verbunden&quot;) to be visible&quot;">tests/e2e/areas/test_chat.py:56: in chat_page
+    page.wait_for_selector("text=Verbunden", timeout=15_000)
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/sync_api/_generated.py:8217: in wait_for_selector
+    self._sync(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_page.py:419: in wait_for_selector
+    return await self._main_frame.wait_for_selector(**locals_to_params(locals()))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_frame.py:369: in wait_for_selector
+    await self._channel.send(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:69: in send
+    return await self._connection.wrap_api_call(
+/private/tmp/renfield-e2e-venv/lib/python3.14/site-packages/playwright/_impl/_connection.py:559: in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+E   playwright._impl._errors.TimeoutError: Page.wait_for_selector: Timeout 15000ms exceeded.
+E   Call log:
+E     - waiting for locator("text=Verbunden") to be visible</error></testcase></testsuite></testsuites>

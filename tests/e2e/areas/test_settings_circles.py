@@ -96,12 +96,13 @@ class TestCirclesPageRenders:
             tiers = _get("/api/knowledge-graph/circle-tiers")
         except httpx.HTTPStatusError as e:
             pytest.skip(f"circle-tiers endpoint: {e.response.status_code}")
-        # Endpoint may return a list or a dict keyed by tier number
-        if isinstance(tiers, dict):
-            assert len(tiers) == 5, f"Expected 5 tiers, got {len(tiers)}: {list(tiers)}"
-        else:
-            assert isinstance(tiers, list)
-            assert len(tiers) == 5
+        # Envelope is {"tiers": [...]} on the real API; legacy shapes
+        # (direct list or dict keyed by tier#) are accepted for forward
+        # compatibility.
+        if isinstance(tiers, dict) and "tiers" in tiers:
+            tiers = tiers["tiers"]
+        assert hasattr(tiers, "__len__"), f"Unexpected shape: {tiers!r}"
+        assert len(tiers) == 5, f"Expected 5 tiers, got {len(tiers)}: {tiers!r}"
 
 
 class TestCircleMembers:

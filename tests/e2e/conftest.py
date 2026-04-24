@@ -40,7 +40,15 @@ def _playwright_instance():
 
 @pytest.fixture(scope="session")
 def browser(_playwright_instance):
-    browser = _playwright_instance.chromium.launch(headless=True)
+    # --ignore-certificate-errors applies the cert bypass to WebSocket
+    # upgrades too, which `ignore_https_errors=True` on the context
+    # does NOT cover in headless Chromium. Without it, renfield.local's
+    # self-signed cert silently kills the wss:// handshake and the
+    # chat page sits on "Verbinde..." forever.
+    browser = _playwright_instance.chromium.launch(
+        headless=True,
+        args=["--ignore-certificate-errors"],
+    )
     yield browser
     browser.close()
 
