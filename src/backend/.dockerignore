@@ -1,0 +1,30 @@
+# Dockerignore for the backend image. The build context is src/backend/ (not
+# the repo root — see .claude/skills/deploy-production/SKILL.md).
+#
+# The three YAML files below are provided by the `renfield-mcp-config`
+# ConfigMap at runtime via subPath mounts. They must NOT ship in the image:
+# kubelet subPath-mounting a file over a file works; over a directory or
+# missing path it fails with "not a directory". If a stray file or
+# directory with these names ends up in the build context (e.g. from
+# kubelet artifacts on the build box, or a local copy someone left
+# behind), the build would silently bake it in and every pod restart
+# after the next deploy would crashloop on the mount.
+config/mcp_servers.yaml
+config/agent_roles.yaml
+config/kg_scopes.yaml
+config/mail_accounts.yaml
+config/mail_accounts.default.yaml
+
+# Python bytecode caches, test artefacts, editor scratch.
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+# Virtualenvs shouldn't leak into the image.
+.venv
+venv

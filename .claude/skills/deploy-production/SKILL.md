@@ -11,6 +11,7 @@ disable-model-invocation: true
 - **Pi Zero 2 W SD cards are EXTREMELY fragile** — SIGKILL during restart can brick the device. Always ask before restarting satellite services. See `references/satellite-deploy.md`.
 - **Never force-push to main** and never bypass branch protection; main merges go through a PR (see `git-workflow` skill).
 - **CI is intentionally non-functional for this project** — run tests on the .159 build box, not in CI.
+- **ConfigMap-provided files are NOT in the image.** `mcp_servers.yaml`, `agent_roles.yaml`, `kg_scopes.yaml`, `mail_accounts.yaml` live only in the `renfield-mcp-config` ConfigMap. If the build-box working copy ever grows these as untracked files or directories at `src/backend/config/*`, the resulting image breaks the pod's subPath mount with `not a directory`. Keep `src/backend/.dockerignore` carving these paths out, and clean them on .159 if you see root-owned leftovers from kubelet bind-mount artefacts.
 
 ## Topology at a glance
 
@@ -26,28 +27,27 @@ Single-VM `renfield.local` deployment on `/opt/renfield` is legacy / build-box o
 
 Images live in Harbor and are pulled by the cluster via `imagePullPolicy: Always` on the `:latest` tag (or pinned tags like `:v1.3.1`).
 
+Both Dockerfiles expect **their own directory as the build context** — not the repo root. The Dockerfile's `COPY requirements.txt constraints.txt ./` and `COPY wakeword-models /app/wakeword-models` resolve against context root, and those files live at `src/backend/*`, not at the repo root.
+
 ```bash
 # From the build box (.159). You need to be logged in:
 docker login registry.treehouse.x-idra.de
 
 # Backend (CPU image, ~3.5 GB — torch pinned to +cpu wheels via constraints.txt)
+cd /opt/renfield/src/backend
 docker build -t registry.treehouse.x-idra.de/renfield/backend:latest \
-  -f src/backend/Dockerfile .
+             -t registry.treehouse.x-idra.de/renfield/backend:pr<N>-<sha> \
+             -f Dockerfile .
 docker push registry.treehouse.x-idra.de/renfield/backend:latest
+docker push registry.treehouse.x-idra.de/renfield/backend:pr<N>-<sha>
 
 # Frontend (Nginx serving React build, ~144 MB)
-docker build -t registry.treehouse.x-idra.de/renfield/frontend:latest \
-  -f src/frontend/Dockerfile src/frontend/
+cd /opt/renfield/src/frontend
+docker build -t registry.treehouse.x-idra.de/renfield/frontend:latest -f Dockerfile .
 docker push registry.treehouse.x-idra.de/renfield/frontend:latest
 ```
 
-Tag pinning (recommended over `:latest` for traceability):
-
-```bash
-docker tag registry.treehouse.x-idra.de/renfield/backend:latest \
-          registry.treehouse.x-idra.de/renfield/backend:v1.3.2
-docker push registry.treehouse.x-idra.de/renfield/backend:v1.3.2
-```
+Always build + push a pinned tag (`pr<N>-<sha>`) alongside `:latest` — gives you an immutable rollback target (`kubectl set image deploy/backend backend=.../backend:pr<N>-<sha>`).
 
 **Why the image stays ~3.5 GB:** `src/backend/constraints.txt` pins `torch`/`torchaudio`/`torchvision` to the `+cpu` wheels so transitive deps (docling, easyocr, transformers) can't drag in the 2.7 GB CUDA runtime + 641 MB triton. Don't lift that constraint unless you've thought through the Harbor push timeout.
 
