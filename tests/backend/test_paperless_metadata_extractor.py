@@ -843,34 +843,54 @@ class TestExtractorIntegration:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_taxonomy_fetch_fails_returns_error(self, tmp_path):
+    async def test_taxonomy_fetch_fails_does_not_crash(self, tmp_path):
+        """If the Paperless taxonomy endpoints are unreachable, the
+        extractor must not crash — empty taxonomy is a legitimate state
+        (cold Paperless install, transient outage). The LLM can still
+        produce metadata and any values it picks become new-entry
+        proposals because they won't fuzzy-match an empty taxonomy.
+
+        Pre-fix this test asserted `result.error is not None` because
+        the old fallback picked ollama_vision_model (qwen3-vl:8b) which
+        ignored think=False — the LLM call silently returned empty
+        content and parsing failed. After fixing the fallback order to
+        prefer chat over vision, the LLM responds correctly and the
+        result is a clean success with doc_text populated."""
         upload = self._mock_upload(tmp_path)
         doc_proc = MagicMock()
         doc_proc.extract_text_only = AsyncMock(return_value="document text")
 
-        # MCP manager that raises on every call
+        # MCP taxonomy calls raise; LLM mock returns a well-formed answer.
         mcp = MagicMock()
         mcp.execute_tool = AsyncMock(side_effect=RuntimeError("paperless down"))
 
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(return_value=SimpleNamespace(
+            message=SimpleNamespace(
+                content='{"title": "T", "correspondent": null, '
+                        '"document_type": null, "tags": [], '
+                        '"storage_path": null, "created_date": null, '
+                        '"new_entry_proposals": []}',
+            ),
+        ))
+
         extractor = PaperlessMetadataExtractor(
-            mcp_manager=mcp, document_processor=doc_proc,
+            mcp_manager=mcp, llm_client=llm_client, document_processor=doc_proc,
         )
         extractor._load_upload = AsyncMock(return_value=upload)
 
-        result = await extractor.extract(
-            attachment_id=1, session_id="s", lang="de",
-        )
-        # _list_via_mcp catches and returns [] for each dimension, so
-        # pruning produces an empty taxonomy — which is fine, not an
-        # error. The LLM call will fail or return empty, and THAT's
-        # the error surface. This test confirms we at least don't
-        # crash the whole pipeline on taxonomy fetch failure.
-        #
-        # If the LLM is not configured either, we get the "no model"
-        # error — let's check we reached the LLM-call step by not
-        # erroring earlier.
-        assert result.error is not None
-        assert result.doc_text == "document text"  # OCR did run
+        with patch("services.paperless_metadata_extractor.settings") as s:
+            s.paperless_extraction_model = "qwen3:8b"
+            s.ollama_vision_model = ""
+            s.ollama_chat_model = ""
+            result = await extractor.extract(
+                attachment_id=1, session_id="s", lang="de",
+            )
+
+        # Pipeline didn't crash; OCR output preserved; extraction produced
+        # a PaperlessMetadata (may be empty of values — that's fine).
+        assert result.doc_text == "document text"
+        assert result.metadata is not None
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -933,6 +953,111 @@ class TestExtractorIntegration:
 
         assert result.error is not None
         assert "model" in result.error.lower() or "fehlgeschlagen" in result.error.lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_fallback_prefers_chat_model_over_vision_model(self, tmp_path):
+        """Regression for the 2026-04-24 prod bug: when
+        paperless_extraction_model is unset, _call_llm used to pick
+        ollama_vision_model before ollama_chat_model. The call is text-only
+        (Docling already ran), and in prod ollama_vision_model was
+        qwen3-vl:8b which ignores `think=False` — the JSON answer got
+        trapped in the thinking buffer, extraction silently failed, and
+        the upload went through with no metadata.
+
+        The fix is a fallback order of: explicit override → chat → vision.
+        This test would fail if the order regresses."""
+        upload = self._mock_upload(tmp_path)
+
+        captured = {}
+
+        async def _capture_chat(model, messages, **kwargs):
+            captured["model"] = model
+            return SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"title": "T", "correspondent": null, '
+                            '"document_type": null, "tags": [], '
+                            '"storage_path": null, "created_date": null, '
+                            '"new_entry_proposals": []}',
+                ),
+            )
+
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(side_effect=_capture_chat)
+
+        doc_proc = MagicMock()
+        doc_proc.extract_text_only = AsyncMock(return_value="doc text")
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(
+            return_value={"success": True, "message": '{"items": []}'}
+        )
+
+        extractor = PaperlessMetadataExtractor(
+            mcp_manager=mcp, llm_client=llm_client, document_processor=doc_proc,
+        )
+        extractor._load_upload = AsyncMock(return_value=upload)
+
+        with patch("services.paperless_metadata_extractor.settings") as s:
+            s.paperless_extraction_model = ""        # no explicit override
+            s.ollama_vision_model = "qwen3-vl:8b"    # vision IS set
+            s.ollama_chat_model = "qwen3:14b"        # chat IS set
+            await extractor.extract(
+                attachment_id=1, session_id="s", lang="de",
+            )
+
+        assert captured["model"] == "qwen3:14b", (
+            f"Expected extraction to use the chat model (text-only path), "
+            f"but it used {captured['model']!r}"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_empty_llm_content_returns_clean_error_not_silent_success(
+        self, tmp_path,
+    ):
+        """Regression for the same 2026-04-24 bug: when the LLM returns
+        empty content (the observable symptom of a thinking-buffer trap),
+        the extractor must surface a clean error so callers log it and
+        downstream behavior is explicit — NOT silently return empty
+        metadata that would upload the document without correspondent /
+        document_type / tags."""
+        upload = self._mock_upload(tmp_path)
+
+        # Mimic what extract_response_content returns when think=False
+        # isn't honored: empty content even though the model "thought".
+        llm_client = MagicMock()
+        llm_client.chat = AsyncMock(return_value=SimpleNamespace(
+            message=SimpleNamespace(content="", thinking="…internal reasoning…"),
+        ))
+
+        doc_proc = MagicMock()
+        doc_proc.extract_text_only = AsyncMock(return_value="doc text")
+
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(
+            return_value={"success": True, "message": '{"items": []}'}
+        )
+
+        extractor = PaperlessMetadataExtractor(
+            mcp_manager=mcp, llm_client=llm_client, document_processor=doc_proc,
+        )
+        extractor._load_upload = AsyncMock(return_value=upload)
+
+        with patch("services.paperless_metadata_extractor.settings") as s:
+            s.paperless_extraction_model = "qwen3:8b"
+            s.ollama_vision_model = ""
+            s.ollama_chat_model = ""
+            result = await extractor.extract(
+                attachment_id=1, session_id="s", lang="de",
+            )
+
+        assert result.error is not None, (
+            "Empty LLM content must produce an explicit error — not a "
+            "silent success that falls through to a metadata-less upload."
+        )
+        assert result.metadata == PaperlessMetadata()
+        assert result.doc_text == "doc text"
 
 
 # ===========================================================================
