@@ -97,18 +97,19 @@ async def fetch_relevant_examples(
             # marginal cost, and a hard threshold tuned without data
             # would be guesswork at this stage.
             #
-            # Source ordering (PR 4): both ``confirm_diff`` and
-            # ``paperless_ui_sweep`` rows are eligible, but we prefer
-            # the former. Confirm-diffs carry higher signal: the user
-            # explicitly answered "ja" to a specific proposal, while
-            # UI-sweep rows are reconstructed from a later edit and
-            # can't distinguish extraction corrections from taxonomy
-            # drift. The ORDER BY flips this into a lexicographic
-            # sort: confirm_diff rows come first, then ui_sweep rows,
-            # tie-broken by similarity.
+            # Source ordering (PR 4): three buckets, lexicographic sort
+            # by (rank, cosine_distance). ``seed`` wins first — those
+            # are manually curated starter examples and should anchor
+            # retrieval while the learned corpus is still sparse.
+            # ``confirm_diff`` beats ``paperless_ui_sweep`` because the
+            # user explicitly answered "ja" to a specific proposal,
+            # while UI-sweep rows are reconstructed from a later edit
+            # and can't distinguish extraction corrections from
+            # taxonomy drift.
             source_preference = case(
-                (PaperlessExtractionExample.source == "confirm_diff", 0),
-                else_=1,
+                (PaperlessExtractionExample.source == "seed", 0),
+                (PaperlessExtractionExample.source == "confirm_diff", 1),
+                else_=2,
             )
             stmt = (
                 select(PaperlessExtractionExample)

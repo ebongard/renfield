@@ -207,10 +207,24 @@ async def _detect_edit(
     if not current or current.get("error"):
         return None
 
+    # Field-name remap: the MCP ``upload_document`` tool accepts
+    # ``created_date`` but ``get_document`` returns ``created`` (ISO
+    # timestamp like ``2026-02-14T00:00:00Z``). Without this mapping
+    # every sweep would see "original.created_date=2026-02-14" vs
+    # "current.created_date=None" and write a phantom ui_sweep row
+    # claiming the user blanked the date — poisoning the learning
+    # corpus.
+    if "created_date" not in current:
+        raw_created = current.get("created")
+        if isinstance(raw_created, str):
+            # Take the YYYY-MM-DD prefix — original_metadata stores the
+            # date only, not the timestamp.
+            current = {**current, "created_date": raw_created[:10]}
+
     # The MCP get_document returns resolved names for
     # correspondent/document_type and a list of tag names.
-    # Shape matches original_metadata directly, so field-by-field diff
-    # works without remapping.
+    # Shape matches original_metadata for the tracked fields after
+    # the ``created`` remap above.
     normalised = {
         field: _normalise_field(field, current.get(field))
         for field in _TRACKED_FIELDS
@@ -262,32 +276,74 @@ async def run_abandoned_confirm_sweep(
     now: datetime | None = None,
     max_age_hours: int = 24,
 ) -> int:
-    """Delete ``paperless_pending_confirms`` rows older than
-    *max_age_hours*. The FK cascade on ``chat_uploads`` doesn't help
-    here — the ChatUpload itself is still valid (the user may upload
-    it again); only the stale confirm-state needs to go.
+    """Reap confirm flows the user walked away from.
 
-    Returns the number of rows deleted. Designed to be safely re-run.
+    Design contract (``docs/design/paperless-llm-metadata.md`` §
+    "Abandoned-confirm cleanup" + eng-review test plan): a
+    ``paperless_pending_confirms`` row older than *max_age_hours* means
+    the user started the cold-start confirm flow but never answered
+    ja/nein. We delete the ``ChatUpload`` row AND unlink the bytes on
+    disk; the pending_confirm row itself disappears via the CASCADE on
+    ``pending_confirms.attachment_id → chat_uploads.id``.
+
+    We don't reuse the generic chat-upload retention loop here. That
+    loop fires on ``retention_days`` (30 d default), leaving abandoned
+    confirm files on disk far longer than the 24 h policy calls for.
+    Explicit reap makes the window predictable.
+
+    Returns the count of ChatUploads reaped (== pending_confirms
+    cascaded). Safe to re-run; per-row errors are logged and skipped.
     """
-    from sqlalchemy import delete
+    from pathlib import Path
 
-    from models.database import PaperlessPendingConfirm
+    from sqlalchemy import select
+
+    from models.database import ChatUpload, PaperlessPendingConfirm
     from services.database import AsyncSessionLocal
 
     current = now or datetime.utcnow()
     cutoff = current - timedelta(hours=max_age_hours)
 
+    reaped = 0
+    file_errors = 0
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            delete(PaperlessPendingConfirm)
+        # Join so we can unlink the file before the cascade drops the
+        # ChatUpload row. Ordering: file first, DB row second — better
+        # to orphan a DB row than a file we forgot about.
+        stale = await db.execute(
+            select(ChatUpload, PaperlessPendingConfirm)
+            .join(
+                PaperlessPendingConfirm,
+                PaperlessPendingConfirm.attachment_id == ChatUpload.id,
+            )
             .where(PaperlessPendingConfirm.created_at < cutoff)
         )
-        await db.commit()
-        deleted = result.rowcount or 0
+        for upload, _pending in stale.all():
+            if upload.file_path:
+                try:
+                    p = Path(upload.file_path)
+                    if p.is_file():
+                        p.unlink()
+                except Exception as exc:
+                    # Keep reaping the DB row even if the disk unlink
+                    # fails — the file may be on a remounted volume,
+                    # already-gone, or permission-locked. A stranded
+                    # file is cheaper than a stranded DB row that
+                    # blocks future sweeps.
+                    logger.warning(
+                        "abandoned-confirm sweep: unlink %s failed: %s",
+                        upload.file_path, exc,
+                    )
+                    file_errors += 1
+            await db.delete(upload)
+            reaped += 1
+        if reaped:
+            await db.commit()
 
-    if deleted:
+    if reaped:
         logger.info(
-            "abandoned-confirm sweep: %d pending_confirms older than %d h purged",
-            deleted, max_age_hours,
+            "abandoned-confirm sweep: %d ChatUploads + pending_confirms "
+            "older than %d h purged (%d file-unlink errors)",
+            reaped, max_age_hours, file_errors,
         )
-    return deleted
+    return reaped

@@ -139,6 +139,34 @@ class TestDetectEdit:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
+    async def test_created_timestamp_remapped_to_created_date(self):
+        """Paperless ``get_document`` returns ``created`` as ISO timestamp
+        while ``upload_document`` stored ``created_date``. Without the
+        remap, every sweep would see "original=2026-02-14" vs
+        "current=None" and emit a phantom blanked-date diff."""
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True,
+            "message": json.dumps({
+                "title": "T", "correspondent": "Stadtwerke",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x",
+                "created": "2026-02-14T00:00:00Z",  # note: ISO timestamp, not created_date
+            }),
+        })
+        diff = await _detect_edit(
+            mcp_manager=mcp,
+            document_id=42,
+            original={
+                "title": "T", "correspondent": "Stadtwerke",
+                "document_type": "Rechnung", "tags": ["wohnung"],
+                "storage_path": "/x", "created_date": "2026-02-14",
+            },
+        )
+        assert diff is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
     async def test_mcp_not_found_returns_none(self):
         """Document was deleted from Paperless → inner ``error`` set."""
         mcp = MagicMock()
@@ -358,42 +386,107 @@ class TestRunSweepTick:
 
 
 class TestAbandonedConfirmSweep:
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_deletes_old_rows(self):
+    """Design contract (paperless-llm-metadata.md §
+    "Abandoned-confirm cleanup"): the sweeper deletes ChatUpload rows
+    AND unlinks their bytes on disk. The pending_confirms row follows
+    via FK CASCADE."""
+
+    def _make_sweep_session(self, upload_pending_pairs: list):
+        """Factory that returns a session whose SELECT join yields the
+        supplied (ChatUpload, PendingConfirm) pairs, and records
+        ``db.delete`` calls + commit."""
+        deleted_rows: list = []
+
         session = AsyncMock()
         session.__aenter__ = AsyncMock(return_value=session)
         session.__aexit__ = AsyncMock(return_value=None)
         session.commit = AsyncMock()
+        session.delete = AsyncMock(side_effect=lambda obj: deleted_rows.append(obj))
 
-        exec_result = MagicMock()
-        exec_result.rowcount = 3
-        session.execute = AsyncMock(return_value=exec_result)
+        async def _execute(_stmt):
+            result = MagicMock()
+            result.all = MagicMock(return_value=upload_pending_pairs)
+            return result
 
-        def _factory():
-            return session
+        session.execute = AsyncMock(side_effect=_execute)
+        session._deleted = deleted_rows  # type: ignore[attr-defined]
+        return session
 
-        with patch("services.database.AsyncSessionLocal", _factory):
-            deleted = await run_abandoned_confirm_sweep(max_age_hours=24)
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unlinks_bytes_and_deletes_upload(self, tmp_path):
+        """Each abandoned confirm → its ChatUpload's file is unlinked
+        AND the ChatUpload row is deleted. pending_confirm disappears
+        via FK CASCADE (not tested directly — that's a DB-level
+        behaviour)."""
+        f1 = tmp_path / "a.pdf"
+        f1.write_bytes(b"x")
+        f2 = tmp_path / "b.pdf"
+        f2.write_bytes(b"y")
 
-        assert deleted == 3
+        upload1 = SimpleNamespace(id=10, file_path=str(f1))
+        upload2 = SimpleNamespace(id=11, file_path=str(f2))
+        pc1 = SimpleNamespace(attachment_id=10)
+        pc2 = SimpleNamespace(attachment_id=11)
+
+        session = self._make_sweep_session([(upload1, pc1), (upload2, pc2)])
+
+        with patch("services.database.AsyncSessionLocal", lambda: session):
+            reaped = await run_abandoned_confirm_sweep(max_age_hours=24)
+
+        assert reaped == 2
+        assert not f1.exists()
+        assert not f2.exists()
+        assert session._deleted == [upload1, upload2]  # type: ignore[attr-defined]
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_missing_file_still_reaps_db_row(self, tmp_path):
+        """File already gone (user purged, volume unmounted) → we
+        still delete the DB row. Better to strand a file than strand
+        a DB row that blocks future sweeps."""
+        upload = SimpleNamespace(id=20, file_path=str(tmp_path / "gone.pdf"))
+        pc = SimpleNamespace(attachment_id=20)
+        session = self._make_sweep_session([(upload, pc)])
+
+        with patch("services.database.AsyncSessionLocal", lambda: session):
+            reaped = await run_abandoned_confirm_sweep(max_age_hours=24)
+
+        assert reaped == 1
+        assert session._deleted == [upload]  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_unlink_exception_does_not_block_reap(self, tmp_path, monkeypatch):
+        """Permission error on unlink must not stop us from reaping
+        the DB row — the in-memory counter must still increment."""
+        f1 = tmp_path / "locked.pdf"
+        f1.write_bytes(b"x")
+
+        def _boom(self):
+            raise PermissionError("locked")
+
+        monkeypatch.setattr("pathlib.Path.unlink", _boom)
+
+        upload = SimpleNamespace(id=30, file_path=str(f1))
+        pc = SimpleNamespace(attachment_id=30)
+        session = self._make_sweep_session([(upload, pc)])
+
+        with patch("services.database.AsyncSessionLocal", lambda: session):
+            reaped = await run_abandoned_confirm_sweep(max_age_hours=24)
+
+        assert reaped == 1
+        assert session._deleted == [upload]  # type: ignore[attr-defined]
 
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_returns_zero_when_nothing_to_delete(self):
-        session = AsyncMock()
-        session.__aenter__ = AsyncMock(return_value=session)
-        session.__aexit__ = AsyncMock(return_value=None)
-        session.commit = AsyncMock()
+        session = self._make_sweep_session([])
 
-        exec_result = MagicMock()
-        exec_result.rowcount = 0
-        session.execute = AsyncMock(return_value=exec_result)
+        with patch("services.database.AsyncSessionLocal", lambda: session):
+            reaped = await run_abandoned_confirm_sweep()
 
-        def _factory():
-            return session
-
-        with patch("services.database.AsyncSessionLocal", _factory):
-            deleted = await run_abandoned_confirm_sweep()
-
-        assert deleted == 0
+        assert reaped == 0
+        # No-op: nothing to commit when nothing was reaped.
+        session.commit.assert_not_awaited()

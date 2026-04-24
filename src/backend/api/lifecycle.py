@@ -268,30 +268,37 @@ def _schedule_paperless_sweepers(app):
     2. Abandoned-confirm sweeper: drop stale ``pending_confirms``
        rows (> 24 h). Pure DB-only, no MCP dependency.
     """
+    # Run-first, sleep-after: a process that restarts every 59 min
+    # would otherwise never sweep. The upfront work waits 60 s so MCP
+    # manager and DB sessions are ready; subsequent iterations run the
+    # full hourly cadence.
     async def ui_edit_loop():
+        await asyncio.sleep(60)
         while True:
             try:
-                await asyncio.sleep(3600)  # 1 hour
                 mgr = getattr(app.state, "mcp_manager", None)
-                if mgr is None:
-                    continue
-                from services.paperless_ui_edit_sweeper import run_sweep_tick
-                await run_sweep_tick(mcp_manager=mgr)
+                if mgr is not None:
+                    from services.paperless_ui_edit_sweeper import run_sweep_tick
+                    await run_sweep_tick(mcp_manager=mgr)
+                await asyncio.sleep(3600)  # 1 hour
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"Paperless UI-edit sweep failed: {e}")
+                await asyncio.sleep(3600)
 
     async def abandoned_confirm_loop():
+        await asyncio.sleep(60)
         while True:
             try:
-                await asyncio.sleep(3600)  # 1 hour
                 from services.paperless_ui_edit_sweeper import run_abandoned_confirm_sweep
                 await run_abandoned_confirm_sweep()
+                await asyncio.sleep(3600)  # 1 hour
             except asyncio.CancelledError:
                 break
             except Exception as e:
                 logger.warning(f"Paperless abandoned-confirm sweep failed: {e}")
+                await asyncio.sleep(3600)
 
     _startup_tasks.append(asyncio.create_task(ui_edit_loop()))
     _startup_tasks.append(asyncio.create_task(abandoned_confirm_loop()))

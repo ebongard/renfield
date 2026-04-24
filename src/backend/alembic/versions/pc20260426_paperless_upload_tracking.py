@@ -57,7 +57,12 @@ def upgrade() -> None:
             "uploaded_at",
             sa.DateTime(),
             nullable=False,
-            server_default=sa.func.now(),
+            # Explicit UTC cast: the sweeper compares ``uploaded_at``
+            # against Python's ``datetime.utcnow()`` (naive UTC). A bare
+            # ``now()`` would produce a naive timestamp in the DB
+            # session's timezone — if the container drifts off UTC the
+            # window filter misfires silently.
+            server_default=sa.text("(now() AT TIME ZONE 'UTC')"),
         ),
         # Exactly what we sent to Paperless — the field set we compare
         # against when the sweeper runs. JSON shape mirrors
