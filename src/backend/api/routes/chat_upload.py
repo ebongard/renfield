@@ -532,35 +532,76 @@ async def _auto_index_to_kb(
         # Step 1 — Document row + enqueue, within a short-lived session.
         async with AsyncSessionLocal() as db:
             kb = await _get_or_create_default_kb(db)
-
-            from services.rag_service import RAGService
-            rag = RAGService(db)
-            doc = await rag.create_document_record(
-                file_path=file_path,
-                knowledge_base_id=kb.id,
-                filename=filename,
-                file_hash=file_hash,
-            )
-            doc_id = doc.id
             kb_id = kb.id
 
-            # Link the chat upload to the pending doc up-front so the
-            # UI can show "processing" without waiting for the worker.
-            upload_row = (await db.execute(
-                select(ChatUpload).where(ChatUpload.id == upload_id)
+            # Re-upload of the same file into the same KB: the unique
+            # constraint `uq_documents_file_hash_kb` fires on a second
+            # INSERT and the auto-index path raises IntegrityError,
+            # surfacing to the user as "Auto-index failed". Pre-check
+            # for an existing doc with this hash and reuse it instead
+            # — link the chat upload to the existing doc and let the
+            # poll loop pick up its current state (likely already
+            # `completed`, in which case the user gets an immediate
+            # "document_ready" notification).
+            from models.database import Document as _Doc
+            existing = (await db.execute(
+                select(_Doc)
+                .where(_Doc.file_hash == file_hash)
+                .where(_Doc.knowledge_base_id == kb_id)
             )).scalar_one_or_none()
-            if upload_row:
-                upload_row.document_id = doc_id
-                upload_row.knowledge_base_id = kb_id
-                await db.commit()
 
-        queue = DocumentTaskQueue(redis_client=get_redis())
-        await queue.enqueue({
-            "document_id": doc_id,
-            "force_ocr": False,
-            "user_id": None,
-        })
-        logger.info(f"Chat upload {upload_id} enqueued as doc {doc_id} → KB {kb_id}")
+            if existing is not None:
+                doc_id = existing.id
+                upload_row = (await db.execute(
+                    select(ChatUpload).where(ChatUpload.id == upload_id)
+                )).scalar_one_or_none()
+                if upload_row:
+                    upload_row.document_id = doc_id
+                    upload_row.knowledge_base_id = kb_id
+                    await db.commit()
+                logger.info(
+                    f"Chat upload {upload_id} matches existing doc {doc_id} "
+                    f"in KB {kb_id} (hash={file_hash[:12]}…) — reusing"
+                )
+                # Skip enqueue; fall through to the poll loop which
+                # will detect status=completed on the next iteration
+                # and notify the session.
+                doc = existing
+            else:
+                from services.rag_service import RAGService
+                rag = RAGService(db)
+                doc = await rag.create_document_record(
+                    file_path=file_path,
+                    knowledge_base_id=kb_id,
+                    filename=filename,
+                    file_hash=file_hash,
+                )
+                doc_id = doc.id
+
+                # Link the chat upload to the pending doc up-front so
+                # the UI can show "processing" without waiting for the
+                # worker.
+                upload_row = (await db.execute(
+                    select(ChatUpload).where(ChatUpload.id == upload_id)
+                )).scalar_one_or_none()
+                if upload_row:
+                    upload_row.document_id = doc_id
+                    upload_row.knowledge_base_id = kb_id
+                    await db.commit()
+
+        # Only enqueue when we created a NEW document row. Re-uploads
+        # that hit the existing-doc branch above already have a worker
+        # task in some terminal state (or in flight) — the poll loop
+        # picks up `completed`/`failed` directly. Re-enqueuing a
+        # completed doc would burn worker cycles for no gain.
+        if existing is None:
+            queue = DocumentTaskQueue(redis_client=get_redis())
+            await queue.enqueue({
+                "document_id": doc_id,
+                "force_ocr": False,
+                "user_id": None,
+            })
+            logger.info(f"Chat upload {upload_id} enqueued as doc {doc_id} → KB {kb_id}")
 
         # Step 2 — poll for terminal state. Check first, sleep after,
         # so a worker that finishes in <2s notifies the UI immediately

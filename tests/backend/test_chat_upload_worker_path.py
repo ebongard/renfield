@@ -203,3 +203,75 @@ async def test_auto_index_worker_failure_surfaces_error(
 
     err = next(n for n in notifications if n["type"] == "document_error")
     assert "Docling threw on page 42" in err["error"]
+
+
+@pytest.mark.unit
+@pytest.mark.database
+async def test_auto_index_reuses_existing_doc_on_duplicate_hash(
+    db_session, kb, chat_upload_row,
+):
+    """Re-uploading the same file into the same KB used to crash the
+    auto-index path with `IntegrityError: duplicate key value violates
+    unique constraint "uq_documents_file_hash_kb"` because
+    create_document_record blindly INSERTed.
+
+    The fix: pre-check for an existing (file_hash, kb_id) row and
+    reuse it — link the chat upload to the existing doc, skip the
+    enqueue, and let the poll loop deliver document_ready immediately
+    if the existing doc is already completed.
+    """
+    notifications: list[dict] = []
+
+    async def _fake_notify(session_id, payload):
+        notifications.append({"session": session_id, **payload})
+
+    hash_val = hashlib.sha256(b"already-uploaded-once").hexdigest()
+    existing_doc = Document(
+        filename="duplicate.pdf",
+        file_path="/tmp/duplicate.pdf",
+        file_hash=hash_val,
+        knowledge_base_id=kb.id,
+        status="completed",
+        chunk_count=42,
+    )
+    db_session.add(existing_doc)
+    await db_session.commit()
+    await db_session.refresh(existing_doc)
+
+    create_record = AsyncMock()  # MUST NOT be called
+    enqueue_mock = AsyncMock()    # MUST NOT be called
+
+    with patch(
+        "api.routes.chat_upload._get_or_create_default_kb",
+        new=AsyncMock(return_value=kb),
+    ), patch(
+        "api.routes.chat_upload._worker_is_alive",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "services.rag_service.RAGService.create_document_record",
+        new=create_record,
+    ), patch(
+        "services.task_queue.DocumentTaskQueue.enqueue",
+        new=enqueue_mock,
+    ), patch(
+        "api.websocket.shared.notify_session",
+        new=_fake_notify,
+    ):
+        await _auto_index_to_kb(
+            upload_id=chat_upload_row.id,
+            file_path="/tmp/duplicate.pdf",
+            filename="duplicate.pdf",
+            file_hash=hash_val,
+            session_id="sess-dup",
+        )
+
+    # No INSERT, no enqueue: we reused the existing doc cleanly.
+    create_record.assert_not_called()
+    enqueue_mock.assert_not_called()
+
+    # The session got a document_ready for the existing doc.
+    types = [n["type"] for n in notifications]
+    assert "document_ready" in types
+    ready = next(n for n in notifications if n["type"] == "document_ready")
+    assert ready["document_id"] == existing_doc.id
+    assert ready["chunk_count"] == 42
