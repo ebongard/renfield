@@ -56,7 +56,7 @@ async def _ensure_alembic_baseline():
         else:
             await conn.execute(text(
                 "CREATE TABLE alembic_version ("
-                "version_num VARCHAR(32) NOT NULL, "
+                "version_num VARCHAR(64) NOT NULL, "
                 "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
             ))
         await conn.execute(
