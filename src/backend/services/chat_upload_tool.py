@@ -715,8 +715,9 @@ def _render_confirm_message(
 
     lines.append("")
     lines.append(
-        "Antworte mit `ja` (Vorschläge übernehmen — bei `near` Wahl 1, "
-        "sonst NEU), `nein` zum Abbrechen, oder gib pro Feld eine Wahl an, "
-        "z.B. `1: 2, 2: neu, 3: x`."
+        "Antworte mit `ja` (vorgeschlagene Treffer übernehmen, ungelöste "
+        "Felder leer lassen), `nein` zum Abbrechen, oder gib pro Feld eine "
+        "Wahl an, z.B. `1: 2, 2: neu, 3: x`. Neue Taxonomie-Einträge nur "
+        "auf ausdrücklichen Wunsch (`neu`)."
     )
     return "\n".join(lines)

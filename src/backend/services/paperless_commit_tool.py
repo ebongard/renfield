@@ -54,16 +54,21 @@ _APPROVE_TOKENS = {"ja", "j", "ok", "okay", "passt", "passt so", "yes", "y", "su
 _ABORT_TOKENS = {"nein", "n", "abbrechen", "stopp", "stop", "no", "cancel"}
 
 # Per-resolution choice tokens. Only used as the right-hand side of a
-# "<idx>: <choice>" pair, so collision with top-level abort tokens
-# ("n", "no") is fine — but we keep them disjoint to avoid surprising
-# the user who reads them in either context.
-_NEW_TOKENS = {"neu", "new", "anlegen", "create"}
+# "<idx>: <choice>" pair, so the collision between "n" here and the
+# top-level abort token "n" never fires (different parsing contexts).
+# The preview marker "n. NEU anlegen" needs "n" to be valid here.
+_NEW_TOKENS = {"n", "neu", "new", "anlegen", "create"}
 _SKIP_TOKENS = {"x", "skip", "leer", "weglassen", "ueberspringen", "überspringen"}
 
 # Pair format in the user reply: "1: 2, 2: neu, 3: x". Index is the
 # [N] number from the confirm preview; value is a candidate index,
-# "neu", or "x". Whitespace-tolerant.
-_CHOICE_RE = re.compile(r"\s*(\d+)\s*[:=]\s*([^,;\n]+?)\s*(?=,|;|$)")
+# "neu", or "x". Whitespace-tolerant. The lookahead also stops on the
+# next "<digit>:" pair so phone-typed replies like "1:2 2:neu" (no
+# comma) still split into two decisions instead of swallowing the
+# second pair into the first value.
+_CHOICE_RE = re.compile(
+    r"\s*(\d+)\s*[:=]\s*([^,;\n]+?)\s*(?=,|;|$|\d+\s*[:=])"
+)
 
 _MAX_EDIT_ROUNDS = 3
 
@@ -188,13 +193,31 @@ async def paperless_commit_upload(
     return await _handle_ambiguous_response(pending)
 
 
+def _resolution_value(res: dict[str, Any]) -> str:
+    """Extracted value of a resolution. Falls back to legacy ``value``
+    so pending rows persisted under the old NewEntryProposal shape
+    (``{field, value, reasoning}``) still carry signal — without this
+    fallback the user's "ja" silently drops the LLM's pick because the
+    new shape's ``extracted_value`` key is absent."""
+    return (
+        res.get("extracted_value")
+        or res.get("value")
+        or ""
+    )
+
+
 def _default_decisions(
     resolutions: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     """Build the default decision per resolution for the `ja` path.
 
-    - near_matches non-empty → pick the first candidate.
-    - near_matches empty     → "neu" (create extracted_value).
+    - near_matches non-empty → pick the first candidate (safe: the user
+      sees it as the "(Vorschlag)" entry in the preview).
+    - near_matches empty     → SKIP. Auto-creating a new taxonomy
+      entry from a single OCR'd value without explicit user consent
+      pollutes the user's Paperless instance with typos and one-off
+      misreads forever. The user must explicitly type "<idx>: neu"
+      to opt in to creating an entry.
 
     Each decision dict has shape:
         {"resolution": <res>, "action": "use" | "create" | "skip",
@@ -212,8 +235,8 @@ def _default_decisions(
         else:
             out.append({
                 "resolution": res,
-                "action": "create",
-                "value": res.get("extracted_value") or "",
+                "action": "skip",
+                "value": "",
             })
     return out
 
@@ -250,7 +273,9 @@ def _parse_user_choices(
 
         if choice in _NEW_TOKENS:
             decision["action"] = "create"
-            decision["value"] = res.get("extracted_value") or ""
+            decision["value"] = _resolution_value(res)
+            if not decision["value"]:
+                return [], f"resolution {idx} has no value to create"
         elif choice in _SKIP_TOKENS:
             decision["action"] = "skip"
             decision["value"] = ""

@@ -191,7 +191,10 @@ class TestApprovePath:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_ja_fires_creates_for_approved_proposals(self, tmp_path):
+    async def test_explicit_neu_fires_creates_for_approved_resolutions(self, tmp_path):
+        """User opts into creating new taxonomy entries via "<idx>: neu"
+        per resolution. Default `ja` would skip these (safer), so the
+        test passes the explicit choices."""
         file = tmp_path / "f.pdf"
         file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
 
@@ -227,14 +230,13 @@ class TestApprovePath:
             "services.database.AsyncSessionLocal",
             _make_session_factory(pending=pending, upload=upload),
         ):
-            # Patch the taxonomy-cache invalidation import so it doesn't
-            # try to touch the real module's state during the test.
             with patch(
                 "services.paperless_metadata_extractor._invalidate_taxonomy_cache",
                 MagicMock(),
             ):
                 result = await paperless_commit_upload(
-                    {"confirm_token": "tok-b", "user_response_text": "ja"},
+                    {"confirm_token": "tok-b",
+                     "user_response_text": "1: neu, 2: neu"},
                     mcp_manager=mcp, session_id="s", user_id=1,
                 )
 
@@ -250,7 +252,7 @@ class TestApprovePath:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_ja_treats_already_exists_as_success(self, tmp_path):
+    async def test_already_exists_is_success(self, tmp_path):
         """If a create_* says the entry already exists (raced against
         another extraction), treat it as success and use the existing id
         rather than aborting."""
@@ -289,7 +291,8 @@ class TestApprovePath:
                 MagicMock(),
             ):
                 result = await paperless_commit_upload(
-                    {"confirm_token": "tok-c", "user_response_text": "ja"},
+                    {"confirm_token": "tok-c",
+                     "user_response_text": "1: neu"},
                     mcp_manager=mcp, session_id="s", user_id=1,
                 )
 
@@ -355,7 +358,8 @@ class TestApprovePath:
                     MagicMock(),
                 ):
                     result = await paperless_commit_upload(
-                        {"confirm_token": "tok-emb", "user_response_text": "ja"},
+                        {"confirm_token": "tok-emb",
+                         "user_response_text": "1: neu"},
                         mcp_manager=mcp, session_id="s", user_id=1,
                     )
 
@@ -420,7 +424,8 @@ class TestApprovePath:
                     MagicMock(),
                 ):
                     result = await paperless_commit_upload(
-                        {"confirm_token": "tok-no-emb", "user_response_text": "ja"},
+                        {"confirm_token": "tok-no-emb",
+                         "user_response_text": "1: neu"},
                         mcp_manager=mcp, session_id="s", user_id=1,
                     )
 
@@ -687,7 +692,11 @@ class TestAmbiguousResponse:
 
 class TestChoiceParser:
     @pytest.mark.unit
-    def test_default_decisions_pick_first_near_match(self):
+    def test_default_decisions_pick_first_near_match_else_skip(self):
+        """Safety default: only auto-pick when the user has seen
+        candidates. No-match fields skip rather than auto-create —
+        creating a taxonomy entry from a single OCR'd value without
+        explicit consent pollutes the user's Paperless instance."""
         from services.paperless_commit_tool import _default_decisions
 
         resolutions = [
@@ -698,6 +707,75 @@ class TestChoiceParser:
         decisions = _default_decisions(resolutions)
         assert decisions[0]["action"] == "use"
         assert decisions[0]["value"] == "Foo Inc"
+        assert decisions[1]["action"] == "skip"
+        assert decisions[1]["value"] == ""
+
+    @pytest.mark.unit
+    def test_default_decisions_legacy_proposal_shape_survives(self):
+        """Legacy pending rows persisted under the old NewEntryProposal
+        shape carry ``value`` instead of ``extracted_value`` and never
+        ``near_matches``. The default-decision builder must read both
+        keys so a "ja" reply on an old pending row still works."""
+        from services.paperless_commit_tool import _default_decisions
+
+        legacy = [
+            {"field": "correspondent", "value": "Schreiner Meier",
+             "reasoning": "..."},
+        ]
+        decisions = _default_decisions(legacy)
+        # Legacy row had no near matches → safe default is skip.
+        # The value must not silently disappear, though — the user
+        # can still type "1: neu" to opt into creating it.
+        assert decisions[0]["action"] == "skip"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_neu_on_legacy_proposal(self):
+        """Legacy proposal {field, value, reasoning} → "1: neu" must
+        create the value, not crash on the missing extracted_value."""
+        from services.paperless_commit_tool import _parse_user_choices
+
+        legacy = [
+            {"field": "correspondent", "value": "Schreiner Meier",
+             "reasoning": "..."},
+        ]
+        decisions, err = _parse_user_choices("1: neu", legacy)
+        assert err is None
+        assert decisions[0]["action"] == "create"
+        assert decisions[0]["value"] == "Schreiner Meier"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_n_marker_treated_as_create(self):
+        """The preview shows users `n. NEU anlegen` so the parser must
+        accept "n" as the create token — not just the spelled-out
+        "neu". Otherwise users following the on-screen contract get a
+        re-prompt loop."""
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "Foo",
+             "near_matches": ["Foo Inc"]},
+        ]
+        decisions, err = _parse_user_choices("1: n", resolutions)
+        assert err is None
+        assert decisions[0]["action"] == "create"
+        assert decisions[0]["value"] == "Foo"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_handles_missing_separator(self):
+        """Phone-typed reply without a comma between pairs ("1:2 2:neu")
+        must still split into two decisions — losing the second pair
+        silently is the worst possible failure mode."""
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "Foo",
+             "near_matches": ["Foo Inc", "Foo GmbH"]},
+            {"field": "tag", "extracted_value": "bar", "near_matches": []},
+        ]
+        decisions, err = _parse_user_choices("1:2 2:neu", resolutions)
+        assert err is None
+        assert decisions[0]["action"] == "use"
+        assert decisions[0]["value"] == "Foo GmbH"
         assert decisions[1]["action"] == "create"
         assert decisions[1]["value"] == "bar"
 
