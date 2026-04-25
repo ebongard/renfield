@@ -59,6 +59,25 @@ async def _ensure_alembic_baseline():
                 "version_num VARCHAR(64) NOT NULL, "
                 "CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"
             ))
+        # Idempotent widen — covers the partial-state path: alembic_version
+        # exists but is empty (e.g. prior crashed init, manual recovery ops)
+        # with a pre-existing VARCHAR(32) column. The CREATE above only runs
+        # when the table is fully absent. Without this ALTER the INSERT below
+        # crashes with StringDataRightTruncationError on a >32-char head_rev.
+        # Mirrors the same pattern in alembic/env.py (PR #462) so both
+        # creation paths converge on VARCHAR(64). Postgres-only by design;
+        # this function is never invoked against SQLite/test engines.
+        await conn.execute(text(
+            "DO $$ BEGIN "
+            "  IF (SELECT character_maximum_length "
+            "      FROM information_schema.columns "
+            "      WHERE table_name='alembic_version' "
+            "        AND column_name='version_num') < 64 "
+            "  THEN ALTER TABLE alembic_version "
+            "    ALTER COLUMN version_num TYPE VARCHAR(64); "
+            "  END IF; "
+            "END $$;"
+        ))
         await conn.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
             {"v": head_rev},
