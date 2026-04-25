@@ -1,11 +1,165 @@
-# TODOS
+# TODOS — Renfield Master Index
 
-Project-level TODOs that aren't immediate but shouldn't be forgotten. Each entry:
-WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
+Single prioritized index of every open work item, with a reference back to the source document where the original detail lives. When a topic is covered in multiple places, the **primary source** is listed first — that's the one to update when the item is actually worked.
+
+**Tiers:**
+
+- **P0 — Active / blocking.** Work that unblocks a commitment, gates another in-progress track, or shipped-incomplete.
+- **P1 — Next substantive batch.** Ready to pick up once P0 is clear; concrete scope, no external gate.
+- **P2 — Scheduled follow-ups.** Known improvements with clear scope but no forcing function yet.
+- **P3 — Conditional / on signal.** Deferred pending real usage data, upstream change, or strategic green-light. Do NOT pull these forward without the trigger firing.
+
+Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
+
+Last reviewed: 2026-04-25 (after Reva submodule bump branch + PR #477 + TODOS consolidation).
 
 ---
 
-## v2.5 — KG Retrieval Upgrade (gates v3 KG-as-brain)
+## P0 — Active / blocking
+
+### Reva compatibility restoration — code RESTORED, awaiting PRD verification
+All 8 features verified present in current Renfield main (`f62c52b`) by code inspection on 2026-04-25: SemanticRouter wired in `agent_router.py:55` + `lifecycle.py:433`; XML delimiter tags + security warning in `prompts/agent.yaml`; `EpisodicMemory` service at `services/episodic_memory_service.py`; ConversationMemory `source`/`scope`/`confidence`/`team_id`/`trigger_pattern` columns at `models/database.py:837-847`; `MEMORY_CATEGORY_PROCEDURAL` at `models/database.py:794`; `_serialize_for_prompt()` at `agent_service.py:293`; `utils/request_context.py` exists; `prompt_hashes` at `prompt_manager.py:218`.
+
+**In flight (verification path):**
+- Reva branch `chore/bump-renfield-circles-paperless` (commit `ffa1550`) bumps submodule `903362a → f62c52b` (78 commits). Pushed.
+- Test deploy on roberta (192.168.99.41 build box) succeeded after the alembic hotfix below — bumped image starts cleanly.
+- PRD deploy + E2E re-run handed off to a separate Claude session in `/Users/evdb/projects.ai/reva` (build/push procedure for `registry.treehouse.x-idra.de/reva/reva:latest` not in repo, needs user input).
+- Pre-bump PRD baseline (run today against the OLD reva on PRD): 99 pass / 37 fail / 4 skip out of 140.
+- **Primary source:** `../reva/docs/architecture/renfield-compatibility-requirements.md`
+- **Memory pointer:** `memory/project_reva_compatibility.md`
+
+### Renfield PR #477 — fix(alembic): widen baseline-create alembic_version to VARCHAR(64)
+One-line fix in `services/database.py:_ensure_alembic_baseline` — companion to PR #462. The earlier fix widened the column in `alembic/env.py` for existing tables, but missed the parallel fresh-install path which still hardcoded VARCHAR(32) and crashed on `INSERT 'pc20260426_paperless_upload_tracking'` (38 chars). Bit prod during the Reva bump test deploy on roberta today.
+- **PR:** https://github.com/ebongard/renfield/pull/477
+- **Branch:** `fix/alembic-baseline-varchar64`
+- **Status:** open, awaiting review/merge
+- **Followup once merged:** Reva re-bumps the submodule to pick up the fix (so future fresh-DB Reva installs don't hit the same wall).
+
+### KRITISCH audit findings (K1-K7) — RESOLVED (branch `audit/k1-k7`, PR pending)
+Closed in one branch: K2 got a batched permission lookup; K1/K3 were already fixed before the audit was written; K4 is a full .env.example rewrite covering 100% of Settings + ha_glue; K5 converted the last plaintext secret (`presence_webhook_secret`) to SecretStr; K6 added the two missing Docker Secrets to both prod compose files + the generator script; K7 documented EXTERNAL_URL/EXTERNAL_WS_URL as Vite build args.
+- **Primary source:** `tasks/audit-findings-plan.md` §KRITISCH (now marked done)
+
+---
+
+## P1 — Next substantive batch
+
+### Reva — Phase 1 Foundation (Days 1-3)
+Create the Reva private repo + plugin skeleton on top of Renfield.
+- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 1
+- **Items:** private `reva` repo with submodule structure · verify hook system supports route + tool registration · ~30 lines of Renfield plugin-support changes · Dockerfile + docker-compose.yml · `reva/hooks.py` skeleton · `reva/config.py`
+
+### Reva — Phase 2 Teams Transport (Days 4-6)
+- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 2
+- **Items:** `teams_transport.py` Bot Framework adapter · `teams_auth.py` Teams↔Release user mapping · wire Teams → Renfield agent service → Teams response · Bot Framework Emulator test
+
+### WICHTIG audit findings — performance + config hygiene
+- **Primary source:** `tasks/audit-findings-plan.md` §WICHTIG, §Priorisierte Roadmap Phase 2-3
+- **Items:** W1 DB connection pool tuning · W2 migrate IVFFlat → HNSW indexes · W3 bulk-insert document chunks · W4 conversation search N+1 · W5 23 hardcoded timeouts → Settings · W6 LLM options from YAML, not Python · W7-W8 circuit breaker + cache TTLs configurable · W12 `alembic.ini` hardcoded credentials · W13 config range/format validation · W14 inconsistent boolean naming
+
+---
+
+## P2 — Scheduled follow-ups
+
+### Reva — Phases 3-5 (Enterprise tools, notifications, polish)
+- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 3-5
+- **Phase 3 Enterprise Tools (Days 7-10):** `ldap_service.py` · `release_roles.py` 5-level lookup · register as agent tools · connect Release MCP server (38 tools, no porting)
+- **Phase 4 Notifications (Days 11-12):** `notify_handler.py` webhook receiver · `subscriptions.py` DB-backed model · proactive Teams messaging · update Java plugin webhook URL
+- **Phase 5 Polish & Deploy (Days 13-14):** `system_prompt.md` adapted from Roberta · tests · deploy to 192.168.99.41 · E2E verification · retire Roberta Node.js
+
+### Paperless PR 4 inline follow-ups (documented in code, filed here)
+All three have clear triggers but were out of PR 4 scope. Inline `# ...` comments in the relevant files carry full context.
+- **Multi-replica `pg_try_advisory_lock`.** Current `asyncio.Lock` only covers a single process; k8s with >1 backend replica needs DB-level coordination. Source: `src/backend/services/paperless_ui_edit_sweeper.py` (top-of-file comment on `_sweep_lock`).
+- **Multi-user attribution in ui_sweep rows.** Attribution seam exists (`_resolve_editor_user_id`); needs MCP `owner` exposure + Paperless↔Renfield user-mapping table to actually resolve the editor. Source: `src/backend/services/paperless_ui_edit_sweeper.py` (docstring on `_build_example_row` + `_resolve_editor_user_id`).
+- **Narrow MCP `get_document_metadata` tool or `include_content=False` flag.** Eliminates the 10 KB response-truncation path entirely. Lives in the `renfield-mcp-paperless` upstream repo. Source: `src/backend/services/paperless_ui_edit_sweeper.py` comment on `_TRUNCATION_MARKER`.
+
+### Paperless PR 4b — No-re-edit filter (superseded flag)
+If ui_sweep noise shows up in real use, mark original sweep row `superseded=true` when same field edited again later.
+- **Primary source:** `docs/design/paperless-llm-metadata.md` §Implementation plan → PR 4 (scope cut) + §Database schema note on `superseded` column
+- **Trigger:** noise in the corpus observable in practice. Column already exists in `paperless_extraction_examples`.
+
+### Satellite — audio pipeline improvements
+- **Primary source:** `src/satellite/TECHNICAL_DEBT.md` §Future TODOs
+- **High priority:** audio preprocessing (noise reduction) on backend for resource-constrained satellites — alternative: XVF3800 hardware AEC (see `docs/XVF3800_SATELLITE.md`)
+- **Medium priority:** Opus audio compression (~50% bandwidth) · echo cancellation (software WebRTC APM or XVF3800)
+- **Low priority:** 4-mic beamforming extension · custom wake-word training
+
+### EMPFEHLUNG audit findings — modernization + cleanup
+- **Primary source:** `tasks/audit-findings-plan.md` §EMPFEHLUNG, §Priorisierte Roadmap Phase 4-5
+- **Frontend:** W9 React.lazy code-splitting for admin pages · W10 TypeScript coverage 23% → target higher via strict mode migration · W11 Prettier · E11 React Query · E12 13 hardcoded German strings · E13 ChatPage prop drilling → Context · E14 ESLint React version · E15 enable `tsconfig` strict mode
+- **Backend/config:** E1-E3 speaker-loading + eager-load cleanup + FK indexes · E4-E9 remaining hardcoded values (MCP 40KB cap, backoff constants, agent history limit, agent response truncation, embedding dim, similarity threshold) · E10 frontend localhost fallbacks · E16 legacy config field removal (`ollama_model`, `piper_voice`, `plugins_*`, `spotify_*`) · E17 Redis URL parameterization · E18 Frigate MQTT defaults
+
+### Run `/design-consultation` to formalize DESIGN.md (BEFORE next major frontend surface)
+
+**WHAT:** Run the `/design-consultation` skill to formalize Renfield's existing implicit design system into a DESIGN.md file. Captures the palette (crimson primary + turquoise accent + cream neutral), typography (Cormorant Variable display + DM Sans Variable body), component vocabulary (cards, inputs, buttons, animations), and design philosophy.
+
+**WHY:** The circles v1 design review found that Renfield has a sophisticated visual system in `src/frontend/src/index.css` that's doing the work of a design system without ever being named. Adding new pages + a tier visual language + dimension-agnostic UI is much easier (and more consistent) when those rules are explicit before implementation begins.
+
+**PROS:**
+- Prevents design drift across new pages
+- Makes design decisions debuggable ("does this fit DESIGN.md?")
+- Creates shareable artifact for future contributors
+- Catches inconsistencies in the existing system that have crept in over time
+
+**CONS:**
+- 30-45 minutes of conversation (small cost for the leverage gained)
+- Documentation rot risk if not maintained alongside design changes (mitigated by /design-review skill referring to DESIGN.md)
+
+**CONTEXT:**
+- Existing palette in `src/frontend/src/index.css`: `--color-primary-{50..900}` (crimson family centered on #e63e54), `--color-accent-{50..900}` (turquoise centered on #00e4b8), `--color-cream` (#f0e6d3)
+- Existing typography: `--font-display` (Cormorant Variable serif), `--font-sans` (DM Sans Variable sans)
+- Animation tokens already defined: `--animate-typing-dot`, `--animate-fade-slide-in`, `--animate-slide-in-right`, etc.
+- 19 existing pages provide pattern reference; KnowledgePage / RolesPage / MemoryPage are the closest analogs for new circles surfaces
+
+**DEPENDS ON:**
+- Should land BEFORE the next substantive frontend surface
+- Independent of all back-end work
+
+**SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` design-review pass
+
+### Write `docs/STRATEGY.md` — North-Star "WHY circles" doc
+
+**WHAT:** A strategic intent document that captures WHY the Second Brain Circles plan exists, distinct from the HOW captured in the design doc and DESIGN.md. Documents the Reva unification thesis, the federation moonshot rationale, the household-product positioning, and the strategic context that motivated the 9-12 month foundation investment over alternative paths (small household features, Reva commercial pursuit, public Renfield launch, 6-week MVP).
+
+**WHY:** The /plan-ceo-review surfaced via outside voice that the strategic premise is currently legible only to the user. The design doc has architecture but not intent. The DESIGN.md will have visual system but not strategic context. If the user takes a sabbatical, hands the project off, or comes back in 18 months after Reva pulls focus, the next person inherits ambitious infrastructure with no documented WHY. STRATEGY.md fills that gap.
+
+**PROS:**
+- Strategic context survives session compaction + project handoff + memory drift
+- Future eng/CEO reviews of v2/v2.5/v3 work have a north-star to evaluate against ("does this still serve the strategic intent?")
+- The Reva unification claim becomes inspectable instead of implicit
+- Forces articulation of the 5-year ideal (per Section 10 dream-state delta)
+- 30-min effort for arguably the highest-leverage doc in the project
+
+**CONS:**
+- 30-45 min of writing
+- Risks becoming "vision theater" if not written honestly (the outside voice's #2 critique — "Reva unification is rationalization, not strategy")
+
+**CONTEXT:**
+- Per CEO review HOLD SCOPE + 1C decision: the maximalist plan stands BECAUSE the user has strategic context the outside voice doesn't. STRATEGY.md externalizes that context.
+- Honest framing should include: which alternative strategic moves were considered and rejected (6-week MVP, public launch, Reva commercial-first, small household features) AND the user's reasons for choosing the maximalist circles path over them
+- Should reference: design doc, DESIGN.md, Reva memory note, feature-ideen.md (the path-not-taken alternatives)
+- Should be HONEST about the field-of-dreams risk (federation has no second peer yet) and what would invalidate the bet
+
+**DEPENDS ON:**
+- Pre-implementation gate conversations (Reva + partner) ideally happen FIRST so STRATEGY.md can incorporate their findings
+- Independent of all v1 implementation work
+
+**SOURCE:** /plan-ceo-review session 2026-04-19, Section 10 + outside voice cross-model tension 1
+
+---
+
+## P3 — Conditional / on signal
+
+### Paperless PR 5 — Interactive confirm card
+In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
+- **Primary source:** `docs/design/paperless-llm-metadata.md` §Implementation plan → PR 5, §302-324
+- **Gate:** build ONLY if cold-start data from PR 2 shows users rubber-stamp free-text confirms they can't easily edit, OR first-impression quality becomes a stated concern. Confirm is cold-start-only (first 10 uploads/user) so most users never see it.
+
+### Paperless kNN tier (pre-LLM voter)
+Embed each new upload, find k nearest Paperless docs already archived, copy dominant metadata pattern when top-k agree.
+- **Primary source:** `docs/design/paperless-llm-metadata.md` §Appendix: kNN tier, deferred
+- **Gate:** ALL THREE must hold — (1) v1 live 3+ months with 200+ documents · (2) Stage 1 LLM latency is the p50 UX bottleneck (> 5 s) · (3) correction rate on correspondent/document_type is low enough that kNN voting would be correct. Do not build otherwise.
+
+### v2.5 — KG Retrieval Upgrade (gates v3 KG-as-brain)
 
 **WHAT:** A focused 3-5 month workstream upgrading Renfield's KG retrieval from "flat 1-hop entity lookup" to proper graph-aware retrieval (multi-hop traversal, edge-type ranking, optional hierarchical summaries, inverse/transitive inference, structural query primitives).
 
@@ -39,9 +193,7 @@ WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` v2.5 section
 
----
-
-## MCPManager Streaming Surface
+### MCPManager Streaming Surface
 
 **WHAT:** Add `execute_tool_streaming(name, args, on_progress) -> AsyncIterator[ProgressChunk | FinalResult]` to `services/mcp_client.py:MCPManager`. Existing `execute_tool` returns one dict and exits — there's no streaming progress callback API.
 
@@ -68,9 +220,7 @@ WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` v2 section + eng-review C-Build decision
 
----
-
-## Notes Feature Design Doc (markdown editor + bidirectional links)
+### Notes Feature Design Doc (markdown editor + bidirectional links)
 
 **WHAT:** A separate office-hours / design session for hand-written atomic notes — markdown editor, bidirectional `[[link]]` syntax, graph view, optional outliner mode. Was descoped from circles v1 because notes-as-product is its own surface (not just an access-control concern).
 
@@ -87,7 +237,7 @@ WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
 - Adds a 5th atom_type → expands `AtomPayload*` TypedDict surface (Open Q 7 in design doc)
 
 **CONTEXT:**
-- Office-hours conversation in this session pushed back hard against shipping notes in v1 — too distinct from the access-control feature, would smuggle a whole product into the circles design
+- Office-hours conversation pushed back hard against shipping notes in v1 — too distinct from the access-control feature, would smuggle a whole product into the circles design
 - Notes-on-atoms vs notes-alongside-atoms is the first design fork (does a note become an atom that wears a circle, or does a note exist parallel to atoms?)
 - Should sit on top of circles v1 (notes inherit circle_tier on creation; tier-edit affordance like other entity views)
 
@@ -97,39 +247,7 @@ WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` Premise 2 + Open Q 1 + Open Q 12
 
----
-
-## Run /design-consultation to formalize DESIGN.md (BEFORE circles v1 implementation)
-
-**WHAT:** Run the `/design-consultation` skill to formalize Renfield's existing implicit design system into a DESIGN.md file. Captures the palette (crimson primary + turquoise accent + cream neutral), typography (Cormorant Variable display + DM Sans Variable body), component vocabulary (cards, inputs, buttons, animations), and design philosophy.
-
-**WHY:** The circles v1 design review found that Renfield has a sophisticated visual system in `src/frontend/src/index.css` that's doing the work of a design system without ever being named. Adding 4 new pages + a tier visual language + dimension-agnostic UI will be much easier (and more consistent) if those rules are explicit before implementation begins.
-
-**PROS:**
-- Prevents design drift across new pages (Brain, Brain Review Queue, /settings/circles, federated progress chrome)
-- Makes design decisions debuggable ("does this fit DESIGN.md?")
-- Creates shareable artifact for future contributors
-- Catches inconsistencies in the existing system that have crept in over time
-
-**CONS:**
-- 30-45 minutes of conversation (small cost for the leverage gained)
-- Documentation rot risk if not maintained alongside design changes (mitigated by /design-review skill referring to DESIGN.md)
-
-**CONTEXT:**
-- Existing palette in `src/frontend/src/index.css`: `--color-primary-{50..900}` (crimson family centered on #e63e54), `--color-accent-{50..900}` (turquoise centered on #00e4b8), `--color-cream` (#f0e6d3)
-- Existing typography: `--font-display` (Cormorant Variable serif), `--font-sans` (DM Sans Variable sans)
-- Animation tokens already defined: `--animate-typing-dot`, `--animate-fade-slide-in`, `--animate-slide-in-right`, etc.
-- 19 existing pages provide pattern reference; KnowledgePage / RolesPage / MemoryPage are the closest analogs for circles surfaces
-
-**DEPENDS ON:**
-- Should land BEFORE circles v1 frontend implementation begins (Lane C in the parallelization plan)
-- Independent of Reva conversation + partner conversation (those gate schema, not design)
-
-**SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` design-review pass
-
----
-
-## Brain Review Queue Auto-Archive Policy (v1.5 decision)
+### Brain Review Queue Auto-Archive Policy (v1.5 decision)
 
 **WHAT:** Decide what happens to atoms in the Brain Review Queue that the user never reviews. v1 ships with "no auto-archive, queue may grow." v1.5 should make this a real decision based on actual usage signal.
 
@@ -156,31 +274,16 @@ WHAT, WHY, PROS, CONS, CONTEXT, DEPENDS ON.
 
 ---
 
-## Write docs/STRATEGY.md — North-Star "WHY circles" doc
+## Source index
 
-**WHAT:** A strategic intent document that captures WHY the Second Brain Circles plan exists, distinct from the HOW captured in the design doc and DESIGN.md. Documents the Reva unification thesis, the federation moonshot rationale, the household-product positioning, and the strategic context that motivated the 9-12 month foundation investment over alternative paths (small household features, Reva commercial pursuit, public Renfield launch, 6-week MVP).
+When updating an item, update these files (primary source first):
 
-**WHY:** The /plan-ceo-review surfaced via outside voice that the strategic premise is currently legible only to the user (Eduard). The design doc has architecture but not intent. The DESIGN.md has visual system but not strategic context. If the user takes a sabbatical, hands the project off, or comes back in 18 months after Reva pulls focus, the next person inherits ambitious infrastructure with no documented WHY. STRATEGY.md fills that gap.
-
-**PROS:**
-- Strategic context survives session compaction + project handoff + memory drift
-- Future eng/CEO reviews of v2/v2.5/v3 work have a north-star to evaluate against ("does this still serve the strategic intent?")
-- The Reva unification claim becomes inspectable instead of implicit
-- Forces articulation of the 5-year ideal (per Section 10 dream-state delta)
-- 30-min effort for arguably the highest-leverage doc in the project
-
-**CONS:**
-- 30-45 min of writing
-- Risks becoming "vision theater" if not written honestly (the outside voice's #2 critique — "Reva unification is rationalization, not strategy")
-
-**CONTEXT:**
-- Per CEO review HOLD SCOPE + 1C decision: the maximalist plan stands BECAUSE the user has strategic context the outside voice doesn't. STRATEGY.md externalizes that context.
-- Honest framing should include: which alternative strategic moves were considered and rejected (6-week MVP, public launch, Reva commercial-first, small household features) AND the user's reasons for choosing the maximalist circles path over them
-- Should reference: design doc, DESIGN.md, Reva memory note, feature-ideen.md (the path-not-taken alternatives)
-- Should be HONEST about the field-of-dreams risk (federation has no second peer yet) and what would invalidate the bet
-
-**DEPENDS ON:**
-- Pre-implementation gate conversations (Reva + partner) ideally happen FIRST so STRATEGY.md can incorporate their findings
-- Independent of all v1 implementation work
-
-**SOURCE:** /plan-ceo-review session 2026-04-19, Section 10 + outside voice cross-model tension 1
+| Source doc | Covers |
+|---|---|
+| `tasks/reva-plan.md` (local / untracked) | Reva plugin architecture + 5-phase implementation plan |
+| `tasks/audit-findings-plan.md` | 7 KRITISCH + 14 WICHTIG + 18 EMPFEHLUNG audit items |
+| `docs/design/paperless-llm-metadata.md` | Paperless-LLM-metadata PR roadmap (PR 5, PR 4b, kNN tier) |
+| `../reva/docs/architecture/renfield-compatibility-requirements.md` | 8 Reva compatibility blockers + 3 moderate signature changes |
+| `src/satellite/TECHNICAL_DEBT.md` | Satellite audio pipeline follow-ups |
+| `memory/project_reva_compatibility.md` | Live pointer to the Reva compatibility doc |
+| `~/.gstack/projects/ebongard-renfield/evdb-main-*-second-brain-circles.md` | Strategic items inlined here (v2.5 KG, MCPManager streaming, Notes, Brain Queue, DESIGN.md, STRATEGY.md) |
