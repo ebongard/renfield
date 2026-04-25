@@ -1,20 +1,22 @@
 """
 PaperlessMetadataExtractor — LLM-driven metadata extraction for Paperless-NGX uploads.
 
-Reads a chat-attached document via Docling, fetches the user's current
-Paperless taxonomy from the MCP server, asks the LLM to pick the best
-metadata fields from that taxonomy (with worked examples baked into the
-prompt), validates via pydantic + fuzzy-match + taxonomy-membership, and
-returns a structured result the caller can feed into
-``mcp.paperless.upload_document``.
+Reads a chat-attached document via Docling, asks the LLM to extract the
+essential metadata directly from the document text (NOT constrained to
+any taxonomy — the LLM's job is reading the doc, not knowing what's in
+Paperless), then resolves each extracted value against the user's live
+Paperless taxonomy on the server side. Returns a structured result the
+caller feeds into ``mcp.paperless.upload_document``.
+
+Why no taxonomy in the prompt: a real household instance has
+~900 correspondents, ~400 doc-types, ~1500 tags. Stuffing that list into
+every prompt blows the context budget AND pushes the LLM toward
+hallucinating taxonomy matches instead of extracting the value the
+document actually carries. Server-side fuzzy matching + user-driven
+near-match disambiguation is far cheaper and more accurate.
 
 Design reference:
     docs/design/paperless-llm-metadata.md
-
-This is PR 2a of the feature: the atomic extraction unit, independently
-testable, no dependency on the confirm flow. PR 2b wires this into the
-``forward_attachment_to_paperless`` tool + cold-start-only confirm state
-machine.
 
 ASCII flow — single extraction call:
 
@@ -25,33 +27,34 @@ ASCII flow — single extraction call:
         │
         ▼
     OCR / text-layer extraction via DocumentProcessor.extract_text_only
-    (Docling HybridChunker + EasyOCR fallback; vision-model path is a
-    PR 2b refinement once the agent-client wiring supports it)
         │
         ▼
-    fetch_taxonomy(mcp_manager)
-        │   calls mcp.paperless.list_* tools, prunes top-20 correspondents
-        │   and top-20 tags by recency from the `/api/documents/?ordering=-modified`
-        │   window provided by PR 1's MCP server.
+    fetch_taxonomy(mcp_manager) — used post-extraction for resolution,
+    NOT injected into the prompt
         │
         ▼
-    render prompt (paperless_metadata.yaml) with taxonomy + doc_text
+    render prompt (paperless_metadata.yaml) with doc_text + learned
+    examples only
         │
         ▼
-    LLM call (settings.paperless_extraction_model || vision || chat)
+    LLM call (settings.paperless_extraction_model || chat)
         │
         ▼
-    validate(response)
+    validate(response, taxonomy)
         │   1. pydantic parse
-        │   2. rapidfuzz near-match against taxonomy (rewrites silently
-        │      on one-candidate-within-threshold, flags ambiguous)
-        │   3. strict membership check (drops misses that weren't
-        │      flagged as new_entry_proposals)
+        │   2. resolve each singleton field:
+        │        - exact / strong-fuzzy hit → canonical value, no
+        │          decision needed
+        │        - 1-3 near matches → resolution with candidates,
+        │          requires user decision
+        │        - no match → resolution with empty near_matches
+        │          (user picks "neu" or skips)
+        │   3. resolve each tag the same way
         │   4. clamp created_date (today-10y ... today+1y)
-        │   5. cap tags at 5
         │
         ▼
-    ExtractionResult(metadata, proposals, confidence, source_text)
+    ExtractionResult(metadata, doc_text, error)
+        — metadata.resolutions carries everything needing user input.
 """
 from __future__ import annotations
 
@@ -113,11 +116,13 @@ _CORPORATE_SUFFIX_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Per-field confidence gate for new_entry_proposals. Below this the LLM
-# is too uncertain to justify surfacing a create-proposal to the user —
-# drop the proposal silently. Matches the design doc's § Validation
-# step 3 wording.
-_PROPOSAL_CONFIDENCE_MIN = 0.6
+# Looser thresholds for the "near match" candidate list. _fuzzy_match
+# only returns a single high-confidence canonical hit (Levenshtein <= 2);
+# _fuzzy_top_candidates expands the radius so the user can pick from a
+# small shortlist when no high-confidence hit exists.
+_NEAR_MAX_DISTANCE = 6
+_NEAR_MAX_RATIO = 0.4
+_NEAR_LIMIT = 3
 
 # Taxonomy cache TTL (in memory, per-process). 10 min balances freshness
 # with API-call cost. Invalidated on successful create_* via the MCP
@@ -162,22 +167,53 @@ def _invalidate_taxonomy_cache() -> None:
 # ---------------------------------------------------------------------------
 
 
-class NewEntryProposal(BaseModel):
-    """Singleton proposal for a not-in-taxonomy value. Three new tags
-    become three separate proposals, not one entry with a list."""
-    field: Literal["correspondent", "document_type", "tag", "storage_path"]
-    value: str
-    reasoning: str
+class FieldResolution(BaseModel):
+    """Server-side resolution of one LLM-extracted value against the
+    user's live Paperless taxonomy.
+
+    Three states (read off ``status``):
+      - ``exact``: ``canonical`` is set, ``near_matches`` empty.
+        No user input needed; the singleton field carries the
+        canonical value already.
+      - ``near``: ``canonical`` is None, ``near_matches`` has 1-3
+        candidate entries from the taxonomy. User picks one OR
+        creates the extracted value as new.
+      - ``none``: ``canonical`` is None, ``near_matches`` empty.
+        Either the user creates the extracted value as new, or
+        skips the field entirely.
+
+    For singleton fields we emit at most one resolution per field;
+    for tags we emit one per LLM-extracted tag that didn't resolve to
+    an exact taxonomy hit.
+    """
+    field: Literal["correspondent", "document_type", "storage_path", "tag"]
+    extracted_value: str
+    canonical: str | None = None
+    near_matches: list[str] = Field(default_factory=list)
+
+    @property
+    def status(self) -> Literal["exact", "near", "none"]:
+        if self.canonical is not None:
+            return "exact"
+        if self.near_matches:
+            return "near"
+        return "none"
+
+    @property
+    def requires_user_decision(self) -> bool:
+        return self.status != "exact"
 
 
 class PaperlessMetadata(BaseModel):
     """Output of the extractor.
 
-    Every taxonomy field is either ``None`` (LLM couldn't decide or
-    nothing matched) or a string guaranteed to be present in the user's
-    live Paperless taxonomy (because the validator checks exactly that).
-    ``new_entry_proposals`` carries LLM's confidence-gated suggestions
-    for values it thinks deserve a new taxonomy entry.
+    Singleton taxonomy fields (correspondent / document_type /
+    storage_path) carry a value ONLY when the validator resolved an
+    exact / strong-fuzzy match against the live taxonomy. Anything
+    needing user input lives in ``resolutions``.
+
+    ``tags`` carries only exact-resolved tags; LLM-extracted tags that
+    didn't match get individual entries in ``resolutions``.
     """
     title: str | None = None
     correspondent: str | None = None
@@ -186,7 +222,7 @@ class PaperlessMetadata(BaseModel):
     storage_path: str | None = None
     created_date: date | None = None
     confidence: dict[str, float] = Field(default_factory=dict)
-    new_entry_proposals: list[NewEntryProposal] = Field(default_factory=list)
+    resolutions: list[FieldResolution] = Field(default_factory=list)
 
 
 class ExtractionResult(BaseModel):
@@ -321,9 +357,66 @@ def _fuzzy_match(llm_value: str, taxonomy: list[str]) -> str | None:
 
     if len(candidates) == 1:
         return candidates[0]
-    # Zero candidates OR ambiguous multi-match → caller handles as
-    # proposal (ambiguity surfaces in the confirm UI).
+    # Zero candidates OR ambiguous multi-match → caller surfaces a
+    # FieldResolution with the top-N candidates instead.
     return None
+
+
+def _fuzzy_top_candidates(
+    llm_value: str,
+    taxonomy: list[str],
+    *,
+    limit: int = _NEAR_LIMIT,
+    max_distance: int = _NEAR_MAX_DISTANCE,
+    max_ratio: float = _NEAR_MAX_RATIO,
+) -> list[str]:
+    """Return up to ``limit`` taxonomy entries closest to ``llm_value``.
+
+    Looser than :func:`_fuzzy_match`: shortlists candidates the user can
+    pick from when no high-confidence single hit exists. Sorted by
+    distance ascending — closest match first.
+
+    Compares both the raw normalised form and the corporate-suffix-
+    stripped form, takes the smaller distance. Catches cases like
+    "Stadtwerke X GmbH" vs "Stadtwerke X" without forcing them to
+    pass the strict 2-edit gate.
+    """
+    if not llm_value or not taxonomy:
+        return []
+    normalised = _normalise(llm_value)
+    if not normalised:
+        return []
+    stripped = _strip_corporate_suffix(normalised)
+
+    scored: list[tuple[int, str]] = []
+    for entry in taxonomy:
+        entry_n = _normalise(entry)
+        if not entry_n:
+            continue
+        entry_stripped = _strip_corporate_suffix(entry_n)
+        d_raw = Levenshtein.distance(normalised, entry_n)
+        d_stripped = (
+            Levenshtein.distance(stripped, entry_stripped)
+            if stripped and entry_stripped
+            else d_raw
+        )
+        d = min(d_raw, d_stripped)
+        max_len = max(len(normalised), len(entry_n), 1)
+        if d > max_distance or d / max_len > max_ratio:
+            continue
+        scored.append((d, entry))
+
+    scored.sort(key=lambda pair: (pair[0], pair[1]))
+    seen: set[str] = set()
+    out: list[str] = []
+    for _, entry in scored:
+        if entry in seen:
+            continue
+        seen.add(entry)
+        out.append(entry)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def prune_taxonomy(
@@ -411,99 +504,73 @@ def validate_extraction(
     """Full validation pipeline. Caller passes the parsed LLM JSON dict.
 
     1. Pydantic shape check — malformed → ValidationError raises up.
-    2. Fuzzy match against each taxonomy dimension. One-candidate wins
-       silently (rewrites llm value to canonical); zero or ambiguous
-       drops the field to ``None`` — unless the LLM simultaneously
-       emitted a ``new_entry_proposal`` for that field, in which case
-       the proposal survives for user review.
-    3. Strict taxonomy membership — after fuzzy, assert the value is in
-       the list. Defence-in-depth; should never drop here.
+    2. For each singleton field (correspondent / document_type /
+       storage_path), resolve the LLM value against the taxonomy:
+         - exact / strong-fuzzy hit → set field to canonical, no
+           resolution emitted.
+         - else → field stays None, a FieldResolution is appended with
+           the extracted value + up to 3 near-match candidates.
+    3. For each tag, the same resolution: exact hits land in
+       ``metadata.tags``, anything else gets one resolution per tag.
     4. ``created_date`` clamped to [today-10y, today+1y].
-    5. ``tags`` truncated at 5.
+    5. ``tags`` capped at 5.
+
+    The caller surfaces ``metadata.resolutions`` to the user as a
+    decision list; the commit tool turns the user's response into
+    final field values + create_* calls.
     """
-    # Step 1 — parse. Any shape error raises; caller catches.
+    # Step 1 — parse. Drop fields the legacy prompt may still emit
+    # (new_entry_proposals) so old payloads don't poison the new shape.
+    payload = dict(raw_output)
+    payload.pop("new_entry_proposals", None)
+    payload.pop("resolutions", None)  # server-owned; ignore any LLM input
     try:
-        metadata = PaperlessMetadata(**raw_output)
+        metadata = PaperlessMetadata(**payload)
     except ValidationError as exc:
-        # Add the raw dict to the exception note so debugging shows what
-        # the LLM actually emitted. pydantic's own error is verbose
-        # enough that appending is more useful than replacing.
         raise ValueError(f"Malformed LLM output: {exc}") from exc
 
-    # Confidence-gate the proposals first. Design § Validation step 3:
-    # proposals below _PROPOSAL_CONFIDENCE_MIN (0.6) are dropped
-    # silently — the LLM is too uncertain to justify surfacing a
-    # create-proposal to the user. Check confidence per-field: a low
-    # confidence on the FIELD (e.g. confidence.correspondent = 0.2)
-    # drops any proposals for that field.
-    high_confidence_proposals: list[NewEntryProposal] = []
-    for proposal in metadata.new_entry_proposals:
-        # The LLM emits confidence keyed by field name (singular for
-        # fields, plural "tags" for the list). Proposal.field is always
-        # singular ("correspondent", "document_type", "tag",
-        # "storage_path") per the Literal typing.
-        confidence_key = proposal.field
-        # For tag proposals, the LLM's confidence is usually keyed
-        # "tags" in its response. Accept either.
-        confidence = metadata.confidence.get(confidence_key)
-        if confidence is None and proposal.field == "tag":
-            confidence = metadata.confidence.get("tags")
-        if confidence is None:
-            # LLM didn't emit confidence for this field. Be permissive
-            # — drop-silent would lose useful signal when the model
-            # forgets the confidence block. Let the proposal survive.
-            high_confidence_proposals.append(proposal)
-            continue
-        if confidence >= _PROPOSAL_CONFIDENCE_MIN:
-            high_confidence_proposals.append(proposal)
-        else:
-            logger.debug(
-                "Dropping low-confidence proposal (%.2f < %.2f): %s=%r",
-                confidence, _PROPOSAL_CONFIDENCE_MIN,
-                proposal.field, proposal.value,
-            )
-    metadata.new_entry_proposals = high_confidence_proposals
+    resolutions: list[FieldResolution] = []
 
-    # Group the surviving proposals by field for quick lookup during
-    # fuzzy fallback — if the LLM flagged "correspondent" as proposal,
-    # we don't need to silently drop the field value too.
-    proposed_fields = {p.field for p in metadata.new_entry_proposals}
+    # Step 2 — singleton fields.
+    metadata.correspondent, res = _resolve_singleton_field(
+        metadata.correspondent, taxonomy.correspondents, field="correspondent",
+    )
+    if res is not None:
+        resolutions.append(res)
 
-    # Step 2 + 3 — fuzzy + strict membership.
-    metadata.correspondent = _validate_singleton_field(
-        metadata.correspondent,
-        taxonomy.correspondents,
-        field_name="correspondent",
-        has_proposal=("correspondent" in proposed_fields),
+    metadata.document_type, res = _resolve_singleton_field(
+        metadata.document_type, taxonomy.document_types, field="document_type",
     )
-    metadata.document_type = _validate_singleton_field(
-        metadata.document_type,
-        taxonomy.document_types,
-        field_name="document_type",
-        has_proposal=("document_type" in proposed_fields),
-    )
-    metadata.storage_path = _validate_singleton_field(
-        metadata.storage_path,
-        taxonomy.storage_paths,
-        field_name="storage_path",
-        has_proposal=("storage_path" in proposed_fields),
-    )
+    if res is not None:
+        resolutions.append(res)
 
-    # Tags are list-valued; each element goes through fuzzy-then-strict
-    # independently, misses are dropped silently (proposals work at
-    # field-not-element granularity — a tag proposal covers one missing
-    # tag, not the whole list).
+    metadata.storage_path, res = _resolve_singleton_field(
+        metadata.storage_path, taxonomy.storage_paths, field="storage_path",
+    )
+    if res is not None:
+        resolutions.append(res)
+
+    # Step 3 — tags. Each LLM tag resolved independently. Cap input at
+    # 5 so the resolution list can't explode if the LLM gets verbose.
     validated_tags: list[str] = []
-    for tag in metadata.tags:
+    seen_canonical: set[str] = set()
+    for tag in (metadata.tags or [])[:5]:
+        if not tag:
+            continue
         canonical = _fuzzy_match(tag, taxonomy.tags)
         if canonical is not None:
-            validated_tags.append(canonical)
+            if canonical not in seen_canonical:
+                seen_canonical.add(canonical)
+                validated_tags.append(canonical)
         else:
-            logger.debug("Dropping tag not in taxonomy: %r", tag)
-    metadata.tags = validated_tags[:5]  # Step 5 — cap
+            resolutions.append(FieldResolution(
+                field="tag",
+                extracted_value=tag,
+                near_matches=_fuzzy_top_candidates(tag, taxonomy.tags),
+            ))
+    metadata.tags = validated_tags
 
-    # Step 4 — date clamps. Both bounds are computed fresh per call so
-    # tests with a frozen clock see the window they expect.
+    # Step 4 — date clamps.
     if metadata.created_date is not None:
         if metadata.created_date < _date_min() or metadata.created_date > _date_max():
             logger.warning(
@@ -512,39 +579,40 @@ def validate_extraction(
             )
             metadata.created_date = None
 
+    metadata.resolutions = resolutions
     return metadata
 
 
-def _validate_singleton_field(
+def _resolve_singleton_field(
     value: str | None,
     taxonomy: list[str],
     *,
-    field_name: str,
-    has_proposal: bool,
-) -> str | None:
-    """Apply fuzzy+strict validation to one taxonomy-constrained field.
+    field: str,
+) -> tuple[str | None, FieldResolution | None]:
+    """Resolve one LLM-extracted singleton against the taxonomy.
 
-    If the LLM also emitted a new_entry_proposal for this field, we keep
-    ``None`` as the field value (the proposal carries the intent).
-    Otherwise we log the dropped value for later debugging.
+    Returns ``(canonical_value, None)`` when an exact / strong-fuzzy
+    hit exists — the field is set, no user input needed.
+
+    Returns ``(None, FieldResolution(...))`` when no high-confidence
+    hit exists. The resolution carries the extracted value plus up to
+    3 near-match candidates the user picks from (or chooses "neu").
+
+    ``value`` of None / empty → ``(None, None)``: nothing to ask the
+    user about.
     """
-    if value is None:
-        return None
+    if not value:
+        return None, None
 
     canonical = _fuzzy_match(value, taxonomy)
     if canonical is not None:
-        return canonical
+        return canonical, None
 
-    # Not in taxonomy. If there's a matching proposal, that's intended —
-    # silently return None (the caller surfaces the proposal in the
-    # confirm UI). If not, the LLM hallucinated; log for debugging.
-    if not has_proposal:
-        logger.debug(
-            "Dropping %s not in taxonomy (no proposal): %r",
-            field_name,
-            value,
-        )
-    return None
+    return None, FieldResolution(
+        field=field,
+        extracted_value=value,
+        near_matches=_fuzzy_top_candidates(value, taxonomy),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -555,22 +623,23 @@ def _validate_singleton_field(
 def render_prompt(
     *,
     doc_text: str,
-    taxonomy: PaperlessTaxonomy,
+    taxonomy: PaperlessTaxonomy | None = None,  # accepted for back-compat; unused
     lang: str = "de",
     learned_examples: list[dict[str, Any]] | None = None,
 ) -> tuple[str, str]:
     """Build (system, user) messages for the LLM call.
 
-    Taxonomy lists render as comma-separated inline strings; the prompt
-    template doesn't try to pretty-print them because LLMs tolerate
-    either shape and CSV keeps the token count down.
+    The taxonomy is intentionally NOT injected into the prompt — see
+    module docstring. The parameter remains in the signature so existing
+    call sites and tests don't break, but it's discarded here.
 
-    *learned_examples* are confirm-diff entries fetched by the
-    PR 3 retriever. They get rendered into a small block between the
-    seed examples and the input document so the LLM can mimic the
-    correction patterns. ``None`` or empty list = no learned-example
-    block (placeholder collapses).
+    *learned_examples* are confirm-diff entries fetched by the example
+    retriever. They get rendered into a small block between the seed
+    examples and the input document so the LLM can mimic the correction
+    patterns. ``None`` or empty list = no learned-example block
+    (placeholder collapses).
     """
+    del taxonomy  # accepted for back-compat; resolution is server-side
     system = prompt_manager.get(
         "paperless_metadata", "system",
         default="Extract Paperless metadata.", lang=lang,
@@ -579,10 +648,6 @@ def render_prompt(
         "paperless_metadata", "user",
         default="{document_text}",
         lang=lang,
-        correspondents=", ".join(taxonomy.correspondents) or "(none)",
-        document_types=", ".join(taxonomy.document_types) or "(none)",
-        tags=", ".join(taxonomy.tags) or "(none)",
-        storage_paths=", ".join(taxonomy.storage_paths) or "(none)",
         document_text=doc_text[:_MAX_DOC_CHARS],
         learned_examples=_format_learned_examples(learned_examples or [], lang=lang),
     )
@@ -653,9 +718,11 @@ def _strip_example_noise(payload: dict[str, Any]) -> dict[str, Any]:
     """Drop noisy fields from a stored llm_output before showing it as
     a worked example.
 
-    - ``confidence`` / ``new_entry_proposals`` reflect the historical
-      extraction's state, not the corrected outcome — keeping them
-      would reinforce uncertainty rather than the correction itself.
+    - ``confidence`` / ``resolutions`` / ``new_entry_proposals`` reflect
+      the historical extraction's state, not the corrected outcome —
+      keeping them would reinforce uncertainty rather than the
+      correction itself. ``new_entry_proposals`` is dropped for legacy
+      payloads written before the resolution shape landed.
     - ``_doc_text`` is the pending-confirm scratchpad copy of the full
       (up to 8 KB) document text. Leaving it in would double the
       document inside the prompt (once as the snippet, once inside the
@@ -663,6 +730,7 @@ def _strip_example_noise(payload: dict[str, Any]) -> dict[str, Any]:
     """
     out = dict(payload)
     out.pop("confidence", None)
+    out.pop("resolutions", None)
     out.pop("new_entry_proposals", None)
     out.pop("_doc_text", None)
     return out

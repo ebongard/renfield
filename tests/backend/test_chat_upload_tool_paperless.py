@@ -164,7 +164,7 @@ class TestRenderConfirmMessage:
                 "storage_path": "/wohnung/betriebskosten",
                 "created_date": "2026-02-14",
             },
-            proposals=[],
+            resolutions=[],
         )
         assert "rechnung.pdf" in msg
         assert "Stadtwerke Korschenbroich" in msg
@@ -172,7 +172,6 @@ class TestRenderConfirmMessage:
         assert "wohnung, nebenkosten-2025" in msg
         assert "/wohnung/betriebskosten" in msg
         assert "2026-02-14" in msg
-        assert "keine" in msg  # no proposals
         assert "ja" in msg and "nein" in msg
 
     @pytest.mark.unit
@@ -187,34 +186,63 @@ class TestRenderConfirmMessage:
                 "storage_path": None,
                 "created_date": None,
             },
-            proposals=[],
+            resolutions=[],
         )
         # Five "—" markers (one per missing field).
         assert msg.count("—") >= 5
 
     @pytest.mark.unit
-    def test_proposals_listed(self):
-        # Use dict-shaped proposals (pending_confirms JSONB form).
-        proposals = [
-            {"field": "correspondent", "value": "Schreiner Meier",
-             "reasoning": "..."},
-            {"field": "tag", "value": "handwerker", "reasoning": "..."},
+    def test_resolutions_with_near_matches_listed(self):
+        """Resolutions with near matches show numbered candidate options
+        plus the "neu" path."""
+        # Dict shape — matches what's persisted in pending_confirms.proposals.
+        resolutions = [
+            {
+                "field": "correspondent",
+                "extracted_value": "Schreiner Meier",
+                "canonical": None,
+                "near_matches": ["Schreiner Müller", "Schreinerei Bauer"],
+            },
         ]
         msg = _render_confirm_message(
-            filename="f.pdf", metadata={"title": "T"}, proposals=proposals,
+            filename="f.pdf", metadata={"title": "T"}, resolutions=resolutions,
         )
         assert "Schreiner Meier" in msg
-        assert "handwerker" in msg
-        assert "correspondent" in msg
-        assert "tag" in msg
+        assert "Schreiner Müller" in msg
+        assert "Schreinerei Bauer" in msg
+        assert "NEU" in msg
+        assert "Korrespondent" in msg
 
     @pytest.mark.unit
-    def test_proposals_from_pydantic_objects(self):
-        """Confirm message also accepts pydantic NewEntryProposal objects
+    def test_resolution_no_near_matches_offers_neu_and_skip(self):
+        resolutions = [
+            {
+                "field": "correspondent",
+                "extracted_value": "Völlig Unbekannte GmbH",
+                "canonical": None,
+                "near_matches": [],
+            },
+        ]
+        msg = _render_confirm_message(
+            filename="f.pdf", metadata={"title": "T"}, resolutions=resolutions,
+        )
+        assert "Völlig Unbekannte GmbH" in msg
+        assert "NEU" in msg
+        assert "leer lassen" in msg
+
+    @pytest.mark.unit
+    def test_resolutions_from_pydantic_objects(self):
+        """Confirm message also accepts pydantic FieldResolution objects
         (the raw extractor output shape). Duck-typed via hasattr."""
-        p = SimpleNamespace(field="correspondent", value="Test", reasoning="x")
-        msg = _render_confirm_message(filename="f", metadata={}, proposals=[p])
+        from services.paperless_metadata_extractor import FieldResolution
+        r = FieldResolution(
+            field="correspondent", extracted_value="Test", near_matches=["Test Inc"],
+        )
+        msg = _render_confirm_message(
+            filename="f", metadata={"title": "X"}, resolutions=[r],
+        )
         assert "Test" in msg
+        assert "Test Inc" in msg
 
 
 # ===========================================================================
@@ -314,7 +342,7 @@ class TestForwardAttachmentColdStart:
                 tags=["wohnung"],
                 storage_path="/x",
                 created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {
                     "title": "T",
                     "correspondent": "Stadtwerke",
@@ -322,7 +350,7 @@ class TestForwardAttachmentColdStart:
                     "tags": ["wohnung"],
                     "storage_path": "/x",
                     "created_date": None,
-                    "new_entry_proposals": [],
+                    "resolutions": [],
                 },
             ),
             doc_text="doc text",
@@ -373,12 +401,12 @@ class TestForwardAttachmentColdStart:
                 title="T", correspondent="Stadtwerke",
                 document_type="Rechnung", tags=["wohnung"],
                 storage_path="/x", created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {
                     "title": "T", "correspondent": "Stadtwerke",
                     "document_type": "Rechnung", "tags": ["wohnung"],
                     "storage_path": "/x", "created_date": None,
-                    "new_entry_proposals": [],
+                    "resolutions": [],
                 },
             ),
             doc_text="doc",
@@ -450,7 +478,7 @@ class TestForwardAttachmentColdStart:
                 document_type="Rechnung",
                 tags=["Rechnung", "2026"],
                 created_date=date(2026, 4, 24),
-                new_entry_proposals=[],
+                resolutions=[],
             ),
             doc_text="doc",
             error=None,
@@ -510,7 +538,7 @@ class TestForwardAttachmentColdStart:
                 title="T", correspondent="Stadtwerke",
                 document_type="Rechnung", tags=["wohnung"],
                 storage_path="/x", created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {
                     "title": "T", "correspondent": "Stadtwerke",
                     "document_type": "Rechnung", "tags": ["wohnung"],
@@ -565,7 +593,7 @@ class TestForwardAttachmentExtractionFailure:
             metadata=SimpleNamespace(
                 title=None, correspondent=None, document_type=None,
                 tags=[], storage_path=None, created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {},
             ),
             doc_text="",
@@ -617,7 +645,7 @@ class TestPaperlessTaskPolling:
             metadata=SimpleNamespace(
                 title=None, correspondent=None, document_type=None,
                 tags=[], storage_path=None, created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {},
             ),
             doc_text="",
@@ -675,7 +703,7 @@ class TestPaperlessTaskPolling:
             metadata=SimpleNamespace(
                 title=None, correspondent=None, document_type=None,
                 tags=[], storage_path=None, created_date=None,
-                new_entry_proposals=[],
+                resolutions=[],
                 model_dump=lambda **_kw: {},
             ),
             doc_text="",

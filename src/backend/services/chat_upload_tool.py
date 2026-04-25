@@ -315,6 +315,16 @@ async def forward_attachment_to_paperless(
         # extraction run.
         llm_output_for_persist["_doc_text"] = extraction_result.doc_text
 
+        # Resolutions carry the user-facing decision list (extracted
+        # value + near-match candidates per field that didn't resolve
+        # to an exact taxonomy hit). Persisted into the pending row's
+        # JSON column (named `proposals` for legacy reasons) so the
+        # commit tool can read them back in the next turn.
+        resolutions_payload = [
+            r.model_dump(mode="json")
+            for r in extraction_result.metadata.resolutions
+        ]
+
         async with AsyncSessionLocal() as db:
             pending = PaperlessPendingConfirm(
                 confirm_token=confirm_token,
@@ -326,10 +336,7 @@ async def forward_attachment_to_paperless(
                 user_id=user_id,
                 llm_output=llm_output_for_persist,
                 post_fuzzy_output=post_fuzzy,
-                proposals=[
-                    p.model_dump(mode="json")
-                    for p in extraction_result.metadata.new_entry_proposals
-                ],
+                proposals=resolutions_payload,
             )
             db.add(pending)
             await db.commit()
@@ -337,7 +344,7 @@ async def forward_attachment_to_paperless(
         preview_text = _render_confirm_message(
             filename=upload.filename,
             metadata=post_fuzzy,
-            proposals=extraction_result.metadata.new_entry_proposals,
+            resolutions=extraction_result.metadata.resolutions,
         )
 
         return {
@@ -627,17 +634,29 @@ def _infer_lang(upload) -> str:
     return "de"
 
 
+_FIELD_LABELS_DE = {
+    "correspondent": "Korrespondent",
+    "document_type": "Dokumenttyp",
+    "storage_path": "Speicherpfad",
+    "tag": "Tag",
+}
+
+
 def _render_confirm_message(
     *,
     filename: str,
     metadata: dict,
-    proposals: list,
+    resolutions: list,
 ) -> str:
     """Build the German confirm preview the agent relays to the user.
 
-    Matches the shape documented in the design doc § 5 confirm UX.
-    Missing fields render as "—" so the user sees what the LLM couldn't
-    decide and can either approve the gaps or abort.
+    Resolved fields (LLM extracted + server matched a taxonomy entry)
+    appear plainly. Anything that didn't resolve to an exact hit shows
+    up under "Folgende Felder benötigen Klärung" with a numbered list
+    of near-match candidates plus a "neu" option.
+
+    Empty / null fields render as "—" so the user sees what's missing
+    and can either approve the gaps with `ja` or abort with `nein`.
     """
     def _display(value):
         if value is None or value == "":
@@ -646,27 +665,58 @@ def _render_confirm_message(
             return ", ".join(str(v) for v in value) if value else "—"
         return str(value)
 
-    proposals_line = "keine"
-    if proposals:
-        parts = []
-        for p in proposals:
-            field = p.field if hasattr(p, "field") else p.get("field")
-            value = p.value if hasattr(p, "value") else p.get("value")
-            parts.append(f"{field}: {value}")
-        proposals_line = "; ".join(parts)
+    decisions = [
+        r for r in (resolutions or [])
+        if (r.requires_user_decision if hasattr(r, "requires_user_decision")
+            else r.get("status") != "exact" or bool(r.get("near_matches")))
+    ]
 
-    return (
-        f"Ich möchte das Dokument so ablegen:\n"
-        f"\n"
-        f"  Datei:             {filename}\n"
-        f"  Titel:             {_display(metadata.get('title'))}\n"
-        f"  Korrespondent:     {_display(metadata.get('correspondent'))}\n"
-        f"  Dokumenttyp:       {_display(metadata.get('document_type'))}\n"
-        f"  Tags:              {_display(metadata.get('tags'))}\n"
-        f"  Speicherpfad:      {_display(metadata.get('storage_path'))}\n"
-        f"  Ausstellungsdatum: {_display(metadata.get('created_date'))}\n"
-        f"\n"
-        f"  Neu anzulegen:     {proposals_line}\n"
-        f"\n"
-        f"Passt das so? Antworte mit `ja` zum Ablegen oder `nein` zum Abbrechen."
+    lines = [
+        "Ich möchte das Dokument so ablegen:",
+        "",
+        f"  Datei:             {filename}",
+        f"  Titel:             {_display(metadata.get('title'))}",
+        f"  Korrespondent:     {_display(metadata.get('correspondent'))}",
+        f"  Dokumenttyp:       {_display(metadata.get('document_type'))}",
+        f"  Tags:              {_display(metadata.get('tags'))}",
+        f"  Speicherpfad:      {_display(metadata.get('storage_path'))}",
+        f"  Ausstellungsdatum: {_display(metadata.get('created_date'))}",
+    ]
+
+    if not decisions:
+        lines.append("")
+        lines.append(
+            "Passt das so? Antworte mit `ja` zum Ablegen oder `nein` zum Abbrechen."
+        )
+        return "\n".join(lines)
+
+    lines.append("")
+    lines.append("Folgende Felder benötigen Klärung:")
+
+    for idx, res in enumerate(decisions, start=1):
+        field = res.field if hasattr(res, "field") else res.get("field")
+        extracted = (
+            res.extracted_value if hasattr(res, "extracted_value")
+            else res.get("extracted_value")
+        )
+        near = (
+            list(res.near_matches) if hasattr(res, "near_matches")
+            else list(res.get("near_matches") or [])
+        )
+        label = _FIELD_LABELS_DE.get(field, field)
+        lines.append("")
+        lines.append(f"  [{idx}] {label}: aus dem Dokument: \"{extracted}\"")
+        for j, candidate in enumerate(near, start=1):
+            marker = " (Vorschlag)" if j == 1 else ""
+            lines.append(f"        {j}. {candidate}{marker}")
+        lines.append(f"        n. NEU anlegen: \"{extracted}\"")
+        if not near:
+            lines.append("        x. Feld leer lassen")
+
+    lines.append("")
+    lines.append(
+        "Antworte mit `ja` (Vorschläge übernehmen — bei `near` Wahl 1, "
+        "sonst NEU), `nein` zum Abbrechen, oder gib pro Feld eine Wahl an, "
+        "z.B. `1: 2, 2: neu, 3: x`."
     )
+    return "\n".join(lines)

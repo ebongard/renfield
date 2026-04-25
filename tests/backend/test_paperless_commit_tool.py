@@ -204,9 +204,10 @@ class TestApprovePath:
                 "storage_path": None, "document_type": None,
             },
             proposals=[
-                {"field": "correspondent", "value": "Schreiner Meier",
-                 "reasoning": "..."},
-                {"field": "tag", "value": "handwerker", "reasoning": "..."},
+                {"field": "correspondent", "extracted_value": "Schreiner Meier",
+                 "near_matches": []},
+                {"field": "tag", "extracted_value": "handwerker",
+                 "near_matches": []},
             ],
         )
         upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
@@ -262,7 +263,7 @@ class TestApprovePath:
             llm_output={},
             post_fuzzy={"title": "T"},
             proposals=[
-                {"field": "correspondent", "value": "Stadtwerke", "reasoning": "..."},
+                {"field": "correspondent", "extracted_value": "Stadtwerke", "near_matches": []},
             ],
         )
         upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
@@ -314,8 +315,8 @@ class TestApprovePath:
             post_fuzzy={"title": "T", "correspondent": None, "tags": [],
                         "storage_path": None, "document_type": None},
             proposals=[
-                {"field": "correspondent", "value": "Stadtwerke",
-                 "reasoning": "..."},
+                {"field": "correspondent", "extracted_value": "Stadtwerke",
+                 "near_matches": []},
             ],
         )
         upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
@@ -382,8 +383,8 @@ class TestApprovePath:
             post_fuzzy={"title": "T", "correspondent": None, "tags": [],
                         "storage_path": None, "document_type": None},
             proposals=[
-                {"field": "correspondent", "value": "Stadtwerke",
-                 "reasoning": "..."},
+                {"field": "correspondent", "extracted_value": "Stadtwerke",
+                 "near_matches": []},
             ],
         )
         upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
@@ -677,6 +678,87 @@ class TestAmbiguousResponse:
         assert result["data"]["action_required"] == "paperless_confirm"
         # No MCP call.
         assert mcp.execute_tool.await_count == 0
+
+
+# ===========================================================================
+# Per-field choice parser
+# ===========================================================================
+
+
+class TestChoiceParser:
+    @pytest.mark.unit
+    def test_default_decisions_pick_first_near_match(self):
+        from services.paperless_commit_tool import _default_decisions
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "Foo",
+             "near_matches": ["Foo Inc", "Foo GmbH"]},
+            {"field": "tag", "extracted_value": "bar", "near_matches": []},
+        ]
+        decisions = _default_decisions(resolutions)
+        assert decisions[0]["action"] == "use"
+        assert decisions[0]["value"] == "Foo Inc"
+        assert decisions[1]["action"] == "create"
+        assert decisions[1]["value"] == "bar"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_per_field(self):
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "Foo",
+             "near_matches": ["Foo Inc", "Foo GmbH"]},
+            {"field": "tag", "extracted_value": "bar", "near_matches": []},
+        ]
+        decisions, err = _parse_user_choices("1: 2, 2: neu", resolutions)
+        assert err is None
+        assert decisions[0]["action"] == "use"
+        assert decisions[0]["value"] == "Foo GmbH"
+        assert decisions[1]["action"] == "create"
+        assert decisions[1]["value"] == "bar"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_skip_token(self):
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "X",
+             "near_matches": ["Y"]},
+        ]
+        decisions, err = _parse_user_choices("1: x", resolutions)
+        assert err is None
+        assert decisions[0]["action"] == "skip"
+
+    @pytest.mark.unit
+    def test_parse_user_choices_invalid_index(self):
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "X", "near_matches": []},
+        ]
+        _, err = _parse_user_choices("9: neu", resolutions)
+        assert err is not None and "out of range" in err
+
+    @pytest.mark.unit
+    def test_parse_user_choices_invalid_candidate(self):
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "X",
+             "near_matches": ["Y"]},
+        ]
+        _, err = _parse_user_choices("1: 5", resolutions)
+        assert err is not None and "out of range" in err
+
+    @pytest.mark.unit
+    def test_parse_user_choices_no_pairs_returns_error(self):
+        from services.paperless_commit_tool import _parse_user_choices
+
+        resolutions = [
+            {"field": "correspondent", "extracted_value": "X", "near_matches": []},
+        ]
+        _, err = _parse_user_choices("hmm vielleicht", resolutions)
+        assert err is not None
 
 
 # ===========================================================================

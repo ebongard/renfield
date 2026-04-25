@@ -347,8 +347,12 @@ class PaperlessPendingConfirm(Base):
     # Post-fuzzy, post-validation. This is what the user sees and
     # approves in the confirm preview.
     post_fuzzy_output = Column(JSON, nullable=False)
-    # new_entry_proposals[] — surfaces in the confirm message as
-    # "Neu anlegen: Stadtwerke Köln".
+    # FieldResolution[] (column name kept for legacy reasons) — one per
+    # extracted field that did NOT resolve to an exact taxonomy hit.
+    # Carries extracted_value + near-match candidates the user picks
+    # from in the confirm preview. The commit tool reads this back to
+    # turn the user's response into final field values + create_*
+    # calls.
     proposals = Column(JSON, nullable=False, default=list, server_default="[]")
     # Caps the ambiguous-response loop so a user who keeps typing
     # "hmmm" can't pin the row indefinitely.

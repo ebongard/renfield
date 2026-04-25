@@ -56,7 +56,7 @@ _sweep_lock = asyncio.Lock()
 # Fields we diff between what we uploaded and what's in Paperless now.
 # Order matters for the deterministic doc-diff summary — covers every
 # field ``PaperlessMetadata`` persists minus the metadata-only ones
-# (``confidence``, ``new_entry_proposals``).
+# (``confidence``, ``resolutions``).
 _TRACKED_FIELDS: tuple[str, ...] = (
     "title",
     "correspondent",

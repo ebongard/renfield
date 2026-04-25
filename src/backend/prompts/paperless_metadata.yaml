@@ -2,49 +2,49 @@
 #
 # Used by PaperlessMetadataExtractor.extract() to produce a structured
 # metadata dict (correspondent, document_type, tags, storage_path,
-# created_date) from a document's OCR'd text, constrained to the user's
-# current Paperless taxonomy.
+# created_date) directly from a document's OCR'd text.
 #
-# Prompt structure: system + user. The user prompt receives the pruned
-# taxonomy (top 20 correspondents + top 20 tags by recency, full
-# doc_types + storage_paths) plus three worked examples plus the
-# document text. LLM returns a JSON object matching the PaperlessMetadata
-# pydantic model.
+# Prompt structure: system + user. The user prompt receives only the
+# document text plus optional learned examples (past confirm-diffs).
+# The taxonomy is NOT injected into the prompt — it would balloon the
+# context (903 correspondents + 383 doc-types + 1461 tags is typical
+# for a real household instance) and force the LLM to hallucinate a
+# taxonomy match instead of extracting the value the document actually
+# carries. Server-side fuzzy resolution + user-driven near-match
+# disambiguation does that comparison post-extraction.
 #
 # Design reference: docs/design/paperless-llm-metadata.md §Prompt template.
 
 de:
   system: |
     Du hilfst beim Ablegen von Dokumenten in Paperless-NGX. Lies den
-    extrahierten Dokumenttext und waehle die passendsten Felder aus der
-    vorhandenen Paperless-Taxonomie.
+    extrahierten Dokumenttext und gib die wesentlichen Metadaten als
+    JSON zurueck.
 
     Regeln:
-    - Verwende nur Werte aus der unten aufgefuehrten Taxonomie. Wenn
-      nichts passt, gib null zurueck — erfinde nichts.
+    - Extrahiere die Werte direkt aus dem Dokument (Briefkopf,
+      Rechnungssteller, Betreffzeile usw.). Erfinde nichts. Wenn ein
+      Feld im Dokument nicht klar steht, gib null zurueck.
     - title: beschreibend und dateisystemtauglich. Format: "<Dokumenttyp>
       <Zeitraum/Bezug> - <Korrespondent>". Beispiel:
       "Nebenkostenabrechnung 2025 - Stadtwerke Korschenbroich".
+    - correspondent: der Absender des Dokuments. Firmenname so wie er
+      im Briefkopf steht (mit Rechtsform falls aufgefuehrt).
+    - document_type: knapp und generisch ("Rechnung", "Steuerbescheid",
+      "Vertrag", "Mahnung"). NICHT die spezifische Bezeichnung des
+      Dokuments — die gehoert in den title.
+    - storage_path: thematischer Pfad ("/wohnung/betriebskosten",
+      "/steuer/2024", "/handwerker"). Optional.
+    - tags: maximal 5, thematisch relevant.
     - created_date: das Ausstellungsdatum laut Dokument (Rechnungsdatum,
       Ausstellungsdatum, Vertragsdatum — NICHT Zahlungsziel, NICHT das
       heutige Datum). Format YYYY-MM-DD.
-    - tags: maximal 5, thematisch relevant.
     - confidence: 0.0 bis 1.0 pro Feld, deine Selbsteinschaetzung.
-    - new_entry_proposals: optional. Nur wenn du sehr sicher bist, dass
-      der Wert nicht in der Taxonomie steht und einen neuen Eintrag
-      rechtfertigt. Ein Vorschlag pro Feld — drei neue Tags werden als
-      drei Eintraege emittiert.
 
     Antworte ausschliesslich mit einem JSON-Objekt, kein Fliesstext,
     keine Markdown-Code-Fences.
 
   user: |
-    Paperless-Taxonomie (nach Relevanz gekuerzt):
-    correspondents: {correspondents}
-    document_types: {document_types}
-    tags: {tags}
-    storage_paths: {storage_paths}
-
     Beispiele:
 
     ---
@@ -56,7 +56,7 @@ de:
     Antwort:
     {{
       "title": "Nebenkostenabrechnung 2025 - Stadtwerke Korschenbroich",
-      "correspondent": "Stadtwerke Korschenbroich",
+      "correspondent": "Stadtwerke Korschenbroich GmbH",
       "document_type": "Nebenkostenabrechnung",
       "tags": ["wohnung", "nebenkosten-2025"],
       "storage_path": "/wohnung/betriebskosten",
@@ -64,8 +64,7 @@ de:
       "confidence": {{
         "title": 0.95, "correspondent": 0.98, "document_type": 0.95,
         "storage_path": 0.85, "created_date": 0.98
-      }},
-      "new_entry_proposals": []
+      }}
     }}
 
     ---
@@ -84,8 +83,7 @@ de:
       "confidence": {{
         "title": 0.92, "correspondent": 0.98, "document_type": 0.94,
         "storage_path": 0.88, "created_date": 0.99
-      }},
-      "new_entry_proposals": []
+      }}
     }}
 
     ---
@@ -93,27 +91,18 @@ de:
     "Schreiner Meier ... Rechnung Nr. 2026-0042 ... Einbau Fensterbank
     Esszimmer ... 380,00 EUR ... Rechnungsdatum: 18.03.2026"
 
-    (Taxonomie enthaelt "Schreiner Meier" NICHT.)
-
     Antwort:
     {{
       "title": "Rechnung 2026-0042 - Schreiner Meier",
-      "correspondent": null,
+      "correspondent": "Schreiner Meier",
       "document_type": "Rechnung",
       "tags": ["wohnung", "handwerker"],
       "storage_path": "/wohnung/handwerker",
       "created_date": "2026-03-18",
       "confidence": {{
-        "title": 0.9, "document_type": 0.97, "storage_path": 0.7,
-        "created_date": 0.99
-      }},
-      "new_entry_proposals": [
-        {{
-          "field": "correspondent",
-          "value": "Schreiner Meier",
-          "reasoning": "Rechnungskopf nennt den Korrespondenten eindeutig; nicht in Taxonomie."
-        }}
-      ]
+        "title": 0.9, "correspondent": 0.95, "document_type": 0.97,
+        "storage_path": 0.7, "created_date": 0.99
+      }}
     }}
 
     {learned_examples}
@@ -127,33 +116,31 @@ de:
 en:
   system: |
     You help archive documents in Paperless-NGX. Read the extracted
-    document text and pick the best-matching fields from the existing
-    Paperless taxonomy.
+    document text and return the essential metadata as JSON.
 
     Rules:
-    - Use only values from the taxonomy listed below. If nothing fits,
-      return null — do not invent entries.
+    - Extract values directly from the document (letterhead, sender,
+      subject line, etc.). Do not invent. If a field is not clearly
+      stated in the document, return null.
     - title: descriptive, filesystem-safe. Format: "<document_type>
       <period/reference> - <correspondent>". Example:
-      "Utility Bill 2025 - Municipal Utilities".
+      "Utility Bill 2025 - Acme Utilities".
+    - correspondent: the sender of the document. Company name as it
+      appears in the letterhead (with legal form if listed).
+    - document_type: concise and generic ("Invoice", "Tax Notice",
+      "Contract", "Reminder"). NOT the specific document name — that
+      belongs in the title.
+    - storage_path: thematic path ("/home/utilities", "/tax/2024",
+      "/contractor"). Optional.
+    - tags: at most 5, thematically relevant.
     - created_date: the document's issue date (invoice date, issue
       date, contract date — NOT the payment deadline, NOT today's
       date). Format YYYY-MM-DD.
-    - tags: at most 5, thematically relevant.
     - confidence: 0.0 to 1.0 per field, your own estimate.
-    - new_entry_proposals: optional. Only when you are highly confident
-      the value is not in the taxonomy and a new entry is warranted.
-      One proposal per field — three new tags become three entries.
 
     Respond with a JSON object only — no prose, no markdown fences.
 
   user: |
-    Paperless taxonomy (pruned by relevance):
-    correspondents: {correspondents}
-    document_types: {document_types}
-    tags: {tags}
-    storage_paths: {storage_paths}
-
     Examples:
 
     ---
@@ -164,7 +151,7 @@ en:
     Answer:
     {{
       "title": "Utility Bill 2025 - Acme Utilities",
-      "correspondent": "Acme Utilities",
+      "correspondent": "Acme Utilities Inc",
       "document_type": "Utility Bill",
       "tags": ["home", "utilities-2025"],
       "storage_path": "/home/utilities",
@@ -172,8 +159,7 @@ en:
       "confidence": {{
         "title": 0.95, "correspondent": 0.98, "document_type": 0.95,
         "storage_path": 0.85, "created_date": 0.98
-      }},
-      "new_entry_proposals": []
+      }}
     }}
 
     ---
@@ -192,8 +178,7 @@ en:
       "confidence": {{
         "title": 0.92, "correspondent": 0.98, "document_type": 0.94,
         "storage_path": 0.88, "created_date": 0.99
-      }},
-      "new_entry_proposals": []
+      }}
     }}
 
     ---
@@ -201,27 +186,18 @@ en:
     "Meier Carpentry ... Invoice 2026-0042 ... Install windowsill in
     dining room ... USD 380.00 ... Invoice date: 2026-03-18"
 
-    (Taxonomy does NOT contain "Meier Carpentry".)
-
     Answer:
     {{
       "title": "Invoice 2026-0042 - Meier Carpentry",
-      "correspondent": null,
+      "correspondent": "Meier Carpentry",
       "document_type": "Invoice",
       "tags": ["home", "contractor"],
       "storage_path": "/home/contractor",
       "created_date": "2026-03-18",
       "confidence": {{
-        "title": 0.9, "document_type": 0.97, "storage_path": 0.7,
-        "created_date": 0.99
-      }},
-      "new_entry_proposals": [
-        {{
-          "field": "correspondent",
-          "value": "Meier Carpentry",
-          "reasoning": "Invoice header names the correspondent unambiguously; not in taxonomy."
-        }}
-      ]
+        "title": 0.9, "correspondent": 0.95, "document_type": 0.97,
+        "storage_path": 0.7, "created_date": 0.99
+      }}
     }}
 
     {learned_examples}

@@ -9,32 +9,35 @@ German confirm preview; their next chat message is their response.
 
 This tool handles that second turn:
 
-    user message "ja" / "nein" / "ändere X"
+    user message "ja" / "nein" / "1: 2, 2: neu"
         │
         ▼
     paperless_commit_upload(confirm_token, user_response_text)
         │   1. SELECT pending_confirms row (session-scoped per #442)
         │   2. Parse user_response_text:
-        │        - "ja" family → approve as-is
+        │        - "ja" family → apply defaults to every resolution
+        │          (pick #1 if near_matches non-empty, else "neu")
         │        - "nein" family → abort (delete ChatUpload + row, done)
-        │        - anything else (v1) → ask again, bump edit_rounds
-        │   3. If approved with new-entry proposals:
-        │        - For each proposal, call mcp.paperless.create_*
-        │        - Invalidate the extractor's taxonomy cache so the
-        │          next extraction sees the new entries
-        │   4. Call mcp.paperless.upload_document with final fields
-        │   5. On success:
+        │        - "<idx>: <choice>" pairs → per-resolution decision
+        │          where idx is the [N] number from the preview and
+        │          choice is one of: a number from the candidate
+        │          list, "neu", or "x" (skip the field).
+        │   3. For each "neu" decision, call mcp.paperless.create_*
+        │      and invalidate the extractor's taxonomy cache.
+        │   4. Build final field values: post_fuzzy from extraction +
+        │      resolved-by-user fields layered on top.
+        │   5. Call mcp.paperless.upload_document with final fields.
+        │   6. On success:
         │        - Write (doc_text, llm_output, user_approved) into
-        │          paperless_extraction_examples if the user's
-        │          approved fields differ from the LLM's post-fuzzy
-        │          output (confirm-diff signal for PR 3).
+        │          paperless_extraction_examples (confirm-diff signal).
         │        - Increment users.paperless_confirms_used.
         │        - Delete the pending_confirms row.
-        │   6. Return success with a user-facing message.
+        │   7. Return success with a user-facing message.
 """
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from loguru import logger
@@ -50,10 +53,18 @@ from loguru import logger
 _APPROVE_TOKENS = {"ja", "j", "ok", "okay", "passt", "passt so", "yes", "y", "sure"}
 _ABORT_TOKENS = {"nein", "n", "abbrechen", "stopp", "stop", "no", "cancel"}
 
-# v1 keeps edit-parsing dumb: ja/nein only; anything else gets an error
-# message. Smarter correction parsing lands with PR 5 (interactive card)
-# or a separate follow-up. The cold-start confirm is capped at 10
-# uploads per user so this rough UX has a bounded impact.
+# Per-resolution choice tokens. Only used as the right-hand side of a
+# "<idx>: <choice>" pair, so collision with top-level abort tokens
+# ("n", "no") is fine — but we keep them disjoint to avoid surprising
+# the user who reads them in either context.
+_NEW_TOKENS = {"neu", "new", "anlegen", "create"}
+_SKIP_TOKENS = {"x", "skip", "leer", "weglassen", "ueberspringen", "überspringen"}
+
+# Pair format in the user reply: "1: 2, 2: neu, 3: x". Index is the
+# [N] number from the confirm preview; value is a candidate index,
+# "neu", or "x". Whitespace-tolerant.
+_CHOICE_RE = re.compile(r"\s*(\d+)\s*[:=]\s*([^,;\n]+?)\s*(?=,|;|$)")
+
 _MAX_EDIT_ROUNDS = 3
 
 
@@ -142,17 +153,118 @@ async def paperless_commit_upload(
         }
 
     # Classify the user's response.
-    normalised = user_response.strip().lower()
-    if normalised in _APPROVE_TOKENS:
-        return await _commit_approved(
-            pending, mcp_manager=mcp_manager, user_id=user_id,
-        )
+    raw_response = user_response.strip()
+    normalised = raw_response.lower()
+    resolutions: list[dict[str, Any]] = list(pending.proposals or [])
+
     if normalised in _ABORT_TOKENS:
         return await _abort_pending(pending)
 
-    # Unrecognised response. v1 behaviour: count the round, re-prompt if
-    # we still have budget, otherwise force-abort.
+    if normalised in _APPROVE_TOKENS:
+        # "ja" → defaults: pick #1 for resolutions with near matches,
+        # "neu" for resolutions without. No-op when there are none.
+        decisions = _default_decisions(resolutions)
+        return await _commit_approved(
+            pending,
+            mcp_manager=mcp_manager,
+            user_id=user_id,
+            decisions=decisions,
+        )
+
+    # Try to parse per-field choices. Only meaningful when we actually
+    # have resolutions to assign decisions to.
+    if resolutions:
+        decisions, parse_error = _parse_user_choices(raw_response, resolutions)
+        if parse_error is None:
+            return await _commit_approved(
+                pending,
+                mcp_manager=mcp_manager,
+                user_id=user_id,
+                decisions=decisions,
+            )
+
+    # Unrecognised response. Count the round, re-prompt if we still have
+    # budget, otherwise force-abort.
     return await _handle_ambiguous_response(pending)
+
+
+def _default_decisions(
+    resolutions: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Build the default decision per resolution for the `ja` path.
+
+    - near_matches non-empty → pick the first candidate.
+    - near_matches empty     → "neu" (create extracted_value).
+
+    Each decision dict has shape:
+        {"resolution": <res>, "action": "use" | "create" | "skip",
+         "value": <str>}
+    """
+    out: list[dict[str, Any]] = []
+    for res in resolutions:
+        near = list(res.get("near_matches") or [])
+        if near:
+            out.append({
+                "resolution": res,
+                "action": "use",
+                "value": near[0],
+            })
+        else:
+            out.append({
+                "resolution": res,
+                "action": "create",
+                "value": res.get("extracted_value") or "",
+            })
+    return out
+
+
+def _parse_user_choices(
+    text: str,
+    resolutions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Parse a "1: 2, 2: neu, 3: x" reply into a decision per resolution.
+
+    Resolutions not addressed in the user reply fall back to their
+    default (same as the `ja` path). Indices outside 1..len(resolutions)
+    or candidate indices outside 1..len(near_matches) → parse error
+    (caller treats as ambiguous and re-prompts).
+    """
+    matches = _CHOICE_RE.findall(text)
+    if not matches:
+        return [], "no choices found"
+
+    # Seed with defaults so unaddressed resolutions still get a value.
+    decisions = _default_decisions(resolutions)
+    by_idx = {i + 1: d for i, d in enumerate(decisions)}
+
+    for raw_idx, raw_choice in matches:
+        try:
+            idx = int(raw_idx)
+        except ValueError:
+            return [], f"bad index {raw_idx!r}"
+        if idx not in by_idx:
+            return [], f"index {idx} out of range"
+        decision = by_idx[idx]
+        res = decision["resolution"]
+        choice = raw_choice.strip().lower()
+
+        if choice in _NEW_TOKENS:
+            decision["action"] = "create"
+            decision["value"] = res.get("extracted_value") or ""
+        elif choice in _SKIP_TOKENS:
+            decision["action"] = "skip"
+            decision["value"] = ""
+        elif choice.isdigit():
+            cand_idx = int(choice)
+            near = list(res.get("near_matches") or [])
+            if cand_idx < 1 or cand_idx > len(near):
+                return [], f"candidate {cand_idx} out of range for field {idx}"
+            decision["action"] = "use"
+            decision["value"] = near[cand_idx - 1]
+        else:
+            return [], f"unrecognised choice {raw_choice!r} for field {idx}"
+
+    return decisions, None
 
 
 async def _commit_approved(
@@ -160,10 +272,18 @@ async def _commit_approved(
     *,
     mcp_manager: Any,
     user_id: int | None,
+    decisions: list[dict[str, Any]] | None = None,
 ) -> dict:
-    """User said 'ja'. Fire creates for approved proposals, then
-    upload_document, then write the confirm-diff, increment the
-    cold-start counter, and delete the pending row.
+    """User approved. Fire creates for "create" decisions, set
+    "use" decisions on the final field set, skip "skip" decisions,
+    then upload_document, write the confirm-diff, bump the cold-start
+    counter, and delete the pending row.
+
+    ``decisions`` carries one entry per resolution from the pending row
+    in the same order, with shape
+    ``{"resolution": <dict>, "action": "use"|"create"|"skip", "value": str}``.
+    None / empty when the pending row had no resolutions (every field
+    resolved exactly during extraction).
     """
     from sqlalchemy import delete, update
 
@@ -176,18 +296,39 @@ async def _commit_approved(
     from services.database import AsyncSessionLocal
 
     post_fuzzy = pending.post_fuzzy_output or {}
-    proposals = pending.proposals or []
     llm_output = pending.llm_output or {}
+    decisions = decisions or []
 
-    # Step 1 — approve new-entry proposals by calling the matching
-    # create_* MCP tool. Each success invalidates the extractor's
-    # taxonomy cache so subsequent extractions see the new entry.
-    created_entries: dict[str, str] = {}
-    for proposal in proposals:
-        field = proposal.get("field")
-        value = proposal.get("value")
-        if not field or not value:
+    # Step 1 — fire create_* for every "create" decision. Singleton
+    # fields (correspondent / document_type / storage_path) trigger
+    # one create per decision; tag decisions trigger one create per
+    # tag. Successful creates feed `resolved_fields` so the upload
+    # picks up the new value.
+    created_entries: dict[str, list[str]] = {}
+    resolved_fields: dict[str, list[str]] = {
+        "correspondent": [],
+        "document_type": [],
+        "storage_path": [],
+        "tag": [],
+    }
+
+    for decision in decisions:
+        action = decision.get("action")
+        value = (decision.get("value") or "").strip()
+        res = decision.get("resolution") or {}
+        field = res.get("field")
+        if not field or action == "skip" or not value:
             continue
+
+        if action == "use":
+            resolved_fields.setdefault(field, []).append(value)
+            continue
+
+        if action != "create":
+            logger.warning("Unknown decision action, skipping: %r", action)
+            continue
+
+        # action == "create"
         create_tool = {
             "correspondent": "mcp.paperless.create_correspondent",
             "document_type": "mcp.paperless.create_document_type",
@@ -195,37 +336,34 @@ async def _commit_approved(
             "storage_path": "mcp.paperless.create_storage_path",
         }.get(field)
         if create_tool is None:
-            logger.warning("Unknown proposal field, skipping: %r", field)
+            logger.warning("Unknown decision field, skipping: %r", field)
             continue
 
         create_params: dict[str, Any] = {"name": value}
         if field == "storage_path":
-            # Storage paths need a path template. Use the LLM's suggested
-            # value for both name and path — crude v1 fallback, user can
-            # rename in Paperless UI if needed.
+            # Storage paths need a path template. Use the value for
+            # both name and path; user can rename in Paperless UI.
             create_params["path"] = value
 
         try:
             result = await mcp_manager.execute_tool(create_tool, create_params)
         except Exception as exc:
-            logger.warning(
-                "Failed to create %s %r: %s", field, value, exc,
-            )
+            logger.warning("Failed to create %s %r: %s", field, value, exc)
             continue
 
         if not result or not result.get("success"):
             inner = (result or {}).get("message") or "no detail"
             if "already_exists" in str(inner):
-                # Raced against another extraction — someone else already
-                # created this entry. Treat as success.
                 logger.info("%s %r already exists, reusing", field, value)
-                created_entries[field] = value
+                resolved_fields.setdefault(field, []).append(value)
+                created_entries.setdefault(field, []).append(value)
             else:
                 logger.warning(
                     "Create %s %r failed: %s", field, value, str(inner)[:120],
                 )
             continue
-        created_entries[field] = value
+        resolved_fields.setdefault(field, []).append(value)
+        created_entries.setdefault(field, []).append(value)
 
     # Flush the extractor's taxonomy cache so future extractions see
     # the new entries.
@@ -272,18 +410,39 @@ async def _commit_approved(
             "action_taken": False,
         }
 
+    # Build the final field set: post_fuzzy (the exact-resolved fields
+    # from extraction) + resolved_fields (singletons set by user
+    # decision OR newly-created entries). For singletons we take the
+    # last value the user picked / created (only one decision per
+    # field is meaningful). For tags we union the resolved set with
+    # what came out of extraction.
+    final_fields: dict[str, Any] = {}
+    for key in ("correspondent", "document_type", "storage_path"):
+        decided = resolved_fields.get(key) or []
+        if decided:
+            final_fields[key] = decided[-1]
+        elif post_fuzzy.get(key):
+            final_fields[key] = post_fuzzy[key]
+
+    tags_out: list[str] = list(post_fuzzy.get("tags") or [])
+    for tag_value in resolved_fields.get("tag") or []:
+        if tag_value not in tags_out:
+            tags_out.append(tag_value)
+    if tags_out:
+        final_fields["tags"] = tags_out
+
+    if post_fuzzy.get("created_date"):
+        final_fields["created_date"] = post_fuzzy["created_date"]
+
     tool_params: dict[str, Any] = {
         "title": post_fuzzy.get("title") or upload.filename,
         "filename": upload.filename,
         "file_content_base64": file_content_base64,
     }
-    for key in ("correspondent", "document_type", "tags", "storage_path"):
-        val = post_fuzzy.get(key)
+    for key in ("correspondent", "document_type", "tags", "storage_path", "created_date"):
+        val = final_fields.get(key)
         if val:
             tool_params[key] = val
-    created = post_fuzzy.get("created_date")
-    if created:
-        tool_params["created_date"] = created
 
     try:
         mcp_result = await mcp_manager.execute_tool(
@@ -324,20 +483,16 @@ async def _commit_approved(
     # Step 3 — compute the approved field set + embed the doc_text
     # BEFORE opening the write session. The embed call is up to 5 s
     # (see retriever ``_EMBED_TIMEOUT_S``); holding a DB connection
-    # across it would tie up the pool for no reason. Post-PR-3 the
-    # session is only open for the actual writes.
+    # across it would tie up the pool for no reason.
     user_approved = dict(post_fuzzy)
-    for field, value in created_entries.items():
-        if field == "tag":
-            # Tag proposals feed the tags list — append if not already
-            # there. Post-fuzzy tags list carries the taxonomy-hit
-            # tags; the new tag is one we just created.
-            existing_tags = list(user_approved.get("tags") or [])
-            if value not in existing_tags:
-                existing_tags.append(value)
-            user_approved["tags"] = existing_tags
+    user_approved["title"] = tool_params["title"]
+    for key in ("correspondent", "document_type", "storage_path", "created_date"):
+        if key in final_fields:
+            user_approved[key] = final_fields[key]
         else:
-            user_approved[field] = value
+            # User explicitly skipped (or extraction produced nothing).
+            user_approved.pop(key, None)
+    user_approved["tags"] = list(final_fields.get("tags") or [])
 
     diff_row: PaperlessExtractionExample | None = None
     if user_approved != post_fuzzy:
@@ -421,8 +576,11 @@ async def _commit_approved(
 
     created_note = ""
     if created_entries:
-        names = ", ".join(sorted(created_entries.values()))
-        created_note = f" (Neu angelegt: {names})"
+        flat: list[str] = []
+        for values in created_entries.values():
+            flat.extend(values)
+        if flat:
+            created_note = f" (Neu angelegt: {', '.join(sorted(set(flat)))})"
 
     return {
         "success": True,

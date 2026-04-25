@@ -18,11 +18,12 @@ import pytest
 
 from services.paperless_metadata_extractor import (
     ExtractionResult,
-    NewEntryProposal,
+    FieldResolution,
     PaperlessMetadata,
     PaperlessMetadataExtractor,
     PaperlessTaxonomy,
     _fuzzy_match,
+    _fuzzy_top_candidates,
     _normalise,
     _parse_llm_json,
     prune_taxonomy,
@@ -276,7 +277,8 @@ class TestValidateExtraction:
         assert result.tags == ["wohnung", "nebenkosten-2025"]
         assert result.storage_path == "/wohnung/betriebskosten"
         assert result.created_date == date(2026, 2, 14)
-        assert result.new_entry_proposals == []
+        # All fields exact-resolved → no decisions surfaced.
+        assert result.resolutions == []
 
     @pytest.mark.unit
     def test_fuzzy_rewrite_silent_on_near_match(self):
@@ -292,9 +294,10 @@ class TestValidateExtraction:
         assert result.correspondent == "Stadtwerke Korschenbroich"
 
     @pytest.mark.unit
-    def test_non_taxonomy_value_dropped_when_no_proposal(self):
-        """LLM hallucinates a correspondent not in taxonomy, no
-        proposal flagged — field drops to None, nothing surfaces."""
+    def test_non_taxonomy_value_emits_resolution(self):
+        """LLM extracts a correspondent not in the taxonomy. The field
+        drops to None and a FieldResolution surfaces so the user can
+        pick a near match or create a new entry."""
         raw = {
             "title": "Test",
             "correspondent": "Gibt Es Nicht GmbH",
@@ -303,31 +306,44 @@ class TestValidateExtraction:
         }
         result = validate_extraction(raw, _taxonomy())
         assert result.correspondent is None
-        assert result.new_entry_proposals == []
+        assert len(result.resolutions) == 1
+        res = result.resolutions[0]
+        assert res.field == "correspondent"
+        assert res.extracted_value == "Gibt Es Nicht GmbH"
+        # Truly unrelated string → no near matches, only "neu" path.
+        assert res.near_matches == []
 
     @pytest.mark.unit
-    def test_non_taxonomy_value_survives_as_proposal(self):
-        """LLM emits a value not in taxonomy AND flags it as a proposal.
-        Field stays None (proposal carries the intent), proposal
-        survives for user review."""
+    def test_non_taxonomy_value_with_near_match_surfaces_candidates(self):
+        """LLM extracts a value the strict-fuzzy pass can't pin down
+        but that has a few plausible neighbours. The resolution lists
+        them so the user picks a canonical entry."""
+        # Add a couple of plausible neighbours so the looser top-N
+        # matcher has something to surface.
+        taxonomy = _taxonomy()
+        taxonomy.correspondents.extend([
+            "Schreiner Müller",
+            "Schreinerei Bauer",
+            "Schmiede Meier",
+        ])
         raw = {
             "title": "Test",
             "correspondent": "Schreiner Meier",
             "document_type": "Rechnung",
             "tags": [],
-            "new_entry_proposals": [
-                {"field": "correspondent", "value": "Schreiner Meier",
-                 "reasoning": "Rechnungskopf, nicht in Taxonomie."},
-            ],
         }
-        result = validate_extraction(raw, _taxonomy())
+        result = validate_extraction(raw, taxonomy)
         assert result.correspondent is None
-        assert len(result.new_entry_proposals) == 1
-        assert result.new_entry_proposals[0].value == "Schreiner Meier"
+        assert len(result.resolutions) == 1
+        res = result.resolutions[0]
+        assert res.field == "correspondent"
+        assert res.extracted_value == "Schreiner Meier"
+        assert res.near_matches  # at least one neighbour shortlisted
 
     @pytest.mark.unit
-    def test_tags_non_taxonomy_entries_dropped(self):
-        """Tags are list-valued — misses drop silently, hits are kept."""
+    def test_tags_non_taxonomy_entries_emit_resolutions(self):
+        """Tags are list-valued — exact hits land in result.tags,
+        misses each emit a FieldResolution so the user can decide."""
         raw = {
             "title": "Test",
             "correspondent": None,
@@ -338,6 +354,10 @@ class TestValidateExtraction:
         assert "wohnung" in result.tags
         assert "steuer-2025" in result.tags
         assert "made-up-tag" not in result.tags
+        # The miss surfaces as its own resolution.
+        tag_res = [r for r in result.resolutions if r.field == "tag"]
+        assert len(tag_res) == 1
+        assert tag_res[0].extracted_value == "made-up-tag"
 
     @pytest.mark.unit
     def test_tags_capped_at_5(self):
@@ -485,36 +505,45 @@ class TestParseLLMJson:
 
 class TestRenderPrompt:
     @pytest.mark.unit
-    def test_injects_taxonomy_and_doc_text(self):
+    def test_doc_text_in_user_prompt_taxonomy_excluded(self):
+        """The user prompt carries the document text. The taxonomy is
+        intentionally NOT injected — server-side fuzzy resolution
+        replaces what the LLM used to do, and burning context on a
+        ~3000-entry taxonomy was the whole reason this redesign
+        landed."""
         taxonomy = PaperlessTaxonomy(
-            correspondents=["Stadtwerke", "Finanzamt"],
-            document_types=["Rechnung"],
-            tags=["wohnung"],
-            storage_paths=["/x"],
+            correspondents=["Stadtwerke Sentinel"],
+            document_types=["DocTypeSentinel"],
+            tags=["TagSentinel"],
+            storage_paths=["/StorageSentinel"],
         )
         system, user = render_prompt(
             doc_text="Hello world", taxonomy=taxonomy, lang="de",
         )
         assert "JSON" in system or "json" in system.lower()
-        assert "Stadtwerke" in user
-        assert "Rechnung" in user
-        assert "/x" in user
         assert "Hello world" in user
+        # None of the taxonomy entries leak into the prompt.
+        for sentinel in (
+            "Stadtwerke Sentinel",
+            "DocTypeSentinel",
+            "TagSentinel",
+            "/StorageSentinel",
+        ):
+            assert sentinel not in user, (
+                f"taxonomy entry {sentinel!r} leaked into prompt"
+            )
 
     @pytest.mark.unit
-    def test_empty_taxonomy_renders_gracefully(self):
-        """Cold-start, no taxonomy yet — prompt should still render,
-        just noting (none) for each dimension."""
-        taxonomy = PaperlessTaxonomy()
-        _, user = render_prompt(doc_text="doc", taxonomy=taxonomy)
-        assert "(none)" in user
+    def test_render_prompt_works_without_taxonomy(self):
+        """Taxonomy is optional now — render works with None."""
+        _, user = render_prompt(doc_text="doc text here", taxonomy=None)
+        assert "doc text here" in user
 
     @pytest.mark.unit
     def test_doc_text_truncated_past_cap(self):
         """Very long documents get truncated to the LLM-context cap."""
         long_doc = "A" * 20_000
-        taxonomy = PaperlessTaxonomy()
-        _, user = render_prompt(doc_text=long_doc, taxonomy=taxonomy)
+        _, user = render_prompt(doc_text=long_doc, taxonomy=PaperlessTaxonomy())
         # User prompt must not contain the full 20k A's.
         assert "A" * 20_000 not in user
 
@@ -1061,80 +1090,103 @@ class TestExtractorIntegration:
 
 
 # ===========================================================================
-# Confidence-gated proposals
+# _fuzzy_top_candidates + FieldResolution
 # ===========================================================================
 
 
-class TestConfidenceGating:
+class TestFuzzyTopCandidates:
     @pytest.mark.unit
-    def test_high_confidence_proposal_survives(self):
-        """Confidence ≥ 0.6 on the field name → proposal passes."""
+    def test_returns_closest_first(self):
+        taxonomy = ["Stadtwerke A", "Stadtwerke B", "Andere GmbH"]
+        out = _fuzzy_top_candidates("Stadtwerke A", taxonomy)
+        assert out[0] == "Stadtwerke A"
+
+    @pytest.mark.unit
+    def test_caps_at_limit(self):
+        taxonomy = [f"X{i}" for i in range(10)]
+        out = _fuzzy_top_candidates("X1", taxonomy, limit=3)
+        assert len(out) <= 3
+
+    @pytest.mark.unit
+    def test_empty_inputs(self):
+        assert _fuzzy_top_candidates("", ["A"]) == []
+        assert _fuzzy_top_candidates("A", []) == []
+
+    @pytest.mark.unit
+    def test_excludes_far_strings(self):
+        out = _fuzzy_top_candidates(
+            "Stadtwerke", ["Vollkommen Anders", "Noch Anders"],
+        )
+        assert out == []
+
+
+class TestFieldResolution:
+    @pytest.mark.unit
+    def test_status_exact(self):
+        r = FieldResolution(
+            field="correspondent",
+            extracted_value="Foo",
+            canonical="Foo Inc.",
+        )
+        assert r.status == "exact"
+        assert r.requires_user_decision is False
+
+    @pytest.mark.unit
+    def test_status_near(self):
+        r = FieldResolution(
+            field="correspondent",
+            extracted_value="Foo",
+            near_matches=["Foo GmbH", "Foo AG"],
+        )
+        assert r.status == "near"
+        assert r.requires_user_decision is True
+
+    @pytest.mark.unit
+    def test_status_none(self):
+        r = FieldResolution(field="tag", extracted_value="x")
+        assert r.status == "none"
+        assert r.requires_user_decision is True
+
+
+# ===========================================================================
+# Resolutions surfaced for non-exact extractions
+# ===========================================================================
+
+
+class TestResolutionDecisions:
+    @pytest.mark.unit
+    def test_legacy_new_entry_proposals_in_payload_ignored(self):
+        """Older LLM responses (or replayed pending rows) may still carry
+        the obsolete ``new_entry_proposals`` field. validate_extraction
+        strips it silently so the new shape stays clean."""
         raw = {
             "title": "T",
             "correspondent": "Schreiner Meier",
             "document_type": "Rechnung",
             "tags": [],
-            "confidence": {"correspondent": 0.85},
             "new_entry_proposals": [
                 {"field": "correspondent", "value": "Schreiner Meier",
-                 "reasoning": "Rechnungskopf."},
+                 "reasoning": "irrelevant"},
             ],
         }
+        # Should not raise (legacy field is dropped before pydantic).
         result = validate_extraction(raw, _taxonomy())
-        assert len(result.new_entry_proposals) == 1
-        assert result.new_entry_proposals[0].value == "Schreiner Meier"
+        # Server still emits a resolution because correspondent is not
+        # an exact taxonomy hit.
+        assert any(r.field == "correspondent" for r in result.resolutions)
 
     @pytest.mark.unit
-    def test_low_confidence_proposal_dropped(self):
-        """Confidence < 0.6 on the proposal field → dropped."""
+    def test_resolution_status_exact_omitted(self):
+        """When every singleton + tag resolves to an exact / strong-fuzzy
+        hit, no resolutions are emitted."""
         raw = {
             "title": "T",
-            "correspondent": "Unsichtbar Ltd",
+            "correspondent": "Stadtwerke Korschenbroich",
             "document_type": "Rechnung",
-            "tags": [],
-            "confidence": {"correspondent": 0.3},
-            "new_entry_proposals": [
-                {"field": "correspondent", "value": "Unsichtbar Ltd",
-                 "reasoning": "Unsicher, ob so gelesen."},
-            ],
+            "tags": ["wohnung"],
         }
         result = validate_extraction(raw, _taxonomy())
-        assert result.new_entry_proposals == []
-
-    @pytest.mark.unit
-    def test_missing_confidence_permissive(self):
-        """No confidence entry for the proposal field → be permissive
-        (don't drop). Keeps the signal when the LLM forgets the
-        confidence block entirely."""
-        raw = {
-            "title": "T",
-            "correspondent": "Schreiner Meier",
-            "document_type": "Rechnung",
-            "tags": [],
-            # No confidence entry at all.
-            "new_entry_proposals": [
-                {"field": "correspondent", "value": "Schreiner Meier",
-                 "reasoning": "..."},
-            ],
-        }
-        result = validate_extraction(raw, _taxonomy())
-        assert len(result.new_entry_proposals) == 1
-
-    @pytest.mark.unit
-    def test_tag_proposal_uses_plural_confidence_key(self):
-        """The LLM often keys confidence as 'tags' (plural list) even
-        though proposals are singular 'tag'. Accept either."""
-        raw = {
-            "title": "T",
-            "tags": [],
-            "confidence": {"tags": 0.9},
-            "new_entry_proposals": [
-                {"field": "tag", "value": "new-tag",
-                 "reasoning": "..."},
-            ],
-        }
-        result = validate_extraction(raw, _taxonomy())
-        assert len(result.new_entry_proposals) == 1
+        assert result.resolutions == []
 
 
 # ===========================================================================
@@ -1151,19 +1203,6 @@ class TestPartialShapeFailures:
             "title": "T",
             "tags": [],
             "created_date": "not-a-date",
-        }
-        with pytest.raises(ValueError):
-            validate_extraction(raw, _taxonomy())
-
-    @pytest.mark.unit
-    def test_malformed_proposal_shape_raises(self):
-        """Proposal with a wrong field name (not in Literal)."""
-        raw = {
-            "title": "T",
-            "tags": [],
-            "new_entry_proposals": [
-                {"field": "not-a-real-field", "value": "x", "reasoning": "y"},
-            ],
         }
         with pytest.raises(ValueError):
             validate_extraction(raw, _taxonomy())
@@ -1301,20 +1340,19 @@ class TestListViaMcpLogging:
 
 class TestDataModels:
     @pytest.mark.unit
-    def test_new_entry_proposal_rejects_invalid_field(self):
+    def test_field_resolution_rejects_invalid_field(self):
         from pydantic import ValidationError
         with pytest.raises(ValidationError):
-            NewEntryProposal(
+            FieldResolution(
                 field="not-a-valid-field",
-                value="X",
-                reasoning="...",
+                extracted_value="X",
             )
 
     @pytest.mark.unit
-    def test_new_entry_proposal_accepts_all_four_dimensions(self):
+    def test_field_resolution_accepts_all_four_dimensions(self):
         for field in ("correspondent", "document_type", "tag", "storage_path"):
-            p = NewEntryProposal(field=field, value="X", reasoning="...")
-            assert p.field == field
+            r = FieldResolution(field=field, extracted_value="X")
+            assert r.field == field
 
     @pytest.mark.unit
     def test_extraction_result_defaults(self):
