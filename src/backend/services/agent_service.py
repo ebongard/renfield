@@ -1621,6 +1621,37 @@ class AgentService:
             context.tool_results.append(result)
             yield tool_result_step
 
+            # ----------------------------------------------------------
+            # Short-circuit on action_required.
+            #
+            # Some internal tools (paperless cold-start confirm, future
+            # multi-step approval flows) return:
+            #   {success: True, message: "<preview>", data: {action_required: ...}}
+            # The semantics: the user MUST see the preview verbatim and
+            # respond. Asking the LLM to "relay verbatim" works most of
+            # the time but the LLM occasionally summarises (e.g.
+            # "Bitte bestätigen Sie die Vorschau") which leaves the
+            # cold-start flow stuck — the pending row exists, the user
+            # sees no preview, no "ja" arrives, no commit fires.
+            # Emit the tool's `message` as final_answer immediately to
+            # close that gap. Tested live on 2026-04-25 against the
+            # paperless confirm flow (forward_attachment_to_paperless
+            # → user "ja" → paperless_commit_upload).
+            tool_data = result.get("data") or {}
+            if isinstance(tool_data, dict) and tool_data.get("action_required"):
+                preview = result.get("message") or ""
+                if preview:
+                    yield AgentStep(
+                        step_number=step_num,
+                        step_type="final_answer",
+                        content=preview,
+                        reason=(
+                            f"Relaying tool preview verbatim — "
+                            f"action_required={tool_data['action_required']}"
+                        ),
+                    )
+                    return
+
             # Check for repeated empty results from the same tool
             if _is_empty_result(result):
                 context.record_empty_result(action)
