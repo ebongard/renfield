@@ -595,6 +595,119 @@ class TestForwardAttachmentExtractionFailure:
         mcp.execute_tool.assert_awaited_once()
 
 
+class TestPaperlessTaskPolling:
+    """Bare-upload path must wait for Paperless's consume task to reach
+    a terminal state, then surface the real outcome to the user. Without
+    the poll, an asynchronous "duplicate / file too small / unparseable"
+    rejection is silently masked behind 'Sent to Paperless: …' and the
+    user sees 'success' in chat while Paperless drops the file. Real
+    prod symptom on 2026-04-25.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bare_upload_surfaces_consume_failure(self, tmp_path):
+        upload = _upload_stub(tmp_path)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True, "message": '{"task_id": "tid-fail-1"}',
+        })
+
+        extractor_result = SimpleNamespace(
+            metadata=SimpleNamespace(
+                title=None, correspondent=None, document_type=None,
+                tags=[], storage_path=None, created_date=None,
+                new_entry_proposals=[],
+                model_dump=lambda **_kw: {},
+            ),
+            doc_text="",
+            error="OCR lieferte keinen Text.",
+        )
+
+        # Mock the polling helper to simulate Paperless rejecting the
+        # consume task as a duplicate.
+        async def _fake_poll(task_id, **_kw):
+            assert task_id == "tid-fail-1"
+            return (
+                "It is a duplicate of Rechnung NEW Niederrhein (#1661).",
+                None,
+            )
+
+        with patch(
+            "services.chat_upload_tool._run_extraction",
+            AsyncMock(return_value=extractor_result),
+        ), patch(
+            "services.chat_upload_tool._get_confirms_used",
+            AsyncMock(return_value=0),
+        ), patch(
+            "services.database.AsyncSessionLocal",
+            _make_session_factory(upload),
+        ), patch(
+            "services.chat_upload_tool._poll_paperless_task",
+            new=_fake_poll,
+        ):
+            result = await forward_attachment_to_paperless(
+                {"attachment_id": 42},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is False, (
+            "Consume failure must propagate as success=False so the "
+            f"agent doesn't claim success. Got: {result}"
+        )
+        assert "duplicate" in result["message"].lower()
+        assert "1661" in result["message"]
+        assert result["data"]["rejection_reason"]
+        assert result["data"]["task_id"] == "tid-fail-1"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_bare_upload_success_when_consume_succeeds(self, tmp_path):
+        """The poll resolves to (None, document_id) on success — the
+        return must propagate document_id so the UI can link to it."""
+        upload = _upload_stub(tmp_path)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock(return_value={
+            "success": True, "message": '{"task_id": "tid-ok-1"}',
+        })
+
+        extractor_result = SimpleNamespace(
+            metadata=SimpleNamespace(
+                title=None, correspondent=None, document_type=None,
+                tags=[], storage_path=None, created_date=None,
+                new_entry_proposals=[],
+                model_dump=lambda **_kw: {},
+            ),
+            doc_text="",
+            error="OCR lieferte keinen Text.",
+        )
+
+        async def _fake_poll(task_id, **_kw):
+            return (None, 9999)  # Paperless says SUCCESS, doc id 9999
+
+        with patch(
+            "services.chat_upload_tool._run_extraction",
+            AsyncMock(return_value=extractor_result),
+        ), patch(
+            "services.chat_upload_tool._get_confirms_used",
+            AsyncMock(return_value=0),
+        ), patch(
+            "services.database.AsyncSessionLocal",
+            _make_session_factory(upload),
+        ), patch(
+            "services.chat_upload_tool._poll_paperless_task",
+            new=_fake_poll,
+        ):
+            result = await forward_attachment_to_paperless(
+                {"attachment_id": 42},
+                mcp_manager=mcp, session_id="s", user_id=1,
+            )
+
+        assert result["success"] is True
+        assert result["data"]["document_id"] == 9999
+        assert result["data"]["task_id"] == "tid-ok-1"
+
+
 class TestForwardAttachmentValidation:
     @pytest.mark.asyncio
     @pytest.mark.unit

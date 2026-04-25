@@ -447,6 +447,43 @@ async def _direct_upload(
             # success path — it's purely a learning-loop concern.
             logger.warning(f"Upload-tracking persist failed: {exc}")
 
+    # Poll Paperless's task endpoint to learn the REAL ingestion outcome.
+    #
+    # Without this, the MCP returned "task accepted" (HTTP 200 + task_id)
+    # gets blindly reported as "Sent to Paperless" — even though the
+    # consume task can fail asynchronously with e.g.
+    # "Not consuming X.pdf: It is a duplicate of <existing> (#NNN)".
+    # The user then sees "successfully uploaded" but the doc never lands.
+    # That was the prod symptom on 2026-04-25.
+    #
+    # We only poll when (a) we got a task_id back AND (b) the MCP didn't
+    # already produce a document_id (it does that itself when PATCH-style
+    # metadata is set, by polling internally). Skip the poll without a
+    # task_id (nothing to look up).
+    consume_failure: str | None = None
+    if task_id and document_id is None:
+        consume_failure, polled_doc_id = await _poll_paperless_task(task_id)
+        if polled_doc_id is not None:
+            document_id = polled_doc_id
+
+    if consume_failure:
+        # The POST landed but the consume queue rejected it. Surface the
+        # exact reason to the user so the agent's final answer doesn't
+        # claim success when Paperless silently dropped the doc.
+        return {
+            "success": False,
+            "message": (
+                f"Paperless lehnte das Dokument ab: {consume_failure}"
+            ),
+            "action_taken": False,
+            "data": {
+                "attachment_id": upload.id,
+                "filename": upload.filename,
+                "task_id": task_id,
+                "rejection_reason": consume_failure,
+            },
+        }
+
     return {
         "success": True,
         "message": f"Sent to Paperless: {upload.filename}",
@@ -459,6 +496,59 @@ async def _direct_upload(
             "post_upload_patch": patch_state,
         },
     }
+
+
+async def _poll_paperless_task(
+    task_id: str, *, timeout_s: float = 30.0, interval_s: float = 1.0,
+) -> tuple[str | None, int | None]:
+    """Poll Paperless's /api/tasks/?task_id= until terminal state.
+
+    Returns (failure_reason, document_id). Failure reason is the
+    `result` field from Paperless when status=FAILURE (e.g.
+    "It is a duplicate of <other> (#1661)"). Document id is the
+    `related_document` field from Paperless when status=SUCCESS.
+    Either or both may be None on timeout / unexpected shape.
+
+    Reads PAPERLESS_API_URL + PAPERLESS_API_TOKEN from env (the same
+    way the MCP server resolves them, since chat_upload_tool runs
+    in-process and shares the env).
+    """
+    import asyncio
+    import os
+
+    import httpx
+
+    base = os.environ.get("PAPERLESS_API_URL")
+    token = os.environ.get("PAPERLESS_API_TOKEN")
+    if not (base and token):
+        return None, None
+
+    url = f"{base.rstrip('/')}/api/tasks/?task_id={task_id}"
+    headers = {"Authorization": f"Token {token}"}
+    deadline = asyncio.get_running_loop().time() + timeout_s
+
+    async with httpx.AsyncClient(verify=False, timeout=10.0) as client:  # noqa: S501
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                r = await client.get(url, headers=headers)
+                r.raise_for_status()
+                data = r.json()
+                tasks = data if isinstance(data, list) else data.get("results", [])
+                if tasks:
+                    t = tasks[0]
+                    status = (t.get("status") or "").upper()
+                    if status == "SUCCESS":
+                        rd = t.get("related_document")
+                        return None, int(rd) if rd is not None else None
+                    if status == "FAILURE":
+                        return (t.get("result") or "Paperless rejected the upload"), None
+                    # Still PENDING / STARTED → keep polling.
+            except (httpx.HTTPError, ValueError) as exc:
+                logger.warning(
+                    f"Paperless task poll {task_id} transient error: {exc}"
+                )
+            await asyncio.sleep(interval_s)
+    return None, None
 
 
 async def _run_extraction(
