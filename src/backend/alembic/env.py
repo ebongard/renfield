@@ -223,6 +223,16 @@ async def run_async_migrations() -> None:
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
+        # Explicit commit — `connectable.connect()` does not auto-commit on
+        # exit. Alembic's `context.begin_transaction()` inside
+        # do_run_migrations runs synchronously via greenlet and its commit
+        # does not propagate through the asyncpg adapter, so DDL silently
+        # rolls back when the async connection closes. Without this line,
+        # `alembic upgrade head` logs every migration as "Running upgrade…"
+        # but nothing persists. The contrast: `engine.begin()` (used by
+        # `_ensure_alembic_baseline` in services/database.py) auto-commits
+        # on exit and works correctly.
+        await connection.commit()
 
     await connectable.dispose()
 
