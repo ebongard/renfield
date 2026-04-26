@@ -2,28 +2,49 @@
  * Login Page
  *
  * Provides login form and optional registration link.
+ *
+ * W10 — first page migrated to TypeScript. Pattern for subsequent pages:
+ *   - Import already-typed dependencies (AuthContext, axios utils, etc.).
+ *   - Type useState calls with the field's actual shape (string vs string|null).
+ *   - Type form/input event handlers with React's FormEvent /ChangeEvent.
+ *   - Type useLocation's state shape narrowly (location.state is unknown).
  */
-import { useState, useEffect } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate, useLocation, Link } from 'react-router';
+import { Link, useLocation, useNavigate } from 'react-router';
+import { AlertCircle, Eye, EyeOff, Loader, LogIn } from 'lucide-react';
+
 import { useAuth } from '../context/AuthContext';
-import { LogIn, UserPlus, Loader, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { extractApiError } from '../utils/axios';
+
+// react-router's `useLocation().state` is typed as `unknown`. Narrow it
+// here so the redirect-after-login path is exercised through a real
+// type, not a runtime guess.
+interface LocationStateWithFrom {
+  from?: { pathname?: string };
+}
 
 export default function LoginPage() {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, authEnabled, allowRegistration, loading: authLoading } = useAuth();
+  const {
+    login,
+    isAuthenticated,
+    authEnabled,
+    allowRegistration,
+    loading: authLoading,
+  } = useAuth();
 
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [username, setUsername] = useState<string>('');
+  const [password, setPassword] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Get redirect path from location state or default to home
-  const from = location.state?.from?.pathname || '/';
+  // Redirect path from location state, default to home.
+  const fromState = (location.state as LocationStateWithFrom | null) ?? null;
+  const from = fromState?.from?.pathname ?? '/';
 
   // Redirect if already authenticated or auth is disabled
   useEffect(() => {
@@ -40,7 +61,7 @@ export default function LoginPage() {
     }
   }, [error]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>): Promise<void> => {
     e.preventDefault();
     if (!username || !password) {
       setError(t('auth.enterCredentials'));
@@ -53,7 +74,7 @@ export default function LoginPage() {
     try {
       await login(username, password);
       navigate(from, { replace: true });
-    } catch (err) {
+    } catch (err: unknown) {
       setError(extractApiError(err, t('auth.loginFailed')));
     } finally {
       setLoading(false);
