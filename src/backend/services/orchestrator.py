@@ -499,7 +499,7 @@ class QueryOrchestrator:
                     options={"temperature": 0.3, "num_predict": 500},
                     **classification_kwargs,
                 ),
-                timeout=30.0,
+                timeout=settings.orchestrator_synthesis_timeout,
             )
             return extract_response_content(raw_response) or None
 

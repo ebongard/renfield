@@ -139,7 +139,7 @@ class RAGEvalService:
                     prompt=prompt,
                     options={"temperature": 0.3, "num_predict": 500},
                 ),
-                timeout=60,
+                timeout=settings.rag_eval_answer_timeout,
             )
             return response.response.strip()
         except Exception as e:
@@ -160,7 +160,7 @@ class RAGEvalService:
                     prompt=prompt,
                     options={"temperature": 0.0, "num_predict": 5},
                 ),
-                timeout=30,
+                timeout=settings.rag_eval_score_timeout,
             )
             # Extract number from response
             text = response.response.strip()

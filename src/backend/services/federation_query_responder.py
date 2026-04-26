@@ -534,7 +534,7 @@ class FederationQueryResponder:
                         "num_predict": 512,    # hard cap on generated tokens
                     },
                 ),
-                timeout=30.0,  # responder TTL is 60s; synthesis + retrieval + poll-reply must fit
+                timeout=settings.federation_synthesis_timeout,  # constraint validated in config: must be <60 (responder TTL)
             )
             answer = extract_response_content(response) or ""
         except Exception as e:

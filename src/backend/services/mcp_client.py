@@ -152,7 +152,7 @@ _geocode_client: Any = None
 def _get_geocode_client() -> Any:
     global _geocode_client
     if _geocode_client is None:
-        _geocode_client = httpx.AsyncClient(timeout=8.0)
+        _geocode_client = httpx.AsyncClient(timeout=settings.geocode_http_timeout)
     return _geocode_client
 
 
