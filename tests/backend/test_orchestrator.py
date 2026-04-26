@@ -973,12 +973,65 @@ class TestSubAgentHooks:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_hook_task_failure_does_not_break_sub_agent(self):
-        """A raising ``_hook_task`` is logged and ignored — sub-agent still runs."""
+    async def test_hook_task_failure_returns_failed_result(self):
+        """A raising ``_hook_task`` fails the sub-agent cleanly with a localized error.
+
+        Continuing with a half-populated registry would cause hard-to-diagnose
+        "tool not found" errors downstream that don't trace back to the
+        original hook_task failure. Better to surface the error here.
+        """
         from services.agent_service import AgentStep
 
         async def _broken_hook_task():
             raise RuntimeError("plugin tool registration failed")
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        # The mock agent.run should NOT be called when hook_task fails.
+        agent_run_called = {"value": False}
+
+        async def _fake_run(*args, **kwargs):
+            agent_run_called["value"] = True
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        import asyncio as _asyncio
+
+        class _Registry:
+            pass
+
+        registry_instance = _Registry()
+        registry_instance._hook_task = _asyncio.create_task(_broken_hook_task())
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        # Sub-agent did NOT run (registry was broken).
+        assert agent_run_called["value"] is False
+        # Result has the canonical failure shape with a localized error.
+        assert result["answer"] == ""
+        assert result["error"] is not None
+        assert "release" in result["error"].lower() or "Tools" in result["error"]
+        assert result["plugin_data"] == {}
+        assert result["steps"] == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_hook_task_failure_localized_english(self):
+        """Localized error message picks English for ``lang='en'``."""
+        from services.agent_service import AgentStep
+
+        async def _broken_hook_task():
+            raise RuntimeError("registration failed")
 
         primary = _make_role("release", servers=["release"])
         router = _make_router([primary])
@@ -1003,10 +1056,10 @@ class TestSubAgentHooks:
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
-                _make_ollama("ok"), MagicMock(), "de",
+                _make_ollama("ok"), MagicMock(), "en",
             )
 
-        assert result["answer"] == "ok"
+        assert "failed to load" in result["error"]
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -1383,7 +1436,7 @@ class TestParallelExecution:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_invalid_role_returns_empty_result_with_plugin_data(self):
-        """A sub-query referring to a role with no agent loop yields empty plugin_data."""
+        """A sub-query referring to a role with no agent loop yields the canonical failure shape."""
         primary = _make_role("release", has_loop=False, servers=["release"])
         router = _make_router([primary])
         orchestrator = QueryOrchestrator(router, MagicMock())
@@ -1393,11 +1446,11 @@ class TestParallelExecution:
             _make_ollama("ok"), MagicMock(), "de",
         )
 
-        # The early-return path (no agent loop) must still return the new
-        # plugin_data field so callers can blindly read result["plugin_data"].
+        # Early-return must include all canonical-shape keys (plugin_data,
+        # error) so downstream callers can blindly read them.
         assert result == {
             "role": "release", "query": "test",
-            "answer": "", "steps": [], "plugin_data": {},
+            "answer": "", "steps": [], "plugin_data": {}, "error": None,
         }
 
 
@@ -1718,22 +1771,404 @@ class TestSequentialMode:
 
 
 # ============================================================================
-# Phase 2 (Reva-side adaptation) — DEFERRED tests
+# Sub-query shape validation (B5 sink-side)
 # ============================================================================
-# The following test categories from the design's Phase 1 plan are deferred
-# to Phase 2 (Reva adaptation), because the corresponding code lives in the
-# Reva chat_handler integration path that does not yet exist:
-#
-# - check_output hook fires before WebSocket response sent (chat_handler-level)
-# - post_message hook fires after persistence (chat_handler-level)
-# - extract_context_vars hook fires for tool results (chat_handler-level;
-#   also requires adding extract_context_vars to HOOK_EVENTS)
-# - pre_orchestration unconditional fire from chat_handler (the wiring
-#   exists in chat_handler.py from this PR but the tests should run with a
-#   live WebSocket fixture which lives in the Reva e2e suite)
-# - Synthesizer _strip_llm_source_line regex (the function does not yet
-#   exist in Renfield's orchestrator — it is part of Reva's separate
-#   orchestrator and lands in Phase 2 when that file is deleted)
-# - Sub-agent prompts via role.prompt_key (no Renfield-side prompts exist
-#   for the orchestrator-eligible roles yet; Reva supplies them)
+
+class TestSubQueryValidation:
+    """Buggy plugin plans must not crash _run_sub_agent — return failed result."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_non_dict_subquery_returns_failed_result(self):
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        # Plugin returned a string instead of a dict.
+        result = await orchestrator._run_sub_agent(
+            "this is not a dict",  # type: ignore[arg-type]
+            _make_ollama("ok"), MagicMock(), "de",
+        )
+
+        assert result["error"] is not None
+        assert "not a dict" in result["error"]
+        assert result["role"] == "?"
+        assert result["plugin_data"] == {}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_subquery_missing_role_returns_failed_result(self):
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        result = await orchestrator._run_sub_agent(
+            {"query": "no role key"},
+            _make_ollama("ok"), MagicMock(), "de",
+        )
+
+        assert result["error"] is not None
+        assert "missing role" in result["error"].lower()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_subquery_missing_query_returns_failed_result(self):
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        result = await orchestrator._run_sub_agent(
+            {"role": "release"},
+            _make_ollama("ok"), MagicMock(), "de",
+        )
+
+        assert result["error"] is not None
+        assert "missing role or query" in result["error"].lower()
+
+
+# ============================================================================
+# B4 — _emit_combined_answer "all sub-agents failed" branch
+# ============================================================================
+
+class TestEmitCombinedAllFailed:
+    """The all-failed branch must yield a localized final_answer step.
+
+    Returning silently here would leave full_response="", which gates
+    both the WebSocket final bubble AND DB persistence — losing the
+    whole turn including the user's message. Tests pin both languages.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_all_failed_yields_localized_de_message(self):
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+        ollama = _make_ollama("")
+
+        # All sub_results have empty answer (all-failed signal).
+        sub_results = [
+            _failed_sub_result_dict("smart_home", "Licht", "boom"),
+            _failed_sub_result_dict("media", "Musik", "boom"),
+        ]
+
+        steps = []
+        async for step in orchestrator._emit_combined_answer(
+            "msg", sub_results, ollama, "de",
+        ):
+            steps.append(step)
+
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert len(finals) == 1
+        assert finals[0].content  # non-empty
+        # Localized — German indicators
+        assert any(token in finals[0].content.lower()
+                   for token in ("anfrage", "fehl", "leider", "konnte"))
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_all_failed_yields_localized_en_message(self):
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+        ollama = _make_ollama("")
+
+        sub_results = [
+            _failed_sub_result_dict("smart_home", "lights", "boom"),
+            _failed_sub_result_dict("media", "music", "boom"),
+        ]
+
+        steps = []
+        async for step in orchestrator._emit_combined_answer(
+            "msg", sub_results, ollama, "en",
+        ):
+            steps.append(step)
+
+        finals = [s for s in steps if s.step_type == "final_answer"]
+        assert len(finals) == 1
+        assert finals[0].content  # non-empty
+
+
+def _failed_sub_result_dict(role: str, query: str, error: str | None = None) -> dict:
+    """Local helper mirroring orchestrator._failed_sub_result for test setup."""
+    from services.orchestrator import _failed_sub_result
+    return _failed_sub_result(role, query, error=error)
+
+
+# ============================================================================
+# I4 — list-shaped plugin_data fields are concatenated, not overwritten
+# ============================================================================
+
+class TestPluginDataMergeSemantics:
+    """post_sub_agent contributions: list-shaped fields concatenate; non-list
+    fields follow last-writer-wins with a warning."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_list_shaped_field_concatenated_across_handlers(self):
+        """Two handlers contributing to ``contacts`` produce a merged list."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        async def first(**kw):
+            return {"contacts": [{"name": "Alice"}]}
+
+        async def second(**kw):
+            return {"contacts": [{"name": "Bob"}]}
+
+        register_hook("post_sub_agent", first)
+        register_hook("post_sub_agent", second)
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+            mock_registry = MagicMock()
+            mock_registry._hook_task = None
+            MockReg.return_value = mock_registry
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        # BOTH contacts present — not last-writer-wins.
+        names = [c["name"] for c in result["plugin_data"]["contacts"]]
+        assert names == ["Alice", "Bob"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_non_list_field_collision_last_writer_wins(self):
+        """Non-list keys: second handler overwrites first."""
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        async def first(**kw):
+            return {"telemetry_run_id": "run-1"}
+
+        async def second(**kw):
+            return {"telemetry_run_id": "run-2"}
+
+        register_hook("post_sub_agent", first)
+        register_hook("post_sub_agent", second)
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+            mock_registry = MagicMock()
+            mock_registry._hook_task = None
+            MockReg.return_value = mock_registry
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        assert result["plugin_data"]["telemetry_run_id"] == "run-2"
+
+
+# ============================================================================
+# I7 — extend_orchestrator_roles caching
+# ============================================================================
+
+class TestExtendOrchestratorRolesCaching:
+    """The hook fires once per QueryOrchestrator lifetime, not per request."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_extend_orchestrator_roles_cached_after_first_call(self):
+        from utils.hooks import register_hook
+
+        call_count = {"value": 0}
+
+        async def counting_handler(**kw):
+            call_count["value"] += 1
+            return None
+
+        register_hook("extend_orchestrator_roles", counting_handler)
+
+        smart = _make_role("smart_home", servers=["homeassistant"])
+        router = _make_router([smart])
+        ollama = _make_ollama("null")
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "detect prompt"
+            s.agent_ollama_url = None
+            s.ollama_model = "test-model"
+            s.agent_router_timeout = 10.0
+
+            # Three detect calls — the hook should fire only once.
+            await orchestrator.detect_multi_domain("a", ollama)
+            await orchestrator.detect_multi_domain("b", ollama)
+            await orchestrator.detect_multi_domain("c", ollama)
+
+        assert call_count["value"] == 1
+
+
+# ============================================================================
+# typing_callback (design Resolved-Q2)
+# ============================================================================
+
+class TestTypingCallback:
+    """run_orchestrated invokes typing_callback once before sub-agents launch."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_typing_callback_fires_before_sub_agents(self):
+        from services.agent_service import AgentStep
+
+        events: list[str] = []
+
+        async def typing_cb():
+            events.append("typing")
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty_runner(*args, **kwargs):
+            events.append("sub_agents")
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch.object(orchestrator, "_run_parallel", _empty_runner), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            async for _ in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("ok"),
+                executor=MagicMock(), lang="de",
+                typing_callback=typing_cb,
+            ):
+                pass
+
+        assert events == ["typing", "sub_agents"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_typing_callback_failure_does_not_break_orchestration(self):
+        from services.agent_service import AgentStep
+
+        async def broken_typing():
+            raise RuntimeError("websocket dead")
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch.object(orchestrator, "_run_parallel", _empty), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            steps = []
+            async for step in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("ok"),
+                executor=MagicMock(), lang="de",
+                typing_callback=broken_typing,
+            ):
+                steps.append(step)
+
+        # Orchestration completed despite typing_callback failure.
+        assert any(s.step_type == "final_answer" for s in steps)
+
+
+# ============================================================================
+# post_sub_agent fires after agent.run crash (try/finally semantics)
+# ============================================================================
+
+class TestPostSubAgentFiresAfterCrash:
+    """post_sub_agent must fire even when agent.run raises mid-stream."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_post_sub_agent_fires_on_agent_run_crash(self):
+        """If agent.run raises after pre_sub_agent fired, post must still fire so
+        plugin accumulators (contacts, provenance) get drained instead of leaking."""
+        from utils.hooks import register_hook
+
+        post_calls: list[dict] = []
+
+        async def post_spy(**kw):
+            post_calls.append(kw)
+            return None
+
+        register_hook("post_sub_agent", post_spy)
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _crashing_run(*args, **kwargs):
+            # Yield one tool_call step before crashing — simulates partial work.
+            from services.agent_service import AgentStep
+            yield AgentStep(step_number=1, step_type="tool_call", tool="t1")
+            raise RuntimeError("agent crashed mid-stream")
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            mock_agent = MagicMock()
+            mock_agent.run = _crashing_run
+            MockAS.return_value = mock_agent
+            mock_registry = MagicMock()
+            mock_registry._hook_task = None
+            MockReg.return_value = mock_registry
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        # post_sub_agent fired despite agent.run crashing.
+        assert len(post_calls) == 1
+        # The result reflects the crash via the error field.
+        assert result["error"] is not None
+        assert "agent crashed" in result["error"]
+
+
+# ============================================================================
+# Phase 1 (orchestrator-uplift) — backwards compat: vanilla Renfield deploy
 # ============================================================================
