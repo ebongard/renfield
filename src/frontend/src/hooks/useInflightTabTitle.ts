@@ -15,10 +15,10 @@ import { useEffect, useRef } from 'react';
 
 const FLASH_MS = 30_000;
 
-export function useInflightTabTitle(inflightCount, baseTitle) {
-  const baseRef = useRef(baseTitle);
+export function useInflightTabTitle(inflightCount: number, baseTitle: string): void {
+  const baseRef = useRef<string>(baseTitle);
   const prevCountRef = useRef(0);
-  const flashTimerRef = useRef(null);
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Snapshot the base title on mount so subsequent re-renders that flow
   // through React state don't clobber the "clean" value we want to

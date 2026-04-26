@@ -22,9 +22,37 @@
  * would otherwise deliver them twice in dev.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { AxiosError } from 'axios';
 import apiClient from '../utils/axios';
 
-const TERMINAL_STATES = new Set(['completed', 'failed']);
+export type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
+
+export interface KbDocument {
+  id: number;
+  filename: string;
+  status: DocStatus;
+  stage?: string | null;
+  pages?: { current?: number | null; total?: number | null } | null;
+  queue_position?: number | null;
+  [key: string]: unknown;
+}
+
+interface InflightLSEntry {
+  docId: number;
+  filename?: string;
+  startedAt: number;
+}
+
+interface UseDocumentPollingOptions {
+  onResolved?: (doc: KbDocument) => void;
+  onTimeout?: (doc: KbDocument) => void;
+  intervalMs?: number;
+  backoffSequenceMs?: number[];
+  initialDelayMs?: number;
+  timeoutMs?: number;
+}
+
+const TERMINAL_STATES = new Set<DocStatus>(['completed', 'failed']);
 
 // Backoff ladder (ms). The hook walks through this array and clamps at the
 // last value. Tests override via `backoffSequenceMs` / `initialDelayMs`.
@@ -43,15 +71,17 @@ const LS_STALE_TRIM_MS = 10 * 60 * 1000;   // 10 min — trim zombie entries
 // inside the scheduling effect don't have to repeat the `typeof` check.
 const HAS_DOCUMENT = typeof document !== 'undefined';
 
-function readLSEntries() {
+function readLSEntries(): InflightLSEntry[] {
   try {
     const raw = window.localStorage.getItem(LS_KEY);
     if (!raw) return [];
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(raw) as unknown;
     if (!Array.isArray(parsed)) return [];
     const now = Date.now();
-    return parsed
-      .filter((e) => e && typeof e.docId === 'number' && typeof e.startedAt === 'number')
+    return (parsed as Array<Partial<InflightLSEntry>>)
+      .filter((e): e is InflightLSEntry =>
+        Boolean(e) && typeof e.docId === 'number' && typeof e.startedAt === 'number',
+      )
       .filter((e) => now - e.startedAt < LS_MAX_AGE_MS)
       .slice(0, LS_MAX_ENTRIES);
   } catch {
@@ -59,7 +89,7 @@ function readLSEntries() {
   }
 }
 
-function writeLSEntries(entries) {
+function writeLSEntries(entries: InflightLSEntry[]): void {
   try {
     const trimmed = entries.slice(0, LS_MAX_ENTRIES);
     window.localStorage.setItem(LS_KEY, JSON.stringify(trimmed));
@@ -69,7 +99,7 @@ function writeLSEntries(entries) {
   }
 }
 
-function removeLSEntry(docId) {
+function removeLSEntry(docId: number): void {
   const entries = readLSEntries().filter((e) => e.docId !== docId);
   writeLSEntries(entries);
 }
@@ -83,20 +113,17 @@ export function useDocumentPolling({
   backoffSequenceMs,
   initialDelayMs,
   timeoutMs = DEFAULT_TIMEOUT_MS,
-} = {}) {
-  // Map<documentId, DocumentResponse>
-  const [activeDocs, setActiveDocs] = useState({});
-  const activeDocsRef = useRef(activeDocs);
+}: UseDocumentPollingOptions = {}) {
+  const [activeDocs, setActiveDocs] = useState<Record<number, KbDocument>>({});
+  const activeDocsRef = useRef<Record<number, KbDocument>>(activeDocs);
   const onResolvedRef = useRef(onResolved);
   const onTimeoutRef = useRef(onTimeout);
 
   // Per-doc "first seen at" timestamp for the 30-min timeout.
-  const trackedSinceRef = useRef(new Map());
+  const trackedSinceRef = useRef<Map<number, number>>(new Map());
 
-  // Timer / abort state.
-  const timerRef = useRef(null);
-  const abortRef = useRef(null);
-  // Step into DEFAULT_BACKOFF_MS. Reset to 0 on any progress signal.
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const backoffIndexRef = useRef(0);
 
   // Pick the effective backoff ladder once. An explicit `intervalMs`
@@ -148,7 +175,7 @@ export function useDocumentPolling({
       writeLSEntries([]);
       return;
     }
-    const hydrated = {};
+    const hydrated: Record<number, KbDocument> = {};
     entries.forEach((e) => {
       hydrated[e.docId] = {
         id: e.docId,
@@ -165,7 +192,7 @@ export function useDocumentPolling({
   // ---------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------
-  const track = useCallback((doc) => {
+  const track = useCallback((doc: KbDocument) => {
     if (!doc || TERMINAL_STATES.has(doc.status)) return;
     const now = Date.now();
     trackedSinceRef.current.set(doc.id, now);
@@ -180,7 +207,7 @@ export function useDocumentPolling({
     backoffIndexRef.current = 0;
   }, []);
 
-  const forget = useCallback((id) => {
+  const forget = useCallback((id: number) => {
     trackedSinceRef.current.delete(id);
     removeLSEntry(id);
     setActiveDocs((prev) => {
@@ -231,16 +258,17 @@ export function useDocumentPolling({
     if (abortRef.current) abortRef.current.abort();
     abortRef.current = controller;
 
-    let rows;
+    let rows: KbDocument[];
     try {
-      const response = await apiClient.get('/api/knowledge/documents/batch', {
+      const response = await apiClient.get<KbDocument[]>('/api/knowledge/documents/batch', {
         params: { ids: aliveIds.join(',') },
         signal: controller.signal,
       });
       rows = response.data || [];
     } catch (err) {
+      const axiosErr = err as AxiosError | undefined;
       // AbortError is fine — means we moved on or the tab went hidden.
-      if (err?.code === 'ERR_CANCELED' || err?.name === 'CanceledError' || err?.name === 'AbortError') {
+      if (axiosErr?.code === 'ERR_CANCELED' || axiosErr?.name === 'CanceledError' || axiosErr?.name === 'AbortError') {
         return;
       }
       console.warn('[useDocumentPolling] poll failed:', err);
@@ -314,7 +342,7 @@ export function useDocumentPolling({
   useEffect(() => {
     let cancelled = false;
 
-    const scheduleNext = (delayOverride) => {
+    const scheduleNext = (delayOverride?: number) => {
       if (cancelled) return;
       if (timerRef.current) {
         clearTimeout(timerRef.current);

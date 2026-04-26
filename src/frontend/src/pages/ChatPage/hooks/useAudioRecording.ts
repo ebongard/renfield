@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { AxiosError } from 'axios';
 import apiClient from '../../../utils/axios';
 import { debug } from '../../../utils/debug';
 
@@ -12,45 +13,49 @@ const VAD_CONFIG = {
   SMOOTHING: 0.3,             // Smoothing time constant
 };
 
+interface UseAudioRecordingOptions {
+  onTranscription?: (text: string) => void;
+  onError?: (message: string) => void;
+  onRecordingStart?: () => void;
+  onRecordingStop?: () => void;
+}
+
+interface SttResponse {
+  text: string;
+}
+
+interface AudioContextCapableWindow {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+
 /**
  * Custom hook for audio recording with Voice Activity Detection (VAD).
  * Handles microphone access, recording, silence detection, and STT processing.
- *
- * @param {Object} options - Hook options
- * @param {Function} options.onTranscription - Callback with transcribed text
- * @param {Function} options.onError - Callback for errors
- * @param {Function} options.onRecordingStart - Callback when recording starts
- * @param {Function} options.onRecordingStop - Callback when recording stops
- * @returns {Object} Recording state and methods
  */
 export function useAudioRecording({
   onTranscription,
   onError,
   onRecordingStart,
   onRecordingStop,
-} = {}) {
+}: UseAudioRecordingOptions = {}) {
   const { t } = useTranslation();
 
-  // State
   const [recording, setRecording] = useState(false);
   const [audioLevel, setAudioLevel] = useState(0);
   const [silenceTimeRemaining, setSilenceTimeRemaining] = useState(0);
   const [processing, setProcessing] = useState(false);
 
-  // Refs
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const silenceTimerRef = useRef(null);
-  const animationFrameRef = useRef(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
   const isStoppingRef = useRef(false);
-  const streamRef = useRef(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
-  /**
-   * Process voice input - send to STT endpoint
-   */
-  const processVoiceInput = useCallback(async (audioBlob) => {
+  const processVoiceInput = useCallback(async (audioBlob: Blob) => {
     debug.log('Processing voice input...');
     setProcessing(true);
 
@@ -59,8 +64,8 @@ export function useAudioRecording({
       formData.append('audio', audioBlob, 'recording.webm');
 
       debug.log('Sending audio to backend...');
-      const sttResponse = await apiClient.post('/api/voice/stt', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      const sttResponse = await apiClient.post<SttResponse>('/api/voice/stt', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
 
       debug.log('STT Response:', sttResponse.data);
@@ -73,12 +78,14 @@ export function useAudioRecording({
       debug.log('Transcribed text:', transcribedText);
       onTranscription?.(transcribedText);
     } catch (error) {
+      const axiosErr = error as AxiosError<{ detail?: string }> | undefined;
       console.error('Voice input error:', error);
-      console.error('Error details:', error.response?.data);
+      console.error('Error details:', axiosErr?.response?.data);
 
       let errorMessage = t('voice.processingError');
-      if (error.response?.data?.detail) {
-        errorMessage += ' (' + error.response.data.detail + ')';
+      const detail = axiosErr?.response?.data?.detail;
+      if (detail) {
+        errorMessage += ` (${detail})`;
       }
 
       onError?.(errorMessage);
@@ -155,7 +162,12 @@ export function useAudioRecording({
 
       // Audio Context for level monitoring
       try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const win = window as unknown as AudioContextCapableWindow;
+        const AudioContextCtor = win.AudioContext ?? win.webkitAudioContext;
+        if (!AudioContextCtor) {
+          throw new Error('AudioContext is not supported');
+        }
+        const audioContext = new AudioContextCtor();
         audioContextRef.current = audioContext;
         debug.log('AudioContext created, State:', audioContext.state);
 
@@ -275,7 +287,7 @@ export function useAudioRecording({
         }
       };
 
-      mediaRecorder.ondataavailable = (event) => {
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
         debug.log('Audio data received:', event.data.size, 'bytes');
         audioChunksRef.current.push(event.data);
       };
@@ -340,7 +352,8 @@ export function useAudioRecording({
 
     } catch (error) {
       console.error('Microphone error:', error);
-      onError?.(t('voice.microphoneError') + ': ' + error.message);
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      onError?.(`${t('voice.microphoneError')}: ${message}`);
       onRecordingStop?.();
     }
   }, [t, stopRecording, processVoiceInput, onRecordingStart, onRecordingStop, onError]);
