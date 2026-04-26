@@ -3,6 +3,12 @@
 Revision ID: h8i9j0k1l2m3
 Revises: g7h8i9j0k1l2
 Create Date: 2026-01-29
+
+NOTE — `idx_intent_corrections_embedding` is created here as IVFFlat
+(the default at the time). It is dropped + replaced by an HNSW index
+later in the chain by `j0k1l2m3n4o5_add_fk_indexes_and_hnsw`.
+Production never runs against this IVFFlat index after the full chain
+applies.
 """
 from typing import Sequence, Union
 

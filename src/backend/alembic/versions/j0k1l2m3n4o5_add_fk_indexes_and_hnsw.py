@@ -3,6 +3,17 @@
 Revision ID: j0k1l2m3n4o5
 Revises: i9j0k1l2m3n4
 Create Date: 2026-02-04
+
+NOTE — This migration is the IVFFlat → HNSW switchover for the
+existing vector indexes. It drops `idx_document_chunks_embedding` and
+`idx_intent_corrections_embedding` (originally created as IVFFlat by
+b2c3d4e5f6g7 and h8i9j0k1l2m3) and recreates them as HNSW. Production
+never runs on IVFFlat after this migration applies.
+
+The downgrade path re-creates IVFFlat for rollback compatibility only;
+no production environment should ever execute it. Later migrations
+(`cce1984705df_resize_embedding_vectors_768_to_2560`) further evolve the
+indexes — see `models/database.py:DocumentChunk` for the current shape.
 """
 from typing import Sequence, Union
 
