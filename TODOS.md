@@ -11,29 +11,11 @@ Single prioritized index of every open work item, with a reference back to the s
 
 Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
 
-Last reviewed: 2026-04-25 (after Reva submodule bump branch + PR #477 + TODOS consolidation).
+Last reviewed: 2026-04-26 (Reva bump VERIFIED on PRD; renfield #477 + #478 + #479 merged).
 
 ---
 
 ## P0 — Active / blocking
-
-### Reva compatibility restoration — code RESTORED, awaiting PRD verification
-All 8 features verified present in current Renfield main (`f62c52b`) by code inspection on 2026-04-25: SemanticRouter wired in `agent_router.py:55` + `lifecycle.py:433`; XML delimiter tags + security warning in `prompts/agent.yaml`; `EpisodicMemory` service at `services/episodic_memory_service.py`; ConversationMemory `source`/`scope`/`confidence`/`team_id`/`trigger_pattern` columns at `models/database.py:837-847`; `MEMORY_CATEGORY_PROCEDURAL` at `models/database.py:794`; `_serialize_for_prompt()` at `agent_service.py:293`; `utils/request_context.py` exists; `prompt_hashes` at `prompt_manager.py:218`.
-
-**In flight (verification path):**
-- Reva branch `chore/bump-renfield-circles-paperless` (commit `ffa1550`) bumps submodule `903362a → f62c52b` (78 commits). Pushed.
-- Test deploy on roberta (192.168.99.41 build box) succeeded after the alembic hotfix below — bumped image starts cleanly.
-- PRD deploy + E2E re-run handed off to a separate Claude session in `/Users/evdb/projects.ai/reva` (build/push procedure for `registry.treehouse.x-idra.de/reva/reva:latest` not in repo, needs user input).
-- Pre-bump PRD baseline (run today against the OLD reva on PRD): 99 pass / 37 fail / 4 skip out of 140.
-- **Primary source:** `../reva/docs/architecture/renfield-compatibility-requirements.md`
-- **Memory pointer:** `memory/project_reva_compatibility.md`
-
-### Renfield PR #477 — fix(alembic): widen baseline-create alembic_version to VARCHAR(64)
-One-line fix in `services/database.py:_ensure_alembic_baseline` — companion to PR #462. The earlier fix widened the column in `alembic/env.py` for existing tables, but missed the parallel fresh-install path which still hardcoded VARCHAR(32) and crashed on `INSERT 'pc20260426_paperless_upload_tracking'` (38 chars). Bit prod during the Reva bump test deploy on roberta today.
-- **PR:** https://github.com/ebongard/renfield/pull/477
-- **Branch:** `fix/alembic-baseline-varchar64`
-- **Status:** open, awaiting review/merge
-- **Followup once merged:** Reva re-bumps the submodule to pick up the fix (so future fresh-DB Reva installs don't hit the same wall).
 
 ### KRITISCH audit findings (K1-K7) — RESOLVED (branch `audit/k1-k7`, PR pending)
 Closed in one branch: K2 got a batched permission lookup; K1/K3 were already fixed before the audit was written; K4 is a full .env.example rewrite covering 100% of Settings + ha_glue; K5 converted the last plaintext secret (`presence_webhook_secret`) to SecretStr; K6 added the two missing Docker Secrets to both prod compose files + the generator script; K7 documented EXTERNAL_URL/EXTERNAL_WS_URL as Vite build args.
@@ -247,6 +229,14 @@ Embed each new upload, find k nearest Paperless docs already archived, copy domi
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` Premise 2 + Open Q 1 + Open Q 12
 
+### Re-enable `itsm` MCP on roberta when USU customer service is back
+During the 2026-04-25 Reva bump test deploy on roberta, the `itsm` MCP server (`http://usu-mcp.reva.treehouse.local/mcp`) was throwing `Connection refused` — USU customer-side service was down. Reva's `/api/health` returns 503 if any MCP server is disconnected, blocking pod readiness. Workaround was to flip `enabled: true → false` for the itsm block in roberta's `reva-mcp-config` ConfigMap.
+
+PRD is unaffected (separate cluster, separate ConfigMap, `usu-mcp` actually running there). Roberta-only loose end.
+
+- **Reverse with:** `ssh evdb@192.168.99.41 -- kubectl edit configmap reva-mcp-config -n reva` and flip `enabled: false → true` in the itsm block, then `kubectl rollout restart deployment/reva -n reva`.
+- **Gate:** USU customer service back up + reachable from roberta cluster (verify with `kubectl exec -n reva deployment/reva -c reva -- python3 -c 'import urllib.request,socket; socket.setdefaulttimeout(5); urllib.request.urlopen("http://usu-mcp.reva.treehouse.local/mcp")'`).
+
 ### Brain Review Queue Auto-Archive Policy (v1.5 decision)
 
 **WHAT:** Decide what happens to atoms in the Brain Review Queue that the user never reviews. v1 ships with "no auto-archive, queue may grow." v1.5 should make this a real decision based on actual usage signal.
@@ -283,7 +273,8 @@ When updating an item, update these files (primary source first):
 | `tasks/reva-plan.md` (local / untracked) | Reva plugin architecture + 5-phase implementation plan |
 | `tasks/audit-findings-plan.md` | 7 KRITISCH + 14 WICHTIG + 18 EMPFEHLUNG audit items |
 | `docs/design/paperless-llm-metadata.md` | Paperless-LLM-metadata PR roadmap (PR 5, PR 4b, kNN tier) |
-| `../reva/docs/architecture/renfield-compatibility-requirements.md` | 8 Reva compatibility blockers + 3 moderate signature changes |
+| `../reva/docs/architecture/renfield-compatibility-requirements.md` | 8 Reva compatibility blockers (ALL VERIFIED on PRD 2026-04-26 via Reva PR #177) |
+| `../reva/docs/operations/upgrade-guide.md` §7 | Existing-DB upgrade dance for Reva submodule bumps (added during 2026-04-26 bump) |
 | `src/satellite/TECHNICAL_DEBT.md` | Satellite audio pipeline follow-ups |
-| `memory/project_reva_compatibility.md` | Live pointer to the Reva compatibility doc |
+| `memory/project_reva_compatibility.md` | Memory pointer to the Reva compatibility status (now: verified) |
 | `~/.gstack/projects/ebongard-renfield/evdb-main-*-second-brain-circles.md` | Strategic items inlined here (v2.5 KG, MCPManager streaming, Notes, Brain Queue, DESIGN.md, STRATEGY.md) |
