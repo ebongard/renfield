@@ -153,6 +153,77 @@ async def test_parent_child_creates_parent_and_children(rag_service, mock_db):
     assert all(c.embedding is not None for c in children)
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_parent_child_batches_parent_inserts_w3(rag_service, mock_db):
+    """W3 regression: _ingest_parent_child must batch all parent INSERTs into
+    a single add_all + flush, not loop per-parent-group with add+flush.
+
+    Pre-fix behaviour: N parent groups → N db.add(parent) calls + N flush()
+    round trips. For a doc with 50 parent groups (≈500 children), that's 50
+    extra round trips before children are even embedded, AND embedding for
+    group N+1 cannot start until group N's flush completes.
+
+    Post-fix invariant:
+      - db.add_all called exactly once (with the full parents list).
+      - db.flush called exactly once (single round trip to assign all ids).
+      - db.add NEVER called for a parent (use add_all batched instead).
+    """
+    rag_service.get_embedding = AsyncMock(return_value=[0.1] * 768)
+
+    # 12 child-sized chunks → with parent_size=4, that's 3 parent groups.
+    chunks = [
+        {
+            "text": f"Child {i}",
+            "chunk_index": i,
+            "metadata": {"headings": [], "page_number": 1, "chunk_type": "paragraph"},
+        }
+        for i in range(12)
+    ]
+
+    flush_count = 0
+
+    async def counting_flush():
+        nonlocal flush_count
+        flush_count += 1
+
+    mock_db.flush = counting_flush
+    # Reset the per-test counters on the MagicMock attributes
+    mock_db.add.reset_mock()
+    mock_db.add_all.reset_mock()
+
+    with patch.object(settings, "rag_parent_chunk_size", 1024), \
+         patch.object(settings, "rag_child_chunk_size", 256):
+        sem = asyncio.Semaphore(5)
+        result = await rag_service._ingest_parent_child(1, chunks, sem)
+
+    parents = [r for r in result if r.chunk_type == "parent"]
+    children = [r for r in result if r.chunk_type != "parent"]
+
+    # Sanity — 3 parents, 12 children
+    assert len(parents) == 3
+    assert len(children) == 12
+
+    # W3 invariants
+    assert flush_count == 1, (
+        f"Expected exactly 1 flush() call (batched), got {flush_count} — "
+        "regression to per-parent-group flush loop"
+    )
+    assert mock_db.add_all.call_count == 1, (
+        f"Expected exactly 1 add_all() call for parents batch, got "
+        f"{mock_db.add_all.call_count}"
+    )
+    add_all_args = mock_db.add_all.call_args[0][0]
+    assert len(add_all_args) == 3, (
+        f"add_all should receive all 3 parents in a single call, got "
+        f"{len(add_all_args)}"
+    )
+    assert mock_db.add.call_count == 0, (
+        f"db.add() should NOT be used for parents in the batched path "
+        f"(use add_all instead), got {mock_db.add.call_count} calls"
+    )
+
+
 # ===========================================================================
 # 5. Parent resolution in search
 # ===========================================================================
