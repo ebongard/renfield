@@ -11,28 +11,17 @@ Single prioritized index of every open work item, with a reference back to the s
 
 Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
 
-Last reviewed: 2026-04-26 (Reva bump VERIFIED on PRD; renfield #477 + #478 + #479 merged).
+Last reviewed: 2026-04-26 (sweep stale entries — KRITISCH K1-K7 already merged as #464 on 2026-04-24; Reva Phases 1-5 describe pre-existing work, Reva is built and in production).
 
 ---
 
 ## P0 — Active / blocking
 
-### KRITISCH audit findings (K1-K7) — RESOLVED (branch `audit/k1-k7`, PR pending)
-Closed in one branch: K2 got a batched permission lookup; K1/K3 were already fixed before the audit was written; K4 is a full .env.example rewrite covering 100% of Settings + ha_glue; K5 converted the last plaintext secret (`presence_webhook_secret`) to SecretStr; K6 added the two missing Docker Secrets to both prod compose files + the generator script; K7 documented EXTERNAL_URL/EXTERNAL_WS_URL as Vite build args.
-- **Primary source:** `tasks/audit-findings-plan.md` §KRITISCH (now marked done)
+_(no active blockers — all prior P0 items resolved and merged)_
 
 ---
 
 ## P1 — Next substantive batch
-
-### Reva — Phase 1 Foundation (Days 1-3)
-Create the Reva private repo + plugin skeleton on top of Renfield.
-- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 1
-- **Items:** private `reva` repo with submodule structure · verify hook system supports route + tool registration · ~30 lines of Renfield plugin-support changes · Dockerfile + docker-compose.yml · `reva/hooks.py` skeleton · `reva/config.py`
-
-### Reva — Phase 2 Teams Transport (Days 4-6)
-- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 2
-- **Items:** `teams_transport.py` Bot Framework adapter · `teams_auth.py` Teams↔Release user mapping · wire Teams → Renfield agent service → Teams response · Bot Framework Emulator test
 
 ### WICHTIG audit findings — performance + config hygiene
 - **Primary source:** `tasks/audit-findings-plan.md` §WICHTIG, §Priorisierte Roadmap Phase 2-3
@@ -41,12 +30,6 @@ Create the Reva private repo + plugin skeleton on top of Renfield.
 ---
 
 ## P2 — Scheduled follow-ups
-
-### Reva — Phases 3-5 (Enterprise tools, notifications, polish)
-- **Primary source:** `tasks/reva-plan.md` (local / untracked) §Implementation Order → Phase 3-5
-- **Phase 3 Enterprise Tools (Days 7-10):** `ldap_service.py` · `release_roles.py` 5-level lookup · register as agent tools · connect Release MCP server (38 tools, no porting)
-- **Phase 4 Notifications (Days 11-12):** `notify_handler.py` webhook receiver · `subscriptions.py` DB-backed model · proactive Teams messaging · update Java plugin webhook URL
-- **Phase 5 Polish & Deploy (Days 13-14):** `system_prompt.md` adapted from Roberta · tests · deploy to 192.168.99.41 · E2E verification · retire Roberta Node.js
 
 ### Paperless PR 4 inline follow-ups (documented in code, filed here)
 All three have clear triggers but were out of PR 4 scope. Inline `# ...` comments in the relevant files carry full context.
@@ -270,8 +253,7 @@ When updating an item, update these files (primary source first):
 
 | Source doc | Covers |
 |---|---|
-| `tasks/reva-plan.md` (local / untracked) | Reva plugin architecture + 5-phase implementation plan |
-| `tasks/audit-findings-plan.md` | 7 KRITISCH + 14 WICHTIG + 18 EMPFEHLUNG audit items |
+| `tasks/audit-findings-plan.md` | 14 WICHTIG + 18 EMPFEHLUNG audit items (KRITISCH K1-K7 done as #464) |
 | `docs/design/paperless-llm-metadata.md` | Paperless-LLM-metadata PR roadmap (PR 5, PR 4b, kNN tier) |
 | `../reva/docs/architecture/renfield-compatibility-requirements.md` | 8 Reva compatibility blockers (ALL VERIFIED on PRD 2026-04-26 via Reva PR #177) |
 | `../reva/docs/operations/upgrade-guide.md` §7 | Existing-DB upgrade dance for Reva submodule bumps (added during 2026-04-26 bump) |
