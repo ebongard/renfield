@@ -1,6 +1,7 @@
 """
 Konfiguration und Settings
 """
+import os
 from functools import lru_cache
 
 from loguru import logger
@@ -8,19 +9,19 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings
 
 
-# W13 — Fields whose default value is a placeholder ("changeme") meant to
-# fail loudly when running against any real environment. The
-# Settings.warn_on_changeme_defaults() validator below loops over this map
-# and emits a single WARN line per match at startup, with the field's
-# placeholder value spelled out for grep-ability.
+# W13 — Names of fields whose Settings-class default is a placeholder
+# meant to fail loudly when running against any real environment. The
+# `Settings.warn_on_changeme_defaults()` validator reads each name's
+# CURRENT default off `Settings.model_fields[name].default` at runtime
+# and compares to the resolved value — no hand-maintained mirror string
+# that can silently drift if someone changes the default literal.
 #
-# Map shape: {field_name: placeholder_default_value}
-# Update this when introducing a new placeholder-defaulted secret.
-_CHANGEME_DEFAULTS: dict[str, str] = {
-    "postgres_password": "changeme",
-    "secret_key": "changeme-in-production-use-strong-random-key",
-    "default_admin_password": "changeme",
-}
+# Update this list when introducing a new placeholder-defaulted secret.
+_CHANGEME_FIELDS: tuple[str, ...] = (
+    "postgres_password",
+    "secret_key",
+    "default_admin_password",
+)
 
 
 class Settings(BaseSettings):
@@ -165,9 +166,11 @@ class Settings(BaseSettings):
     # W5 — previously hardcoded timeouts now configurable
     geocode_http_timeout: float = Field(default=8.0, ge=1.0, le=30.0)
     """HTTP timeout for the Nominatim geocode httpx client in mcp_client.py."""
-    federation_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=120.0)
-    """Federation responder synthesis timeout. Constraint: must fit inside the
-    responder TTL (60s) along with retrieval and poll-reply overhead — keep <60."""
+    federation_synthesis_timeout: float = Field(default=30.0, ge=5.0, le=59.0)
+    """Federation responder synthesis timeout. Hard upper bound 59s because the
+    responder TTL is 60s and synthesis must fit inside that along with
+    retrieval and the poll-reply round trip. The Field constraint enforces
+    this, not just the comment."""
 
     # Agent Advanced
     agent_history_limit: int = Field(default=20, ge=1, le=100)       # Max history steps in agent loop
@@ -478,30 +481,46 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def warn_on_changeme_defaults(self) -> "Settings":
         """W13 — Emit a loud WARNING for any secret/password field still set
-        to its placeholder `changeme*` default.
+        to its placeholder default.
 
-        Soft fail (warning, not exception) so dev/test environments aren't
-        broken — they often legitimately use placeholder credentials. The
-        warning is structured with the field name + placeholder spelled out
-        so deploy tooling can grep production logs for it.
+        For each field name in `_CHANGEME_FIELDS`, compare the current
+        resolved value to the field's class-level default (read live from
+        `Settings.model_fields[name].default`). If they match, the env
+        override didn't take effect — i.e. the placeholder is in use.
 
-        See _CHANGEME_DEFAULTS at module top for the list of guarded fields.
+        Gated to non-development environments so dev/test runs aren't
+        spammed with a warning that exists to catch production-deploy
+        regressions. Trigger condition: `RENFIELD_ENV` is set to anything
+        other than the default `"development"` (e.g. `"production"`,
+        `"staging"`, or `"prod"`). Tests can opt in to the warning path
+        by setting RENFIELD_ENV explicitly.
         """
+        env = os.getenv("RENFIELD_ENV", "development").lower()
+        if env in {"development", "dev", "test"}:
+            return self
+
         offenders: list[str] = []
-        for field_name, placeholder in _CHANGEME_DEFAULTS.items():
+        for field_name in _CHANGEME_FIELDS:
+            field_info = type(self).model_fields.get(field_name)
+            if field_info is None:
+                continue  # field renamed/removed — silent skip is intentional
+            placeholder_default = field_info.default
+            if isinstance(placeholder_default, SecretStr):
+                placeholder_default = placeholder_default.get_secret_value()
             value = getattr(self, field_name, None)
             if value is None:
                 continue
             current = value.get_secret_value() if isinstance(value, SecretStr) else value
-            if current == placeholder:
+            if current == placeholder_default:
                 offenders.append(field_name)
 
         if offenders:
             logger.warning(
-                "⚠ INSECURE DEFAULT(S) IN USE — fields still set to placeholder "
-                f"defaults: {', '.join(offenders)}. Set these via env vars "
+                f"⚠ INSECURE DEFAULT(S) IN USE — RENFIELD_ENV={env!r} but the "
+                f"following fields are still on their class-level placeholder "
+                f"default: {', '.join(offenders)}. Set them via env vars "
                 "(POSTGRES_PASSWORD, SECRET_KEY, DEFAULT_ADMIN_PASSWORD) or "
-                "Docker Secrets before deploying to a non-dev environment."
+                "Docker Secrets."
             )
         return self
 

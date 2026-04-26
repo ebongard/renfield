@@ -16,12 +16,9 @@ real environments don't silently run with insecure credentials.
 from __future__ import annotations
 
 import io
-import os
-from contextlib import redirect_stderr
 
 import pytest
 from loguru import logger
-from pydantic import Field as PydField  # for type-only checks
 
 
 # --- W5 — timeout settings exist with the right defaults + ranges ---
@@ -68,35 +65,51 @@ def test_w5_timeout_fields_exist_on_settings():
 def test_w5_call_sites_use_settings_not_literals():
     """The 6 call sites the audit identified must reference settings.<name>
     instead of an inline literal. Catches accidental reverts.
+
+    Asserts BOTH conditions: the settings reference must be present AND
+    the matching `await asyncio.wait_for(... timeout=<literal>)` form
+    must NOT be present, so a partial revert that adds back the literal
+    while leaving the settings ref also fails the test.
     """
+    import re
     from pathlib import Path
 
     repo_root = Path(__file__).resolve().parents[2]
     cases = [
-        ("src/backend/services/agent_service.py", "settings.agent_preselect_timeout", "timeout=10.0"),
-        ("src/backend/services/orchestrator.py", "settings.orchestrator_synthesis_timeout", "timeout=30.0"),
-        ("src/backend/services/mcp_client.py", "settings.geocode_http_timeout", "timeout=8.0"),
-        ("src/backend/services/federation_query_responder.py", "settings.federation_synthesis_timeout", "timeout=30.0"),
-        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_answer_timeout", "timeout=60"),
-        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_score_timeout", "timeout=30"),
+        ("src/backend/services/agent_service.py", "settings.agent_preselect_timeout", r"\btimeout=10\.0\b"),
+        ("src/backend/services/orchestrator.py", "settings.orchestrator_synthesis_timeout", r"\btimeout=30\.0\b"),
+        ("src/backend/services/mcp_client.py", "settings.geocode_http_timeout", r"\btimeout=8\.0\b"),
+        ("src/backend/services/federation_query_responder.py", "settings.federation_synthesis_timeout", r"\btimeout=30\.0\b"),
+        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_answer_timeout", r"\btimeout=60\b"),
+        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_score_timeout", r"\btimeout=30\b"),
     ]
-    for rel_path, must_contain, must_not_contain_at_callsite in cases:
+    for rel_path, must_contain, banned_literal_re in cases:
         src = (repo_root / rel_path).read_text()
         assert must_contain in src, (
             f"{rel_path}: missing reference `{must_contain}` — "
             "W5 fix expects this call site to use the Settings field"
         )
+        # Strip out comments before checking — historical "previously timeout=10.0"
+        # comments are accurate and shouldn't trigger a regression failure.
+        src_no_comments = "\n".join(
+            line.split("#", 1)[0] for line in src.splitlines()
+        )
+        assert not re.search(banned_literal_re, src_no_comments), (
+            f"{rel_path}: literal matching `{banned_literal_re}` reappeared "
+            "in non-comment code — W5 expects all call sites to use the "
+            "Settings field, not a hardcoded number"
+        )
 
 
-# --- W13 — placeholder defaults trigger a loud warning ---
+# --- W13 — placeholder defaults trigger a loud warning (in production env) ---
 
 @pytest.mark.unit
-def test_w13_warns_when_postgres_password_is_changeme(monkeypatch):
-    """Default Settings instantiation (no env override) leaves
-    postgres_password = 'changeme'. The model_validator must emit a
-    WARN-level message naming the offending field.
+def test_w13_warns_in_production_when_postgres_password_is_changeme(monkeypatch):
+    """In a production-style RENFIELD_ENV with placeholder defaults still
+    in place, the validator must emit a WARN-level message naming the
+    offending field.
     """
-    # Strip env so we hit the placeholder default deterministically.
+    monkeypatch.setenv("RENFIELD_ENV", "production")
     for var in ("POSTGRES_PASSWORD", "SECRET_KEY", "DEFAULT_ADMIN_PASSWORD"):
         monkeypatch.delenv(var, raising=False)
 
@@ -111,8 +124,8 @@ def test_w13_warns_when_postgres_password_is_changeme(monkeypatch):
 
     output = captured.getvalue()
     assert "INSECURE DEFAULT" in output, (
-        "warn_on_changeme_defaults must emit a clearly-marked WARN line. "
-        f"Got: {output!r}"
+        "warn_on_changeme_defaults must emit a clearly-marked WARN line "
+        f"in production. Got: {output!r}"
     )
     assert "postgres_password" in output, (
         "Warning must name the offending field for grep-ability. "
@@ -121,10 +134,38 @@ def test_w13_warns_when_postgres_password_is_changeme(monkeypatch):
 
 
 @pytest.mark.unit
-def test_w13_no_warning_when_password_is_set(monkeypatch):
-    """When all three placeholder fields are overridden via env,
-    the validator must stay silent.
+def test_w13_silent_in_development_even_with_placeholders(monkeypatch):
+    """In dev (default RENFIELD_ENV), the validator must stay silent even
+    when placeholder defaults are in place — the warning is a
+    production-deploy guard, not a dev-environment annoyance.
     """
+    monkeypatch.delenv("RENFIELD_ENV", raising=False)  # default → "development"
+    for var in ("POSTGRES_PASSWORD", "SECRET_KEY", "DEFAULT_ADMIN_PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+
+    captured = io.StringIO()
+    sink_id = logger.add(captured, level="WARNING", format="{level}|{message}")
+    try:
+        from utils.config import Settings
+
+        Settings()
+    finally:
+        logger.remove(sink_id)
+
+    output = captured.getvalue()
+    assert "INSECURE DEFAULT" not in output, (
+        "Validator must stay silent in development env (this is the "
+        "default-case behaviour to avoid spamming dev/test logs). "
+        f"Got unexpected warning: {output!r}"
+    )
+
+
+@pytest.mark.unit
+def test_w13_no_warning_in_production_when_secrets_are_set(monkeypatch):
+    """When all three placeholder fields are overridden via env in a
+    production-style RENFIELD_ENV, the validator must stay silent.
+    """
+    monkeypatch.setenv("RENFIELD_ENV", "production")
     monkeypatch.setenv("POSTGRES_PASSWORD", "real-strong-password-from-secret")
     monkeypatch.setenv("SECRET_KEY", "5c5e93b6f7c4a8d2e1f3b9a4c8d6e0f2")
     monkeypatch.setenv("DEFAULT_ADMIN_PASSWORD", "another-real-password")
@@ -141,5 +182,31 @@ def test_w13_no_warning_when_password_is_set(monkeypatch):
     output = captured.getvalue()
     assert "INSECURE DEFAULT" not in output, (
         "Validator should NOT warn when all placeholder defaults are "
-        f"overridden. Got unexpected warning: {output!r}"
+        f"overridden in production. Got unexpected warning: {output!r}"
     )
+
+
+@pytest.mark.unit
+def test_w13_changeme_fields_match_settings_defaults():
+    """Drift guard: every field listed in `_CHANGEME_FIELDS` must exist on
+    the Settings class, AND its class-level default must be a string-like
+    placeholder (resolved via SecretStr unwrap if applicable). If a
+    future commit renames the field or replaces the placeholder default
+    without updating `_CHANGEME_FIELDS`, this test catches it.
+    """
+    from utils.config import _CHANGEME_FIELDS, Settings
+    from pydantic import SecretStr
+
+    fields = Settings.model_fields
+    for name in _CHANGEME_FIELDS:
+        assert name in fields, (
+            f"_CHANGEME_FIELDS lists `{name}` but Settings has no such field. "
+            "Was it renamed? Update _CHANGEME_FIELDS to match."
+        )
+        default = fields[name].default
+        if isinstance(default, SecretStr):
+            default = default.get_secret_value()
+        assert isinstance(default, str) and default, (
+            f"`{name}` should ship with a string placeholder default (so the "
+            f"validator has a known value to compare against), got: {default!r}"
+        )
