@@ -531,9 +531,22 @@ class RAGService:
         await self.db.flush()
 
         # Phase 3: embed every child concurrently, capturing the now-set parent.id.
+        # Pre-existing quirk worth knowing about (not introduced by W3, kept
+        # for behaviour parity with the prior per-group loop): blank-text
+        # children are filtered both at parent_text construction (above) and
+        # at _embed_child entry, so they survive in the input shape but yield
+        # None and get dropped at reassembly. Their absence from the output
+        # means parent.chunk_metadata["child_count"] (set at parent build
+        # time as len(group)) overcounts when groups contain blanks. Logged
+        # below so the discrepancy is visible — fixing the metadata count is
+        # out of W3's scope.
         async def _embed_child(chunk_data: dict, parent_id: int) -> DocumentChunk | None:
             text_content = chunk_data["text"]
             if not text_content or not text_content.strip():
+                logger.debug(
+                    f"Skipping blank child chunk_index={chunk_data.get('chunk_index')} "
+                    f"(parent_id={parent_id}) — child_count metadata may overcount"
+                )
                 return None
             embed_text = chunk_data.get("text_for_embedding", text_content)
             async with sem:
