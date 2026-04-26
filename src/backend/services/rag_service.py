@@ -497,17 +497,34 @@ class RAGService:
         # Group consecutive child chunks into parents
         children_per_parent = max(1, settings.rag_parent_chunk_size // max(settings.rag_child_chunk_size, 1))
 
-        # Phase 1: build all parents (no embedding)
+        # Phase 1: build all parents (no embedding). Filter blank-text
+        # children once up front so `child_count` metadata, parent_text
+        # construction, and the child-embedding gather all see the same
+        # set — eliminates the metadata overcount that the per-group loop
+        # carried (where child_count = raw len(group) but blanks dropped
+        # out at embedding time, so the live row count was lower).
         parent_groups: list[tuple[DocumentChunk, list[dict]]] = []
         for group_start in range(0, len(chunks), children_per_parent):
-            group = chunks[group_start:group_start + children_per_parent]
+            raw_group = chunks[group_start:group_start + children_per_parent]
+            if not raw_group:
+                continue
+
+            blanks_dropped = sum(
+                1 for c in raw_group
+                if not (c.get("text") and c["text"].strip())
+            )
+            group = [c for c in raw_group if c.get("text") and c["text"].strip()]
             if not group:
-                continue
+                continue  # whole group was blank — skip entirely
 
-            parent_text = "\n\n".join(c["text"] for c in group if c["text"] and c["text"].strip())
-            if not parent_text.strip():
-                continue
+            if blanks_dropped:
+                logger.debug(
+                    f"Parent group at chunk_index={group_start} dropped "
+                    f"{blanks_dropped} blank-text children "
+                    f"({len(group)} retained out of {len(raw_group)})"
+                )
 
+            parent_text = "\n\n".join(c["text"] for c in group)
             first_meta = group[0]["metadata"]
             parent = DocumentChunk(
                 document_id=doc_id,
@@ -517,6 +534,8 @@ class RAGService:
                 page_number=first_meta.get("page_number"),
                 section_title=", ".join(first_meta.get("headings", [])) or None,
                 chunk_type="parent",
+                # child_count now reflects what actually ends up in the DB,
+                # not the pre-filter raw input size.
                 chunk_metadata={"child_count": len(group)},
             )
             parent_groups.append((parent, group))
@@ -531,23 +550,11 @@ class RAGService:
         await self.db.flush()
 
         # Phase 3: embed every child concurrently, capturing the now-set parent.id.
-        # Pre-existing quirk worth knowing about (not introduced by W3, kept
-        # for behaviour parity with the prior per-group loop): blank-text
-        # children are filtered both at parent_text construction (above) and
-        # at _embed_child entry, so they survive in the input shape but yield
-        # None and get dropped at reassembly. Their absence from the output
-        # means parent.chunk_metadata["child_count"] (set at parent build
-        # time as len(group)) overcounts when groups contain blanks. Logged
-        # below so the discrepancy is visible — fixing the metadata count is
-        # out of W3's scope.
+        # `group` is already non-blank-filtered in phase 1, so no blank
+        # guard needed here — None returns from `_embed_child` only on real
+        # embedding failures, not on text-shape rejection.
         async def _embed_child(chunk_data: dict, parent_id: int) -> DocumentChunk | None:
             text_content = chunk_data["text"]
-            if not text_content or not text_content.strip():
-                logger.debug(
-                    f"Skipping blank child chunk_index={chunk_data.get('chunk_index')} "
-                    f"(parent_id={parent_id}) — child_count metadata may overcount"
-                )
-                return None
             embed_text = chunk_data.get("text_for_embedding", text_content)
             async with sem:
                 try:

@@ -224,6 +224,53 @@ async def test_parent_child_batches_parent_inserts_w3(rag_service, mock_db):
     )
 
 
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_parent_child_count_matches_actual_children_after_blank_filter(rag_service, mock_db):
+    """W3 follow-up: parent.chunk_metadata['child_count'] must reflect the
+    number of children that ACTUALLY end up in the DB, not the raw input
+    size before blank-text children get filtered out.
+
+    Pre-fix bug (carried from the original per-group loop): child_count
+    was set to `len(group)` at parent build time, BEFORE the blank-text
+    guard inside _embed_child filtered out empty/whitespace-only chunks.
+    So a group of 4 chunks where 1 was blank produced a parent claiming
+    `child_count: 4` but only 3 actual child rows in the DB.
+
+    Post-fix invariant: blanks are filtered ONCE up front (in phase 1),
+    and child_count reflects the filtered count. The number of returned
+    children of any parent always matches that parent's child_count.
+    """
+    rag_service.get_embedding = AsyncMock(return_value=[0.1] * 768)
+
+    # 4 chunks, 1 blank — parent_size=4 → single parent group.
+    chunks = [
+        {"text": "Real first chunk", "chunk_index": 0, "metadata": {"headings": [], "page_number": 1, "chunk_type": "paragraph"}},
+        {"text": "   ", "chunk_index": 1, "metadata": {"headings": [], "page_number": 1, "chunk_type": "paragraph"}},  # blank
+        {"text": "Real third chunk", "chunk_index": 2, "metadata": {"headings": [], "page_number": 1, "chunk_type": "paragraph"}},
+        {"text": "Real fourth chunk", "chunk_index": 3, "metadata": {"headings": [], "page_number": 1, "chunk_type": "paragraph"}},
+    ]
+
+    with patch.object(settings, "rag_parent_chunk_size", 1024), \
+         patch.object(settings, "rag_child_chunk_size", 256):
+        sem = asyncio.Semaphore(5)
+        result = await rag_service._ingest_parent_child(1, chunks, sem)
+
+    parents = [r for r in result if r.chunk_type == "parent"]
+    children = [r for r in result if r.chunk_type != "parent"]
+
+    assert len(parents) == 1
+    # 4 raw inputs - 1 blank = 3 children expected, NOT 4
+    assert len(children) == 3, (
+        f"Expected 3 non-blank children, got {len(children)} — blank filtering regressed"
+    )
+    assert parents[0].chunk_metadata["child_count"] == 3, (
+        f"child_count should match actual children (3), got "
+        f"{parents[0].chunk_metadata['child_count']} — metadata still uses "
+        "pre-filter raw len(group)"
+    )
+
+
 # ===========================================================================
 # 5. Parent resolution in search
 # ===========================================================================
