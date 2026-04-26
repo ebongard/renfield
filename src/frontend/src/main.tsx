@@ -5,12 +5,17 @@ import '@fontsource-variable/cormorant';
 import '@fontsource-variable/dm-sans';
 import App from './App';
 import './index.css';
-import './i18n'; // Initialize i18n
+import './i18n';
 
-ReactDOM.createRoot(document.getElementById('root')).render(
+const rootElement = document.getElementById('root');
+if (!rootElement) {
+  throw new Error('Root element #root not found in document');
+}
+
+ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <BrowserRouter>
       <App />
     </BrowserRouter>
-  </React.StrictMode>
+  </React.StrictMode>,
 );

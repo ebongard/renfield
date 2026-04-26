@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Check, Copy, Fingerprint } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import Modal from './Modal';
 import Alert from './Alert';
 import TierPicker from './TierPicker';
+import type { CircleTier } from './TierBadge';
 
 /**
  * PairInitiatorModal — drives the asker side of the F2 handshake.
@@ -24,28 +26,45 @@ import TierPicker from './TierPicker';
  * the server's PairingResponse schema. The pair-anchor check happens
  * server-side; we validate shape locally for quick failure.
  */
-const STEP_OFFER = 'offer';
-const STEP_AWAIT_RESPONSE = 'await_response';
-const STEP_PICK_TIER = 'pick_tier';
-const STEP_DONE = 'done';
+type Step = 'offer' | 'await_response' | 'pick_tier' | 'done';
 
-export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
+interface OfferData {
+  initiator_pubkey: string;
+  signature: string;
+  nonce: string;
+}
+
+interface ResponseData {
+  responder_pubkey: string;
+  signature: string;
+  nonce: string;
+  responder_display_name?: string;
+}
+
+interface PairInitiatorModalProps {
+  isOpen: boolean;
+  onClose?: () => void;
+  onPaired?: () => void;
+}
+
+const REQUIRED_RESPONSE_FIELDS = ['responder_pubkey', 'signature', 'nonce'] as const;
+
+export default function PairInitiatorModal({ isOpen, onClose, onPaired }: PairInitiatorModalProps) {
   const { t } = useTranslation();
 
-  const [step, setStep] = useState(STEP_OFFER);
+  const [step, setStep] = useState<Step>('offer');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // State carried through the three steps
-  const [offer, setOffer] = useState(null);
+  const [offer, setOffer] = useState<OfferData | null>(null);
   const [responseText, setResponseText] = useState('');
-  const [parsedResponse, setParsedResponse] = useState(null);
-  const [tier, setTier] = useState(2);  // default: household
+  const [parsedResponse, setParsedResponse] = useState<ResponseData | null>(null);
+  const [tier, setTier] = useState<CircleTier>(2);
 
   const [copied, setCopied] = useState(false);
 
   const reset = () => {
-    setStep(STEP_OFFER);
+    setStep('offer');
     setLoading(false);
     setError(null);
     setOffer(null);
@@ -65,17 +84,16 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.post('/api/federation/pair/offer', {});
+      const response = await apiClient.post<OfferData>('/api/federation/pair/offer', {});
       setOffer(response.data);
-      setStep(STEP_AWAIT_RESPONSE);
+      setStep('await_response');
     } catch (err) {
-      setError(err?.response?.data?.detail || t('circles.pairOfferFailed'));
+      setError(extractApiError(err, t('circles.pairOfferFailed')));
     } finally {
       setLoading(false);
     }
   };
 
-  // Copy offer JSON to clipboard
   const handleCopyOffer = async () => {
     if (!offer) return;
     try {
@@ -94,9 +112,9 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
       setError(t('circles.pairResponseRequired'));
       return;
     }
-    let parsed;
+    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(responseText);
+      parsed = JSON.parse(responseText) as Record<string, unknown>;
     } catch {
       setError(t('circles.pairResponseMalformed'));
       return;
@@ -105,7 +123,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
     // Server's PairingResponse schema (services/pairing_service.py) names
     // the signature field `signature`, NOT `responder_signature`. Getting
     // this wrong would reject every legitimate response client-side.
-    for (const key of ['responder_pubkey', 'signature', 'nonce']) {
+    for (const key of REQUIRED_RESPONSE_FIELDS) {
       if (typeof parsed[key] !== 'string') {
         setError(t('circles.pairResponseMissingField', { field: key }));
         return;
@@ -115,8 +133,8 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
       setError(t('circles.pairResponseWrongNonce'));
       return;
     }
-    setParsedResponse(parsed);
-    setStep(STEP_PICK_TIER);
+    setParsedResponse(parsed as unknown as ResponseData);
+    setStep('pick_tier');
   };
 
   // Step 3 → complete handshake with tier
@@ -129,10 +147,10 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
         response: parsedResponse,
         their_tier_for_me: tier,
       });
-      setStep(STEP_DONE);
+      setStep('done');
       onPaired?.();
     } catch (err) {
-      setError(err?.response?.data?.detail || t('circles.pairCompleteFailed'));
+      setError(extractApiError(err, t('circles.pairCompleteFailed')));
     } finally {
       setLoading(false);
     }
@@ -142,7 +160,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
     <Modal isOpen={isOpen} onClose={handleClose} title={t('circles.pairInitiateTitle')}>
       {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
 
-      {step === STEP_OFFER && (
+      {step === 'offer' && (
         <div className="space-y-4">
           <p className="text-sm text-gray-700 dark:text-gray-300">
             {t('circles.pairInitiateStep1Explanation')}
@@ -163,7 +181,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
         </div>
       )}
 
-      {step === STEP_AWAIT_RESPONSE && offer && (
+      {step === 'await_response' && offer && (
         <div className="space-y-4">
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">
@@ -220,7 +238,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
         </div>
       )}
 
-      {step === STEP_PICK_TIER && parsedResponse && (
+      {step === 'pick_tier' && parsedResponse && (
         <div className="space-y-4">
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-1">
@@ -241,7 +259,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
           <div className="flex justify-between gap-2">
             <button
               type="button"
-              onClick={() => setStep(STEP_AWAIT_RESPONSE)}
+              onClick={() => setStep('await_response')}
               className="btn-secondary inline-flex items-center gap-1 px-4 py-2 rounded-lg"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -259,7 +277,7 @@ export default function PairInitiatorModal({ isOpen, onClose, onPaired }) {
         </div>
       )}
 
-      {step === STEP_DONE && (
+      {step === 'done' && (
         <div className="space-y-4 text-center py-4">
           <Check className="w-12 h-12 mx-auto text-green-600" aria-hidden="true" />
           <p className="text-lg font-semibold text-gray-900 dark:text-white">

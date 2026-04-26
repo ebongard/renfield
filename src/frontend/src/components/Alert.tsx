@@ -1,6 +1,7 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { AlertCircle, AlertTriangle, CheckCircle, Info } from 'lucide-react';
+import { AlertCircle, AlertTriangle, CheckCircle, Info, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 
 export type AlertVariant = 'error' | 'success' | 'warning' | 'info';
 
@@ -42,9 +43,12 @@ interface AlertProps {
   variant?: AlertVariant;
   children?: ReactNode;
   className?: string;
+  /** When provided, renders an X button that calls this handler. */
+  onClose?: () => void;
 }
 
-export default function Alert({ variant = 'info', children, className = '' }: AlertProps) {
+export default function Alert({ variant = 'info', children, className = '', onClose }: AlertProps) {
+  const { t } = useTranslation();
   const v = VARIANTS[variant] ?? VARIANTS.info;
   const Icon = v.icon;
 
@@ -52,7 +56,17 @@ export default function Alert({ variant = 'info', children, className = '' }: Al
     <div className={`card ${v.container} ${className}`}>
       <div className="flex items-center space-x-3">
         <Icon className={`w-5 h-5 shrink-0 ${v.iconColor}`} aria-hidden="true" />
-        <p className={v.text}>{children}</p>
+        <p className={`grow ${v.text}`}>{children}</p>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            className={`shrink-0 p-1 rounded-md hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${v.iconColor}`}
+            aria-label={t('common.dismiss')}
+          >
+            <X className="w-4 h-4" aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
   );

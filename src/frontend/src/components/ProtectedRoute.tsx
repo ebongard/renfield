@@ -3,23 +3,27 @@
  *
  * Wraps routes that require authentication or specific permissions.
  */
+import type { ReactNode } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { useAuth } from '../context/AuthContext';
 import { Loader, ShieldOff } from 'lucide-react';
 
-/**
- * ProtectedRoute - Requires authentication
- *
- * @param {Object} props
- * @param {React.ReactNode} props.children - Child components to render
- * @param {string|string[]} props.permission - Required permission(s)
- * @param {boolean} props.requireAny - If true, user needs any of the permissions (default: all)
- */
-export default function ProtectedRoute({ children, permission = null, requireAny = false }) {
+interface ProtectedRouteProps {
+  children: ReactNode;
+  /** Required permission(s) — string or array. */
+  permission?: string | string[] | null;
+  /** When true, user needs ANY of the permissions; otherwise ALL are required. */
+  requireAny?: boolean;
+}
+
+export default function ProtectedRoute({
+  children,
+  permission = null,
+  requireAny = false,
+}: ProtectedRouteProps) {
   const { isAuthenticated, authEnabled, loading, hasPermission, hasAnyPermission } = useAuth();
   const location = useLocation();
 
-  // Show loading while checking auth status
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-[50vh]">
@@ -28,22 +32,19 @@ export default function ProtectedRoute({ children, permission = null, requireAny
     );
   }
 
-  // If auth is disabled, allow access
   if (!authEnabled) {
-    return children;
+    return <>{children}</>;
   }
 
-  // If not authenticated, redirect to login
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
-  // Check permissions if specified
   if (permission) {
     const permissions = Array.isArray(permission) ? permission : [permission];
     const hasAccess = requireAny
       ? hasAnyPermission(permissions)
-      : permissions.every(p => hasPermission(p));
+      : permissions.every((p) => hasPermission(p));
 
     if (!hasAccess) {
       return (
@@ -59,16 +60,13 @@ export default function ProtectedRoute({ children, permission = null, requireAny
     }
   }
 
-  return children;
+  return <>{children}</>;
 }
 
-/**
- * AdminRoute - Requires admin permission
- */
-export function AdminRoute({ children }) {
-  return (
-    <ProtectedRoute permission="admin">
-      {children}
-    </ProtectedRoute>
-  );
+interface AdminRouteProps {
+  children: ReactNode;
+}
+
+export function AdminRoute({ children }: AdminRouteProps) {
+  return <ProtectedRoute permission="admin">{children}</ProtectedRoute>;
 }

@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { QRCodeSVG } from 'qrcode.react';
 import { ArrowLeft, Check, Copy, Fingerprint } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import Modal from './Modal';
 import Alert from './Alert';
 import TierPicker from './TierPicker';
+import type { CircleTier } from './TierBadge';
 
 /**
  * PairResponderModal — drives the responder side of the F2 handshake.
@@ -19,26 +21,46 @@ import TierPicker from './TierPicker';
  *      response as a QR code + copyable JSON for the initiator to scan
  *      or paste into their modal.
  */
-const STEP_PASTE_OFFER = 'paste_offer';
-const STEP_PICK_TIER = 'pick_tier';
-const STEP_SHOW_RESPONSE = 'show_response';
+type Step = 'paste_offer' | 'pick_tier' | 'show_response';
 
-export default function PairResponderModal({ isOpen, onClose, onPaired }) {
+interface PairingOffer {
+  initiator_pubkey: string;
+  signature: string;
+  nonce: string;
+  display_name: string;
+  expires_at?: number;
+}
+
+interface PairingResponseData {
+  responder_pubkey: string;
+  signature: string;
+  nonce: string;
+}
+
+interface PairResponderModalProps {
+  isOpen: boolean;
+  onClose?: () => void;
+  onPaired?: () => void;
+}
+
+const REQUIRED_OFFER_FIELDS = ['initiator_pubkey', 'signature', 'nonce', 'display_name'] as const;
+
+export default function PairResponderModal({ isOpen, onClose, onPaired }: PairResponderModalProps) {
   const { t } = useTranslation();
 
-  const [step, setStep] = useState(STEP_PASTE_OFFER);
+  const [step, setStep] = useState<Step>('paste_offer');
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   const [offerText, setOfferText] = useState('');
-  const [parsedOffer, setParsedOffer] = useState(null);
-  const [tier, setTier] = useState(2);
-  const [responseData, setResponseData] = useState(null);
+  const [parsedOffer, setParsedOffer] = useState<PairingOffer | null>(null);
+  const [tier, setTier] = useState<CircleTier>(2);
+  const [responseData, setResponseData] = useState<PairingResponseData | null>(null);
 
   const [copied, setCopied] = useState(false);
 
   const reset = () => {
-    setStep(STEP_PASTE_OFFER);
+    setStep('paste_offer');
     setLoading(false);
     setError(null);
     setOfferText('');
@@ -60,14 +82,14 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
       setError(t('circles.pairOfferRequired'));
       return;
     }
-    let parsed;
+    let parsed: Record<string, unknown>;
     try {
-      parsed = JSON.parse(offerText);
+      parsed = JSON.parse(offerText) as Record<string, unknown>;
     } catch {
       setError(t('circles.pairOfferMalformed'));
       return;
     }
-    for (const key of ['initiator_pubkey', 'signature', 'nonce', 'display_name']) {
+    for (const key of REQUIRED_OFFER_FIELDS) {
       if (typeof parsed[key] !== 'string') {
         setError(t('circles.pairOfferMissingField', { field: key }));
         return;
@@ -80,8 +102,8 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
       setError(t('circles.pairOfferExpired'));
       return;
     }
-    setParsedOffer(parsed);
-    setStep(STEP_PICK_TIER);
+    setParsedOffer(parsed as unknown as PairingOffer);
+    setStep('pick_tier');
   };
 
   // Step 2 → accept offer with chosen tier
@@ -90,15 +112,15 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
     try {
       setLoading(true);
       setError(null);
-      const resp = await apiClient.post('/api/federation/pair/accept', {
+      const resp = await apiClient.post<PairingResponseData>('/api/federation/pair/accept', {
         offer: parsedOffer,
         my_tier_for_you: tier,
       });
       setResponseData(resp.data);
-      setStep(STEP_SHOW_RESPONSE);
+      setStep('show_response');
       onPaired?.();
     } catch (err) {
-      setError(err?.response?.data?.detail || t('circles.pairAcceptFailed'));
+      setError(extractApiError(err, t('circles.pairAcceptFailed')));
     } finally {
       setLoading(false);
     }
@@ -119,7 +141,7 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
     <Modal isOpen={isOpen} onClose={handleClose} title={t('circles.pairAcceptTitle')}>
       {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
 
-      {step === STEP_PASTE_OFFER && (
+      {step === 'paste_offer' && (
         <div className="space-y-4">
           <p className="text-sm text-gray-700 dark:text-gray-300">
             {t('circles.pairAcceptStep1Instruction')}
@@ -152,7 +174,7 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
         </div>
       )}
 
-      {step === STEP_PICK_TIER && parsedOffer && (
+      {step === 'pick_tier' && parsedOffer && (
         <div className="space-y-4">
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-1">
@@ -176,7 +198,7 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
           <div className="flex justify-between gap-2">
             <button
               type="button"
-              onClick={() => setStep(STEP_PASTE_OFFER)}
+              onClick={() => setStep('paste_offer')}
               className="btn-secondary inline-flex items-center gap-1 px-4 py-2 rounded-lg"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -194,7 +216,7 @@ export default function PairResponderModal({ isOpen, onClose, onPaired }) {
         </div>
       )}
 
-      {step === STEP_SHOW_RESPONSE && responseData && (
+      {step === 'show_response' && responseData && (
         <div className="space-y-4">
           <div>
             <p className="text-sm text-gray-700 dark:text-gray-300 mb-3">

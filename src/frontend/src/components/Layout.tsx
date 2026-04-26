@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import type { ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import {
   MessageSquare,
   CheckSquare,
@@ -29,7 +31,7 @@ import {
   FileSearch,
   Share2,
   History,
-  GitBranch
+  GitBranch,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
@@ -37,8 +39,19 @@ import LanguageSwitcher from './LanguageSwitcher';
 import NotificationToast from './NotificationToast';
 import { useAuth } from '../context/AuthContext';
 
-// Navigation items with translation keys
-const mainNavigationConfig = [
+interface NavItemConfig {
+  nameKey: string;
+  href: string;
+  icon: LucideIcon;
+  permission?: string[];
+  feature?: string;
+}
+
+interface NavItem extends NavItemConfig {
+  name: string;
+}
+
+const mainNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.chat', href: '/', icon: MessageSquare },
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'], feature: 'knowledge' },
   { nameKey: 'nav.brain', href: '/brain', icon: Brain },
@@ -50,8 +63,7 @@ const mainNavigationConfig = [
   { nameKey: 'nav.cameras', href: '/camera', icon: Camera, permission: ['cam.view', 'cam.full'], feature: 'cameras' },
 ];
 
-// Admin navigation with translation keys
-const adminNavigationConfig = [
+const adminNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.rooms', href: '/rooms', icon: DoorOpen, permission: ['rooms.read', 'rooms.manage'], feature: 'smart_home' },
   { nameKey: 'nav.speakers', href: '/speakers', icon: Users, permission: ['speakers.own', 'speakers.all'], feature: 'voice' },
   { nameKey: 'nav.smarthome', href: '/homeassistant', icon: Lightbulb, permission: ['ha.read', 'ha.control', 'ha.full'], feature: 'smart_home' },
@@ -68,7 +80,11 @@ const adminNavigationConfig = [
   { nameKey: 'nav.circles', href: '/settings/circles', icon: CircleDashed },
 ];
 
-export default function Layout({ children }) {
+interface LayoutProps {
+  children: ReactNode;
+}
+
+export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(() => {
@@ -80,29 +96,24 @@ export default function Layout({ children }) {
 
   const location = useLocation();
   const navigate = useNavigate();
-  const sidebarRef = useRef(null);
-  const firstFocusableRef = useRef(null);
+  const sidebarRef = useRef<HTMLElement | null>(null);
+  const firstFocusableRef = useRef<HTMLButtonElement | null>(null);
 
-  // Auth context
-  const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, isFeatureEnabled, loading: authLoading } = useAuth();
+  const { user, isAuthenticated, authEnabled, logout, hasAnyPermission, isFeatureEnabled } = useAuth();
 
-  // Translate navigation items
-  const mainNavigation = mainNavigationConfig.map(item => ({
+  const mainNavigation: NavItem[] = mainNavigationConfig.map((item) => ({
     ...item,
-    name: t(item.nameKey)
+    name: t(item.nameKey),
   }));
 
-  const adminNavigation = adminNavigationConfig.map(item => ({
+  const adminNavigation: NavItem[] = adminNavigationConfig.map((item) => ({
     ...item,
-    name: t(item.nameKey)
+    name: t(item.nameKey),
   }));
 
-  // Filter navigation items based on features and permissions
-  const filterNavItems = (items) => {
-    return items.filter(item => {
-      // Feature flag check first
+  const filterNavItems = (items: NavItem[]): NavItem[] => {
+    return items.filter((item) => {
       if (item.feature && !isFeatureEnabled(item.feature)) return false;
-      // Permission check
       if (!authEnabled) return true;
       if (!item.permission) return true;
       return hasAnyPermission(item.permission);
@@ -134,7 +145,6 @@ export default function Layout({ children }) {
   // Check ob aktuelle Route im Admin-Bereich ist
   const isAdminRoute = visibleAdminNav.some(item => item.href === location.pathname);
 
-  // Admin automatisch aufklappen wenn Admin-Route aktiv
   useEffect(() => {
     if (isAdminRoute && !adminExpanded) {
       setAdminExpanded(true);
@@ -142,16 +152,16 @@ export default function Layout({ children }) {
     }
   }, [location.pathname]);
 
-  // Escape-Key und Click-Outside Handler
   useEffect(() => {
-    const handleEscape = (e) => {
+    const handleEscape = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && sidebarOpen) {
         setSidebarOpen(false);
       }
     };
 
-    const handleClickOutside = (e) => {
-      if (sidebarOpen && sidebarRef.current && !sidebarRef.current.contains(e.target)) {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as Node | null;
+      if (sidebarOpen && sidebarRef.current && target && !sidebarRef.current.contains(target)) {
         setSidebarOpen(false);
       }
     };
@@ -184,7 +194,12 @@ export default function Layout({ children }) {
     };
   }, [sidebarOpen]);
 
-  const NavLink = ({ item, onClick }) => {
+  interface NavLinkProps {
+    item: NavItem;
+    onClick?: () => void;
+  }
+
+  const NavLink = ({ item, onClick }: NavLinkProps) => {
     const Icon = item.icon;
     const isActive = location.pathname === item.href;
 
@@ -389,7 +404,7 @@ export default function Layout({ children }) {
                       </div>
                       <div className="flex-1 min-w-0 lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
                         <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{user?.username}</p>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.role}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.role?.name}</p>
                       </div>
                     </div>
                   </div>

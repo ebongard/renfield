@@ -5,8 +5,9 @@
  * Handles device type selection, room selection, and capability configuration.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import {
   Monitor,
   Tablet,
@@ -22,60 +23,61 @@ import {
   Settings,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
-import {
-  DEVICE_TYPES,
-  DEVICE_TYPE_LABELS,
-} from '../hooks/useDeviceConnection';
+import { extractApiError } from '../utils/axios';
+import { DEVICE_TYPES, DEVICE_TYPE_LABELS } from '../hooks/useDeviceConnection';
+import type { DeviceConfig, DeviceType } from '../types/device';
+import type { Room } from '../types/api';
 import { useDevice } from '../context/DeviceContext';
 
-// Device type icons
-const DEVICE_TYPE_ICONS = {
+const DEVICE_TYPE_ICONS: Partial<Record<DeviceType, LucideIcon>> = {
   [DEVICE_TYPES.WEB_PANEL]: Monitor,
   [DEVICE_TYPES.WEB_TABLET]: Tablet,
   [DEVICE_TYPES.WEB_BROWSER]: Smartphone,
   [DEVICE_TYPES.WEB_KIOSK]: Tv,
 };
 
+type MicPermission = PermissionState | 'unknown';
+
+interface DeviceSetupProps {
+  onSetupComplete?: (config: DeviceConfig, device: ReturnType<typeof useDevice>) => void;
+  onCancel?: () => void;
+  existingConfig?: DeviceConfig | null;
+}
+
 export default function DeviceSetup({
   onSetupComplete,
   onCancel,
   existingConfig = null,
-}) {
+}: DeviceSetupProps) {
   const { t } = useTranslation();
 
-  // Device type descriptions (moved inside component for i18n)
-  const DEVICE_TYPE_DESCRIPTIONS = {
+  const DEVICE_TYPE_DESCRIPTIONS: Partial<Record<DeviceType, string>> = {
     [DEVICE_TYPES.WEB_PANEL]: t('device.descriptionPanel'),
     [DEVICE_TYPES.WEB_TABLET]: t('device.descriptionTablet'),
     [DEVICE_TYPES.WEB_BROWSER]: t('device.descriptionBrowser'),
     [DEVICE_TYPES.WEB_KIOSK]: t('device.descriptionKiosk'),
   };
-  // Form state
-  const [deviceType, setDeviceType] = useState(existingConfig?.type || DEVICE_TYPES.WEB_BROWSER);
-  const [selectedRoom, setSelectedRoom] = useState(existingConfig?.room || '');
-  const [deviceName, setDeviceName] = useState(existingConfig?.name || '');
-  const [isStationary, setIsStationary] = useState(existingConfig?.isStationary ?? true);
 
-  // Capability overrides
+  const [deviceType, setDeviceType] = useState<DeviceType>(existingConfig?.type ?? DEVICE_TYPES.WEB_BROWSER);
+  const [selectedRoom, setSelectedRoom] = useState<string>(existingConfig?.room ?? '');
+  const [deviceName, setDeviceName] = useState<string>(existingConfig?.name ?? '');
+  const [isStationary, setIsStationary] = useState<boolean>(existingConfig?.isStationary ?? true);
+
   const [hasMicrophone, setHasMicrophone] = useState(true);
   const [hasSpeaker, setHasSpeaker] = useState(true);
   const [hasWakeWord, setHasWakeWord] = useState(false);
 
-  // Rooms list
-  const [rooms, setRooms] = useState([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(true);
   const [newRoomName, setNewRoomName] = useState('');
   const [showNewRoomInput, setShowNewRoomInput] = useState(false);
 
-  // Permission state
-  const [micPermission, setMicPermission] = useState('unknown'); // unknown, granted, denied, prompt
-  const [checkingPermissions, setCheckingPermissions] = useState(false);
+  const [micPermission, setMicPermission] = useState<MicPermission>('unknown');
+  const [, setCheckingPermissions] = useState(false);
 
-  // Setup state
   const [isConnecting, setIsConnecting] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Use device context instead of creating own connection
   const device = useDevice();
 
   // Load rooms on mount
@@ -108,16 +110,15 @@ export default function DeviceSetup({
     }
   }, [deviceType, micPermission]);
 
-  // Load rooms from API
   const loadRooms = async () => {
     setLoadingRooms(true);
     try {
-      const response = await apiClient.get('/api/rooms');
-      setRooms(response.data || []);
+      const response = await apiClient.get<Room[]>('/api/rooms');
+      const data = response.data ?? [];
+      setRooms(data);
 
-      // Auto-select first room if none selected
-      if (!selectedRoom && response.data.length > 0) {
-        setSelectedRoom(response.data[0].name);
+      if (!selectedRoom && data.length > 0) {
+        setSelectedRoom(data[0].name);
       }
     } catch (err) {
       console.error('Failed to load rooms:', err);
@@ -127,55 +128,49 @@ export default function DeviceSetup({
     }
   };
 
-  // Check microphone permission
   const checkMicrophonePermission = async () => {
     setCheckingPermissions(true);
     try {
-      // Check if permission API is available
       if (navigator.permissions && navigator.permissions.query) {
-        const result = await navigator.permissions.query({ name: 'microphone' });
+        const result = await navigator.permissions.query({ name: 'microphone' as PermissionName });
         setMicPermission(result.state);
 
-        // Listen for changes
         result.onchange = () => {
           setMicPermission(result.state);
         };
       } else {
-        // Fallback: try to access microphone
         try {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          stream.getTracks().forEach(track => track.stop());
+          stream.getTracks().forEach((track) => track.stop());
           setMicPermission('granted');
-        } catch (e) {
+        } catch {
           setMicPermission('denied');
         }
       }
-    } catch (err) {
+    } catch {
       setMicPermission('prompt');
     } finally {
       setCheckingPermissions(false);
     }
   };
 
-  // Request microphone permission
   const requestMicrophonePermission = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((track) => track.stop());
       setMicPermission('granted');
       setHasMicrophone(true);
-    } catch (err) {
+    } catch {
       setMicPermission('denied');
       setHasMicrophone(false);
     }
   };
 
-  // Create new room
   const createRoom = async () => {
     if (!newRoomName.trim()) return;
 
     try {
-      const response = await apiClient.post('/api/rooms', {
+      const response = await apiClient.post<Room>('/api/rooms', {
         name: newRoomName.trim(),
       });
       setRooms([...rooms, response.data]);
@@ -184,11 +179,10 @@ export default function DeviceSetup({
       setShowNewRoomInput(false);
     } catch (err) {
       console.error('Failed to create room:', err);
-      setError(err.response?.data?.detail || t('device.couldNotCreateRoom'));
+      setError(extractApiError(err, t('device.couldNotCreateRoom')));
     }
   };
 
-  // Handle setup completion
   const handleComplete = useCallback(async () => {
     if (!selectedRoom) {
       setError(t('device.pleaseSelectRoom'));
@@ -198,7 +192,7 @@ export default function DeviceSetup({
     setIsConnecting(true);
     setError(null);
 
-    const config = {
+    const config: DeviceConfig = {
       room: selectedRoom,
       type: deviceType,
       name: deviceName || null,
@@ -207,26 +201,21 @@ export default function DeviceSetup({
         has_microphone: hasMicrophone,
         has_speaker: hasSpeaker,
         has_wakeword: hasWakeWord,
-        wakeword_method: hasWakeWord ? 'browser_wasm' : null,
+        ...(hasWakeWord ? { wakeword_method: 'browser_wasm' as const } : {}),
       },
     };
 
     try {
-      // connect() now returns a Promise that resolves when registered
       await device.connect(config);
 
       setIsConnecting(false);
       onSetupComplete?.(config, device);
     } catch (err) {
-      setError(err.message || 'Connection failed');
+      const message = err instanceof Error ? err.message : 'Connection failed';
+      setError(message);
       setIsConnecting(false);
     }
-  }, [device, selectedRoom, deviceType, deviceName, isStationary, hasMicrophone, hasSpeaker, hasWakeWord, onSetupComplete]);
-
-  // Quick setup (skip configuration)
-  const handleQuickSetup = () => {
-    handleComplete();
-  };
+  }, [device, selectedRoom, deviceType, deviceName, isStationary, hasMicrophone, hasSpeaker, hasWakeWord, onSetupComplete, t]);
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">

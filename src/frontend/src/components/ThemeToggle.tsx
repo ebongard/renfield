@@ -1,6 +1,20 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import { Sun, Moon, Monitor } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
+import type { ThemePreference } from '../context/ThemeContext';
+
+interface ThemeOption {
+  value: ThemePreference;
+  label: string;
+  icon: LucideIcon;
+}
+
+const OPTIONS: ThemeOption[] = [
+  { value: 'light', label: 'Hell', icon: Sun },
+  { value: 'dark', label: 'Dunkel', icon: Moon },
+  { value: 'system', label: 'System', icon: Monitor },
+];
 
 /**
  * Theme toggle button with dropdown for light/dark/system selection.
@@ -8,12 +22,12 @@ import { useTheme } from '../context/ThemeContext';
 export default function ThemeToggle() {
   const { theme, isDark, setTheme } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
-  const dropdownRef = useRef(null);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (dropdownRef.current && target && !dropdownRef.current.contains(target)) {
         setIsOpen(false);
       }
     };
@@ -22,9 +36,8 @@ export default function ThemeToggle() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Close dropdown on escape key
   useEffect(() => {
-    const handleEscape = (event) => {
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsOpen(false);
       }
@@ -34,14 +47,7 @@ export default function ThemeToggle() {
     return () => document.removeEventListener('keydown', handleEscape);
   }, []);
 
-  const options = [
-    { value: 'light', label: 'Hell', icon: Sun },
-    { value: 'dark', label: 'Dunkel', icon: Moon },
-    { value: 'system', label: 'System', icon: Monitor }
-  ];
-
-  const currentIcon = theme === 'system' ? Monitor : isDark ? Moon : Sun;
-  const CurrentIcon = currentIcon;
+  const CurrentIcon: LucideIcon = theme === 'system' ? Monitor : isDark ? Moon : Sun;
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -66,7 +72,7 @@ export default function ThemeToggle() {
           role="menu"
           aria-orientation="vertical"
         >
-          {options.map(({ value, label, icon: Icon }) => (
+          {OPTIONS.map(({ value, label, icon: Icon }) => (
             <button
               key={value}
               onClick={() => {

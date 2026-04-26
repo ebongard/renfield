@@ -6,34 +6,44 @@
  */
 
 import React from 'react';
+import type { ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { withTranslation } from 'react-i18next';
+import type { WithTranslation } from 'react-i18next';
 
-class ErrorBoundary extends React.Component {
-  constructor(props) {
+interface ErrorBoundaryOwnProps {
+  children: ReactNode;
+  fallback?: ReactNode;
+}
+
+type ErrorBoundaryProps = ErrorBoundaryOwnProps & WithTranslation;
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+  errorInfo: ErrorInfo | null;
+}
+
+class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, errorInfo: null };
   }
 
-  static getDerivedStateFromError(error) {
-    // Update state so next render shows the fallback UI
+  static getDerivedStateFromError(error: Error): Partial<ErrorBoundaryState> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error, errorInfo) {
-    // Log error to console or error reporting service
+  componentDidCatch(error: Error, errorInfo: ErrorInfo): void {
     console.error('ErrorBoundary caught an error:', error, errorInfo);
     this.setState({ errorInfo });
-
-    // You could send to an error reporting service here
-    // logErrorToService(error, errorInfo);
   }
 
-  handleReload = () => {
+  handleReload = (): void => {
     window.location.reload();
   };
 
-  handleRetry = () => {
+  handleRetry = (): void => {
     this.setState({ hasError: false, error: null, errorInfo: null });
   };
 
@@ -41,30 +51,25 @@ class ErrorBoundary extends React.Component {
     const { t } = this.props;
 
     if (this.state.hasError) {
-      // Custom fallback UI
       if (this.props.fallback) {
-        return this.props.fallback;
+        return <>{this.props.fallback}</>;
       }
 
       return (
         <div className="min-h-screen bg-gray-900 flex items-center justify-center p-4">
           <div className="card max-w-md w-full text-center">
-            {/* Icon */}
             <div className="w-16 h-16 mx-auto mb-4 bg-red-600/20 rounded-full flex items-center justify-center">
               <AlertTriangle className="w-8 h-8 text-red-500" aria-hidden="true" />
             </div>
 
-            {/* Title */}
             <h1 className="text-xl font-bold text-white mb-2">
               {t('errorBoundary.title')}
             </h1>
 
-            {/* Message */}
             <p className="text-gray-400 mb-6">
               {t('errorBoundary.message')}
             </p>
 
-            {/* Error details (only in development) */}
             {import.meta.env.DEV && this.state.error && (
               <details className="mb-6 text-left">
                 <summary className="text-sm text-gray-500 cursor-pointer hover:text-gray-400">
@@ -77,7 +82,6 @@ class ErrorBoundary extends React.Component {
               </details>
             )}
 
-            {/* Actions */}
             <div className="flex space-x-3">
               <button
                 onClick={this.handleRetry}
@@ -98,7 +102,7 @@ class ErrorBoundary extends React.Component {
       );
     }
 
-    return this.props.children;
+    return <>{this.props.children}</>;
   }
 }
 

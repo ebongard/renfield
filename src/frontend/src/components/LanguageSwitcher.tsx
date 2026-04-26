@@ -1,34 +1,44 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 
-const languages = [
+type LanguageCode = 'de' | 'en';
+
+interface Language {
+  code: LanguageCode;
+  name: string;
+  flag: string;
+}
+
+const LANGUAGES: Language[] = [
   { code: 'de', name: 'Deutsch', flag: '🇩🇪' },
-  { code: 'en', name: 'English', flag: '🇬🇧' }
+  { code: 'en', name: 'English', flag: '🇬🇧' },
 ];
 
-export default function LanguageSwitcher({ compact = false }) {
+interface LanguageSwitcherProps {
+  compact?: boolean;
+}
+
+export default function LanguageSwitcher({ compact = false }: LanguageSwitcherProps) {
   const { i18n, t } = useTranslation();
   const { isAuthenticated, authEnabled } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [syncing, setSyncing] = useState(false);
-  const dropdownRef = useRef(null);
+  const [, setSyncing] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
   const initialLoadDone = useRef(false);
 
-  const currentLanguage = languages.find(lang => lang.code === i18n.language) || languages[0];
+  const currentLanguage = LANGUAGES.find((lang) => lang.code === i18n.language) ?? LANGUAGES[0];
 
-  // Load user's language preference from backend on initial load (if authenticated)
   useEffect(() => {
     const loadUserLanguage = async () => {
       if (!authEnabled || !isAuthenticated || initialLoadDone.current) return;
 
       try {
-        const response = await apiClient.get('/api/preferences/language');
+        const response = await apiClient.get<{ language?: string }>('/api/preferences/language');
         const userLanguage = response.data.language;
 
-        // Only change if different from current
         if (userLanguage && userLanguage !== i18n.language) {
           await i18n.changeLanguage(userLanguage);
         }
@@ -41,10 +51,10 @@ export default function LanguageSwitcher({ compact = false }) {
     loadUserLanguage();
   }, [isAuthenticated, authEnabled, i18n]);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (dropdownRef.current && target && !dropdownRef.current.contains(target)) {
         setIsOpen(false);
       }
     };
@@ -53,9 +63,8 @@ export default function LanguageSwitcher({ compact = false }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Close dropdown on escape key
   useEffect(() => {
-    const handleEscape = (event) => {
+    const handleEscape = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setIsOpen(false);
       }
@@ -65,25 +74,25 @@ export default function LanguageSwitcher({ compact = false }) {
     return () => document.removeEventListener('keydown', handleEscape);
   }, []);
 
-  // Sync language change to backend (if authenticated)
-  const syncToBackend = useCallback(async (code) => {
-    if (!authEnabled || !isAuthenticated) return;
+  const syncToBackend = useCallback(
+    async (code: LanguageCode) => {
+      if (!authEnabled || !isAuthenticated) return;
 
-    setSyncing(true);
-    try {
-      await apiClient.put('/api/preferences/language', { language: code });
-    } catch (error) {
-      console.warn('Failed to sync language preference:', error);
-    } finally {
-      setSyncing(false);
-    }
-  }, [isAuthenticated, authEnabled]);
+      setSyncing(true);
+      try {
+        await apiClient.put('/api/preferences/language', { language: code });
+      } catch (error) {
+        console.warn('Failed to sync language preference:', error);
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [isAuthenticated, authEnabled],
+  );
 
-  const changeLanguage = async (code) => {
+  const changeLanguage = async (code: LanguageCode) => {
     await i18n.changeLanguage(code);
     setIsOpen(false);
-
-    // Sync to backend if authenticated
     await syncToBackend(code);
   };
 
@@ -116,7 +125,7 @@ export default function LanguageSwitcher({ compact = false }) {
           role="listbox"
           aria-label={t('language.label')}
         >
-          {languages.map((lang) => (
+          {LANGUAGES.map((lang) => (
             <button
               key={lang.code}
               onClick={() => changeLanguage(lang.code)}
@@ -132,9 +141,7 @@ export default function LanguageSwitcher({ compact = false }) {
                 <span className="text-base">{lang.flag}</span>
                 <span>{lang.name}</span>
               </div>
-              {i18n.language === lang.code && (
-                <Check className="w-4 h-4" />
-              )}
+              {i18n.language === lang.code && <Check className="w-4 h-4" />}
             </button>
           ))}
         </div>

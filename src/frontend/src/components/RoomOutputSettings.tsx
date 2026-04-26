@@ -1,12 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Volume2, Plus, Trash2, Loader, ChevronDown, ChevronUp,
-  GripVertical, Power, PowerOff, Speaker, Radio, Monitor, Wifi
+  Power, PowerOff, Speaker, Radio, Monitor, Wifi,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from './ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
+
+type OutputType = 'audio' | 'visual';
+type DeviceKind = 'homeassistant' | 'renfield' | 'dlna';
+
+interface OutputDevice {
+  id: number;
+  output_type: OutputType;
+  is_enabled: boolean;
+  allow_interruption: boolean;
+  tts_volume: number | null;
+  priority: number;
+  device_name?: string | null;
+  dlna_renderer_name?: string | null;
+  ha_entity_id?: string | null;
+  renfield_device_id?: string | null;
+}
+
+interface RenfieldOutputDevice {
+  device_id: string;
+  device_name?: string;
+}
+
+interface HaOutputDevice {
+  entity_id: string;
+  friendly_name?: string;
+}
+
+interface DlnaOutputDevice {
+  name: string;
+  friendly_name?: string;
+}
+
+type AvailableDevice = RenfieldOutputDevice | HaOutputDevice | DlnaOutputDevice;
+
+interface AvailableOutputs {
+  renfield_devices: RenfieldOutputDevice[];
+  ha_media_players: HaOutputDevice[];
+  dlna_renderers: DlnaOutputDevice[];
+}
+
+interface RoomOutputSettingsProps {
+  roomId: number;
+  roomName: string;
+  outputType?: OutputType;
+}
 
 /**
  * RoomOutputSettings - Manage audio output devices for a room
@@ -18,52 +64,58 @@ import { useAuth } from '../context/AuthContext';
  * - Delete output devices
  * - Drag-and-drop reordering (simplified: up/down buttons)
  */
-export default function RoomOutputSettings({ roomId, roomName, outputType = 'audio' }) {
+export default function RoomOutputSettings({
+  roomId,
+  roomName,
+  outputType = 'audio',
+}: RoomOutputSettingsProps) {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
   const { isFeatureEnabled } = useAuth();
   const showHA = isFeatureEnabled('smart_home');
   const isVisual = outputType === 'visual';
-  // State
+
   const [expanded, setExpanded] = useState(false);
-  const [outputDevices, setOutputDevices] = useState([]);
-  const [availableOutputs, setAvailableOutputs] = useState({ renfield_devices: [], ha_media_players: [], dlna_renderers: [] });
+  const [outputDevices, setOutputDevices] = useState<OutputDevice[]>([]);
+  const [availableOutputs, setAvailableOutputs] = useState<AvailableOutputs>({
+    renfield_devices: [],
+    ha_media_players: [],
+    dlna_renderers: [],
+  });
   const [loading, setLoading] = useState(false);
   const [loadingAvailable, setLoadingAvailable] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
-  // Add form state
-  const [selectedType, setSelectedType] = useState(showHA ? 'homeassistant' : 'renfield');
+  const [selectedType, setSelectedType] = useState<DeviceKind>(showHA ? 'homeassistant' : 'renfield');
   const [selectedDevice, setSelectedDevice] = useState('');
   const [allowInterruption, setAllowInterruption] = useState(false);
   const [ttsVolume, setTtsVolume] = useState(50);
   const [adding, setAdding] = useState(false);
 
-  // Load output devices when expanded
-  useEffect(() => {
-    if (expanded) {
-      loadOutputDevices();
-    }
-  }, [expanded, roomId]);
-
-  const loadOutputDevices = async () => {
+  const loadOutputDevices = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get(`/api/rooms/${roomId}/output-devices`);
-      setOutputDevices(response.data.filter(d => d.output_type === outputType));
+      const response = await apiClient.get<OutputDevice[]>(`/api/rooms/${roomId}/output-devices`);
+      setOutputDevices(response.data.filter((d) => d.output_type === outputType));
     } catch (err) {
       console.error('Failed to load output devices:', err);
       setError('Ausgabegeraete konnten nicht geladen werden');
     } finally {
       setLoading(false);
     }
-  };
+  }, [roomId, outputType]);
+
+  useEffect(() => {
+    if (expanded) {
+      loadOutputDevices();
+    }
+  }, [expanded, loadOutputDevices]);
 
   const loadAvailableOutputs = async () => {
     try {
       setLoadingAvailable(true);
-      const response = await apiClient.get(`/api/rooms/${roomId}/available-outputs`);
+      const response = await apiClient.get<AvailableOutputs>(`/api/rooms/${roomId}/available-outputs`);
       setAvailableOutputs(response.data);
     } catch (err) {
       console.error('Failed to load available outputs:', err);
@@ -72,10 +124,7 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     }
   };
 
-  const getDefaultType = () => {
-    if (showHA) return 'homeassistant';
-    return 'renfield';
-  };
+  const getDefaultType = (): DeviceKind => (showHA ? 'homeassistant' : 'renfield');
 
   const openAddModal = () => {
     loadAvailableOutputs();
@@ -95,7 +144,7 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     try {
       setAdding(true);
 
-      const payload = {
+      const payload: Record<string, unknown> = {
         output_type: outputType,
         allow_interruption: allowInterruption,
         tts_volume: ttsVolume / 100,
@@ -115,13 +164,13 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
       loadOutputDevices();
     } catch (err) {
       console.error('Failed to add output device:', err);
-      setError(err.response?.data?.detail || 'Geraet konnte nicht hinzugefuegt werden');
+      setError(extractApiError(err, 'Geraet konnte nicht hinzugefuegt werden'));
     } finally {
       setAdding(false);
     }
   };
 
-  const updateOutputDevice = async (deviceId, updates) => {
+  const updateOutputDevice = async (deviceId: number, updates: Partial<OutputDevice>) => {
     try {
       await apiClient.patch(`/api/rooms/output-devices/${deviceId}`, updates);
       loadOutputDevices();
@@ -131,7 +180,7 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     }
   };
 
-  const deleteOutputDevice = async (deviceId) => {
+  const deleteOutputDevice = async (deviceId: number) => {
     const confirmed = await confirm({
       title: t('rooms.removeOutputDevice'),
       message: t('rooms.removeOutputDeviceConfirm'),
@@ -148,22 +197,21 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     }
   };
 
-  const moveDevice = async (index, direction) => {
+  const moveDevice = async (index: number, direction: 'up' | 'down') => {
     const newDevices = [...outputDevices];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
 
     if (targetIndex < 0 || targetIndex >= newDevices.length) return;
 
-    // Swap devices
     [newDevices[index], newDevices[targetIndex]] = [newDevices[targetIndex], newDevices[index]];
 
-    // Get new order of IDs
-    const deviceIds = newDevices.map(d => d.id);
+    const deviceIds = newDevices.map((d) => d.id);
 
     try {
-      await apiClient.post(`/api/rooms/${roomId}/output-devices/reorder?output_type=${outputType}`, {
-        device_ids: deviceIds
-      });
+      await apiClient.post(
+        `/api/rooms/${roomId}/output-devices/reorder?output_type=${outputType}`,
+        { device_ids: deviceIds },
+      );
       loadOutputDevices();
     } catch (err) {
       console.error('Failed to reorder devices:', err);
@@ -171,7 +219,7 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     }
   };
 
-  const getDeviceIcon = (device) => {
+  const getDeviceIcon = (device: OutputDevice) => {
     if (device.dlna_renderer_name) {
       return <Wifi className="w-4 h-4 text-purple-400" />;
     }
@@ -181,50 +229,41 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
     return <Speaker className="w-4 h-4 text-blue-400" />;
   };
 
-  // Filter out already configured devices from available list
-  const getAvailableDevices = () => {
+  const getAvailableDevices = (): AvailableDevice[] => {
     const configuredRenfieldIds = new Set(
-      outputDevices.filter(d => d.renfield_device_id).map(d => d.renfield_device_id)
+      outputDevices.map((d) => d.renfield_device_id).filter((v): v is string => Boolean(v)),
     );
     const configuredHAIds = new Set(
-      outputDevices.filter(d => d.ha_entity_id).map(d => d.ha_entity_id)
+      outputDevices.map((d) => d.ha_entity_id).filter((v): v is string => Boolean(v)),
     );
     const configuredDLNANames = new Set(
-      outputDevices.filter(d => d.dlna_renderer_name).map(d => d.dlna_renderer_name)
+      outputDevices.map((d) => d.dlna_renderer_name).filter((v): v is string => Boolean(v)),
     );
 
     if (selectedType === 'renfield') {
-      return availableOutputs.renfield_devices.filter(
-        d => !configuredRenfieldIds.has(d.device_id)
-      );
-    } else if (selectedType === 'dlna') {
-      return (availableOutputs.dlna_renderers || []).filter(
-        d => !configuredDLNANames.has(d.name)
-      );
-    } else if (showHA) {
-      return availableOutputs.ha_media_players.filter(
-        d => !configuredHAIds.has(d.entity_id)
-      );
+      return availableOutputs.renfield_devices.filter((d) => !configuredRenfieldIds.has(d.device_id));
+    }
+    if (selectedType === 'dlna') {
+      return (availableOutputs.dlna_renderers ?? []).filter((d) => !configuredDLNANames.has(d.name));
+    }
+    if (showHA) {
+      return availableOutputs.ha_media_players.filter((d) => !configuredHAIds.has(d.entity_id));
     }
     return [];
   };
 
-  const getDeviceKey = (device) => {
-    if (selectedType === 'renfield') return device.device_id;
-    if (selectedType === 'dlna') return device.name;
-    return device.entity_id;
+  const getDeviceKey = (device: AvailableDevice): string => {
+    if ('device_id' in device) return device.device_id;
+    if ('entity_id' in device) return device.entity_id;
+    return device.name;
   };
 
-  const getDeviceValue = (device) => {
-    if (selectedType === 'renfield') return device.device_id;
-    if (selectedType === 'dlna') return device.name;
-    return device.entity_id;
-  };
+  const getDeviceValue = (device: AvailableDevice): string => getDeviceKey(device);
 
-  const getDeviceLabel = (device) => {
-    if (selectedType === 'renfield') return device.device_name || device.device_id;
-    if (selectedType === 'dlna') return device.friendly_name || device.name;
-    return device.friendly_name || device.entity_id;
+  const getDeviceLabel = (device: AvailableDevice): string => {
+    if ('device_id' in device) return device.device_name ?? device.device_id;
+    if ('entity_id' in device) return device.friendly_name ?? device.entity_id;
+    return device.friendly_name ?? device.name;
   };
 
   return (
@@ -478,7 +517,7 @@ export default function RoomOutputSettings({ roomId, roomName, outputType = 'aud
                     min="0"
                     max="100"
                     value={ttsVolume}
-                    onChange={(e) => setTtsVolume(parseInt(e.target.value))}
+                    onChange={(e) => setTtsVolume(parseInt(e.target.value, 10))}
                     className="w-full"
                   />
                   <p className="text-xs text-gray-500 mt-1">
