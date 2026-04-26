@@ -1142,3 +1142,11 @@ llm_options_summary:
   temperature: 0.3
   num_predict: 1500
   num_ctx: 32768
+
+# Tool pre-selection — short JSON-only response, small context window.
+# Used by AgentService._preselect_tools() to ask the LLM for a small list of
+# tool names it expects to need this turn. Temperature 0 = deterministic.
+llm_options_tool_preselect:
+  temperature: 0
+  num_predict: 120
+  num_ctx: 4096
