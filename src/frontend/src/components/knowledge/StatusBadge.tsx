@@ -14,18 +14,41 @@
  *   - Contrast: pending text bumped from `gray-500` → `gray-700`
  *     (`gray-300` in dark) to clear WCAG AA against the card background.
  */
+import type { LucideIcon } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle, Loader2, Clock, AlertCircle } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-const STATUS_META = {
+export type DocStatus = 'completed' | 'processing' | 'pending' | 'failed';
+
+export interface DocPages {
+  current: number;
+  total: number;
+}
+
+export interface DocLike {
+  status: DocStatus;
+  filename?: string;
+  queue_position?: number | null;
+  stage?: 'parsing' | 'chunking' | 'embedding' | 'ocr' | string | null;
+  pages?: DocPages | null;
+}
+
+interface StatusMeta {
+  Icon: LucideIcon;
+  labelKey: string;
+  iconClass: string;
+  spin: boolean;
+}
+
+const STATUS_META: Record<DocStatus, StatusMeta> = {
   completed: { Icon: CheckCircle, labelKey: 'knowledge.statusCompleted', iconClass: 'text-green-500', spin: false },
   processing: { Icon: Loader2, labelKey: 'knowledge.statusProcessing', iconClass: 'text-primary-500', spin: true },
   pending: { Icon: Clock, labelKey: 'knowledge.statusQueued', iconClass: 'text-gray-500', spin: false },
   failed: { Icon: AlertCircle, labelKey: 'knowledge.statusFailed', iconClass: 'text-red-500', spin: false },
 };
 
-const STAGE_KEY = {
+const STAGE_KEY: Record<string, string> = {
   parsing: 'knowledge.stageParsing',
   chunking: 'knowledge.stageChunking',
   embedding: 'knowledge.stageEmbedding',
@@ -35,7 +58,9 @@ const STAGE_KEY = {
 // the same document. Prevents SR buffer spam on long OCR jobs.
 const LIVE_REGION_MIN_GAP_MS = 10_000;
 
-function subLabel(t, doc) {
+type TFn = (key: string, options?: Record<string, unknown>) => string;
+
+function subLabel(t: TFn, doc: DocLike): string | null {
   if (doc.status === 'pending' && doc.queue_position != null) {
     return t('knowledge.statusQueuePosition', { position: doc.queue_position });
   }
@@ -46,27 +71,32 @@ function subLabel(t, doc) {
       }
       return t('knowledge.stageOcrNoPages');
     }
-    const key = STAGE_KEY[doc.stage];
+    const key = doc.stage ? STAGE_KEY[doc.stage] : undefined;
     if (key) return t(key);
   }
   return null;
 }
 
-function hasKnownPageProgress(doc) {
+function hasKnownPageProgress(doc: DocLike): doc is DocLike & { pages: DocPages } {
   return (
     doc.status === 'processing' &&
-    doc.pages &&
+    doc.pages != null &&
     typeof doc.pages.current === 'number' &&
     typeof doc.pages.total === 'number' &&
     doc.pages.total > 0
   );
 }
 
-export default function StatusBadge({ doc, filename }) {
+interface StatusBadgeProps {
+  doc: DocLike;
+  filename?: string;
+}
+
+export default function StatusBadge({ doc, filename }: StatusBadgeProps) {
   const { t } = useTranslation();
-  const meta = STATUS_META[doc.status] || STATUS_META.pending;
+  const meta = STATUS_META[doc.status] ?? STATUS_META.pending;
   const label = t(meta.labelKey);
-  const sub = subLabel(t, doc);
+  const sub = subLabel(t as TFn, doc);
   const { Icon } = meta;
   const progress = hasKnownPageProgress(doc);
 
@@ -75,8 +105,8 @@ export default function StatusBadge({ doc, filename }) {
   // `sub` only — a language switch changes `label` but shouldn't reset
   // the rate-limit window (user already heard the equivalent phrase in
   // the old language).
-  const lastAnnouncedAtRef = useRef(0);
-  const [announcement, setAnnouncement] = useState('');
+  const lastAnnouncedAtRef = useRef<number>(0);
+  const [announcement, setAnnouncement] = useState<string>('');
   useEffect(() => {
     if (!sub) return;
     const now = Date.now();
@@ -86,26 +116,30 @@ export default function StatusBadge({ doc, filename }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps — see above
   }, [sub]);
 
-  // Status transitions are always announced (terminal or major change). The
-  // stage/page sub-label uses a separate polite region above.
-  const statusAnnouncement = `${label}: ${filename || doc.filename}`;
+  const statusAnnouncement = `${label}: ${filename || doc.filename || ''}`;
 
   // The outer element swaps semantics based on whether we know pages. We
   // keep the visible markup identical across branches — only the ARIA
   // wiring differs.
-  const outerProps = progress
+  type DivAttrs = React.HTMLAttributes<HTMLDivElement> & {
+    'aria-valuenow'?: number;
+    'aria-valuemin'?: number;
+    'aria-valuemax'?: number;
+    'aria-valuetext'?: string;
+  };
+  const outerProps: DivAttrs = progress
     ? {
         role: 'progressbar',
         'aria-valuenow': doc.pages.current,
         'aria-valuemin': 0,
         'aria-valuemax': doc.pages.total,
-        'aria-valuetext': sub || undefined,
+        'aria-valuetext': sub ?? undefined,
         'aria-label': statusAnnouncement,
       }
     : {
         role: 'status',
         'aria-live': 'polite',
-        'aria-busy': doc.status === 'processing' ? 'true' : undefined,
+        'aria-busy': doc.status === 'processing' ? true : undefined,
         'aria-label': statusAnnouncement,
       };
 
@@ -121,11 +155,6 @@ export default function StatusBadge({ doc, filename }) {
           <span className="text-xs text-gray-700 dark:text-gray-300 leading-tight">{sub}</span>
         )}
       </div>
-      {/* Separate polite-live sub-region for rate-limited stage announcements.
-          Visually hidden but read by screen readers. Kept out of the
-          progressbar element so SR doesn't get duplicate readouts. Only
-          rendered when we actually have something to announce — an
-          always-present empty live region is noise in the DOM. */}
       {announcement && (
         <span className="sr-only" aria-live="polite">{announcement}</span>
       )}

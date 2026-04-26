@@ -12,8 +12,20 @@
  *   - Initial focus on the jump button stays C1 behaviour.
  *   - Escape closes — unchanged.
  */
-import { useEffect, useRef } from 'react';
+import { MouseEvent, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+export interface ExistingDocument {
+  id: number | string;
+  filename: string;
+  uploaded_at?: string | null;
+}
+
+interface DuplicateDialogProps {
+  existing: ExistingDocument | null;
+  onClose: () => void;
+  onJump: (id: ExistingDocument['id']) => void;
+}
 
 // Query that matches anything keyboard-focusable. We use this to scope the
 // Tab/Shift+Tab cycle to elements living inside the dialog.
@@ -26,18 +38,18 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(',');
 
-export default function DuplicateDialog({ existing, onClose, onJump }) {
-  const jumpBtnRef = useRef(null);
-  const dialogRef = useRef(null);
-  const lastFocusedRef = useRef(null);
+export default function DuplicateDialog({ existing, onClose, onJump }: DuplicateDialogProps) {
+  const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const lastFocusedRef = useRef<HTMLElement | null>(null);
   const { t, i18n } = useTranslation();
 
   useEffect(() => {
     // Remember who owned focus so we can restore it on close.
-    lastFocusedRef.current = document.activeElement;
+    lastFocusedRef.current = document.activeElement as HTMLElement | null;
     if (jumpBtnRef.current) jumpBtnRef.current.focus();
 
-    const onKey = (e) => {
+    const onKey = (e: globalThis.KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.stopPropagation();
         onClose();
@@ -47,7 +59,7 @@ export default function DuplicateDialog({ existing, onClose, onJump }) {
       if (!dialogRef.current) return;
 
       // Focus trap: keep Tab/Shift+Tab within the dialog.
-      const focusables = dialogRef.current.querySelectorAll(FOCUSABLE_SELECTOR);
+      const focusables = dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
       if (focusables.length === 0) return;
       const first = focusables[0];
       const last = focusables[focusables.length - 1];
@@ -62,9 +74,6 @@ export default function DuplicateDialog({ existing, onClose, onJump }) {
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      // Return focus to whoever had it before the dialog opened. Wrapped
-      // in a try/catch because the previously-focused node may have been
-      // unmounted (e.g. tab closed, element re-rendered).
       const prev = lastFocusedRef.current;
       if (prev && typeof prev.focus === 'function') {
         try {
@@ -88,7 +97,7 @@ export default function DuplicateDialog({ existing, onClose, onJump }) {
       aria-modal="true"
       aria-labelledby="duplicate-dialog-title"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
-      onClick={(e) => {
+      onClick={(e: MouseEvent<HTMLDivElement>) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >

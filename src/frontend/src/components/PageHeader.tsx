@@ -1,6 +1,14 @@
-import React from 'react';
+import type { LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
-export default function PageHeader({ icon: Icon, title, subtitle, children }) {
+interface PageHeaderProps {
+  icon: LucideIcon;
+  title: string;
+  subtitle?: string;
+  children?: ReactNode;
+}
+
+export default function PageHeader({ icon: Icon, title, subtitle, children }: PageHeaderProps) {
   return (
     <div className="card">
       <div className="flex flex-col sm:flex-row sm:items-center gap-4">

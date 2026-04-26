@@ -5,7 +5,29 @@
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
-function getHeatColor(value, max) {
+export interface HeatmapCell {
+  room_id: number;
+  room_name: string;
+  hour: number;
+  count: number;
+}
+
+interface Room {
+  id: number;
+  name: string;
+}
+
+interface HeatmapDerived {
+  rooms: Room[];
+  maxCount: number;
+  grid: Record<string, number>;
+}
+
+interface PresenceHeatmapProps {
+  data: HeatmapCell[];
+}
+
+function getHeatColor(value: number, max: number): string {
   if (!value || max === 0) return '';
   const ratio = value / max;
   if (ratio > 0.7) return 'bg-blue-600 dark:bg-blue-500 text-white';
@@ -14,15 +36,15 @@ function getHeatColor(value, max) {
   return 'bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200';
 }
 
-export default function PresenceHeatmap({ data }) {
+export default function PresenceHeatmap({ data }: PresenceHeatmapProps) {
   const { t } = useTranslation();
 
-  const { rooms, maxCount, grid } = useMemo(() => {
+  const { rooms, maxCount, grid }: HeatmapDerived = useMemo(() => {
     if (!data || data.length === 0) return { rooms: [], maxCount: 0, grid: {} };
 
-    const roomMap = {};
+    const roomMap: Record<number, string> = {};
     let max = 0;
-    const g = {};
+    const g: Record<string, number> = {};
 
     for (const cell of data) {
       roomMap[cell.room_id] = cell.room_name;
@@ -31,14 +53,14 @@ export default function PresenceHeatmap({ data }) {
       if (cell.count > max) max = cell.count;
     }
 
-    const roomList = Object.entries(roomMap)
-      .map(([id, name]) => ({ id: parseInt(id), name }))
+    const roomList: Room[] = Object.entries(roomMap)
+      .map(([id, name]) => ({ id: parseInt(id, 10), name }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     return { rooms: roomList, maxCount: max, grid: g };
   }, [data]);
 
-  const hours = Array.from({ length: 24 }, (_, i) => i);
+  const hours: number[] = Array.from({ length: 24 }, (_, i) => i);
 
   if (rooms.length === 0) {
     return (
@@ -74,7 +96,7 @@ export default function PresenceHeatmap({ data }) {
                   {room.name}
                 </td>
                 {hours.map((h) => {
-                  const count = grid[`${room.id}-${h}`] || 0;
+                  const count = grid[`${room.id}-${h}`] ?? 0;
                   return (
                     <td key={h} className="py-1 px-0.5 text-center">
                       <div

@@ -1,6 +1,15 @@
-import React from 'react';
+import { KeyboardEvent, MouseEvent } from 'react';
 import { MessageSquare, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+
+import type { Conversation } from '../types/chat';
+
+interface ConversationItemProps {
+  conversation: Conversation;
+  isActive: boolean;
+  onClick: () => void;
+  onDelete: () => void;
+}
 
 /**
  * Single conversation item in the sidebar.
@@ -10,11 +19,11 @@ export default function ConversationItem({
   conversation,
   isActive,
   onClick,
-  onDelete
-}) {
+  onDelete,
+}: ConversationItemProps) {
   const { t } = useTranslation();
 
-  const handleDelete = (e) => {
+  const handleDelete = (e: MouseEvent<HTMLButtonElement>): void => {
     e.stopPropagation();
     onDelete();
   };
@@ -31,7 +40,7 @@ export default function ConversationItem({
       onClick={onClick}
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => {
+      onKeyDown={(e: KeyboardEvent<HTMLDivElement>) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onClick();

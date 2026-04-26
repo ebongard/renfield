@@ -5,45 +5,75 @@
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Legend,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 
-const DAY_KEYS = ['daySun', 'dayMon', 'dayTue', 'dayWed', 'dayThu', 'dayFri', 'daySat'];
+export interface PredictionRow {
+  day_of_week: number;
+  room_id: number;
+  room_name: string;
+  hour: number;
+  probability: number;
+}
+
+const DAY_KEYS = ['daySun', 'dayMon', 'dayTue', 'dayWed', 'dayThu', 'dayFri', 'daySat'] as const;
 
 // Consistent room colors
-const ROOM_COLORS = [
+const ROOM_COLORS: string[] = [
   '#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6',
   '#ec4899', '#06b6d4', '#84cc16',
 ];
 
-export default function PresencePredictions({ data }) {
+interface RoomEntry {
+  id: number;
+  name: string;
+}
+
+// Each chart row is keyed by hour string and carries one numeric column per room.
+// `Record<string, string | number>` covers both the `hour` label and the
+// dynamic per-room columns the chart consumes.
+type ChartRow = Record<string, string | number>;
+
+interface PresencePredictionsProps {
+  data: PredictionRow[];
+}
+
+export default function PresencePredictions({ data }: PresencePredictionsProps) {
   const { t } = useTranslation();
 
   // Default to current day of week (JS: 0=Sun)
-  const [selectedDay, setSelectedDay] = useState(() => new Date().getDay());
+  const [selectedDay, setSelectedDay] = useState<number>(() => new Date().getDay());
 
-  const { chartData, rooms } = useMemo(() => {
+  const { chartData, rooms } = useMemo<{ chartData: ChartRow[]; rooms: RoomEntry[] }>(() => {
     if (!data || data.length === 0) return { chartData: [], rooms: [] };
 
     // Filter by selected day
     const filtered = data.filter((d) => d.day_of_week === selectedDay);
 
     // Collect unique rooms
-    const roomMap = {};
+    const roomMap: Record<number, string> = {};
     for (const entry of filtered) {
       roomMap[entry.room_id] = entry.room_name;
     }
-    const roomList = Object.entries(roomMap)
-      .map(([id, name]) => ({ id: parseInt(id), name }))
+    const roomList: RoomEntry[] = Object.entries(roomMap)
+      .map(([id, name]) => ({ id: parseInt(id, 10), name }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
     // Build hour → {hour, room1: prob, room2: prob, ...}
-    const hourMap = {};
+    const hourMap: Record<number, ChartRow> = {};
     for (let h = 0; h < 24; h++) {
-      hourMap[h] = { hour: `${h}:00` };
+      const row: ChartRow = { hour: `${h}:00` };
       for (const room of roomList) {
-        hourMap[h][room.name] = 0;
+        row[room.name] = 0;
       }
+      hourMap[h] = row;
     }
     for (const entry of filtered) {
       const roomName = roomMap[entry.room_id];
@@ -70,7 +100,6 @@ export default function PresencePredictions({ data }) {
         {t('presence.predictionsTitle')}
       </h3>
 
-      {/* Day selector pills */}
       <div className="flex gap-1 mb-4 flex-wrap">
         {DAY_KEYS.map((key, idx) => (
           <button
@@ -87,24 +116,19 @@ export default function PresencePredictions({ data }) {
         ))}
       </div>
 
-      {/* Chart */}
       {rooms.length > 0 ? (
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={chartData} margin={{ top: 5, right: 5, bottom: 5, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            <XAxis
-              dataKey="hour"
-              tick={{ fontSize: 11 }}
-              interval={2}
-            />
+            <XAxis dataKey="hour" tick={{ fontSize: 11 }} interval={2} />
             <YAxis
               tick={{ fontSize: 11 }}
               domain={[0, 100]}
-              tickFormatter={(v) => `${v}%`}
+              tickFormatter={(v: number) => `${v}%`}
               width={45}
             />
             <Tooltip
-              formatter={(value) => `${value}%`}
+              formatter={(value: number) => `${value}%`}
               contentStyle={{
                 backgroundColor: 'var(--color-bg-tooltip, #fff)',
                 borderColor: 'var(--color-border-tooltip, #e5e7eb)',

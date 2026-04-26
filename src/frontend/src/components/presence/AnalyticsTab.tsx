@@ -1,56 +1,78 @@
 /**
  * Analytics tab — user/time-range selectors + heatmap + predictions.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BarChart3, RefreshCw } from 'lucide-react';
+
 import apiClient from '../../utils/axios';
+import type { HeatmapCell } from './PresenceHeatmap';
 import PresenceHeatmap from './PresenceHeatmap';
+import type { PredictionRow } from './PresencePredictions';
 import PresencePredictions from './PresencePredictions';
 
-const TIME_RANGES = [
+export interface PresenceUser {
+  id: string | number;
+  username: string;
+}
+
+interface TimeRange {
+  days: number;
+  key: 'days7' | 'days30' | 'days60' | 'days90';
+}
+
+const TIME_RANGES: TimeRange[] = [
   { days: 7, key: 'days7' },
   { days: 30, key: 'days30' },
   { days: 60, key: 'days60' },
   { days: 90, key: 'days90' },
 ];
 
-export default function AnalyticsTab({ users }) {
+interface AnalyticsTabProps {
+  users: PresenceUser[];
+}
+
+interface HeatmapQuery {
+  days: number;
+  user_id?: string | number;
+}
+
+export default function AnalyticsTab({ users }: AnalyticsTabProps) {
   const { t } = useTranslation();
 
-  const [selectedUserId, setSelectedUserId] = useState('');
-  const [days, setDays] = useState(30);
-  const [heatmapData, setHeatmapData] = useState([]);
-  const [predictionsData, setPredictionsData] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string>('');
+  const [days, setDays] = useState<number>(30);
+  const [heatmapData, setHeatmapData] = useState<HeatmapCell[]>([]);
+  const [predictionsData, setPredictionsData] = useState<PredictionRow[]>([]);
+  const [loading, setLoading] = useState<boolean>(false);
 
-  const loadHeatmap = useCallback(async () => {
+  const loadHeatmap = useCallback(async (): Promise<void> => {
     try {
-      const params = { days };
+      const params: HeatmapQuery = { days };
       if (selectedUserId) params.user_id = selectedUserId;
-      const res = await apiClient.get('/api/presence/analytics/heatmap', { params });
-      setHeatmapData(res.data || []);
+      const res = await apiClient.get<HeatmapCell[]>('/api/presence/analytics/heatmap', { params });
+      setHeatmapData(res.data ?? []);
     } catch {
       setHeatmapData([]);
     }
   }, [days, selectedUserId]);
 
-  const loadPredictions = useCallback(async () => {
+  const loadPredictions = useCallback(async (): Promise<void> => {
     if (!selectedUserId) {
       setPredictionsData([]);
       return;
     }
     try {
-      const res = await apiClient.get('/api/presence/analytics/predictions', {
+      const res = await apiClient.get<PredictionRow[]>('/api/presence/analytics/predictions', {
         params: { user_id: selectedUserId, days },
       });
-      setPredictionsData(res.data || []);
+      setPredictionsData(res.data ?? []);
     } catch {
       setPredictionsData([]);
     }
   }, [selectedUserId, days]);
 
-  const loadAll = useCallback(async () => {
+  const loadAll = useCallback(async (): Promise<void> => {
     setLoading(true);
     await Promise.all([loadHeatmap(), loadPredictions()]);
     setLoading(false);
@@ -62,9 +84,7 @@ export default function AnalyticsTab({ users }) {
 
   return (
     <div className="space-y-6">
-      {/* Filters */}
       <div className="flex flex-wrap items-center gap-4">
-        {/* User selector */}
         <div className="flex items-center gap-2">
           <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
             {t('presence.user')}:
@@ -81,7 +101,6 @@ export default function AnalyticsTab({ users }) {
           </select>
         </div>
 
-        {/* Time range pills */}
         <div className="flex items-center gap-2">
           <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
             {t('presence.timeRange')}:
@@ -103,7 +122,6 @@ export default function AnalyticsTab({ users }) {
           </div>
         </div>
 
-        {/* Refresh */}
         <button
           onClick={loadAll}
           disabled={loading}
@@ -114,10 +132,8 @@ export default function AnalyticsTab({ users }) {
         </button>
       </div>
 
-      {/* Heatmap */}
       <PresenceHeatmap data={heatmapData} />
 
-      {/* Predictions */}
       {selectedUserId ? (
         <PresencePredictions data={predictionsData} />
       ) : (

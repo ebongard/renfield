@@ -1,24 +1,30 @@
-import React, { useRef, useEffect } from 'react';
+import { KeyboardEvent, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { TIER_SYMBOLS, TIER_CLASS } from './TierBadge';
+
+import type { CircleTier } from './TierBadge';
+import { TIER_CLASS, TIER_SYMBOLS } from './TierBadge';
 
 /**
  * 5-segment tier selector — symbol + label per segment. Keyboard-navigable
  * (arrow keys move selection AND focus); follows DESIGN.md tier visual language.
- *
- * Props:
- *   - value: int 0..4 (current tier)
- *   - onChange: (tier: int) => void
- *   - disabled: bool
  */
-export default function TierPicker({ value, onChange, disabled = false, className = '' }) {
+interface TierPickerProps {
+  value?: CircleTier | number;
+  onChange: (tier: CircleTier) => void;
+  disabled?: boolean;
+  className?: string;
+}
+
+const ALL_TIERS: CircleTier[] = [0, 1, 2, 3, 4];
+
+export default function TierPicker({ value, onChange, disabled = false, className = '' }: TierPickerProps) {
   const { t } = useTranslation();
-  const buttonRefs = useRef([]);
+  const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   // Track which tier *we* just moved to via keyboard so we can restore focus
   // after React re-renders with the new selection. Without this, roving-tabindex
   // leaves focus on the previously-selected (now tabindex=-1) button and the
   // user can't arrow past the end.
-  const pendingFocusTier = useRef(null);
+  const pendingFocusTier = useRef<CircleTier | null>(null);
 
   useEffect(() => {
     if (pendingFocusTier.current != null) {
@@ -28,14 +34,14 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
     }
   }, [value]);
 
-  const move = (newTier) => {
+  const move = (newTier: number): void => {
     if (disabled) return;
-    const clamped = Math.max(0, Math.min(4, newTier));
+    const clamped = Math.max(0, Math.min(4, newTier)) as CircleTier;
     pendingFocusTier.current = clamped;
     onChange(clamped);
   };
 
-  const handleKey = (e, tier) => {
+  const handleKey = (e: KeyboardEvent<HTMLButtonElement>, tier: CircleTier): void => {
     if (disabled) return;
     if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
       e.preventDefault();
@@ -57,7 +63,7 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
 
   // Roving tabindex: only one button is tabbable. Default to the selected
   // one, or tier 0 if `value` is undefined.
-  const focusedTier = value != null ? value : 0;
+  const focusedTier: CircleTier = (value != null ? (value as CircleTier) : 0);
 
   return (
     <div
@@ -65,7 +71,7 @@ export default function TierPicker({ value, onChange, disabled = false, classNam
       aria-label={t('circles.tierPickerLabel')}
       className={`flex flex-wrap gap-2 ${className}`}
     >
-      {[0, 1, 2, 3, 4].map((tier) => {
+      {ALL_TIERS.map((tier) => {
         const selected = value === tier;
         return (
           <button

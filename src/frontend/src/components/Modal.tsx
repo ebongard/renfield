@@ -9,9 +9,21 @@
  * - Focus restoration on close
  */
 
-import React, { useEffect, useRef, useCallback } from 'react';
+import { KeyboardEvent, MouseEvent, ReactNode, useCallback, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
+
+interface ModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  title?: ReactNode;
+  children?: ReactNode;
+  showCloseButton?: boolean;
+  closeOnEscape?: boolean;
+  closeOnOverlayClick?: boolean;
+  maxWidth?: string;
+  className?: string;
+}
 
 export default function Modal({
   isOpen,
@@ -23,14 +35,14 @@ export default function Modal({
   closeOnOverlayClick = true,
   maxWidth = 'max-w-md',
   className = '',
-}) {
-  const modalRef = useRef(null);
-  const previousActiveElement = useRef(null);
+}: ModalProps) {
+  const modalRef = useRef<HTMLDivElement | null>(null);
+  const previousActiveElement = useRef<HTMLElement | null>(null);
 
   // Store the previously focused element and focus the modal
   useEffect(() => {
     if (isOpen) {
-      previousActiveElement.current = document.activeElement;
+      previousActiveElement.current = document.activeElement as HTMLElement | null;
       // Small delay to ensure modal is rendered
       setTimeout(() => {
         modalRef.current?.focus();
@@ -45,7 +57,7 @@ export default function Modal({
   useEffect(() => {
     if (!isOpen || !closeOnEscape) return;
 
-    const handleEscape = (e) => {
+    const handleEscape = (e: globalThis.KeyboardEvent): void => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onClose();
@@ -69,11 +81,11 @@ export default function Modal({
   }, [isOpen]);
 
   // Focus trap - keep focus within modal
-  const handleKeyDown = useCallback((e) => {
+  const handleKeyDown = useCallback((e: KeyboardEvent<HTMLDivElement>): void => {
     if (e.key !== 'Tab' || !modalRef.current) return;
 
-    const focusableElements = modalRef.current.querySelectorAll(
-      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    const focusableElements = modalRef.current.querySelectorAll<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
     );
     const firstElement = focusableElements[0];
     const lastElement = focusableElements[focusableElements.length - 1];
@@ -81,13 +93,11 @@ export default function Modal({
     if (!firstElement) return;
 
     if (e.shiftKey) {
-      // Shift + Tab
       if (document.activeElement === firstElement || document.activeElement === modalRef.current) {
         e.preventDefault();
         lastElement?.focus();
       }
     } else {
-      // Tab
       if (document.activeElement === lastElement) {
         e.preventDefault();
         firstElement?.focus();
@@ -96,7 +106,7 @@ export default function Modal({
   }, []);
 
   // Handle overlay click
-  const handleOverlayClick = useCallback((e) => {
+  const handleOverlayClick = useCallback((e: MouseEvent<HTMLDivElement>): void => {
     if (closeOnOverlayClick && e.target === e.currentTarget) {
       onClose();
     }
@@ -121,7 +131,6 @@ export default function Modal({
           onClick={(e) => e.stopPropagation()}
           className={`card ${maxWidth} w-full outline-hidden ${className}`}
         >
-          {/* Header with title and close button */}
           {(title || showCloseButton) && (
             <div className="flex items-center justify-between mb-4 shrink-0">
               {title && (
@@ -145,6 +154,6 @@ export default function Modal({
         </div>
       </div>
     </div>,
-    document.body
+    document.body,
   );
 }

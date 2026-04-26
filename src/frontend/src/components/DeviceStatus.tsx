@@ -5,29 +5,31 @@
  * Displayed in the app header/navbar.
  */
 
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import {
+  Loader,
   MapPin,
-  Wifi,
-  WifiOff,
-  Settings,
-  Monitor,
-  Tablet,
-  Smartphone,
-  Tv,
   Mic,
   MicOff,
+  Monitor,
+  Settings,
+  Smartphone,
+  Tablet,
+  Tv,
   Volume2,
   VolumeX,
-  Loader,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
-import { useDevice, DEVICE_TYPES, CONNECTION_STATES, DEVICE_STATES } from '../context/DeviceContext';
+
+import { DEVICE_STATES, DEVICE_TYPES, useDevice } from '../context/DeviceContext';
+import type { DeviceConfig } from '../types/device';
 import { useCapabilities } from '../hooks/useCapabilities';
 import DeviceSetup from './DeviceSetup';
 
-// Device type icons
-const DEVICE_ICONS = {
+const DEVICE_ICONS: Record<string, LucideIcon> = {
   [DEVICE_TYPES.SATELLITE]: Wifi,
   [DEVICE_TYPES.WEB_PANEL]: Monitor,
   [DEVICE_TYPES.WEB_TABLET]: Tablet,
@@ -35,8 +37,7 @@ const DEVICE_ICONS = {
   [DEVICE_TYPES.WEB_KIOSK]: Tv,
 };
 
-// State colors
-const STATE_COLORS = {
+const STATE_COLORS: Record<string, string> = {
   [DEVICE_STATES.IDLE]: 'bg-gray-500',
   [DEVICE_STATES.LISTENING]: 'bg-green-500 animate-gentle-pulse',
   [DEVICE_STATES.PROCESSING]: 'bg-yellow-500 animate-gentle-pulse',
@@ -44,22 +45,26 @@ const STATE_COLORS = {
   [DEVICE_STATES.ERROR]: 'bg-red-500',
 };
 
-export default function DeviceStatus({ compact = false }) {
+interface DeviceStatusProps {
+  compact?: boolean;
+}
+
+export default function DeviceStatus({ compact = false }: DeviceStatusProps) {
   const { t } = useTranslation();
   const device = useDevice();
-  const { features, hasMicrophone, hasSpeaker } = useCapabilities();
-  const [showSetup, setShowSetup] = useState(false);
+  const { hasMicrophone, hasSpeaker } = useCapabilities();
+  const [showSetup, setShowSetup] = useState<boolean>(false);
 
-  const DeviceIcon = DEVICE_ICONS[device.deviceType] || Smartphone;
-  const stateColor = STATE_COLORS[device.deviceState] || 'bg-gray-500';
+  const DeviceIcon = DEVICE_ICONS[device.deviceType] ?? Smartphone;
+  const stateColor = STATE_COLORS[device.deviceState] ?? 'bg-gray-500';
 
-  // Handle setup completion
-  const handleSetupComplete = (config, connection) => {
+  // Handle setup completion. Connection arg from DeviceSetup is intentionally
+  // unused; we forward only the persistent config to the device store.
+  const handleSetupComplete = (config: DeviceConfig): void => {
     device.handleSetupComplete(config);
     setShowSetup(false);
   };
 
-  // Compact version for navbar
   if (compact) {
     return (
       <>
@@ -97,7 +102,6 @@ export default function DeviceStatus({ compact = false }) {
           )}
         </button>
 
-        {/* Setup Modal */}
         {showSetup && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="w-full max-w-lg">
@@ -113,10 +117,8 @@ export default function DeviceStatus({ compact = false }) {
     );
   }
 
-  // Full version for settings/status page
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-      {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className={`p-2 rounded-lg ${device.isConnected ? 'bg-green-100 dark:bg-green-500/20' : 'bg-gray-100 dark:bg-gray-700'}`}>
@@ -140,9 +142,7 @@ export default function DeviceStatus({ compact = false }) {
         </button>
       </div>
 
-      {/* Status */}
       <div className="p-4 space-y-3">
-        {/* Connection Status */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-500 dark:text-gray-400">{t('common.status')}</span>
           <div className="flex items-center space-x-2">
@@ -151,7 +151,6 @@ export default function DeviceStatus({ compact = false }) {
           </div>
         </div>
 
-        {/* Room */}
         {device.roomName && (
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.room')}</span>
@@ -162,7 +161,6 @@ export default function DeviceStatus({ compact = false }) {
           </div>
         )}
 
-        {/* Capabilities */}
         <div className="flex items-center justify-between">
           <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.capabilities')}</span>
           <div className="flex items-center space-x-2">
@@ -179,7 +177,6 @@ export default function DeviceStatus({ compact = false }) {
           </div>
         </div>
 
-        {/* Device ID */}
         {device.deviceId && (
           <div className="flex items-center justify-between">
             <span className="text-sm text-gray-500 dark:text-gray-400">{t('device.deviceId')}</span>
@@ -188,7 +185,6 @@ export default function DeviceStatus({ compact = false }) {
         )}
       </div>
 
-      {/* Actions */}
       <div className="px-4 py-3 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
         {device.isConnected ? (
           <button
@@ -214,7 +210,6 @@ export default function DeviceStatus({ compact = false }) {
         )}
       </div>
 
-      {/* Setup Modal */}
       {showSetup && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="w-full max-w-lg">

@@ -1,36 +1,58 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertCircle, Check, ChevronDown } from 'lucide-react';
+
 import axios from '../utils/axios';
 
 /**
  * Button component for correcting wrong intent classifications.
  * Shows a dropdown with available intent options when clicked.
  * Dynamically fetches MCP tools from the API to include all available intents.
- *
- * @param {Object} props
- * @param {string} props.messageText - The original user message
- * @param {string} props.detectedIntent - The intent that was detected
- * @param {string} props.feedbackType - "intent", "agent_tool", or "complexity"
- * @param {Function} props.onCorrect - Callback(messageText, feedbackType, originalValue, correctedValue)
- * @param {boolean} props.proactive - Whether this was proactively requested by the backend
  */
 
-// Module-level cache for MCP intent options
-let _mcpOptionsCache = null;
-let _mcpOptionsFetchPromise = null;
+export type FeedbackType = 'intent' | 'agent_tool' | 'complexity';
 
-async function fetchMcpIntentOptions() {
+interface IntentOption {
+  value: string;
+  label: string;
+}
+
+interface McpOption extends IntentOption {
+  server: string;
+}
+
+interface MCPTool {
+  intent: string;
+  server?: string;
+}
+
+interface IntentsStatusResponse {
+  mcp_tools?: MCPTool[];
+}
+
+export type CorrectionHandler = (
+  messageText: string,
+  feedbackType: FeedbackType,
+  originalValue: string | undefined,
+  correctedValue: string,
+) => void | Promise<void>;
+
+// Module-level cache for MCP intent options
+let _mcpOptionsCache: McpOption[] | null = null;
+let _mcpOptionsFetchPromise: Promise<McpOption[]> | null = null;
+
+async function fetchMcpIntentOptions(): Promise<McpOption[]> {
   if (_mcpOptionsCache) return _mcpOptionsCache;
   if (_mcpOptionsFetchPromise) return _mcpOptionsFetchPromise;
 
-  _mcpOptionsFetchPromise = axios.get('/api/intents/status')
-    .then(res => {
-      const mcpTools = res.data?.mcp_tools || [];
+  _mcpOptionsFetchPromise = axios
+    .get<IntentsStatusResponse>('/api/intents/status')
+    .then((res) => {
+      const mcpTools = res.data?.mcp_tools ?? [];
       // Group by server — use first tool per server as representative intent
-      const serverMap = {};
+      const serverMap: Record<string, McpOption> = {};
       for (const tool of mcpTools) {
-        const server = tool.server || 'unknown';
+        const server = tool.server ?? 'unknown';
         if (!serverMap[server]) {
           serverMap[server] = {
             value: tool.intent,
@@ -42,12 +64,21 @@ async function fetchMcpIntentOptions() {
       _mcpOptionsCache = Object.values(serverMap);
       return _mcpOptionsCache;
     })
-    .catch(() => {
+    .catch((): McpOption[] => {
       _mcpOptionsFetchPromise = null;
       return [];
     });
 
   return _mcpOptionsFetchPromise;
+}
+
+interface IntentCorrectionButtonProps {
+  messageText: string;
+  detectedIntent?: string;
+  detectedConfidence?: number | null;
+  feedbackType?: FeedbackType;
+  onCorrect?: CorrectionHandler;
+  proactive?: boolean;
 }
 
 export default function IntentCorrectionButton({
@@ -57,12 +88,12 @@ export default function IntentCorrectionButton({
   feedbackType = 'intent',
   onCorrect,
   proactive = false,
-}) {
+}: IntentCorrectionButtonProps) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(proactive);
-  const [intentExpanded, setIntentExpanded] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [mcpOptions, setMcpOptions] = useState([]);
+  const [open, setOpen] = useState<boolean>(proactive);
+  const [intentExpanded, setIntentExpanded] = useState<boolean>(false);
+  const [submitted, setSubmitted] = useState<boolean>(false);
+  const [mcpOptions, setMcpOptions] = useState<McpOption[]>([]);
 
   useEffect(() => {
     if (feedbackType === 'intent') {
@@ -71,28 +102,28 @@ export default function IntentCorrectionButton({
   }, [feedbackType]);
 
   // Core intent options (always available)
-  const coreOptions = [
+  const coreOptions: IntentOption[] = [
     { value: 'general.conversation', label: t('feedback.intentConversation') },
     { value: 'knowledge.ask', label: t('feedback.intentKnowledge') },
   ];
 
   // Build dynamic intent options: core + MCP tools
-  const intentOptions = [
+  const intentOptions: IntentOption[] = [
     ...coreOptions,
-    ...mcpOptions.map(opt => ({
+    ...mcpOptions.map((opt) => ({
       value: opt.value,
       label: opt.label,
     })),
-  ].filter(opt => opt.value !== detectedIntent);
+  ].filter((opt) => opt.value !== detectedIntent);
 
-  const complexityOptions = [
+  const complexityOptions: IntentOption[] = [
     { value: 'complex', label: t('feedback.shouldBeComplex') },
     { value: 'simple', label: t('feedback.shouldBeSimple') },
   ];
 
-  const options = feedbackType === 'complexity' ? complexityOptions : intentOptions;
+  const options: IntentOption[] = feedbackType === 'complexity' ? complexityOptions : intentOptions;
 
-  const handleSelect = async (correctedValue) => {
+  const handleSelect = async (correctedValue: string): Promise<void> => {
     if (onCorrect) {
       await onCorrect(messageText, feedbackType, detectedIntent, correctedValue);
     }
@@ -114,7 +145,6 @@ export default function IntentCorrectionButton({
   return (
     <div className="mt-1 relative">
       <div className="flex items-center gap-2 flex-wrap">
-        {/* Intent info (collapsible) */}
         {detectedIntent && pct != null && (
           <button
             onClick={() => setIntentExpanded(!intentExpanded)}
@@ -129,14 +159,12 @@ export default function IntentCorrectionButton({
           </button>
         )}
 
-        {/* Proactive hint */}
         {proactive && !open && (
           <span className="text-xs text-amber-600 dark:text-amber-400">
             {t('feedback.proactiveQuestion')}
           </span>
         )}
 
-        {/* Correction toggle */}
         {onCorrect && (
           <button
             onClick={() => setOpen(!open)}
@@ -157,7 +185,7 @@ export default function IntentCorrectionButton({
               ? t('feedback.selectComplexity')
               : t('feedback.selectCorrectIntent')}
           </p>
-          {options.map(opt => (
+          {options.map((opt) => (
             <button
               key={opt.value}
               onClick={() => handleSelect(opt.value)}

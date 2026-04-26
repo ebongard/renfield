@@ -1,13 +1,27 @@
-import React from 'react';
+import { Loader, Plus, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Plus, X, Loader } from 'lucide-react';
-import ConversationItem from './ConversationItem';
+
 import { groupConversationsByDate } from '../hooks/useChatSessions';
+import type { Conversation, GroupedConversations } from '../types/chat';
+import ConversationItem from './ConversationItem';
 
 /**
  * Sidebar component displaying conversation history.
  * Supports mobile overlay and desktop persistent modes.
  */
+interface ChatSidebarProps {
+  conversations: Conversation[];
+  activeSessionId: string | null;
+  onSelectConversation: (sessionId: string) => void;
+  onNewChat: () => void;
+  onDeleteConversation: (sessionId: string) => void;
+  isOpen: boolean;
+  onClose: () => void;
+  loading: boolean;
+}
+
+type GroupedConversationsKey = keyof GroupedConversations;
+
 export default function ChatSidebar({
   conversations,
   activeSessionId,
@@ -16,21 +30,20 @@ export default function ChatSidebar({
   onDeleteConversation,
   isOpen,
   onClose,
-  loading
-}) {
+  loading,
+}: ChatSidebarProps) {
   const { t } = useTranslation();
-  const grouped = groupConversationsByDate(conversations);
+  const grouped: GroupedConversations = groupConversationsByDate(conversations);
 
-  const periodLabels = {
+  const periodLabels: Record<GroupedConversationsKey, string> = {
     today: t('chat.today'),
     yesterday: t('chat.yesterday'),
     lastWeek: t('chat.thisWeek'),
-    older: t('chat.older')
+    older: t('chat.older'),
   };
 
   return (
     <>
-      {/* Mobile Overlay Backdrop */}
       {isOpen && (
         <div
           className="fixed inset-0 bg-black/50 z-20 md:hidden"
@@ -39,7 +52,6 @@ export default function ChatSidebar({
         />
       )}
 
-      {/* Sidebar */}
       <aside
         className={`
           fixed md:relative z-30
@@ -51,7 +63,6 @@ export default function ChatSidebar({
         role="navigation"
         aria-label={t('chat.openConversations')}
       >
-        {/* Header with New Chat Button */}
         <div className="p-4 border-b border-gray-200 dark:border-gray-700 shrink-0">
           <div className="flex items-center justify-between mb-4 md:mb-0">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white md:hidden">
@@ -76,7 +87,6 @@ export default function ChatSidebar({
           </button>
         </div>
 
-        {/* Conversation List */}
         <div className="flex-1 overflow-y-auto" role="list" aria-label={t('chat.conversations')}>
           {loading ? (
             <div className="flex items-center justify-center py-8">
@@ -93,23 +103,24 @@ export default function ChatSidebar({
               </p>
             </div>
           ) : (
-            Object.entries(grouped).map(([period, convs]) =>
-              convs.length > 0 && (
-                <div key={period} role="group" aria-label={periodLabels[period]}>
-                  <div className="px-4 py-2 text-xs text-gray-500 uppercase tracking-wider font-medium sticky top-0 bg-white dark:bg-gray-800">
-                    {periodLabels[period]}
+            (Object.entries(grouped) as Array<[GroupedConversationsKey, Conversation[]]>).map(
+              ([period, convs]) =>
+                convs.length > 0 && (
+                  <div key={period} role="group" aria-label={periodLabels[period]}>
+                    <div className="px-4 py-2 text-xs text-gray-500 uppercase tracking-wider font-medium sticky top-0 bg-white dark:bg-gray-800">
+                      {periodLabels[period]}
+                    </div>
+                    {convs.map((conv) => (
+                      <ConversationItem
+                        key={conv.session_id}
+                        conversation={conv}
+                        isActive={conv.session_id === activeSessionId}
+                        onClick={() => onSelectConversation(conv.session_id)}
+                        onDelete={() => onDeleteConversation(conv.session_id)}
+                      />
+                    ))}
                   </div>
-                  {convs.map(conv => (
-                    <ConversationItem
-                      key={conv.session_id}
-                      conversation={conv}
-                      isActive={conv.session_id === activeSessionId}
-                      onClick={() => onSelectConversation(conv.session_id)}
-                      onDelete={() => onDeleteConversation(conv.session_id)}
-                    />
-                  ))}
-                </div>
-              )
+                ),
             )
           )}
         </div>

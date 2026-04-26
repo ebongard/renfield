@@ -1,6 +1,11 @@
-import React from 'react';
+import type { LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
-const COLOR_MAP = {
+export type BadgeColor =
+  | 'blue' | 'green' | 'red' | 'yellow' | 'purple'
+  | 'amber' | 'pink' | 'teal' | 'gray' | 'accent';
+
+const COLOR_MAP: Record<BadgeColor, string> = {
   blue:   'bg-blue-100 text-blue-600 dark:bg-blue-600/20 dark:text-blue-400',
   green:  'bg-green-100 text-green-600 dark:bg-green-600/20 dark:text-green-400',
   red:    'bg-red-100 text-red-600 dark:bg-red-600/20 dark:text-red-400',
@@ -13,8 +18,15 @@ const COLOR_MAP = {
   accent: 'bg-accent-100 text-accent-700 dark:bg-accent-600/20 dark:text-accent-400',
 };
 
-export default function Badge({ color = 'gray', icon: Icon, children, className = '' }) {
-  const colors = COLOR_MAP[color] || COLOR_MAP.gray;
+interface BadgeProps {
+  color?: BadgeColor;
+  icon?: LucideIcon;
+  children?: ReactNode;
+  className?: string;
+}
+
+export default function Badge({ color = 'gray', icon: Icon, children, className = '' }: BadgeProps) {
+  const colors = COLOR_MAP[color] ?? COLOR_MAP.gray;
 
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-1 text-xs rounded-sm font-medium ${colors} ${className}`}>

@@ -1,4 +1,3 @@
-import React from 'react';
 import { useTranslation } from 'react-i18next';
 
 /**
@@ -9,15 +8,17 @@ import { useTranslation } from 'react-i18next';
  * symbols: 0=█ (filled), 1=●, 2=○, 3=◐ (half), 4=◯ (open)
  * i18n keys: circles.tier.0 .. circles.tier.4
  */
-const TIER_SYMBOLS = {
-  0: '\u2588',  // █ full block (SELF, most private)
-  1: '\u25CF',  // ● filled circle
-  2: '\u25CB',  // ○ hollow circle (HOUSEHOLD)
-  3: '\u25D0',  // ◐ half-filled
-  4: '\u25EF',  // ◯ large circle (PUBLIC)
+export type CircleTier = 0 | 1 | 2 | 3 | 4;
+
+const TIER_SYMBOLS: Record<CircleTier, string> = {
+  0: '█',  // █ full block (SELF, most private)
+  1: '●',  // ● filled circle
+  2: '○',  // ○ hollow circle (HOUSEHOLD)
+  3: '◐',  // ◐ half-filled
+  4: '◯',  // ◯ large circle (PUBLIC)
 };
 
-const TIER_CLASS = {
+const TIER_CLASS: Record<CircleTier, string> = {
   0: 'tier-badge-0',
   1: 'tier-badge-1',
   2: 'tier-badge-2',
@@ -25,12 +26,18 @@ const TIER_CLASS = {
   4: 'tier-badge-4',
 };
 
-export default function TierBadge({ tier, labelKey = null, className = '' }) {
+interface TierBadgeProps {
+  tier: number | CircleTier;
+  labelKey?: string | null;
+  className?: string;
+}
+
+export default function TierBadge({ tier, labelKey = null, className = '' }: TierBadgeProps) {
   const { t } = useTranslation();
-  const safeTier = Math.max(0, Math.min(4, Number(tier) || 0));
+  const safeTier = Math.max(0, Math.min(4, Number(tier) || 0)) as CircleTier;
   const symbol = TIER_SYMBOLS[safeTier];
-  const label = labelKey || t(`circles.tier.${safeTier}`);
-  const tierClass = TIER_CLASS[safeTier] || '';
+  const label = labelKey ?? t(`circles.tier.${safeTier}`);
+  const tierClass = TIER_CLASS[safeTier] ?? '';
 
   return (
     <span
