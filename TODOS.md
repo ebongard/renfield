@@ -11,7 +11,7 @@ Single prioritized index of every open work item, with a reference back to the s
 
 Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
 
-Last reviewed: 2026-04-26 (sweep stale entries — KRITISCH K1-K7 already merged as #464 on 2026-04-24; Reva Phases 1-5 describe pre-existing work, Reva is built and in production).
+Last reviewed: 2026-04-26 (WICHTIG sweep — 13 of 14 items closed: W1/W4/W7/W8/W9/W11/W12/W14 verified already done in previous work; W2/W3/W5/W6/W13 closed today via #482-#485. W10 deferred separately).
 
 ---
 
@@ -23,9 +23,13 @@ _(no active blockers — all prior P0 items resolved and merged)_
 
 ## P1 — Next substantive batch
 
-### WICHTIG audit findings — performance + config hygiene
-- **Primary source:** `tasks/audit-findings-plan.md` §WICHTIG, §Priorisierte Roadmap Phase 2-3
-- **Items:** W1 DB connection pool tuning · W2 migrate IVFFlat → HNSW indexes · W3 bulk-insert document chunks · W4 conversation search N+1 · W5 23 hardcoded timeouts → Settings · W6 LLM options from YAML, not Python · W7-W8 circuit breaker + cache TTLs configurable · W12 `alembic.ini` hardcoded credentials · W13 config range/format validation · W14 inconsistent boolean naming
+### W10 — Frontend TypeScript coverage migration
+71 `.jsx`/`.js` files vs 17 `.tsx`/`.ts` files in `src/frontend/src/` — only ~19% TypeScript. Multi-day effort, deliberately deferred from the WICHTIG sweep because it's a separate work program (file-by-file migration with type-safety triage), not a single-PR fix.
+- **Primary source:** `tasks/audit-findings-plan.md` §WICHTIG W10
+- **Recommended approach:** start with the highest-state-complexity pages (ChatPage, KnowledgePage, RolesPage) — those benefit most from type safety. Convert one page per PR.
+- **Trigger:** pick up after the next round of frontend feature work, OR if a frontend bug surfaces that types would have prevented.
+
+_(WICHTIG W1-W9 + W11-W14 all closed — see "Last reviewed" line above for the breakdown. Audit-findings-plan.md still lists them; the doc itself has not been updated to mark them resolved.)_
 
 ---
 
