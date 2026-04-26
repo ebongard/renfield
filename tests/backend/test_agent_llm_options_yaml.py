@@ -73,37 +73,59 @@ def test_agent_service_has_no_inline_llm_option_literals_at_call_sites():
     """agent_service.py call sites must not reintroduce inline literal
     `{"temperature": ..., "num_predict": ...}` dicts.
 
-    The only acceptable place for such literals is inside the
-    `_DEFAULT_LLM_OPTIONS*` module-level constant blocks.
+    The only acceptable place for such literals is inside the module-level
+    `_DEFAULT_LLM_OPTIONS*` constant assignments. We use an AST walk
+    (rather than line-by-line brace tracking) so the test is robust to
+    single-line dict refactors, comments, and stylistic edits.
     """
+    import ast
+
     src = AGENT_SERVICE_PY.read_text()
+    tree = ast.parse(src)
 
-    # Find every line that contains both "temperature" and "num_predict"
-    # in a dict literal — the tell-tale shape for an LLM options dict.
-    offending: list[tuple[int, str]] = []
-    in_default_block = False
-    for lineno, line in enumerate(src.splitlines(), start=1):
-        stripped = line.strip()
+    # Step 1 — collect line ranges of every module-level
+    # `_DEFAULT_LLM_OPTIONS*` assignment. Any literal dict whose lineno
+    # falls inside one of these ranges is allowed (it's the constant
+    # itself).
+    allowed_ranges: list[tuple[int, int]] = []
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id.startswith("_DEFAULT_LLM_OPTIONS")
+                ):
+                    end_lineno = getattr(node, "end_lineno", node.lineno)
+                    allowed_ranges.append((node.lineno, end_lineno))
 
-        # Track entry/exit of _DEFAULT_LLM_OPTIONS_* dict definitions —
-        # those are the only place inline literal LLM options are allowed.
-        if stripped.startswith("_DEFAULT_LLM_OPTIONS"):
-            in_default_block = True
-            continue
-        if in_default_block and stripped == "}":
-            in_default_block = False
-            continue
-        if in_default_block:
-            continue
+    assert allowed_ranges, (
+        "Expected at least one module-level _DEFAULT_LLM_OPTIONS* "
+        "assignment in agent_service.py — these are the canonical home "
+        "for the fallback dicts. None found."
+    )
 
-        # Outside _DEFAULT_LLM_OPTIONS blocks: flag any line with the
-        # literal-LLM-options shape.
-        if '"temperature"' in stripped and '"num_predict"' in stripped:
-            offending.append((lineno, stripped))
+    def _is_allowed(lineno: int) -> bool:
+        return any(lo <= lineno <= hi for lo, hi in allowed_ranges)
+
+    # Step 2 — walk every dict literal in the file. Flag any whose keys
+    # include "temperature" AND "num_predict" (the LLM-options shape) and
+    # whose location is NOT inside a _DEFAULT_LLM_OPTIONS* assignment.
+    offending: list[int] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        keys = {
+            k.value
+            for k in node.keys
+            if isinstance(k, ast.Constant) and isinstance(k.value, str)
+        }
+        if {"temperature", "num_predict"}.issubset(keys) and not _is_allowed(node.lineno):
+            offending.append(node.lineno)
 
     assert not offending, (
-        "agent_service.py contains inline literal LLM options dicts at "
-        "call sites — these must route through prompt_manager.get_config() "
-        "with module-level _DEFAULT_LLM_OPTIONS_* as the fallback. "
+        "agent_service.py contains inline literal LLM-options dicts "
+        "(keys: temperature + num_predict) at call sites. These must "
+        "route through `_llm_options_or_default()` with the module-level "
+        "_DEFAULT_LLM_OPTIONS_* constants as the fallback. "
         f"Offending lines: {offending}"
     )

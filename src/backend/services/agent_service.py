@@ -381,6 +381,18 @@ _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT = {
 }
 
 
+def _llm_options_or_default(prompt_key: str, fallback: dict) -> dict:
+    """Resolve LLM options from prompts/agent.yaml, falling back to a default.
+
+    Uses explicit `is None` rather than truthiness so an empty/falsy YAML
+    value (`{}`, `None` from a missing key, etc.) is distinguished — an
+    explicit `{}` from YAML is honoured (no inherited options),
+    while a missing key falls through to the in-code fallback.
+    """
+    cfg = prompt_manager.get_config("agent", prompt_key)
+    return cfg if cfg is not None else fallback
+
+
 # Fields that contain large binary data (base64-encoded)
 _BLOB_FIELDS = {"content_base64"}
 
@@ -734,9 +746,8 @@ class AgentService:
 
         try:
             classification_kwargs = get_classification_chat_kwargs(agent_model)
-            preselect_options = (
-                prompt_manager.get_config("agent", "llm_options_tool_preselect")
-                or _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT
+            preselect_options = _llm_options_or_default(
+                "llm_options_tool_preselect", _DEFAULT_LLM_OPTIONS_TOOL_PRESELECT,
             )
             raw_response = await asyncio.wait_for(
                 agent_client.chat(
@@ -1187,10 +1198,8 @@ class AgentService:
 
         # Get LLM options from config (YAML wins; module-level constants are
         # the fallback if a key is missing from prompts/agent.yaml).
-        llm_options = prompt_manager.get_config("agent", "llm_options") or _DEFAULT_LLM_OPTIONS
-        llm_options_retry = (
-            prompt_manager.get_config("agent", "llm_options_retry") or _DEFAULT_LLM_OPTIONS_RETRY
-        )
+        llm_options = _llm_options_or_default("llm_options", _DEFAULT_LLM_OPTIONS)
+        llm_options_retry = _llm_options_or_default("llm_options_retry", _DEFAULT_LLM_OPTIONS_RETRY)
         json_system_message = prompt_manager.get("agent", "json_system_message", lang=lang)
 
         # Native function calling — opt-in per role AND requires the agent client
@@ -1744,8 +1753,8 @@ class AgentService:
         )
 
         # Get LLM options for summary (YAML wins; module-level constant is fallback)
-        llm_options_summary = (
-            prompt_manager.get_config("agent", "llm_options_summary") or _DEFAULT_LLM_OPTIONS_SUMMARY
+        llm_options_summary = _llm_options_or_default(
+            "llm_options_summary", _DEFAULT_LLM_OPTIONS_SUMMARY,
         )
         summary_system = prompt_manager.get("agent", "summary_system_message", lang=lang)
 
