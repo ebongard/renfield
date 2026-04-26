@@ -450,55 +450,30 @@ class QueryOrchestrator:
         sub_results_out: list[dict] | None = None,
         **agent_kwargs,
     ) -> AsyncGenerator["AgentStep", None]:
-        """Run sub-agents sequentially (original behavior).
+        """Run sub-agents sequentially.
 
-        `sub_results_out` (when provided) is appended to as each sub-agent
-        completes, giving the caller access to the structured per-role answers
-        for the post_orchestration hook.
+        Delegates to ``_run_sub_agent`` per query so ``pre_sub_agent`` /
+        ``post_sub_agent`` hooks and the ``_hook_task`` await fire
+        identically to parallel mode. ``sub_results_out`` is appended to
+        as each sub-agent completes (same contract as ``_run_parallel``).
         """
-        from services.agent_service import AgentService, AgentStep
-        from services.agent_tools import AgentToolRegistry
-
         sub_results: list[dict] = sub_results_out if sub_results_out is not None else []
 
         for i, sq in enumerate(sub_queries):
-            role_name = sq["role"]
-            query = sq["query"]
-            role = self.router.roles.get(role_name)
-
-            if not role or not role.has_agent_loop:
-                logger.warning(f"Orchestrator: skipping invalid role '{role_name}'")
-                continue
-
-            logger.info(f"Orchestrator: running sub-agent {i+1}/{len(sub_queries)} [{role_name}]: {query[:60]}")
-
-            tool_registry = AgentToolRegistry(
-                mcp_manager=self.mcp_manager,
-                server_filter=role.mcp_servers,
-                internal_filter=role.internal_tools,
+            logger.info(
+                f"Orchestrator: running sub-agent {i+1}/{len(sub_queries)} "
+                f"[{sq['role']}]: {sq['query'][:60]}"
             )
-            agent = AgentService(tool_registry, role=role)
+            result = await self._run_sub_agent(sq, ollama, executor, lang, **agent_kwargs)
 
-            # Same suppression rule as _run_parallel — only the
-            # combined answer should be surfaced to the user.
-            final_answer = None
-            async for step in agent.run(
-                message=query,
-                ollama=ollama,
-                executor=executor,
-                lang=lang,
-                **agent_kwargs,
-            ):
+            # Same suppression rule as _run_parallel — only the combined
+            # answer is surfaced to the user.
+            for step in result["steps"]:
                 if step.step_type == "final_answer":
-                    final_answer = step.content
                     continue
                 yield step
 
-            sub_results.append({
-                "role": role_name,
-                "query": query,
-                "answer": final_answer or "",
-            })
+            sub_results.append(result)
 
         async for step in self._emit_combined_answer(message, sub_results, ollama, lang):
             yield step

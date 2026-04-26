@@ -877,31 +877,46 @@ class TestSubAgentHooks:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_hook_task_awaited_before_agent_run(self):
-        """If the registry has a `_hook_task` future, it must be awaited first.
+        """If the registry has a ``_hook_task`` awaitable, it must be awaited
+        before the agent loop runs.
 
-        Reva's plugin tools register asynchronously via `_hook_task`. Without
-        this await the agent loop reads the registry before plugin-registered
-        tools are present — intermittent "tool not found" failures on the
-        first orchestrated call after startup.
+        Reva's plugin tools register asynchronously via ``_hook_task``.
+        Without this await the agent loop reads the registry before
+        plugin-registered tools are present — intermittent "tool not found"
+        failures on the first orchestrated call after startup.
+
+        The test uses a custom awaitable whose ``__await__`` flips a flag
+        only when the orchestrator explicitly awaits it. An ``asyncio.Task``
+        would be unsuitable here: the event loop schedules tasks on the
+        next yield, and the orchestrator's other ``await`` calls
+        (``run_hooks`` for ``pre_sub_agent``) would let the task complete
+        even if our code never awaited ``_hook_task`` directly. The
+        custom awaitable closes that gap.
         """
         from services.agent_service import AgentStep
 
-        run_after_await = {"value": False}
-        await_observed = {"awaited": False}
+        events: list[str] = []
+
+        class _AwaitTracker:
+            """Awaitable that records when (and only when) it is explicitly awaited."""
+            def __init__(self):
+                self.awaited = False
+
+            def __await__(self):
+                self.awaited = True
+                events.append("hook_task_awaited")
+                # Empty generator — resolves immediately with no value.
+                if False:
+                    yield  # pragma: no cover
 
         primary = _make_role("release", servers=["release"])
         router = _make_router([primary])
         orchestrator = QueryOrchestrator(router, MagicMock())
 
-        async def _hook_task_coro():
-            await_observed["awaited"] = True
-
-        # Wrap as an awaitable Task so getattr returns it directly.
-        import asyncio as _asyncio
-        hook_task = _asyncio.create_task(_hook_task_coro())
+        hook_task = _AwaitTracker()
 
         async def _fake_run(*args, **kwargs):
-            run_after_await["value"] = await_observed["awaited"]
+            events.append("agent_run_called")
             yield AgentStep(step_number=1, step_type="final_answer", content="ok")
 
         class _Registry:
@@ -921,8 +936,77 @@ class TestSubAgentHooks:
                 _make_ollama("ok"), MagicMock(), "de",
             )
 
-        # The agent ran AFTER the hook_task was observed as awaited.
-        assert run_after_await["value"] is True
+        # The custom awaitable was actually awaited.
+        assert hook_task.awaited is True
+        # And it was awaited BEFORE the agent loop ran (strict ordering).
+        assert events.index("hook_task_awaited") < events.index("agent_run_called")
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_no_hook_task_attribute_does_not_raise(self):
+        """If the registry has no ``_hook_task`` attribute, the sub-agent runs cleanly."""
+        from services.agent_service import AgentStep
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        # Registry without the _hook_task attribute (vanilla AgentToolRegistry has no such field).
+        class _Registry:
+            pass
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry", return_value=_Registry()):
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        assert result["answer"] == "ok"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_hook_task_failure_does_not_break_sub_agent(self):
+        """A raising ``_hook_task`` is logged and ignored — sub-agent still runs."""
+        from services.agent_service import AgentStep
+
+        async def _broken_hook_task():
+            raise RuntimeError("plugin tool registration failed")
+
+        primary = _make_role("release", servers=["release"])
+        router = _make_router([primary])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _fake_run(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        import asyncio as _asyncio
+
+        class _Registry:
+            pass
+
+        registry_instance = _Registry()
+        registry_instance._hook_task = _asyncio.create_task(_broken_hook_task())
+
+        with patch("services.agent_service.AgentService") as MockAS, \
+             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+            mock_agent = MagicMock()
+            mock_agent.run = _fake_run
+            MockAS.return_value = mock_agent
+
+            result = await orchestrator._run_sub_agent(
+                {"role": "release", "query": "status"},
+                _make_ollama("ok"), MagicMock(), "de",
+            )
+
+        assert result["answer"] == "ok"
 
     @pytest.mark.unit
     @pytest.mark.asyncio
@@ -1322,7 +1406,20 @@ class TestParallelExecution:
 # ============================================================================
 
 class TestVanillaRenfieldBackwardsCompat:
-    """With no plugins registered, behavior must match pre-uplift."""
+    """With no plugins registered, behavior must match pre-uplift.
+
+    These tests use *spy* handlers — registered hooks that record their
+    invocations and return ``None`` (i.e. they do not mutate any state).
+    Spies prove two properties at once:
+
+    1. The new hook fires *do* fire (they are wired up correctly).
+    2. With no state-mutating handler in place, the orchestrator's
+       behavior is unchanged from the pre-uplift baseline.
+
+    Asserting outcomes alone (e.g. "no card step") would be circumstantial
+    — those outcomes also hold if the hook fires don't fire at all. The
+    spies make the assertion direct.
+    """
 
     @pytest.fixture(autouse=True)
     def _clear_hooks(self):
@@ -1333,13 +1430,21 @@ class TestVanillaRenfieldBackwardsCompat:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_no_extend_orchestrator_roles_handler_uses_default_set(self):
-        """Without a hook handler, planner sees only roles with has_agent_loop=True."""
+    async def test_extend_orchestrator_roles_fires_with_zero_handlers(self):
+        """The hook event fires with no handlers — default eligibility wins."""
+        from utils.hooks import register_hook
+
+        spy_calls: list[dict] = []
+
+        async def spy(**kw):
+            spy_calls.append(kw)
+            return None  # observation only — no role extension
+
+        register_hook("extend_orchestrator_roles", spy)
+
         smart = _make_role("smart_home", has_loop=True, servers=["homeassistant"])
-        # Roles without agent loops are skipped by default.
         chat = _make_role("conversation", has_loop=False)
         router = _make_router([smart, chat])
-
         ollama = _make_ollama("null")
         orchestrator = QueryOrchestrator(router, MagicMock())
 
@@ -1353,15 +1458,35 @@ class TestVanillaRenfieldBackwardsCompat:
 
             await orchestrator.detect_multi_domain("test", ollama)
 
+            # Spy received exactly one call — the hook fired.
+            assert len(spy_calls) == 1
+            assert "roles" in spy_calls[0] and "lang" in spy_calls[0]
+
+            # Default eligibility preserved (spy returned None → no extension).
             descriptions = pm.get.call_args.kwargs.get("role_descriptions", "")
             assert "smart_home" in descriptions
             assert "conversation" not in descriptions
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_no_pre_sub_agent_handler_keeps_default_registry(self):
-        """Without a pre_sub_agent handler, the registry is untouched between create and run."""
+    async def test_pre_and_post_sub_agent_each_fire_once_per_sub_agent(self):
+        """pre_sub_agent and post_sub_agent each fire exactly once per ``_run_sub_agent`` call."""
+        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+
+        pre_calls: list[dict] = []
+        post_calls: list[dict] = []
+
+        async def pre_spy(**kw):
+            pre_calls.append(kw)
+            return None  # no mutation, no plugin_data contribution
+
+        async def post_spy(**kw):
+            post_calls.append(kw)
+            return None  # no plugin_data contribution
+
+        register_hook("pre_sub_agent", pre_spy)
+        register_hook("post_sub_agent", post_spy)
 
         primary = _make_role("release", servers=["release"])
         router = _make_router([primary])
@@ -1372,12 +1497,9 @@ class TestVanillaRenfieldBackwardsCompat:
 
         class _Registry:
             _hook_task = None
-            preselected = None  # default — no plugin mutation
-
-        registry_instance = _Registry()
 
         with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+             patch("services.agent_tools.AgentToolRegistry", return_value=_Registry()):
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
@@ -1387,14 +1509,29 @@ class TestVanillaRenfieldBackwardsCompat:
                 _make_ollama("ok"), MagicMock(), "de",
             )
 
-        assert registry_instance.preselected is None
-        assert result["plugin_data"] == {}  # no post_sub_agent → empty
+        # Each hook fired exactly once (one sub-agent → one fire).
+        assert len(pre_calls) == 1
+        assert len(post_calls) == 1
+        # Post fires AFTER pre (state at post-fire reflects sub-agent completion).
+        assert pre_calls[0]["role"] == "release"
+        assert post_calls[0]["result"]["answer"] == "ok"
+        # Spy returned None → no plugin_data contribution → empty dict preserved.
+        assert result["plugin_data"] == {}
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_no_post_orchestration_handler_no_card_step(self):
-        """Without a post_orchestration handler, no card step is yielded."""
+    async def test_post_orchestration_fires_with_zero_handlers_no_card_step(self):
+        """post_orchestration fires once; with no handler returning a card, no card step yields."""
+        from utils.hooks import register_hook
         from services.agent_service import AgentStep
+
+        spy_calls: list[dict] = []
+
+        async def spy(**kw):
+            spy_calls.append(kw)
+            return None  # no card
+
+        register_hook("post_orchestration", spy)
 
         orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
 
@@ -1413,7 +1550,171 @@ class TestVanillaRenfieldBackwardsCompat:
             ):
                 steps.append(step)
 
+        # Hook fired once.
+        assert len(spy_calls) == 1
+        # No card step yielded (spy returned None, no card payload).
         assert not any(s.step_type == "card" for s in steps)
+        # final_answer still streamed normally.
+        assert any(s.step_type == "final_answer" for s in steps)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_pre_orchestration_does_not_fire_inside_run_orchestrated(self):
+        """``run_orchestrated`` no longer fires ``pre_orchestration`` itself.
+
+        The hook is owned by the upstream caller (chat_handler / Teams
+        transport) so plugins can inject a pre-computed plan before
+        sub_queries are determined. This test pins that contract: a
+        registered ``pre_orchestration`` handler is NOT called from
+        within ``run_orchestrated``.
+        """
+        from utils.hooks import register_hook
+        from services.agent_service import AgentStep
+
+        pre_calls: list[dict] = []
+
+        async def pre_spy(**kw):
+            pre_calls.append(kw)
+            return None
+
+        register_hook("pre_orchestration", pre_spy)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        async def _empty(*args, **kwargs):
+            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
+
+        with patch.object(orchestrator, "_run_parallel", _empty), \
+             patch("services.orchestrator.settings") as s:
+            s.agent_orchestrator_parallel = True
+
+            async for _ in orchestrator.run_orchestrated(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("ok"),
+                executor=MagicMock(), lang="de",
+            ):
+                pass
+
+        # The spy was registered but never invoked from inside run_orchestrated.
+        assert len(pre_calls) == 0
+
+
+# ============================================================================
+# Phase 1 (orchestrator-uplift) — sequential mode parity with parallel mode
+# ============================================================================
+
+class TestSequentialMode:
+    """``_run_sequential`` delegates to ``_run_sub_agent`` so the new hook
+    surface fires identically to parallel mode."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_sequential_fires_pre_and_post_sub_agent(self):
+        """Sequential mode must fire the new hooks per sub-agent (parity with parallel)."""
+        from utils.hooks import register_hook
+
+        pre_calls: list[dict] = []
+        post_calls: list[dict] = []
+
+        async def pre_spy(**kw):
+            pre_calls.append(kw)
+            return None
+
+        async def post_spy(**kw):
+            post_calls.append(kw)
+            return None
+
+        register_hook("pre_sub_agent", pre_spy)
+        register_hook("post_sub_agent", post_spy)
+
+        smart = _make_role("smart_home", servers=["homeassistant"])
+        media = _make_role("media", servers=["jellyfin"])
+        router = _make_router([smart, media])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        # Stub _run_sub_agent so the test focuses on hook firing — the
+        # real pre/post fires are exercised by TestSubAgentHooks. Here we
+        # only verify _run_sequential reaches them via delegation.
+        call_count = {"value": 0}
+
+        async def _fake_sub_agent(sq, *a, **kw):
+            call_count["value"] += 1
+            # Mimic real _run_sub_agent firing the hooks.
+            from utils.hooks import run_hooks
+            await run_hooks("pre_sub_agent", step=sq, role=sq["role"],
+                            tool_registry=MagicMock(), lang="de")
+            result = {
+                "role": sq["role"], "query": sq["query"],
+                "answer": "done", "steps": [], "plugin_data": {},
+            }
+            await run_hooks("post_sub_agent", step=sq, role=sq["role"],
+                            result=result, lang="de")
+            return result
+
+        async def _fake_combined(*a, **kw):
+            if False:
+                yield  # pragma: no cover
+
+        with patch.object(orchestrator, "_run_sub_agent", _fake_sub_agent), \
+             patch.object(orchestrator, "_emit_combined_answer", return_value=_fake_combined()):
+            sub_results: list[dict] = []
+            async for _ in orchestrator._run_sequential(
+                sub_queries=[
+                    {"role": "smart_home", "query": "Licht"},
+                    {"role": "media", "query": "Musik"},
+                ],
+                message="m", ollama=_make_ollama("ok"),
+                executor=MagicMock(), lang="de",
+                sub_results_out=sub_results,
+            ):
+                pass
+
+        # Both hooks fired twice (one per sub-agent), in the right order.
+        assert call_count["value"] == 2
+        assert len(pre_calls) == 2
+        assert len(post_calls) == 2
+        assert {c["role"] for c in pre_calls} == {"smart_home", "media"}
+        assert {c["role"] for c in post_calls} == {"smart_home", "media"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_sequential_collects_plugin_data(self):
+        """Sequential mode collects the same ``plugin_data`` shape as parallel."""
+        smart = _make_role("smart_home", servers=["homeassistant"])
+        router = _make_router([smart])
+        orchestrator = QueryOrchestrator(router, MagicMock())
+
+        async def _fake_sub_agent(sq, *a, **kw):
+            return {
+                "role": sq["role"], "query": sq["query"],
+                "answer": "ok", "steps": [],
+                "plugin_data": {"contacts": [{"name": "Test"}]},
+            }
+
+        async def _fake_combined(*a, **kw):
+            if False:
+                yield  # pragma: no cover
+
+        with patch.object(orchestrator, "_run_sub_agent", _fake_sub_agent), \
+             patch.object(orchestrator, "_emit_combined_answer", return_value=_fake_combined()):
+            sub_results: list[dict] = []
+            async for _ in orchestrator._run_sequential(
+                sub_queries=[{"role": "smart_home", "query": "x"}],
+                message="m", ollama=_make_ollama("ok"),
+                executor=MagicMock(), lang="de",
+                sub_results_out=sub_results,
+            ):
+                pass
+
+        assert len(sub_results) == 1
+        assert sub_results[0]["plugin_data"] == {"contacts": [{"name": "Test"}]}
 
 
 # ============================================================================
