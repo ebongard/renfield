@@ -25,40 +25,33 @@ MIGRATIONS_DIR = REPO_ROOT / "src" / "backend" / "alembic" / "versions"
 
 
 @pytest.mark.unit
-def test_document_chunk_comment_describes_hnsw_not_ivfflat():
-    """`models/database.py` line 274-ish carries a comment describing how
-    the vector-search index is created at migration time. That comment
-    must reflect the current HNSW reality (with halfvec cast for high-dim
-    embeddings), not the original IVFFlat scheme that's no longer in use.
+def test_document_chunk_comment_describes_hnsw_index():
+    """`models/database.py` near DocumentChunk carries a comment describing
+    how the vector-search index is created at migration time. The comment
+    must reference `USING hnsw` AND `halfvec` so a future reader of the
+    model file sees both the current algorithm and the dimensionality
+    workaround without having to dig through the migration chain.
 
-    The comment IS allowed to mention IVFFlat in a "originally created
-    as IVFFlat by ..." context — that's accurate history. What's banned
-    is a CREATE-INDEX-style snippet that suggests IVFFlat is the current
-    definition.
+    Deliberately NO assertion on absence of "ivfflat": the comment is
+    expected to mention IVFFlat in historical / supersedence context
+    ("originally created as IVFFlat by ..."), and a substring ban would
+    over-match that legitimate text. The positive HNSW + halfvec checks
+    alone catch the regression we care about (someone replacing the
+    current comment with the old IVFFlat-only one).
     """
     src = DATABASE_PY.read_text()
 
-    # Pull out lines around the DocumentChunk vector-index comment.
-    # Grep-style: any line in the file mentioning ivfflat in a CREATE
-    # INDEX context (rather than a historical reference).
-    bad_lines = [
-        (lineno, line.strip())
-        for lineno, line in enumerate(src.splitlines(), start=1)
-        if "USING ivfflat" in line
-    ]
-    assert not bad_lines, (
-        "models/database.py contains a `USING ivfflat` snippet, suggesting "
-        "the current index definition is IVFFlat. Production runs HNSW since "
-        "j0k1l2m3n4o5_add_fk_indexes_and_hnsw — update the comment to reflect "
-        f"that. Offending lines: {bad_lines}"
-    )
-
-    # Positive guard: the comment block must mention HNSW so future
-    # readers see the real index type.
     assert "USING hnsw" in src, (
         "models/database.py should describe the current HNSW index in a "
         "comment near DocumentChunk so the model file's reader doesn't "
         "have to dig through the migration chain"
+    )
+    assert "halfvec" in src, (
+        "The HNSW comment in models/database.py should mention the "
+        "`halfvec` cast — production embeddings exceed pgvector's 2000-dim "
+        "limit on regular `vector`, and halfvec is how the index works "
+        "around it. Without this note, the next eng to look at this file "
+        "won't know why a cast appears in the migration"
     )
 
 

@@ -274,11 +274,14 @@ class DocumentChunk(Base):
     # Vector-search index is created at migration time, NOT by SQLAlchemy
     # `create_all`. Currently HNSW with halfvec cast (production runs
     # 2560-dim embeddings via qwen3-embedding:4b — pgvector 0.8.1 limits
-    # regular `vector` to 2000-dim, so the index uses `embedding::halfvec(N)`):
+    # regular `vector` to 2000-dim, so the index uses
+    # `embedding::halfvec(<dim>)` where <dim> matches the active
+    # embedding_dimension at the time of the latest resize migration —
+    # 2560 in production today):
     #
     #   CREATE INDEX idx_document_chunks_embedding_hnsw
     #   ON document_chunks
-    #   USING hnsw ((embedding::halfvec({DIM})) halfvec_cosine_ops)
+    #   USING hnsw ((embedding::halfvec(2560)) halfvec_cosine_ops)
     #   WITH (m = 16, ef_construction = 64);
     #
     # Originally created as IVFFlat by b2c3d4e5f6g7_add_rag_tables.py and
