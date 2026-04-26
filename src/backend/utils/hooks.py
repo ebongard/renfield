@@ -159,10 +159,22 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     #       in parallel. Plugins can inspect or annotate the plan.
     #   pre_sub_agent / post_sub_agent: (role, query, result)
     #       Fired around each sub-agent step inside the orchestrator.
-    #   check_output: (role, response) -> dict | None
-    #       Final gate before returning a response to the user. Plugins
-    #       can reject or rewrite outputs that violate guardrails (e.g.
-    #       Reva's GDPR / prompt-leakage checks).
+    #   check_output: (content: str, role: str | None, user_id: int | None) -> str | None
+    #       Final gate before returning a response to the user. Handlers
+    #       receive the synthesized response and may return a redacted
+    #       string (used in place of `content`) or None to defer. Used
+    #       by Reva's GDPR / prompt-leakage output guard.
+    #
+    #       SECURITY-CRITICAL: callers should treat handler crashes as
+    #       fail-closed (refuse to send the unredacted text). Use
+    #       `run_hooks_with_errors` instead of `run_hooks` to surface
+    #       failures, then choose a fail-closed response.
+    #   extract_context_vars: (tool_summaries: list, session_id, user_id)
+    #       Fired fire-and-forget after persistence to extract
+    #       per-conversation state (e.g. current_release_id) from tool
+    #       results. Reva's transport.py uses an inline equivalent today;
+    #       this hook will be wired in chat_handler in Phase 2 of the
+    #       orchestrator-uplift project.
     "load_entity_patterns",
     "post_routing",
     "extend_orchestrator_roles",
@@ -171,6 +183,7 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "pre_sub_agent",
     "post_sub_agent",
     "check_output",
+    "extract_context_vars",
     # Sub-intent dispatch — fired by chat_handler after AgentRouter
     # classification when the matched role declares a sub_intent with a
     # ``dispatch: {type: handler, handler: <name>}`` config. Handlers
@@ -199,7 +212,14 @@ def register_hook(event: str, fn: HookFn) -> None:
 
 
 async def run_hooks(event: str, **kwargs: Any) -> list[Any]:
-    """Run all hooks for *event*, return non-None results. Never raises."""
+    """Run all hooks for *event*, return non-None results. Never raises.
+
+    Handler exceptions are caught and logged with full traceback at warning
+    level; the result list contains only successful, non-None contributions.
+    Callers cannot distinguish "no handler registered" from "handler crashed"
+    via the return value alone — use ``run_hooks_with_errors`` when the
+    distinction matters (e.g. fail-closed gates like ``check_output``).
+    """
     results: list[Any] = []
     for fn in _hooks.get(event, []):
         try:
@@ -211,6 +231,34 @@ async def run_hooks(event: str, **kwargs: Any) -> list[Any]:
                 f"Hook {getattr(fn, '__qualname__', repr(fn))} failed for {event}"
             )
     return results
+
+
+async def run_hooks_with_errors(
+    event: str, **kwargs: Any,
+) -> tuple[list[Any], list[tuple[HookFn, BaseException]]]:
+    """Like ``run_hooks`` but also returns a list of (handler, exception) pairs.
+
+    Use this for fail-closed semantics: when a handler crash means the
+    caller should refuse the operation rather than silently degrade. The
+    GDPR ``check_output`` gate is the canonical example — a redactor crash
+    must not cause unredacted text to ship.
+
+    Failures are still logged at warning level via the same path as
+    ``run_hooks``; this only changes whether the caller can observe them.
+    """
+    results: list[Any] = []
+    errors: list[tuple[HookFn, BaseException]] = []
+    for fn in _hooks.get(event, []):
+        try:
+            result = await fn(**kwargs)
+            if result is not None:
+                results.append(result)
+        except Exception as e:
+            errors.append((fn, e))
+            logger.opt(exception=True).warning(
+                f"Hook {getattr(fn, '__qualname__', repr(fn))} failed for {event}"
+            )
+    return results, errors
 
 
 def clear_hooks() -> None:
