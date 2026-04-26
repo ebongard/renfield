@@ -922,44 +922,64 @@ async def websocket_endpoint(
                     and settings.agent_orchestrator_enabled
                     and mcp_manager is not None
                 ):
-                    from services.orchestrator import QueryOrchestrator
-                    from utils.hooks import run_hooks
+                    from utils.hooks import run_hooks, run_hooks_with_errors
 
-                    orchestrator = QueryOrchestrator(agent_router, mcp_manager)
-                    sub_queries = None
+                    sub_queries: list[dict] | None = None
 
                     # Step 1 — ask plugins for a pre-computed plan.
-                    # Fires UNCONDITIONALLY (every role, including
-                    # `conversation` / `knowledge`) so a plugin can opt
-                    # vague queries into orchestration without depending
-                    # on the LLM planner. A handler returning ``None``
-                    # defers; a non-empty ``list[dict]`` is the plan.
-                    try:
-                        hook_results = await run_hooks(
-                            "pre_orchestration",
-                            plan=None,
-                            message=content,
-                            role=role,
-                            lang=ollama.default_lang,
-                            user_id=user_id,
-                            session_id=msg_session_id,
+                    # Fires UNCONDITIONALLY so a plugin can opt vague
+                    # queries into orchestration. None ⇒ defer; non-empty
+                    # list[dict] ⇒ use this plan, skip the planner.
+                    hook_results = await run_hooks(
+                        "pre_orchestration",
+                        plan=None,
+                        message=content,
+                        role=role,
+                        lang=ollama.default_lang,
+                        user_id=user_id,
+                        session_id=msg_session_id,
+                    )
+                    for hr in hook_results:
+                        if not (isinstance(hr, list) and hr):
+                            continue
+                        # Validate per-element shape — plugin plans are
+                        # untrusted input. Drop entries missing role/query
+                        # or referencing unknown roles; warn on any drop.
+                        validated = [
+                            sq for sq in hr
+                            if isinstance(sq, dict)
+                            and isinstance(sq.get("role"), str)
+                            and isinstance(sq.get("query"), str)
+                            and sq["role"] in agent_router.roles
+                        ]
+                        if len(validated) != len(hr):
+                            logger.warning(
+                                f"pre_orchestration plan: {len(hr)} entries, "
+                                f"{len(validated)} valid — discarded malformed entries"
+                            )
+                        if not validated:
+                            continue
+                        if len(validated) < 2:
+                            logger.info(
+                                f"🎼 pre_orchestration plan has only "
+                                f"{len(validated)} entry — orchestrator requires "
+                                f"≥2 sub-queries; falling through to single-role"
+                            )
+                            continue
+                        sub_queries = validated
+                        logger.info(
+                            f"🎼 pre_orchestration plan accepted: "
+                            f"{len(validated)} sub-queries → "
+                            f"{[sq['role'] for sq in validated]}"
                         )
-                        for hr in hook_results:
-                            if isinstance(hr, list) and hr:
-                                sub_queries = hr
-                                logger.info(
-                                    f"🎼 pre_orchestration hook returned plan with "
-                                    f"{len(hr)} sub-queries → {[sq.get('role') for sq in hr]}"
-                                )
-                                break
-                    except Exception as e:
-                        logger.warning(f"pre_orchestration hook raised, falling back to planner: {e}")
+                        break
 
-                    # Step 2 — if no plan, run the LLM planner. Skip it
-                    # for chitchat roles where the ~3-10s planner cost
-                    # would not pay off. Plugins that want orchestration
-                    # for those roles should supply a plan in step 1.
+                    # Step 2 — if no plan, run the LLM planner. Skip the
+                    # ~3-10s planner round-trip for chitchat roles.
+                    orchestrator = None
                     if sub_queries is None and role.name not in ("conversation", "knowledge"):
+                        from services.orchestrator import QueryOrchestrator
+                        orchestrator = QueryOrchestrator(agent_router, mcp_manager)
                         try:
                             sub_queries = await orchestrator.detect_multi_domain(
                                 content, ollama, lang=ollama.default_lang,
@@ -969,23 +989,31 @@ async def websocket_endpoint(
                             sub_queries = None
 
                     if sub_queries and len(sub_queries) >= 2:
+                        if orchestrator is None:
+                            from services.orchestrator import QueryOrchestrator
+                            orchestrator = QueryOrchestrator(agent_router, mcp_manager)
                         agent_used = True
                         orchestrated = True
                         logger.info(f"🎼 Orchestrator: {len(sub_queries)} sub-queries → {[sq.get('role') for sq in sub_queries]}")
                         executor = ActionExecutor(mcp_manager=mcp_manager, session_id=msg_session_id)
                         agent_tool_results = []
-                        # Buffer the final_answer step instead of streaming it,
-                        # so `check_output` (below) can redact before the user
-                        # sees the synthesized text. Tool steps + cards still
-                        # stream as they happen — only the synthesizer's
-                        # combined answer is held back.
+                        # Buffer final_answer AND card steps so check_output
+                        # can redact before send AND the card arrives after
+                        # the assistant message bubble it should attach to.
+                        # Tool steps still stream live for in-progress UX.
                         deferred_final_answer: str | None = None
+                        deferred_card: dict | None = None
+
+                        async def _typing_callback() -> None:
+                            await websocket.send_json({"type": "typing"})
+
                         async for step in orchestrator.run_orchestrated(
                             sub_queries=sub_queries,
                             message=content,
                             ollama=ollama,
                             executor=executor,
                             lang=ollama.default_lang,
+                            typing_callback=_typing_callback,
                             conversation_history=session_state.conversation_history if session_state.conversation_history else None,
                             room_context=room_context,
                             memory_context=memory_context,
@@ -998,7 +1026,11 @@ async def websocket_endpoint(
                         ):
                             if step.step_type == "final_answer":
                                 deferred_final_answer = step.content
-                                # Don't send to websocket yet — held for redaction.
+                            elif step.step_type == "card":
+                                # Hold the card until the assistant text
+                                # is on the wire — frontend attaches the
+                                # card to the latest assistant message.
+                                deferred_card = (step.data or {}).get("card")
                             else:
                                 await websocket.send_json(step_to_ws_message(step))
                             if step.step_type == "tool_result" and step.success and step.data:
@@ -1006,39 +1038,74 @@ async def websocket_endpoint(
                             if step.step_type in ("tool_call", "tool_result"):
                                 agent_steps_count += 1
 
-                        # check_output BEFORE sending the synthesized
-                        # answer to the client. Plugins (e.g. Reva's GDPR
-                        # output_guard) can return a redacted version;
-                        # the user sees only the redacted text.
+                        # check_output: fail-closed gate. If any handler
+                        # crashes, refuse to send unredacted text. The
+                        # GDPR/output-guard contract requires that a
+                        # broken redactor cannot leak data — silently
+                        # falling through with the original synthesis
+                        # would defeat the gate.
                         full_response = deferred_final_answer or ""
                         if full_response:
-                            try:
-                                redaction_results = await run_hooks(
-                                    "check_output",
-                                    content=full_response,
-                                    role=role.name if role else None,
-                                    user_id=user_id,
+                            redaction_results, redaction_errors = await run_hooks_with_errors(
+                                "check_output",
+                                content=full_response,
+                                role=role.name if role else None,
+                                user_id=user_id,
+                            )
+                            if redaction_errors:
+                                logger.error(
+                                    f"check_output handlers crashed "
+                                    f"({len(redaction_errors)} failures) — refusing to send "
+                                    f"unredacted response. Failed: "
+                                    f"{[fn.__qualname__ for fn, _ in redaction_errors]}"
                                 )
+                                full_response = (
+                                    "Antwort konnte nicht vollständig geprüft werden. "
+                                    "Bitte versuche es erneut."
+                                    if ollama.default_lang.startswith("de") else
+                                    "Response could not be fully validated. Please try again."
+                                )
+                            else:
                                 for rr in redaction_results:
-                                    if isinstance(rr, str) and rr and rr != full_response:
+                                    if not (isinstance(rr, str) and rr and rr != full_response):
+                                        continue
+                                    # Sanity check: extreme reduction (>95%)
+                                    # is more likely a redactor bug than
+                                    # legitimate redaction. Fail-closed.
+                                    ratio = len(rr) / max(1, len(full_response))
+                                    if ratio < 0.05:
+                                        logger.error(
+                                            f"check_output extreme redaction: "
+                                            f"{len(full_response)} → {len(rr)} chars "
+                                            f"(ratio={ratio:.3f}) — treating as fail-closed"
+                                        )
+                                        full_response = (
+                                            "[Inhalt zur Datenschutzprüfung zurückgehalten]"
+                                            if ollama.default_lang.startswith("de") else
+                                            "[content withheld for privacy review]"
+                                        )
+                                    else:
                                         logger.info(
-                                            f"check_output redacted orchestrated response "
+                                            f"check_output redacted "
                                             f"({len(full_response)} → {len(rr)} chars)"
                                         )
                                         full_response = rr
-                                        break
-                            except Exception as e:
-                                logger.warning(f"check_output hook raised, ignoring: {e}")
+                                    break
 
-                            # Now send the (possibly redacted) final answer.
-                            # Frontend handles `type: "stream"` for assistant text,
-                            # the same shape `step_to_ws_message` produces for a
-                            # final_answer AgentStep — so this matches the existing
-                            # contract. We send the whole thing in one message
-                            # (one chunk equals the complete redacted text).
+                            # Send the (possibly redacted/replaced) final
+                            # answer first, then the card. type: "stream"
+                            # mirrors step_to_ws_message's final_answer
+                            # shape — frontend treats the whole content
+                            # as one chunk.
                             await websocket.send_json({
                                 "type": "stream",
                                 "content": full_response,
+                            })
+
+                        if deferred_card:
+                            await websocket.send_json({
+                                "type": "card",
+                                "card": deferred_card,
                             })
 
                         if agent_tool_results:
