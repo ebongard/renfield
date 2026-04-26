@@ -10,6 +10,7 @@ Opt-in via AGENT_ORCHESTRATOR_ENABLED=true.
 
 import asyncio
 import json
+import re
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,22 @@ from loguru import logger
 from services.prompt_manager import prompt_manager
 from utils.config import settings
 from utils.llm_client import extract_response_content, get_agent_client, get_classification_chat_kwargs
+
+
+# Strip "_Quelle: ..._" / "_Source: ..._" lines that synthesizer LLMs
+# sometimes write alongside the actual answer. Transports/plugins that
+# attach their own canonical source footer (Reva's transport.py) expect
+# the LLM not to duplicate it. The pattern tolerates italic/bold markers,
+# both DE and EN variants, and trailing whitespace. Anchored to line
+# start; multi-line mode so the regex acts per-line.
+_SOURCE_LINE_RE: re.Pattern[str] = re.compile(
+    r"(?im)^\s*[_*]*\s*(quelle|source|sources|quellen)\s*[:：][^\n]*[_*]*\s*$",
+)
+
+
+def _strip_source_line(answer: str) -> str:
+    """Remove any trailing ``_Quelle: ..._`` / ``_Source: ..._`` line."""
+    return _SOURCE_LINE_RE.sub("", answer).rstrip()
 
 if TYPE_CHECKING:
     from services.action_executor import ActionExecutor
@@ -685,16 +702,66 @@ class QueryOrchestrator:
         ollama: "OllamaService",
         lang: str,
     ) -> str | None:
-        """Combine sub-results into a unified answer via LLM."""
+        """Combine sub-results into a unified answer via LLM.
+
+        Plugin extension points:
+
+        - ``build_synthesis_context`` — fires before the prompt is built.
+          Plugins return a text block to append to ``collected_data`` so
+          the synthesizer can reference plugin-specific context (e.g.
+          Reva's contacts engine emits a ``<contacts>...</contacts>``
+          block for the synthesizer to mention contact persons in prose).
+          First non-None result wins.
+
+        - ``synthesis_prompt_override`` — fires after ``collected_data``
+          is finalized. Plugins return a fully-templated synth prompt
+          to replace Renfield's default. First non-None result wins.
+
+        - Source-line stripping is applied unconditionally to the synth
+          output: ``_Quelle: ..._`` / ``_Source: ..._`` lines are removed
+          (DE+EN, italic markers tolerated). Transports/plugins that
+          attach their own canonical source footer expect the LLM not to
+          duplicate it; this is generic enough to be a default.
+        """
+        from utils.hooks import run_hooks
+
         results_text = "\n".join(
             f"- [{r['role']}] {r['query']}: {r['answer']}"
             for r in sub_results
         )
 
-        synthesize_prompt = prompt_manager.get(
-            "agent", "orchestrator_synthesize_prompt", lang=lang,
-            message=message, sub_results=results_text,
+        # Hook: plugins may append plugin-specific context to the
+        # collected sub-results before the synthesizer sees them.
+        context_results = await run_hooks(
+            "build_synthesis_context",
+            message=message,
+            sub_results=sub_results,
+            lang=lang,
         )
+        for cr in context_results:
+            if isinstance(cr, str) and cr:
+                results_text = f"{results_text}\n\n{cr}"
+                break
+
+        # Hook: plugins may override the synthesizer prompt entirely.
+        synthesize_prompt: str | None = None
+        override_results = await run_hooks(
+            "synthesis_prompt_override",
+            message=message,
+            collected_data=results_text,
+            lang=lang,
+        )
+        for op in override_results:
+            if isinstance(op, str) and op:
+                synthesize_prompt = op
+                break
+
+        if synthesize_prompt is None:
+            synthesize_prompt = prompt_manager.get(
+                "agent", "orchestrator_synthesize_prompt", lang=lang,
+                message=message, sub_results=results_text,
+            )
+
         if not synthesize_prompt:
             # Fallback: concatenate
             return "\n\n".join(r["answer"] for r in sub_results if r["answer"])
@@ -712,7 +779,8 @@ class QueryOrchestrator:
                 ),
                 timeout=settings.orchestrator_synthesis_timeout,
             )
-            return extract_response_content(raw_response) or None
+            answer = extract_response_content(raw_response) or None
+            return _strip_source_line(answer) if answer else None
 
         except Exception as e:
             logger.warning(f"Orchestrator synthesis failed: {e}")

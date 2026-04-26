@@ -2178,5 +2178,232 @@ class TestPostSubAgentFiresAfterCrash:
 
 
 # ============================================================================
+# Phase 1.5 — synthesis hooks (build_synthesis_context, synthesis_prompt_override)
+#               + source-line stripping
+# ============================================================================
+
+class TestSynthesisHooks:
+    """``_synthesize`` exposes two extension points and one default behavior:
+    ``build_synthesis_context`` (append plugin context to the synth prompt's
+    collected_data block), ``synthesis_prompt_override`` (replace the entire
+    templated prompt), and source-line stripping on the LLM output."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_hooks(self):
+        from utils.hooks import clear_hooks
+        clear_hooks()
+        yield
+        clear_hooks()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_build_synthesis_context_appended_to_collected_data(self):
+        """Plugin's returned text block must be appended to the prompt's collected data."""
+        from utils.hooks import register_hook
+
+        captured: dict[str, str] = {}
+
+        async def context_handler(message, sub_results, lang, **_):
+            return "<contacts>\n  - Alice\n  - Bob\n</contacts>"
+
+        register_hook("build_synthesis_context", context_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        # Capture the templated prompt by stubbing prompt_manager.get.
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "DEFAULT_PROMPT"
+            s.agent_router_model = "test-model"
+            s.ollama_intent_model = "test-model"
+            s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 10.0
+
+            sub_results = [
+                {"role": "release", "query": "status", "answer": "ok"},
+                {"role": "jira", "query": "tickets", "answer": "no tickets"},
+            ]
+
+            await orchestrator._synthesize("msg", sub_results, _make_ollama("synthesized"), "de")
+
+            kwargs = pm.get.call_args.kwargs
+            captured["sub_results"] = kwargs.get("sub_results", "")
+
+        # Plugin's contacts block must appear after the per-role bullets.
+        assert "<contacts>" in captured["sub_results"]
+        assert "Alice" in captured["sub_results"]
+        # Original bullets still present.
+        assert "[release]" in captured["sub_results"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_build_synthesis_context_first_non_none_wins(self):
+        """When two handlers return text, the first registration wins."""
+        from utils.hooks import register_hook
+
+        async def first_handler(message, sub_results, lang, **_):
+            return "BLOCK_FIRST"
+
+        async def second_handler(message, sub_results, lang, **_):
+            return "BLOCK_SECOND"
+
+        register_hook("build_synthesis_context", first_handler)
+        register_hook("build_synthesis_context", second_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "X"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 10.0
+
+            await orchestrator._synthesize(
+                "msg",
+                [{"role": "release", "query": "q", "answer": "a"}],
+                _make_ollama("synthesized"), "de",
+            )
+
+            sr = pm.get.call_args.kwargs.get("sub_results", "")
+
+        assert "BLOCK_FIRST" in sr
+        assert "BLOCK_SECOND" not in sr
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_synthesis_prompt_override_replaces_template(self):
+        """Plugin-supplied prompt is sent verbatim to the LLM; default template is skipped."""
+        from utils.hooks import register_hook
+
+        async def override_handler(message, collected_data, lang, **_):
+            return f"PLUGIN_PROMPT[message={message}]"
+
+        register_hook("synthesis_prompt_override", override_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        ollama = _make_ollama("synth output")
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "DEFAULT_PROMPT_NEVER_USED"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 10.0
+
+            await orchestrator._synthesize(
+                "what is the status",
+                [{"role": "release", "query": "q", "answer": "a"}],
+                ollama, "de",
+            )
+
+        # ollama.client.chat received the plugin's prompt, not the default.
+        chat_kwargs = ollama.client.chat.call_args.kwargs
+        sent_messages = chat_kwargs["messages"]
+        assert sent_messages[0]["content"] == "PLUGIN_PROMPT[message=what is the status]"
+        # prompt_manager.get was never reached because the override returned non-None.
+        assert pm.get.called is False
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_synthesis_prompt_override_none_falls_through_to_default(self):
+        """When all plugins return None, Renfield uses prompt_manager.get default."""
+        from utils.hooks import register_hook
+
+        async def noop_handler(message, collected_data, lang, **_):
+            return None
+
+        register_hook("synthesis_prompt_override", noop_handler)
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "DEFAULT_PROMPT"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 10.0
+
+            await orchestrator._synthesize(
+                "msg",
+                [{"role": "release", "query": "q", "answer": "a"}],
+                _make_ollama("synth"), "de",
+            )
+
+            assert pm.get.called
+
+    @pytest.mark.unit
+    def test_strip_source_line_de(self):
+        """The DE _Quelle: ..._ pattern is stripped."""
+        from services.orchestrator import _strip_source_line
+        text = (
+            "Hier ist die Antwort.\n"
+            "\n"
+            "_Quelle: Digital.ai Release_"
+        )
+        result = _strip_source_line(text)
+        assert "Quelle" not in result
+        assert "Hier ist die Antwort." in result
+
+    @pytest.mark.unit
+    def test_strip_source_line_en(self):
+        """The EN _Source: ..._ pattern is stripped."""
+        from services.orchestrator import _strip_source_line
+        text = "Here is the answer.\n\n_Source: Digital.ai Release_"
+        result = _strip_source_line(text)
+        assert "Source" not in result
+        assert "Here is the answer." in result
+
+    @pytest.mark.unit
+    def test_strip_source_line_plural_quellen(self):
+        """The DE plural ``Quellen:`` variant is also stripped."""
+        from services.orchestrator import _strip_source_line
+        text = "Antwort hier.\n\n_Quellen: Release, Jira_"
+        assert "Quellen" not in _strip_source_line(text)
+
+    @pytest.mark.unit
+    def test_strip_source_line_no_match_passthrough(self):
+        """Text without a source line is returned unmodified (modulo trailing ws)."""
+        from services.orchestrator import _strip_source_line
+        text = "Just an answer with no source line."
+        assert _strip_source_line(text) == text
+
+    @pytest.mark.unit
+    def test_strip_source_line_inline_quelle_not_stripped(self):
+        """Only line-anchored Quelle: matches are stripped — inline mentions stay."""
+        from services.orchestrator import _strip_source_line
+        text = "Die Quelle: ist offiziell und vertrauenswürdig."
+        # Inline (not at line start with surrounding markers) — should pass through.
+        # Note: regex is anchored to ^\s* so a sentence starting "Die Quelle:" doesn't match.
+        assert "Quelle" in _strip_source_line(text)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_strip_applied_after_synthesis(self):
+        """End-to-end: a synth response containing _Quelle: ..._ is stripped before return."""
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        ollama = _make_ollama("Here is the synthesized answer.\n\n_Quelle: Test_")
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}):
+            pm.get.return_value = "PROMPT"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 10.0
+
+            answer = await orchestrator._synthesize(
+                "msg",
+                [{"role": "release", "query": "q", "answer": "a"}],
+                ollama, "de",
+            )
+
+        assert "Quelle" not in (answer or "")
+        assert "synthesized answer" in (answer or "")
+
+
+# ============================================================================
 # Phase 1 (orchestrator-uplift) — backwards compat: vanilla Renfield deploy
 # ============================================================================

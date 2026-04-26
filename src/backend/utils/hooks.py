@@ -175,6 +175,19 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     #       results. Reva's transport.py uses an inline equivalent today;
     #       this hook will be wired in chat_handler in Phase 2 of the
     #       orchestrator-uplift project.
+    #   build_synthesis_context: (message, sub_results, lang) -> str | None
+    #       Fired inside QueryOrchestrator._synthesize before the synth
+    #       prompt is templated. Plugins return a text block that gets
+    #       APPENDED to the collected sub-results before the synthesizer
+    #       LLM sees it. Reva uses this to inject a <contacts> block so
+    #       the synthesized prose can mention contact persons. First
+    #       non-None result wins (deterministic ordering by registration).
+    #   synthesis_prompt_override: (message, collected_data, lang) -> str | None
+    #       Fired inside QueryOrchestrator._synthesize to let plugins
+    #       fully replace the default synthesizer prompt template. Plugins
+    #       return the FINAL TEMPLATED PROMPT (already formatted with
+    #       message + collected_data), not a template. None defers to
+    #       Renfield's default. First non-None result wins.
     "load_entity_patterns",
     "post_routing",
     "extend_orchestrator_roles",
@@ -184,6 +197,8 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     "post_sub_agent",
     "check_output",
     "extract_context_vars",
+    "build_synthesis_context",
+    "synthesis_prompt_override",
     # Sub-intent dispatch — fired by chat_handler after AgentRouter
     # classification when the matched role declares a sub_intent with a
     # ``dispatch: {type: handler, handler: <name>}`` config. Handlers
