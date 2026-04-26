@@ -483,7 +483,13 @@ class TestRunSubAgentListData:
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
-            MockReg.return_value = MagicMock()
+            # _hook_task explicitly None so the orchestrator's "wait for plugin
+            # tools" path stays a no-op (MagicMock would auto-create a non-None,
+            # non-awaitable attribute that the orchestrator now correctly
+            # treats as a hook_task crash → fail-the-sub-agent).
+            mock_registry = MagicMock()
+            mock_registry._hook_task = None
+            MockReg.return_value = mock_registry
 
             result = await orchestrator._run_sub_agent(
                 {"role": "jira", "query": "find tickets"},
@@ -524,7 +530,9 @@ class TestRunSubAgentListData:
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
-            MockReg.return_value = MagicMock()
+            mock_registry = MagicMock()
+            mock_registry._hook_task = None
+            MockReg.return_value = mock_registry
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -1859,9 +1867,9 @@ class TestEmitCombinedAllFailed:
         finals = [s for s in steps if s.step_type == "final_answer"]
         assert len(finals) == 1
         assert finals[0].content  # non-empty
-        # Localized — German indicators
+        # Localized — German indicators from the actual all-failed message
         assert any(token in finals[0].content.lower()
-                   for token in ("anfrage", "fehl", "leider", "konnte"))
+                   for token in ("keine", "antwort", "versuch", "betroffen"))
 
     @pytest.mark.unit
     @pytest.mark.asyncio
