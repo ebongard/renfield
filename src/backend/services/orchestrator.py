@@ -47,11 +47,48 @@ class QueryOrchestrator:
         """Detect if a message needs multi-domain handling.
 
         Returns list of sub-queries [{role: str, query: str}] or None.
+
+        Plugin extension: the ``extend_orchestrator_roles`` hook runs
+        before the planner prompt is built. Each handler returns an
+        iterable of additional role *names* to include in the planner's
+        role list (the role's existing description from ``self.router.roles``
+        is used; unknown names are silently ignored). This lets a plugin
+        promote a non-``has_agent_loop`` role into the planner's vocabulary
+        without modifying the agent_router.
         """
+        from utils.hooks import run_hooks
+
+        # Default eligibility: any role with an agent loop. Plugins can
+        # extend this set via the extend_orchestrator_roles hook.
+        eligible_names: set[str] = {
+            role.name for role in self.router.roles.values() if role.has_agent_loop
+        }
+        try:
+            extra_results = await run_hooks(
+                "extend_orchestrator_roles",
+                roles=self.router.roles,
+                lang=lang,
+            )
+        except Exception as e:
+            logger.warning(f"extend_orchestrator_roles hook raised, ignoring: {e}")
+            extra_results = []
+
+        for er in extra_results:
+            if er is None:
+                continue
+            try:
+                eligible_names.update(name for name in er if name in self.router.roles)
+            except TypeError:
+                logger.warning(
+                    f"extend_orchestrator_roles handler returned non-iterable "
+                    f"(type={type(er).__name__}); ignoring"
+                )
+
         # Build role descriptions for the detection prompt
         role_lines = []
-        for role in self.router.roles.values():
-            if not role.has_agent_loop:
+        for name in sorted(eligible_names):
+            role = self.router.roles.get(name)
+            if role is None:
                 continue
             desc = role.description.get(lang, role.description.get("de", ""))
             role_lines.append(f"- {role.name}: {desc}")
@@ -164,23 +201,22 @@ class QueryOrchestrator:
         When agent_orchestrator_parallel is True, sub-agents run in parallel
         with isolated contexts. Otherwise falls back to sequential execution.
 
-        Fires `pre_orchestration` before sub-agents launch and
-        `post_orchestration` after synthesis. If any post_orchestration handler
-        returns a dict containing a `card` key, an additional AgentStep with
+        Fires ``post_orchestration`` after synthesis. If any handler
+        returns a dict containing a ``card`` key, an additional AgentStep with
         step_type="card" is yielded so the WebSocket layer can forward it to
         the client. First well-shaped card wins.
+
+        ``pre_orchestration`` is *not* fired here — it fires upstream in the
+        caller (chat_handler / Teams transport) before sub_queries are
+        determined, so plugins can inject a pre-computed plan. By the time
+        we reach this method, the plan is already final. Firing again here
+        would create double-firing semantics that handlers would have to
+        guard against.
 
         Yields AgentStep objects for real-time feedback.
         """
         from services.agent_service import AgentStep
         from utils.hooks import run_hooks
-
-        plan = {"sub_queries": list(sub_queries), "message": message, "lang": lang}
-        try:
-            await run_hooks("pre_orchestration", message=message, plan=plan, lang=lang)
-        except Exception as e:
-            # Hook failures must never break orchestration.
-            logger.warning(f"pre_orchestration hook raised, ignoring: {e}")
 
         sub_results: list[dict] = []
         final_answer: str | None = None
@@ -233,10 +269,18 @@ class QueryOrchestrator:
     ) -> dict:
         """Run a single sub-agent to completion with isolated context.
 
-        Returns dict with role, query, answer, and collected steps.
+        Fires ``pre_sub_agent`` before the agent loop (after the per-task
+        tool registry is built — handlers may mutate it, e.g. to pre-select
+        a narrower tool list) and ``post_sub_agent`` after the loop
+        completes. Each handler's return-dict is merged into the result's
+        ``plugin_data`` field so callers downstream (``post_orchestration``)
+        see a single accumulated dict per sub-agent.
+
+        Returns dict with role, query, answer, steps, and plugin_data.
         """
         from services.agent_service import AgentService
         from services.agent_tools import AgentToolRegistry
+        from utils.hooks import run_hooks
 
         role_name = sq["role"]
         query = sq["query"]
@@ -244,7 +288,7 @@ class QueryOrchestrator:
 
         if not role or not role.has_agent_loop:
             logger.warning(f"Orchestrator: skipping invalid role '{role_name}'")
-            return {"role": role_name, "query": query, "answer": "", "steps": []}
+            return {"role": role_name, "query": query, "answer": "", "steps": [], "plugin_data": {}}
 
         logger.info(f"Orchestrator: launching sub-agent [{role_name}]: {query[:60]}")
 
@@ -254,7 +298,36 @@ class QueryOrchestrator:
             server_filter=role.mcp_servers,
             internal_filter=role.internal_tools,
         )
+
+        # Wait for plugin-registered tools to be ready before the agent
+        # loop reads the registry. ``register_tools`` hooks attach tools
+        # asynchronously via ``_hook_task``; without this await the agent
+        # may run before plugin tools are registered, causing intermittent
+        # "tool not found" failures on the first orchestrated call after
+        # startup. The single-agent path in chat_handler also lacks this
+        # await — fixing it here is part of the orchestrator uplift.
+        hook_task = getattr(tool_registry, "_hook_task", None)
+        if hook_task is not None:
+            try:
+                await hook_task
+            except Exception as e:
+                logger.warning(f"tool_registry._hook_task raised, continuing: {e}")
+
         agent = AgentService(tool_registry, role=role)
+
+        # Fire pre_sub_agent — plugins receive the registry and may mutate
+        # it (e.g. tool pre-selection, contact accumulator init). Hook
+        # exceptions never break the sub-agent.
+        try:
+            await run_hooks(
+                "pre_sub_agent",
+                step=sq,
+                role=role_name,
+                tool_registry=tool_registry,
+                lang=lang,
+            )
+        except Exception as e:
+            logger.warning(f"pre_sub_agent hook raised, continuing: {e}")
 
         steps = []
         final_answer = None
@@ -279,8 +352,36 @@ class QueryOrchestrator:
             if step.step_type == "final_answer":
                 final_answer = step.content
 
+        result = {
+            "role": role_name,
+            "query": query,
+            "answer": final_answer or "",
+            "steps": steps,
+            "plugin_data": {},
+        }
+
+        # Fire post_sub_agent — plugins receive the completed result and
+        # may attach side-channel data (drained contact accumulators,
+        # provenance entries, telemetry). Each handler's return-dict is
+        # merged into result["plugin_data"]; later handlers' keys win.
+        try:
+            hook_results = await run_hooks(
+                "post_sub_agent",
+                step=sq,
+                role=role_name,
+                result=result,
+                lang=lang,
+            )
+        except Exception as e:
+            logger.warning(f"post_sub_agent hook raised, continuing: {e}")
+            hook_results = []
+
+        for hr in hook_results:
+            if isinstance(hr, dict):
+                result["plugin_data"].update(hr)
+
         logger.info(f"Orchestrator: sub-agent [{role_name}] completed ({len(steps)} steps)")
-        return {"role": role_name, "query": query, "answer": final_answer or "", "steps": steps}
+        return result
 
     async def _run_parallel(
         self,

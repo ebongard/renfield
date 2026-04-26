@@ -921,17 +921,61 @@ async def websocket_endpoint(
                     not sub_intent_handled
                     and settings.agent_orchestrator_enabled
                     and mcp_manager is not None
-                    and role.name not in ("conversation", "knowledge")
                 ):
+                    # Fire pre_orchestration UNCONDITIONALLY — even for the
+                    # `conversation` and `knowledge` roles. Plugins (e.g.
+                    # Reva's QueryPlan) can return a pre-computed plan here
+                    # to opt vague conversational queries into orchestration
+                    # without depending on the LLM planner. Returning None
+                    # means "no pre-computed plan, defer to the planner";
+                    # returning list[dict] means "use this plan, skip the
+                    # planner".
+                    sub_queries = None
                     try:
+                        from utils.hooks import run_hooks
+                        hook_results = await run_hooks(
+                            "pre_orchestration",
+                            plan=None,
+                            message=content,
+                            role=role,
+                            lang=ollama.default_lang,
+                            user_id=user_id,
+                            session_id=msg_session_id,
+                        )
+                        for hr in hook_results:
+                            if isinstance(hr, list) and hr:
+                                sub_queries = hr
+                                logger.info(
+                                    f"🎼 pre_orchestration hook returned plan with "
+                                    f"{len(hr)} sub-queries → {[sq.get('role') for sq in hr]}"
+                                )
+                                break
+                    except Exception as e:
+                        logger.warning(f"pre_orchestration hook raised, falling back to planner: {e}")
+
+                    # No pre-computed plan? Run the LLM planner — but only
+                    # for orchestrator-eligible roles (everything that has
+                    # an agent loop and is not pure-conversation). The
+                    # planner is expensive (~3-10s); skipping it for
+                    # conversation/knowledge keeps chitchat fast.
+                    if sub_queries is None and role.name not in ("conversation", "knowledge"):
+                        try:
+                            from services.orchestrator import QueryOrchestrator
+                            orchestrator = QueryOrchestrator(agent_router, mcp_manager)
+                            sub_queries = await orchestrator.detect_multi_domain(
+                                content, ollama, lang=ollama.default_lang,
+                            )
+                        except Exception as _orch_err:
+                            logger.warning(f"Orchestrator detection failed, falling back to single-role: {_orch_err}")
+                            sub_queries = None
+                    elif sub_queries is None:
+                        # Conversation / knowledge role with no plugin-supplied plan:
+                        # explicitly skip the planner (cheap path, no LLM call).
+                        pass
+                    else:
+                        # Plugin supplied a plan — instantiate orchestrator for run_orchestrated below.
                         from services.orchestrator import QueryOrchestrator
                         orchestrator = QueryOrchestrator(agent_router, mcp_manager)
-                        sub_queries = await orchestrator.detect_multi_domain(
-                            content, ollama, lang=ollama.default_lang,
-                        )
-                    except Exception as _orch_err:
-                        logger.warning(f"Orchestrator detection failed, falling back to single-role: {_orch_err}")
-                        sub_queries = None
 
                     if sub_queries and len(sub_queries) >= 2:
                         agent_used = True
@@ -967,6 +1011,35 @@ async def websocket_endpoint(
                             action_result = _build_agent_action_result(agent_tool_results)
                         if not intent:
                             intent = {"intent": "agent.orchestrated", "confidence": 1.0, "parameters": {}}
+
+                        # check_output: plugins can validate/redact the
+                        # synthesized response before it is persisted.
+                        # The streamed websocket text was already sent
+                        # unmodified (UX preserved); this updates
+                        # `full_response` so the persisted message and
+                        # any downstream logging see the redacted form.
+                        # A future iteration can buffer the synthesis and
+                        # only send after redaction completes.
+                        if full_response:
+                            try:
+                                from utils.hooks import run_hooks
+                                redaction_results = await run_hooks(
+                                    "check_output",
+                                    content=full_response,
+                                    role=role.name if role else None,
+                                    user_id=user_id,
+                                )
+                                for rr in redaction_results:
+                                    if isinstance(rr, str) and rr and rr != full_response:
+                                        logger.info(
+                                            f"check_output redacted orchestrated response "
+                                            f"({len(full_response)} → {len(rr)} chars)"
+                                        )
+                                        full_response = rr
+                                        break
+                            except Exception as e:
+                                logger.warning(f"check_output hook raised, ignoring: {e}")
+
                         logger.info(f"🎼 Orchestrator abgeschlossen: {agent_steps_count} Steps across {len(sub_queries)} sub-agents")
 
                 if sub_intent_handled:
