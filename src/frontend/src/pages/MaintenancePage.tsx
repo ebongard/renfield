@@ -7,16 +7,29 @@
  * - Intent debugging
  */
 import { useState } from 'react';
+import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import {
-  Wrench, Search, Database, Bug, Loader, AlertCircle, CheckCircle
+  Wrench, Search, Database, Bug, Loader, AlertCircle, CheckCircle,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 
-function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAction, variant }) {
+interface ActionRowProps {
+  title: string;
+  description: string;
+  buttonLabel: string;
+  icon?: LucideIcon;
+  loading: boolean;
+  onAction: () => void | Promise<void>;
+  variant?: 'warning' | 'primary';
+}
+
+function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAction, variant }: ActionRowProps) {
   return (
     <div className="flex items-center justify-between py-3">
       <div className="flex-1 min-w-0 mr-4">
@@ -41,7 +54,12 @@ function ActionRow({ title, description, buttonLabel, icon: Icon, loading, onAct
   );
 }
 
-function ResultBox({ success, children }) {
+interface ResultBoxProps {
+  success: boolean;
+  children?: ReactNode;
+}
+
+function ResultBox({ success, children }: ResultBoxProps) {
   if (!children) return null;
   return (
     <div className={`mt-2 p-3 rounded-lg flex items-start gap-2 text-sm ${
@@ -63,28 +81,45 @@ export default function MaintenancePage() {
   const { t } = useTranslation();
   const { getAccessToken } = useAuth();
 
+  interface FtsResult {
+    updated_count?: number;
+    updated?: number;
+    fts_config?: string;
+  }
+  interface KwResult {
+    keywords_count?: number;
+    count?: number;
+    sample?: string[] | string;
+  }
+  interface EmbedResult {
+    model?: string;
+    counts?: Record<string, number>;
+    errors?: string[];
+  }
+  type IntentResult = Record<string, unknown>;
+
   // FTS Reindex
   const [ftsLoading, setFtsLoading] = useState(false);
-  const [ftsResult, setFtsResult] = useState(null);
-  const [ftsError, setFtsError] = useState(null);
+  const [ftsResult, setFtsResult] = useState<FtsResult | null>(null);
+  const [ftsError, setFtsError] = useState<string | null>(null);
 
   // HA Keywords
   const [kwLoading, setKwLoading] = useState(false);
-  const [kwResult, setKwResult] = useState(null);
-  const [kwError, setKwError] = useState(null);
+  const [kwResult, setKwResult] = useState<KwResult | null>(null);
+  const [kwError, setKwError] = useState<string | null>(null);
 
   // Re-embed
   const [embedLoading, setEmbedLoading] = useState(false);
-  const [embedResult, setEmbedResult] = useState(null);
-  const [embedError, setEmbedError] = useState(null);
+  const [embedResult, setEmbedResult] = useState<EmbedResult | null>(null);
+  const [embedError, setEmbedError] = useState<string | null>(null);
 
   // Intent debug
   const [intentMessage, setIntentMessage] = useState('');
   const [intentLoading, setIntentLoading] = useState(false);
-  const [intentResult, setIntentResult] = useState(null);
-  const [intentError, setIntentError] = useState(null);
+  const [intentResult, setIntentResult] = useState<IntentResult | null>(null);
+  const [intentError, setIntentError] = useState<string | null>(null);
 
-  const getAuthHeaders = async () => {
+  const getAuthHeaders = async (): Promise<Record<string, string>> => {
     const token = await getAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
@@ -97,10 +132,10 @@ export default function MaintenancePage() {
     setFtsError(null);
     try {
       const headers = await getAuthHeaders();
-      const response = await apiClient.post('/api/knowledge/reindex-fts', null, { headers });
+      const response = await apiClient.post<FtsResult>('/api/knowledge/reindex-fts', null, { headers });
       setFtsResult(response.data);
     } catch (err) {
-      setFtsError(err.response?.data?.detail || t('maintenance.errors.reindexFailed'));
+      setFtsError(extractApiError(err, t('maintenance.errors.reindexFailed')));
     } finally {
       setFtsLoading(false);
     }
@@ -112,10 +147,10 @@ export default function MaintenancePage() {
     setKwError(null);
     try {
       const headers = await getAuthHeaders();
-      const response = await apiClient.post('/admin/refresh-keywords', null, { headers });
+      const response = await apiClient.post<KwResult>('/admin/refresh-keywords', null, { headers });
       setKwResult(response.data);
     } catch (err) {
-      setKwError(err.response?.data?.detail || t('maintenance.errors.refreshKeywordsFailed'));
+      setKwError(extractApiError(err, t('maintenance.errors.refreshKeywordsFailed')));
     } finally {
       setKwLoading(false);
     }
@@ -128,13 +163,13 @@ export default function MaintenancePage() {
     setEmbedError(null);
     try {
       const headers = await getAuthHeaders();
-      const response = await apiClient.post('/admin/reembed', null, {
+      const response = await apiClient.post<EmbedResult>('/admin/reembed', null, {
         headers,
-        timeout: 1800000 // 30 minutes
+        timeout: 1800000, // 30 minutes
       });
       setEmbedResult(response.data);
     } catch (err) {
-      setEmbedError(err.response?.data?.detail || t('maintenance.errors.reembedFailed'));
+      setEmbedError(extractApiError(err, t('maintenance.errors.reembedFailed')));
     } finally {
       setEmbedLoading(false);
     }
@@ -147,14 +182,14 @@ export default function MaintenancePage() {
     setIntentError(null);
     try {
       const headers = await getAuthHeaders();
-      const response = await apiClient.post(
+      const response = await apiClient.post<IntentResult>(
         `/debug/intent?message=${encodeURIComponent(intentMessage.trim())}`,
         null,
-        { headers }
+        { headers },
       );
       setIntentResult(response.data);
     } catch (err) {
-      setIntentError(err.response?.data?.detail || t('maintenance.errors.intentTestFailed'));
+      setIntentError(extractApiError(err, t('maintenance.errors.intentTestFailed')));
     } finally {
       setIntentLoading(false);
     }

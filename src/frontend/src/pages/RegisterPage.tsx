@@ -4,6 +4,7 @@
  * Allows new users to create an account.
  */
 import { useState, useEffect } from 'react';
+import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, Link } from 'react-router';
 import { useAuth } from '../context/AuthContext';
@@ -21,7 +22,7 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   // Redirect if already authenticated or registration is disabled
@@ -43,7 +44,7 @@ export default function RegisterPage() {
     }
   }, [error]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
     // Validation

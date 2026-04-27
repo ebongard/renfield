@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
 import {
@@ -16,6 +17,26 @@ import {
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+
+type AuditStatus = 'success' | 'failed' | 'in_progress' | string;
+
+interface AuditEntry {
+  id: string;
+  peer_pubkey: string;
+  peer_display_name: string;
+  query_text: string;
+  answer_excerpt?: string;
+  error_message?: string;
+  initiated_at: string;
+  finalized_at?: string;
+  final_status: AuditStatus;
+  verified_signature?: boolean;
+}
+
+interface StatusIconProps {
+  status: AuditStatus;
+  verified?: boolean;
+}
 
 /**
  * /brain/audit
@@ -35,7 +56,7 @@ import Alert from '../components/Alert';
  */
 const PAGE_SIZE = 50;
 
-function StatusIcon({ status, verified }) {
+function StatusIcon({ status, verified }: StatusIconProps) {
   if (status === 'success') {
     return verified
       ? <CheckCircle2 className="w-4 h-4 text-green-500 dark:text-green-400" aria-hidden="true" />
@@ -47,7 +68,7 @@ function StatusIcon({ status, verified }) {
   return <HelpCircle className="w-4 h-4 text-gray-400 dark:text-gray-500" aria-hidden="true" />;
 }
 
-function formatDateTime(iso, lang) {
+function formatDateTime(iso: string | undefined, lang: string): string {
   if (!iso) return '';
   try {
     const d = new Date(iso);
@@ -60,7 +81,11 @@ function formatDateTime(iso, lang) {
   }
 }
 
-function formatRelativeDuration(startIso, endIso, t) {
+function formatRelativeDuration(
+  startIso: string | undefined,
+  endIso: string | undefined,
+  t: TFunction,
+): string | null {
   if (!startIso || !endIso) return null;
   try {
     const start = new Date(startIso).getTime();
@@ -81,17 +106,17 @@ export default function FederationAuditPage() {
 
   const peerFilter = searchParams.get('peer');
 
-  const [entries, setEntries] = useState([]);
+  const [entries, setEntries] = useState<AuditEntry[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [expanded, setExpanded] = useState(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
       if (peerFilter) params.set('peer_pubkey', peerFilter);
-      const response = await apiClient.get(`/api/federation/audit?${params}`);
+      const response = await apiClient.get<{ entries: AuditEntry[] }>(`/api/federation/audit?${params}`);
       setEntries(response.data.entries || []);
       setError(null);
     } catch {
@@ -105,7 +130,7 @@ export default function FederationAuditPage() {
     load();
   }, [load]);
 
-  const toggleExpand = (id) => {
+  const toggleExpand = (id: string) => {
     setExpanded((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
