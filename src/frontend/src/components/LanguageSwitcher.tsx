@@ -25,7 +25,6 @@ export default function LanguageSwitcher({ compact = false }: LanguageSwitcherPr
   const { i18n, t } = useTranslation();
   const { isAuthenticated, authEnabled } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
-  const [, setSyncing] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
   const initialLoadDone = useRef(false);
 
@@ -77,14 +76,10 @@ export default function LanguageSwitcher({ compact = false }: LanguageSwitcherPr
   const syncToBackend = useCallback(
     async (code: LanguageCode) => {
       if (!authEnabled || !isAuthenticated) return;
-
-      setSyncing(true);
       try {
         await apiClient.put('/api/preferences/language', { language: code });
       } catch (error) {
         console.warn('Failed to sync language preference:', error);
-      } finally {
-        setSyncing(false);
       }
     },
     [isAuthenticated, authEnabled],

@@ -12,13 +12,10 @@ import {
   Plus,
   RefreshCw,
   CheckCircle,
-  XCircle,
-  Clock,
   Loader,
   Database,
   Layers,
   File,
-  AlertCircle,
   ArrowRightLeft,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
@@ -127,7 +124,6 @@ export default function KnowledgePage() {
 
   // Move / Bulk selection state
   const [selectedDocs, setSelectedDocs] = useState<Set<number>>(new Set());
-  const [, setMoveTargetKbId] = useState<number | null>(null);
   const [showMoveDropdown, setShowMoveDropdown] = useState<number | 'bulk' | null>(null);
 
   // Load data
@@ -434,23 +430,6 @@ export default function KnowledgePage() {
         ))}
       </div>
     );
-  };
-
-  // Status icon helper — retained for callers that still render just the
-  // icon (e.g. the Stats card). The document row uses <StatusBadge>.
-  const getStatusIcon = (status: DocStatus | string) => {
-    switch (status) {
-      case 'completed':
-        return <CheckCircle className="w-5 h-5 text-green-500" aria-hidden="true" />;
-      case 'processing':
-        return <Loader className="w-5 h-5 text-blue-500 animate-spin" aria-hidden="true" />;
-      case 'pending':
-        return <Clock className="w-5 h-5 text-gray-500" aria-hidden="true" />;
-      case 'failed':
-        return <XCircle className="w-5 h-5 text-red-500" aria-hidden="true" />;
-      default:
-        return <AlertCircle className="w-5 h-5 text-gray-500" aria-hidden="true" />;
-    }
   };
 
   // File type icon helper

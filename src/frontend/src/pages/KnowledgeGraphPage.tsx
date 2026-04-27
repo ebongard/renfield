@@ -488,8 +488,8 @@ export default function KnowledgeGraphPage() {
               className="input w-auto"
             >
               <option value="all">{t('common.all')}</option>
-              {availableTiers.map(t => (
-                <option key={t.tier} value={String(t.tier)}>{t.label}</option>
+              {availableTiers.map((tier) => (
+                <option key={tier.tier} value={String(tier.tier)}>{tier.label}</option>
               ))}
             </select>
 
