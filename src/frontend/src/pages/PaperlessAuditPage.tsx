@@ -5,6 +5,9 @@
  * Provides audit control, review queue, OCR issue tracking, and statistics.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { TFunction } from 'i18next';
+import type { AxiosError } from 'axios';
+import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
@@ -17,10 +20,15 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 
-const TABS = ['control', 'review', 'ocr', 'completeness', 'duplicates', 'correspondents', 'stats'];
+type AuditTab = 'control' | 'review' | 'ocr' | 'completeness' | 'duplicates' | 'correspondents' | 'stats';
+type AuditMode = 'new_only' | 'full';
+type FixMode = 'review' | 'auto_threshold' | 'auto_all';
+type OcrLevel = 1 | 2 | 3 | 4 | 5;
+
+const TABS: AuditTab[] = ['control', 'review', 'ocr', 'completeness', 'duplicates', 'correspondents', 'stats'];
 const PAGE_SIZE = 20;
 
-const OCR_COLORS = {
+const OCR_COLORS: Partial<Record<number, string>> = {
   1: 'bg-red-500',
   2: 'bg-orange-500',
   3: 'bg-yellow-500',
@@ -28,7 +36,7 @@ const OCR_COLORS = {
   5: 'bg-green-700',
 };
 
-const OCR_TEXT_COLORS = {
+const OCR_TEXT_COLORS: Partial<Record<number, string>> = {
   1: 'text-red-600 dark:text-red-400',
   2: 'text-orange-600 dark:text-orange-400',
   3: 'text-yellow-600 dark:text-yellow-400',
@@ -36,69 +44,138 @@ const OCR_TEXT_COLORS = {
   5: 'text-green-700 dark:text-green-300',
 };
 
+interface AuditStatus {
+  running: boolean;
+  progress?: number;
+  total?: number;
+}
+
+interface AuditResult {
+  id: number;
+  paperless_doc_id: number;
+  current_title?: string | null;
+  suggested_title?: string | null;
+  current_correspondent?: string | null;
+  suggested_correspondent?: string | null;
+  current_document_type?: string | null;
+  suggested_document_type?: string | null;
+  current_date?: string | null;
+  suggested_date?: string | null;
+  current_storage_path?: string | null;
+  suggested_storage_path?: string | null;
+  detected_language?: string | null;
+  suggested_tags?: string[];
+  missing_fields?: string[];
+  confidence?: number | null;
+  ocr_quality?: number;
+  ocr_issues?: string;
+  content_completeness?: number;
+  completeness_issues?: string;
+}
+
+interface AuditStats {
+  total_audited?: number;
+  changes_needed?: number;
+  applied?: number;
+  skipped?: number;
+  pending?: number;
+  failed?: number;
+  missing_metadata_count?: number;
+  duplicate_groups?: number;
+  avg_confidence?: number;
+  ocr_quality_distribution?: Record<string, number>;
+  ocr_distribution?: Record<string, number>;
+  language_distribution?: Record<string, number>;
+  completeness_distribution?: Record<string, number>;
+}
+
+interface DuplicateDoc {
+  id: number;
+  paperless_doc_id: number;
+  current_title?: string | null;
+  current_correspondent?: string | null;
+  duplicate_score?: number | null;
+}
+
+interface DuplicateGroup {
+  group_id: string;
+  documents: DuplicateDoc[];
+}
+
+interface CorrespondentVariant {
+  name: string;
+  similarity: number;
+}
+
+interface CorrespondentCluster {
+  canonical: string;
+  variants: CorrespondentVariant[];
+}
+
 export default function PaperlessAuditPage() {
   const { t } = useTranslation();
   const { getAccessToken } = useAuth();
 
-  const [activeTab, setActiveTab] = useState('control');
+  const [activeTab, setActiveTab] = useState<AuditTab>('control');
   const [notConfigured, setNotConfigured] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Control tab state
-  const [auditStatus, setAuditStatus] = useState(null);
-  const [mode, setMode] = useState('new_only');
-  const [fixMode, setFixMode] = useState('review');
+  const [auditStatus, setAuditStatus] = useState<AuditStatus | null>(null);
+  const [mode, setMode] = useState<AuditMode>('new_only');
+  const [fixMode, setFixMode] = useState<FixMode>('review');
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.8);
   const [starting, setStarting] = useState(false);
   const [stopping, setStopping] = useState(false);
-  const pollRef = useRef(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Review tab state
-  const [reviewResults, setReviewResults] = useState([]);
+  const [reviewResults, setReviewResults] = useState<AuditResult[]>([]);
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewPage, setReviewPage] = useState(0);
   const [reviewTotal, setReviewTotal] = useState(0);
-  const [selectedIds, setSelectedIds] = useState(new Set());
-  const [actionLoading, setActionLoading] = useState(new Set());
-  const [reviewSortBy, setReviewSortBy] = useState(null);
-  const [reviewSortOrder, setReviewSortOrder] = useState('desc');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [actionLoading, setActionLoading] = useState<Set<number>>(new Set());
+  const [reviewSortBy, setReviewSortBy] = useState<string | null>(null);
+  const [reviewSortOrder, setReviewSortOrder] = useState<'asc' | 'desc'>('desc');
   const [reviewSearch, setReviewSearch] = useState('');
-  const reviewSearchTimer = useRef(null);
+  const reviewSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // OCR tab state
-  const [ocrResults, setOcrResults] = useState([]);
+  const [ocrResults, setOcrResults] = useState<AuditResult[]>([]);
   const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrPage, setOcrPage] = useState(0);
   const [ocrTotal, setOcrTotal] = useState(0);
-  const [ocrActionLoading, setOcrActionLoading] = useState(new Set());
+  const [ocrActionLoading, setOcrActionLoading] = useState<Set<number>>(new Set());
 
   // Stats tab state
-  const [stats, setStats] = useState(null);
+  const [stats, setStats] = useState<AuditStats | null>(null);
   const [statsLoading, setStatsLoading] = useState(false);
 
   // Completeness tab state
-  const [completenessResults, setCompletenessResults] = useState([]);
+  const [completenessResults, setCompletenessResults] = useState<AuditResult[]>([]);
   const [completenessLoading, setCompletenessLoading] = useState(false);
   const [completenessPage, setCompletenessPage] = useState(0);
   const [completenessTotal, setCompletenessTotal] = useState(0);
 
   // Duplicates tab state
-  const [duplicateGroups, setDuplicateGroups] = useState([]);
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [duplicatesLoading, setDuplicatesLoading] = useState(false);
   const [detectingDuplicates, setDetectingDuplicates] = useState(false);
 
   // Correspondents tab state
-  const [correspondentClusters, setCorrespondentClusters] = useState([]);
+  const [correspondentClusters, setCorrespondentClusters] = useState<CorrespondentCluster[]>([]);
   const [correspondentsLoading, setCorrespondentsLoading] = useState(false);
   const [corrThreshold, setCorrThreshold] = useState(0.82);
 
-  const authHeaders = useCallback(async () => {
+  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
     const token = await getAccessToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, [getAccessToken]);
 
-  const handleApiError = useCallback((err) => {
-    if (err.response?.status === 503) {
+  const handleApiError = useCallback((err: unknown) => {
+    const status = (err as AxiosError | undefined)?.response?.status;
+    if (status === 503) {
       setNotConfigured(true);
       return;
     }
@@ -109,7 +186,7 @@ export default function PaperlessAuditPage() {
   const loadStatus = useCallback(async () => {
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/status', { headers });
+      const res = await apiClient.get<AuditStatus>('/api/admin/paperless-audit/status', { headers });
       setAuditStatus(res.data);
       setNotConfigured(false);
     } catch (err) {
@@ -171,7 +248,7 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const params = { status: 'pending', changes_needed: true, per_page: PAGE_SIZE, page: reviewPage + 1 };
+      const params: Record<string, unknown> = { status: 'pending', changes_needed: true, per_page: PAGE_SIZE, page: reviewPage + 1 };
       if (reviewSortBy) {
         params.sort_by = reviewSortBy;
         params.sort_order = reviewSortOrder;
@@ -179,9 +256,11 @@ export default function PaperlessAuditPage() {
       if (reviewSearch.trim()) {
         params.search = reviewSearch.trim();
       }
-      const res = await apiClient.get('/api/admin/paperless-audit/results', { headers, params });
-      setReviewResults(res.data.results || res.data || []);
-      setReviewTotal(res.data.total ?? (res.data.results || res.data || []).length);
+      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', { headers, params });
+      const data = res.data;
+      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
+      setReviewResults(results);
+      setReviewTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
       setSelectedIds(new Set());
       setNotConfigured(false);
     } catch (err) {
@@ -195,8 +274,8 @@ export default function PaperlessAuditPage() {
     if (activeTab === 'review') loadReview();
   }, [activeTab, loadReview]);
 
-  const approveResults = async (ids) => {
-    setActionLoading(prev => new Set([...prev, ...ids]));
+  const approveResults = async (ids: number[]) => {
+    setActionLoading((prev) => new Set([...prev, ...ids]));
     try {
       const headers = await authHeaders();
       await apiClient.post('/api/admin/paperless-audit/apply', { result_ids: ids }, { headers });
@@ -204,16 +283,16 @@ export default function PaperlessAuditPage() {
     } catch (err) {
       handleApiError(err);
     } finally {
-      setActionLoading(prev => {
+      setActionLoading((prev) => {
         const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
+        ids.forEach((id) => next.delete(id));
         return next;
       });
     }
   };
 
-  const skipResults = async (ids) => {
-    setActionLoading(prev => new Set([...prev, ...ids]));
+  const skipResults = async (ids: number[]) => {
+    setActionLoading((prev) => new Set([...prev, ...ids]));
     try {
       const headers = await authHeaders();
       await apiClient.post('/api/admin/paperless-audit/skip', { result_ids: ids }, { headers });
@@ -221,16 +300,16 @@ export default function PaperlessAuditPage() {
     } catch (err) {
       handleApiError(err);
     } finally {
-      setActionLoading(prev => {
+      setActionLoading((prev) => {
         const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
+        ids.forEach((id) => next.delete(id));
         return next;
       });
     }
   };
 
-  const toggleSelected = (id) => {
-    setSelectedIds(prev => {
+  const toggleSelected = (id: number) => {
+    setSelectedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -242,13 +321,13 @@ export default function PaperlessAuditPage() {
     if (selectedIds.size === reviewResults.length) {
       setSelectedIds(new Set());
     } else {
-      setSelectedIds(new Set(reviewResults.map(r => r.id)));
+      setSelectedIds(new Set(reviewResults.map((r) => r.id)));
     }
   };
 
-  const handleReviewSort = (column) => {
+  const handleReviewSort = (column: string) => {
     if (reviewSortBy === column) {
-      setReviewSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+      setReviewSortOrder((prev) => prev === 'asc' ? 'desc' : 'asc');
     } else {
       setReviewSortBy(column);
       setReviewSortOrder('asc');
@@ -256,9 +335,9 @@ export default function PaperlessAuditPage() {
     setReviewPage(0);
   };
 
-  const handleReviewSearch = (value) => {
+  const handleReviewSearch = (value: string) => {
     setReviewSearch(value);
-    clearTimeout(reviewSearchTimer.current);
+    if (reviewSearchTimer.current) clearTimeout(reviewSearchTimer.current);
     reviewSearchTimer.current = setTimeout(() => {
       setReviewPage(0);
     }, 300);
@@ -270,12 +349,14 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/results', {
+      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', {
         headers,
         params: { ocr_quality_max: 2, per_page: PAGE_SIZE, page: ocrPage + 1 },
       });
-      setOcrResults(res.data.results || res.data || []);
-      setOcrTotal(res.data.total ?? (res.data.results || res.data || []).length);
+      const data = res.data;
+      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
+      setOcrResults(results);
+      setOcrTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
       setNotConfigured(false);
     } catch (err) {
       handleApiError(err);
@@ -288,8 +369,8 @@ export default function PaperlessAuditPage() {
     if (activeTab === 'ocr') loadOcr();
   }, [activeTab, loadOcr]);
 
-  const reOcr = async (ids) => {
-    setOcrActionLoading(prev => new Set([...prev, ...ids]));
+  const reOcr = async (ids: number[]) => {
+    setOcrActionLoading((prev) => new Set([...prev, ...ids]));
     try {
       const headers = await authHeaders();
       await apiClient.post('/api/admin/paperless-audit/re-ocr', { result_ids: ids }, { headers });
@@ -297,9 +378,9 @@ export default function PaperlessAuditPage() {
     } catch (err) {
       handleApiError(err);
     } finally {
-      setOcrActionLoading(prev => {
+      setOcrActionLoading((prev) => {
         const next = new Set(prev);
-        ids.forEach(id => next.delete(id));
+        ids.forEach((id) => next.delete(id));
         return next;
       });
     }
@@ -311,7 +392,7 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/stats', { headers });
+      const res = await apiClient.get<AuditStats>('/api/admin/paperless-audit/stats', { headers });
       setStats(res.data);
       setNotConfigured(false);
     } catch (err) {
@@ -331,12 +412,14 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/results', {
+      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', {
         headers,
         params: { completeness_max: 2, per_page: PAGE_SIZE, page: completenessPage + 1 },
       });
-      setCompletenessResults(res.data.results || res.data || []);
-      setCompletenessTotal(res.data.total ?? (res.data.results || res.data || []).length);
+      const data = res.data;
+      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
+      setCompletenessResults(results);
+      setCompletenessTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
       setNotConfigured(false);
     } catch (err) {
       handleApiError(err);
@@ -355,7 +438,7 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/duplicate-groups', { headers });
+      const res = await apiClient.get<DuplicateGroup[]>('/api/admin/paperless-audit/duplicate-groups', { headers });
       setDuplicateGroups(res.data || []);
       setNotConfigured(false);
     } catch (err) {
@@ -389,7 +472,7 @@ export default function PaperlessAuditPage() {
     setError(null);
     try {
       const headers = await authHeaders();
-      const res = await apiClient.get('/api/admin/paperless-audit/correspondent-normalization', {
+      const res = await apiClient.get<{ clusters?: CorrespondentCluster[] }>('/api/admin/paperless-audit/correspondent-normalization', {
         headers,
         params: { threshold: corrThreshold },
       });
@@ -416,7 +499,7 @@ export default function PaperlessAuditPage() {
     );
   }
 
-  const tabIcons = {
+  const tabIcons: Record<AuditTab, LucideIcon> = {
     control: Play,
     review: ClipboardList,
     ocr: Eye,
@@ -555,8 +638,23 @@ export default function PaperlessAuditPage() {
   );
 }
 
+interface ControlTabProps {
+  t: TFunction;
+  auditStatus: AuditStatus | null;
+  mode: AuditMode;
+  setMode: (m: AuditMode) => void;
+  fixMode: FixMode;
+  setFixMode: (m: FixMode) => void;
+  confidenceThreshold: number;
+  setConfidenceThreshold: (n: number) => void;
+  starting: boolean;
+  stopping: boolean;
+  onStart: () => void;
+  onStop: () => void;
+}
+
 // --- Control Tab Component ---
-function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confidenceThreshold, setConfidenceThreshold, starting, stopping, onStart, onStop }) {
+function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confidenceThreshold, setConfidenceThreshold, starting, stopping, onStart, onStop }: ControlTabProps) {
   const running = auditStatus?.running;
   const current = auditStatus?.progress ?? 0;
   const total = auditStatus?.total ?? 0;
@@ -571,7 +669,7 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
           </label>
           <select
             value={mode}
-            onChange={(e) => setMode(e.target.value)}
+            onChange={(e) => setMode(e.target.value as AuditMode)}
             disabled={running}
             className="input w-full"
           >
@@ -586,7 +684,7 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
           </label>
           <select
             value={fixMode}
-            onChange={(e) => setFixMode(e.target.value)}
+            onChange={(e) => setFixMode(e.target.value as FixMode)}
             disabled={running}
             className="input w-full"
           >
@@ -665,12 +763,38 @@ function ControlTab({ t, auditStatus, mode, setMode, fixMode, setFixMode, confid
   );
 }
 
+interface ReviewTabProps {
+  t: TFunction;
+  results: AuditResult[];
+  loading: boolean;
+  total: number;
+  page: number;
+  setPage: (n: number) => void;
+  selectedIds: Set<number>;
+  actionLoading: Set<number>;
+  onToggleSelected: (id: number) => void;
+  onToggleSelectAll: () => void;
+  onApprove: (ids: number[]) => void;
+  onSkip: (ids: number[]) => void;
+  sortBy: string | null;
+  sortOrder: 'asc' | 'desc';
+  onSort: (column: string) => void;
+  search: string;
+  onSearch: (value: string) => void;
+}
+
+interface SortHeaderProps {
+  column: string;
+  children: React.ReactNode;
+  className?: string;
+}
+
 // --- Review Tab Component ---
-function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, sortBy, sortOrder, onSort, search, onSearch }) {
+function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, actionLoading, onToggleSelected, onToggleSelectAll, onApprove, onSkip, sortBy, sortOrder, onSort, search, onSearch }: ReviewTabProps) {
   const totalPages = Math.ceil(total / PAGE_SIZE);
   const allSelected = selectedIds.size === results.length && results.length > 0;
 
-  const SortHeader = ({ column, children, className = '' }) => {
+  const SortHeader = ({ column, children, className = '' }: SortHeaderProps) => {
     const active = sortBy === column;
     return (
       <th
@@ -851,8 +975,19 @@ function ReviewTab({ t, results, loading, total, page, setPage, selectedIds, act
   );
 }
 
+interface OcrTabProps {
+  t: TFunction;
+  results: AuditResult[];
+  loading: boolean;
+  total: number;
+  page: number;
+  setPage: (n: number) => void;
+  actionLoading: Set<number>;
+  onReOcr: (ids: number[]) => void;
+}
+
 // --- OCR Tab Component ---
-function OcrTab({ t, results, loading, total, page, setPage, actionLoading, onReOcr }) {
+function OcrTab({ t, results, loading, total, page, setPage, actionLoading, onReOcr }: OcrTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -927,8 +1062,14 @@ function OcrTab({ t, results, loading, total, page, setPage, actionLoading, onRe
   );
 }
 
+interface StatsTabProps {
+  t: TFunction;
+  stats: AuditStats | null;
+  loading: boolean;
+}
+
 // --- Stats Tab Component ---
-function StatsTab({ t, stats, loading }) {
+function StatsTab({ t, stats, loading }: StatsTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -1052,8 +1193,17 @@ function StatsTab({ t, stats, loading }) {
   );
 }
 
+interface CompletenessTabProps {
+  t: TFunction;
+  results: AuditResult[];
+  loading: boolean;
+  total: number;
+  page: number;
+  setPage: (n: number) => void;
+}
+
 // --- Completeness Tab Component ---
-function CompletenessTab({ t, results, loading, total, page, setPage }) {
+function CompletenessTab({ t, results, loading, total, page, setPage }: CompletenessTabProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -1115,8 +1265,16 @@ function CompletenessTab({ t, results, loading, total, page, setPage }) {
   );
 }
 
+interface DuplicatesTabProps {
+  t: TFunction;
+  groups: DuplicateGroup[];
+  loading: boolean;
+  detecting: boolean;
+  onDetect: () => void;
+}
+
 // --- Duplicates Tab Component ---
-function DuplicatesTab({ t, groups, loading, detecting, onDetect }) {
+function DuplicatesTab({ t, groups, loading, detecting, onDetect }: DuplicatesTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -1166,8 +1324,17 @@ function DuplicatesTab({ t, groups, loading, detecting, onDetect }) {
   );
 }
 
+interface CorrespondentsTabProps {
+  t: TFunction;
+  clusters: CorrespondentCluster[];
+  loading: boolean;
+  threshold: number;
+  setThreshold: (n: number) => void;
+  onScan: () => void;
+}
+
 // --- Correspondents Tab Component ---
-function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onScan }) {
+function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onScan }: CorrespondentsTabProps) {
   return (
     <div className="space-y-4">
       <div className="card p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -1225,8 +1392,13 @@ function CorrespondentsTab({ t, clusters, loading, threshold, setThreshold, onSc
   );
 }
 
+interface DiffValueProps {
+  current?: string | null;
+  suggested?: string | null;
+}
+
 // --- Shared Components ---
-function DiffValue({ current, suggested }) {
+function DiffValue({ current, suggested }: DiffValueProps) {
   if (!suggested || current === suggested) {
     return <span className="text-gray-900 dark:text-gray-100">{current || '-'}</span>;
   }
@@ -1240,14 +1412,20 @@ function DiffValue({ current, suggested }) {
   );
 }
 
-function ConfidenceBadge({ value }) {
+function ConfidenceBadge({ value }: { value: number | null | undefined }) {
   if (value == null) return <span className="text-gray-400">-</span>;
   const pct = (value * 100).toFixed(0);
   const color = value >= 0.8 ? 'text-green-600 dark:text-green-400' : value >= 0.6 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400';
   return <span className={`text-xs font-medium ${color}`}>{pct}%</span>;
 }
 
-function Pagination({ page, totalPages, onPageChange }) {
+interface PaginationProps {
+  page: number;
+  totalPages: number;
+  onPageChange: (n: number) => void;
+}
+
+function Pagination({ page, totalPages, onPageChange }: PaginationProps) {
   return (
     <div className="flex items-center justify-center gap-2 pt-2">
       <button
