@@ -6,8 +6,12 @@
  * allows CRUD operations on tracked BLE devices.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { FormEvent } from 'react';
+import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
+import type { AxiosError } from 'axios';
 import Modal from '../components/Modal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
@@ -19,9 +23,55 @@ import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import AnalyticsTab from '../components/presence/AnalyticsTab';
 
+type DeviceTypeKind = 'phone' | 'watch' | 'tracker';
+type DetectionMethod = 'ble' | 'classic_bt';
+
+interface Occupant {
+  user_id: number;
+  user_name?: string;
+  last_seen: number;
+  confidence: number;
+}
+
+interface PresenceRoom {
+  room_id: number;
+  room_name?: string;
+  occupants: Occupant[];
+}
+
+interface PresenceUser {
+  id: number;
+  username: string;
+}
+
+interface BleDevice {
+  id: number;
+  user_id: number;
+  mac_address: string;
+  device_name: string;
+  device_type: DeviceTypeKind;
+  detection_method: DetectionMethod;
+  is_enabled?: boolean;
+}
+
+interface DeviceFormData {
+  user_id: string;
+  mac_address: string;
+  device_name: string;
+  device_type: DeviceTypeKind;
+  detection_method: DetectionMethod;
+}
+
+interface NewDevicePayload {
+  user_id: number;
+  mac_address: string;
+  device_name: string;
+  device_type: DeviceTypeKind;
+  detection_method: DetectionMethod;
+}
 
 // Confidence bar component
-function ConfidenceBar({ value }) {
+function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const getColor = () => {
     if (pct > 70) return 'bg-green-500';
@@ -44,8 +94,8 @@ function ConfidenceBar({ value }) {
 
 
 // Format relative time
-function useFormatAgo(t) {
-  return useCallback((timestamp) => {
+function useFormatAgo(t: TFunction) {
+  return useCallback((timestamp: number | undefined): string => {
     if (!timestamp) return '';
     const seconds = Math.floor(Date.now() / 1000 - timestamp);
     if (seconds < 5) return t('presence.justNow');
@@ -55,8 +105,13 @@ function useFormatAgo(t) {
 }
 
 
+interface RoomCardProps {
+  room: PresenceRoom;
+  formatAgo: (ts: number | undefined) => string;
+}
+
 // Room occupancy card
-function RoomCard({ room, formatAgo }) {
+function RoomCard({ room, formatAgo }: RoomCardProps) {
   const { t } = useTranslation();
 
   return (
@@ -105,7 +160,7 @@ function RoomCard({ room, formatAgo }) {
 
 
 // Device type icon helper
-function DeviceTypeIcon({ type, className = 'w-4 h-4' }) {
+function DeviceTypeIcon({ type, className = 'w-4 h-4' }: { type: string; className?: string }) {
   switch (type) {
     case 'watch': return <Watch className={className} />;
     case 'tracker': return <Radio className={className} />;
@@ -114,10 +169,17 @@ function DeviceTypeIcon({ type, className = 'w-4 h-4' }) {
 }
 
 
+interface AddDeviceModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSave: (device: NewDevicePayload) => Promise<void>;
+  users: PresenceUser[];
+}
+
 // Add device modal
-function AddDeviceModal({ isOpen, onClose, onSave, users }) {
+function AddDeviceModal({ isOpen, onClose, onSave, users }: AddDeviceModalProps) {
   const { t } = useTranslation();
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<DeviceFormData>({
     user_id: '',
     mac_address: '',
     device_name: '',
@@ -129,7 +191,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
 
   const macPattern = /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/;
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError('');
 
@@ -148,7 +210,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
     setSaving(true);
     try {
       await onSave({
-        user_id: parseInt(form.user_id),
+        user_id: parseInt(form.user_id, 10),
         mac_address: form.mac_address.toUpperCase(),
         device_name: form.device_name.trim(),
         device_type: form.device_type,
@@ -157,10 +219,11 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
       setForm({ user_id: '', mac_address: '', device_name: '', device_type: 'phone', detection_method: 'ble' });
       onClose();
     } catch (err) {
-      if (err.response?.status === 409) {
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status === 409) {
         setError(t('presence.macDuplicate'));
       } else {
-        setError(err.response?.data?.detail || t('common.error'));
+        setError(extractApiError(err, t('common.error')));
       }
     } finally {
       setSaving(false);
@@ -223,7 +286,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
           </label>
           <select
             value={form.device_type}
-            onChange={(e) => setForm({ ...form, device_type: e.target.value })}
+            onChange={(e) => setForm({ ...form, device_type: e.target.value as DeviceTypeKind })}
             className="input w-full"
           >
             <option value="phone">{t('presence.phone')}</option>
@@ -238,7 +301,7 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }) {
           </label>
           <select
             value={form.detection_method}
-            onChange={(e) => setForm({ ...form, detection_method: e.target.value })}
+            onChange={(e) => setForm({ ...form, detection_method: e.target.value as DetectionMethod })}
             className="input w-full"
           >
             <option value="ble">{t('presence.detectionBle')}</option>
@@ -271,21 +334,21 @@ export default function PresencePage() {
   const formatAgo = useFormatAgo(t);
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [activeTab, setActiveTab] = useState('live');
-  const [rooms, setRooms] = useState([]);
-  const [devices, setDevices] = useState([]);
-  const [users, setUsers] = useState([]);
+  const [activeTab, setActiveTab] = useState<'live' | 'analytics'>('live');
+  const [rooms, setRooms] = useState<PresenceRoom[]>([]);
+  const [devices, setDevices] = useState<BleDevice[]>([]);
+  const [users, setUsers] = useState<PresenceUser[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showAddDevice, setShowAddDevice] = useState(false);
-  const [presenceEnabled, setPresenceEnabled] = useState(null);
+  const [presenceEnabled, setPresenceEnabled] = useState<boolean | null>(null);
 
-  const refreshIntervalRef = useRef(null);
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadPresence = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/presence/rooms');
+      const response = await apiClient.get<PresenceRoom[]>('/api/presence/rooms');
       setRooms(response.data || []);
       setError(null);
     } catch (err) {
@@ -298,7 +361,7 @@ export default function PresencePage() {
 
   const loadDevices = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/presence/devices');
+      const response = await apiClient.get<BleDevice[]>('/api/presence/devices');
       setDevices(response.data || []);
     } catch {
       // Non-critical, may fail if not admin
@@ -307,9 +370,9 @@ export default function PresencePage() {
 
   const loadUsers = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/users');
+      const response = await apiClient.get<PresenceUser[] | { users?: PresenceUser[] }>('/api/users');
       const data = response.data;
-      setUsers(Array.isArray(data) ? data : data?.users || []);
+      setUsers(Array.isArray(data) ? data : (data?.users ?? []));
     } catch {
       // Non-critical
     }
@@ -320,8 +383,8 @@ export default function PresencePage() {
     loadPresence();
     loadDevices();
     loadUsers();
-    apiClient.get('/api/presence/status')
-      .then(res => setPresenceEnabled(res.data?.enabled ?? false))
+    apiClient.get<{ enabled?: boolean }>('/api/presence/status')
+      .then((res) => setPresenceEnabled(res.data?.enabled ?? false))
       .catch(() => setPresenceEnabled(false));
   }, [loadPresence, loadDevices, loadUsers]);
 
@@ -337,13 +400,13 @@ export default function PresencePage() {
     };
   }, [autoRefresh, loadPresence]);
 
-  const handleAddDevice = async (deviceData) => {
+  const handleAddDevice = async (deviceData: NewDevicePayload) => {
     await apiClient.post('/api/presence/devices', deviceData);
     await loadDevices();
   };
 
-  const handleToggleDetectionMethod = async (device) => {
-    const newMethod = device.detection_method === 'classic_bt' ? 'ble' : 'classic_bt';
+  const handleToggleDetectionMethod = async (device: BleDevice) => {
+    const newMethod: DetectionMethod = device.detection_method === 'classic_bt' ? 'ble' : 'classic_bt';
     try {
       await apiClient.patch(`/api/presence/devices/${device.id}`, {
         detection_method: newMethod,
@@ -354,7 +417,7 @@ export default function PresencePage() {
     }
   };
 
-  const handleDeleteDevice = async (device) => {
+  const handleDeleteDevice = async (device: BleDevice) => {
     const confirmed = await confirm({
       title: t('presence.deleteDevice'),
       message: t('presence.deleteDeviceConfirm', { name: device.device_name }),

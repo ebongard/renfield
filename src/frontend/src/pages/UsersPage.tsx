@@ -4,6 +4,7 @@
  * Admin page for managing users: create, edit, delete, assign roles.
  */
 import { useState, useEffect, useCallback } from 'react';
+import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient, { extractApiError, extractFieldErrors } from '../utils/axios';
@@ -14,29 +15,70 @@ import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   Users, UserPlus, UserCog, Pencil, Trash2, Loader,
-  Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw
+  Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw,
 } from 'lucide-react';
+
+type PersonalityStyle = 'freundlich' | 'direkt' | 'formell' | 'casual';
+
+interface AdminUser {
+  id: number;
+  username: string;
+  first_name?: string | null;
+  last_name?: string | null;
+  email?: string | null;
+  role_id: number;
+  role_name?: string;
+  is_active: boolean;
+  personality_style?: PersonalityStyle;
+  personality_prompt?: string | null;
+  speaker_id?: number | null;
+  last_login?: string | null;
+}
+
+interface RoleSummary {
+  id: number;
+  name: string;
+  description?: string;
+}
+
+interface SpeakerSummary {
+  id: number;
+  name: string;
+  embedding_count: number;
+}
+
+interface UserFormData {
+  username: string;
+  first_name: string;
+  last_name: string;
+  email: string;
+  password: string;
+  role_id: string;
+  is_active: boolean;
+  personality_style: PersonalityStyle;
+  personality_prompt: string;
+}
 
 export default function UsersPage() {
   const { t, i18n } = useTranslation();
   const { user: currentUser, getAccessToken } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [users, setUsers] = useState([]);
-  const [roles, setRoles] = useState([]);
-  const [speakers, setSpeakers] = useState([]);
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [roles, setRoles] = useState<RoleSummary[]>([]);
+  const [speakers, setSpeakers] = useState<SpeakerSummary[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
-  const [editingUser, setEditingUser] = useState(null);
+  const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [showLinkSpeakerModal, setShowLinkSpeakerModal] = useState(false);
-  const [linkingUserId, setLinkingUserId] = useState(null);
+  const [linkingUserId, setLinkingUserId] = useState<number | null>(null);
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<UserFormData>({
     username: '',
     first_name: '',
     last_name: '',
@@ -45,11 +87,11 @@ export default function UsersPage() {
     role_id: '',
     is_active: true,
     personality_style: 'freundlich',
-    personality_prompt: ''
+    personality_prompt: '',
   });
   const [showPassword, setShowPassword] = useState(false);
   const [formLoading, setFormLoading] = useState(false);
-  const [fieldErrors, setFieldErrors] = useState({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   // Load data
   const loadData = useCallback(async () => {
@@ -59,22 +101,24 @@ export default function UsersPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       const [usersRes, rolesRes, speakersRes] = await Promise.all([
-        apiClient.get('/api/users', { headers }),
-        apiClient.get('/api/roles', { headers }),
-        apiClient.get('/api/speakers', { headers }).catch(() => ({ data: [] }))
+        apiClient.get<AdminUser[] | { users?: AdminUser[] }>('/api/users', { headers }),
+        apiClient.get<RoleSummary[] | { roles?: RoleSummary[] }>('/api/roles', { headers }),
+        apiClient.get<SpeakerSummary[]>('/api/speakers', { headers }).catch(() => ({ data: [] as SpeakerSummary[] })),
       ]);
 
       // API returns { users: [], total, page, page_size } for users
       // and { roles: [] } for roles
-      setUsers(usersRes.data.users || usersRes.data || []);
-      setRoles(rolesRes.data.roles || rolesRes.data || []);
+      const usersData = usersRes.data;
+      const rolesData = rolesRes.data;
+      setUsers(Array.isArray(usersData) ? usersData : (usersData.users ?? []));
+      setRoles(Array.isArray(rolesData) ? rolesData : (rolesData.roles ?? []));
       setSpeakers(speakersRes.data || []);
     } catch (err) {
       setError(extractApiError(err, t('users.failedToLoad')));
     } finally {
       setLoading(false);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, t]);
 
   useEffect(() => {
     loadData();
@@ -93,7 +137,7 @@ export default function UsersPage() {
 
   // Open create modal
   const handleCreate = () => {
-    const defaultRoleId = String(roles.find(r => r.name === 'Gast')?.id || roles[0]?.id || '');
+    const defaultRoleId = String(roles.find((r) => r.name === 'Gast')?.id || roles[0]?.id || '');
     setEditingUser(null);
     setFormData({
       username: '',
@@ -112,7 +156,7 @@ export default function UsersPage() {
   };
 
   // Open edit modal
-  const handleEdit = (user) => {
+  const handleEdit = (user: AdminUser) => {
     setEditingUser(user);
     setFormData({
       username: user.username,
@@ -123,7 +167,7 @@ export default function UsersPage() {
       role_id: String(user.role_id),
       is_active: user.is_active,
       personality_style: user.personality_style || 'freundlich',
-      personality_prompt: user.personality_prompt || ''
+      personality_prompt: user.personality_prompt || '',
     });
     setShowPassword(false);
     setFieldErrors({});
@@ -131,18 +175,18 @@ export default function UsersPage() {
   };
 
   // Update form field and clear its error
-  const updateField = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
-    if (fieldErrors[field]) {
-      setFieldErrors(prev => { const next = { ...prev }; delete next[field]; return next; });
+  const updateField = <K extends keyof UserFormData>(field: K, value: UserFormData[K]) => {
+    setFormData((prev) => ({ ...prev, [field]: value }));
+    if (fieldErrors[field as string]) {
+      setFieldErrors((prev) => { const next = { ...prev }; delete next[field as string]; return next; });
     }
   };
 
   // Submit form
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     // Client-side validation (replaces native HTML5 validation disabled by noValidate)
-    const errors = {};
+    const errors: Record<string, string> = {};
     if (!formData.username || formData.username.length < 3) {
       errors.username = t('users.validationUsernameMin', { defaultValue: 'Mindestens 3 Zeichen' });
     }
@@ -217,7 +261,7 @@ export default function UsersPage() {
   };
 
   // Delete user
-  const handleDelete = async (user) => {
+  const handleDelete = async (user: AdminUser) => {
     if (user.id === currentUser?.id) {
       setError(t('users.cannotDeleteOwnAccount'));
       return;
@@ -226,8 +270,8 @@ export default function UsersPage() {
     const confirmed = await confirm({
       title: t('users.deleteUser'),
       message: t('users.deleteUserConfirm', { username: user.username }),
-      confirmText: t('common.delete'),
-      variant: 'danger'
+      confirmLabel: t('common.delete'),
+      variant: 'danger',
     });
 
     if (!confirmed) return;
@@ -245,13 +289,13 @@ export default function UsersPage() {
   };
 
   // Link speaker to user
-  const handleLinkSpeaker = (userId) => {
+  const handleLinkSpeaker = (userId: number) => {
     setLinkingUserId(userId);
     setShowLinkSpeakerModal(true);
   };
 
   // Submit speaker link
-  const handleLinkSpeakerSubmit = async (speakerId) => {
+  const handleLinkSpeakerSubmit = async (speakerId: number) => {
     try {
       const token = getAccessToken();
       await apiClient.post(`/api/users/${linkingUserId}/link-speaker`, { speaker_id: speakerId }, {
@@ -267,12 +311,12 @@ export default function UsersPage() {
   };
 
   // Unlink speaker from user
-  const handleUnlinkSpeaker = async (userId) => {
+  const handleUnlinkSpeaker = async (userId: number) => {
     const confirmed = await confirm({
       title: t('users.unlinkSpeaker'),
       message: t('users.unlinkSpeakerConfirm'),
-      confirmText: t('users.unlink'),
-      variant: 'warning'
+      confirmLabel: t('users.unlink'),
+      variant: 'warning',
     });
 
     if (!confirmed) return;
@@ -290,8 +334,8 @@ export default function UsersPage() {
   };
 
   // Get available speakers (not linked to any user)
-  const availableSpeakers = Array.isArray(speakers) && Array.isArray(users)
-    ? speakers.filter(s => !users.some(u => u.speaker_id === s.id))
+  const availableSpeakers: SpeakerSummary[] = Array.isArray(speakers) && Array.isArray(users)
+    ? speakers.filter((s) => !users.some((u) => u.speaker_id === s.id))
     : [];
 
   if (loading) {
@@ -597,7 +641,7 @@ export default function UsersPage() {
             </label>
             <select
               value={formData.personality_style}
-              onChange={(e) => updateField('personality_style', e.target.value)}
+              onChange={(e) => updateField('personality_style', e.target.value as PersonalityStyle)}
               className="input w-full"
               disabled={formLoading}
             >
