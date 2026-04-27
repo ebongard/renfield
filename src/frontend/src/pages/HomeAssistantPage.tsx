@@ -1,18 +1,37 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import { Lightbulb, Power, Search, Loader, Sun, Thermometer } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 
+interface HaEntityAttributes {
+  friendly_name?: string;
+  brightness?: number;
+  [key: string]: unknown;
+}
+
+interface HaEntity {
+  entity_id: string;
+  state: string;
+  attributes?: HaEntityAttributes;
+}
+
+interface DomainOption {
+  key: string;
+  nameKey: string;
+  icon: LucideIcon;
+}
+
 export default function HomeAssistantPage() {
   const { t } = useTranslation();
-  const [entities, setEntities] = useState([]);
-  const [filteredEntities, setFilteredEntities] = useState([]);
+  const [entities, setEntities] = useState<HaEntity[]>([]);
+  const [filteredEntities, setFilteredEntities] = useState<HaEntity[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomain, setSelectedDomain] = useState('all');
   const [loading, setLoading] = useState(true);
 
-  const domains = [
+  const domains: DomainOption[] = [
     { key: 'all', nameKey: 'common.all', icon: Power },
     { key: 'light', nameKey: 'homeassistant.lights', icon: Lightbulb },
     { key: 'switch', nameKey: 'homeassistant.switches', icon: Power },
@@ -20,37 +39,31 @@ export default function HomeAssistantPage() {
     { key: 'cover', nameKey: 'homeassistant.covers', icon: Sun },
   ];
 
-  useEffect(() => {
-    loadEntities();
-  }, []);
-
-  useEffect(() => {
-    filterEntities();
-  }, [searchQuery, selectedDomain, entities]);
-
-  const loadEntities = async () => {
+  const loadEntities = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/homeassistant/states');
+      const response = await apiClient.get<{ states: HaEntity[] }>('/api/homeassistant/states');
       setEntities(response.data.states);
     } catch (error) {
       console.error('Fehler beim Laden der Entities:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const filterEntities = () => {
+  useEffect(() => {
+    loadEntities();
+  }, [loadEntities]);
+
+  useEffect(() => {
     let filtered = entities;
 
-    // Domain Filter
     if (selectedDomain !== 'all') {
-      filtered = filtered.filter(e => e.entity_id.startsWith(`${selectedDomain}.`));
+      filtered = filtered.filter((e) => e.entity_id.startsWith(`${selectedDomain}.`));
     }
 
-    // Search Filter
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
-      filtered = filtered.filter(e => {
+      filtered = filtered.filter((e) => {
         const entityId = e.entity_id.toLowerCase();
         const friendlyName = e.attributes?.friendly_name?.toLowerCase() || '';
         return entityId.includes(query) || friendlyName.includes(query);
@@ -58,19 +71,18 @@ export default function HomeAssistantPage() {
     }
 
     setFilteredEntities(filtered);
-  };
+  }, [searchQuery, selectedDomain, entities]);
 
-  const toggleEntity = async (entityId) => {
+  const toggleEntity = async (entityId: string) => {
     try {
       await apiClient.post(`/api/homeassistant/toggle/${entityId}`);
-      // Reload entities to get updated state
       await loadEntities();
     } catch (error) {
       console.error('Fehler beim Umschalten:', error);
     }
   };
 
-  const getEntityIcon = (entity) => {
+  const getEntityIcon = (entity: HaEntity) => {
     const domain = entity.entity_id.split('.')[0];
     switch (domain) {
       case 'light':
@@ -84,7 +96,7 @@ export default function HomeAssistantPage() {
     }
   };
 
-  const isEntityOn = (entity) => {
+  const isEntityOn = (entity: HaEntity): boolean => {
     return entity.state === 'on' || entity.state === 'open';
   };
 
