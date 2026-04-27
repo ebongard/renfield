@@ -6,10 +6,12 @@ import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import type { BadgeColor } from '../components/Badge';
 import {
   Server,
   RefreshCw,
@@ -22,27 +24,46 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
+type Transport = 'stdio' | 'streamable_http' | 'sse' | string;
+
+interface McpServer {
+  name: string;
+  connected: boolean;
+  transport: Transport;
+  tool_count: number;
+  total_tool_count?: number;
+  last_error?: string;
+}
+
+interface McpStatus {
+  enabled: boolean;
+  servers: McpServer[];
+  total_tools: number;
+}
+
+interface McpTool {
+  name: string;
+  original_name: string;
+  server: string;
+  active: boolean;
+  description?: string;
+  input_schema?: Record<string, unknown>;
+}
+
 export default function IntegrationsPage() {
   const { t } = useTranslation();
   const { getAccessToken } = useAuth();
 
-  // State
-  const [mcpStatus, setMcpStatus] = useState(null);
-  const [mcpTools, setMcpTools] = useState([]);
+  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
+  const [mcpTools, setMcpTools] = useState<McpTool[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  // UI State
-  const [expandedServers, setExpandedServers] = useState({});
-  const [selectedTool, setSelectedTool] = useState(null);
-  const [togglingTools, setTogglingTools] = useState({});
-
-  // Load data on mount
-  useEffect(() => {
-    loadData();
-  }, []);
+  const [expandedServers, setExpandedServers] = useState<Record<string, boolean>>({});
+  const [selectedTool, setSelectedTool] = useState<McpTool | null>(null);
+  const [togglingTools, setTogglingTools] = useState<Record<string, boolean>>({});
 
   // Auto-clear alerts
   useEffect(() => {
@@ -64,18 +85,22 @@ export default function IntegrationsPage() {
 
       // Load MCP status and tools in parallel
       const [statusRes, toolsRes] = await Promise.all([
-        apiClient.get('/api/mcp/status', { headers }).catch(() => ({ data: { enabled: false, servers: [], total_tools: 0 } })),
-        apiClient.get('/api/mcp/tools', { headers }).catch(() => ({ data: { tools: [] } })),
+        apiClient.get<McpStatus>('/api/mcp/status', { headers }).catch(() => ({ data: { enabled: false, servers: [], total_tools: 0 } as McpStatus })),
+        apiClient.get<{ tools: McpTool[] }>('/api/mcp/tools', { headers }).catch(() => ({ data: { tools: [] as McpTool[] } })),
       ]);
 
       setMcpStatus(statusRes.data);
       setMcpTools(toolsRes.data.tools || []);
     } catch (err) {
-      setError(err.response?.data?.detail || t('integrations.loadError'));
+      setError(extractApiError(err, t('integrations.loadError')));
     } finally {
       setLoading(false);
     }
   }, [getAccessToken, t]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   const handleRefresh = async () => {
     try {
@@ -88,24 +113,24 @@ export default function IntegrationsPage() {
       setSuccess(t('integrations.refreshSuccess'));
       await loadData();
     } catch (err) {
-      setError(err.response?.data?.detail || t('integrations.refreshError'));
+      setError(extractApiError(err, t('integrations.refreshError')));
     } finally {
       setRefreshing(false);
     }
   };
 
-  const toggleServerExpand = (serverName) => {
-    setExpandedServers(prev => ({
+  const toggleServerExpand = (serverName: string) => {
+    setExpandedServers((prev) => ({
       ...prev,
-      [serverName]: !prev[serverName]
+      [serverName]: !prev[serverName],
     }));
   };
 
-  const getToolsForServer = (serverName) => {
-    return mcpTools.filter(tool => tool.server === serverName);
+  const getToolsForServer = (serverName: string): McpTool[] => {
+    return mcpTools.filter((tool) => tool.server === serverName);
   };
 
-  const toggleTool = async (serverName, toolOriginalName, currentlyActive) => {
+  const toggleTool = async (serverName: string, toolOriginalName: string, currentlyActive: boolean) => {
     const serverTools = getToolsForServer(serverName);
     const toggleKey = `${serverName}.${toolOriginalName}`;
     setTogglingTools(prev => ({ ...prev, [toggleKey]: true }));
@@ -135,47 +160,47 @@ export default function IntegrationsPage() {
     try {
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await apiClient.patch(
+      const res = await apiClient.patch<McpStatus>(
         `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
         { active_tools: newActiveTools },
-        { headers }
+        { headers },
       );
       setMcpStatus(res.data);
     } catch (err) {
       // Revert optimistic update
-      setMcpTools(prev => prev.map(t =>
+      setMcpTools((prev) => prev.map((t) =>
         t.server === serverName && t.original_name === toolOriginalName
           ? { ...t, active: currentlyActive }
-          : t
+          : t,
       ));
-      setError(err.response?.data?.detail || t('integrations.toolToggleError'));
+      setError(extractApiError(err, t('integrations.toolToggleError')));
     } finally {
-      setTogglingTools(prev => ({ ...prev, [toggleKey]: false }));
+      setTogglingTools((prev) => ({ ...prev, [toggleKey]: false }));
     }
   };
 
-  const resetServerTools = async (serverName) => {
-    setTogglingTools(prev => ({ ...prev, [serverName]: true }));
+  const resetServerTools = async (serverName: string) => {
+    setTogglingTools((prev) => ({ ...prev, [serverName]: true }));
     try {
       const token = getAccessToken();
       const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await apiClient.patch(
+      const res = await apiClient.patch<McpStatus>(
         `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
         { active_tools: null },
-        { headers }
+        { headers },
       );
       setMcpStatus(res.data);
       await loadData();
       setSuccess(t('integrations.resetDefaults'));
     } catch (err) {
-      setError(err.response?.data?.detail || t('integrations.toolToggleError'));
+      setError(extractApiError(err, t('integrations.toolToggleError')));
     } finally {
-      setTogglingTools(prev => ({ ...prev, [serverName]: false }));
+      setTogglingTools((prev) => ({ ...prev, [serverName]: false }));
     }
   };
 
-  const transportBadgeColor = (transport) => {
-    const map = { stdio: 'blue', streamable_http: 'purple', sse: 'amber' };
+  const transportBadgeColor = (transport: Transport): BadgeColor => {
+    const map: Record<string, BadgeColor> = { stdio: 'blue', streamable_http: 'purple', sse: 'amber' };
     return map[transport] || 'gray';
   };
 

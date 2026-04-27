@@ -6,6 +6,7 @@
  */
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { LucideIcon } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
@@ -14,11 +15,10 @@ import Badge from '../components/Badge';
 import {
   Zap, Loader, RefreshCw, CheckCircle, XCircle,
   ChevronDown, ChevronRight, Home, Brain, Camera, Workflow,
-  MessageSquare, Puzzle, Server, Code
+  MessageSquare, Puzzle, Server, Code,
 } from 'lucide-react';
 
-// Icon mapping for integrations
-const INTEGRATION_ICONS = {
+const INTEGRATION_ICONS: Record<string, LucideIcon> = {
   homeassistant: Home,
   knowledge: Brain,
   camera: Camera,
@@ -26,17 +26,61 @@ const INTEGRATION_ICONS = {
   general: MessageSquare,
 };
 
+interface IntentParameter {
+  name: string;
+  required?: boolean;
+}
+
+interface IntentDescriptor {
+  name: string;
+  description: string;
+  parameters: IntentParameter[];
+}
+
+interface Integration {
+  name: string;
+  title: string;
+  enabled: boolean;
+  intent_count: number;
+  intents: IntentDescriptor[];
+}
+
+interface PluginIntent {
+  name: string;
+  description: string;
+  plugin: string;
+}
+
+interface McpToolIntent {
+  intent: string;
+  description: string;
+  server?: string;
+}
+
+interface IntentsStatus {
+  total_intents: number;
+  enabled_integrations: number;
+  integrations: Integration[];
+  plugins?: PluginIntent[];
+  mcp_tools?: McpToolIntent[];
+}
+
+interface PromptData {
+  language: string;
+  intent_types: string;
+  examples?: string;
+}
+
 export default function IntentsPage() {
   const { t, i18n } = useTranslation();
   const { getAccessToken } = useAuth();
 
-  // State
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [status, setStatus] = useState(null);
-  const [expandedIntegrations, setExpandedIntegrations] = useState(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<IntentsStatus | null>(null);
+  const [expandedIntegrations, setExpandedIntegrations] = useState<Set<string>>(new Set());
   const [showPrompt, setShowPrompt] = useState(false);
-  const [promptData, setPromptData] = useState(null);
+  const [promptData, setPromptData] = useState<PromptData | null>(null);
 
   // Load intent status
   const loadStatus = useCallback(async () => {
@@ -46,8 +90,8 @@ export default function IntentsPage() {
     try {
       const token = await getAccessToken();
       const lang = i18n.language || 'de';
-      const response = await apiClient.get(`/api/intents/status?lang=${lang}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      const response = await apiClient.get<IntentsStatus>(`/api/intents/status?lang=${lang}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       setStatus(response.data);
@@ -76,8 +120,8 @@ export default function IntentsPage() {
     try {
       const token = await getAccessToken();
       const lang = i18n.language || 'de';
-      const response = await apiClient.get(`/api/intents/prompt?lang=${lang}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      const response = await apiClient.get<PromptData>(`/api/intents/prompt?lang=${lang}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       setPromptData(response.data);
       setShowPrompt(true);
@@ -87,7 +131,7 @@ export default function IntentsPage() {
   };
 
   // Toggle integration expansion
-  const toggleIntegration = (name) => {
+  const toggleIntegration = (name: string) => {
     setExpandedIntegrations(prev => {
       const next = new Set(prev);
       if (next.has(name)) {
