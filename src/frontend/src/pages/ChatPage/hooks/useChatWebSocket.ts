@@ -129,6 +129,8 @@ export function useChatWebSocket({
   const [wsConnected, setWsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Pending whenReady() resolvers, drained on the next onopen/onclose.
+  const readyResolversRef = useRef<Array<(ok: boolean) => void>>([]);
 
   const connectWebSocket = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -148,6 +150,9 @@ export function useChatWebSocket({
     ws.onopen = () => {
       debug.log('WebSocket verbunden');
       setWsConnected(true);
+      // Wake any callers waiting on whenReady().
+      const pending = readyResolversRef.current.splice(0);
+      pending.forEach((resolve) => resolve(true));
     };
 
     ws.onmessage = (event: MessageEvent) => {
@@ -206,6 +211,10 @@ export function useChatWebSocket({
     ws.onclose = () => {
       debug.log('WebSocket getrennt');
       setWsConnected(false);
+      // Don't leave whenReady() callers hanging across a closed socket; the
+      // next reconnect will create a fresh ws with its own onopen drain.
+      const pending = readyResolversRef.current.splice(0);
+      pending.forEach((resolve) => resolve(false));
       reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
     };
 
@@ -241,10 +250,45 @@ export function useChatWebSocket({
     return Boolean(wsRef.current && wsRef.current.readyState === WebSocket.OPEN);
   }, []);
 
+  /**
+   * Resolve `true` once the WebSocket reaches OPEN, or `false` on timeout
+   * or abort. Resolves immediately if already OPEN. Used by callers that
+   * need to wait through the page-load handshake before falling back to
+   * a non-WebSocket path.
+   */
+  const whenReady = useCallback(
+    (timeoutMs: number = 3000, signal?: AbortSignal): Promise<boolean> => {
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        return Promise.resolve(true);
+      }
+      if (signal?.aborted) {
+        return Promise.resolve(false);
+      }
+      return new Promise<boolean>((resolve) => {
+        let settled = false;
+        const settle = (ok: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+          resolve(ok);
+        };
+        const onAbort = () => settle(false);
+        const timer = setTimeout(() => settle(false), timeoutMs);
+        if (signal) signal.addEventListener('abort', onAbort, { once: true });
+        // The resolver registry is drained by ws.onopen (true) and
+        // ws.onclose (false). Already-settled entries are no-ops.
+        readyResolversRef.current.push(settle);
+      });
+    },
+    [],
+  );
+
   return {
     wsConnected,
     sendMessage,
     isReady,
+    whenReady,
     reconnect: connectWebSocket,
   };
 }
