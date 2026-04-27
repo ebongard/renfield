@@ -1,16 +1,47 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Users, UserPlus, Mic, MicOff, Trash2, Loader, CheckCircle,
   AlertCircle, Volume2, Shield, ShieldCheck, RefreshCw,
-  Edit3, GitMerge
+  Edit3, GitMerge,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+
+interface Speaker {
+  id: number;
+  name: string;
+  alias: string;
+  is_admin: boolean;
+  embedding_count?: number;
+  user_id?: number | null;
+  user_name?: string | null;
+  is_pinned?: boolean;
+}
+
+interface SpeakerServiceStatus {
+  available: boolean;
+  message?: string;
+}
+
+interface IdentifyResult {
+  is_identified: boolean;
+  speaker_id?: number | null;
+  speaker_name?: string | null;
+  speaker_alias?: string | null;
+  confidence?: number;
+  message?: string;
+}
+
+interface AudioContextCapableWindow {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
 
 export default function SpeakersPage() {
   const { t } = useTranslation();
@@ -18,24 +49,24 @@ export default function SpeakersPage() {
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   // State
-  const [speakers, setSpeakers] = useState([]);
+  const [speakers, setSpeakers] = useState<Speaker[]>([]);
   const [loading, setLoading] = useState(true);
-  const [serviceStatus, setServiceStatus] = useState(null);
+  const [serviceStatus, setServiceStatus] = useState<SpeakerServiceStatus | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [showIdentifyModal, setShowIdentifyModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showMergeModal, setShowMergeModal] = useState(false);
-  const [selectedSpeaker, setSelectedSpeaker] = useState(null);
-  const [mergeTargetId, setMergeTargetId] = useState(null);
+  const [selectedSpeaker, setSelectedSpeaker] = useState<Speaker | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
   const [merging, setMerging] = useState(false);
   const [recording, setRecording] = useState(false);
-  const [audioBlob, setAudioBlob] = useState(null);
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
   const [enrolling, setEnrolling] = useState(false);
   const [identifying, setIdentifying] = useState(false);
-  const [identifyResult, setIdentifyResult] = useState(null);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [identifyResult, setIdentifyResult] = useState<IdentifyResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
 
   // Form state
@@ -50,12 +81,12 @@ export default function SpeakersPage() {
   const [updating, setUpdating] = useState(false);
 
   // Refs
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
-  const streamRef = useRef(null);
-  const audioContextRef = useRef(null);
-  const analyserRef = useRef(null);
-  const animationFrameRef = useRef(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const animationFrameRef = useRef<number | null>(null);
 
   // Load data on mount
   useEffect(() => {
@@ -76,7 +107,7 @@ export default function SpeakersPage() {
 
   const loadServiceStatus = async () => {
     try {
-      const response = await apiClient.get('/api/speakers/status');
+      const response = await apiClient.get<SpeakerServiceStatus>('/api/speakers/status');
       setServiceStatus(response.data);
     } catch (err) {
       console.error('Failed to load service status:', err);
@@ -87,7 +118,7 @@ export default function SpeakersPage() {
   const loadSpeakers = async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/api/speakers');
+      const response = await apiClient.get<Speaker[]>('/api/speakers');
       setSpeakers(response.data);
     } catch (err) {
       console.error('Failed to load speakers:', err);
@@ -118,11 +149,11 @@ export default function SpeakersPage() {
       loadSpeakers();
     } catch (err) {
       console.error('Failed to create speaker:', err);
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
-  const deleteSpeaker = async (speaker) => {
+  const deleteSpeaker = async (speaker: Speaker) => {
     const confirmed = await confirm({
       title: t('speakers.deleteSpeaker'),
       message: t('speakers.deleteSpeakerConfirm', { name: speaker.name }),
@@ -162,7 +193,7 @@ export default function SpeakersPage() {
       loadSpeakers();
     } catch (err) {
       console.error('Failed to update speaker:', err);
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     } finally {
       setUpdating(false);
     }
@@ -174,12 +205,13 @@ export default function SpeakersPage() {
       return;
     }
 
-    if (selectedSpeaker.id === parseInt(mergeTargetId)) {
+    const mergeTargetIdInt = parseInt(mergeTargetId, 10);
+    if (selectedSpeaker.id === mergeTargetIdInt) {
       setError(t('speakers.sameSourceAndTarget'));
       return;
     }
 
-    const targetSpeaker = speakers.find(s => s.id === parseInt(mergeTargetId));
+    const targetSpeaker = speakers.find((s) => s.id === mergeTargetIdInt);
     const confirmed = await confirm({
       title: t('speakers.mergeSpeakers'),
       message: t('speakers.mergeConfirm', { source: selectedSpeaker.name, target: targetSpeaker?.name }),
@@ -192,9 +224,9 @@ export default function SpeakersPage() {
 
     try {
       setMerging(true);
-      const response = await apiClient.post('/api/speakers/merge', {
+      const response = await apiClient.post<{ message: string }>('/api/speakers/merge', {
         source_speaker_id: selectedSpeaker.id,
-        target_speaker_id: parseInt(mergeTargetId)
+        target_speaker_id: mergeTargetIdInt,
       });
 
       setSuccess(response.data.message);
@@ -204,13 +236,13 @@ export default function SpeakersPage() {
       loadSpeakers();
     } catch (err) {
       console.error('Failed to merge speakers:', err);
-      setError(err.response?.data?.detail || t('speakers.mergeFailed'));
+      setError(extractApiError(err, t('speakers.mergeFailed')));
     } finally {
       setMerging(false);
     }
   };
 
-  const openEditModal = (speaker) => {
+  const openEditModal = (speaker: Speaker) => {
     setSelectedSpeaker(speaker);
     setEditSpeakerName(speaker.name);
     setEditSpeakerAlias(speaker.alias);
@@ -218,7 +250,7 @@ export default function SpeakersPage() {
     setShowEditModal(true);
   };
 
-  const openMergeModal = (speaker) => {
+  const openMergeModal = (speaker: Speaker) => {
     setSelectedSpeaker(speaker);
     setMergeTargetId(null);
     setShowMergeModal(true);
@@ -235,7 +267,10 @@ export default function SpeakersPage() {
 
       // Set up audio context for level monitoring
       try {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const win = window as unknown as AudioContextCapableWindow;
+        const Ctor = win.AudioContext ?? win.webkitAudioContext;
+        if (!Ctor) throw new Error('AudioContext is not supported');
+        const audioContext = new Ctor();
         audioContextRef.current = audioContext;
 
         if (audioContext.state === 'suspended') {
@@ -274,7 +309,7 @@ export default function SpeakersPage() {
         console.warn('Audio context setup failed:', audioErr);
       }
 
-      mediaRecorder.ondataavailable = (event) => {
+      mediaRecorder.ondataavailable = (event: BlobEvent) => {
         audioChunksRef.current.push(event.data);
       };
 
@@ -297,7 +332,7 @@ export default function SpeakersPage() {
 
         // Stop stream
         if (streamRef.current) {
-          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current.getTracks().forEach((track) => track.stop());
         }
       };
 
@@ -328,10 +363,10 @@ export default function SpeakersPage() {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'voice_sample.webm');
 
-      const response = await apiClient.post(
+      const response = await apiClient.post<{ message: string }>(
         `/api/speakers/${selectedSpeaker.id}/enroll`,
         formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        { headers: { 'Content-Type': 'multipart/form-data' } },
       );
 
       setSuccess(response.data.message);
@@ -340,7 +375,7 @@ export default function SpeakersPage() {
       loadSpeakers();
     } catch (err) {
       console.error('Failed to enroll voice sample:', err);
-      setError(err.response?.data?.detail || t('speakers.voiceSampleFailed'));
+      setError(extractApiError(err, t('speakers.voiceSampleFailed')));
     } finally {
       setEnrolling(false);
     }
@@ -359,22 +394,22 @@ export default function SpeakersPage() {
       const formData = new FormData();
       formData.append('audio', audioBlob, 'identify.webm');
 
-      const response = await apiClient.post(
+      const response = await apiClient.post<IdentifyResult>(
         '/api/speakers/identify',
         formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        { headers: { 'Content-Type': 'multipart/form-data' } },
       );
 
       setIdentifyResult(response.data);
     } catch (err) {
       console.error('Failed to identify speaker:', err);
-      setError(err.response?.data?.detail || t('speakers.identificationFailed'));
+      setError(extractApiError(err, t('speakers.identificationFailed')));
     } finally {
       setIdentifying(false);
     }
   };
 
-  const openEnrollModal = (speaker) => {
+  const openEnrollModal = (speaker: Speaker) => {
     setSelectedSpeaker(speaker);
     setAudioBlob(null);
     setShowEnrollModal(true);
@@ -811,7 +846,7 @@ export default function SpeakersPage() {
           </button>
           <button
             onClick={identifySpeaker}
-            disabled={!audioBlob || identifying || identifyResult}
+            disabled={!audioBlob || identifying || identifyResult !== null}
             className="flex-1 btn btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {identifying ? (
