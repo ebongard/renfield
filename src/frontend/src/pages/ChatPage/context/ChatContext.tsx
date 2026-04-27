@@ -1,34 +1,190 @@
-import React, { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { createContext, useContext, useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { useTranslation } from 'react-i18next';
 import apiClient from '../../../utils/axios';
 import { debug } from '../../../utils/debug';
 import { useWakeWord } from '../../../hooks/useWakeWord';
 import { WAKEWORD_CONFIG } from '../../../config/wakeword';
 import { useChatSessions } from '../../../hooks/useChatSessions';
-import { useChatWebSocket, useAudioRecording, useDocumentUpload, useQuickActions } from '../hooks';
+import {
+  useChatWebSocket,
+  useAudioRecording,
+  useDocumentUpload,
+  useQuickActions,
+} from '../hooks';
+import type {
+  ActionWsMessage,
+  AgentFederationProgressMessage,
+  AgentThinkingMessage,
+  AgentToolCallMessage,
+  AgentToolResultMessage,
+  CardMessage,
+  DocumentErrorMessage,
+  DocumentProcessingMessage,
+  DocumentReadyMessage,
+  DoneMessage,
+  IntentFeedbackRequestMessage,
+  RagContextMessage,
+} from '../hooks/useChatWebSocket';
+import type { UploadStates, UploadedDocument } from '../hooks/useDocumentUpload';
+import type { Conversation } from '../../../types/chat';
 import { useConfirmDialog } from '../../../components/ConfirmDialog';
 
 const SESSION_STORAGE_KEY = 'renfield_current_session';
 
-const ChatContext = createContext(null);
+type WakeWordStatus = 'idle' | 'listening' | 'recording' | 'activated';
 
-export function useChatContext() {
+type AgentStep =
+  | { type: 'thinking'; step?: number; content?: string }
+  | { type: 'tool_call'; step?: number; tool: string; parameters?: unknown; reason?: string }
+  | { type: 'tool_result'; step?: number; tool: string; success: boolean; message?: string; data?: unknown };
+
+interface FederationProgressEntry {
+  peer_display_name: string;
+  label: string;
+  sequence: number;
+}
+
+export interface MessageAttachment {
+  id: string;
+  filename: string;
+  status?: string;
+  indexing?: boolean;
+  indexed?: boolean;
+  document_id?: string;
+  indexError?: string;
+}
+
+interface IntentInfo {
+  intent: string;
+  confidence: number;
+}
+
+interface ChatUiMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  streaming?: boolean;
+  intentInfo?: IntentInfo;
+  feedbackRequested?: boolean;
+  userQuery?: string;
+  agentSteps?: AgentStep[];
+  federationProgress?: Record<string, FederationProgressEntry>;
+  attachments?: MessageAttachment[];
+  card?: Record<string, unknown>;
+}
+
+interface EmailDialogState {
+  uploadId: string;
+  filename: string;
+}
+
+interface AudioContextCapableWindow {
+  AudioContext?: typeof AudioContext;
+  webkitAudioContext?: typeof AudioContext;
+}
+
+interface TtsErrorWindow {
+  _ttsErrorShown?: boolean;
+}
+
+type WakeWordHook = ReturnType<typeof useWakeWord>;
+type ActionLoading = Record<string, 'indexing' | 'paperless' | 'email'>;
+type ActionResult = ReturnType<typeof useQuickActions>['actionResult'];
+
+export interface ChatContextValue {
+  // Messages
+  messages: ChatUiMessage[];
+  loading: boolean;
+  input: string;
+  setInput: Dispatch<SetStateAction<string>>;
+  historyLoading: boolean;
+  sendMessage: (text: string, fromVoice?: boolean) => Promise<void>;
+
+  // Session
+  sessionId: string | null;
+  sidebarOpen: boolean;
+  setSidebarOpen: Dispatch<SetStateAction<boolean>>;
+  switchConversation: (newSessionId: string) => Promise<void>;
+  startNewChat: () => void;
+  handleDeleteConversation: (id: string) => Promise<void>;
+
+  // Conversations
+  conversations: Conversation[];
+  conversationsLoading: boolean;
+
+  // WebSocket
+  wsConnected: boolean;
+
+  // Audio
+  recording: boolean;
+  audioLevel: number;
+  silenceTimeRemaining: number;
+  toggleRecording: () => void;
+
+  // RAG
+  useRag: boolean;
+  toggleRag: () => void;
+  selectedKnowledgeBase: string | null;
+  setSelectedKnowledgeBase: Dispatch<SetStateAction<string | null>>;
+
+  // Document upload
+  attachments: MessageAttachment[];
+  uploading: boolean;
+  uploadError: string | null;
+  uploadDocument: (fileOrFiles: File | File[]) => Promise<void>;
+  removeAttachment: (id: string) => void;
+  uploadStates: UploadStates;
+
+  // Wake word
+  wakeWord: WakeWordHook & { status: WakeWordStatus };
+  wakeWordStatus: WakeWordStatus;
+
+  // Quick actions
+  actionLoading: ActionLoading;
+  actionResult: ActionResult;
+  indexToKb: (uploadId: string, kbId: string | number) => Promise<void>;
+  sendToPaperless: (uploadId: string) => Promise<void>;
+  handleSummarize: (uploadId: string) => void;
+  handleSendViaEmail: (uploadId: string) => void;
+
+  // Email dialog
+  emailDialog: EmailDialogState | null;
+  confirmSendViaEmail: (to: string, subject: string, body: string) => Promise<void>;
+  cancelEmailDialog: () => void;
+
+  // Actions
+  speakText: (text: string) => Promise<void>;
+  handleFeedbackSubmit: (
+    messageText: string,
+    feedbackType: string,
+    originalValue: string,
+    correctedValue: string,
+  ) => Promise<void>;
+}
+
+const ChatContext = createContext<ChatContextValue | null>(null);
+
+export function useChatContext(): ChatContextValue {
   const context = useContext(ChatContext);
   if (!context) throw new Error('useChatContext must be used within ChatProvider');
   return context;
 }
 
-export function ChatProvider({ children }) {
+interface ChatProviderProps {
+  children: ReactNode;
+}
+
+export function ChatProvider({ children }: ChatProviderProps) {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   // Message state
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<ChatUiMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
 
   // Session management
-  const [sessionId, setSessionId] = useState(() => {
+  const [sessionId, setSessionId] = useState<string | null>(() => {
     return localStorage.getItem(SESSION_STORAGE_KEY) || null;
   });
 
@@ -38,49 +194,58 @@ export function ChatProvider({ children }) {
 
   // RAG State
   const [useRag, setUseRag] = useState(false);
-  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
-  const [ragSources, setRagSources] = useState([]);
+  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<string | null>(null);
+  const [, setRagSources] = useState<unknown[]>([]);
 
   // Document upload state
-  const [attachments, setAttachments] = useState([]);
+  const [attachments, setAttachments] = useState<MessageAttachment[]>([]);
 
   // Wake word state
-  const [wakeWordStatus, setWakeWordStatus] = useState('idle');
+  const [wakeWordStatus, setWakeWordStatus] = useState<WakeWordStatus>('idle');
   const wakeWordActivatedRef = useRef(false);
   const wakeWordEnabledRef = useRef(false);
-  const audioContextUnlockedRef = useRef(null);
+  const audioContextUnlockedRef = useRef<AudioContext | null>(null);
 
   // Voice input tracking
-  const lastInputChannelRef = useRef('text');
+  const lastInputChannelRef = useRef<'text' | 'voice'>('text');
   const lastAutoTTSTextRef = useRef('');
   const autoTTSPendingRef = useRef(false);
 
   // TTS audio ref
-  const audioRef = useRef(null);
+  const audioRef = useRef<AudioBufferSourceNode | null>(null);
 
   // Intent feedback tracking
   const lastUserQueryRef = useRef('');
-  const lastIntentInfoRef = useRef(null);
+  const lastIntentInfoRef = useRef<IntentInfo | null>(null);
 
   // Chat sessions hook
   const {
     conversations,
     loading: conversationsLoading,
-    refreshConversations,
     deleteConversation,
     loadConversationHistory,
     addConversation,
-    updateConversationPreview
   } = useChatSessions();
+
+  const getAudioContext = useCallback((): AudioContext | null => {
+    const win = window as unknown as AudioContextCapableWindow;
+    const Ctor = win.AudioContext ?? win.webkitAudioContext;
+    if (!Ctor) return null;
+    if (!audioContextUnlockedRef.current || audioContextUnlockedRef.current.state === 'closed') {
+      audioContextUnlockedRef.current = new Ctor();
+      debug.log('AudioContext created and unlocked for TTS');
+    }
+    return audioContextUnlockedRef.current;
+  }, []);
 
   // Play activation sound when wake word is detected
   const playActivationSound = useCallback(() => {
     try {
-      if (!audioContextUnlockedRef.current || audioContextUnlockedRef.current.state === 'closed') {
-        audioContextUnlockedRef.current = new (window.AudioContext || window.webkitAudioContext)();
-        debug.log('AudioContext created and unlocked for TTS');
+      const audioContext = getAudioContext();
+      if (!audioContext) {
+        console.warn('AudioContext not available for activation sound');
+        return;
       }
-      const audioContext = audioContextUnlockedRef.current;
 
       if (audioContext.state === 'suspended') {
         audioContext.resume();
@@ -102,16 +267,16 @@ export function ChatProvider({ children }) {
     } catch (e) {
       console.warn('Could not play activation sound:', e);
     }
-  }, []);
+  }, [getAudioContext]);
 
   // Speak text using TTS
-  const speakText = useCallback(async (text) => {
+  const speakText = useCallback(async (text: string): Promise<void> => {
     try {
       if (audioRef.current) {
-        if (audioRef.current.stop) {
+        try {
           audioRef.current.stop();
-        } else if (audioRef.current.pause) {
-          audioRef.current.pause();
+        } catch {
+          /* may already be stopped */
         }
         audioRef.current = null;
       }
@@ -127,20 +292,19 @@ export function ChatProvider({ children }) {
 
       debug.log('Requesting TTS for:', text.substring(0, 50) + '...');
 
-      const response = await apiClient.post('/api/voice/tts',
+      const response = await apiClient.post<ArrayBuffer>(
+        '/api/voice/tts',
         { text },
-        { responseType: 'arraybuffer' }
+        { responseType: 'arraybuffer' },
       );
 
       if (response.data.byteLength < 100) {
         throw new Error('TTS response too small (Piper likely not available)');
       }
 
-      let audioContext = audioContextUnlockedRef.current;
-      if (!audioContext || audioContext.state === 'closed') {
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        audioContextUnlockedRef.current = audioContext;
-        debug.log('Created new AudioContext for TTS');
+      const audioContext = getAudioContext();
+      if (!audioContext) {
+        throw new Error('AudioContext is not supported');
       }
 
       if (audioContext.state === 'suspended') {
@@ -157,7 +321,7 @@ export function ChatProvider({ children }) {
 
       audioRef.current = source;
 
-      return new Promise((resolve) => {
+      return new Promise<void>((resolve) => {
         source.onended = () => {
           audioRef.current = null;
           debug.log('TTS playback completed');
@@ -167,29 +331,35 @@ export function ChatProvider({ children }) {
         source.start(0);
         debug.log('TTS playback started');
       });
-
     } catch (error) {
       console.error('TTS error:', error);
 
-      if (!window._ttsErrorShown) {
+      const w = window as TtsErrorWindow;
+      if (!w._ttsErrorShown) {
         console.warn('TTS not available. Check Piper in backend.');
-        window._ttsErrorShown = true;
+        w._ttsErrorShown = true;
       }
     }
-  }, []);
+  }, [getAudioContext]);
 
   // Ref for startRecording function (used by wake word callback)
-  const startRecordingRef = useRef(null);
+  const startRecordingRef = useRef<(() => void) | null>(null);
+
+  // Ref for sendMessageInternal (used by handleTranscription before
+  // sendMessageInternal is declared below).
+  const sendMessageInternalRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(
+    async () => undefined,
+  );
 
   // Handle wake word detection
-  const handleWakeWordDetected = useCallback(async (keyword, score) => {
+  const handleWakeWordDetected = useCallback(async (keyword: string, score: number) => {
     debug.log(`Wake word detected: ${keyword} (score: ${score.toFixed(2)})`);
     setWakeWordStatus('activated');
     wakeWordActivatedRef.current = true;
 
     playActivationSound();
 
-    await new Promise(r => setTimeout(r, WAKEWORD_CONFIG.activationDelayMs));
+    await new Promise((r) => setTimeout(r, WAKEWORD_CONFIG.activationDelayMs));
 
     if (startRecordingRef.current) {
       startRecordingRef.current();
@@ -200,7 +370,7 @@ export function ChatProvider({ children }) {
     debug.log('Wake word VAD: Speech ended');
   }, []);
 
-  const handleWakeWordError = useCallback((error) => {
+  const handleWakeWordError = useCallback((error: Error) => {
     console.error('Wake word error:', error);
     setWakeWordStatus('idle');
   }, []);
@@ -220,18 +390,19 @@ export function ChatProvider({ children }) {
   }, [wakeWordEnabled]);
 
   // Handle action — capture intent info for feedback
-  const handleAction = useCallback((data) => {
+  const handleAction = useCallback((data: ActionWsMessage) => {
     if (data.intent) {
+      const intentObj = typeof data.intent === 'string' ? null : data.intent;
       lastIntentInfoRef.current = {
-        intent: data.intent?.intent || data.intent,
-        confidence: data.intent?.confidence || 0,
+        intent: intentObj?.intent ?? (typeof data.intent === 'string' ? data.intent : ''),
+        confidence: intentObj?.confidence ?? 0,
       };
     }
   }, []);
 
   // Handle proactive feedback request from backend
-  const handleIntentFeedbackRequest = useCallback((data) => {
-    setMessages(prev => {
+  const handleIntentFeedbackRequest = useCallback((data: IntentFeedbackRequestMessage) => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.role === 'assistant') {
         return [
@@ -252,7 +423,12 @@ export function ChatProvider({ children }) {
   }, []);
 
   // Submit feedback correction to backend
-  const handleFeedbackSubmit = useCallback(async (messageText, feedbackType, originalValue, correctedValue) => {
+  const handleFeedbackSubmit = useCallback(async (
+    messageText: string,
+    feedbackType: string,
+    originalValue: string,
+    correctedValue: string,
+  ) => {
     try {
       await apiClient.post('/api/feedback/correction', {
         message_text: messageText,
@@ -267,21 +443,20 @@ export function ChatProvider({ children }) {
   }, []);
 
   // Handle stream done - process TTS and wake word resume
-  const handleStreamDone = useCallback((data) => {
+  const handleStreamDone = useCallback((data: DoneMessage) => {
     const ttsHandledByServer = data.tts_handled === true;
 
-    setMessages(prev => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.streaming) {
-        const intentInfo = data.intent ? {
-          intent: data.intent.intent,
-          confidence: data.intent.confidence || 0,
-        } : lastIntentInfoRef.current;
+        const intentInfo: IntentInfo | undefined = data.intent
+          ? { intent: data.intent.intent, confidence: data.intent.confidence ?? 0 }
+          : lastIntentInfoRef.current ?? undefined;
 
-        const completedMessage = {
+        const completedMessage: ChatUiMessage = {
           ...lastMsg,
           streaming: false,
-          intentInfo: intentInfo || undefined,
+          intentInfo,
           userQuery: lastUserQueryRef.current || undefined,
           // F4c — any lingering per-peer progress lines belong only to
           // the live streaming phase; drop them when the message finalizes.
@@ -344,56 +519,71 @@ export function ChatProvider({ children }) {
   }, [speakText, resumeWakeWord]);
 
   // Handle stream chunk
-  const handleStreamChunk = useCallback((content) => {
-    setMessages(prev => {
+  const handleStreamChunk = useCallback((content: string) => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
         return [
           ...prev.slice(0, -1),
-          { ...lastMsg, content: lastMsg.content + content }
+          { ...lastMsg, content: lastMsg.content + content },
         ];
-      } else {
-        return [...prev, { role: 'assistant', content: content, streaming: true }];
       }
+      return [...prev, { role: 'assistant', content, streaming: true }];
     });
   }, []);
 
   // Handle RAG context
-  const handleRagContext = useCallback((data) => {
+  const handleRagContext = useCallback((data: RagContextMessage) => {
     if (!data.has_context) {
       setRagSources([]);
     }
   }, []);
 
   // Handle agent steps (tool calls and results shown inline)
-  const handleAgentThinking = useCallback((data) => {
-    setMessages(prev => {
+  const handleAgentThinking = useCallback((data: AgentThinkingMessage) => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
+      const newStep: AgentStep = { type: 'thinking', step: data.step, content: data.content };
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
-        const steps = [...(lastMsg.agentSteps || []), { type: 'thinking', step: data.step, content: data.content }];
+        const steps = [...(lastMsg.agentSteps ?? []), newStep];
         return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
       }
       // No streaming message yet — create one with just agent steps
-      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [{ type: 'thinking', step: data.step, content: data.content }] }];
+      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [newStep] }];
     });
   }, []);
 
-  const handleAgentToolCall = useCallback((data) => {
-    setMessages(prev => {
+  const handleAgentToolCall = useCallback((data: AgentToolCallMessage) => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
+      const newStep: AgentStep = {
+        type: 'tool_call',
+        step: data.step,
+        tool: data.tool,
+        parameters: data.parameters,
+        reason: data.reason,
+      };
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
-        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_call', step: data.step, tool: data.tool, parameters: data.parameters, reason: data.reason }];
+        const steps = [...(lastMsg.agentSteps ?? []), newStep];
         return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
       }
-      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [{ type: 'tool_call', step: data.step, tool: data.tool, parameters: data.parameters, reason: data.reason }] }];
+      return [...prev, { role: 'assistant', content: '', streaming: true, agentSteps: [newStep] }];
     });
   }, []);
 
-  const handleAgentToolResult = useCallback((data) => {
-    setMessages(prev => {
+  const handleAgentToolResult = useCallback((data: AgentToolResultMessage) => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
-        const steps = [...(lastMsg.agentSteps || []), { type: 'tool_result', step: data.step, tool: data.tool, success: data.success, message: data.message, data: data.data }];
+        const newStep: AgentStep = {
+          type: 'tool_result',
+          step: data.step,
+          tool: data.tool,
+          success: data.success,
+          message: data.message,
+          data: data.data,
+        };
+        const steps = [...(lastMsg.agentSteps ?? []), newStep];
         return [...prev.slice(0, -1), { ...lastMsg, agentSteps: steps }];
       }
       return prev;
@@ -417,9 +607,9 @@ export function ChatProvider({ children }) {
   // Out-of-order chunks are ignored by `sequence`: only advance when
   // seq > stored seq (drops stale late arrivals but keeps terminal
   // chunks regardless, since losing a `complete` would strand the line).
-  const handleAgentFederationProgress = useCallback((data) => {
+  const handleAgentFederationProgress = useCallback((data: AgentFederationProgressMessage) => {
     const { peer_pubkey, peer_display_name, label, sequence } = data;
-    setMessages(prev => {
+    setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (!lastMsg || lastMsg.role !== 'assistant' || !lastMsg.streaming) {
         // Chunk arrived before any assistant message — attach to a new
@@ -431,7 +621,7 @@ export function ChatProvider({ children }) {
           federationProgress: { [peer_pubkey]: { peer_display_name, label, sequence } },
         }];
       }
-      const current = lastMsg.federationProgress || {};
+      const current = lastMsg.federationProgress ?? {};
       const next = { ...current };
       const isTerminal = label === 'complete' || label === 'failed';
       if (isTerminal) {
@@ -448,44 +638,44 @@ export function ChatProvider({ children }) {
   }, []);
 
   // Handle document processing notifications from backend
-  const handleDocumentProcessing = useCallback((data) => {
-    setMessages(prev => prev.map(msg => {
+  const handleDocumentProcessing = useCallback((data: DocumentProcessingMessage) => {
+    setMessages((prev) => prev.map((msg) => {
       if (!msg.attachments) return msg;
-      const updated = msg.attachments.map(att =>
-        att.id === data.upload_id ? { ...att, indexing: true } : att
+      const updated = msg.attachments.map((att) =>
+        att.id === data.upload_id ? { ...att, indexing: true } : att,
       );
       return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
     }));
   }, []);
 
-  const handleDocumentReady = useCallback((data) => {
-    setMessages(prev => prev.map(msg => {
+  const handleDocumentReady = useCallback((data: DocumentReadyMessage) => {
+    setMessages((prev) => prev.map((msg) => {
       if (!msg.attachments) return msg;
-      const updated = msg.attachments.map(att =>
+      const updated = msg.attachments.map((att) =>
         att.id === data.upload_id
           ? { ...att, indexing: false, indexed: true, document_id: data.document_id }
-          : att
+          : att,
       );
       return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
     }));
   }, []);
 
-  const handleDocumentError = useCallback((data) => {
-    setMessages(prev => prev.map(msg => {
+  const handleDocumentError = useCallback((data: DocumentErrorMessage) => {
+    setMessages((prev) => prev.map((msg) => {
       if (!msg.attachments) return msg;
-      const updated = msg.attachments.map(att =>
+      const updated = msg.attachments.map((att) =>
         att.id === data.upload_id
           ? { ...att, indexing: false, indexError: data.error }
-          : att
+          : att,
       );
       return updated !== msg.attachments ? { ...msg, attachments: updated } : msg;
     }));
   }, []);
 
   // Adaptive Card from server (sent after orchestrated/single-role response)
-  const handleCard = useCallback((data) => {
+  const handleCard = useCallback((data: CardMessage) => {
     if (!data.card) return;
-    setMessages(prev => {
+    setMessages((prev) => {
       const updated = [...prev];
       // Attach to most recent assistant message
       for (let i = updated.length - 1; i >= 0; i--) {
@@ -516,17 +706,14 @@ export function ChatProvider({ children }) {
   });
 
   // Handle transcription from audio recording
-  const handleTranscription = useCallback((text) => {
+  const handleTranscription = useCallback((text: string) => {
     debug.log('Transcription received:', text);
-    sendMessageInternal(text, true);
+    sendMessageInternalRef.current(text, true);
   }, []);
 
   // Handle recording error
-  const handleRecordingError = useCallback((errorMessage) => {
-    setMessages(prev => [...prev, {
-      role: 'assistant',
-      content: errorMessage
-    }]);
+  const handleRecordingError = useCallback((errorMessage: string) => {
+    setMessages((prev) => [...prev, { role: 'assistant', content: errorMessage }]);
     setLoading(false);
   }, []);
 
@@ -559,7 +746,6 @@ export function ChatProvider({ children }) {
     audioLevel,
     silenceTimeRemaining,
     startRecording,
-    stopRecording,
     toggleRecording,
   } = useAudioRecording({
     onTranscription: handleTranscription,
@@ -569,32 +755,39 @@ export function ChatProvider({ children }) {
   });
 
   // Document upload hook
-  const { uploading, uploadError, uploadDocument: doUpload, uploadDocuments: doUploadMultiple, uploadStates } = useDocumentUpload();
+  const {
+    uploading,
+    uploadError,
+    uploadDocuments: doUploadMultiple,
+    uploadStates,
+  } = useDocumentUpload();
 
-  const handleUploadDocument = useCallback(async (fileOrFiles) => {
+  const handleUploadDocument = useCallback(async (fileOrFiles: File | File[]) => {
     if (!sessionId) return;
     const files = Array.isArray(fileOrFiles) ? fileOrFiles : [fileOrFiles];
     const results = await doUploadMultiple(files, sessionId);
-    const successful = results.filter(Boolean);
+    const successful = results.filter((r): r is UploadedDocument => Boolean(r));
     if (successful.length > 0) {
-      setAttachments(prev => [...prev, ...successful]);
+      // Server returns full attachment shape (id, filename, status, …) under
+      // UploadedDocument's index signature; surface it as MessageAttachment.
+      setAttachments((prev) => [...prev, ...(successful as unknown as MessageAttachment[])]);
     }
   }, [sessionId, doUploadMultiple]);
 
-  const removeAttachment = useCallback((id) => {
-    setAttachments(prev => prev.filter(a => a.id !== id));
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
   // Quick actions hook
   const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendViaEmail } = useQuickActions();
 
   // Email dialog state
-  const [emailDialog, setEmailDialog] = useState(null);
+  const [emailDialog, setEmailDialog] = useState<EmailDialogState | null>(null);
 
-  const handleSendViaEmail = useCallback((uploadId) => {
-    let filename = null;
+  const handleSendViaEmail = useCallback((uploadId: string) => {
+    let filename: string | null = null;
     for (const msg of messages) {
-      const att = msg.attachments?.find(a => a.id === uploadId);
+      const att = msg.attachments?.find((a) => a.id === uploadId);
       if (att) {
         filename = att.filename;
         break;
@@ -602,14 +795,14 @@ export function ChatProvider({ children }) {
     }
     // Also check pending attachments
     if (!filename) {
-      const att = attachments.find(a => a.id === uploadId);
+      const att = attachments.find((a) => a.id === uploadId);
       if (att) filename = att.filename;
     }
     if (!filename) return;
     setEmailDialog({ uploadId, filename });
   }, [messages, attachments]);
 
-  const confirmSendViaEmail = useCallback(async (to, subject, body) => {
+  const confirmSendViaEmail = useCallback(async (to: string, subject: string, body: string) => {
     if (!emailDialog) return;
     await sendViaEmail(emailDialog.uploadId, to, subject, body);
     setEmailDialog(null);
@@ -623,7 +816,7 @@ export function ChatProvider({ children }) {
   startRecordingRef.current = startRecording;
 
   // Internal send message function
-  const sendMessageInternal = useCallback(async (text, fromVoice = false) => {
+  const sendMessageInternal = useCallback(async (text: string, fromVoice = false): Promise<void> => {
     if (!text.trim()) return;
 
     if (!fromVoice) {
@@ -638,27 +831,29 @@ export function ChatProvider({ children }) {
     // Capture current attachments before clearing
     const currentAttachments = [...attachments];
     const completedIds = currentAttachments
-      .filter(a => a.status === 'completed')
-      .map(a => a.id);
+      .filter((a) => a.status === 'completed')
+      .map((a) => a.id);
 
-    const userMessage = {
+    const userMessage: ChatUiMessage = {
       role: 'user',
       content: text,
       ...(currentAttachments.length > 0 && { attachments: currentAttachments }),
     };
-    setMessages(prev => [...prev, userMessage]);
+    setMessages((prev) => [...prev, userMessage]);
     setInput('');
     setAttachments([]);
     setLoading(true);
 
     const previewText = text.length > 50 ? text.substring(0, 50) + '...' : text;
-    addConversation({
-      session_id: sessionId,
-      preview: previewText,
-      message_count: messages.length + 1,
-      updated_at: new Date().toISOString(),
-      created_at: new Date().toISOString()
-    });
+    if (sessionId) {
+      addConversation({
+        session_id: sessionId,
+        preview: previewText,
+        message_count: messages.length + 1,
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString(),
+      });
+    }
 
     if (isReady()) {
       const message = {
@@ -673,32 +868,31 @@ export function ChatProvider({ children }) {
       setRagSources([]);
     } else {
       try {
-        const response = await apiClient.post('/api/chat/send', {
+        const response = await apiClient.post<{ message: string }>('/api/chat/send', {
           message: text,
-          session_id: sessionId
+          session_id: sessionId,
         });
 
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: response.data.message
-        }]);
+        setMessages((prev) => [...prev, { role: 'assistant', content: response.data.message }]);
       } catch (error) {
         console.error('Chat error:', error);
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: t('errors.couldNotProcess')
-        }]);
+        setMessages((prev) => [...prev, { role: 'assistant', content: t('errors.couldNotProcess') }]);
       } finally {
         setLoading(false);
       }
     }
   }, [sessionId, messages.length, useRag, selectedKnowledgeBase, isReady, wsSendMessage, addConversation, attachments, t]);
 
+  // Wire ref so handleTranscription (declared above) can call sendMessageInternal
+  useEffect(() => {
+    sendMessageInternalRef.current = sendMessageInternal;
+  }, [sendMessageInternal]);
+
   // Summarize handler (must be after sendMessageInternal)
-  const handleSummarize = useCallback((uploadId) => {
-    let filename = null;
+  const handleSummarize = useCallback((uploadId: string) => {
+    let filename: string | null = null;
     for (const msg of messages) {
-      const att = msg.attachments?.find(a => a.id === uploadId);
+      const att = msg.attachments?.find((a) => a.id === uploadId);
       if (att) {
         filename = att.filename;
         break;
@@ -730,17 +924,20 @@ export function ChatProvider({ children }) {
     const loadHistory = async () => {
       if (!sessionId) return;
 
-      const existingConv = conversations.find(c => c.session_id === sessionId);
+      const existingConv = conversations.find((c) => c.session_id === sessionId);
       if (existingConv && existingConv.message_count > 0 && messages.length === 0) {
         setHistoryLoading(true);
         try {
           const history = await loadConversationHistory(sessionId);
           if (history.length > 0) {
-            setMessages(history.map(m => ({
-              role: m.role,
-              content: m.content,
-              ...(m.attachments?.length > 0 && { attachments: m.attachments }),
-            })));
+            setMessages(history.map((m) => {
+              const meta = m.metadata as { attachments?: MessageAttachment[] } | undefined;
+              return {
+                role: m.role === 'system' ? 'assistant' : m.role,
+                content: m.content,
+                ...(meta?.attachments && meta.attachments.length > 0 && { attachments: meta.attachments }),
+              };
+            }));
           }
         } catch (err) {
           console.error('Failed to load conversation history:', err);
@@ -754,7 +951,7 @@ export function ChatProvider({ children }) {
   }, [sessionId, conversations, loadConversationHistory, messages.length]);
 
   // Switch to existing conversation
-  const switchConversation = useCallback(async (newSessionId) => {
+  const switchConversation = useCallback(async (newSessionId: string) => {
     if (newSessionId === sessionId) {
       setSidebarOpen(false);
       return;
@@ -763,11 +960,14 @@ export function ChatProvider({ children }) {
     setHistoryLoading(true);
     try {
       const history = await loadConversationHistory(newSessionId);
-      setMessages(history.map(m => ({
-        role: m.role,
-        content: m.content,
-        ...(m.attachments?.length > 0 && { attachments: m.attachments }),
-      })));
+      setMessages(history.map((m) => {
+        const meta = m.metadata as { attachments?: MessageAttachment[] } | undefined;
+        return {
+          role: m.role === 'system' ? 'assistant' : m.role,
+          content: m.content,
+          ...(meta?.attachments && meta.attachments.length > 0 && { attachments: meta.attachments }),
+        };
+      }));
       setSessionId(newSessionId);
       localStorage.setItem(SESSION_STORAGE_KEY, newSessionId);
       setSidebarOpen(false);
@@ -788,7 +988,7 @@ export function ChatProvider({ children }) {
   }, []);
 
   // Delete conversation
-  const handleDeleteConversation = useCallback(async (id) => {
+  const handleDeleteConversation = useCallback(async (id: string) => {
     const confirmed = await confirm({
       title: t('chat.deleteConversationTitle'),
       message: t('chat.deleteConversation'),
@@ -805,10 +1005,10 @@ export function ChatProvider({ children }) {
 
   // Toggle RAG
   const toggleRag = useCallback(() => {
-    setUseRag(prev => !prev);
+    setUseRag((prev) => !prev);
   }, []);
 
-  const value = useMemo(() => ({
+  const value = useMemo<ChatContextValue>(() => ({
     // Messages
     messages,
     loading,

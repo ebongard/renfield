@@ -1,79 +1,94 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { debug } from '../../../utils/debug';
 
-interface BaseWsMessage {
+export interface BaseWsMessage {
   type: string;
   [key: string]: unknown;
 }
 
-interface StreamMessage extends BaseWsMessage {
+export interface StreamMessage extends BaseWsMessage {
   type: 'stream';
   content: string;
 }
 
-interface DoneMessage extends BaseWsMessage {
+export interface DoneMessage extends BaseWsMessage {
   type: 'done';
+  tts_handled?: boolean;
+  intent?: { intent: string; confidence?: number };
 }
 
-interface ActionWsMessage extends BaseWsMessage {
+export interface ActionWsMessage extends BaseWsMessage {
   type: 'action';
-  intent: string;
+  intent: { intent?: string; confidence?: number; parameters?: Record<string, unknown> } | string;
   result: unknown;
 }
 
-interface RagContextMessage extends BaseWsMessage {
+export interface RagContextMessage extends BaseWsMessage {
   type: 'rag_context';
   has_context: boolean;
 }
 
-interface IntentFeedbackRequestMessage extends BaseWsMessage {
+export interface IntentFeedbackRequestMessage extends BaseWsMessage {
   type: 'intent_feedback_request';
   detected_intent: string;
+  confidence: number;
+  message_text: string;
 }
 
-interface DocumentProcessingMessage extends BaseWsMessage {
+export interface DocumentProcessingMessage extends BaseWsMessage {
   type: 'document_processing';
   filename: string;
+  upload_id: string;
 }
 
-interface DocumentReadyMessage extends BaseWsMessage {
+export interface DocumentReadyMessage extends BaseWsMessage {
   type: 'document_ready';
   filename: string;
   document_id: string;
+  upload_id: string;
 }
 
-interface DocumentErrorMessage extends BaseWsMessage {
+export interface DocumentErrorMessage extends BaseWsMessage {
   type: 'document_error';
   filename: string;
   error: string;
+  upload_id: string;
 }
 
-interface AgentThinkingMessage extends BaseWsMessage {
+export interface AgentThinkingMessage extends BaseWsMessage {
   type: 'agent_thinking';
+  step?: number;
   content?: string;
 }
 
-interface AgentToolCallMessage extends BaseWsMessage {
+export interface AgentToolCallMessage extends BaseWsMessage {
   type: 'agent_tool_call';
+  step?: number;
   tool: string;
+  parameters?: unknown;
   reason?: string;
 }
 
-interface AgentToolResultMessage extends BaseWsMessage {
+export interface AgentToolResultMessage extends BaseWsMessage {
   type: 'agent_tool_result';
+  step?: number;
   tool: string;
   success: boolean;
+  message?: string;
+  data?: unknown;
 }
 
-interface AgentFederationProgressMessage extends BaseWsMessage {
+export interface AgentFederationProgressMessage extends BaseWsMessage {
   type: 'agent_federation_progress';
-  peer_display_name?: string;
-  label?: string;
-  sequence?: number;
+  peer_pubkey: string;
+  peer_display_name: string;
+  label: string;
+  sequence: number;
 }
 
-interface CardMessage extends BaseWsMessage {
+export interface CardMessage extends BaseWsMessage {
   type: 'card';
+  card?: Record<string, unknown>;
 }
 
 interface UseChatWebSocketOptions {
