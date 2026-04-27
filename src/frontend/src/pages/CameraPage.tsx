@@ -1,43 +1,53 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 
+type CameraLabel = 'person' | 'car' | 'dog' | 'cat';
+type LabelFilter = CameraLabel | 'all';
+
+interface CameraEvent {
+  label: string;
+  camera: string;
+  start_time: number;
+  score?: number;
+}
+
 export default function CameraPage() {
   const { t, i18n } = useTranslation();
-  const [cameras, setCameras] = useState([]);
-  const [events, setEvents] = useState([]);
-  const [selectedLabel, setSelectedLabel] = useState('all');
+  const [cameras, setCameras] = useState<string[]>([]);
+  const [events, setEvents] = useState<CameraEvent[]>([]);
+  const [selectedLabel, setSelectedLabel] = useState<LabelFilter>('all');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadCameras();
-    loadEvents();
-  }, [selectedLabel]);
-
-  const loadCameras = async () => {
+  const loadCameras = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/camera/cameras');
+      const response = await apiClient.get<{ cameras: string[] }>('/api/camera/cameras');
       setCameras(response.data.cameras);
     } catch (error) {
       console.error('Fehler beim Laden der Kameras:', error);
     }
-  };
+  }, []);
 
-  const loadEvents = async () => {
+  const loadEvents = useCallback(async () => {
     try {
       const params = selectedLabel !== 'all' ? { label: selectedLabel } : {};
-      const response = await apiClient.get('/api/camera/events', { params });
+      const response = await apiClient.get<{ events: CameraEvent[] }>('/api/camera/events', { params });
       setEvents(response.data.events);
     } catch (error) {
       console.error('Fehler beim Laden der Events:', error);
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedLabel]);
 
-  const getLabelIcon = (label) => {
+  useEffect(() => {
+    loadCameras();
+    loadEvents();
+  }, [loadCameras, loadEvents]);
+
+  const getLabelIcon = (label: string) => {
     switch (label) {
       case 'person':
         return <User className="w-5 h-5" />;
@@ -51,7 +61,7 @@ export default function CameraPage() {
     }
   };
 
-  const labels = ['all', 'person', 'car', 'dog', 'cat'];
+  const labels: LabelFilter[] = ['all', 'person', 'car', 'dog', 'cat'];
 
   return (
     <div className="space-y-6">

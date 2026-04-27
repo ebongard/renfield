@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { Users, Trash2, Clock, Fingerprint, History } from 'lucide-react';
@@ -6,7 +6,16 @@ import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import TierBadge from '../components/TierBadge';
+import type { CircleTier } from '../components/TierBadge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+
+interface FederationPeer {
+  id: string;
+  remote_display_name: string;
+  remote_pubkey: string;
+  circle_tier: CircleTier | number;
+  last_seen_at?: string | null;
+}
 
 /**
  * /settings/circles/peers
@@ -24,19 +33,19 @@ export default function CirclesPeersPage() {
   const { t, i18n } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [peers, setPeers] = useState([]);
+  const [peers, setPeers] = useState<FederationPeer[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
-  const [revokingIds, setRevokingIds] = useState(() => new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [revokingIds, setRevokingIds] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/api/federation/peers');
+      const response = await apiClient.get<{ peers: FederationPeer[] }>('/api/federation/peers');
       setPeers(response.data.peers || []);
       setError(null);
-    } catch (err) {
+    } catch {
       setError(t('circles.peersCouldNotLoad'));
     } finally {
       setLoading(false);
@@ -54,7 +63,7 @@ export default function CirclesPeersPage() {
     }
   }, [success]);
 
-  const formatRelative = (iso) => {
+  const formatRelative = (iso?: string | null): string => {
     if (!iso) return t('circles.peerNeverSeen');
     try {
       const when = new Date(iso);
@@ -71,11 +80,11 @@ export default function CirclesPeersPage() {
     }
   };
 
-  const handleRevoke = async (peer) => {
+  const handleRevoke = async (peer: FederationPeer) => {
     const ok = await confirm({
       title: t('circles.revokePeerTitle'),
       message: t('circles.revokePeerConfirm', { name: peer.remote_display_name }),
-      confirmText: t('common.delete'),
+      confirmLabel: t('common.delete'),
       variant: 'danger',
     });
     if (!ok) return;

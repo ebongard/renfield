@@ -1,13 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Inbox, Calendar } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import type { BadgeColor } from '../components/Badge';
 import TierPicker from '../components/TierPicker';
+import type { CircleTier } from '../components/TierBadge';
 
-const ATOM_TYPE_COLORS = {
+type AtomType = 'kb_document' | 'kg_node' | 'kg_edge' | 'conversation_memory';
+
+const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   kb_document: 'blue',
   kg_node: 'amber',
   kg_edge: 'purple',
@@ -16,26 +20,36 @@ const ATOM_TYPE_COLORS = {
 
 const DAY_OPTIONS = [1, 3, 7, 14, 30];
 
+interface ReviewAtom {
+  atom_id: string;
+  atom_type: AtomType;
+  tier?: CircleTier | number;
+  policy?: { tier?: CircleTier | number; [key: string]: unknown };
+  title?: string;
+  preview?: string;
+  created_at?: string;
+}
+
 export default function BrainReviewPage() {
   const { t, i18n } = useTranslation();
 
-  const [atoms, setAtoms] = useState([]);
+  const [atoms, setAtoms] = useState<ReviewAtom[]>([]);
   const [days, setDays] = useState(7);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   // per-atom busy flag so the tier picker disables while the PATCH is in flight
-  const [savingIds, setSavingIds] = useState(() => new Set());
+  const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
 
   const load = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await apiClient.get('/api/circles/me/atoms-for-review', {
+      const response = await apiClient.get<ReviewAtom[]>('/api/circles/me/atoms-for-review', {
         params: { days, limit: 50 },
       });
       setAtoms(response.data || []);
       setError(null);
-    } catch (err) {
+    } catch {
       setError(t('circles.couldNotLoad'));
     } finally {
       setLoading(false);
@@ -54,7 +68,7 @@ export default function BrainReviewPage() {
     }
   }, [success]);
 
-  const handleTierChange = async (atom, newTier) => {
+  const handleTierChange = async (atom: ReviewAtom, newTier: CircleTier) => {
     if ((atom.tier ?? 0) === newTier) return;
     setSavingIds((prev) => new Set(prev).add(atom.atom_id));
     try {
@@ -68,7 +82,7 @@ export default function BrainReviewPage() {
           : a,
       ));
       setSuccess(t('circles.reviewTierChanged'));
-    } catch (err) {
+    } catch {
       setError(t('circles.couldNotSave'));
     } finally {
       setSavingIds((prev) => {
@@ -79,7 +93,7 @@ export default function BrainReviewPage() {
     }
   };
 
-  const formatDate = (iso) => {
+  const formatDate = (iso?: string): string => {
     if (!iso) return '';
     try {
       const locale = i18n.language === 'de' ? 'de-DE' : 'en-US';
@@ -149,7 +163,7 @@ export default function BrainReviewPage() {
                 <div className="flex-1 min-w-0 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge color={ATOM_TYPE_COLORS[atom.atom_type] || 'gray'}>
-                      {t(`circles.atomType.${atom.atom_type}`, atom.atom_type)}
+                      {t(`circles.atomType.${atom.atom_type}`, { defaultValue: atom.atom_type })}
                     </Badge>
                     <span className="text-xs text-gray-500 dark:text-gray-400">
                       {t('circles.capturedAt')}: {formatDate(atom.created_at)}

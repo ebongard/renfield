@@ -1,29 +1,45 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Brain, Search } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import type { BadgeColor } from '../components/Badge';
 import TierBadge from '../components/TierBadge';
+import type { CircleTier } from '../components/TierBadge';
 
-const ATOM_TYPE_COLORS = {
+type AtomType = 'kb_document' | 'kg_node' | 'kg_edge' | 'conversation_memory';
+
+const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   kb_document: 'blue',
   kg_node: 'amber',
   kg_edge: 'purple',
   conversation_memory: 'teal',
 };
 
+interface AtomMatch {
+  atom: {
+    atom_id: string;
+    atom_type: AtomType;
+    tier?: CircleTier | number;
+  };
+  score: number;
+  snippet: string;
+  rank: number;
+}
+
 export default function BrainPage() {
   const { t } = useTranslation();
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
+  const [results, setResults] = useState<AtomMatch[]>([]);
   const [searched, setSearched] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSearch = async (e) => {
+  const handleSearch = async (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault?.();
     const q = query.trim();
     if (!q) return;
@@ -31,12 +47,12 @@ export default function BrainPage() {
     try {
       setLoading(true);
       setError(null);
-      const response = await apiClient.get('/api/atoms', {
+      const response = await apiClient.get<AtomMatch[]>('/api/atoms', {
         params: { q, top_k: 20 },
       });
       setResults(response.data || []);
       setSearched(true);
-    } catch (err) {
+    } catch {
       setError(t('circles.couldNotLoad'));
       setResults([]);
     } finally {

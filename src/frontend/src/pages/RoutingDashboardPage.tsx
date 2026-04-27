@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { useTranslation } from 'react-i18next';
-import { RefreshCw, Filter, CheckCircle2, XCircle, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
 
-const LAYER_COLORS = {
+type Layer = 'entity_id' | 'continuity' | 'semantic' | 'mlp' | 'llm';
+
+const LAYER_COLORS: Record<Layer, string> = {
   entity_id: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
   continuity: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
   semantic: 'bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300',
@@ -12,11 +13,30 @@ const LAYER_COLORS = {
   llm: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
 };
 
+interface EntityMatch {
+  id: string;
+}
+
+interface RoutingTrace {
+  id: string | number;
+  created_at?: string;
+  message: string;
+  domain: string;
+  layer?: Layer;
+  confidence?: number | null;
+  entity_matches?: EntityMatch[];
+  user_feedback?: 1 | -1 | null;
+}
+
+interface RoutingStats {
+  by_domain?: Record<string, number>;
+  by_layer?: Record<string, number>;
+}
+
 export default function RoutingDashboardPage() {
-  const { t } = useTranslation();
   const { getAccessToken } = useAuth();
-  const [traces, setTraces] = useState([]);
-  const [stats, setStats] = useState(null);
+  const [traces, setTraces] = useState<RoutingTrace[]>([]);
+  const [stats, setStats] = useState<RoutingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [domainFilter, setDomainFilter] = useState('');
 
@@ -28,8 +48,8 @@ export default function RoutingDashboardPage() {
       const params = domainFilter ? { domain: domainFilter } : {};
 
       const [tracesRes, statsRes] = await Promise.all([
-        apiClient.get('/api/admin/routing-traces', { headers, params }),
-        apiClient.get('/api/admin/routing-stats', { headers }),
+        apiClient.get<{ traces: RoutingTrace[] }>('/api/admin/routing-traces', { headers, params }),
+        apiClient.get<RoutingStats>('/api/admin/routing-stats', { headers }),
       ]);
 
       setTraces(tracesRes.data.traces || []);
@@ -42,8 +62,6 @@ export default function RoutingDashboardPage() {
   }, [getAccessToken, domainFilter]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
-
-  const domains = stats?.by_domain ? Object.keys(stats.by_domain) : [];
 
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-6">
@@ -92,7 +110,7 @@ export default function RoutingDashboardPage() {
             {Object.entries(stats.by_layer).map(([layer, count]) => (
               <span
                 key={layer}
-                className={`px-3 py-1 rounded-full text-xs font-medium ${LAYER_COLORS[layer] || LAYER_COLORS.llm}`}
+                className={`px-3 py-1 rounded-full text-xs font-medium ${LAYER_COLORS[layer as Layer] || LAYER_COLORS.llm}`}
               >
                 {layer}: {count}
               </span>
@@ -133,7 +151,7 @@ export default function RoutingDashboardPage() {
                   </span>
                 </td>
                 <td className="py-2 pr-4">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${LAYER_COLORS[trace.layer] || LAYER_COLORS.llm}`}>
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${(trace.layer && LAYER_COLORS[trace.layer]) || LAYER_COLORS.llm}`}>
                     {trace.layer || 'llm'}
                   </span>
                 </td>

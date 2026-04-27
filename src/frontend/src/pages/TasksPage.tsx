@@ -1,33 +1,44 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
 import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Badge from '../components/Badge';
 
+type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
+type TaskFilter = TaskStatus | 'all';
+
+interface Task {
+  id: string | number;
+  status: TaskStatus;
+  title: string;
+  task_type: string;
+  created_at: string;
+  completed_at?: string | null;
+}
+
 export default function TasksPage() {
   const { t } = useTranslation();
-  const [tasks, setTasks] = useState([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState<TaskFilter>('all');
 
   useEffect(() => {
+    const loadTasks = async () => {
+      try {
+        const params = filter !== 'all' ? { status: filter } : {};
+        const response = await apiClient.get<{ tasks: Task[] }>('/api/tasks/list', { params });
+        setTasks(response.data.tasks);
+      } catch (error) {
+        console.error('Fehler beim Laden der Tasks:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
     loadTasks();
   }, [filter]);
 
-  const loadTasks = async () => {
-    try {
-      const params = filter !== 'all' ? { status: filter } : {};
-      const response = await apiClient.get('/api/tasks/list', { params });
-      setTasks(response.data.tasks);
-    } catch (error) {
-      console.error('Fehler beim Laden der Tasks:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const getStatusIcon = (status) => {
+  const getStatusIcon = (status: TaskStatus) => {
     switch (status) {
       case 'pending':
         return <Clock className="w-5 h-5 text-yellow-500" />;
@@ -42,7 +53,7 @@ export default function TasksPage() {
     }
   };
 
-  const filters = ['all', 'pending', 'running', 'completed', 'failed'];
+  const filters: TaskFilter[] = ['all', 'pending', 'running', 'completed', 'failed'];
 
   return (
     <div className="space-y-6">
