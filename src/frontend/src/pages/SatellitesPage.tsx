@@ -10,16 +10,75 @@ import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import type { BadgeColor } from '../components/Badge';
+import type { LucideIcon } from 'lucide-react';
 import {
   Satellite, Wifi, WifiOff, Mic, Volume2, Cpu, Thermometer,
-  Activity, Clock, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
-  ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package
+  Activity, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
+  ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package,
 } from 'lucide-react';
 
-// Audio level visualization component
-function AudioLevelMeter({ level, maxLevel = 100, label }) {
+type SatState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
+
+interface WakeWordEvent {
+  keyword: string;
+  confidence: number;
+  timestamp: number;
+}
+
+interface SatelliteMetrics {
+  audio_rms?: number;
+  audio_db?: number;
+  is_speech?: boolean;
+  cpu_percent?: number;
+  memory_percent?: number;
+  temperature?: number;
+  session_count_1h?: number;
+  error_count_1h?: number;
+  last_wakeword?: WakeWordEvent;
+}
+
+interface SatelliteCapabilities {
+  local_wakeword?: boolean;
+  speaker?: boolean;
+  led_count?: number;
+}
+
+interface SatelliteSession {
+  duration_seconds: number;
+  audio_chunks_count: number;
+  transcription?: string;
+}
+
+type UpdateStatus = 'in_progress' | 'failed' | 'success' | string;
+
+interface SatelliteData {
+  satellite_id: string;
+  room: string;
+  state: SatState;
+  version?: string;
+  has_active_session?: boolean;
+  uptime_seconds: number;
+  heartbeat_ago_seconds: number;
+  metrics?: SatelliteMetrics;
+  current_session?: SatelliteSession;
+  capabilities?: SatelliteCapabilities;
+  update_available?: boolean;
+  update_status?: UpdateStatus;
+  update_stage?: string;
+  update_progress?: number;
+  update_error?: string;
+}
+
+interface AudioLevelMeterProps {
+  level: number;
+  maxLevel?: number;
+  label: string;
+}
+
+function AudioLevelMeter({ level, maxLevel = 100, label }: AudioLevelMeterProps) {
   const percentage = Math.min((level / maxLevel) * 100, 100);
-  const getColor = (pct) => {
+  const getColor = (pct: number): string => {
     if (pct > 80) return 'bg-red-500';
     if (pct > 60) return 'bg-yellow-500';
     return 'bg-green-500';
@@ -42,10 +101,10 @@ function AudioLevelMeter({ level, maxLevel = 100, label }) {
 }
 
 // State indicator badge
-function StateBadge({ state }) {
+function StateBadge({ state }: { state: SatState }) {
   const { t } = useTranslation();
 
-  const stateConfig = {
+  const stateConfig: Record<SatState, { color: BadgeColor; icon: LucideIcon }> = {
     idle: { color: 'gray', icon: Radio },
     listening: { color: 'green', icon: Mic },
     processing: { color: 'yellow', icon: Zap },
@@ -57,13 +116,13 @@ function StateBadge({ state }) {
 
   return (
     <Badge color={config.color} icon={config.icon}>
-      {t(`satellites.states.${state}`, state.toUpperCase())}
+      {t(`satellites.states.${state}`, { defaultValue: state.toUpperCase() })}
     </Badge>
   );
 }
 
 // Progress bar for update
-function UpdateProgressBar({ progress, className = '' }) {
+function UpdateProgressBar({ progress, className = '' }: { progress: number; className?: string }) {
   return (
     <div className={`w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden ${className}`}>
       <div
@@ -74,22 +133,30 @@ function UpdateProgressBar({ progress, className = '' }) {
   );
 }
 
+interface SatelliteCardProps {
+  satellite: SatelliteData;
+  expanded: boolean;
+  onToggle: () => void;
+  latestVersion: string;
+  onUpdate: (satelliteId: string) => Promise<void>;
+}
+
 // Single satellite card
-function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate }) {
+function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate }: SatelliteCardProps) {
   const { t } = useTranslation();
   const [updating, setUpdating] = useState(false);
 
-  const formatDuration = (seconds) => {
+  const formatDuration = (seconds: number): string => {
     if (seconds < 60) return `${Math.round(seconds)}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   };
 
-  const formatAgo = (seconds) => {
-    if (seconds < 5) return t('satellites.justNow', 'just now');
-    if (seconds < 60) return t('satellites.secondsAgo', '{{count}}s ago', { count: Math.round(seconds) });
-    if (seconds < 3600) return t('satellites.minutesAgo', '{{count}}m ago', { count: Math.floor(seconds / 60) });
-    return t('satellites.hoursAgo', '{{count}}h ago', { count: Math.floor(seconds / 3600) });
+  const formatAgo = (seconds: number): string => {
+    if (seconds < 5) return t('satellites.justNow', { defaultValue: 'just now' });
+    if (seconds < 60) return t('satellites.secondsAgo', { defaultValue: '{{count}}s ago', count: Math.round(seconds) });
+    if (seconds < 3600) return t('satellites.minutesAgo', { defaultValue: '{{count}}m ago', count: Math.floor(seconds / 60) });
+    return t('satellites.hoursAgo', { defaultValue: '{{count}}h ago', count: Math.floor(seconds / 3600) });
   };
 
   const handleUpdate = async () => {
@@ -134,14 +201,14 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
           {/* Update available indicator */}
           {hasUpdate && !isUpdating && (
             <Badge color="yellow" icon={ArrowUpCircle}>
-              {t('satellites.updateAvailable', 'Update')}
+              {t('satellites.updateAvailable', { defaultValue: 'Update' })}
             </Badge>
           )}
 
           {/* Updating indicator */}
           {isUpdating && (
             <Badge color="blue" icon={Loader2} className="[&_svg]:animate-spin">
-              {t('satellites.updating', 'Updating...')}
+              {t('satellites.updating', { defaultValue: 'Updating...' })}
             </Badge>
           )}
 
@@ -379,37 +446,37 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
 export default function SatellitesPage() {
   const { t } = useTranslation();
 
-  const [satellites, setSatellites] = useState([]);
+  const [satellites, setSatellites] = useState<SatelliteData[]>([]);
   const [latestVersion, setLatestVersion] = useState('');
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [expandedIds, setExpandedIds] = useState(new Set());
+  const [error, setError] = useState<string | null>(null);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const refreshIntervalRef = useRef(null);
+  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadSatellites = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/satellites');
+      const response = await apiClient.get<{ satellites: SatelliteData[]; latest_version?: string }>('/api/satellites');
       setSatellites(response.data.satellites || []);
       setLatestVersion(response.data.latest_version || '');
       setError(null);
     } catch (err) {
       console.error('Failed to load satellites:', err);
-      setError(t('satellites.loadError', 'Failed to load satellites'));
+      setError(t('satellites.loadError', { defaultValue: 'Failed to load satellites' }));
     } finally {
       setLoading(false);
     }
   }, [t]);
 
-  const triggerUpdate = useCallback(async (satelliteId) => {
+  const triggerUpdate = useCallback(async (satelliteId: string) => {
     try {
       await apiClient.post(`/api/satellites/${satelliteId}/update`);
       // Refresh to see update status
       await loadSatellites();
     } catch (err) {
       console.error('Failed to trigger update:', err);
-      setError(t('satellites.updateError', 'Failed to trigger update'));
+      setError(t('satellites.updateError', { defaultValue: 'Failed to trigger update' }));
     }
   }, [loadSatellites, t]);
 
@@ -429,7 +496,7 @@ export default function SatellitesPage() {
     };
   }, [autoRefresh, loadSatellites]);
 
-  const toggleExpanded = (id) => {
+  const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) {

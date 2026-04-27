@@ -4,6 +4,7 @@
  * Admin page for managing roles and permissions.
  */
 import { useState, useEffect, useCallback } from 'react';
+import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient, { extractApiError } from '../utils/axios';
@@ -14,12 +15,32 @@ import Badge from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import {
   Shield, Plus, Pencil, Trash2, Loader,
-  Lock, RefreshCw, ChevronDown, ChevronRight
+  Lock, RefreshCw, ChevronDown, ChevronRight,
 } from 'lucide-react';
+
+interface PermissionCategoryDef {
+  description: string;
+  permissions: string[];
+  feature?: string;
+}
+
+interface Role {
+  id: number;
+  name: string;
+  description?: string | null;
+  permissions: string[];
+  is_system?: boolean;
+}
+
+interface RoleFormData {
+  name: string;
+  description: string;
+  permissions: string[];
+}
 
 // Permission categories for better organization
 // Categories with a 'feature' key are only shown when that feature is enabled
-const PERMISSION_CATEGORIES = {
+const PERMISSION_CATEGORIES: Record<string, PermissionCategoryDef> = {
   'Knowledge Bases': {
     description: 'Access to knowledge base documents',
     permissions: ['kb.none', 'kb.own', 'kb.shared', 'kb.all']
@@ -53,7 +74,7 @@ const PERMISSION_CATEGORIES = {
 };
 
 // Permission descriptions
-const PERMISSION_DESCRIPTIONS = {
+const PERMISSION_DESCRIPTIONS: Record<string, string> = {
   'kb.none': 'No access to knowledge bases',
   'kb.own': 'Access only own knowledge bases',
   'kb.shared': 'Access own and shared knowledge bases',
@@ -79,24 +100,24 @@ export default function RolesPage() {
   const { getAccessToken, isFeatureEnabled } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [roles, setRoles] = useState([]);
-  const [allPermissions, setAllPermissions] = useState([]);
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [, setAllPermissions] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
-  const [editingRole, setEditingRole] = useState(null);
+  const [editingRole, setEditingRole] = useState<Role | null>(null);
 
   // Form state
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<RoleFormData>({
     name: '',
     description: '',
-    permissions: []
+    permissions: [],
   });
   const [formLoading, setFormLoading] = useState(false);
-  const [expandedCategories, setExpandedCategories] = useState({});
+  const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
   // Load data
   const loadData = useCallback(async () => {
@@ -106,8 +127,8 @@ export default function RolesPage() {
       const headers = { Authorization: `Bearer ${token}` };
 
       const [rolesRes, permsRes] = await Promise.all([
-        apiClient.get('/api/roles', { headers }),
-        apiClient.get('/api/auth/permissions', { headers })
+        apiClient.get<Role[]>('/api/roles', { headers }),
+        apiClient.get<string[]>('/api/auth/permissions', { headers }),
       ]);
 
       setRoles(Array.isArray(rolesRes.data) ? rolesRes.data : []);
@@ -117,7 +138,7 @@ export default function RolesPage() {
     } finally {
       setLoading(false);
     }
-  }, [getAccessToken]);
+  }, [getAccessToken, t]);
 
   useEffect(() => {
     loadData();
@@ -135,7 +156,7 @@ export default function RolesPage() {
   }, [error, success]);
 
   // Toggle category expansion
-  const toggleCategory = (category) => {
+  const toggleCategory = (category: string) => {
     setExpandedCategories(prev => ({
       ...prev,
       [category]: !prev[category]
@@ -151,8 +172,8 @@ export default function RolesPage() {
       permissions: []
     });
     // Expand all categories for new role
-    const expanded = {};
-    Object.keys(PERMISSION_CATEGORIES).forEach(cat => {
+    const expanded: Record<string, boolean> = {};
+    Object.keys(PERMISSION_CATEGORIES).forEach((cat) => {
       expanded[cat] = true;
     });
     setExpandedCategories(expanded);
@@ -160,38 +181,38 @@ export default function RolesPage() {
   };
 
   // Open edit modal
-  const handleEdit = (role) => {
+  const handleEdit = (role: Role) => {
     setEditingRole(role);
     setFormData({
       name: role.name,
       description: role.description || '',
-      permissions: [...role.permissions]
+      permissions: [...role.permissions],
     });
     // Expand categories that have selected permissions
-    const expanded = {};
+    const expanded: Record<string, boolean> = {};
     Object.entries(PERMISSION_CATEGORIES).forEach(([cat, { permissions }]) => {
-      expanded[cat] = permissions.some(p => role.permissions.includes(p));
+      expanded[cat] = permissions.some((p) => role.permissions.includes(p));
     });
     setExpandedCategories(expanded);
     setShowModal(true);
   };
 
   // Toggle permission
-  const togglePermission = (permission) => {
-    setFormData(prev => {
+  const togglePermission = (permission: string) => {
+    setFormData((prev) => {
       const permissions = prev.permissions.includes(permission)
-        ? prev.permissions.filter(p => p !== permission)
+        ? prev.permissions.filter((p) => p !== permission)
         : [...prev.permissions, permission];
       return { ...prev, permissions };
     });
   };
 
   // Select all in category
-  const selectAllInCategory = (category) => {
+  const selectAllInCategory = (category: string) => {
     const categoryPermissions = PERMISSION_CATEGORIES[category].permissions;
-    setFormData(prev => {
+    setFormData((prev) => {
       const newPermissions = [...prev.permissions];
-      categoryPermissions.forEach(p => {
+      categoryPermissions.forEach((p) => {
         if (!newPermissions.includes(p)) {
           newPermissions.push(p);
         }
@@ -201,16 +222,16 @@ export default function RolesPage() {
   };
 
   // Clear all in category
-  const clearCategory = (category) => {
+  const clearCategory = (category: string) => {
     const categoryPermissions = PERMISSION_CATEGORIES[category].permissions;
-    setFormData(prev => ({
+    setFormData((prev) => ({
       ...prev,
-      permissions: prev.permissions.filter(p => !categoryPermissions.includes(p))
+      permissions: prev.permissions.filter((p) => !categoryPermissions.includes(p)),
     }));
   };
 
   // Submit form
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setFormLoading(true);
 
@@ -242,7 +263,7 @@ export default function RolesPage() {
   };
 
   // Delete role
-  const handleDelete = async (role) => {
+  const handleDelete = async (role: Role) => {
     if (role.is_system) {
       setError(t('roles.systemRoleCannotDelete'));
       return;
@@ -251,8 +272,8 @@ export default function RolesPage() {
     const confirmed = await confirm({
       title: t('roles.deleteRole'),
       message: t('roles.deleteRoleConfirm', { name: role.name }),
-      confirmText: t('common.delete'),
-      variant: 'danger'
+      confirmLabel: t('common.delete'),
+      variant: 'danger',
     });
 
     if (!confirmed) return;
@@ -270,7 +291,7 @@ export default function RolesPage() {
   };
 
   // Get count of permissions in category
-  const getCategoryPermissionCount = (category, permissions) => {
+  const getCategoryPermissionCount = (category: string, permissions: string[]): number => {
     const categoryPerms = PERMISSION_CATEGORIES[category].permissions;
     return permissions.filter(p => categoryPerms.includes(p)).length;
   };
