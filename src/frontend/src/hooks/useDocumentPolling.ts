@@ -27,14 +27,18 @@ import apiClient from '../utils/axios';
 
 export type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
 
+export interface KbDocumentPages {
+  current?: number | null;
+  total?: number | null;
+}
+
 export interface KbDocument {
   id: number;
   filename: string;
   status: DocStatus;
   stage?: string | null;
-  pages?: { current?: number | null; total?: number | null } | null;
+  pages?: KbDocumentPages | null;
   queue_position?: number | null;
-  [key: string]: unknown;
 }
 
 interface InflightLSEntry {

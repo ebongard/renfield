@@ -1,5 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
+import type { ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import type { AxiosError } from 'axios';
 import {
   BookOpen,
   Upload,
@@ -17,63 +19,125 @@ import {
   Layers,
   File,
   AlertCircle,
-  ArrowRightLeft
+  ArrowRightLeft,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import StatusBadge from '../components/knowledge/StatusBadge';
 import DuplicateDialog from '../components/knowledge/DuplicateDialog';
+import type { ExistingDocument } from '../components/knowledge/DuplicateDialog';
 import { useDocumentPolling } from '../hooks/useDocumentPolling';
+import type { KbDocument } from '../hooks/useDocumentPolling';
+import type { DocPages } from '../components/knowledge/StatusBadge';
 import { useInflightTabTitle } from '../hooks/useInflightTabTitle';
+
+type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
+type StatusFilter = DocStatus | 'all';
+
+interface KnowledgeBaseRow {
+  id: number;
+  name: string;
+  description?: string | null;
+  document_count?: number;
+}
+
+interface KnowledgeStats {
+  document_count: number;
+  completed_documents: number;
+  chunk_count: number;
+  knowledge_base_count: number;
+}
+
+interface SearchChunk {
+  content: string;
+  page_number?: number | null;
+  section_title?: string | null;
+}
+
+interface SearchResultDocument {
+  id: number;
+  filename: string;
+}
+
+interface SearchResultChunk {
+  document: SearchResultDocument;
+  chunk: SearchChunk;
+  similarity: number;
+}
+
+interface DocumentRow {
+  id: number;
+  filename: string;
+  status: DocStatus;
+  stage?: string | null;
+  pages?: DocPages | null;
+  queue_position?: number | null;
+  file_type?: string;
+  knowledge_base_id?: number;
+  error_message?: string;
+  size_bytes?: number;
+  file_size?: number;
+  page_count?: number;
+  chunk_count?: number;
+  title?: string;
+  created_at?: string;
+}
+
+interface DuplicateErrorPayload {
+  existing_document?: ExistingDocument;
+  max_mb?: number;
+  allowed?: string[];
+  message?: string;
+}
 
 export default function KnowledgePage() {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
   // State
-  const [documents, setDocuments] = useState([]);
-  const [knowledgeBases, setKnowledgeBases] = useState([]);
-  const [stats, setStats] = useState(null);
+  const [documents, setDocuments] = useState<DocumentRow[]>([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseRow[]>([]);
+  const [stats, setStats] = useState<KnowledgeStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState([]);
+  const [searchResults, setSearchResults] = useState<SearchResultChunk[]>([]);
   const [searching, setSearching] = useState(false);
 
   // Filter state
-  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState(null);
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
 
   // New Knowledge Base state
   const [showNewKbModal, setShowNewKbModal] = useState(false);
   const [newKbName, setNewKbName] = useState('');
 
-  // Duplicate-upload dialog (#388): surface 409 as a real modal with an
-  // anchor to the existing document, not a toast.
-  const [duplicate, setDuplicate] = useState(null);
+  // Duplicate-upload dialog (#388)
+  const [duplicate, setDuplicate] = useState<ExistingDocument | null>(null);
 
   // Per-row expansion state for showing raw `error_message` on failed docs.
-  const [expandedErrors, setExpandedErrors] = useState({});
+  const [expandedErrors, setExpandedErrors] = useState<Record<number, boolean>>({});
   const [newKbDescription, setNewKbDescription] = useState('');
 
   // Move / Bulk selection state
-  const [selectedDocs, setSelectedDocs] = useState(new Set());
-  const [moveTargetKbId, setMoveTargetKbId] = useState(null);
-  const [showMoveDropdown, setShowMoveDropdown] = useState(null); // doc id or 'bulk'
+  const [selectedDocs, setSelectedDocs] = useState<Set<number>>(new Set());
+  const [, setMoveTargetKbId] = useState<number | null>(null);
+  const [showMoveDropdown, setShowMoveDropdown] = useState<number | 'bulk' | null>(null);
 
   // Load data
   const loadDocuments = useCallback(async () => {
     try {
-      const params = {};
+      const params: Record<string, unknown> = {};
       if (selectedKnowledgeBase) params.knowledge_base_id = selectedKnowledgeBase;
       if (statusFilter !== 'all') params.status = statusFilter;
 
-      const response = await apiClient.get('/api/knowledge/documents', { params });
+      const response = await apiClient.get<DocumentRow[]>('/api/knowledge/documents', { params });
       setDocuments(response.data);
     } catch (error) {
       console.error('Failed to load documents:', error);
@@ -82,7 +146,7 @@ export default function KnowledgePage() {
 
   const loadKnowledgeBases = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/knowledge/bases');
+      const response = await apiClient.get<KnowledgeBaseRow[]>('/api/knowledge/bases');
       setKnowledgeBases(response.data);
     } catch (error) {
       console.error('Failed to load knowledge bases:', error);
@@ -91,7 +155,7 @@ export default function KnowledgePage() {
 
   const loadStats = useCallback(async () => {
     try {
-      const response = await apiClient.get('/api/knowledge/stats');
+      const response = await apiClient.get<KnowledgeStats>('/api/knowledge/stats');
       setStats(response.data);
     } catch (error) {
       console.error('Failed to load stats:', error);
@@ -133,13 +197,14 @@ export default function KnowledgePage() {
 
   // Last file the user tried to upload, so the 503-toast retry CTA can
   // re-submit without re-opening the file picker.
-  const [pendingRetryFile, setPendingRetryFile] = useState(null);
+  const [pendingRetryFile, setPendingRetryFile] = useState<File | null>(null);
 
   // File upload handler — handles both 200 (legacy inline) and 202
   // (worker-enabled) responses. On 202 we track the doc for polling and
   // surface a "queued, processing soon" toast; on 200 we just reload.
-  const handleUpload = async (eventOrFile) => {
-    const file = eventOrFile?.target?.files?.[0] || eventOrFile;
+  const handleUpload = async (eventOrFile: ChangeEvent<HTMLInputElement> | File) => {
+    const event = eventOrFile as ChangeEvent<HTMLInputElement>;
+    const file: File | undefined = (event?.target?.files?.[0] as File | undefined) ?? (eventOrFile as File);
     if (!file) return;
 
     setUploading(true);
@@ -154,14 +219,14 @@ export default function KnowledgePage() {
         ? { knowledge_base_id: selectedKnowledgeBase }
         : {};
 
-      const response = await apiClient.post('/api/knowledge/upload', formData, {
+      const response = await apiClient.post<DocumentRow>('/api/knowledge/upload', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         params,
       });
 
       if (response.status === 202) {
         setUploadProgress(t('knowledge.uploadQueued'));
-        trackDocument(response.data);
+        trackDocument(response.data as KbDocument);
         setPendingRetryFile(null);
         await loadDocuments();
       } else {
@@ -173,33 +238,35 @@ export default function KnowledgePage() {
 
       setTimeout(() => setUploadProgress(null), 2500);
     } catch (error) {
-      const status = error.response?.status;
-      const detail = error.response?.data?.detail;
+      const axiosErr = error as AxiosError<{ detail?: DuplicateErrorPayload | string }> | undefined;
+      const status = axiosErr?.response?.status;
+      const detail = axiosErr?.response?.data?.detail;
+      const detailObj = typeof detail === 'object' ? detail : undefined;
 
-      if (status === 409 && detail?.existing_document) {
-        setDuplicate(detail.existing_document);
+      if (status === 409 && detailObj?.existing_document) {
+        setDuplicate(detailObj.existing_document);
         setUploadProgress(null);
       } else if (status === 503) {
         setUploadProgress(t('knowledge.workerUnavailable'));
         // keep setTimeout longer for retry CTA; cleared on retry or dismiss
         setTimeout(() => setUploadProgress(null), 10000);
       } else if (status === 413) {
-        const maxMb = detail?.max_mb ?? '';
+        const maxMb = detailObj?.max_mb ?? '';
         setUploadProgress(t('knowledge.fileTooLarge', { maxMb }));
         setTimeout(() => setUploadProgress(null), 5000);
       } else if (status === 415) {
-        const allowed = Array.isArray(detail?.allowed) ? detail.allowed.join(', ') : '';
+        const allowed = Array.isArray(detailObj?.allowed) ? detailObj.allowed.join(', ') : '';
         setUploadProgress(t('knowledge.formatNotSupported', { allowed }));
         setTimeout(() => setUploadProgress(null), 6000);
       } else {
         console.error('Upload error:', error);
-        const msg = typeof detail === 'string' ? detail : detail?.message || t('knowledge.serverError');
+        const msg = typeof detail === 'string' ? detail : (detailObj?.message ?? t('knowledge.serverError'));
         setUploadProgress(`${t('knowledge.errorLabel')}: ${msg}`);
         setTimeout(() => setUploadProgress(null), 6000);
       }
     } finally {
       setUploading(false);
-      if (eventOrFile?.target) eventOrFile.target.value = '';
+      if (event?.target) event.target.value = '';
     }
   };
 
@@ -213,7 +280,7 @@ export default function KnowledgePage() {
   };
 
   // Delete document
-  const handleDeleteDocument = async (id, filename) => {
+  const handleDeleteDocument = async (id: number, filename: string) => {
     const confirmed = await confirm({
       title: t('common.delete'),
       message: t('knowledge.deleteDocument', { filename }),
@@ -232,7 +299,7 @@ export default function KnowledgePage() {
   };
 
   // Reindex document
-  const handleReindexDocument = async (id) => {
+  const handleReindexDocument = async (id: number) => {
     try {
       await apiClient.post(`/api/knowledge/documents/${id}/reindex`);
       await loadDocuments();
@@ -249,10 +316,10 @@ export default function KnowledgePage() {
 
     setSearching(true);
     try {
-      const response = await apiClient.post('/api/knowledge/search', {
+      const response = await apiClient.post<{ results: SearchResultChunk[] }>('/api/knowledge/search', {
         query: searchQuery,
         top_k: 5,
-        knowledge_base_id: selectedKnowledgeBase
+        knowledge_base_id: selectedKnowledgeBase,
       });
       setSearchResults(response.data.results);
     } catch (error) {
@@ -278,12 +345,12 @@ export default function KnowledgePage() {
       setNewKbDescription('');
     } catch (error) {
       console.error('Create error:', error);
-      alert(error.response?.data?.detail || t('common.error'));
+      alert(extractApiError(error, t('common.error')));
     }
   };
 
   // Delete Knowledge Base
-  const handleDeleteKnowledgeBase = async (id, name) => {
+  const handleDeleteKnowledgeBase = async (id: number, name: string) => {
     const confirmed = await confirm({
       title: t('knowledge.deleteKnowledgeBase'),
       message: t('knowledge.deleteKnowledgeBaseConfirm', { name }),
@@ -304,13 +371,13 @@ export default function KnowledgePage() {
   };
 
   // Move documents
-  const handleMoveDocuments = async (docIds, targetKbId) => {
+  const handleMoveDocuments = async (docIds: number[], targetKbId: number | null) => {
     if (!targetKbId || docIds.length === 0) return;
 
     try {
-      const response = await apiClient.post('/api/knowledge/documents/move', {
+      const response = await apiClient.post<{ moved_count: number }>('/api/knowledge/documents/move', {
         document_ids: docIds,
-        target_knowledge_base_id: targetKbId
+        target_knowledge_base_id: targetKbId,
       });
       const moved = response.data.moved_count;
       if (moved > 0) {
@@ -324,12 +391,12 @@ export default function KnowledgePage() {
       await Promise.all([loadDocuments(), loadKnowledgeBases(), loadStats()]);
     } catch (error) {
       console.error('Move error:', error);
-      alert(error.response?.data?.detail || t('common.error'));
+      alert(extractApiError(error, t('common.error')));
     }
   };
 
   // Bulk selection helpers
-  const toggleDocSelection = (docId) => {
+  const toggleDocSelection = (docId: number) => {
     setSelectedDocs(prev => {
       const next = new Set(prev);
       if (next.has(docId)) next.delete(docId);
@@ -342,13 +409,13 @@ export default function KnowledgePage() {
     if (selectedDocs.size === documents.length) {
       setSelectedDocs(new Set());
     } else {
-      setSelectedDocs(new Set(documents.map(d => d.id)));
+      setSelectedDocs(new Set(documents.map((d) => d.id)));
     }
   };
 
   // KB selector dropdown for move
-  const MoveKbDropdown = ({ docIds, onClose }) => {
-    const targetBases = knowledgeBases.filter(kb => kb.id !== selectedKnowledgeBase);
+  const MoveKbDropdown = ({ docIds, onClose }: { docIds: number[]; onClose: () => void }) => {
+    const targetBases = knowledgeBases.filter((kb) => kb.id !== selectedKnowledgeBase);
     if (targetBases.length === 0) return null;
 
     return (
@@ -371,7 +438,7 @@ export default function KnowledgePage() {
 
   // Status icon helper — retained for callers that still render just the
   // icon (e.g. the Stats card). The document row uses <StatusBadge>.
-  const getStatusIcon = (status) => {
+  const getStatusIcon = (status: DocStatus | string) => {
     switch (status) {
       case 'completed':
         return <CheckCircle className="w-5 h-5 text-green-500" aria-hidden="true" />;
@@ -387,7 +454,7 @@ export default function KnowledgePage() {
   };
 
   // File type icon helper
-  const getFileIcon = (fileType) => {
+  const getFileIcon = (fileType?: string) => {
     switch (fileType) {
       case 'pdf':
         return <FileText className="w-5 h-5 text-red-400" />;
@@ -402,8 +469,8 @@ export default function KnowledgePage() {
     }
   };
 
-  const statusFilters = ['all', 'completed', 'processing', 'pending', 'failed'];
-  const statusLabels = {
+  const statusFilters: StatusFilter[] = ['all', 'completed', 'processing', 'pending', 'failed'];
+  const statusLabels: Record<StatusFilter, string> = {
     all: t('common.all'),
     completed: t('knowledge.statusCompleted'),
     processing: t('knowledge.statusProcessing'),
@@ -556,7 +623,6 @@ export default function KnowledgePage() {
               : 'info'
             }
             className="mt-4"
-            role={uploadProgress.includes('Fehler') ? 'alert' : 'status'}
           >
             <div className="flex items-center justify-between gap-3">
               <span>{uploadProgress}</span>
@@ -721,8 +787,9 @@ export default function KnowledgePage() {
               // the polling hook drops it from activeDocs and onResolved
               // triggers a list reload — so stale data is replaced with
               // the authoritative row shortly after.
-              const doc = activeDocs[staleDoc.id]
-                ? { ...staleDoc, ...activeDocs[staleDoc.id] }
+              const liveOverlay = activeDocs[staleDoc.id];
+              const doc: DocumentRow = liveOverlay
+                ? { ...staleDoc, ...liveOverlay, pages: liveOverlay.pages as DocPages | null | undefined }
                 : staleDoc;
               return (
               <div
