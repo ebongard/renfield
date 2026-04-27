@@ -856,6 +856,24 @@ export function ChatProvider({ children }: ChatProviderProps) {
       });
     }
 
+    // Brief grace period for the WebSocket handshake. The WS path runs the
+    // full chat pipeline (orchestrator, sub-agents, cards); the REST
+    // fallback at /api/chat/send skips orchestration and produces inferior
+    // answers for cross-domain queries. Without this wait, a user who
+    // submits immediately after page load races the WS handshake and
+    // silently lands on REST. Wait up to ~3s — long enough to cover normal
+    // handshake latency, short enough that genuinely WS-blocked clients
+    // (proxies, extensions) still get a usable fallback in perceptible time.
+    if (!isReady()) {
+      const WS_WAIT_TIMEOUT_MS = 3000;
+      const POLL_INTERVAL_MS = 50;
+      const start = Date.now();
+      while (!isReady() && Date.now() - start < WS_WAIT_TIMEOUT_MS) {
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
+      }
+    }
+
     if (isReady()) {
       const message = {
         type: 'text',
