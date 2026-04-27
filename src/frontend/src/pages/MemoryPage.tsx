@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Brain,
@@ -9,62 +9,74 @@ import {
   Calendar,
 } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import type { BadgeColor } from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 
-const CATEGORIES = ['preference', 'fact', 'instruction', 'context'];
+type MemoryCategory = 'preference' | 'fact' | 'instruction' | 'context';
 
-const CATEGORY_BADGE_COLORS = {
+const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'instruction', 'context'];
+
+const CATEGORY_BADGE_COLORS: Record<MemoryCategory, BadgeColor> = {
   preference: 'purple',
   fact: 'blue',
   instruction: 'amber',
   context: 'green',
 };
 
+interface Memory {
+  id: string | number;
+  content: string;
+  category: MemoryCategory;
+  importance: number;
+  access_count: number;
+  created_at: string;
+}
+
 export default function MemoryPage() {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [memories, setMemories] = useState([]);
+  const [memories, setMemories] = useState<Memory[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const [activeCategory, setActiveCategory] = useState(null);
+  const [activeCategory, setActiveCategory] = useState<MemoryCategory | null>(null);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
-  const [editingMemory, setEditingMemory] = useState(null);
+  const [editingMemory, setEditingMemory] = useState<Memory | null>(null);
   const [formContent, setFormContent] = useState('');
-  const [formCategory, setFormCategory] = useState('fact');
+  const [formCategory, setFormCategory] = useState<MemoryCategory>('fact');
   const [formImportance, setFormImportance] = useState(0.5);
 
-  // Load memories
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
       if (activeCategory) params.set('category', activeCategory);
       params.set('limit', '100');
 
-      const response = await apiClient.get(`/api/memory?${params}`);
+      const response = await apiClient.get<{ memories: Memory[]; total: number }>(`/api/memory?${params}`);
       setMemories(response.data.memories);
       setTotal(response.data.total);
       setError(null);
-    } catch (err) {
+    } catch {
       setError(t('memory.couldNotLoad'));
     } finally {
       setLoading(false);
     }
-  };
+  }, [activeCategory, t]);
 
   useEffect(() => {
     loadMemories();
-  }, [activeCategory]);
+  }, [loadMemories]);
 
   // Auto-clear messages
   useEffect(() => {
@@ -87,7 +99,7 @@ export default function MemoryPage() {
   };
 
   // Open edit modal
-  const openEditModal = (memory) => {
+  const openEditModal = (memory: Memory) => {
     setEditingMemory(memory);
     setFormContent(memory.content);
     setFormCategory(memory.category);
@@ -116,12 +128,12 @@ export default function MemoryPage() {
       setShowModal(false);
       loadMemories();
     } catch (err) {
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
   // Delete
-  const handleDelete = async (memory) => {
+  const handleDelete = async (memory: Memory) => {
     const confirmed = await confirm({
       title: t('memory.deleteTitle'),
       message: t('memory.deleteConfirm'),
@@ -136,18 +148,18 @@ export default function MemoryPage() {
       setSuccess(t('memory.deleted'));
       loadMemories();
     } catch (err) {
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
   // Format date
-  const formatDate = (dateStr) => {
+  const formatDate = (dateStr?: string): string => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString();
   };
 
   // Importance dots
-  const ImportanceDots = ({ value }) => {
+  const ImportanceDots = ({ value }: { value: number }) => {
     const filled = Math.round(value * 5);
     return (
       <div className="flex space-x-0.5" title={`${Math.round(value * 100)}%`}>
@@ -301,7 +313,7 @@ export default function MemoryPage() {
             </label>
             <select
               value={formCategory}
-              onChange={(e) => setFormCategory(e.target.value)}
+              onChange={(e) => setFormCategory(e.target.value as MemoryCategory)}
               className="input w-full"
             >
               {CATEGORIES.map((cat) => (

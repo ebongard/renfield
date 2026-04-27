@@ -4,26 +4,55 @@
  * Admin page for managing system-wide settings like wake word configuration.
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
+import type { AxiosError } from 'axios';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import {
   Settings, Mic, Loader, CheckCircle, RefreshCw, Save,
-  Satellite, Monitor, XCircle, Clock
+  Satellite, Monitor, XCircle, Clock,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+
+interface KeywordOption {
+  id: string;
+  label: string;
+  description?: string;
+}
+
+interface WakewordSettingsData {
+  keyword: string;
+  threshold: number;
+  cooldown_ms: number;
+  available_keywords?: KeywordOption[];
+  subscriber_count?: number;
+}
+
+interface SyncDevice {
+  device_id: string;
+  device_type?: 'satellite' | 'web' | string;
+  synced: boolean;
+  active_keywords?: string[];
+  error?: string;
+}
+
+interface SyncStatusData {
+  devices: SyncDevice[];
+  all_synced: boolean;
+  failed_count: number;
+}
 
 export default function SettingsPage() {
   const { t } = useTranslation();
   const { getAccessToken } = useAuth();
 
-  // State
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
-  const [settings, setSettings] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [settings, setSettings] = useState<WakewordSettingsData | null>(null);
 
   // Form state
   const [keyword, setKeyword] = useState('alexa');
@@ -34,9 +63,9 @@ export default function SettingsPage() {
   const [hasChanges, setHasChanges] = useState(false);
 
   // Device sync status
-  const [syncStatus, setSyncStatus] = useState(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusData | null>(null);
   const [showSyncStatus, setShowSyncStatus] = useState(false);
-  const syncPollingRef = useRef(null);
+  const syncPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load settings
   const loadSettings = useCallback(async () => {
@@ -45,8 +74,8 @@ export default function SettingsPage() {
 
     try {
       const token = await getAccessToken();
-      const response = await apiClient.get('/api/settings/wakeword', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      const response = await apiClient.get<WakewordSettingsData>('/api/settings/wakeword', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       setSettings(response.data);
@@ -70,8 +99,8 @@ export default function SettingsPage() {
   const loadSyncStatus = useCallback(async () => {
     try {
       const token = await getAccessToken();
-      const response = await apiClient.get('/api/settings/wakeword/sync-status', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      const response = await apiClient.get<SyncStatusData>('/api/settings/wakeword/sync-status', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       setSyncStatus(response.data);
       return response.data;
@@ -96,7 +125,7 @@ export default function SettingsPage() {
 
       // Stop polling if all synced or max polls reached
       if (status?.all_synced || pollCount >= maxPolls) {
-        clearInterval(syncPollingRef.current);
+        if (syncPollingRef.current) clearInterval(syncPollingRef.current);
         syncPollingRef.current = null;
       }
     }, 2000);
@@ -129,12 +158,12 @@ export default function SettingsPage() {
 
     try {
       const token = await getAccessToken();
-      const response = await apiClient.put('/api/settings/wakeword', {
+      const response = await apiClient.put<WakewordSettingsData>('/api/settings/wakeword', {
         keyword,
         threshold,
-        cooldown_ms: cooldownMs
+        cooldown_ms: cooldownMs,
       }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {}
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
 
       setSettings(response.data);
@@ -148,10 +177,11 @@ export default function SettingsPage() {
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
       console.error('Failed to save settings:', err);
-      if (err.response?.status === 403) {
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status === 403) {
         setError(t('errors.forbidden'));
       } else {
-        setError(err.response?.data?.detail || t('settings.failedToSave'));
+        setError(extractApiError(err, t('settings.failedToSave')));
       }
     } finally {
       setSaving(false);
