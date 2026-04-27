@@ -11,7 +11,7 @@ Single prioritized index of every open work item, with a reference back to the s
 
 Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
 
-Last reviewed: 2026-04-26 (WICHTIG sweep — 13 of 14 items closed: W1/W4/W7/W8/W9/W11/W12/W14 verified already done in previous work; W2/W3/W5/W6/W13 closed today via #482-#485. W10 deferred separately).
+Last reviewed: 2026-04-27 (WICHTIG sweep CLOSED — 14 of 14 items resolved: W1/W4/W7/W8/W9/W11/W12/W14 verified already done in previous work; W2/W3/W5/W6/W13 closed via #482-#485 on 2026-04-26; W10 closed via #487 on 2026-04-27 — full frontend TypeScript migration).
 
 ---
 
@@ -23,13 +23,7 @@ _(no active blockers — all prior P0 items resolved and merged)_
 
 ## P1 — Next substantive batch
 
-### W10 — Frontend TypeScript coverage migration
-71 `.jsx`/`.js` files vs 17 `.tsx`/`.ts` files in `src/frontend/src/` — only ~19% TypeScript. Multi-day effort, deliberately deferred from the WICHTIG sweep because it's a separate work program (file-by-file migration with type-safety triage), not a single-PR fix.
-- **Primary source:** `tasks/audit-findings-plan.md` §WICHTIG W10
-- **Recommended approach:** start with the highest-state-complexity pages (ChatPage, KnowledgePage, RolesPage) — those benefit most from type safety. Convert one page per PR.
-- **Trigger:** pick up after the next round of frontend feature work, OR if a frontend bug surfaces that types would have prevented.
-
-_(WICHTIG W1-W9 + W11-W14 all closed — see "Last reviewed" line above for the breakdown. Audit-findings-plan.md still lists them; the doc itself has not been updated to mark them resolved.)_
+_(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. Audit-findings-plan.md still lists pre-resolution items in body text; the per-item lines and Phase 4-5 checklists have been updated to reflect closure.)_
 
 ---
 
@@ -54,7 +48,7 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 
 ### EMPFEHLUNG audit findings — modernization + cleanup
 - **Primary source:** `tasks/audit-findings-plan.md` §EMPFEHLUNG, §Priorisierte Roadmap Phase 4-5
-- **Frontend:** W9 React.lazy code-splitting for admin pages · W10 TypeScript coverage 23% → target higher via strict mode migration · W11 Prettier · E11 React Query · E12 13 hardcoded German strings · E13 ChatPage prop drilling → Context · E14 ESLint React version · E15 enable `tsconfig` strict mode
+- **Frontend:** W9 React.lazy code-splitting for admin pages · W11 Prettier · E11 React Query · E12 13 hardcoded German strings · E13 ChatPage prop drilling → Context · E14 ESLint React version · E15 enable `tsconfig` strict mode (W10 closed via #487 on 2026-04-27)
 - **Backend/config:** E1-E3 speaker-loading + eager-load cleanup + FK indexes · E4-E9 remaining hardcoded values (MCP 40KB cap, backoff constants, agent history limit, agent response truncation, embedding dim, similarity threshold) · E10 frontend localhost fallbacks · E16 legacy config field removal (`ollama_model`, `piper_voice`, `plugins_*`, `spotify_*`) · E17 Redis URL parameterization · E18 Frigate MQTT defaults
 
 ### Run `/design-consultation` to formalize DESIGN.md (BEFORE next major frontend surface)

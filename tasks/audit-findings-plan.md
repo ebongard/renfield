@@ -102,10 +102,10 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - **Problem:** All 14 pages loaded eagerly — no React.lazy/Suspense
 - **Fix:** Lazy-load admin pages (users, roles, settings, satellites, integrations, intents)
 
-### W10. TypeScript coverage only 23%
+### W10. TypeScript coverage only 23% — RESOLVED (#487)
 - **Datei:** Frontend src/
-- **Problem:** 38 of 52 files are .jsx/.js (no type safety)
-- **Fix:** Gradual migration, start with pages that handle complex state
+- **Problem:** 38 of 52 files were .jsx/.js (no type safety)
+- **Fix:** Migrated all `.jsx`/`.js` under `src/frontend/src/` to `.tsx`/`.ts` with explicit types — no `as any`, no `@ts-nocheck`. Surfaced 9 real silent-failure bugs (Layout role render, Alert no-op `onClose` × 6 sites, multiple `confirmText` typos, `confirm()` called with positional string in 3 places, no-op `role` prop on Alert). Single PR #487 (Apr 2026).
 
 ### W11. No Prettier configured
 - **Datei:** Frontend root
@@ -250,7 +250,7 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 
 ### Phase 4: Frontend Modernisierung
 - [ ] W9: React.lazy code splitting for admin pages
-- [ ] W10: Gradual TypeScript migration (strict mode)
+- [x] W10: TypeScript migration — 100% `.tsx`/`.ts` coverage in `src/frontend/src/` (#487)
 - [ ] W11: Add Prettier
 - [ ] E11: React Query for data fetching
 - [ ] E12: i18n hardcoded strings

@@ -31,6 +31,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 ### Frontend Rules
 
+- **TypeScript only.** All frontend source under `src/frontend/src/` is `.tsx`/`.ts`; do NOT add new `.jsx`/`.js`. Type real shapes — no `as any`, no `@ts-nocheck`, no shim files. If a refactor is too big to type cleanly in one pass, leave it as `.jsx` rather than fake-type it as `.tsx` (W10 migration history: fake-`.tsx` is worse than honest `.jsx`).
 - **DESIGN.md is the source of truth.** Before any UI change, read `DESIGN.md` at repo root. Color tokens, fonts, spacing, motion, semantic colors, and the tier visual language are defined there. Do NOT deviate without explicit user approval. In `/review` and `/qa`, flag any code that doesn't match DESIGN.md.
 - **Dark Mode**: ALL components must use Tailwind `dark:` variants. Never hardcode colors.
 - **i18n**: ALL user-facing strings must use `useTranslation()`. Never hardcode text.
