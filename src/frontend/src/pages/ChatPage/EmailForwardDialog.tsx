@@ -1,15 +1,28 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Mail } from 'lucide-react';
 import Modal from '../../components/Modal';
 
-export default function EmailForwardDialog({ open, filename, onConfirm, onCancel }) {
+interface EmailForwardDialogProps {
+  open: boolean;
+  filename?: string;
+  onConfirm: (to: string, subject: string, body: string) => void;
+  onCancel: () => void;
+}
+
+export default function EmailForwardDialog({
+  open,
+  filename,
+  onConfirm,
+  onCancel,
+}: EmailForwardDialogProps) {
   const { t } = useTranslation();
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState(`Document: ${filename || ''}`);
   const [body, setBody] = useState('');
 
-  const handleSubmit = (e) => {
+  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!to.trim()) return;
     onConfirm(to.trim(), subject.trim(), body.trim());

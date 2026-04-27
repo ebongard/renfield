@@ -1,7 +1,23 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader } from 'lucide-react';
 import apiClient from '../../utils/axios';
+import type { MessageAttachment } from './context/ChatContext';
+
+interface KnowledgeBase {
+  id: string | number;
+  name: string;
+}
+
+interface AttachmentQuickActionsProps {
+  attachment: MessageAttachment;
+  onIndexToKb: (attachmentId: string, kbId: string | number) => void;
+  onSendToPaperless: (attachmentId: string) => void;
+  onSendViaEmail?: (attachmentId: string) => void;
+  onSummarize: (attachmentId: string) => void;
+  actionLoading?: Record<string, string>;
+}
 
 export default function AttachmentQuickActions({
   attachment,
@@ -10,22 +26,22 @@ export default function AttachmentQuickActions({
   onSendViaEmail,
   onSummarize,
   actionLoading,
-}) {
+}: AttachmentQuickActionsProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [showKbList, setShowKbList] = useState(false);
-  const [knowledgeBases, setKnowledgeBases] = useState([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
-  const menuRef = useRef(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const isLoading = actionLoading?.[attachment.id];
   const isDisabled = attachment.status !== 'completed' || !!isLoading;
 
-  // Close on outside click
   useEffect(() => {
     if (!open) return;
-    const handleMouseDown = (e) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
+    const handleMouseDown = (e: globalThis.MouseEvent) => {
+      const target = e.target as Node | null;
+      if (menuRef.current && target && !menuRef.current.contains(target)) {
         setOpen(false);
         setShowKbList(false);
       }
@@ -34,14 +50,14 @@ export default function AttachmentQuickActions({
     return () => document.removeEventListener('mousedown', handleMouseDown);
   }, [open]);
 
-  const handleToggle = (e) => {
+  const handleToggle = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (isDisabled) return;
-    setOpen(prev => !prev);
+    setOpen((prev) => !prev);
     setShowKbList(false);
   };
 
-  const handleAddToKb = async (e) => {
+  const handleAddToKb = async (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     if (showKbList) {
       setShowKbList(false);
@@ -49,7 +65,7 @@ export default function AttachmentQuickActions({
     }
     setKbLoading(true);
     try {
-      const response = await apiClient.get('/api/knowledge/bases');
+      const response = await apiClient.get<KnowledgeBase[]>('/api/knowledge/bases');
       setKnowledgeBases(response.data || []);
     } catch {
       setKnowledgeBases([]);
@@ -59,26 +75,26 @@ export default function AttachmentQuickActions({
     setShowKbList(true);
   };
 
-  const handleSelectKb = (e, kbId) => {
+  const handleSelectKb = (e: MouseEvent<HTMLButtonElement>, kbId: string | number) => {
     e.stopPropagation();
     setOpen(false);
     setShowKbList(false);
     onIndexToKb(attachment.id, kbId);
   };
 
-  const handlePaperless = (e) => {
+  const handlePaperless = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setOpen(false);
     onSendToPaperless(attachment.id);
   };
 
-  const handleEmail = (e) => {
+  const handleEmail = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setOpen(false);
     onSendViaEmail?.(attachment.id);
   };
 
-  const handleSummarize = (e) => {
+  const handleSummarize = (e: MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     setOpen(false);
     onSummarize(attachment.id);

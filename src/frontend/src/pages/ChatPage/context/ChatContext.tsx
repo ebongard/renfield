@@ -53,6 +53,7 @@ export interface MessageAttachment {
   indexed?: boolean;
   document_id?: string;
   indexError?: string;
+  file_size?: number;
 }
 
 interface IntentInfo {

@@ -1,15 +1,20 @@
-import React from 'react';
 import { useTranslation } from 'react-i18next';
+
+interface AudioVisualizerProps {
+  /** Current audio level (0-100) */
+  audioLevel?: number;
+  /** Time until auto-stop (ms) */
+  silenceTimeRemaining?: number;
+}
 
 /**
  * Audio waveform visualizer during recording.
  * Shows audio level bars and silence countdown.
- *
- * @param {Object} props - Component props
- * @param {number} props.audioLevel - Current audio level (0-100)
- * @param {number} props.silenceTimeRemaining - Time until auto-stop (ms)
  */
-export default function AudioVisualizer({ audioLevel = 0, silenceTimeRemaining = 0 }) {
+export default function AudioVisualizer({
+  audioLevel = 0,
+  silenceTimeRemaining = 0,
+}: AudioVisualizerProps) {
   const { t } = useTranslation();
 
   return (

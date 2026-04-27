@@ -1,4 +1,5 @@
-import React, { useRef, useEffect } from 'react';
+import { useRef, useEffect } from 'react';
+import type { ReactElement } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Volume2, Loader, FileText, AlertCircle, CheckCircle, Search, CheckCircle2, XCircle, ChevronRight, Radio } from 'lucide-react';
 import AdaptiveCardRenderer from '../../components/AdaptiveCardRenderer';
@@ -9,17 +10,22 @@ import { useChatContext } from './context/ChatContext';
 
 const IMAGE_URL_RE = /https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?/i;
 
-function isImageUrl(url) {
+function isImageUrl(url: string): boolean {
   return IMAGE_URL_RE.test(url);
 }
 
-function renderMessageContent(text) {
+type ContentPart =
+  | { type: 'text'; content: string }
+  | { type: 'link'; label: string; url: string }
+  | { type: 'image'; url: string };
+
+function renderMessageContent(text: string): ReactElement {
   // Combined pattern: markdown links [text](url), image URLs, or plain URLs
   const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?|https?:\/\/[^\s)]+/gi;
 
-  const parts = [];
+  const parts: ContentPart[] = [];
   let lastIndex = 0;
-  let match;
+  let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(text)) !== null) {
     if (match.index > lastIndex) {
@@ -55,7 +61,7 @@ function renderMessageContent(text) {
             alt="Album Art"
             className="rounded-lg max-w-[200px] max-h-[200px] my-2 shadow-md"
             loading="lazy"
-            onError={(e) => { e.target.style.display = 'none'; }}
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
           />
         ) : part.type === 'link' ? (
           <a
@@ -81,7 +87,7 @@ export default function ChatMessages() {
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage,
   } = useChatContext();
-  const messagesEndRef = useRef(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -113,13 +119,13 @@ export default function ChatMessages() {
             {t('chat.useTextOrMic')}
           </p>
           <div className="flex flex-wrap justify-center gap-2">
-            {(() => {
+            {(((): string[] => {
               try {
                 const custom = import.meta.env.VITE_CHAT_STARTERS;
-                if (custom) return JSON.parse(custom);
-              } catch {}
+                if (custom) return JSON.parse(custom) as string[];
+              } catch { /* fall through */ }
               return [t('chat.exampleWeather'), t('chat.exampleLight'), t('chat.exampleMusic')];
-            })().map((example) => (
+            })()).map((example: string) => (
               <button
                 key={example}
                 onClick={() => sendMessage?.(example, false)}
@@ -260,7 +266,7 @@ export default function ChatMessages() {
                       </span>
                     )}
                     {att.indexing
-                      ? <Loader className="w-3 h-3 flex-shrink-0 animate-spin" aria-hidden="true" title={t('chat.documentIndexing')} />
+                      ? <span title={t('chat.documentIndexing')} className="inline-flex"><Loader className="w-3 h-3 flex-shrink-0 animate-spin" aria-hidden="true" /></span>
                       : att.indexed
                         ? <span className="inline-flex items-center px-1 rounded text-[9px] font-semibold bg-green-200 text-green-900 dark:bg-green-800 dark:text-green-100" title={t('chat.documentIndexed')}>KB</span>
                         : att.status === 'completed'

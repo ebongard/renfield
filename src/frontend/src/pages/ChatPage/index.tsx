@@ -1,4 +1,3 @@
-import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { Menu } from 'lucide-react';
 import ChatSidebar from '../../components/ChatSidebar';

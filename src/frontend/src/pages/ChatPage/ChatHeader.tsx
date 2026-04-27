@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader, Ear, EarOff, Settings } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
@@ -16,11 +16,11 @@ export default function ChatHeader() {
     isListening: wakeWordListening,
     isLoading: wakeWordLoading,
     error: wakeWordError,
-    settings: wakeWordSettings = {},
+    settings: wakeWordSettings,
     toggle: toggleWakeWord,
     setKeyword: setWakeWordKeyword,
     setThreshold: setWakeWordThreshold,
-    availableKeywords = [],
+    availableKeywords,
     lastDetection,
     status: wakeWordStatus,
   } = wakeWord;

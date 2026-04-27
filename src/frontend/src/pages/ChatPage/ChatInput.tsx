@@ -1,9 +1,15 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import type { ChangeEvent, DragEvent, KeyboardEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Send, Mic, MicOff, BookOpen, ChevronDown, Paperclip, X, FileText, Loader } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import AudioVisualizer from './AudioVisualizer';
 import { useChatContext } from './context/ChatContext';
+
+interface KnowledgeBase {
+  id: string;
+  name: string;
+}
 
 export default function ChatInput() {
   const { t } = useTranslation();
@@ -14,23 +20,23 @@ export default function ChatInput() {
     attachments, uploading, uploadDocument, removeAttachment, uploadStates,
   } = useChatContext();
 
-  const fileInputRef = useRef(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [knowledgeBases, setKnowledgeBases] = useState([]);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [showRagSettings, setShowRagSettings] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
 
-  const handleDragOver = useCallback((e) => {
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(true);
   }, []);
 
-  const handleDragLeave = useCallback((e) => {
+  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
   }, []);
 
-  const handleDrop = useCallback((e) => {
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     setIsDragOver(false);
     const files = e.dataTransfer.files;
@@ -39,30 +45,28 @@ export default function ChatInput() {
     }
   }, [uploadDocument]);
 
-  // Load knowledge bases when RAG is enabled
   useEffect(() => {
+    const loadKnowledgeBases = async () => {
+      try {
+        const response = await apiClient.get<KnowledgeBase[]>('/api/knowledge/bases');
+        setKnowledgeBases(response.data);
+      } catch (error) {
+        console.error('Error loading Knowledge Bases:', error);
+      }
+    };
     if (useRag && knowledgeBases.length === 0) {
       loadKnowledgeBases();
     }
-  }, [useRag]);
+  }, [useRag, knowledgeBases.length]);
 
-  const loadKnowledgeBases = async () => {
-    try {
-      const response = await apiClient.get('/api/knowledge/bases');
-      setKnowledgeBases(response.data);
-    } catch (error) {
-      console.error('Error loading Knowledge Bases:', error);
-    }
-  };
-
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       sendMessage?.(input, false);
     }
   };
 
-  const handleFileChange = (e) => {
+  const handleFileChange = (e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files && files.length > 0) {
       uploadDocument(Array.from(files));
@@ -71,7 +75,7 @@ export default function ChatInput() {
     e.target.value = '';
   };
 
-  const handleSelectKb = (kbId) => {
+  const handleSelectKb = (kbId: string | null) => {
     setSelectedKnowledgeBase?.(kbId);
     setShowRagSettings(false);
   };
