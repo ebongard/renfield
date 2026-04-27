@@ -131,6 +131,21 @@ class ActionExecutor:
         # MCP tool intents (mcp.* prefix — handles HA, n8n, weather, search, etc.)
         if self.mcp_manager and intent.startswith("mcp."):
             logger.info(f"🔌 Executing MCP tool: {intent}")
+            # Plugin pre-call rewrite. Plugins may repair malformed LLM
+            # tool calls here (e.g. substitute a release id when the LLM
+            # passed a title). First well-shaped non-None dict replaces
+            # parameters; everything else is ignored.
+            from utils.hooks import run_hooks
+            pre_call_results = await run_hooks(
+                "pre_mcp_call",
+                intent=intent,
+                parameters=parameters,
+                user_id=user_id,
+            )
+            for rewritten in pre_call_results:
+                if isinstance(rewritten, dict):
+                    parameters = rewritten
+                    break
             # `user_id` is passed as a kwarg to `execute_tool()` (used for
             # permission checks + audit), NOT merged into `parameters`. MCP
             # tools have strict Pydantic schemas; every unknown key triggers

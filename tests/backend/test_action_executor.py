@@ -221,6 +221,85 @@ class TestActionExecutorMCP:
 
 
 # ============================================================================
+# pre_mcp_call hook Tests
+# ============================================================================
+
+class TestActionExecutorPreMCPCall:
+    """Tests for the pre_mcp_call plugin hook."""
+
+    @pytest.mark.unit
+    async def test_pre_mcp_call_replaces_parameters(self, action_executor):
+        """Hook handler returning a dict replaces parameters before execute_tool."""
+        from utils.hooks import register_hook, _hooks
+
+        async def rewrite(intent, parameters, user_id=None, **_):
+            if intent == "mcp.release.get_release":
+                return {"id": "Applications/Folder/Release1"}
+            return None
+
+        register_hook("pre_mcp_call", rewrite)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"title": "Product A 1.3.5"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(rewrite)
+
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1] == {"id": "Applications/Folder/Release1"}
+
+    @pytest.mark.unit
+    async def test_pre_mcp_call_none_leaves_parameters_unchanged(self, action_executor):
+        """Hook returning None leaves the original parameters intact."""
+        from utils.hooks import register_hook, _hooks
+
+        async def noop(intent, parameters, user_id=None, **_):
+            return None
+
+        register_hook("pre_mcp_call", noop)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"id": "Applications/Folder/Release1"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(noop)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1] == {"id": "Applications/Folder/Release1"}
+
+    @pytest.mark.unit
+    async def test_pre_mcp_call_first_dict_wins(self, action_executor):
+        """When multiple handlers return dicts, the first one wins."""
+        from utils.hooks import register_hook, _hooks
+
+        async def first(intent, parameters, user_id=None, **_):
+            return {"id": "first"}
+
+        async def second(intent, parameters, user_id=None, **_):
+            return {"id": "second"}
+
+        register_hook("pre_mcp_call", first)
+        register_hook("pre_mcp_call", second)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.get_release",
+                "parameters": {"title": "x"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["pre_mcp_call"].remove(first)
+            _hooks["pre_mcp_call"].remove(second)
+
+        call_args = action_executor.mcp_manager.execute_tool.call_args
+        assert call_args.args[1] == {"id": "first"}
+
+
+# ============================================================================
 # ActionExecutor Edge Cases Tests
 # ============================================================================
 

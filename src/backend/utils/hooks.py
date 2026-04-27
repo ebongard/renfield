@@ -211,6 +211,16 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # plugin returning ``handled=True`` wins. This is the web-chat
     # equivalent of the Teams transport's ``_DISPATCH_HANDLERS`` table.
     "dispatch_sub_intent",
+    # Pre-MCP tool call rewrite — fired by ActionExecutor right before
+    # ``MCPManager.execute_tool`` for any ``mcp.*`` intent. Handlers
+    # receive ``intent: str, parameters: dict, user_id: int | None`` and
+    # may return a ``dict`` to **replace** the parameters before the MCP
+    # call, or ``None`` to leave them unchanged. First well-shaped
+    # non-None result wins — registration order determines precedence.
+    # Used by plugins to repair LLM tool calls (e.g. resolve a release
+    # title to its API id when the LLM passed the wrong parameter
+    # shape). Platform default (no handler) is a no-op.
+    "pre_mcp_call",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]
