@@ -23,6 +23,7 @@ import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+import type { AlertVariant } from '../components/Alert';
 import Badge from '../components/Badge';
 import StatusBadge from '../components/knowledge/StatusBadge';
 import DuplicateDialog from '../components/knowledge/DuplicateDialog';
@@ -100,7 +101,7 @@ export default function KnowledgePage() {
   const [stats, setStats] = useState<KnowledgeStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ text: string; variant: AlertVariant } | null>(null);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -179,7 +180,7 @@ export default function KnowledgePage() {
       // 30-min cap hit. Tell the user their poll loop gave up, but leave
       // the DB row alone — a manual refresh can still pick it up if the
       // worker does eventually finish.
-      setUploadProgress(t('knowledge.pollingTimeout', { filename: doc.filename }));
+      setUploadProgress({ text: t('knowledge.pollingTimeout', { filename: doc.filename }), variant: 'warning' });
       setTimeout(() => setUploadProgress(null), 8000);
     },
   });
@@ -195,16 +196,12 @@ export default function KnowledgePage() {
   // re-submit without re-opening the file picker.
   const [pendingRetryFile, setPendingRetryFile] = useState<File | null>(null);
 
-  // File upload handler — handles both 200 (legacy inline) and 202
-  // (worker-enabled) responses. On 202 we track the doc for polling and
-  // surface a "queued, processing soon" toast; on 200 we just reload.
-  const handleUpload = async (eventOrFile: ChangeEvent<HTMLInputElement> | File) => {
-    const event = eventOrFile as ChangeEvent<HTMLInputElement>;
-    const file: File | undefined = (event?.target?.files?.[0] as File | undefined) ?? (eventOrFile as File);
-    if (!file) return;
-
+  // Core upload — handles both 200 (legacy inline) and 202 (worker-enabled)
+  // responses. On 202 we track the doc for polling and surface a "queued,
+  // processing soon" toast; on 200 we just reload.
+  const uploadFile = async (file: File) => {
     setUploading(true);
-    setUploadProgress(t('knowledge.processing', { filename: file.name }));
+    setUploadProgress({ text: t('knowledge.processing', { filename: file.name }), variant: 'info' });
     setPendingRetryFile(file);
 
     const formData = new FormData();
@@ -221,12 +218,12 @@ export default function KnowledgePage() {
       });
 
       if (response.status === 202) {
-        setUploadProgress(t('knowledge.uploadQueued'));
+        setUploadProgress({ text: t('knowledge.uploadQueued'), variant: 'success' });
         trackDocument(response.data as KbDocument);
         setPendingRetryFile(null);
         await loadDocuments();
       } else {
-        setUploadProgress(t('knowledge.uploadSuccess'));
+        setUploadProgress({ text: t('knowledge.uploadSuccess'), variant: 'success' });
         setPendingRetryFile(null);
         await loadDocuments();
         await loadStats();
@@ -242,28 +239,39 @@ export default function KnowledgePage() {
       if (status === 409 && detailObj?.existing_document) {
         setDuplicate(detailObj.existing_document);
         setUploadProgress(null);
+        setPendingRetryFile(null);
       } else if (status === 503) {
-        setUploadProgress(t('knowledge.workerUnavailable'));
-        // keep setTimeout longer for retry CTA; cleared on retry or dismiss
+        // 503 is transient — keep pendingRetryFile so the retry CTA shows.
+        setUploadProgress({ text: t('knowledge.workerUnavailable'), variant: 'error' });
         setTimeout(() => setUploadProgress(null), 10000);
       } else if (status === 413) {
         const maxMb = detailObj?.max_mb ?? '';
-        setUploadProgress(t('knowledge.fileTooLarge', { maxMb }));
+        setUploadProgress({ text: t('knowledge.fileTooLarge', { maxMb }), variant: 'error' });
+        setPendingRetryFile(null);
         setTimeout(() => setUploadProgress(null), 5000);
       } else if (status === 415) {
         const allowed = Array.isArray(detailObj?.allowed) ? detailObj.allowed.join(', ') : '';
-        setUploadProgress(t('knowledge.formatNotSupported', { allowed }));
+        setUploadProgress({ text: t('knowledge.formatNotSupported', { allowed }), variant: 'error' });
+        setPendingRetryFile(null);
         setTimeout(() => setUploadProgress(null), 6000);
       } else {
         console.error('Upload error:', error);
         const msg = typeof detail === 'string' ? detail : (detailObj?.message ?? t('knowledge.serverError'));
-        setUploadProgress(`${t('knowledge.errorLabel')}: ${msg}`);
+        setUploadProgress({ text: `${t('knowledge.errorLabel')}: ${msg}`, variant: 'error' });
+        setPendingRetryFile(null);
         setTimeout(() => setUploadProgress(null), 6000);
       }
     } finally {
       setUploading(false);
-      if (event?.target) event.target.value = '';
     }
+  };
+
+  // <input type="file"> change handler — extracts the file, dispatches to
+  // uploadFile, and resets the input so the same file can be re-selected.
+  const handleUploadEvent = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadFile(file);
+    e.target.value = '';
   };
 
   // Retry the last upload that bounced with 503.
@@ -271,7 +279,7 @@ export default function KnowledgePage() {
     if (pendingRetryFile) {
       const file = pendingRetryFile;
       setPendingRetryFile(null);
-      handleUpload(file);
+      uploadFile(file);
     }
   };
 
@@ -377,9 +385,9 @@ export default function KnowledgePage() {
       });
       const moved = response.data.moved_count;
       if (moved > 0) {
-        setUploadProgress(t('knowledge.documentsMovedSuccess', { count: moved }));
+        setUploadProgress({ text: t('knowledge.documentsMovedSuccess', { count: moved }), variant: 'success' });
       } else {
-        setUploadProgress(t('knowledge.alreadyInTargetKb'));
+        setUploadProgress({ text: t('knowledge.alreadyInTargetKb'), variant: 'info' });
       }
       setTimeout(() => setUploadProgress(null), 3000);
       setSelectedDocs(new Set());
@@ -575,7 +583,7 @@ export default function KnowledgePage() {
         <div className="border-2 border-dashed border-gray-300 dark:border-gray-600 rounded-lg p-6 text-center hover:border-primary-500 transition-colors">
           <input
             type="file"
-            onChange={handleUpload}
+            onChange={handleUploadEvent}
             accept=".pdf,.docx,.doc,.txt,.md,.html,.pptx,.xlsx"
             disabled={uploading}
             className="hidden"
@@ -595,17 +603,10 @@ export default function KnowledgePage() {
           </label>
         </div>
         {uploadProgress && (
-          <Alert
-            variant={
-              uploadProgress.includes('Fehler') || uploadProgress.includes(t('knowledge.workerUnavailable').slice(0, 20)) ? 'error'
-              : uploadProgress === t('knowledge.uploadQueued') || uploadProgress.includes('Erfolgreich') ? 'success'
-              : 'info'
-            }
-            className="mt-4"
-          >
+          <Alert variant={uploadProgress.variant} className="mt-4">
             <div className="flex items-center justify-between gap-3">
-              <span>{uploadProgress}</span>
-              {pendingRetryFile && uploadProgress === t('knowledge.workerUnavailable') && (
+              <span>{uploadProgress.text}</span>
+              {pendingRetryFile && uploadProgress.variant === 'error' && (
                 <button
                   type="button"
                   onClick={handleRetryUpload}
