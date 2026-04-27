@@ -1,12 +1,14 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Home, Plus, Edit3, Trash2, Loader,
   RefreshCw, Link as LinkIcon, Unlink, Radio,
   ArrowDownToLine, ArrowUpFromLine, ArrowLeftRight,
-  Monitor, Tablet, Smartphone, Tv, User
+  Monitor, Tablet, Smartphone, Tv, User,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import apiClient from '../utils/axios';
+import { extractApiError } from '../utils/axios';
 import RoomOutputSettings from '../components/RoomOutputSettings';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
@@ -14,8 +16,52 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 
+type DeviceTypeKey = 'satellite' | 'web_panel' | 'web_tablet' | 'web_browser' | 'web_kiosk';
+
+interface DeviceTypeConfig {
+  icon: LucideIcon;
+  label: string;
+  color: string;
+}
+
+interface RoomDevice {
+  device_id: string;
+  device_name?: string | null;
+  device_type: DeviceTypeKey;
+  is_online: boolean;
+}
+
+interface Room {
+  id: number;
+  name: string;
+  alias: string;
+  icon?: string | null;
+  source?: 'homeassistant' | 'satellite' | 'renfield' | string;
+  ha_area_id?: string | null;
+  owner_id?: number | null;
+  owner_name?: string | null;
+  device_count?: number;
+  online_count?: number;
+  devices?: RoomDevice[];
+}
+
+interface HAArea {
+  area_id: string;
+  name: string;
+  is_linked?: boolean;
+  linked_room_name?: string;
+}
+
+interface SimpleUser {
+  id: number;
+  username: string;
+  first_name?: string;
+}
+
+type ConflictResolution = 'skip' | 'link' | 'overwrite';
+
 // Device type icons and labels
-const DEVICE_TYPE_CONFIG = {
+const DEVICE_TYPE_CONFIG: Record<DeviceTypeKey, DeviceTypeConfig> = {
   satellite: { icon: Radio, label: 'Satellite', color: 'text-green-400' },
   web_panel: { icon: Monitor, label: 'Panel', color: 'text-blue-400' },
   web_tablet: { icon: Tablet, label: 'Tablet', color: 'text-purple-400' },
@@ -29,18 +75,18 @@ export default function RoomsPage() {
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   // State
-  const [rooms, setRooms] = useState([]);
-  const [haAreas, setHAAreas] = useState([]);
+  const [rooms, setRooms] = useState<Room[]>([]);
+  const [haAreas, setHAAreas] = useState<HAArea[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingAreas, setLoadingAreas] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSyncPanel, setShowSyncPanel] = useState(false);
-  const [selectedRoom, setSelectedRoom] = useState(null);
+  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [error, setError] = useState(null);
-  const [success, setSuccess] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
   // Form state
   const [newRoomName, setNewRoomName] = useState('');
@@ -48,15 +94,28 @@ export default function RoomsPage() {
   const [editRoomName, setEditRoomName] = useState('');
   const [editRoomIcon, setEditRoomIcon] = useState('');
   const [editRoomOwnerId, setEditRoomOwnerId] = useState('');
-  const [users, setUsers] = useState([]);
+  const [users, setUsers] = useState<SimpleUser[]>([]);
   const [updating, setUpdating] = useState(false);
   const [selectedHAArea, setSelectedHAArea] = useState('');
-  const [conflictResolution, setConflictResolution] = useState('link');
+  const [conflictResolution, setConflictResolution] = useState<ConflictResolution>('link');
+
+  const loadRooms = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await apiClient.get<Room[]>('/api/rooms');
+      setRooms(response.data);
+    } catch (err) {
+      console.error('Failed to load rooms:', err);
+      setError(t('rooms.couldNotLoad'));
+    } finally {
+      setLoading(false);
+    }
+  }, [t]);
 
   // Load data on mount
   useEffect(() => {
     loadRooms();
-  }, []);
+  }, [loadRooms]);
 
   // Clear messages after 5 seconds
   useEffect(() => {
@@ -69,24 +128,11 @@ export default function RoomsPage() {
     }
   }, [error, success]);
 
-  const loadRooms = async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get('/api/rooms');
-      setRooms(response.data);
-    } catch (err) {
-      console.error('Failed to load rooms:', err);
-      setError(t('rooms.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const loadUsers = async () => {
     try {
-      const response = await apiClient.get('/api/users');
+      const response = await apiClient.get<SimpleUser[] | { users?: SimpleUser[] }>('/api/users');
       const data = response.data;
-      setUsers(Array.isArray(data) ? data : data?.users || []);
+      setUsers(Array.isArray(data) ? data : (data?.users ?? []));
     } catch (err) {
       console.error('Failed to load users:', err);
     }
@@ -95,7 +141,7 @@ export default function RoomsPage() {
   const loadHAAreas = async () => {
     try {
       setLoadingAreas(true);
-      const response = await apiClient.get('/api/rooms/ha/areas');
+      const response = await apiClient.get<HAArea[]>('/api/rooms/ha/areas');
       setHAAreas(response.data);
     } catch (err) {
       console.error('Failed to load HA areas:', err);
@@ -124,7 +170,7 @@ export default function RoomsPage() {
       loadRooms();
     } catch (err) {
       console.error('Failed to create room:', err);
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
@@ -154,13 +200,13 @@ export default function RoomsPage() {
       loadRooms();
     } catch (err) {
       console.error('Failed to update room:', err);
-      setError(err.response?.data?.detail || t('common.error'));
+      setError(extractApiError(err, t('common.error')));
     } finally {
       setUpdating(false);
     }
   };
 
-  const deleteRoom = async (room) => {
+  const deleteRoom = async (room: Room) => {
     const confirmed = await confirm({
       title: t('rooms.deleteRoom'),
       message: t('rooms.deleteRoomConfirm', { name: room.name }),
@@ -196,13 +242,13 @@ export default function RoomsPage() {
       loadRooms();
     } catch (err) {
       console.error('Failed to link room:', err);
-      setError(err.response?.data?.detail || t('rooms.linkFailed'));
+      setError(extractApiError(err, t('rooms.linkFailed')));
     } finally {
       setUpdating(false);
     }
   };
 
-  const unlinkFromHA = async (room) => {
+  const unlinkFromHA = async (room: Room) => {
     const confirmed = await confirm({
       title: t('rooms.unlinkTitle'),
       message: t('rooms.unlinkConfirm', { name: room.name }),
@@ -226,8 +272,8 @@ export default function RoomsPage() {
   const importFromHA = async () => {
     try {
       setSyncing(true);
-      const response = await apiClient.post('/api/rooms/ha/import', {
-        conflict_resolution: conflictResolution
+      const response = await apiClient.post<{ imported: number; linked: number; skipped: number }>('/api/rooms/ha/import', {
+        conflict_resolution: conflictResolution,
       });
 
       const { imported, linked, skipped } = response.data;
@@ -236,7 +282,7 @@ export default function RoomsPage() {
       loadHAAreas();
     } catch (err) {
       console.error('Failed to import from HA:', err);
-      setError(err.response?.data?.detail || t('rooms.importFailed'));
+      setError(extractApiError(err, t('rooms.importFailed')));
     } finally {
       setSyncing(false);
     }
@@ -245,7 +291,7 @@ export default function RoomsPage() {
   const exportToHA = async () => {
     try {
       setSyncing(true);
-      const response = await apiClient.post('/api/rooms/ha/export');
+      const response = await apiClient.post<{ exported: number; linked: number }>('/api/rooms/ha/export');
 
       const { exported, linked } = response.data;
       setSuccess(t('rooms.exportResult', { exported, linked }));
@@ -253,7 +299,7 @@ export default function RoomsPage() {
       loadHAAreas();
     } catch (err) {
       console.error('Failed to export to HA:', err);
-      setError(err.response?.data?.detail || t('rooms.exportFailed'));
+      setError(extractApiError(err, t('rooms.exportFailed')));
     } finally {
       setSyncing(false);
     }
@@ -262,7 +308,10 @@ export default function RoomsPage() {
   const syncWithHA = async () => {
     try {
       setSyncing(true);
-      const response = await apiClient.post(`/api/rooms/ha/sync?conflict_resolution=${conflictResolution}`);
+      const response = await apiClient.post<{
+        import_results: { imported: number; linked: number };
+        export_results: { exported: number; linked: number };
+      }>(`/api/rooms/ha/sync?conflict_resolution=${conflictResolution}`);
 
       const { import_results, export_results } = response.data;
       const imported = import_results.imported + import_results.linked;
@@ -272,13 +321,13 @@ export default function RoomsPage() {
       loadHAAreas();
     } catch (err) {
       console.error('Failed to sync with HA:', err);
-      setError(err.response?.data?.detail || t('rooms.syncFailed'));
+      setError(extractApiError(err, t('rooms.syncFailed')));
     } finally {
       setSyncing(false);
     }
   };
 
-  const deleteDevice = async (device) => {
+  const deleteDevice = async (device: RoomDevice) => {
     const confirmed = await confirm({
       title: t('rooms.deleteDevice'),
       message: t('rooms.deleteDeviceConfirm', { name: device.device_name || device.device_id }),
@@ -298,7 +347,7 @@ export default function RoomsPage() {
     }
   };
 
-  const openEditModal = (room) => {
+  const openEditModal = (room: Room) => {
     setSelectedRoom(room);
     setEditRoomName(room.name);
     setEditRoomIcon(room.icon || '');
@@ -307,7 +356,7 @@ export default function RoomsPage() {
     setShowEditModal(true);
   };
 
-  const openLinkModal = (room) => {
+  const openLinkModal = (room: Room) => {
     setSelectedRoom(room);
     setSelectedHAArea('');
     loadHAAreas();
@@ -319,7 +368,7 @@ export default function RoomsPage() {
     setShowSyncPanel(true);
   };
 
-  const getSourceBadge = (source) => {
+  const getSourceBadge = (source: Room['source']) => {
     switch (source) {
       case 'homeassistant':
         return <Badge color="blue">HA</Badge>;
@@ -704,7 +753,7 @@ export default function RoomsPage() {
           <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.conflictResolution')}:</label>
           <select
             value={conflictResolution}
-            onChange={(e) => setConflictResolution(e.target.value)}
+            onChange={(e) => setConflictResolution(e.target.value as ConflictResolution)}
             className="input w-full"
           >
             <option value="skip">{t('rooms.conflictSkip')}</option>
