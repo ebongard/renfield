@@ -724,6 +724,7 @@ class TestRouterToolIntegration:
         registry = AgentToolRegistry(
             server_filter=role.mcp_servers,
             internal_filter=role.internal_tools,
+            _init_only=True,
         )
 
         # With no MCP manager, only internal tools should be registered
@@ -748,7 +749,7 @@ class TestRouterToolIntegration:
         roles = _parse_roles(SAMPLE_CONFIG)
         role = roles["smart_home"]
 
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         agent = AgentService(registry, role=role)
 
         assert agent.max_steps == 4
@@ -765,6 +766,7 @@ class TestRouterToolIntegration:
         registry = AgentToolRegistry(
             server_filter=role.mcp_servers,
             internal_filter=role.internal_tools,
+            _init_only=True,
         )
 
         tool_names = registry.get_tool_names()
@@ -780,7 +782,7 @@ class TestRouterToolIntegration:
         from services.agent_service import AgentService
         from services.agent_tools import AgentToolRegistry
 
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         agent = AgentService(registry)
 
         # Should use settings.agent_max_steps (12 by default)

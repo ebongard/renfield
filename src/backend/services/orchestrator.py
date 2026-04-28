@@ -390,30 +390,23 @@ class QueryOrchestrator:
         logger.info(f"Orchestrator: launching sub-agent [{role_name}]: {query[:60]}")
 
         try:
-            tool_registry = AgentToolRegistry(
-                mcp_manager=self.mcp_manager,
-                server_filter=role.mcp_servers,
-                internal_filter=role.internal_tools,
-            )
-
-            # Plugin-registered tools attach asynchronously via _hook_task.
-            # Without this await the agent reads a half-populated registry
-            # and "tool not found" errors don't trace back to the failure.
-            hook_task = getattr(tool_registry, "_hook_task", None)
-            if hook_task is not None:
-                try:
-                    await hook_task
-                except Exception as e:
-                    logger.opt(exception=True).error(
-                        f"Tool registry init failed for [{role_name}]: "
-                        f"{type(e).__name__}: {e}"
-                    )
-                    msg = (
-                        f"Tools für Rolle '{role_name}' konnten nicht geladen werden."
-                        if lang.startswith("de") else
-                        f"Tools for role '{role_name}' failed to load."
-                    )
-                    return _failed_sub_result(role_name, query, error=msg)
+            try:
+                tool_registry = await AgentToolRegistry.create(
+                    mcp_manager=self.mcp_manager,
+                    server_filter=role.mcp_servers,
+                    internal_filter=role.internal_tools,
+                )
+            except Exception as e:
+                logger.opt(exception=True).error(
+                    f"Tool registry init failed for [{role_name}]: "
+                    f"{type(e).__name__}: {e}"
+                )
+                msg = (
+                    f"Tools für Rolle '{role_name}' konnten nicht geladen werden."
+                    if lang.startswith("de") else
+                    f"Tools for role '{role_name}' failed to load."
+                )
+                return _failed_sub_result(role_name, query, error=msg)
 
             agent = AgentService(tool_registry, role=role)
 

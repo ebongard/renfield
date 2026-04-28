@@ -483,13 +483,8 @@ class TestRunSubAgentListData:
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
-            # _hook_task explicitly None so the orchestrator's "wait for plugin
-            # tools" path stays a no-op (MagicMock would auto-create a non-None,
-            # non-awaitable attribute that the orchestrator now correctly
-            # treats as a hook_task crash → fail-the-sub-agent).
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "jira", "query": "find tickets"},
@@ -531,8 +526,7 @@ class TestRunSubAgentListData:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -738,8 +732,7 @@ class TestSubAgentHooks:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             await orchestrator._run_sub_agent(
                 {"role": "smart_home", "query": "Mach Licht an"},
@@ -780,8 +773,7 @@ class TestSubAgentHooks:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             await orchestrator._run_sub_agent(
                 {"role": "media", "query": "Spiel Musik"},
@@ -828,8 +820,7 @@ class TestSubAgentHooks:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -863,14 +854,14 @@ class TestSubAgentHooks:
         async def _fake_run(*args, **kwargs):
             yield AgentStep(step_number=1, step_type="final_answer", content="ok")
 
-        # Use a real namespace object so attribute mutation sticks.
         class _Registry:
-            _hook_task = None
+            pass
 
         registry_instance = _Registry()
 
         with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            MockReg.create = AsyncMock(return_value=registry_instance)
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
@@ -884,136 +875,32 @@ class TestSubAgentHooks:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_hook_task_awaited_before_agent_run(self):
-        """If the registry has a ``_hook_task`` awaitable, it must be awaited
-        before the agent loop runs.
-
-        Reva's plugin tools register asynchronously via ``_hook_task``.
-        Without this await the agent loop reads the registry before
-        plugin-registered tools are present — intermittent "tool not found"
-        failures on the first orchestrated call after startup.
-
-        The test uses a custom awaitable whose ``__await__`` flips a flag
-        only when the orchestrator explicitly awaits it. An ``asyncio.Task``
-        would be unsuitable here: the event loop schedules tasks on the
-        next yield, and the orchestrator's other ``await`` calls
-        (``run_hooks`` for ``pre_sub_agent``) would let the task complete
-        even if our code never awaited ``_hook_task`` directly. The
-        custom awaitable closes that gap.
-        """
-        from services.agent_service import AgentStep
-
-        events: list[str] = []
-
-        class _AwaitTracker:
-            """Awaitable that records when (and only when) it is explicitly awaited."""
-            def __init__(self):
-                self.awaited = False
-
-            def __await__(self):
-                self.awaited = True
-                events.append("hook_task_awaited")
-                # Empty generator — resolves immediately with no value.
-                if False:
-                    yield  # pragma: no cover
-
-        primary = _make_role("release", servers=["release"])
-        router = _make_router([primary])
-        orchestrator = QueryOrchestrator(router, MagicMock())
-
-        hook_task = _AwaitTracker()
-
-        async def _fake_run(*args, **kwargs):
-            events.append("agent_run_called")
-            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
-
-        class _Registry:
-            pass
-
-        registry_instance = _Registry()
-        registry_instance._hook_task = hook_task
-
-        with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
-            mock_agent = MagicMock()
-            mock_agent.run = _fake_run
-            MockAS.return_value = mock_agent
-
-            await orchestrator._run_sub_agent(
-                {"role": "release", "query": "status"},
-                _make_ollama("ok"), MagicMock(), "de",
-            )
-
-        # The custom awaitable was actually awaited.
-        assert hook_task.awaited is True
-        # And it was awaited BEFORE the agent loop ran (strict ordering).
-        assert events.index("hook_task_awaited") < events.index("agent_run_called")
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_no_hook_task_attribute_does_not_raise(self):
-        """If the registry has no ``_hook_task`` attribute, the sub-agent runs cleanly."""
-        from services.agent_service import AgentStep
-
-        primary = _make_role("release", servers=["release"])
-        router = _make_router([primary])
-        orchestrator = QueryOrchestrator(router, MagicMock())
-
-        async def _fake_run(*args, **kwargs):
-            yield AgentStep(step_number=1, step_type="final_answer", content="ok")
-
-        # Registry without the _hook_task attribute (vanilla AgentToolRegistry has no such field).
-        class _Registry:
-            pass
-
-        with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=_Registry()):
-            mock_agent = MagicMock()
-            mock_agent.run = _fake_run
-            MockAS.return_value = mock_agent
-
-            result = await orchestrator._run_sub_agent(
-                {"role": "release", "query": "status"},
-                _make_ollama("ok"), MagicMock(), "de",
-            )
-
-        assert result["answer"] == "ok"
-
-    @pytest.mark.unit
-    @pytest.mark.asyncio
-    async def test_hook_task_failure_returns_failed_result(self):
-        """A raising ``_hook_task`` fails the sub-agent cleanly with a localized error.
+    async def test_create_failure_returns_failed_result(self):
+        """A raising ``AgentToolRegistry.create()`` fails the sub-agent cleanly
+        with a localized error.
 
         Continuing with a half-populated registry would cause hard-to-diagnose
         "tool not found" errors downstream that don't trace back to the
-        original hook_task failure. Better to surface the error here.
+        original tool-registry init failure. Better to surface the error here.
         """
         from services.agent_service import AgentStep
-
-        async def _broken_hook_task():
-            raise RuntimeError("plugin tool registration failed")
 
         primary = _make_role("release", servers=["release"])
         router = _make_router([primary])
         orchestrator = QueryOrchestrator(router, MagicMock())
 
-        # The mock agent.run should NOT be called when hook_task fails.
+        # The mock agent.run should NOT be called when create() fails.
         agent_run_called = {"value": False}
 
         async def _fake_run(*args, **kwargs):
             agent_run_called["value"] = True
             yield AgentStep(step_number=1, step_type="final_answer", content="ok")
 
-        import asyncio as _asyncio
-
-        class _Registry:
-            pass
-
-        registry_instance = _Registry()
-        registry_instance._hook_task = _asyncio.create_task(_broken_hook_task())
-
         with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            MockReg.create = AsyncMock(
+                side_effect=RuntimeError("plugin tool registration failed")
+            )
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
@@ -1023,7 +910,7 @@ class TestSubAgentHooks:
                 _make_ollama("ok"), MagicMock(), "de",
             )
 
-        # Sub-agent did NOT run (registry was broken).
+        # Sub-agent did NOT run (registry creation failed).
         assert agent_run_called["value"] is False
         # Result has the canonical failure shape with a localized error.
         assert result["answer"] == ""
@@ -1034,12 +921,9 @@ class TestSubAgentHooks:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
-    async def test_hook_task_failure_localized_english(self):
+    async def test_create_failure_localized_english(self):
         """Localized error message picks English for ``lang='en'``."""
         from services.agent_service import AgentStep
-
-        async def _broken_hook_task():
-            raise RuntimeError("registration failed")
 
         primary = _make_role("release", servers=["release"])
         router = _make_router([primary])
@@ -1048,16 +932,11 @@ class TestSubAgentHooks:
         async def _fake_run(*args, **kwargs):
             yield AgentStep(step_number=1, step_type="final_answer", content="ok")
 
-        import asyncio as _asyncio
-
-        class _Registry:
-            pass
-
-        registry_instance = _Registry()
-        registry_instance._hook_task = _asyncio.create_task(_broken_hook_task())
-
         with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=registry_instance):
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            MockReg.create = AsyncMock(
+                side_effect=RuntimeError("registration failed")
+            )
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
@@ -1094,8 +973,7 @@ class TestSubAgentHooks:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -1129,8 +1007,7 @@ class TestSubAgentHooks:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -1430,8 +1307,7 @@ class TestParallelExecution:
             mock_agent.run = _no_final
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "test"},
@@ -1557,10 +1433,11 @@ class TestVanillaRenfieldBackwardsCompat:
             yield AgentStep(step_number=1, step_type="final_answer", content="ok")
 
         class _Registry:
-            _hook_task = None
+            pass
 
         with patch("services.agent_service.AgentService") as MockAS, \
-             patch("services.agent_tools.AgentToolRegistry", return_value=_Registry()):
+             patch("services.agent_tools.AgentToolRegistry") as MockReg:
+            MockReg.create = AsyncMock(return_value=_Registry())
             mock_agent = MagicMock()
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
@@ -1943,8 +1820,7 @@ class TestPluginDataMergeSemantics:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -1984,8 +1860,7 @@ class TestPluginDataMergeSemantics:
             mock_agent.run = _fake_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},
@@ -2162,8 +2037,7 @@ class TestPostSubAgentFiresAfterCrash:
             mock_agent.run = _crashing_run
             MockAS.return_value = mock_agent
             mock_registry = MagicMock()
-            mock_registry._hook_task = None
-            MockReg.return_value = mock_registry
+            MockReg.create = AsyncMock(return_value=mock_registry)
 
             result = await orchestrator._run_sub_agent(
                 {"role": "release", "query": "status"},

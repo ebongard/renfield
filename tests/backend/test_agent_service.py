@@ -581,7 +581,7 @@ class TestAgentServiceRun:
 
     def _make_registry(self, tools=None):
         """Create a tool registry with MCP tools."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         return registry
 
     def _make_ollama_mock(self, responses):
@@ -958,7 +958,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_total_timeout(self):
         """Total timeout should stop the agent even if steps are within per-step limit."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         ollama = MagicMock()
         ollama.client = MagicMock()
 
@@ -1004,7 +1004,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_with_results(self):
         """Summary answer should call LLM to produce natural language from tool results."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="Wie ist das Wetter?")
@@ -1039,7 +1039,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_no_results(self):
         """Summary answer without any results should give generic message."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -1051,7 +1051,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     async def test_build_summary_answer_llm_failure_fallback(self):
         """When LLM summary fails, should return a fallback message."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -1076,7 +1076,7 @@ class TestAgentServiceSafety:
     @pytest.mark.unit
     def test_build_fallback_answer(self):
         """Fallback answer should include the error message."""
-        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        registry = AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
         agent = AgentService(registry)
 
         ctx = AgentContext(original_message="test")
@@ -1093,7 +1093,7 @@ class TestAgentServiceRetry:
     """Test the retry-on-empty-response mechanism."""
 
     def _make_registry(self):
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     def _make_executor_mock(self, results=None):
         executor = AsyncMock()
@@ -1218,7 +1218,7 @@ class TestToolResultDataInclusion:
     """Test that tool results include actual data for LLM reasoning."""
 
     def _make_registry(self):
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     @pytest.mark.unit
     async def test_tool_result_includes_data(self):
@@ -1313,7 +1313,7 @@ class TestAgentInfiniteLoopDetection:
     """Test that the agent detects and breaks out of infinite loops."""
 
     def _make_registry(self):
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     def _make_executor_mock(self):
         executor = AsyncMock()
@@ -1376,7 +1376,7 @@ class TestAgentCircuitBreakerIntegration:
     """Test circuit breaker integration in agent service."""
 
     def _make_registry(self):
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     @pytest.mark.unit
     async def test_circuit_breaker_blocks_when_open(self):
@@ -1551,7 +1551,7 @@ class TestAgentMusicPlaybackChain:
             tools.append(mock_tool)
         mock_mcp.get_all_tools.return_value = tools
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         # play_in_room and resolve_room_player moved to ha_glue hook;
         # register them manually for the test.
         from services.agent_tools import ToolDefinition
@@ -1788,7 +1788,7 @@ class TestAgentBreaksOnRepeatedEmptyResults:
     """Test that the agent loop breaks after repeated empty results."""
 
     def _make_registry(self):
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     @pytest.mark.unit
     async def test_agent_breaks_after_repeated_empty_results(self):
@@ -1860,7 +1860,7 @@ class TestTokenContextVars:
 
     def _make_registry(self):
         from services.agent_tools import AgentToolRegistry
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     def _make_ollama_mock(self, responses):
         ollama = MagicMock()
@@ -2141,7 +2141,7 @@ class TestShouldUseNativeFC:
 
     def _make_registry(self):
         from services.agent_tools import AgentToolRegistry
-        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager())
+        return AgentToolRegistry(mcp_manager=_make_mock_mcp_manager(), _init_only=True)
 
     @pytest.mark.unit
     def test_default_off_when_no_role_flag(self):

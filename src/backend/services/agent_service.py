@@ -1162,14 +1162,6 @@ class AgentService:
 
         start_time = time.monotonic()
 
-        # Ensure plugin tools (register_tools hook) are ready before we read
-        # the tool list.  The hook is scheduled as a background task in
-        # AgentToolRegistry.__init__; without this await, _preselect_tools
-        # captures only MCP/internal tools and misses plugin-provided ones.
-        hook_task = getattr(self.tool_registry, "_hook_task", None)
-        if hook_task is not None:
-            await hook_task
-
         # Per-role model/URL override > global agent settings > default
         role_model = self.role.model if self.role else None
         role_url = self.role.ollama_url if self.role else None

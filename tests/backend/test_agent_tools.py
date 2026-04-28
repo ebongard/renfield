@@ -39,19 +39,109 @@ class TestAgentToolRegistryConstruction:
         """The server_filter parameter must be exposed so plugins (e.g. the
         register_tools hook) can scope their additions to the same set of
         servers the caller selected for MCP/internal tools."""
-        registry = AgentToolRegistry(server_filter=["jira", "confluence"])
+        registry = AgentToolRegistry(server_filter=["jira", "confluence"], _init_only=True)
         assert registry.server_filter == ["jira", "confluence"]
 
     @pytest.mark.unit
     def test_server_filter_default_none(self):
         """When no server_filter is passed, the attribute is None (= all servers)."""
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         assert registry.server_filter is None
 
     @pytest.mark.unit
     def test_internal_filter_stored_as_attribute(self):
         """The internal_filter parameter is exposed for the same reason."""
-        registry = AgentToolRegistry(internal_filter=["internal.knowledge_search"])
+        registry = AgentToolRegistry(internal_filter=["internal.knowledge_search"], _init_only=True)
+        assert registry.internal_filter == ["internal.knowledge_search"]
+
+
+class TestAgentToolRegistryAsyncCreate:
+    """Test the async ``create()`` classmethod that runs ``register_tools`` in-line.
+
+    This is the production constructor — it replaces the old pattern where
+    ``__init__`` scheduled a background task and every call site had to
+    remember ``await tool_registry._hook_task``. With ``create()`` the
+    registry returned to the caller is fully populated, eliminating the
+    race condition that caused intermittent missing-plugin-tool failures.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_create_awaits_register_tools_hook(self):
+        """``create()`` must await the ``register_tools`` hook before returning,
+        so plugin-registered tools are present in the registry the caller receives."""
+        from utils.hooks import _hooks, register_hook
+
+        # Save original hook state for cleanup
+        original = list(_hooks.get("register_tools", []))
+        try:
+            registered_during_create: list[bool] = []
+
+            async def _plugin_hook(registry, **_kw):
+                # Add a plugin tool — caller must see this in the returned registry.
+                registry._tools["plugin.test_tool"] = ToolDefinition(
+                    name="plugin.test_tool",
+                    description="Plugin-registered tool",
+                )
+                registered_during_create.append(True)
+
+            register_hook("register_tools", _plugin_hook)
+
+            registry = await AgentToolRegistry.create()
+
+            # Hook ran synchronously during create() — not deferred.
+            assert registered_during_create == [True]
+            # Plugin tool is visible immediately on the returned registry.
+            assert "plugin.test_tool" in registry._tools
+        finally:
+            _hooks["register_tools"] = original
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_create_propagates_hook_failure(self):
+        """If a ``register_tools`` hook raises, ``create()`` must propagate the
+        exception so callers (e.g. the orchestrator) can fail fast with a
+        diagnosable error instead of silently using a half-populated registry.
+
+        This is the contract that ``run_hooks``'s swallow-and-log semantics
+        would break — ``create()`` deliberately bypasses ``run_hooks`` to
+        keep ``register_tools`` fail-loud."""
+        from utils.hooks import _hooks, register_hook
+
+        original = list(_hooks.get("register_tools", []))
+        try:
+            async def _broken_hook(**_kw):
+                raise RuntimeError("plugin tool registration failed")
+
+            register_hook("register_tools", _broken_hook)
+
+            with pytest.raises(RuntimeError, match="plugin tool registration failed"):
+                await AgentToolRegistry.create()
+        finally:
+            _hooks["register_tools"] = original
+
+    @pytest.mark.unit
+    def test_direct_init_without_opt_in_raises(self):
+        """Direct ``AgentToolRegistry(...)`` construction must raise — it
+        skips the ``register_tools`` hook and would silently lose plugin
+        tools (Reva's resolve_team_members, resolve_role, etc.). This is
+        the structural guard that prevents a regression of TD-13."""
+        with pytest.raises(RuntimeError, match="AgentToolRegistry.create"):
+            AgentToolRegistry()
+
+        with pytest.raises(RuntimeError, match="AgentToolRegistry.create"):
+            AgentToolRegistry(server_filter=["jira"])
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_create_passes_filters_to_init(self):
+        """``create()`` must thread ``server_filter`` / ``internal_filter`` through
+        to the underlying ``__init__`` so plugins can scope their additions."""
+        registry = await AgentToolRegistry.create(
+            server_filter=["jira"],
+            internal_filter=["internal.knowledge_search"],
+        )
+        assert registry.server_filter == ["jira"]
         assert registry.internal_filter == ["internal.knowledge_search"]
 
 
@@ -75,7 +165,7 @@ class TestAgentToolRegistryMCPTools:
 
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.is_valid_tool("mcp.homeassistant.turn_on") is True
 
         tool = registry.get_tool("mcp.homeassistant.turn_on")
@@ -98,7 +188,7 @@ class TestAgentToolRegistryMCPTools:
 
         mock_mcp.get_all_tools.return_value = tools
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         names = registry.get_tool_names()
         assert len(names) == 3
         assert "mcp.homeassistant.turn_on" in names
@@ -108,12 +198,12 @@ class TestAgentToolRegistryMCPTools:
     @pytest.mark.unit
     def test_empty_registry_no_mcp(self):
         """Without MCP or plugins, registry should be empty."""
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         assert len(registry.get_tool_names()) == 0
 
     @pytest.mark.unit
     def test_get_tool_returns_none_for_unknown(self):
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         tool = registry.get_tool("nonexistent.tool")
         assert tool is None
 
@@ -126,7 +216,7 @@ class TestAgentToolRegistryMCPTools:
         mock_tool.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.is_valid_tool("mcp.test.tool") is True
         assert registry.is_valid_tool("nonexistent.tool") is False
 
@@ -140,7 +230,7 @@ class TestAgentToolRegistryMCPTools:
         mock_tool.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.resolve_tool_name("mcp.homeassistant.GetLiveContext") == "mcp.homeassistant.GetLiveContext"
 
     @pytest.mark.unit
@@ -153,7 +243,7 @@ class TestAgentToolRegistryMCPTools:
         mock_tool.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.resolve_tool_name("GetLiveContext") == "mcp.homeassistant.GetLiveContext"
 
     @pytest.mark.unit
@@ -170,7 +260,7 @@ class TestAgentToolRegistryMCPTools:
         tool2.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [tool1, tool2]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.resolve_tool_name("search") is None
 
     @pytest.mark.unit
@@ -179,7 +269,7 @@ class TestAgentToolRegistryMCPTools:
         mock_mcp = MagicMock()
         mock_mcp.get_all_tools.return_value = []
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.resolve_tool_name("nonexistent") is None
 
     @pytest.mark.unit
@@ -192,7 +282,7 @@ class TestAgentToolRegistryMCPTools:
         mock_tool.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         assert registry.is_valid_tool("HassTurnOn") is True
         assert registry.is_valid_tool("mcp.homeassistant.HassTurnOn") is True
         assert registry.is_valid_tool("NonExistent") is False
@@ -203,7 +293,7 @@ class TestAgentToolRegistryPrompt:
 
     @pytest.mark.unit
     def test_empty_registry_prompt(self):
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         prompt = registry.build_tools_prompt()
         assert "KEINE TOOLS" in prompt
 
@@ -225,7 +315,7 @@ class TestAgentToolRegistryPrompt:
             tools.append(mock_tool)
         mock_mcp.get_all_tools.return_value = tools
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         prompt = registry.build_tools_prompt()
         assert "mcp.homeassistant.turn_on" in prompt
         assert "mcp.weather.get_forecast" in prompt
@@ -240,7 +330,7 @@ class TestAgentToolRegistryPrompt:
         mock_tool.input_schema = {"properties": {}, "required": []}
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         prompt = registry.build_tools_prompt()
         assert "A very specific description" in prompt
 
@@ -256,7 +346,7 @@ class TestAgentToolRegistryPrompt:
         }
         mock_mcp.get_all_tools.return_value = [mock_tool]
 
-        registry = AgentToolRegistry(mcp_manager=mock_mcp)
+        registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         prompt = registry.build_tools_prompt()
         assert "entity_id" in prompt
 
@@ -290,7 +380,7 @@ def _build_multi_server_registry():
         mock_tool.input_schema = {"properties": {"q": {"type": "string", "description": "Query"}}, "required": []}
         tools.append(mock_tool)
     mock_mcp.get_all_tools.return_value = tools
-    return AgentToolRegistry(mcp_manager=mock_mcp)
+    return AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
 
 
 class TestSelectRelevantTools:
@@ -340,7 +430,7 @@ class TestSelectRelevantTools:
     @pytest.mark.unit
     def test_empty_registry_returns_empty(self):
         """Empty registry should return empty dict."""
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         selected = registry.select_relevant_tools("Test query")
         assert selected == {}
 
@@ -431,7 +521,7 @@ class TestBuildToolsSchema:
     def _make_registry_with_tools(self, tools):
         mcp_manager = MagicMock()
         mcp_manager.get_all_tools.return_value = tools
-        return AgentToolRegistry(mcp_manager=mcp_manager)
+        return AgentToolRegistry(mcp_manager=mcp_manager, _init_only=True)
 
     @pytest.mark.unit
     def test_returns_openai_tools_format(self):
@@ -486,7 +576,7 @@ class TestBuildToolsSchema:
     @pytest.mark.unit
     def test_tool_without_input_schema_gets_synthesised_schema(self):
         """ToolDefinition with only flattened parameters gets a minimal fallback."""
-        registry = AgentToolRegistry()
+        registry = AgentToolRegistry(_init_only=True)
         registry._tools["plugin.custom"] = ToolDefinition(
             name="plugin.custom",
             description="Plugin-registered tool",
@@ -522,7 +612,7 @@ class TestToolDefinitionInputSchema:
 
         mcp_manager = MagicMock()
         mcp_manager.get_all_tools.return_value = [mcp_tool]
-        registry = AgentToolRegistry(mcp_manager=mcp_manager)
+        registry = AgentToolRegistry(mcp_manager=mcp_manager, _init_only=True)
 
         tool = registry.get_tool("mcp.homeassistant.turn_on")
         assert tool is not None

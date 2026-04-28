@@ -79,8 +79,23 @@ class AgentToolRegistry:
         mcp_manager: Optional["MCPManager"] = None,
         server_filter: list[str] | None = None,
         internal_filter: list[str] | None = None,
+        _init_only: bool = False,
     ):
-        """Initialize the tool registry.
+        """Initialize the tool registry with MCP + platform-internal tools.
+
+        Direct construction is restricted: ``__init__`` does NOT run the
+        ``register_tools`` hook, so plugin tools (Reva's
+        ``resolve_team_members`` etc.) are absent. Production code must use
+        :meth:`AgentToolRegistry.create` instead — it runs the hook in-line
+        and returns a fully populated registry. Tests that don't need
+        plugin tools may opt into direct construction by passing
+        ``_init_only=True``.
+
+        The guard exists because TD-13 (Reva P0.5) was a silent-failure
+        regression caused by exactly this gap — a caller that constructed
+        the registry without awaiting the plugin hook lost plugin tools
+        with no signal in the logs. We trade a flagged ``RuntimeError`` at
+        the wrong call site for that class of mistake.
 
         Args:
             mcp_manager: MCP server manager
@@ -88,7 +103,22 @@ class AgentToolRegistry:
                           None means include all servers.
             internal_filter: If set, only include these internal tool names.
                             None means include all internal tools.
+            _init_only: Test-only escape hatch. Set to True to construct a
+                registry without plugin tools. Production code must not
+                pass this — use :meth:`create` instead.
+
+        Raises:
+            RuntimeError: if ``_init_only`` is False (the default).
         """
+        if not _init_only:
+            raise RuntimeError(
+                "Direct AgentToolRegistry(...) construction is restricted "
+                "because it skips plugin-tool registration "
+                "(the register_tools hook). Production code must use "
+                "`await AgentToolRegistry.create(...)`. Tests that don't "
+                "need plugin tools may pass `_init_only=True`."
+            )
+
         self._tools: dict[str, ToolDefinition] = {}
 
         # Expose the construction filters as public attributes so the
@@ -106,8 +136,38 @@ class AgentToolRegistry:
         # Register internal agent tools (room resolution, media playback)
         self._register_internal_tools(internal_filter=internal_filter)
 
-        # Hook: register_tools — plugins can add their own tool definitions
-        self._schedule_register_tools_hook()
+    @classmethod
+    async def create(
+        cls,
+        mcp_manager: Optional["MCPManager"] = None,
+        server_filter: list[str] | None = None,
+        internal_filter: list[str] | None = None,
+    ) -> "AgentToolRegistry":
+        """Async constructor — builds the registry AND awaits plugin tools.
+
+        Replaces the previous pattern where ``__init__`` scheduled a
+        background task and every call site had to remember
+        ``await tool_registry._hook_task``. With ``create()`` the registry
+        returned to the caller is fully populated.
+
+        Plugin hooks are awaited directly here (not via ``run_hooks``) so
+        that a failing handler propagates as a real exception. Caller code
+        — notably the orchestrator — relies on this to fail fast with a
+        diagnosable error instead of silently using a half-populated
+        registry. ``run_hooks`` swallows handler exceptions for fire-and-
+        forget event sites; ``register_tools`` is fail-loud.
+        """
+        from utils.hooks import _hooks
+
+        registry = cls(
+            mcp_manager=mcp_manager,
+            server_filter=server_filter,
+            internal_filter=internal_filter,
+            _init_only=True,
+        )
+        for hook in _hooks.get("register_tools", []):
+            await hook(registry=registry)
+        return registry
 
     def _register_internal_tools(self, internal_filter: list[str] | None = None) -> None:
         """Register platform-owned internal agent tools.
@@ -138,22 +198,6 @@ class AgentToolRegistry:
             )
             self._tools[tool.name] = tool
             logger.debug(f"Internal agent tool registered: {tool.name}")
-
-    def _schedule_register_tools_hook(self) -> None:
-        """Fire the register_tools hook so plugins can add tool definitions."""
-        import asyncio
-
-        from utils.hooks import run_hooks
-
-        async def _run():
-            await run_hooks("register_tools", registry=self)
-
-        try:
-            loop = asyncio.get_running_loop()
-            # Store reference to prevent GC (RUF006)
-            self._hook_task = loop.create_task(_run())
-        except RuntimeError:
-            pass  # No event loop (e.g. sync tests) — skip
 
     def _register_mcp_tools(self, mcp_manager: "MCPManager", server_filter: list[str] | None = None) -> None:
         """Register MCP tools as agent tools.

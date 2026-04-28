@@ -1152,7 +1152,7 @@ async def websocket_endpoint(
                 else:
                     # Specialized agent loop (smart_home, documents, media, research, workflow, general)
                     agent_used = True
-                    tool_registry = AgentToolRegistry(
+                    tool_registry = await AgentToolRegistry.create(
                         mcp_manager=mcp_manager,
                         server_filter=role.mcp_servers,
                         internal_filter=role.internal_tools,

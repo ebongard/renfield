@@ -153,6 +153,7 @@ class TestRoutineRoleConfig:
 
         registry = AgentToolRegistry(
             internal_filter=role.internal_tools,
+            _init_only=True,
         )
         agent = AgentService(registry, role=role)
 
@@ -168,6 +169,7 @@ class TestRoutineRoleConfig:
         registry = AgentToolRegistry(
             server_filter=role.mcp_servers,
             internal_filter=role.internal_tools,
+            _init_only=True,
         )
 
         tool_names = registry.get_tool_names()
@@ -187,7 +189,7 @@ class TestRoutineAgentExecution:
         """Create an AgentService configured with the routine role."""
         roles = _parse_roles(ROUTINE_ROLE_CONFIG)
         role = roles["routine"]
-        registry = AgentToolRegistry(internal_filter=role.internal_tools)
+        registry = AgentToolRegistry(internal_filter=role.internal_tools, _init_only=True)
         return AgentService(registry, role=role)
 
     def _patch_agent_deps(self, llm_responses: list[str]):

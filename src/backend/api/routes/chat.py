@@ -112,7 +112,7 @@ async def send_message(
                 from services.agent_tools import AgentToolRegistry
 
                 mcp_manager = getattr(app.state, 'mcp_manager', None)
-                tool_registry = AgentToolRegistry(mcp_manager=mcp_manager)
+                tool_registry = await AgentToolRegistry.create(mcp_manager=mcp_manager)
                 agent = AgentService(tool_registry)
                 executor = ActionExecutor(mcp_manager=mcp_manager)
 

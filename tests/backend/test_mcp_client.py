@@ -706,7 +706,7 @@ class TestMCPToolsInRegistry:
             ),
         ]
 
-        registry = AgentToolRegistry(mcp_manager=mock_manager)
+        registry = AgentToolRegistry(mcp_manager=mock_manager, _init_only=True)
 
         assert registry.is_valid_tool("mcp.n8n.send_email") is True
         tool = registry.get_tool("mcp.n8n.send_email")
@@ -734,7 +734,7 @@ class TestMCPToolsInRegistry:
             ),
         ]
 
-        registry = AgentToolRegistry(mcp_manager=mock_manager)
+        registry = AgentToolRegistry(mcp_manager=mock_manager, _init_only=True)
         prompt = registry.build_tools_prompt()
 
         assert "mcp.test.greet" in prompt
@@ -746,7 +746,7 @@ class TestMCPToolsInRegistry:
         """Registry should work fine without mcp_manager."""
         from services.agent_tools import AgentToolRegistry
 
-        registry = AgentToolRegistry(mcp_manager=None)
+        registry = AgentToolRegistry(mcp_manager=None, _init_only=True)
         assert len(registry.get_tool_names()) == 0
         assert registry.is_valid_tool("mcp.anything") is False
 
