@@ -30,6 +30,7 @@ from typing import Any
 # (the default path — non-chat callers don't need progress relay).
 ProgressSink = Callable[[dict], Awaitable[None]]
 
+import anyio
 import httpx
 import yaml
 from loguru import logger
@@ -614,6 +615,24 @@ def _detect_inner_error(message: str) -> bool:
     return False
 
 
+# Exceptions that indicate the MCP transport itself is broken (session
+# died, stream closed, server bounced). These — and only these — trigger
+# a single auto-reconnect-and-retry inside execute_tool(). MCP application
+# errors (mcp.shared.exceptions.McpError, validation, schema mismatch)
+# must NOT be in this list: reconnecting wouldn't help and would tear
+# down a perfectly healthy session over a malformed argument.
+_SESSION_DEAD_EXCEPTIONS: tuple[type[BaseException], ...] = (
+    anyio.ClosedResourceError,
+    anyio.BrokenResourceError,
+    anyio.EndOfStream,
+    httpx.RemoteProtocolError,
+    httpx.ReadError,
+    httpx.WriteError,
+    httpx.ConnectError,
+    ConnectionError,
+)
+
+
 class MCPTransportType(str, Enum):
     STREAMABLE_HTTP = "streamable_http"
     SSE = "sse"
@@ -689,6 +708,12 @@ class MCPServerState:
     exit_stack: AsyncExitStack | None = None
     rate_limiter: TokenBucketRateLimiter | None = None
     backoff: ExponentialBackoff | None = None  # Reconnection backoff tracker
+    # Serializes concurrent reconnect attempts per server. Initialized
+    # synchronously via default_factory so concurrent first-callers can't
+    # each construct their own Lock and end up reconnecting in parallel
+    # (which would race exit_stack teardown against re-entry).
+    reconnect_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    last_successful_call: float = 0.0  # monotonic timestamp; 0 = never
 
 
 def _substitute_env_vars(value: str) -> str:
@@ -1030,6 +1055,85 @@ class MCPManager:
                     pass
                 state.exit_stack = None
 
+    async def _reconnect_server(self, state: MCPServerState) -> bool:
+        """Tear down a stale session and re-establish.
+
+        Single concurrent reconnect per server: callers contend on
+        ``state.reconnect_lock`` (initialised synchronously on the dataclass).
+        Whoever wins the lock first does the actual work; subsequent
+        callers see ``state.connected == True`` and short-circuit. Caller-
+        side: invoke when a tool call raises a session-shape error, then
+        retry the operation once.
+        """
+        async with state.reconnect_lock:
+            # Another caller may have already restored the session.
+            if state.connected and state.session is not None:
+                return True
+            # Tear down old session/streams. Failures here are expected
+            # (the resource is half-broken — that's why we're here).
+            if state.exit_stack is not None:
+                try:
+                    await state.exit_stack.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                state.exit_stack = None
+                state.session = None
+            logger.info(f"MCP reconnecting to '{state.config.name}'...")
+            await self._connect_server(state)
+            return state.connected
+
+    async def probe_server(self, server_name: str) -> dict:
+        """Active probe for an MCP server's session via the universal
+        ``tools/list`` method.
+
+        Vendor-agnostic: every conformant MCP server supports
+        ``tools/list``, so this works against servers we don't control.
+
+        Auto-reconnects on probe failure (single-shot) so a /api/health
+        call from Reva not only reports the live state but also drives
+        recovery without waiting for the next ``refresh_tools`` tick.
+
+        Returns ``{"ok": bool, "latency_ms": float | None, "detail": str | None}``.
+        """
+        state = self._servers.get(server_name)
+        if state is None:
+            return {"ok": False, "latency_ms": None, "detail": "unknown server"}
+
+        async def _probe_once() -> tuple[bool, float | None, str | None]:
+            if state.session is None:
+                return False, None, "no session"
+            t0 = time.monotonic()
+            try:
+                await asyncio.wait_for(state.session.list_tools(), timeout=2.0)
+            except asyncio.TimeoutError:
+                return False, None, "timeout >2s"
+            except Exception as exc:  # noqa: BLE001 - surface the type
+                return False, None, f"{type(exc).__name__}: {exc}"[:200]
+            latency_ms = (time.monotonic() - t0) * 1000
+            return True, round(latency_ms, 1), None
+
+        ok, latency, detail = await _probe_once()
+        if ok:
+            state.last_successful_call = time.monotonic()
+            return {"ok": True, "latency_ms": latency, "detail": None}
+
+        # Probe failed → mark stale and try one reconnect, then re-probe.
+        state.connected = False
+        state.last_error = detail
+        reconnected = await self._reconnect_server(state)
+        if not reconnected:
+            return {"ok": False, "latency_ms": None, "detail": f"reconnect failed: {state.last_error}"}
+        ok, latency, detail = await _probe_once()
+        if ok:
+            state.last_successful_call = time.monotonic()
+        else:
+            # Reconnect succeeded but the fresh session still can't list_tools.
+            # Don't leave state.connected=True after we've seen evidence of
+            # breakage — next caller would try to use a known-bad session.
+            state.connected = False
+            state.last_error = detail
+        return {"ok": ok, "latency_ms": latency, "detail": detail}
+
     def _check_tool_permission(
         self,
         tool_info: MCPToolInfo,
@@ -1241,69 +1345,105 @@ class MCPManager:
                 "data": None,
             }
 
-        try:
-            user_info = f" (user_id={user_id})" if user_id is not None else ""
-            logger.debug(f"MCP call: {namespaced_name}{user_info}")
-            result = await asyncio.wait_for(
+        user_info = f" (user_id={user_id})" if user_id is not None else ""
+        logger.debug(f"MCP call: {namespaced_name}{user_info}")
+
+        async def _do_call() -> Any:
+            return await asyncio.wait_for(
                 state.session.call_tool(tool_info.original_name, arguments),
                 timeout=settings.mcp_call_timeout,
             )
 
-            # Convert CallToolResult to our format
-            is_error = getattr(result, "isError", False)
-            content_parts = []
-            raw_data = []
-
-            for item in result.content:
-                text = getattr(item, "text", None)
-                if text:
-                    # === Response Truncation ===
-                    truncated_text = _truncate_response(text)
-                    content_parts.append(truncated_text)
-                raw_data.append(
-                    {"type": getattr(item, "type", "unknown"), "text": text}
+        # Try once; on a session-shape exception (transport-layer death —
+        # see _SESSION_DEAD_EXCEPTIONS) reconnect and retry once. Application
+        # errors (McpError, validation) and timeouts fall through immediately:
+        # reconnecting wouldn't help and would tear down a healthy session.
+        result = None
+        last_exc: BaseException | None = None
+        for attempt in range(2):
+            try:
+                result = await _do_call()
+                last_exc = None
+                break
+            except TimeoutError:
+                logger.error(f"MCP tool call timeout: {namespaced_name}")
+                return {
+                    "success": False,
+                    "message": f"Tool-Aufruf Timeout: {namespaced_name}",
+                    "data": None,
+                }
+            except _SESSION_DEAD_EXCEPTIONS as e:
+                last_exc = e
+                if attempt == 0:
+                    logger.warning(
+                        f"MCP session died on {namespaced_name}: {type(e).__name__}: {e}; "
+                        f"reconnecting and retrying once"
+                    )
+                    state.connected = False
+                    state.last_error = str(e)
+                    reconnected = await self._reconnect_server(state)
+                    if not reconnected:
+                        break
+                    continue
+                logger.error(
+                    f"MCP tool call failed after reconnect: {namespaced_name}: {e}"
                 )
+                state.connected = False
+                state.last_error = str(e)
+            except Exception as e:  # noqa: BLE001 - bubble in last_exc
+                # Application-level error (McpError, schema, etc.). The
+                # session is fine; just surface the failure.
+                last_exc = e
+                logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
+                state.last_error = str(e)
+                break
 
-            message = "\n".join(content_parts) if content_parts else "Tool executed"
-
-            # Truncate final message if still too large
-            message = _truncate_response(message)
-
-            # NOTE: Credential sanitization is NOT done here — the agent loop
-            # needs real API keys in tool results (e.g. Jellyfin stream URLs
-            # passed to play_in_room). Sanitization happens in
-            # step_to_ws_message() before sending to the frontend.
-
-            # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
-            # JSON envelope: {"success": false, "error": "..."}. The MCP-level
-            # isError flag stays False even on application errors, so we check
-            # the inner JSON to detect real failures.
-            if not is_error:
-                is_error = _detect_inner_error(message)
-
-            return {
-                "success": not is_error,
-                "message": message,
-                "data": raw_data if raw_data else None,
-            }
-
-        except TimeoutError:
-            logger.error(f"MCP tool call timeout: {namespaced_name}")
+        if result is None:
             return {
                 "success": False,
-                "message": f"Tool-Aufruf Timeout: {namespaced_name}",
+                "message": f"Tool-Aufruf fehlgeschlagen: {last_exc}",
                 "data": None,
             }
-        except Exception as e:
-            logger.error(f"MCP tool call failed: {namespaced_name}: {e}")
-            # Mark server as disconnected on session errors
-            state.connected = False
-            state.last_error = str(e)
-            return {
-                "success": False,
-                "message": f"Tool-Aufruf fehlgeschlagen: {e}",
-                "data": None,
-            }
+
+        state.last_successful_call = time.monotonic()
+
+        # Convert CallToolResult to our format
+        is_error = getattr(result, "isError", False)
+        content_parts = []
+        raw_data = []
+
+        for item in result.content:
+            text = getattr(item, "text", None)
+            if text:
+                # === Response Truncation ===
+                truncated_text = _truncate_response(text)
+                content_parts.append(truncated_text)
+            raw_data.append(
+                {"type": getattr(item, "type", "unknown"), "text": text}
+            )
+
+        message = "\n".join(content_parts) if content_parts else "Tool executed"
+
+        # Truncate final message if still too large
+        message = _truncate_response(message)
+
+        # NOTE: Credential sanitization is NOT done here — the agent loop
+        # needs real API keys in tool results (e.g. Jellyfin stream URLs
+        # passed to play_in_room). Sanitization happens in
+        # step_to_ws_message() before sending to the frontend.
+
+        # Some MCP servers (e.g. n8n-mcp) wrap responses in their own
+        # JSON envelope: {"success": false, "error": "..."}. The MCP-level
+        # isError flag stays False even on application errors, so we check
+        # the inner JSON to detect real failures.
+        if not is_error:
+            is_error = _detect_inner_error(message)
+
+        return {
+            "success": not is_error,
+            "message": message,
+            "data": raw_data if raw_data else None,
+        }
 
     async def execute_tool_streaming(
         self,
