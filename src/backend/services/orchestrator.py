@@ -775,7 +775,15 @@ class QueryOrchestrator:
             answer = extract_response_content(raw_response) or None
             return _strip_source_line(answer) if answer else None
 
+        except asyncio.TimeoutError:
+            # str(TimeoutError()) is empty — log the configured timeout
+            # explicitly so ops can see why the fallback triggered.
+            logger.warning(
+                f"Orchestrator synthesis timed out after "
+                f"{settings.orchestrator_synthesis_timeout}s — using fallback"
+            )
+            return "\n\n".join(r["answer"] for r in sub_results if r["answer"])
         except Exception as e:
-            logger.warning(f"Orchestrator synthesis failed: {e}")
-            # Fallback: concatenate
+            # repr() carries the type name even when str(e) is empty.
+            logger.warning(f"Orchestrator synthesis failed: {e!r}")
             return "\n\n".join(r["answer"] for r in sub_results if r["answer"])

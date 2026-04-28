@@ -2277,6 +2277,78 @@ class TestSynthesisHooks:
         assert "Quelle" not in (answer or "")
         assert "synthesized answer" in (answer or "")
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_synthesis_timeout_logs_configured_timeout_and_falls_back(self):
+        """When the synth call times out, the warning must name the configured
+        timeout (str(asyncio.TimeoutError()) is empty) and the fallback path
+        must concatenate sub-agent answers so the user still gets a response.
+        Regression guard for issue #182."""
+        import asyncio
+
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        ollama = MagicMock()
+        ollama.client = AsyncMock()
+        ollama.client.chat = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        sub_results = [
+            {"role": "release", "query": "q1", "answer": "release answer"},
+            {"role": "jira", "query": "q2", "answer": "jira answer"},
+        ]
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}), \
+             patch("services.orchestrator.logger") as mock_logger:
+            pm.get.return_value = "PROMPT"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 30.0
+
+            answer = await orchestrator._synthesize("msg", sub_results, ollama, "de")
+
+        assert answer is not None
+        assert "release answer" in answer
+        assert "jira answer" in answer
+        assert mock_logger.warning.called
+        warning_msg = mock_logger.warning.call_args.args[0]
+        # The configured timeout must appear in the message — empty
+        # str(TimeoutError()) was the original bug.
+        assert "timed out" in warning_msg.lower()
+        assert "30.0" in warning_msg
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_synthesis_generic_exception_logs_type_and_message(self):
+        """Non-timeout exceptions must log both the type name and the message
+        so silent failures (#182) become diagnosable."""
+        orchestrator = QueryOrchestrator(_make_router([]), MagicMock())
+
+        ollama = MagicMock()
+        ollama.client = AsyncMock()
+        ollama.client.chat = AsyncMock(side_effect=RuntimeError("boom"))
+
+        sub_results = [{"role": "release", "query": "q", "answer": "fallback"}]
+
+        with patch("services.orchestrator.prompt_manager") as pm, \
+             patch("services.orchestrator.settings") as s, \
+             patch("services.orchestrator.get_classification_chat_kwargs", return_value={}), \
+             patch("services.orchestrator.logger") as mock_logger:
+            pm.get.return_value = "PROMPT"
+            s.agent_router_model = s.ollama_intent_model = s.ollama_model = "test-model"
+            s.orchestrator_synthesis_timeout = 30.0
+
+            answer = await orchestrator._synthesize("msg", sub_results, ollama, "de")
+
+        assert answer is not None
+        assert "fallback" in answer
+        assert mock_logger.warning.called
+        warning_msg = mock_logger.warning.call_args.args[0]
+        # repr() form: "RuntimeError('boom')" — carries type name and message
+        # even when str(e) would have been empty (the #182 bug).
+        assert "RuntimeError" in warning_msg
+        assert "boom" in warning_msg
+
 
 # ============================================================================
 # Phase 1 (orchestrator-uplift) — backwards compat: vanilla Renfield deploy
