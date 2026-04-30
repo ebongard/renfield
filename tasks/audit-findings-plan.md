@@ -10,10 +10,10 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 |----------|-------|----------|----------|
 | KRITISCH | 7 | 7 / 7 | Must fix — performance bottlenecks, security gaps |
 | WICHTIG | 14 | 14 / 14 | Should fix — inconsistencies, missing optimizations |
-| EMPFEHLUNG | 18 | 15 / 18 | Nice to have — modernization, cleanup |
+| EMPFEHLUNG | 18 | 16 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E14, E16, E17, E18. Open: E11 (React Query), E13 (ChatPage Context refactor), E15 (TS strict mode) — all frontend modernization. See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E13, E14, E16, E17, E18. Open: **E11** (React Query — substantial frontend refactor) and **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions). Both warrant their own dedicated session. See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -161,9 +161,9 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - German `console.error` logs (5 found, audit said 3) — converted to English in `CameraPage.tsx`, `HomeAssistantPage.tsx`, `TasksPage.tsx`. Logs are dev-facing, so English consistency with the rest of the codebase is the right fix (no i18n needed for dev logs).
 - Out of E12 scope: `RoomOutputSettings.tsx` has its own substantial i18n debt (~10 hardcoded German strings); filed separately as it was not in the original audit list.
 
-### E13. ChatPage prop drilling (12+ props)
-- `ChatPage/index.jsx` passes 12 props to ChatInput
-- Fix: Extract chat input state into Context
+### E13. ChatPage prop drilling (12+ props) — RESOLVED
+- `src/frontend/src/pages/ChatPage/context/ChatContext.tsx` is the shared Context provider; `ChatProvider` wraps `ChatPage` (`index.tsx:8`).
+- `ChatInput` now takes **zero props** and pulls everything from `useChatContext()` — same for `ChatMessages`, `ChatHeader`, `AttachmentQuickActions`. The 12-prop drill the audit flagged is gone. Verified by reading `ChatInput.tsx` — destructures 16 fields directly from context.
 
 ### E14. ESLint React version hardcoded as 18.2 — RESOLVED (already)
 - Verified during E17 sweep: `src/frontend/.eslintrc.cjs:22` already reads `version: 'detect'`. The audit's "hardcoded 18.2" claim was stale; nothing to change.
@@ -241,8 +241,10 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 
 ### Phase 5: Cleanup
 - [x] E16: Legacy config fields — `plugins_*`/`music_enabled`/`spotify_*` already gone; `piper_voice` renamed to `piper_default_voice`; `ollama_model` re-classified as intentional fallback infrastructure (not dead)
-- [x] E4-E9: Hardcoded values to Settings — E4/E6/E7/E8 already done in earlier work; E5 (MCP backoff) + E9 (intent feedback thresholds, both bars) closed in this PR
+- [x] E4-E9: Hardcoded values to Settings — E4/E6/E7/E8 already done in earlier work; E5 (MCP backoff) + E9 (intent feedback thresholds, both bars) closed
+- [x] E10: Frontend localhost fallbacks centralized in `utils/env.ts` with PROD/DEV warnings
 - [x] E17: Redis URL parameterization — 6 platform compose entries use `${REDIS_URL:-redis://redis:6379}`
 - [x] E18: Frigate MQTT broker/port from Settings — defensive hygiene before MQTT consumer ships
-- [ ] E13: ChatPage prop drilling → Context
-- [ ] E15: Enable TypeScript strict mode
+- [x] E13: ChatPage prop drilling — ChatProvider wraps the page, ChatInput takes 0 props (verified, audit was stale)
+- [ ] E15: Enable TypeScript strict mode (~31 errors mostly null-checks; deferred to dedicated session)
+- [ ] E11: React Query for data fetching (large refactor; deferred to dedicated session)
