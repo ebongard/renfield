@@ -2,14 +2,11 @@
  * Presence Detection Page
  *
  * Admin page for monitoring room occupancy and managing BLE devices.
- * Shows real-time presence data with confidence indicators and
- * allows CRUD operations on tracked BLE devices.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState } from 'react';
 import type { FormEvent } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import type { AxiosError } from 'axios';
 import Modal from '../components/Modal';
@@ -22,37 +19,21 @@ import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import AnalyticsTab from '../components/presence/AnalyticsTab';
-
-type DeviceTypeKind = 'phone' | 'watch' | 'tracker';
-type DetectionMethod = 'ble' | 'classic_bt';
-
-interface Occupant {
-  user_id: number;
-  user_name?: string;
-  last_seen: number;
-  confidence: number;
-}
-
-interface PresenceRoom {
-  room_id: number;
-  room_name?: string;
-  occupants: Occupant[];
-}
-
-interface PresenceUser {
-  id: number;
-  username: string;
-}
-
-interface BleDevice {
-  id: number;
-  user_id: number;
-  mac_address: string;
-  device_name: string;
-  device_type: DeviceTypeKind;
-  detection_method: DetectionMethod;
-  is_enabled?: boolean;
-}
+import {
+  usePresenceRoomsQuery,
+  usePresenceDevicesQuery,
+  usePresenceUsersQuery,
+  usePresenceStatusQuery,
+  useCreatePresenceDevice,
+  usePatchPresenceDevice,
+  useDeletePresenceDevice,
+  type DeviceTypeKind,
+  type DetectionMethod,
+  type PresenceRoom,
+  type PresenceUser,
+  type BleDevice,
+  type NewDevicePayload,
+} from '../api/resources/presence';
 
 interface DeviceFormData {
   user_id: string;
@@ -62,15 +43,6 @@ interface DeviceFormData {
   detection_method: DetectionMethod;
 }
 
-interface NewDevicePayload {
-  user_id: number;
-  mac_address: string;
-  device_name: string;
-  device_type: DeviceTypeKind;
-  detection_method: DetectionMethod;
-}
-
-// Confidence bar component
 function ConfidenceBar({ value }: { value: number }) {
   const pct = Math.round(value * 100);
   const getColor = () => {
@@ -92,25 +64,21 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
-
-// Format relative time
 function useFormatAgo(t: TFunction) {
-  return useCallback((timestamp: number | undefined): string => {
+  return (timestamp: number | undefined): string => {
     if (!timestamp) return '';
     const seconds = Math.floor(Date.now() / 1000 - timestamp);
     if (seconds < 5) return t('presence.justNow');
     if (seconds < 60) return t('presence.secondsAgo', { count: seconds });
     return t('presence.minutesAgo', { count: Math.floor(seconds / 60) });
-  }, [t]);
+  };
 }
-
 
 interface RoomCardProps {
   room: PresenceRoom;
   formatAgo: (ts: number | undefined) => string;
 }
 
-// Room occupancy card
 function RoomCard({ room, formatAgo }: RoomCardProps) {
   const { t } = useTranslation();
 
@@ -158,8 +126,6 @@ function RoomCard({ room, formatAgo }: RoomCardProps) {
   );
 }
 
-
-// Device type icon helper
 function DeviceTypeIcon({ type, className = 'w-4 h-4' }: { type: string; className?: string }) {
   switch (type) {
     case 'watch': return <Watch className={className} />;
@@ -168,7 +134,6 @@ function DeviceTypeIcon({ type, className = 'w-4 h-4' }: { type: string; classNa
   }
 }
 
-
 interface AddDeviceModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -176,7 +141,6 @@ interface AddDeviceModalProps {
   users: PresenceUser[];
 }
 
-// Add device modal
 function AddDeviceModal({ isOpen, onClose, onSave, users }: AddDeviceModalProps) {
   const { t } = useTranslation();
   const [form, setForm] = useState<DeviceFormData>({
@@ -328,92 +292,43 @@ function AddDeviceModal({ isOpen, onClose, onSave, users }: AddDeviceModalProps)
   );
 }
 
-
 export default function PresencePage() {
   const { t } = useTranslation();
   const formatAgo = useFormatAgo(t);
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   const [activeTab, setActiveTab] = useState<'live' | 'analytics'>('live');
-  const [rooms, setRooms] = useState<PresenceRoom[]>([]);
-  const [devices, setDevices] = useState<BleDevice[]>([]);
-  const [users, setUsers] = useState<PresenceUser[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [showAddDevice, setShowAddDevice] = useState(false);
-  const [presenceEnabled, setPresenceEnabled] = useState<boolean | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const roomsQuery = usePresenceRoomsQuery(autoRefresh);
+  const devicesQuery = usePresenceDevicesQuery();
+  const usersQuery = usePresenceUsersQuery();
+  const statusQuery = usePresenceStatusQuery();
 
-  const loadPresence = useCallback(async () => {
-    try {
-      const response = await apiClient.get<PresenceRoom[]>('/api/presence/rooms');
-      setRooms(response.data || []);
-      setError(null);
-    } catch (err) {
-      console.error('Failed to load presence:', err);
-      setError(t('presence.loadError'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  const rooms = roomsQuery.data ?? [];
+  const devices = devicesQuery.data ?? [];
+  const users = usersQuery.data ?? [];
+  const presenceEnabled = statusQuery.data?.enabled ?? null;
+  const loading = roomsQuery.isLoading;
 
-  const loadDevices = useCallback(async () => {
-    try {
-      const response = await apiClient.get<BleDevice[]>('/api/presence/devices');
-      setDevices(response.data || []);
-    } catch {
-      // Non-critical, may fail if not admin
-    }
-  }, []);
+  const createDevice = useCreatePresenceDevice();
+  const patchDevice = usePatchPresenceDevice();
+  const deleteDevice = useDeletePresenceDevice();
 
-  const loadUsers = useCallback(async () => {
-    try {
-      const response = await apiClient.get<PresenceUser[] | { users?: PresenceUser[] }>('/api/users');
-      const data = response.data;
-      setUsers(Array.isArray(data) ? data : (data?.users ?? []));
-    } catch {
-      // Non-critical
-    }
-  }, []);
-
-  // Initial load
-  useEffect(() => {
-    loadPresence();
-    loadDevices();
-    loadUsers();
-    apiClient.get<{ enabled?: boolean }>('/api/presence/status')
-      .then((res) => setPresenceEnabled(res.data?.enabled ?? false))
-      .catch(() => setPresenceEnabled(false));
-  }, [loadPresence, loadDevices, loadUsers]);
-
-  // Auto-refresh presence data
-  useEffect(() => {
-    if (autoRefresh) {
-      refreshIntervalRef.current = setInterval(loadPresence, 5000);
-    }
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    };
-  }, [autoRefresh, loadPresence]);
+  const displayError = error ?? roomsQuery.errorMessage;
 
   const handleAddDevice = async (deviceData: NewDevicePayload) => {
-    await apiClient.post('/api/presence/devices', deviceData);
-    await loadDevices();
+    await createDevice.mutateAsync(deviceData);
   };
 
   const handleToggleDetectionMethod = async (device: BleDevice) => {
     const newMethod: DetectionMethod = device.detection_method === 'classic_bt' ? 'ble' : 'classic_bt';
     try {
-      await apiClient.patch(`/api/presence/devices/${device.id}`, {
-        detection_method: newMethod,
-      });
-      await loadDevices();
-    } catch {
-      setError(t('common.error'));
+      await patchDevice.mutateAsync({ id: device.id, patch: { detection_method: newMethod } });
+    } catch (err) {
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
@@ -425,14 +340,12 @@ export default function PresencePage() {
     if (!confirmed) return;
 
     try {
-      await apiClient.delete(`/api/presence/devices/${device.id}`);
-      await loadDevices();
-    } catch {
-      setError(t('common.error'));
+      await deleteDevice.mutateAsync(device.id);
+    } catch (err) {
+      setError(extractApiError(err, t('common.error')));
     }
   };
 
-  // Stats
   const totalUsers = new Set(rooms.flatMap(r => r.occupants.map(o => o.user_id))).size;
   const occupiedRooms = rooms.length;
 
@@ -449,7 +362,6 @@ export default function PresencePage() {
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <PageHeader icon={MapPin} title={t('presence.title')} subtitle={t('presence.subtitle')}>
           {activeTab === 'live' && (
@@ -465,7 +377,7 @@ export default function PresencePage() {
               </label>
 
               <button
-                onClick={loadPresence}
+                onClick={() => roomsQuery.refetch()}
                 className="btn-icon btn-icon-ghost"
                 title={t('common.refresh')}
               >
@@ -476,7 +388,6 @@ export default function PresencePage() {
         </PageHeader>
       </div>
 
-      {/* Tabs */}
       <div className="flex gap-1 mb-6 border-b border-gray-200 dark:border-gray-700">
         <button
           onClick={() => setActiveTab('live')}
@@ -510,7 +421,6 @@ export default function PresencePage() {
         <AnalyticsTab users={users} />
       ) : (
       <>
-      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
           <div className="flex items-center gap-3">
@@ -537,10 +447,8 @@ export default function PresencePage() {
         </div>
       </div>
 
-      {/* Error */}
-      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
+      {displayError && <Alert variant="error" className="mb-4">{displayError}</Alert>}
 
-      {/* Room Occupancy Section */}
       <h2 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">
         {t('presence.roomOccupancy')}
       </h2>
@@ -565,7 +473,6 @@ export default function PresencePage() {
         </div>
       )}
 
-      {/* BLE Device Management Section */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
           {t('presence.devices')}
@@ -658,7 +565,6 @@ export default function PresencePage() {
         </div>
       )}
 
-      {/* Modals */}
       <AddDeviceModal
         isOpen={showAddDevice}
         onClose={() => setShowAddDevice(false)}

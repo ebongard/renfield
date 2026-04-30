@@ -15,6 +15,13 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
     get: vi.fn(),
   },
+  extractApiError: (err, fallback) => {
+    const detail = err?.response?.data?.detail;
+    if (!detail) return fallback;
+    if (typeof detail === 'string') return detail;
+    return fallback;
+  },
+  extractFieldErrors: () => ({}),
 }));
 
 beforeAll(() => {

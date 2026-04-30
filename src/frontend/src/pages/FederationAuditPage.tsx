@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import type { TFunction } from 'i18next';
 import { useTranslation } from 'react-i18next';
 import { Link, useSearchParams } from 'react-router';
@@ -14,46 +14,15 @@ import {
   ShieldCheck,
   ShieldAlert,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
-
-type AuditStatus = 'success' | 'failed' | 'in_progress' | string;
-
-interface AuditEntry {
-  id: string;
-  peer_pubkey: string;
-  peer_display_name: string;
-  query_text: string;
-  answer_excerpt?: string;
-  error_message?: string;
-  initiated_at: string;
-  finalized_at?: string;
-  final_status: AuditStatus;
-  verified_signature?: boolean;
-}
+import { useFederationAuditQuery, type AuditStatus } from '../api/resources/federation';
 
 interface StatusIconProps {
   status: AuditStatus;
   verified?: boolean;
 }
 
-/**
- * /brain/audit
- *
- * Asker-side federation audit feed: every federated query this user
- * has made, newest first. One row per query lifecycle (initiate →
- * terminal). Rows are read-only. Clicking expands to show the full
- * query and the answer excerpt / error text.
- *
- * Filter `?peer=<pubkey>` is honored so the peers page can deep-link
- * to "show me everything I asked this peer". Drop the filter with a
- * "show all" button next to the header.
- *
- * Retention is 90 days server-side (lifecycle cleanup); no client-side
- * pagination yet — the first 50 rows cover normal usage. If a
- * household user hits that limit we'll add a "Load more" button.
- */
 const PAGE_SIZE = 50;
 
 function StatusIcon({ status, verified }: StatusIconProps) {
@@ -106,29 +75,13 @@ export default function FederationAuditPage() {
 
   const peerFilter = searchParams.get('peer');
 
-  const [entries, setEntries] = useState<AuditEntry[]>([]);
-  const [loading, setLoading] = useState(true);
+  const auditQuery = useFederationAuditQuery(peerFilter, PAGE_SIZE);
+  const entries = auditQuery.data ?? [];
+
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams({ limit: String(PAGE_SIZE) });
-      if (peerFilter) params.set('peer_pubkey', peerFilter);
-      const response = await apiClient.get<{ entries: AuditEntry[] }>(`/api/federation/audit?${params}`);
-      setEntries(response.data.entries || []);
-      setError(null);
-    } catch {
-      setError(t('federationAudit.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
-  }, [peerFilter, t]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const displayError = error ?? auditQuery.errorMessage;
 
   const toggleExpand = (id: string) => {
     setExpanded((prev) => {
@@ -158,7 +111,7 @@ export default function FederationAuditPage() {
         subtitle={t('federationAudit.subtitle')}
       />
 
-      {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
+      {displayError && <Alert variant="error" onClose={() => setError(null)}>{displayError}</Alert>}
 
       <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-gray-500 dark:text-gray-400">
         <div>
@@ -182,7 +135,7 @@ export default function FederationAuditPage() {
         </Link>
       </div>
 
-      {loading ? (
+      {auditQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
         </div>

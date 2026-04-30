@@ -1,9 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { RefreshCw, CheckCircle2, XCircle } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
-
-type Layer = 'entity_id' | 'continuity' | 'semantic' | 'mlp' | 'llm';
+import {
+  useRoutingTracesQuery,
+  useRoutingStatsQuery,
+  type Layer,
+} from '../api/resources/routing';
 
 const LAYER_COLORS: Record<Layer, string> = {
   entity_id: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
@@ -13,55 +14,20 @@ const LAYER_COLORS: Record<Layer, string> = {
   llm: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
 };
 
-interface EntityMatch {
-  id: string;
-}
-
-interface RoutingTrace {
-  id: string | number;
-  created_at?: string;
-  message: string;
-  domain: string;
-  layer?: Layer;
-  confidence?: number | null;
-  entity_matches?: EntityMatch[];
-  user_feedback?: 1 | -1 | null;
-}
-
-interface RoutingStats {
-  by_domain?: Record<string, number>;
-  by_layer?: Record<string, number>;
-}
-
 export default function RoutingDashboardPage() {
-  const { getAccessToken } = useAuth();
-  const [traces, setTraces] = useState<RoutingTrace[]>([]);
-  const [stats, setStats] = useState<RoutingStats | null>(null);
-  const [loading, setLoading] = useState(true);
   const [domainFilter, setDomainFilter] = useState('');
 
-  const fetchData = useCallback(async () => {
-    setLoading(true);
-    try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-      const params = domainFilter ? { domain: domainFilter } : {};
+  const tracesQuery = useRoutingTracesQuery(domainFilter);
+  const statsQuery = useRoutingStatsQuery();
 
-      const [tracesRes, statsRes] = await Promise.all([
-        apiClient.get<{ traces: RoutingTrace[] }>('/api/admin/routing-traces', { headers, params }),
-        apiClient.get<RoutingStats>('/api/admin/routing-stats', { headers }),
-      ]);
+  const traces = tracesQuery.data ?? [];
+  const stats = statsQuery.data ?? null;
+  const loading = tracesQuery.isFetching || statsQuery.isFetching;
 
-      setTraces(tracesRes.data.traces || []);
-      setStats(statsRes.data || null);
-    } catch (err) {
-      console.error('Failed to fetch routing data:', err);
-    } finally {
-      setLoading(false);
-    }
-  }, [getAccessToken, domainFilter]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
+  const refresh = () => {
+    tracesQuery.refetch();
+    statsQuery.refetch();
+  };
 
   return (
     <div className="max-w-6xl mx-auto p-4 space-y-6">
@@ -75,7 +41,7 @@ export default function RoutingDashboardPage() {
           </p>
         </div>
         <button
-          onClick={fetchData}
+          onClick={refresh}
           disabled={loading}
           className="btn-secondary flex items-center gap-2"
         >
@@ -84,7 +50,6 @@ export default function RoutingDashboardPage() {
         </button>
       </div>
 
-      {/* Stats Summary */}
       {stats && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {Object.entries(stats.by_domain || {}).map(([domain, count]) => (
@@ -102,7 +67,6 @@ export default function RoutingDashboardPage() {
         </div>
       )}
 
-      {/* Layer Distribution */}
       {stats?.by_layer && (
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">Classification Layers</h2>
@@ -119,7 +83,6 @@ export default function RoutingDashboardPage() {
         </div>
       )}
 
-      {/* Traces Table */}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm">
           <thead>

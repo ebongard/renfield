@@ -2,10 +2,9 @@
  * Integrations Page
  * Admin page for managing MCP server integrations
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
+import { useQueryClient } from '@tanstack/react-query';
 import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
@@ -23,41 +22,30 @@ import {
   ChevronDown,
   ChevronRight,
 } from 'lucide-react';
-
-type Transport = 'stdio' | 'streamable_http' | 'sse' | string;
-
-interface McpServer {
-  name: string;
-  connected: boolean;
-  transport: Transport;
-  tool_count: number;
-  total_tool_count?: number;
-  last_error?: string;
-}
-
-interface McpStatus {
-  enabled: boolean;
-  servers: McpServer[];
-  total_tools: number;
-}
-
-interface McpTool {
-  name: string;
-  original_name: string;
-  server: string;
-  active: boolean;
-  description?: string;
-  input_schema?: Record<string, unknown>;
-}
+import {
+  useMcpStatusQuery,
+  useMcpToolsQuery,
+  useRefreshMcp,
+  usePatchActiveTools,
+  type Transport,
+  type McpStatus,
+  type McpTool,
+} from '../api/resources/integrations';
+import { keys } from '../api/keys';
 
 export default function IntegrationsPage() {
   const { t } = useTranslation();
-  const { getAccessToken } = useAuth();
+  const queryClient = useQueryClient();
 
-  const [mcpStatus, setMcpStatus] = useState<McpStatus | null>(null);
-  const [mcpTools, setMcpTools] = useState<McpTool[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const statusQuery = useMcpStatusQuery();
+  const toolsQuery = useMcpToolsQuery();
+  const mcpStatus: McpStatus | null = statusQuery.data ?? null;
+  const mcpTools: McpTool[] = toolsQuery.data ?? [];
+  const loading = statusQuery.isLoading || toolsQuery.isLoading;
+
+  const refreshMcp = useRefreshMcp();
+  const patchActiveTools = usePatchActiveTools();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -65,7 +53,6 @@ export default function IntegrationsPage() {
   const [selectedTool, setSelectedTool] = useState<McpTool | null>(null);
   const [togglingTools, setTogglingTools] = useState<Record<string, boolean>>({});
 
-  // Auto-clear alerts
   useEffect(() => {
     if (error || success) {
       const timer = setTimeout(() => {
@@ -76,46 +63,12 @@ export default function IntegrationsPage() {
     }
   }, [error, success]);
 
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const token = getAccessToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      // Load MCP status and tools in parallel
-      const [statusRes, toolsRes] = await Promise.all([
-        apiClient.get<McpStatus>('/api/mcp/status', { headers }).catch(() => ({ data: { enabled: false, servers: [], total_tools: 0 } as McpStatus })),
-        apiClient.get<{ tools: McpTool[] }>('/api/mcp/tools', { headers }).catch(() => ({ data: { tools: [] as McpTool[] } })),
-      ]);
-
-      setMcpStatus(statusRes.data);
-      setMcpTools(toolsRes.data.tools || []);
-    } catch (err) {
-      setError(extractApiError(err, t('integrations.loadError')));
-    } finally {
-      setLoading(false);
-    }
-  }, [getAccessToken, t]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
   const handleRefresh = async () => {
     try {
-      setRefreshing(true);
-      const token = getAccessToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-
-      // Refresh MCP connections
-      await apiClient.post('/api/mcp/refresh', {}, { headers });
+      await refreshMcp.mutateAsync(undefined);
       setSuccess(t('integrations.refreshSuccess'));
-      await loadData();
     } catch (err) {
       setError(extractApiError(err, t('integrations.refreshError')));
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -130,49 +83,44 @@ export default function IntegrationsPage() {
     return mcpTools.filter((tool) => tool.server === serverName);
   };
 
-  const toggleTool = async (serverName: string, toolOriginalName: string, currentlyActive: boolean) => {
+  const toggleTool = async (
+    serverName: string,
+    toolOriginalName: string,
+    currentlyActive: boolean,
+  ) => {
     const serverTools = getToolsForServer(serverName);
     const toggleKey = `${serverName}.${toolOriginalName}`;
-    setTogglingTools(prev => ({ ...prev, [toggleKey]: true }));
+    setTogglingTools((prev) => ({ ...prev, [toggleKey]: true }));
 
-    // Build new active list
-    let newActiveTools;
+    let newActiveTools: string[];
     if (currentlyActive) {
-      // Deactivate: keep all currently active except this one
       newActiveTools = serverTools
-        .filter(t => t.active && t.original_name !== toolOriginalName)
-        .map(t => t.original_name);
+        .filter((tt) => tt.active && tt.original_name !== toolOriginalName)
+        .map((tt) => tt.original_name);
     } else {
-      // Activate: add this one to currently active
       newActiveTools = [
-        ...serverTools.filter(t => t.active).map(t => t.original_name),
+        ...serverTools.filter((tt) => tt.active).map((tt) => tt.original_name),
         toolOriginalName,
       ];
     }
 
-    // Optimistic update
-    setMcpTools(prev => prev.map(t =>
-      t.server === serverName && t.original_name === toolOriginalName
-        ? { ...t, active: !currentlyActive }
-        : t
-    ));
+    // Optimistic update on the tools query
+    const toolsQueryKey = [...keys.integrations.list(), 'tools'] as const;
+    const previousTools = queryClient.getQueryData<McpTool[]>(toolsQueryKey);
+    queryClient.setQueryData<McpTool[]>(toolsQueryKey, (prev) =>
+      (prev ?? []).map((tt) =>
+        tt.server === serverName && tt.original_name === toolOriginalName
+          ? { ...tt, active: !currentlyActive }
+          : tt,
+      ),
+    );
 
     try {
-      const token = getAccessToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await apiClient.patch<McpStatus>(
-        `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
-        { active_tools: newActiveTools },
-        { headers },
-      );
-      setMcpStatus(res.data);
+      await patchActiveTools.mutateAsync({ serverName, activeTools: newActiveTools });
     } catch (err) {
-      // Revert optimistic update
-      setMcpTools((prev) => prev.map((t) =>
-        t.server === serverName && t.original_name === toolOriginalName
-          ? { ...t, active: currentlyActive }
-          : t,
-      ));
+      if (previousTools !== undefined) {
+        queryClient.setQueryData(toolsQueryKey, previousTools);
+      }
       setError(extractApiError(err, t('integrations.toolToggleError')));
     } finally {
       setTogglingTools((prev) => ({ ...prev, [toggleKey]: false }));
@@ -182,15 +130,9 @@ export default function IntegrationsPage() {
   const resetServerTools = async (serverName: string) => {
     setTogglingTools((prev) => ({ ...prev, [serverName]: true }));
     try {
-      const token = getAccessToken();
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
-      const res = await apiClient.patch<McpStatus>(
-        `/api/mcp/servers/${encodeURIComponent(serverName)}/tools`,
-        { active_tools: null },
-        { headers },
-      );
-      setMcpStatus(res.data);
-      await loadData();
+      await patchActiveTools.mutateAsync({ serverName, activeTools: null });
+      // Reload tools after reset
+      await toolsQuery.refetch();
       setSuccess(t('integrations.resetDefaults'));
     } catch (err) {
       setError(extractApiError(err, t('integrations.toolToggleError')));
@@ -204,12 +146,10 @@ export default function IntegrationsPage() {
     return map[transport] || 'gray';
   };
 
-  // Calculate stats
   const mcpServerCount = mcpStatus?.servers?.length || 0;
-  const mcpConnectedCount = mcpStatus?.servers?.filter(s => s.connected).length || 0;
+  const mcpConnectedCount = mcpStatus?.servers?.filter((s) => s.connected).length || 0;
   const mcpToolCount = mcpStatus?.total_tools || 0;
 
-  // Loading state
   if (loading) {
     return (
       <div className="space-y-6">
@@ -224,23 +164,20 @@ export default function IntegrationsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader icon={Server} title={t('integrations.title')} subtitle={t('integrations.subtitle')}>
         <button
           onClick={handleRefresh}
-          disabled={refreshing}
+          disabled={refreshMcp.isPending}
           className="btn btn-secondary flex items-center space-x-2"
         >
-          <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${refreshMcp.isPending ? 'animate-spin' : ''}`} />
           <span>{t('integrations.refresh')}</span>
         </button>
       </PageHeader>
 
-      {/* Alerts */}
       {error && <Alert variant="error">{error}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
-      {/* Overall Stats */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <div className="card text-center py-4">
           <p className="text-2xl font-bold text-gray-900 dark:text-white">{mcpServerCount}</p>
@@ -256,7 +193,6 @@ export default function IntegrationsPage() {
         </div>
       </div>
 
-      {/* MCP Servers Section */}
       <div className="card">
         <div className="flex items-center space-x-3 mb-4">
           <Server className="w-6 h-6 text-indigo-500" />
@@ -268,8 +204,7 @@ export default function IntegrationsPage() {
           </Badge>
         </div>
 
-        {/* Server List */}
-        {mcpStatus?.servers?.length > 0 ? (
+        {mcpStatus?.servers && mcpStatus.servers.length > 0 ? (
           <div className="space-y-3">
             {mcpStatus.servers.map((server) => {
               const isExpanded = expandedServers[server.name];
@@ -280,7 +215,6 @@ export default function IntegrationsPage() {
                   key={server.name}
                   className="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden"
                 >
-                  {/* Server Header */}
                   <div
                     className="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-800 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors"
                     onClick={() => toggleServerExpand(server.name)}
@@ -313,10 +247,8 @@ export default function IntegrationsPage() {
                     </div>
                   </div>
 
-                  {/* Server Details */}
                   {isExpanded && (
                     <div className="p-4 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700">
-                      {/* Error if any */}
                       {server.last_error && (
                         <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800">
                           <div className="flex items-start space-x-2">
@@ -333,12 +265,11 @@ export default function IntegrationsPage() {
                         </div>
                       )}
 
-                      {/* Tools List */}
                       {serverTools.length > 0 ? (
                         <div>
                           <div className="flex items-center justify-between mb-3">
                             <h4 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                              {t('integrations.availableTools')} ({serverTools.filter(t => t.active).length}/{serverTools.length} {t('integrations.activeTools')})
+                              {t('integrations.availableTools')} ({serverTools.filter((tt) => tt.active).length}/{serverTools.length} {t('integrations.activeTools')})
                             </h4>
                             <button
                               onClick={(e) => {
@@ -429,7 +360,6 @@ export default function IntegrationsPage() {
         )}
       </div>
 
-      {/* MCP Tool Detail Modal */}
       <Modal
         isOpen={!!selectedTool}
         onClose={() => setSelectedTool(null)}
@@ -438,7 +368,6 @@ export default function IntegrationsPage() {
       >
         {selectedTool && (
           <div className="space-y-4">
-            {/* Tool Name */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 {t('integrations.toolName')}
@@ -448,7 +377,6 @@ export default function IntegrationsPage() {
               </code>
             </div>
 
-            {/* Server */}
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                 {t('integrations.server')}
@@ -456,7 +384,6 @@ export default function IntegrationsPage() {
               <p className="text-gray-900 dark:text-white">{selectedTool.server}</p>
             </div>
 
-            {/* Description */}
             {selectedTool.description && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -466,7 +393,6 @@ export default function IntegrationsPage() {
               </div>
             )}
 
-            {/* Input Schema */}
             {selectedTool.input_schema && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -478,7 +404,6 @@ export default function IntegrationsPage() {
               </div>
             )}
 
-            {/* Close Button */}
             <div className="pt-4 border-t border-gray-200 dark:border-gray-700">
               <button
                 onClick={() => setSelectedTool(null)}
