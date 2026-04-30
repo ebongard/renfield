@@ -1,52 +1,28 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Volume2, Plus, Trash2, Loader, ChevronDown, ChevronUp,
   Power, PowerOff, Speaker, Radio, Monitor, Wifi,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from './ConfirmDialog';
 import { useAuth } from '../context/AuthContext';
+import {
+  useOutputDevicesQuery,
+  useAvailableOutputsQuery,
+  useAddOutputDevice,
+  useUpdateOutputDevice,
+  useDeleteOutputDevice,
+  useReorderOutputDevices,
+  type OutputType,
+  type OutputDevice,
+  type RenfieldOutputDevice,
+  type HaOutputDevice,
+  type DlnaOutputDevice,
+} from '../api/resources/roomOutputs';
 
-type OutputType = 'audio' | 'visual';
 type DeviceKind = 'homeassistant' | 'renfield' | 'dlna';
-
-interface OutputDevice {
-  id: number;
-  output_type: OutputType;
-  is_enabled: boolean;
-  allow_interruption: boolean;
-  tts_volume: number | null;
-  priority: number;
-  device_name?: string | null;
-  dlna_renderer_name?: string | null;
-  ha_entity_id?: string | null;
-  renfield_device_id?: string | null;
-}
-
-interface RenfieldOutputDevice {
-  device_id: string;
-  device_name?: string;
-}
-
-interface HaOutputDevice {
-  entity_id: string;
-  friendly_name?: string;
-}
-
-interface DlnaOutputDevice {
-  name: string;
-  friendly_name?: string;
-}
-
 type AvailableDevice = RenfieldOutputDevice | HaOutputDevice | DlnaOutputDevice;
-
-interface AvailableOutputs {
-  renfield_devices: RenfieldOutputDevice[];
-  ha_media_players: HaOutputDevice[];
-  dlna_renderers: DlnaOutputDevice[];
-}
 
 interface RoomOutputSettingsProps {
   roomId: number;
@@ -54,16 +30,6 @@ interface RoomOutputSettingsProps {
   outputType?: OutputType;
 }
 
-/**
- * RoomOutputSettings - Manage audio output devices for a room
- *
- * Features:
- * - List configured output devices with priority order
- * - Add new output devices (Renfield devices, HA media players, or DLNA renderers)
- * - Edit device settings (priority, interruption, volume)
- * - Delete output devices
- * - Drag-and-drop reordering (simplified: up/down buttons)
- */
 export default function RoomOutputSettings({
   roomId,
   roomName,
@@ -76,58 +42,37 @@ export default function RoomOutputSettings({
   const isVisual = outputType === 'visual';
 
   const [expanded, setExpanded] = useState(false);
-  const [outputDevices, setOutputDevices] = useState<OutputDevice[]>([]);
-  const [availableOutputs, setAvailableOutputs] = useState<AvailableOutputs>({
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const outputsQuery = useOutputDevicesQuery(roomId, expanded);
+  const allDevices = outputsQuery.data ?? [];
+  const outputDevices = allDevices.filter((d) => d.output_type === outputType);
+  const loading = outputsQuery.isLoading;
+
+  const availableQuery = useAvailableOutputsQuery(roomId, showAddModal);
+  const availableOutputs = availableQuery.data ?? {
     renfield_devices: [],
     ha_media_players: [],
     dlna_renderers: [],
-  });
-  const [loading, setLoading] = useState(false);
-  const [loadingAvailable, setLoadingAvailable] = useState(false);
-  const [showAddModal, setShowAddModal] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  };
+  const loadingAvailable = availableQuery.isLoading;
+
+  const addMutation = useAddOutputDevice(roomId);
+  const updateMutation = useUpdateOutputDevice(roomId);
+  const deleteMutation = useDeleteOutputDevice(roomId);
+  const reorderMutation = useReorderOutputDevices(roomId);
 
   const [selectedType, setSelectedType] = useState<DeviceKind>(showHA ? 'homeassistant' : 'renfield');
   const [selectedDevice, setSelectedDevice] = useState('');
   const [allowInterruption, setAllowInterruption] = useState(false);
   const [ttsVolume, setTtsVolume] = useState(50);
-  const [adding, setAdding] = useState(false);
 
-  const loadOutputDevices = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<OutputDevice[]>(`/api/rooms/${roomId}/output-devices`);
-      setOutputDevices(response.data.filter((d) => d.output_type === outputType));
-    } catch (err) {
-      console.error('Failed to load output devices:', err);
-      setError('Ausgabegeraete konnten nicht geladen werden');
-    } finally {
-      setLoading(false);
-    }
-  }, [roomId, outputType]);
-
-  useEffect(() => {
-    if (expanded) {
-      loadOutputDevices();
-    }
-  }, [expanded, loadOutputDevices]);
-
-  const loadAvailableOutputs = async () => {
-    try {
-      setLoadingAvailable(true);
-      const response = await apiClient.get<AvailableOutputs>(`/api/rooms/${roomId}/available-outputs`);
-      setAvailableOutputs(response.data);
-    } catch (err) {
-      console.error('Failed to load available outputs:', err);
-    } finally {
-      setLoadingAvailable(false);
-    }
-  };
+  const adding = addMutation.isPending;
 
   const getDefaultType = (): DeviceKind => (showHA ? 'homeassistant' : 'renfield');
 
   const openAddModal = () => {
-    loadAvailableOutputs();
     setSelectedType(getDefaultType());
     setSelectedDevice('');
     setAllowInterruption(false);
@@ -140,10 +85,7 @@ export default function RoomOutputSettings({
       setError('Bitte ein Geraet auswaehlen');
       return;
     }
-
     try {
-      setAdding(true);
-
       const payload: Record<string, unknown> = {
         output_type: outputType,
         allow_interruption: allowInterruption,
@@ -159,23 +101,17 @@ export default function RoomOutputSettings({
         payload.ha_entity_id = selectedDevice;
       }
 
-      await apiClient.post(`/api/rooms/${roomId}/output-devices`, payload);
+      await addMutation.mutateAsync({ roomId, payload });
       setShowAddModal(false);
-      loadOutputDevices();
     } catch (err) {
-      console.error('Failed to add output device:', err);
       setError(extractApiError(err, 'Geraet konnte nicht hinzugefuegt werden'));
-    } finally {
-      setAdding(false);
     }
   };
 
   const updateOutputDevice = async (deviceId: number, updates: Partial<OutputDevice>) => {
     try {
-      await apiClient.patch(`/api/rooms/output-devices/${deviceId}`, updates);
-      loadOutputDevices();
-    } catch (err) {
-      console.error('Failed to update output device:', err);
+      await updateMutation.mutateAsync({ deviceId, updates });
+    } catch {
       setError('Geraet konnte nicht aktualisiert werden');
     }
   };
@@ -187,12 +123,9 @@ export default function RoomOutputSettings({
       variant: 'danger',
     });
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/rooms/output-devices/${deviceId}`);
-      loadOutputDevices();
-    } catch (err) {
-      console.error('Failed to delete output device:', err);
+      await deleteMutation.mutateAsync(deviceId);
+    } catch {
       setError('Geraet konnte nicht entfernt werden');
     }
   };
@@ -200,21 +133,12 @@ export default function RoomOutputSettings({
   const moveDevice = async (index: number, direction: 'up' | 'down') => {
     const newDevices = [...outputDevices];
     const targetIndex = direction === 'up' ? index - 1 : index + 1;
-
     if (targetIndex < 0 || targetIndex >= newDevices.length) return;
-
     [newDevices[index], newDevices[targetIndex]] = [newDevices[targetIndex], newDevices[index]];
-
     const deviceIds = newDevices.map((d) => d.id);
-
     try {
-      await apiClient.post(
-        `/api/rooms/${roomId}/output-devices/reorder?output_type=${outputType}`,
-        { device_ids: deviceIds },
-      );
-      loadOutputDevices();
-    } catch (err) {
-      console.error('Failed to reorder devices:', err);
+      await reorderMutation.mutateAsync({ roomId, outputType, deviceIds });
+    } catch {
       setError('Reihenfolge konnte nicht geaendert werden');
     }
   };
@@ -268,7 +192,6 @@ export default function RoomOutputSettings({
 
   return (
     <div className="mt-4 border-t border-gray-700 pt-4">
-      {/* Header - Click to expand */}
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between text-left hover:bg-gray-800 rounded-lg p-2 -m-2"
@@ -291,10 +214,8 @@ export default function RoomOutputSettings({
         )}
       </button>
 
-      {/* Expanded Content */}
       {expanded && (
         <div className="mt-4 space-y-3">
-          {/* Error Message */}
           {error && (
             <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded-sm">
               {error}
@@ -304,7 +225,6 @@ export default function RoomOutputSettings({
             </div>
           )}
 
-          {/* Loading */}
           {loading ? (
             <div className="text-center py-4">
               <Loader className="w-5 h-5 animate-spin mx-auto text-gray-400" />
@@ -322,7 +242,6 @@ export default function RoomOutputSettings({
               )}
             </p>
           ) : (
-            /* Output Devices List */
             <div className="space-y-2">
               {outputDevices.map((device, index) => (
                 <div
@@ -331,34 +250,28 @@ export default function RoomOutputSettings({
                     device.is_enabled ? 'bg-gray-800' : 'bg-gray-800/50 opacity-50'
                   }`}
                 >
-                  {/* Priority Badge */}
                   <span className="w-5 h-5 bg-gray-700 rounded-sm text-xs flex items-center justify-center text-gray-400">
                     {index + 1}
                   </span>
 
-                  {/* Device Icon */}
                   {getDeviceIcon(device)}
 
-                  {/* Device Name */}
                   <span className="flex-1 text-sm text-gray-300 truncate">
                     {device.device_name || device.dlna_renderer_name || device.ha_entity_id || device.renfield_device_id}
                   </span>
 
-                  {/* Volume Badge */}
                   {device.tts_volume !== null && (
                     <span className="text-xs text-gray-500">
                       {Math.round(device.tts_volume * 100)}%
                     </span>
                   )}
 
-                  {/* Interruption Badge */}
                   {device.allow_interruption && (
                     <span className="text-xs text-yellow-400" title="Unterbricht laufende Wiedergabe">
                       INT
                     </span>
                   )}
 
-                  {/* Enable/Disable */}
                   <button
                     onClick={() => updateOutputDevice(device.id, { is_enabled: !device.is_enabled })}
                     className={`p-1 rounded-sm ${device.is_enabled ? 'text-green-400' : 'text-gray-500'}`}
@@ -367,7 +280,6 @@ export default function RoomOutputSettings({
                     {device.is_enabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
                   </button>
 
-                  {/* Move Up/Down */}
                   <div className="flex flex-col">
                     <button
                       onClick={() => moveDevice(index, 'up')}
@@ -385,7 +297,6 @@ export default function RoomOutputSettings({
                     </button>
                   </div>
 
-                  {/* Delete */}
                   <button
                     onClick={() => deleteOutputDevice(device.id)}
                     className="p-1 text-red-400 hover:text-red-300"
@@ -398,7 +309,6 @@ export default function RoomOutputSettings({
             </div>
           )}
 
-          {/* Add Button */}
           <button
             onClick={openAddModal}
             className="w-full flex items-center justify-center space-x-2 py-2 text-sm text-gray-400 hover:text-gray-300 border border-dashed border-gray-700 rounded-lg hover:border-gray-600"
@@ -411,7 +321,6 @@ export default function RoomOutputSettings({
 
       {ConfirmDialogComponent}
 
-      {/* Add Device Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
@@ -419,7 +328,6 @@ export default function RoomOutputSettings({
             <p className="text-gray-400 text-sm mb-4">Raum: {roomName}</p>
 
             <div className="space-y-4">
-              {/* Device Type Selector */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Geraetetyp:</label>
                 <div className="flex space-x-2">
@@ -470,7 +378,6 @@ export default function RoomOutputSettings({
                 </div>
               </div>
 
-              {/* Device Selector */}
               <div>
                 <label className="block text-sm text-gray-400 mb-2">Geraet:</label>
                 {loadingAvailable ? (
@@ -506,7 +413,6 @@ export default function RoomOutputSettings({
                 )}
               </div>
 
-              {/* TTS Volume (audio only) */}
               {!isVisual && (
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">
@@ -526,7 +432,6 @@ export default function RoomOutputSettings({
                 </div>
               )}
 
-              {/* Allow Interruption */}
               <div className="flex items-center space-x-3">
                 <input
                   type="checkbox"

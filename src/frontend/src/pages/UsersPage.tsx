@@ -3,11 +3,11 @@
  *
  * Admin page for managing users: create, edit, delete, assign roles.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import apiClient, { extractApiError, extractFieldErrors } from '../utils/axios';
+import { extractApiError, extractFieldErrors } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -17,35 +17,20 @@ import {
   Users, UserPlus, UserCog, Pencil, Trash2, Loader,
   Shield, User, Mic, Link2, Unlink, Eye, EyeOff, RefreshCw,
 } from 'lucide-react';
-
-type PersonalityStyle = 'freundlich' | 'direkt' | 'formell' | 'casual';
-
-interface AdminUser {
-  id: number;
-  username: string;
-  first_name?: string | null;
-  last_name?: string | null;
-  email?: string | null;
-  role_id: number;
-  role_name?: string;
-  is_active: boolean;
-  personality_style?: PersonalityStyle;
-  personality_prompt?: string | null;
-  speaker_id?: number | null;
-  last_login?: string | null;
-}
-
-interface RoleSummary {
-  id: number;
-  name: string;
-  description?: string;
-}
-
-interface SpeakerSummary {
-  id: number;
-  name: string;
-  embedding_count: number;
-}
+import {
+  useUsersQuery,
+  useRolesListQuery,
+  useSpeakersListQuery,
+  useCreateUser,
+  useUpdateUser,
+  useResetUserPassword,
+  useDeleteUser,
+  useLinkSpeaker,
+  useUnlinkSpeaker,
+  type AdminUser,
+  type PersonalityStyle,
+  type SpeakerSummary,
+} from '../api/resources/users';
 
 interface UserFormData {
   username: string;
@@ -61,23 +46,33 @@ interface UserFormData {
 
 export default function UsersPage() {
   const { t, i18n } = useTranslation();
-  const { user: currentUser, getAccessToken } = useAuth();
+  const { user: currentUser } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [roles, setRoles] = useState<RoleSummary[]>([]);
-  const [speakers, setSpeakers] = useState<SpeakerSummary[]>([]);
-  const [loading, setLoading] = useState(true);
+  const usersQuery = useUsersQuery();
+  const rolesQuery = useRolesListQuery();
+  const speakersQuery = useSpeakersListQuery();
+
+  const users = usersQuery.data ?? [];
+  const roles = rolesQuery.data ?? [];
+  const speakers = speakersQuery.data ?? [];
+  const loading = usersQuery.isLoading || rolesQuery.isLoading;
+
+  const createUser = useCreateUser();
+  const updateUser = useUpdateUser();
+  const resetPassword = useResetUserPassword();
+  const deleteUser = useDeleteUser();
+  const linkSpeaker = useLinkSpeaker();
+  const unlinkSpeaker = useUnlinkSpeaker();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Modal states
   const [showModal, setShowModal] = useState(false);
   const [editingUser, setEditingUser] = useState<AdminUser | null>(null);
   const [showLinkSpeakerModal, setShowLinkSpeakerModal] = useState(false);
   const [linkingUserId, setLinkingUserId] = useState<number | null>(null);
 
-  // Form state
   const [formData, setFormData] = useState<UserFormData>({
     username: '',
     first_name: '',
@@ -93,38 +88,9 @@ export default function UsersPage() {
   const [formLoading, setFormLoading] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  // Load data
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
+  const queryError = usersQuery.errorMessage ?? rolesQuery.errorMessage;
+  const displayError = error ?? queryError;
 
-      const [usersRes, rolesRes, speakersRes] = await Promise.all([
-        apiClient.get<AdminUser[] | { users?: AdminUser[] }>('/api/users', { headers }),
-        apiClient.get<RoleSummary[] | { roles?: RoleSummary[] }>('/api/roles', { headers }),
-        apiClient.get<SpeakerSummary[]>('/api/speakers', { headers }).catch(() => ({ data: [] as SpeakerSummary[] })),
-      ]);
-
-      // API returns { users: [], total, page, page_size } for users
-      // and { roles: [] } for roles
-      const usersData = usersRes.data;
-      const rolesData = rolesRes.data;
-      setUsers(Array.isArray(usersData) ? usersData : (usersData.users ?? []));
-      setRoles(Array.isArray(rolesData) ? rolesData : (rolesData.roles ?? []));
-      setSpeakers(speakersRes.data || []);
-    } catch (err) {
-      setError(extractApiError(err, t('users.failedToLoad')));
-    } finally {
-      setLoading(false);
-    }
-  }, [getAccessToken, t]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Auto-clear alerts
   useEffect(() => {
     if (error || success) {
       const timer = setTimeout(() => {
@@ -135,7 +101,12 @@ export default function UsersPage() {
     }
   }, [error, success]);
 
-  // Open create modal
+  const refreshData = () => {
+    usersQuery.refetch();
+    rolesQuery.refetch();
+    speakersQuery.refetch();
+  };
+
   const handleCreate = () => {
     const defaultRoleId = String(roles.find((r) => r.name === 'Gast')?.id || roles[0]?.id || '');
     setEditingUser(null);
@@ -155,7 +126,6 @@ export default function UsersPage() {
     setShowModal(true);
   };
 
-  // Open edit modal
   const handleEdit = (user: AdminUser) => {
     setEditingUser(user);
     setFormData({
@@ -174,7 +144,6 @@ export default function UsersPage() {
     setShowModal(true);
   };
 
-  // Update form field and clear its error
   const updateField = <K extends keyof UserFormData>(field: K, value: UserFormData[K]) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     if (fieldErrors[field as string]) {
@@ -182,10 +151,8 @@ export default function UsersPage() {
     }
   };
 
-  // Submit form
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    // Client-side validation (replaces native HTML5 validation disabled by noValidate)
     const errors: Record<string, string> = {};
     if (!formData.username || formData.username.length < 3) {
       errors.username = t('users.validationUsernameMin', { defaultValue: 'Mindestens 3 Zeichen' });
@@ -203,35 +170,29 @@ export default function UsersPage() {
     setFormLoading(true);
 
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
       const roleId = parseInt(formData.role_id, 10);
       if (editingUser) {
-        // Update user
-        const updateData = {
-          username: formData.username,
-          first_name: formData.first_name || null,
-          last_name: formData.last_name || null,
-          email: formData.email || null,
-          role_id: roleId,
-          is_active: formData.is_active,
-          personality_style: formData.personality_style,
-          personality_prompt: formData.personality_prompt || null
-        };
+        await updateUser.mutateAsync({
+          id: editingUser.id,
+          patch: {
+            username: formData.username,
+            first_name: formData.first_name || null,
+            last_name: formData.last_name || null,
+            email: formData.email || null,
+            role_id: roleId,
+            is_active: formData.is_active,
+            personality_style: formData.personality_style,
+            personality_prompt: formData.personality_prompt || null,
+          },
+        });
 
-        await apiClient.patch(`/api/users/${editingUser.id}`, updateData, { headers });
-
-        // Update password separately if provided
         if (formData.password) {
-          await apiClient.post(`/api/users/${editingUser.id}/reset-password`, {
-            new_password: formData.password
-          }, { headers });
+          await resetPassword.mutateAsync({ id: editingUser.id, password: formData.password });
         }
 
         setSuccess(t('users.userUpdated'));
       } else {
-        // Create user
-        const createPayload = {
+        await createUser.mutateAsync({
           username: formData.username,
           first_name: formData.first_name || null,
           last_name: formData.last_name || null,
@@ -240,14 +201,12 @@ export default function UsersPage() {
           role_id: roleId,
           is_active: formData.is_active,
           personality_style: formData.personality_style,
-          personality_prompt: formData.personality_prompt || null
-        };
-        await apiClient.post('/api/users', createPayload, { headers });
+          personality_prompt: formData.personality_prompt || null,
+        });
         setSuccess(t('users.userCreated'));
       }
 
       setShowModal(false);
-      loadData();
     } catch (err) {
       const fields = extractFieldErrors(err);
       if (Object.keys(fields).length > 0) {
@@ -260,7 +219,6 @@ export default function UsersPage() {
     }
   };
 
-  // Delete user
   const handleDelete = async (user: AdminUser) => {
     if (user.id === currentUser?.id) {
       setError(t('users.cannotDeleteOwnAccount'));
@@ -277,40 +235,30 @@ export default function UsersPage() {
     if (!confirmed) return;
 
     try {
-      const token = getAccessToken();
-      await apiClient.delete(`/api/users/${user.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await deleteUser.mutateAsync(user.id);
       setSuccess(t('users.userDeleted'));
-      loadData();
     } catch (err) {
       setError(extractApiError(err, t('users.failedToDelete')));
     }
   };
 
-  // Link speaker to user
   const handleLinkSpeaker = (userId: number) => {
     setLinkingUserId(userId);
     setShowLinkSpeakerModal(true);
   };
 
-  // Submit speaker link
   const handleLinkSpeakerSubmit = async (speakerId: number) => {
+    if (linkingUserId === null) return;
     try {
-      const token = getAccessToken();
-      await apiClient.post(`/api/users/${linkingUserId}/link-speaker`, { speaker_id: speakerId }, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await linkSpeaker.mutateAsync({ userId: linkingUserId, speakerId });
       setSuccess(t('users.speakerLinked'));
       setShowLinkSpeakerModal(false);
       setLinkingUserId(null);
-      loadData();
     } catch (err) {
       setError(extractApiError(err, t('users.failedToLink')));
     }
   };
 
-  // Unlink speaker from user
   const handleUnlinkSpeaker = async (userId: number) => {
     const confirmed = await confirm({
       title: t('users.unlinkSpeaker'),
@@ -322,18 +270,13 @@ export default function UsersPage() {
     if (!confirmed) return;
 
     try {
-      const token = getAccessToken();
-      await apiClient.delete(`/api/users/${userId}/unlink-speaker`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await unlinkSpeaker.mutateAsync(userId);
       setSuccess(t('users.speakerUnlinked'));
-      loadData();
     } catch (err) {
       setError(extractApiError(err, t('users.failedToUnlink')));
     }
   };
 
-  // Get available speakers (not linked to any user)
   const availableSpeakers: SpeakerSummary[] = Array.isArray(speakers) && Array.isArray(users)
     ? speakers.filter((s) => !users.some((u) => u.speaker_id === s.id))
     : [];
@@ -352,26 +295,22 @@ export default function UsersPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader icon={UserCog} title={t('users.title')} subtitle={t('users.subtitle')} />
 
-      {/* Alerts */}
-      {error && <Alert variant="error">{error}</Alert>}
+      {displayError && <Alert variant="error">{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
-      {/* Actions */}
       <div className="flex flex-wrap gap-3">
         <button onClick={handleCreate} className="btn btn-primary flex items-center space-x-2">
           <UserPlus className="w-4 h-4" />
           <span>{t('users.createUser')}</span>
         </button>
-        <button onClick={loadData} className="btn btn-secondary flex items-center space-x-2">
+        <button onClick={refreshData} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
           <span>{t('common.refresh')}</span>
         </button>
       </div>
 
-      {/* Users List */}
       <div className="space-y-3">
         {users.length === 0 ? (
           <div className="card text-center py-12">
@@ -383,7 +322,6 @@ export default function UsersPage() {
             <div key={user.id} className="card hover:bg-gray-50 dark:hover:bg-gray-750 transition-colors">
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-4">
-                  {/* Avatar */}
                   <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
                     user.role_name === 'Admin' ? 'bg-red-100 dark:bg-red-900/50' :
                     user.role_name === 'Familie' ? 'bg-blue-100 dark:bg-blue-900/50' :
@@ -396,7 +334,6 @@ export default function UsersPage() {
                     )}
                   </div>
 
-                  {/* Info */}
                   <div>
                     <div className="flex items-center space-x-2">
                       <h3 className="text-base font-semibold text-gray-900 dark:text-white">
@@ -433,7 +370,6 @@ export default function UsersPage() {
                   </div>
                 </div>
 
-                {/* Actions */}
                 <div className="flex items-center space-x-2">
                   {user.speaker_id ? (
                     <button
@@ -471,7 +407,6 @@ export default function UsersPage() {
                 </div>
               </div>
 
-              {/* Additional info */}
               {user.last_login && (
                 <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-400 dark:text-gray-500">
                   {t('users.lastLogin')}: {new Date(user.last_login).toLocaleString(i18n.language)}
@@ -482,14 +417,12 @@ export default function UsersPage() {
         )}
       </div>
 
-      {/* Create/Edit Modal */}
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
         title={editingUser ? t('users.editUser') : t('users.createUser')}
       >
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
-          {/* Username */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('auth.username')} <span className="text-red-500">*</span>
@@ -509,7 +442,6 @@ export default function UsersPage() {
             )}
           </div>
 
-          {/* First Name / Last Name */}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
@@ -547,7 +479,6 @@ export default function UsersPage() {
             </div>
           </div>
 
-          {/* Email */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('auth.email')}
@@ -565,7 +496,6 @@ export default function UsersPage() {
             )}
           </div>
 
-          {/* Password */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('auth.password')} {!editingUser && <span className="text-red-500">*</span>}
@@ -595,7 +525,6 @@ export default function UsersPage() {
             )}
           </div>
 
-          {/* Role */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('users.role')} <span className="text-red-500">*</span>
@@ -619,7 +548,6 @@ export default function UsersPage() {
             )}
           </div>
 
-          {/* Active */}
           <div className="flex items-center space-x-3">
             <input
               type="checkbox"
@@ -634,7 +562,6 @@ export default function UsersPage() {
             </label>
           </div>
 
-          {/* Personality Style */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('users.personalityStyle')}
@@ -652,7 +579,6 @@ export default function UsersPage() {
             </select>
           </div>
 
-          {/* Personality Prompt */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('users.personalityPrompt')}
@@ -668,7 +594,6 @@ export default function UsersPage() {
             />
           </div>
 
-          {/* Actions */}
           <div className="flex space-x-3 pt-4">
             <button
               type="button"
@@ -693,7 +618,6 @@ export default function UsersPage() {
         </form>
       </Modal>
 
-      {/* Link Speaker Modal */}
       <Modal
         isOpen={showLinkSpeakerModal}
         onClose={() => {

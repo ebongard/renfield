@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Home, Plus, Edit3, Trash2, Loader,
@@ -7,7 +7,6 @@ import {
   Monitor, Tablet, Smartphone, Tv, User,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import RoomOutputSettings from '../components/RoomOutputSettings';
 import { useConfirmDialog } from '../components/ConfirmDialog';
@@ -15,8 +14,25 @@ import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
-
-type DeviceTypeKey = 'satellite' | 'web_panel' | 'web_tablet' | 'web_browser' | 'web_kiosk';
+import {
+  useRoomsQuery,
+  useHAAreasQuery,
+  useCreateRoom,
+  useUpdateRoom,
+  usePatchRoomOwner,
+  useDeleteRoom,
+  useLinkRoom,
+  useUnlinkRoom,
+  useHAImport,
+  useHAExport,
+  useHASync,
+  useDeleteRoomDevice,
+  type Room,
+  type RoomDevice,
+  type DeviceTypeKey,
+  type ConflictResolution,
+} from '../api/resources/rooms';
+import { useUsersQuery } from '../api/resources/users';
 
 interface DeviceTypeConfig {
   icon: LucideIcon;
@@ -24,43 +40,6 @@ interface DeviceTypeConfig {
   color: string;
 }
 
-interface RoomDevice {
-  device_id: string;
-  device_name?: string | null;
-  device_type: DeviceTypeKey;
-  is_online: boolean;
-}
-
-interface Room {
-  id: number;
-  name: string;
-  alias: string;
-  icon?: string | null;
-  source?: 'homeassistant' | 'satellite' | 'renfield' | string;
-  ha_area_id?: string | null;
-  owner_id?: number | null;
-  owner_name?: string | null;
-  device_count?: number;
-  online_count?: number;
-  devices?: RoomDevice[];
-}
-
-interface HAArea {
-  area_id: string;
-  name: string;
-  is_linked?: boolean;
-  linked_room_name?: string;
-}
-
-interface SimpleUser {
-  id: number;
-  username: string;
-  first_name?: string;
-}
-
-type ConflictResolution = 'skip' | 'link' | 'overwrite';
-
-// Device type icons and labels
 const DEVICE_TYPE_CONFIG: Record<DeviceTypeKey, DeviceTypeConfig> = {
   satellite: { icon: Radio, label: 'Satellite', color: 'text-green-400' },
   web_panel: { icon: Monitor, label: 'Panel', color: 'text-blue-400' },
@@ -71,53 +50,51 @@ const DEVICE_TYPE_CONFIG: Record<DeviceTypeKey, DeviceTypeConfig> = {
 
 export default function RoomsPage() {
   const { t } = useTranslation();
-  // Confirm dialog hook
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  // State
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [haAreas, setHAAreas] = useState<HAArea[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadingAreas, setLoadingAreas] = useState(false);
+  const roomsQuery = useRoomsQuery();
+  const usersQuery = useUsersQuery();
+  const rooms = roomsQuery.data ?? [];
+  const users = usersQuery.data ?? [];
+  const loading = roomsQuery.isLoading;
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [showSyncPanel, setShowSyncPanel] = useState(false);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const [syncing, setSyncing] = useState(false);
+
+  const haAreasQuery = useHAAreasQuery(showLinkModal || showSyncPanel);
+  const haAreas = haAreasQuery.data ?? [];
+  const loadingAreas = haAreasQuery.isFetching;
+
+  const createRoomMutation = useCreateRoom();
+  const updateRoomMutation = useUpdateRoom();
+  const patchOwnerMutation = usePatchRoomOwner();
+  const deleteRoomMutation = useDeleteRoom();
+  const linkRoomMutation = useLinkRoom();
+  const unlinkRoomMutation = useUnlinkRoom();
+  const importMutation = useHAImport();
+  const exportMutation = useHAExport();
+  const syncMutation = useHASync();
+  const deleteDeviceMutation = useDeleteRoomDevice();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Form state
   const [newRoomName, setNewRoomName] = useState('');
   const [newRoomIcon, setNewRoomIcon] = useState('');
   const [editRoomName, setEditRoomName] = useState('');
   const [editRoomIcon, setEditRoomIcon] = useState('');
   const [editRoomOwnerId, setEditRoomOwnerId] = useState('');
-  const [users, setUsers] = useState<SimpleUser[]>([]);
-  const [updating, setUpdating] = useState(false);
   const [selectedHAArea, setSelectedHAArea] = useState('');
   const [conflictResolution, setConflictResolution] = useState<ConflictResolution>('link');
 
-  const loadRooms = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<Room[]>('/api/rooms');
-      setRooms(response.data);
-    } catch (err) {
-      console.error('Failed to load rooms:', err);
-      setError(t('rooms.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
+  const updating = updateRoomMutation.isPending || patchOwnerMutation.isPending || linkRoomMutation.isPending;
+  const syncing = importMutation.isPending || exportMutation.isPending || syncMutation.isPending;
 
-  // Load data on mount
-  useEffect(() => {
-    loadRooms();
-  }, [loadRooms]);
+  const displayError = error ?? roomsQuery.errorMessage;
 
-  // Clear messages after 5 seconds
   useEffect(() => {
     if (error || success) {
       const timer = setTimeout(() => {
@@ -128,48 +105,18 @@ export default function RoomsPage() {
     }
   }, [error, success]);
 
-  const loadUsers = async () => {
-    try {
-      const response = await apiClient.get<SimpleUser[] | { users?: SimpleUser[] }>('/api/users');
-      const data = response.data;
-      setUsers(Array.isArray(data) ? data : (data?.users ?? []));
-    } catch (err) {
-      console.error('Failed to load users:', err);
-    }
-  };
-
-  const loadHAAreas = async () => {
-    try {
-      setLoadingAreas(true);
-      const response = await apiClient.get<HAArea[]>('/api/rooms/ha/areas');
-      setHAAreas(response.data);
-    } catch (err) {
-      console.error('Failed to load HA areas:', err);
-      setError(t('rooms.couldNotLoadAreas'));
-    } finally {
-      setLoadingAreas(false);
-    }
-  };
-
   const createRoom = async () => {
     if (!newRoomName.trim()) {
       setError(t('rooms.nameRequired'));
       return;
     }
-
     try {
-      await apiClient.post('/api/rooms', {
-        name: newRoomName,
-        icon: newRoomIcon || null
-      });
-
+      await createRoomMutation.mutateAsync({ name: newRoomName, icon: newRoomIcon || null });
       setSuccess(t('rooms.roomCreated', { name: newRoomName }));
       setShowCreateModal(false);
       setNewRoomName('');
       setNewRoomIcon('');
-      loadRooms();
     } catch (err) {
-      console.error('Failed to create room:', err);
       setError(extractApiError(err, t('common.error')));
     }
   };
@@ -179,30 +126,21 @@ export default function RoomsPage() {
       setError(t('rooms.nameRequired'));
       return;
     }
-
     try {
-      setUpdating(true);
-      await apiClient.patch(`/api/rooms/${selectedRoom.id}`, {
-        name: editRoomName,
-        icon: editRoomIcon || null
+      await updateRoomMutation.mutateAsync({
+        id: selectedRoom.id,
+        patch: { name: editRoomName, icon: editRoomIcon || null },
       });
 
-      // Update owner separately via dedicated endpoint
       const newOwnerId = editRoomOwnerId === '' ? null : parseInt(editRoomOwnerId, 10);
       if (newOwnerId !== (selectedRoom.owner_id || null)) {
-        await apiClient.patch(`/api/rooms/${selectedRoom.id}/owner`, null, {
-          params: { owner_id: newOwnerId }
-        });
+        await patchOwnerMutation.mutateAsync({ id: selectedRoom.id, ownerId: newOwnerId });
       }
 
       setSuccess(t('rooms.roomUpdated', { name: editRoomName }));
       setShowEditModal(false);
-      loadRooms();
     } catch (err) {
-      console.error('Failed to update room:', err);
       setError(extractApiError(err, t('common.error')));
-    } finally {
-      setUpdating(false);
     }
   };
 
@@ -214,15 +152,11 @@ export default function RoomsPage() {
       cancelLabel: t('common.cancel'),
       variant: 'danger',
     });
-
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/rooms/${room.id}`);
+      await deleteRoomMutation.mutateAsync(room.id);
       setSuccess(t('rooms.roomDeleted', { name: room.name }));
-      loadRooms();
-    } catch (err) {
-      console.error('Failed to delete room:', err);
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -232,19 +166,13 @@ export default function RoomsPage() {
       setError(t('rooms.pleaseSelectArea'));
       return;
     }
-
     try {
-      setUpdating(true);
-      await apiClient.post(`/api/rooms/${selectedRoom.id}/link/${selectedHAArea}`);
+      await linkRoomMutation.mutateAsync({ roomId: selectedRoom.id, areaId: selectedHAArea });
       setSuccess(t('rooms.linkedWith'));
       setShowLinkModal(false);
       setSelectedHAArea('');
-      loadRooms();
     } catch (err) {
-      console.error('Failed to link room:', err);
       setError(extractApiError(err, t('rooms.linkFailed')));
-    } finally {
-      setUpdating(false);
     }
   };
 
@@ -256,74 +184,44 @@ export default function RoomsPage() {
       cancelLabel: t('common.cancel'),
       variant: 'warning',
     });
-
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/rooms/${room.id}/link`);
+      await unlinkRoomMutation.mutateAsync(room.id);
       setSuccess(t('rooms.linkUnlinked'));
-      loadRooms();
-    } catch (err) {
-      console.error('Failed to unlink room:', err);
+    } catch {
       setError(t('rooms.unlinkFailed'));
     }
   };
 
   const importFromHA = async () => {
     try {
-      setSyncing(true);
-      const response = await apiClient.post<{ imported: number; linked: number; skipped: number }>('/api/rooms/ha/import', {
-        conflict_resolution: conflictResolution,
-      });
-
-      const { imported, linked, skipped } = response.data;
-      setSuccess(t('rooms.importResult', { imported, linked, skipped }));
-      loadRooms();
-      loadHAAreas();
+      const data = await importMutation.mutateAsync(conflictResolution);
+      setSuccess(t('rooms.importResult', data));
+      haAreasQuery.refetch();
     } catch (err) {
-      console.error('Failed to import from HA:', err);
       setError(extractApiError(err, t('rooms.importFailed')));
-    } finally {
-      setSyncing(false);
     }
   };
 
   const exportToHA = async () => {
     try {
-      setSyncing(true);
-      const response = await apiClient.post<{ exported: number; linked: number }>('/api/rooms/ha/export');
-
-      const { exported, linked } = response.data;
-      setSuccess(t('rooms.exportResult', { exported, linked }));
-      loadRooms();
-      loadHAAreas();
+      const data = await exportMutation.mutateAsync(undefined);
+      setSuccess(t('rooms.exportResult', data));
+      haAreasQuery.refetch();
     } catch (err) {
-      console.error('Failed to export to HA:', err);
       setError(extractApiError(err, t('rooms.exportFailed')));
-    } finally {
-      setSyncing(false);
     }
   };
 
   const syncWithHA = async () => {
     try {
-      setSyncing(true);
-      const response = await apiClient.post<{
-        import_results: { imported: number; linked: number };
-        export_results: { exported: number; linked: number };
-      }>(`/api/rooms/ha/sync?conflict_resolution=${conflictResolution}`);
-
-      const { import_results, export_results } = response.data;
-      const imported = import_results.imported + import_results.linked;
-      const exported = export_results.exported + export_results.linked;
+      const data = await syncMutation.mutateAsync(conflictResolution);
+      const imported = data.import_results.imported + data.import_results.linked;
+      const exported = data.export_results.exported + data.export_results.linked;
       setSuccess(t('rooms.syncResult', { imported, exported }));
-      loadRooms();
-      loadHAAreas();
+      haAreasQuery.refetch();
     } catch (err) {
-      console.error('Failed to sync with HA:', err);
       setError(extractApiError(err, t('rooms.syncFailed')));
-    } finally {
-      setSyncing(false);
     }
   };
 
@@ -335,14 +233,10 @@ export default function RoomsPage() {
       cancelLabel: t('common.cancel'),
       variant: 'danger',
     });
-
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/rooms/devices/${device.device_id}`);
-      loadRooms();
-    } catch (err) {
-      console.error('Failed to delete device:', err);
+      await deleteDeviceMutation.mutateAsync(device.device_id);
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -352,19 +246,16 @@ export default function RoomsPage() {
     setEditRoomName(room.name);
     setEditRoomIcon(room.icon || '');
     setEditRoomOwnerId(room.owner_id != null ? String(room.owner_id) : '');
-    loadUsers();
     setShowEditModal(true);
   };
 
   const openLinkModal = (room: Room) => {
     setSelectedRoom(room);
     setSelectedHAArea('');
-    loadHAAreas();
     setShowLinkModal(true);
   };
 
   const openSyncPanel = () => {
-    loadHAAreas();
     setShowSyncPanel(true);
   };
 
@@ -381,19 +272,15 @@ export default function RoomsPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader icon={Home} title={t('rooms.title')} subtitle={t('rooms.subtitle')}>
-        <button onClick={loadRooms} className="btn-icon btn-icon-ghost" aria-label={t('rooms.refreshRooms')}>
+        <button onClick={() => roomsQuery.refetch()} className="btn-icon btn-icon-ghost" aria-label={t('rooms.refreshRooms')}>
           <RefreshCw className="w-5 h-5" aria-hidden="true" />
         </button>
       </PageHeader>
 
-      {/* Alerts */}
-      {error && <Alert variant="error">{error}</Alert>}
-
+      {displayError && <Alert variant="error">{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
-      {/* Actions */}
       <div className="flex flex-wrap gap-3">
         <button
           onClick={() => setShowCreateModal(true)}
@@ -412,7 +299,6 @@ export default function RoomsPage() {
         </button>
       </div>
 
-      {/* Rooms List */}
       <div>
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
           {t('rooms.roomsCount', { count: rooms.length })}
@@ -451,7 +337,6 @@ export default function RoomsPage() {
                   {getSourceBadge(room.source)}
                 </div>
 
-                {/* HA Link Status */}
                 <div className="flex items-center justify-between text-sm mb-2">
                   <span className="text-gray-500 dark:text-gray-400">Home Assistant:</span>
                   {room.ha_area_id ? (
@@ -464,7 +349,6 @@ export default function RoomsPage() {
                   )}
                 </div>
 
-                {/* Owner */}
                 {room.owner_name && (
                   <div className="flex items-center justify-between text-sm mb-2">
                     <span className="text-gray-500 dark:text-gray-400">{t('rooms.owner')}:</span>
@@ -475,12 +359,11 @@ export default function RoomsPage() {
                   </div>
                 )}
 
-                {/* Devices Summary */}
                 <div className="flex items-center justify-between text-sm mb-2">
                   <span className="text-gray-500 dark:text-gray-400">{t('rooms.devices')}:</span>
                   <span className="text-gray-600 dark:text-gray-300">
                     {room.device_count || 0}
-                    {room.online_count > 0 && (
+                    {(room.online_count ?? 0) > 0 && (
                       <span className="text-green-600 dark:text-green-400 ml-1">
                         ({room.online_count} {t('common.online')})
                       </span>
@@ -488,8 +371,7 @@ export default function RoomsPage() {
                   </span>
                 </div>
 
-                {/* Device List */}
-                {room.devices?.length > 0 && (
+                {room.devices && room.devices.length > 0 && (
                   <div className="mb-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-lg space-y-1">
                     {room.devices.map((device) => {
                       const config = DEVICE_TYPE_CONFIG[device.device_type] || DEVICE_TYPE_CONFIG.web_browser;
@@ -526,11 +408,9 @@ export default function RoomsPage() {
                   </div>
                 )}
 
-                {/* Output Device Settings */}
                 <RoomOutputSettings roomId={room.id} roomName={room.name} />
                 <RoomOutputSettings roomId={room.id} roomName={room.name} outputType="visual" />
 
-                {/* Actions */}
                 <div className="flex space-x-2">
                   {room.ha_area_id ? (
                     <button
@@ -570,7 +450,6 @@ export default function RoomsPage() {
         )}
       </div>
 
-      {/* Create Room Modal */}
       <Modal isOpen={showCreateModal} onClose={() => setShowCreateModal(false)} title={t('rooms.createRoom')}>
         <div className="space-y-4">
           <div>
@@ -613,7 +492,6 @@ export default function RoomsPage() {
         </div>
       </Modal>
 
-      {/* Edit Room Modal */}
       <Modal isOpen={showEditModal && !!selectedRoom} onClose={() => setShowEditModal(false)} title={t('rooms.editRoom')}>
         <div className="space-y-4">
           <div>
@@ -646,7 +524,7 @@ export default function RoomsPage() {
               className="input w-full"
             >
               <option value="">{t('rooms.noOwner')}</option>
-              {users.map(u => (
+              {users.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.first_name || u.username}
                 </option>
@@ -683,7 +561,6 @@ export default function RoomsPage() {
         </div>
       </Modal>
 
-      {/* Link to HA Area Modal */}
       <Modal isOpen={showLinkModal && !!selectedRoom} onClose={() => setShowLinkModal(false)} title={t('rooms.linkToHAArea')}>
         {selectedRoom && (
           <p className="text-gray-500 dark:text-gray-400 mb-4">{t('device.room')}: {selectedRoom.name}</p>
@@ -708,15 +585,15 @@ export default function RoomsPage() {
               >
                 <option value="">{t('rooms.selectAreaPlaceholder')}</option>
                 {haAreas
-                  .filter(a => !a.is_linked)
-                  .map(area => (
+                  .filter((a) => !a.is_linked)
+                  .map((area) => (
                     <option key={area.area_id} value={area.area_id}>
                       {area.name}
                     </option>
                   ))
                 }
               </select>
-              {haAreas.filter(a => !a.is_linked).length === 0 && (
+              {haAreas.filter((a) => !a.is_linked).length === 0 && (
                 <p className="text-yellow-600 dark:text-yellow-400 text-sm mt-2">
                   {t('rooms.allAreasLinked')}
                 </p>
@@ -746,9 +623,7 @@ export default function RoomsPage() {
         </div>
       </Modal>
 
-      {/* HA Sync Panel Modal */}
       <Modal isOpen={showSyncPanel} onClose={() => setShowSyncPanel(false)} title={t('rooms.haSyncTitle')} maxWidth="max-w-lg">
-        {/* Conflict Resolution */}
         <div className="mb-6">
           <label className="block text-sm text-gray-500 dark:text-gray-400 mb-2">{t('rooms.conflictResolution')}:</label>
           <select
@@ -762,7 +637,6 @@ export default function RoomsPage() {
           </select>
         </div>
 
-        {/* Sync Actions */}
         <div className="grid grid-cols-3 gap-3 mb-6">
           <button
             onClick={importFromHA}
@@ -794,7 +668,6 @@ export default function RoomsPage() {
           </button>
         </div>
 
-        {/* HA Areas List */}
         <div>
           <h3 className="text-base font-semibold text-gray-900 dark:text-white mb-3">
             {t('rooms.haAreasCount', { count: haAreas.length })}
@@ -809,7 +682,7 @@ export default function RoomsPage() {
             </p>
           ) : (
             <div className="space-y-2 max-h-60 overflow-y-auto">
-              {haAreas.map(area => (
+              {haAreas.map((area) => (
                 <div
                   key={area.area_id}
                   className="flex items-center justify-between p-3 bg-gray-100 dark:bg-gray-800 rounded-lg"
@@ -842,7 +715,6 @@ export default function RoomsPage() {
         </div>
       </Modal>
 
-      {/* Confirm Dialog */}
       {ConfirmDialogComponent}
     </div>
   );

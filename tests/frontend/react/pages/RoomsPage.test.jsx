@@ -340,10 +340,7 @@ describe('RoomsPage', () => {
     it('shows error when loading fails', async () => {
       server.use(
         http.get(`${BASE_URL}/api/rooms`, () => {
-          return HttpResponse.json(
-            { detail: 'Failed to load rooms' },
-            { status: 500 }
-          );
+          return new HttpResponse(null, { status: 500 });
         })
       );
 

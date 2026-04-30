@@ -22,12 +22,11 @@ import {
   RefreshCw,
   Settings,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import { DEVICE_TYPES, DEVICE_TYPE_LABELS } from '../hooks/useDeviceConnection';
 import type { DeviceConfig, DeviceType } from '../types/device';
-import type { Room } from '../types/api';
 import { useDevice } from '../context/DeviceContext';
+import { useRoomsQuery, useCreateRoom, type Room } from '../api/resources/rooms';
 
 const DEVICE_TYPE_ICONS: Partial<Record<DeviceType, LucideIcon>> = {
   [DEVICE_TYPES.WEB_PANEL]: Monitor,
@@ -67,8 +66,10 @@ export default function DeviceSetup({
   const [hasSpeaker, setHasSpeaker] = useState(true);
   const [hasWakeWord, setHasWakeWord] = useState(false);
 
-  const [rooms, setRooms] = useState<Room[]>([]);
-  const [loadingRooms, setLoadingRooms] = useState(true);
+  const roomsQuery = useRoomsQuery();
+  const rooms: Room[] = roomsQuery.data ?? [];
+  const loadingRooms = roomsQuery.isLoading;
+  const createRoomMutation = useCreateRoom();
   const [newRoomName, setNewRoomName] = useState('');
   const [showNewRoomInput, setShowNewRoomInput] = useState(false);
 
@@ -80,9 +81,21 @@ export default function DeviceSetup({
 
   const device = useDevice();
 
-  // Load rooms on mount
+  // Auto-select first room when data arrives
   useEffect(() => {
-    loadRooms();
+    if (!selectedRoom && rooms.length > 0) {
+      setSelectedRoom(rooms[0].name);
+    }
+  }, [rooms, selectedRoom]);
+
+  // Surface query errors
+  useEffect(() => {
+    if (roomsQuery.errorMessage) {
+      setError(t('device.couldNotLoadRooms'));
+    }
+  }, [roomsQuery.errorMessage, t]);
+
+  useEffect(() => {
     checkMicrophonePermission();
   }, []);
 
@@ -109,24 +122,6 @@ export default function DeviceSetup({
       setHasWakeWord(false);
     }
   }, [deviceType, micPermission]);
-
-  const loadRooms = async () => {
-    setLoadingRooms(true);
-    try {
-      const response = await apiClient.get<Room[]>('/api/rooms');
-      const data = response.data ?? [];
-      setRooms(data);
-
-      if (!selectedRoom && data.length > 0) {
-        setSelectedRoom(data[0].name);
-      }
-    } catch (err) {
-      console.error('Failed to load rooms:', err);
-      setError(t('device.couldNotLoadRooms'));
-    } finally {
-      setLoadingRooms(false);
-    }
-  };
 
   const checkMicrophonePermission = async () => {
     setCheckingPermissions(true);
@@ -168,17 +163,12 @@ export default function DeviceSetup({
 
   const createRoom = async () => {
     if (!newRoomName.trim()) return;
-
     try {
-      const response = await apiClient.post<Room>('/api/rooms', {
-        name: newRoomName.trim(),
-      });
-      setRooms([...rooms, response.data]);
-      setSelectedRoom(response.data.name);
+      const created = await createRoomMutation.mutateAsync({ name: newRoomName.trim() });
+      setSelectedRoom(created.name);
       setNewRoomName('');
       setShowNewRoomInput(false);
     } catch (err) {
-      console.error('Failed to create room:', err);
       setError(extractApiError(err, t('device.couldNotCreateRoom')));
     }
   };
@@ -283,7 +273,7 @@ export default function DeviceSetup({
               +
             </button>
             <button
-              onClick={loadRooms}
+              onClick={() => roomsQuery.refetch()}
               disabled={loadingRooms}
               className="px-3 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-700 dark:text-gray-300 transition-colors disabled:opacity-50"
               aria-label={t('device.refreshRooms')}
