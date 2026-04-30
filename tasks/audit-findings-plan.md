@@ -183,9 +183,9 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - Out of scope: `k8s/configmap.yaml:11` keeps `redis://redis:6379` hardcoded — k8s configmaps are environment-specific by convention; override per environment if needed.
 - Out of scope: `.github/workflows/ci.yml` uses `redis://localhost:6379` for GitHub Actions service containers, which is correct for that runtime.
 
-### E18. Frigate MQTT defaults hardcoded
-- `integrations/frigate.py:74` — broker="localhost", port=1883
-- Fix: Pull from Settings
+### E18. Frigate MQTT defaults hardcoded — RESOLVED
+- New Settings fields `frigate_mqtt_broker` (default `"localhost"`) and `frigate_mqtt_port` (default `1883`, range 1-65535) in `ha_glue/utils/config.py`.
+- `FrigateClient.setup_mqtt()` defaults its arguments to `None` and falls back to those settings; explicit args still override. Documented in `.env.example` and `docs/ENVIRONMENT_VARIABLES.md`.
 
 ---
 

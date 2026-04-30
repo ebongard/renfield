@@ -95,8 +95,14 @@ class FrigateClient:
             logger.error(f"❌ Fehler beim Abrufen der Kamera-Liste: {e}")
             return []
 
-    def setup_mqtt(self, broker: str = "localhost", port: int = 1883):
-        """MQTT Client für Echtzeit-Events einrichten"""
+    def setup_mqtt(self, broker: str | None = None, port: int | None = None):
+        """MQTT Client für Echtzeit-Events einrichten.
+
+        Defaults to `frigate_mqtt_broker` / `frigate_mqtt_port` from
+        `ha_glue_settings`; explicit args override settings.
+        """
+        broker = broker or ha_glue_settings.frigate_mqtt_broker
+        port = port if port is not None else ha_glue_settings.frigate_mqtt_port
         def on_connect(client, userdata, flags, rc):
             logger.info(f"✅ MQTT verbunden (Code: {rc})")
             # Alle Frigate Events abonnieren

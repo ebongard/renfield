@@ -65,6 +65,8 @@ class HaGlueSettings(BaseSettings):
     # === Frigate (cameras / NVR) ===
     frigate_url: str | None = None
     frigate_timeout: float = Field(default=10.0, ge=1.0, le=120.0)
+    frigate_mqtt_broker: str = "localhost"
+    frigate_mqtt_port: int = Field(default=1883, ge=1, le=65535)
 
     # === HA integration cache / timeout ===
     ha_timeout: float = Field(default=10.0, ge=1.0, le=120.0)

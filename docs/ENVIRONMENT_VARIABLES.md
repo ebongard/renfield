@@ -800,12 +800,20 @@ N8N_MCP_ENABLED=true
 ### Frigate
 
 ```bash
-# Frigate URL
+# Frigate REST URL
 FRIGATE_URL=http://frigate.local:5000
+
+# Frigate MQTT broker (für Echtzeit-Events)
+FRIGATE_MQTT_BROKER=localhost
+FRIGATE_MQTT_PORT=1883
 ```
 
 **Erforderlich:** Optional
-**Format:** `http://<frigate-host>:<port>`
+**Format:** `http://<frigate-host>:<port>` für die REST-URL, getrennter MQTT-Broker für Live-Events.
+
+**Defaults:**
+- `FRIGATE_MQTT_BROKER`: `localhost`
+- `FRIGATE_MQTT_PORT`: `1883`
 
 ---
 
