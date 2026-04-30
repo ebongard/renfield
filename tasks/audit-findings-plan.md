@@ -198,8 +198,10 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `ollama_model` — re-classified: NOT dead. It is the global model fallback referenced by 13+ services as `settings.X_model or settings.ollama_model` (chat_handler, knowledge_graph_service, kg_retrieval, conversation_memory_service, agent_service, agent_router, orchestrator, notification_service, federation_query_responder, paperless_audit_service, ollama_service, main health check). The original audit's claim that `ollama_chat_model` replaces it is wrong — the two coexist as fallback-chain roles.
 
 ### E17. Redis URL not parameterized in docker-compose — RESOLVED
-- All 5 platform `REDIS_URL` instances across `docker-compose.yml` (2), `docker-compose.prod.yml` (2), `docker-compose.prod-cpu.yml` (1) now use `${REDIS_URL:-redis://redis:6379}`, matching the existing `OLLAMA_URL` pattern.
-- Out of scope: Evolution-API's `CACHE_REDIS_URI: redis://redis:6379/3` (docker-compose.yml:267) keeps its service-specific DB-index suffix; not platform-Redis.
+- All 6 platform `REDIS_URL` instances across `docker-compose.yml` (2), `docker-compose.prod.yml` (2), `docker-compose.prod-cpu.yml` (1), `docker-compose.dev.yml` (1) now use `${REDIS_URL:-redis://redis:6379}`, matching the existing `OLLAMA_URL` pattern.
+- Out of scope: Evolution-API's `CACHE_REDIS_URI: redis://redis:6379/3` (docker-compose.yml:267) keeps its service-specific DB-index suffix; parameterizing it as `${REDIS_URL:-…}/3` would break a future external-Redis deploy where `REDIS_URL` already includes a DB index. If that ever lands, introduce a dedicated `EVOLUTION_REDIS_URI` setting.
+- Out of scope: `k8s/configmap.yaml:11` keeps `redis://redis:6379` hardcoded — k8s configmaps are environment-specific by convention; override per environment if needed.
+- Out of scope: `.github/workflows/ci.yml` uses `redis://localhost:6379` for GitHub Actions service containers, which is correct for that runtime.
 
 ### E18. Frigate MQTT defaults hardcoded
 - `integrations/frigate.py:74` — broker="localhost", port=1883
