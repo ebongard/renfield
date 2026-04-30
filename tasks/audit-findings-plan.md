@@ -10,10 +10,10 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 |----------|-------|----------|----------|
 | KRITISCH | 7 | 7 / 7 | Must fix — performance bottlenecks, security gaps |
 | WICHTIG | 14 | 14 / 14 | Should fix — inconsistencies, missing optimizations |
-| EMPFEHLUNG | 18 | 12 / 18 | Nice to have — modernization, cleanup |
+| EMPFEHLUNG | 18 | 15 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E4, E5, E6, E7, E8, E9, E10, E12, E14, E16, E17, E18. Open: E1-E3 (backend perf), E11/E13/E15 (frontend modernization). See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E14, E16, E17, E18. Open: E11 (React Query), E13 (ChatPage Context refactor), E15 (TS strict mode) — all frontend modernization. See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -111,17 +111,22 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 
 ## EMPFEHLUNG (18)
 
-### E1. Speaker embeddings fully loaded
-- `services/whisper_service.py:269` — loads ALL speakers with ALL embeddings every call
-- Fix: Filter by active speakers, limit embeddings per speaker
+### E1. Speaker embeddings fully loaded — RESOLVED
+- Per-speaker embedding cap is enforced at write time: `whisper_service._add_embedding_to_speaker` (line 412-415) skips inserts once a speaker has 10 embeddings, so the DB never holds more than 10 per speaker via continuous learning.
+- Read-side defensive slice at `whisper_service.py:281` (`MAX_EMBEDDINGS_PER_SPEAKER = 10`) still applies as a safety net for any speakers manually enrolled via `/api/speakers/{id}/embeddings` (which doesn't currently enforce the cap; speakers with hand-tuned multi-sample profiles are the edge case).
+- Identification path at line 284 already gates on `if speaker.embeddings:` so empty speakers don't pollute the matcher list. The auto-enroll path (line 333-338) deliberately needs the full speaker list to count "Unbekannter Sprecher #N" — so a server-side filter would break that.
+- **Marginal optimization deferred:** moving the per-speaker LIMIT into SQL via window function would save N×10 row hydration on each STT call. Low value at typical scale (≤20 speakers); revisit if STT latency becomes a bottleneck.
 
-### E2. selectinload loads all documents per KB
-- `services/rag_service.py:686` — eager-loads all documents when listing KBs
-- Fix: Remove selectinload, use lazy or count-only
+### E2. selectinload loads all documents per KB — RESOLVED
+- `services/rag_service.py::list_knowledge_bases` (line 746-768) explicitly avoids `selectinload`, using a correlated count subquery to attach `_document_count` as a transient attribute on each KB. The audit's reference to line 686 was stale.
 
-### E3. Missing FK indexes
-- `Message.conversation_id`, `SpeakerEmbedding.speaker_id`, `User.role_id`, `RoomDevice.room_id`
-- Fix: Add `index=True` to FK columns (or verify implicit indexes exist)
+### E3. Missing FK indexes — RESOLVED
+- All four FK columns the audit flagged carry `index=True`:
+  - `Message.conversation_id` — `models/database.py:56`
+  - `SpeakerEmbedding.speaker_id` — `models/database.py:107`
+  - `User.role_id` — `models/database.py:552`
+  - `RoomDevice.room_id` — `ha_glue/models/database.py:185`
+- The migration `j0k1l2m3n4o5_add_fk_indexes_and_hnsw.py` explicitly creates `ix_speaker_embeddings_speaker_id` (line 32). Audit was stale.
 
 ### E4. MCP response size limit hardcoded (40KB) — RESOLVED (already)
 - `services/mcp_client.py:72` reads `settings.mcp_max_response_size` (Setting added at `utils/config.py:164`, default raised to 128KB to accommodate real `list_correspondents` payloads). Audit's 40KB framing was stale.
@@ -224,7 +229,7 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] W2: HNSW indexes shipped earlier; #485 cleared the doc rot
 - [x] W3: `db.add_all()` bulk insert in `rag_service.py:350,549` (#483)
 - [x] W4: `search()` joins Conversation in initial query — `conversation_service.py:534`
-- [ ] E1-E3: Speaker loading, eager load cleanup, FK indexes
+- [x] E1-E3: Speaker per-speaker embedding cap on write + read-side gate; KB listing uses count subquery; all 4 FK columns carry `index=True` — verified in current code, audit was partially stale
 
 ### Phase 4: Frontend Modernisierung
 - [x] W9: `React.lazy` + `Suspense` for admin pages — `App.tsx:1,15-23+`
