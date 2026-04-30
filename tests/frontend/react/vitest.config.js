@@ -29,6 +29,10 @@ export default defineConfig({
       // which is a different copy than the aliased test React → duplicate
       // React dispatchers → null useMemo. Point tests at a no-op stub.
       'qrcode.react': path.join(__dirname, 'stubs/qrcode.react.js'),
+      // Same React-duplicate problem hits @tanstack/react-query (its
+      // QueryClientProvider context closes over a React copy). Pin to the test
+      // tree so providers and hooks share one React.
+      '@tanstack/react-query': path.join(testNodeModules, '@tanstack/react-query'),
     },
   },
   server: {

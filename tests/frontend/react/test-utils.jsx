@@ -2,7 +2,22 @@ import { render } from '@testing-library/react';
 import { BrowserRouter } from 'react-router';
 import { createContext, useContext } from 'react';
 import { I18nextProvider } from 'react-i18next';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import i18n from '../../../src/frontend/src/i18n';
+
+/**
+ * Build a fresh QueryClient for each test to avoid cross-test cache pollution.
+ * Both queries and mutations have retry disabled — tests should observe error
+ * states immediately, not after a retry attempt.
+ */
+export function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0, staleTime: 0 },
+      mutations: { retry: false },
+    },
+  });
+}
 
 // Set default language to German for tests (matching production default)
 i18n.changeLanguage('de');
@@ -57,18 +72,24 @@ export function renderWithProviders(ui, options = {}) {
   const {
     route = '/',
     authValues = {},
+    queryClient = createTestQueryClient(),
     ...renderOptions
   } = options;
 
   // Set initial route
   window.history.pushState({}, 'Test page', route);
 
+  // Provider order matches production (AuthProvider → QueryClientProvider) so
+  // that hooks calling extractApiError + extractFieldErrors see auth state and
+  // a real QueryClient.
   function Wrapper({ children }) {
     return (
       <I18nextProvider i18n={i18n}>
         <BrowserRouter>
           <MockAuthProvider authValues={authValues}>
-            {children}
+            <QueryClientProvider client={queryClient}>
+              {children}
+            </QueryClientProvider>
           </MockAuthProvider>
         </BrowserRouter>
       </I18nextProvider>
@@ -76,6 +97,7 @@ export function renderWithProviders(ui, options = {}) {
   }
 
   return {
+    queryClient,
     ...render(ui, { wrapper: Wrapper, ...renderOptions }),
   };
 }
@@ -83,14 +105,16 @@ export function renderWithProviders(ui, options = {}) {
 /**
  * Render with just Router (no auth context)
  */
-export function renderWithRouter(ui, { route = '/' } = {}) {
+export function renderWithRouter(ui, { route = '/', queryClient = createTestQueryClient() } = {}) {
   window.history.pushState({}, 'Test page', route);
 
   function Wrapper({ children }) {
     return (
       <I18nextProvider i18n={i18n}>
         <BrowserRouter>
-          {children}
+          <QueryClientProvider client={queryClient}>
+            {children}
+          </QueryClientProvider>
         </BrowserRouter>
       </I18nextProvider>
     );

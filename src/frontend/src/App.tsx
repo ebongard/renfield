@@ -1,5 +1,7 @@
 import { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate } from 'react-router';
+import { QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import ProtectedRoute, { AdminRoute } from './components/ProtectedRoute';
@@ -10,6 +12,7 @@ import { DeviceProvider } from './context/DeviceContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 import LoadingSpinner from './components/LoadingSpinner';
+import { queryClient } from './api/queryClient';
 
 // Lazy-loaded admin/secondary pages
 const TasksPage = lazy(() => import('./pages/TasksPage'));
@@ -178,15 +181,21 @@ function AppRoutes() {
 }
 
 function App() {
+  // Provider order matters: AuthProvider must mount BEFORE QueryClientProvider so
+  // its axios interceptors (bearer-token injection + 401-refresh) are installed
+  // before any React Query fetcher can fire. See plan E11 / D6.
   return (
     <ErrorBoundary>
       <ThemeProvider>
         <AuthProvider>
-          <DeviceProvider>
-          <Suspense fallback={<LoadingSpinner />}>
-            <AppRoutes />
-          </Suspense>
-          </DeviceProvider>
+          <QueryClientProvider client={queryClient}>
+            <DeviceProvider>
+              <Suspense fallback={<LoadingSpinner />}>
+                <AppRoutes />
+              </Suspense>
+            </DeviceProvider>
+            {import.meta.env.DEV && <ReactQueryDevtools initialIsOpen={false} />}
+          </QueryClientProvider>
         </AuthProvider>
       </ThemeProvider>
     </ErrorBoundary>

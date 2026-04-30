@@ -15,6 +15,8 @@
   "dependencies": {
     "@fontsource-variable/cormorant": "^5.2.8",
     "@fontsource-variable/dm-sans": "^5.2.8",
+    "@tanstack/react-query": "^5.100.6",
+    "@tanstack/react-query-devtools": "^5.100.6",
     "axios": "^1.6.5",
     "i18next": "^23.16.8",
     "i18next-browser-languagedetector": "^7.2.2",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.18",
+    "@tanstack/eslint-plugin-query": "^5.100.6",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
     "@typescript-eslint/eslint-plugin": "^8.53.1",

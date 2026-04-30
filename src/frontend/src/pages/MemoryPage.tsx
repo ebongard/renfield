@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Brain,
@@ -8,16 +8,20 @@ import {
   Eye,
   Calendar,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
-import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
-
-type MemoryCategory = 'preference' | 'fact' | 'instruction' | 'context';
+import {
+  useMemoriesQuery,
+  useCreateMemory,
+  useUpdateMemory,
+  useDeleteMemory,
+  type Memory,
+  type MemoryCategory,
+} from '../api/resources/memories';
 
 const CATEGORIES: MemoryCategory[] = ['preference', 'fact', 'instruction', 'context'];
 
@@ -28,26 +32,22 @@ const CATEGORY_BADGE_COLORS: Record<MemoryCategory, BadgeColor> = {
   context: 'green',
 };
 
-interface Memory {
-  id: string | number;
-  content: string;
-  category: MemoryCategory;
-  importance: number;
-  access_count: number;
-  created_at: string;
-}
-
 export default function MemoryPage() {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [memories, setMemories] = useState<Memory[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-
   const [activeCategory, setActiveCategory] = useState<MemoryCategory | null>(null);
+
+  const memoriesQuery = useMemoriesQuery(activeCategory);
+  const memories = memoriesQuery.data?.memories ?? [];
+  const total = memoriesQuery.data?.total ?? 0;
+
+  const createMemory = useCreateMemory();
+  const updateMemory = useUpdateMemory();
+  const deleteMemory = useDeleteMemory();
+
+  const [success, setSuccess] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   // Modal state
   const [showModal, setShowModal] = useState(false);
@@ -56,40 +56,19 @@ export default function MemoryPage() {
   const [formCategory, setFormCategory] = useState<MemoryCategory>('fact');
   const [formImportance, setFormImportance] = useState(0.5);
 
-  const loadMemories = useCallback(async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      if (activeCategory) params.set('category', activeCategory);
-      params.set('limit', '100');
-
-      const response = await apiClient.get<{ memories: Memory[]; total: number }>(`/api/memory?${params}`);
-      setMemories(response.data.memories);
-      setTotal(response.data.total);
-      setError(null);
-    } catch {
-      setError(t('memory.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCategory, t]);
-
-  useEffect(() => {
-    loadMemories();
-  }, [loadMemories]);
+  const error = memoriesQuery.errorMessage ?? mutationError;
 
   // Auto-clear messages
   useEffect(() => {
-    if (error || success) {
+    if (mutationError || success) {
       const timer = setTimeout(() => {
-        setError(null);
+        setMutationError(null);
         setSuccess(null);
       }, 5000);
       return () => clearTimeout(timer);
     }
-  }, [error, success]);
+  }, [mutationError, success]);
 
-  // Open create modal
   const openCreateModal = () => {
     setEditingMemory(null);
     setFormContent('');
@@ -98,7 +77,6 @@ export default function MemoryPage() {
     setShowModal(true);
   };
 
-  // Open edit modal
   const openEditModal = (memory: Memory) => {
     setEditingMemory(memory);
     setFormContent(memory.content);
@@ -107,32 +85,30 @@ export default function MemoryPage() {
     setShowModal(true);
   };
 
-  // Save (create or update)
   const handleSave = async () => {
+    const input = {
+      content: formContent,
+      category: formCategory,
+      importance: formImportance,
+    };
     try {
       if (editingMemory) {
-        await apiClient.patch(`/api/memory/${editingMemory.id}`, {
-          content: formContent,
-          category: formCategory,
-          importance: formImportance,
-        });
+        await updateMemory.mutateAsync({ id: editingMemory.id, input });
         setSuccess(t('memory.updated'));
       } else {
-        await apiClient.post('/api/memory', {
-          content: formContent,
-          category: formCategory,
-          importance: formImportance,
-        });
+        await createMemory.mutateAsync(input);
         setSuccess(t('memory.created'));
       }
       setShowModal(false);
-      loadMemories();
-    } catch (err) {
-      setError(extractApiError(err, t('common.error')));
+    } catch {
+      setMutationError(
+        editingMemory
+          ? updateMemory.errorMessage ?? t('common.error')
+          : createMemory.errorMessage ?? t('common.error'),
+      );
     }
   };
 
-  // Delete
   const handleDelete = async (memory: Memory) => {
     const confirmed = await confirm({
       title: t('memory.deleteTitle'),
@@ -144,21 +120,18 @@ export default function MemoryPage() {
     if (!confirmed) return;
 
     try {
-      await apiClient.delete(`/api/memory/${memory.id}`);
+      await deleteMemory.mutateAsync(memory.id);
       setSuccess(t('memory.deleted'));
-      loadMemories();
-    } catch (err) {
-      setError(extractApiError(err, t('common.error')));
+    } catch {
+      setMutationError(deleteMemory.errorMessage ?? t('common.error'));
     }
   };
 
-  // Format date
   const formatDate = (dateStr?: string): string => {
     if (!dateStr) return '-';
     return new Date(dateStr).toLocaleDateString();
   };
 
-  // Importance dots
   const ImportanceDots = ({ value }: { value: number }) => {
     const filled = Math.round(value * 5);
     return (
@@ -179,7 +152,6 @@ export default function MemoryPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader icon={Brain} title={t('memory.title')} subtitle={t('memory.subtitle')}>
         <span className="text-sm text-gray-500 dark:text-gray-400">
           {t('memory.count', { count: total })}
@@ -190,11 +162,9 @@ export default function MemoryPage() {
         </button>
       </PageHeader>
 
-      {/* Status messages */}
       {error && <Alert variant="error">{error}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
-      {/* Category filter */}
       <div className="flex flex-wrap gap-2">
         <button
           onClick={() => setActiveCategory(null)}
@@ -221,8 +191,7 @@ export default function MemoryPage() {
         ))}
       </div>
 
-      {/* Content */}
-      {loading ? (
+      {memoriesQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
         </div>
@@ -238,7 +207,6 @@ export default function MemoryPage() {
               key={memory.id}
               className="group card hover:shadow-md transition-shadow"
             >
-              {/* Category badge + actions */}
               <div className="flex items-start justify-between mb-2">
                 <Badge color={CATEGORY_BADGE_COLORS[memory.category] || 'gray'}>
                   {t(`memory.categories.${memory.category}`)}
@@ -261,12 +229,10 @@ export default function MemoryPage() {
                 </div>
               </div>
 
-              {/* Content */}
               <p className="text-sm text-gray-800 dark:text-gray-200 mb-3 line-clamp-3">
                 {memory.content}
               </p>
 
-              {/* Footer */}
               <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                 <div className="flex items-center space-x-3">
                   <ImportanceDots value={memory.importance} />
@@ -285,14 +251,12 @@ export default function MemoryPage() {
         </div>
       )}
 
-      {/* Create / Edit Modal */}
       <Modal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
         title={editingMemory ? t('memory.editMemory') : t('memory.addMemory')}
       >
         <div className="space-y-4">
-          {/* Content */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('memory.content')}
@@ -306,7 +270,6 @@ export default function MemoryPage() {
             />
           </div>
 
-          {/* Category */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('common.type')}
@@ -324,7 +287,6 @@ export default function MemoryPage() {
             </select>
           </div>
 
-          {/* Importance */}
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
               {t('memory.importance')}: {Math.round(formImportance * 100)}%
@@ -340,7 +302,6 @@ export default function MemoryPage() {
             />
           </div>
 
-          {/* Actions */}
           <div className="flex justify-end space-x-3 pt-2">
             <button
               onClick={() => setShowModal(false)}
@@ -350,7 +311,7 @@ export default function MemoryPage() {
             </button>
             <button
               onClick={handleSave}
-              disabled={!formContent.trim()}
+              disabled={!formContent.trim() || createMemory.isPending || updateMemory.isPending}
               className="btn-primary disabled:opacity-50"
             >
               {t('common.save')}
