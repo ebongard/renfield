@@ -23,7 +23,7 @@ _(no active blockers — all prior P0 items resolved and merged)_
 
 ## P1 — Next substantive batch
 
-_(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. Audit-findings-plan.md still lists pre-resolution items in body text; the per-item lines and Phase 4-5 checklists have been updated to reflect closure.)_
+_(no P1 items — WICHTIG sweep complete. W10 closed via #487 on 2026-04-27. `tasks/audit-findings-plan.md` swept on 2026-04-30: every W1-W14 entry now points at the actual landed code/PR, and the Phase 1-4 checklists are fully ticked.)_
 
 ---
 

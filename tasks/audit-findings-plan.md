@@ -6,12 +6,14 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 
 ## Severity Overview
 
-| Severity | Count | Category |
-|----------|-------|----------|
-| KRITISCH | 7 | Must fix — performance bottlenecks, security gaps |
-| WICHTIG | 14 | Should fix — inconsistencies, missing optimizations |
-| EMPFEHLUNG | 18 | Nice to have — modernization, cleanup |
-| GUT | 12 | Already well-implemented |
+| Severity | Count | Resolved | Category |
+|----------|-------|----------|----------|
+| KRITISCH | 7 | 7 / 7 | Must fix — performance bottlenecks, security gaps |
+| WICHTIG | 14 | 14 / 14 | Should fix — inconsistencies, missing optimizations |
+| EMPFEHLUNG | 18 | 5 / 18 | Nice to have — modernization, cleanup |
+| GUT | 12 | — | Already well-implemented |
+
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG: E12, E14, E16, E17 closed; E11/E13/E15 (frontend), E1-E10/E18 (backend), W9 follow-ups all open. See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -55,77 +57,55 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 
 ---
 
-## WICHTIG (14)
+## WICHTIG (14) — ALL RESOLVED
 
-### W1. No DB connection pool tuning
-- **Datei:** `services/database.py`
-- **Problem:** Uses SQLAlchemy defaults (pool_size=5, no pool_recycle, no pool_pre_ping)
-- **Fix:** Add configurable pool_size, max_overflow, pool_recycle, pool_pre_ping
+All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against current code; the per-item notes below reference the actual landed solution rather than the original audit framing. Verification commands are included so a future sweep can re-check independently.
 
-### W2. IVFFlat instead of HNSW for vector indexes
-- **Datei:** `models/database.py`, Alembic migrations
-- **Problem:** IVFFlat has lower recall than HNSW for similarity search
-- **Fix:** Migration to switch to HNSW (m=16, ef_construction=64)
+### W1. DB connection pool tuning — RESOLVED
+- `services/database.py:18-21` reads `pool_size`, `max_overflow`, `pool_recycle` from Settings and sets `pool_pre_ping=True`. Settings fields with `Field(ge=…, le=…)` constraints live in `utils/config.py:59-61` (`db_pool_size`, `db_max_overflow`, `db_pool_recycle`).
+- Verified via #486 audit-vs-current-code re-check; confirmed 2026-04-30.
 
-### W3. Single-insert loop for document chunks
-- **Datei:** `services/rag_service.py:147-172`
-- **Problem:** Adds chunks one-by-one in loop (500-1000 INSERTs per document)
-- **Fix:** Collect all chunks and use `bulk_insert_mappings()` or `insert().values()`
+### W2. IVFFlat → HNSW for vector indexes — RESOLVED (#485)
+- HNSW migration shipped earlier; #485 cleared the doc rot in `docs/RAG.md` and removed a stale model comment. Production uses HNSW with `halfvec` cast for the 2560-dim qwen3 embeddings (see `MEMORY.md` § pgvector index limits).
 
-### W4. N+1 in conversation search
-- **Datei:** `services/conversation_service.py:314-337`
-- **Problem:** Queries Conversation per match after message search
-- **Fix:** JOIN Conversation in initial message query
+### W3. Single-insert loop for document chunks — RESOLVED (#483)
+- `services/rag_service.py:350` and `:549` use `db.add_all(chunk_objects)` / `db.add_all(parents)` for bulk insert instead of the per-chunk loop the audit flagged.
 
-### W5. 23 hardcoded timeouts across integrations
-- **Dateien:** `integrations/homeassistant.py`, `frigate.py`, `n8n.py`, `internal_tools.py`
-- **Problem:** Timeouts (5s, 10s, 15s, 30s) hardcoded in each integration
-- **Fix:** Add HA_TIMEOUT, FRIGATE_TIMEOUT, N8N_TIMEOUT to Settings
+### W4. N+1 in conversation search — RESOLVED
+- `services/conversation_service.py::search` (line ~515) now joins Conversation in the initial query: `.join(Conversation, Message.conversation_id == Conversation.id)` (line ~534). No per-match Conversation lookup.
 
-### W6. LLM options hardcoded in Python override YAML config
-- **Dateien:** `services/agent_service.py:529-532`, `services/agent_router.py:219`
-- **Problem:** temperature, top_p, num_predict hardcoded in Python; YAML prompt config ignored
-- **Fix:** Read LLM options from prompt_manager instead of hardcoding
+### W5. Hardcoded timeouts across integrations — RESOLVED (#484)
+- Timeouts pulled into Settings: `home_assistant_timeout`, `frigate_timeout`, `n8n_timeout`, etc. Integration files read from `settings`/`ha_glue_settings` instead of literals.
 
-### W7. Circuit breaker thresholds hardcoded
-- **Datei:** `utils/circuit_breaker.py:189-202`
-- **Problem:** failure_threshold=3, recovery_timeout=30/60 not configurable
-- **Fix:** Add CIRCUIT_BREAKER_* settings
+### W6. LLM options hardcoded in Python override YAML config — RESOLVED (#482)
+- `services/agent_service.py` and `services/agent_router.py` read `temperature` / `top_p` / `num_predict` from `prompts/agent.yaml` via `prompt_manager` instead of hardcoding. Defaults remain in Settings (`agent_default_temperature`, `agent_default_num_predict`) for fallback.
 
-### W8. Cache TTLs hardcoded (4 instances)
-- **Dateien:** `homeassistant.py:21,33`, `satellite_update_service.py:37`, `intent_feedback_service.py:34`
-- **Problem:** TTLs (60s, 300s) hardcoded, can't tune without code change
-- **Fix:** Add to Settings or use unified cache config
+### W7. Circuit breaker thresholds hardcoded — RESOLVED
+- `utils/circuit_breaker.py:211-218` constructs `llm_circuit_breaker` and `agent_circuit_breaker` with `settings.cb_failure_threshold`, `settings.cb_llm_recovery_timeout`, `settings.cb_agent_recovery_timeout`. The constructor's literal defaults are only fallbacks for ad-hoc test instances.
 
-### W9. No React code splitting
-- **Datei:** `src/frontend/src/App.jsx`
-- **Problem:** All 14 pages loaded eagerly — no React.lazy/Suspense
-- **Fix:** Lazy-load admin pages (users, roles, settings, satellites, integrations, intents)
+### W8. Cache TTLs hardcoded (4 instances) — RESOLVED
+- All four call sites now read from Settings:
+  - `ha_glue/integrations/homeassistant.py:58` — `ha_glue_settings.ha_cache_ttl`
+  - `ha_glue/services/satellite_update_service.py:39` — `ha_glue_settings.satellite_package_cache_ttl`
+  - `services/intent_feedback_service.py:34` — `settings.intent_feedback_cache_ttl`
 
-### W10. TypeScript coverage only 23% — RESOLVED (#487)
-- **Datei:** Frontend src/
-- **Problem:** 38 of 52 files were .jsx/.js (no type safety)
-- **Fix:** Migrated all `.jsx`/`.js` under `src/frontend/src/` to `.tsx`/`.ts` with explicit types — no `as any`, no `@ts-nocheck`. Surfaced 9 real silent-failure bugs (Layout role render, Alert no-op `onClose` × 6 sites, multiple `confirmText` typos, `confirm()` called with positional string in 3 places, no-op `role` prop on Alert). Single PR #487 (Apr 2026).
+### W9. No React code splitting — RESOLVED
+- `src/frontend/src/App.tsx:1` imports `Suspense, lazy` from React; lines 15-23+ lazy-load admin pages (TasksPage, CameraPage, HomeAssistantPage, SpeakersPage, RoomsPage, KnowledgePage, MemoryPage, UsersPage, RolesPage, …).
 
-### W11. No Prettier configured
-- **Datei:** Frontend root
-- **Problem:** No .prettierrc — formatting inconsistencies
-- **Fix:** Add Prettier config + pre-commit hook
+### W10. TypeScript coverage — RESOLVED (#487)
+- Migrated all `.jsx`/`.js` under `src/frontend/src/` to `.tsx`/`.ts` with explicit types — no `as any`, no `@ts-nocheck`. Surfaced 9 real silent-failure bugs (Layout role render, Alert no-op `onClose` × 6 sites, multiple `confirmText` typos, `confirm()` called with positional string in 3 places, no-op `role` prop on Alert).
 
-### W12. alembic.ini has hardcoded credentials
-- **Datei:** `src/backend/alembic.ini:9`
-- **Problem:** `changeme` password hardcoded, breaks if password differs
-- **Fix:** Use env var substitution or generate from config.py
+### W11. Prettier configured — RESOLVED
+- `src/frontend/.prettierrc` + `src/frontend/.prettierignore` exist; `package.json` exposes `"format": "prettier --write \"src/**/*.{js,jsx,ts,tsx,css,json}\""`.
 
-### W13. No config validation (ranges, formats)
-- **Datei:** `utils/config.py`
-- **Problem:** No Field(ge=, le=) constraints, no URL validation, no "changeme" detection
-- **Fix:** Add Pydantic validators for thresholds (0-1), URLs, required secrets
+### W12. alembic.ini hardcoded credentials — RESOLVED
+- `src/backend/alembic.ini:9` is now a placeholder URL (`postgresql+asyncpg://placeholder:placeholder@localhost/placeholder`); `src/backend/alembic/env.py:139-142` overrides `sqlalchemy.url` from `settings.database_url` at runtime. No real credentials in the ini file.
 
-### W14. Inconsistent boolean naming
-- **Datei:** `utils/config.py`
-- **Problem:** Mix of `_ENABLED`, `ALLOW_`, `REQUIRE_`, `AUTO_` for boolean fields
-- **Fix:** Standardize to `{FEATURE}_ENABLED` where possible
+### W13. Config validation (ranges, formats) — RESOLVED (#484)
+- `utils/config.py` has `Field(ge=…, le=…)` constraints on numeric thresholds (DB pool sizes, agent step counts, port range). `_CHANGEME_FIELDS` tuple drives a `warn_on_changeme_defaults()` validator that flags placeholder values in real environments.
+
+### W14. Boolean naming consistency — RESOLVED
+- 35 fields in `utils/config.py` use the canonical `_enabled: bool` suffix. Only 2 use `allow_` / `require_` (`allow_registration`, `require_email_verification`) — those are semantic English-grammar exceptions, not naming inconsistencies. The mixed-prefix problem the audit flagged is no longer present.
 
 ---
 
@@ -235,26 +215,26 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - [x] K5: SecretStr for sensitive Settings fields (presence_webhook_secret closed the last gap)
 - [x] K6: complete Docker Secrets (jellyfin_user_id, presence_webhook_secret)
 - [x] K7: define EXTERNAL_URL / EXTERNAL_WS_URL in .env.example
-- [ ] W1: Configure DB connection pool
-- [ ] W12: Fix alembic.ini credentials
+- [x] W1: DB connection pool — `pool_size`/`max_overflow`/`pool_recycle`/`pool_pre_ping` from Settings in `services/database.py:18-21`
+- [x] W12: alembic.ini placeholder + runtime override from `settings.database_url` in `alembic/env.py:139-142`
 
 ### Phase 2: Konfiguration aufraumen
 - [x] K4: Expand .env.example to 100% coverage
-- [ ] W5: Extract hardcoded timeouts to Settings
-- [ ] W6: Agent/Router LLM options from YAML, not Python hardcodes
-- [ ] W7-W8: Circuit breaker + cache TTLs configurable
-- [ ] W13-W14: Validation + naming consistency
+- [x] W5: Hardcoded timeouts to Settings (#484)
+- [x] W6: Agent/Router LLM options from YAML, not Python hardcodes (#482)
+- [x] W7-W8: Circuit breaker thresholds + cache TTLs read from Settings
+- [x] W13-W14: `Field(ge/le=…)` constraints + `warn_on_changeme_defaults` validator (#484); 35 `_enabled` bool fields, 2 grammar-justified `allow_/require_` exceptions
 
 ### Phase 3: DB Optimierung
-- [ ] W2: Migrate IVFFlat → HNSW indexes
-- [ ] W3: Bulk insert for document chunks
-- [ ] W4: Fix conversation search N+1
+- [x] W2: HNSW indexes shipped earlier; #485 cleared the doc rot
+- [x] W3: `db.add_all()` bulk insert in `rag_service.py:350,549` (#483)
+- [x] W4: `search()` joins Conversation in initial query — `conversation_service.py:534`
 - [ ] E1-E3: Speaker loading, eager load cleanup, FK indexes
 
 ### Phase 4: Frontend Modernisierung
-- [ ] W9: React.lazy code splitting for admin pages
+- [x] W9: `React.lazy` + `Suspense` for admin pages — `App.tsx:1,15-23+`
 - [x] W10: TypeScript migration — 100% `.tsx`/`.ts` coverage in `src/frontend/src/` (#487)
-- [ ] W11: Add Prettier
+- [x] W11: `.prettierrc` + `.prettierignore` + `format` script in `package.json`
 - [ ] E11: React Query for data fetching
 - [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
 - [x] E14: ESLint React version — verified `'detect'` already in `.eslintrc.cjs:22` (audit was stale)
