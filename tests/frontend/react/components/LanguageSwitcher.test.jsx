@@ -3,14 +3,22 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LanguageSwitcher from '../../../../src/frontend/src/components/LanguageSwitcher';
 import { I18nextProvider } from 'react-i18next';
+import { QueryClientProvider } from '@tanstack/react-query';
 import i18n from '../../../../src/frontend/src/i18n';
+import { createTestQueryClient } from '../test-utils.jsx';
 
 // Mock axios
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
     get: vi.fn().mockResolvedValue({ data: { language: 'de' } }),
     put: vi.fn().mockResolvedValue({ data: { language: 'de' } })
-  }
+  },
+  extractApiError: (err, fallback) => {
+    const detail = err?.response?.data?.detail;
+    if (typeof detail === 'string') return detail;
+    return fallback;
+  },
+  extractFieldErrors: () => ({}),
 }));
 
 // Mock AuthContext
@@ -21,13 +29,15 @@ vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
   }))
 }));
 
-// Helper to render with i18n
+// Helper to render with i18n + QueryClientProvider
 function renderWithI18n(ui, { language = 'de' } = {}) {
   i18n.changeLanguage(language);
-
+  const queryClient = createTestQueryClient();
   return render(
     <I18nextProvider i18n={i18n}>
-      {ui}
+      <QueryClientProvider client={queryClient}>
+        {ui}
+      </QueryClientProvider>
     </I18nextProvider>
   );
 }

@@ -1,9 +1,24 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook as rawRenderHook, waitFor, act } from '@testing-library/react';
+import { I18nextProvider } from 'react-i18next';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { BASE_URL, mockConversations, mockConversationHistory } from '../mocks/handlers.js';
 import { useChatSessions, groupConversationsByDate } from '../../../../src/frontend/src/hooks/useChatSessions';
+import { createTestQueryClient } from '../test-utils.jsx';
+import i18n from '../../../../src/frontend/src/i18n';
+
+// Wrap renderHook with QueryClientProvider so the new RQ-backed hook works.
+function renderHook(hook, options = {}) {
+  const queryClient = options.queryClient ?? createTestQueryClient();
+  const wrapper = ({ children }) => (
+    <I18nextProvider i18n={i18n}>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </I18nextProvider>
+  );
+  return rawRenderHook(hook, { wrapper, ...options });
+}
 
 describe('useChatSessions', () => {
   beforeEach(() => {
@@ -93,7 +108,9 @@ describe('useChatSessions', () => {
         await result.current.refreshConversations();
       });
 
-      expect(result.current.conversations.length).toBe(initialLength + 1);
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(initialLength + 1);
+      });
     });
   });
 
@@ -113,7 +130,9 @@ describe('useChatSessions', () => {
         expect(success).toBe(true);
       });
 
-      expect(result.current.conversations.length).toBe(initialLength - 1);
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(initialLength - 1);
+      });
       expect(result.current.conversations.find(c => c.session_id === sessionToDelete)).toBeUndefined();
     });
 
@@ -196,7 +215,9 @@ describe('useChatSessions', () => {
         });
       });
 
-      expect(result.current.conversations.length).toBe(initialLength + 1);
+      await waitFor(() => {
+        expect(result.current.conversations.length).toBe(initialLength + 1);
+      });
       expect(result.current.conversations[0].session_id).toBe('new-local-session');
     });
 
@@ -239,9 +260,11 @@ describe('useChatSessions', () => {
         result.current.updateConversationPreview(sessionId, newPreview, 10);
       });
 
-      const updated = result.current.conversations.find(c => c.session_id === sessionId);
-      expect(updated.preview).toBe(newPreview);
-      expect(updated.message_count).toBe(10);
+      await waitFor(() => {
+        const updated = result.current.conversations.find(c => c.session_id === sessionId);
+        expect(updated?.preview).toBe(newPreview);
+        expect(updated?.message_count).toBe(10);
+      });
     });
   });
 });
