@@ -52,7 +52,7 @@ spec:
       containers:
         - name: dlna-mcp
           image: registry.treehouse.x-idra.de/renfield/backend:latest
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           command: ["/opt/venv/bin/renfield-mcp-dlna"]
           env:
             - name: MCP_TRANSPORT
