@@ -14,6 +14,7 @@ import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import { extractApiError } from '../utils/axios';
 import {
   useMemoriesQuery,
   useCreateMemory,
@@ -100,12 +101,8 @@ export default function MemoryPage() {
         setSuccess(t('memory.created'));
       }
       setShowModal(false);
-    } catch {
-      setMutationError(
-        editingMemory
-          ? updateMemory.errorMessage ?? t('common.error')
-          : createMemory.errorMessage ?? t('common.error'),
-      );
+    } catch (err) {
+      setMutationError(extractApiError(err, t('common.error')));
     }
   };
 
@@ -122,8 +119,8 @@ export default function MemoryPage() {
     try {
       await deleteMemory.mutateAsync(memory.id);
       setSuccess(t('memory.deleted'));
-    } catch {
-      setMutationError(deleteMemory.errorMessage ?? t('common.error'));
+    } catch (err) {
+      setMutationError(extractApiError(err, t('common.error')));
     }
   };
 

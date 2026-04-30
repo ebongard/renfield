@@ -3,195 +3,110 @@
  *
  * Admin page for managing system-wide settings like wake word configuration.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { AxiosError } from 'axios';
 import { useTranslation } from 'react-i18next';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
-import { extractApiError } from '../utils/axios';
 import {
   Settings, Mic, Loader, CheckCircle, RefreshCw, Save,
   Satellite, Monitor, XCircle, Clock,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+import { extractApiError } from '../utils/axios';
+import {
+  useWakewordSettingsQuery,
+  useWakewordSyncStatusQuery,
+  useSaveWakewordSettings,
+} from '../api/resources/settings';
 
-interface KeywordOption {
-  id: string;
-  label: string;
-  description?: string;
-}
-
-interface WakewordSettingsData {
-  keyword: string;
-  threshold: number;
-  cooldown_ms: number;
-  available_keywords?: KeywordOption[];
-  subscriber_count?: number;
-}
-
-interface SyncDevice {
-  device_id: string;
-  device_type?: 'satellite' | 'web' | string;
-  synced: boolean;
-  active_keywords?: string[];
-  error?: string;
-}
-
-interface SyncStatusData {
-  devices: SyncDevice[];
-  all_synced: boolean;
-  failed_count: number;
-}
+const SYNC_STATUS_TIMEOUT_MS = 30_000;
 
 export default function SettingsPage() {
   const { t } = useTranslation();
-  const { getAccessToken } = useAuth();
 
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
-  const [settings, setSettings] = useState<WakewordSettingsData | null>(null);
+  const settingsQuery = useWakewordSettingsQuery();
+  const settings = settingsQuery.data;
+  const saveSettings = useSaveWakewordSettings();
 
   // Form state
   const [keyword, setKeyword] = useState('alexa');
   const [threshold, setThreshold] = useState(0.5);
   const [cooldownMs, setCooldownMs] = useState(2000);
 
-  // Track if form has changes
-  const [hasChanges, setHasChanges] = useState(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  // Device sync status
-  const [syncStatus, setSyncStatus] = useState<SyncStatusData | null>(null);
+  // Device sync status — polled query enabled briefly after save
   const [showSyncStatus, setShowSyncStatus] = useState(false);
-  const syncPollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const syncStatusQuery = useWakewordSyncStatusQuery(showSyncStatus);
+  const syncStatus = syncStatusQuery.data ?? null;
+  const syncTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Load settings
-  const loadSettings = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const token = await getAccessToken();
-      const response = await apiClient.get<WakewordSettingsData>('/api/settings/wakeword', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      setSettings(response.data);
-      setKeyword(response.data.keyword);
-      setThreshold(response.data.threshold);
-      setCooldownMs(response.data.cooldown_ms);
-      setHasChanges(false);
-    } catch (err) {
-      console.error('Failed to load settings:', err);
-      setError(t('settings.failedToLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [getAccessToken, t]);
-
+  // Hydrate form from query
   useEffect(() => {
-    loadSettings();
-  }, [loadSettings]);
-
-  // Load device sync status
-  const loadSyncStatus = useCallback(async () => {
-    try {
-      const token = await getAccessToken();
-      const response = await apiClient.get<SyncStatusData>('/api/settings/wakeword/sync-status', {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      setSyncStatus(response.data);
-      return response.data;
-    } catch (err) {
-      console.error('Failed to load sync status:', err);
-      return null;
+    if (settings) {
+      setKeyword(settings.keyword);
+      setThreshold(settings.threshold);
+      setCooldownMs(settings.cooldown_ms);
     }
-  }, [getAccessToken]);
+  }, [settings]);
 
-  // Start polling sync status after saving
-  const startSyncStatusPolling = useCallback(async () => {
-    setShowSyncStatus(true);
-    await loadSyncStatus();
-
-    // Poll every 2 seconds for up to 30 seconds
-    let pollCount = 0;
-    const maxPolls = 15;
-
-    syncPollingRef.current = setInterval(async () => {
-      pollCount++;
-      const status = await loadSyncStatus();
-
-      // Stop polling if all synced or max polls reached
-      if (status?.all_synced || pollCount >= maxPolls) {
-        if (syncPollingRef.current) clearInterval(syncPollingRef.current);
-        syncPollingRef.current = null;
-      }
-    }, 2000);
-  }, [loadSyncStatus]);
-
-  // Cleanup polling on unmount
+  // Stop polling after timeout
   useEffect(() => {
     return () => {
-      if (syncPollingRef.current) {
-        clearInterval(syncPollingRef.current);
-      }
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
   }, []);
 
-  // Check for changes
+  // Stop polling when all synced
   useEffect(() => {
-    if (settings) {
-      const changed = keyword !== settings.keyword ||
-                      threshold !== settings.threshold ||
-                      cooldownMs !== settings.cooldown_ms;
-      setHasChanges(changed);
+    if (syncStatus?.all_synced && syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = null;
     }
-  }, [keyword, threshold, cooldownMs, settings]);
+  }, [syncStatus]);
 
-  // Save settings
+  const hasChanges = settings
+    ? keyword !== settings.keyword ||
+      threshold !== settings.threshold ||
+      cooldownMs !== settings.cooldown_ms
+    : false;
+
+  const error = settingsQuery.errorMessage ?? mutationError;
+  const loading = settingsQuery.isLoading;
+  const saving = saveSettings.isPending;
+
   const handleSave = async () => {
-    setSaving(true);
-    setError(null);
+    setMutationError(null);
     setSuccess(null);
 
     try {
-      const token = await getAccessToken();
-      const response = await apiClient.put<WakewordSettingsData>('/api/settings/wakeword', {
+      await saveSettings.mutateAsync({
         keyword,
         threshold,
         cooldown_ms: cooldownMs,
-      }, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
-
-      setSettings(response.data);
-      setHasChanges(false);
       setSuccess(t('settings.settingsSaved'));
+      setShowSyncStatus(true);
 
-      // Start polling sync status to show device sync progress
-      startSyncStatusPolling();
+      // Cap polling at 30 s
+      if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
+      syncTimeoutRef.current = setTimeout(() => {
+        setShowSyncStatus(false);
+      }, SYNC_STATUS_TIMEOUT_MS);
 
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000);
     } catch (err) {
-      console.error('Failed to save settings:', err);
       const status = (err as AxiosError | undefined)?.response?.status;
       if (status === 403) {
-        setError(t('errors.forbidden'));
+        setMutationError(t('errors.forbidden'));
       } else {
-        setError(extractApiError(err, t('settings.failedToSave')));
+        setMutationError(extractApiError(err, t('settings.failedToSave')));
       }
-    } finally {
-      setSaving(false);
     }
   };
 
-  // Format threshold as percentage
   const thresholdPercent = Math.round(threshold * 100);
-
-  // Format cooldown as seconds
   const cooldownSeconds = (cooldownMs / 1000).toFixed(1);
 
   if (loading) {
@@ -210,11 +125,10 @@ export default function SettingsPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <PageHeader icon={Settings} title={t('settings.title')} subtitle={t('settings.subtitle')}>
           <button
-            onClick={loadSettings}
+            onClick={() => settingsQuery.refetch()}
             className="btn-icon btn-icon-ghost"
             title={t('common.refresh')}
           >
@@ -223,16 +137,9 @@ export default function SettingsPage() {
         </PageHeader>
       </div>
 
-      {/* Error/Success Messages */}
-      {error && (
-        <Alert variant="error" className="mb-4">{error}</Alert>
-      )}
+      {error && <Alert variant="error" className="mb-4">{error}</Alert>}
+      {success && <Alert variant="success" className="mb-4">{success}</Alert>}
 
-      {success && (
-        <Alert variant="success" className="mb-4">{success}</Alert>
-      )}
-
-      {/* Wake Word Settings Card */}
       <div className="card">
         <div className="flex items-center gap-2 mb-4">
           <Mic className="w-6 h-6 text-blue-500" />
@@ -245,7 +152,6 @@ export default function SettingsPage() {
           {t('settings.wakeword.description')}
         </p>
 
-        {/* Keyword Selection */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             {t('settings.wakeword.keyword')}
@@ -262,11 +168,10 @@ export default function SettingsPage() {
             ))}
           </select>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {settings?.available_keywords?.find(k => k.id === keyword)?.description}
+            {settings?.available_keywords?.find((k) => k.id === keyword)?.description}
           </p>
         </div>
 
-        {/* Threshold Slider */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             {t('settings.wakeword.threshold')}
@@ -294,7 +199,6 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {/* Cooldown Slider */}
         <div className="mb-6">
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
             {t('settings.wakeword.cooldown')}
@@ -314,7 +218,6 @@ export default function SettingsPage() {
           </p>
         </div>
 
-        {/* Connected Devices Info */}
         {settings?.subscriber_count !== undefined && (
           <div className="mb-6 p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
             <p className="text-sm text-gray-600 dark:text-gray-400">
@@ -323,14 +226,13 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Device Sync Status (shown after saving) */}
         {showSyncStatus && syncStatus && syncStatus.devices && syncStatus.devices.length > 0 && (
           <div className="mb-6 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
                 {t('settings.wakeword.syncStatus')}
               </h3>
-              {!syncStatus.all_synced && syncPollingRef.current && (
+              {!syncStatus.all_synced && (
                 <Loader className="w-4 h-4 animate-spin text-blue-500" />
               )}
               {syncStatus.all_synced && (
@@ -388,7 +290,6 @@ export default function SettingsPage() {
           </div>
         )}
 
-        {/* Save Button */}
         <div className="flex items-center justify-end gap-4 pt-4 border-t border-gray-200 dark:border-gray-700">
           {hasChanges && (
             <span className="text-sm text-amber-600 dark:text-amber-400">
@@ -411,7 +312,6 @@ export default function SettingsPage() {
           </button>
         </div>
 
-        {/* Broadcast Hint */}
         <p className="mt-4 text-sm text-gray-500 dark:text-gray-400 italic">
           {t('settings.wakeword.broadcastHint')}
         </p>

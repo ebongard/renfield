@@ -7,6 +7,7 @@ import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
+import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -228,12 +229,8 @@ export default function RolesPage() {
         setSuccess(t('roles.roleCreated'));
       }
       setShowModal(false);
-    } catch {
-      setMutationError(
-        editingRole
-          ? updateRole.errorMessage ?? t('roles.failedToSave')
-          : createRole.errorMessage ?? t('roles.failedToSave'),
-      );
+    } catch (err) {
+      setMutationError(extractApiError(err, t('roles.failedToSave')));
     }
   };
 
@@ -256,8 +253,8 @@ export default function RolesPage() {
     try {
       await deleteRole.mutateAsync(role.id);
       setSuccess(t('roles.roleDeleted'));
-    } catch {
-      setMutationError(deleteRole.errorMessage ?? t('roles.failedToDelete'));
+    } catch (err) {
+      setMutationError(extractApiError(err, t('roles.failedToDelete')));
     }
   };
 
