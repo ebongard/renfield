@@ -72,11 +72,12 @@ _mcp_stdio_logger.addFilter(_MCPStdioNoiseFilter())
 MAX_RESPONSE_SIZE = settings.mcp_max_response_size
 DEFAULT_RATE_LIMIT_PER_MINUTE = 60  # Default rate limit per MCP server
 
-# Exponential Backoff constants for reconnection
-BACKOFF_INITIAL_DELAY = 1.0  # Initial delay in seconds
-BACKOFF_MAX_DELAY = 300.0  # Maximum delay (5 minutes)
-BACKOFF_MULTIPLIER = 2.0  # Exponential multiplier
-BACKOFF_JITTER = 0.1  # Random jitter factor (10%)
+# Exponential Backoff constants for reconnection — read from Settings
+# (see mcp_backoff_* fields in utils/config.py).
+BACKOFF_INITIAL_DELAY = settings.mcp_backoff_initial_delay
+BACKOFF_MAX_DELAY = settings.mcp_backoff_max_delay
+BACKOFF_MULTIPLIER = settings.mcp_backoff_multiplier
+BACKOFF_JITTER = settings.mcp_backoff_jitter
 
 
 class ExponentialBackoff:

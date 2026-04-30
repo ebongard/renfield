@@ -129,7 +129,7 @@ class IntentFeedbackService:
         message: str,
         feedback_type: str,
         limit: int = 3,
-        threshold: float = 0.75,
+        threshold: float | None = None,
     ) -> list[dict]:
         """
         Find semantically similar past corrections using cosine similarity.
@@ -143,6 +143,9 @@ class IntentFeedbackService:
         Returns:
             List of dicts with message_text, original_value, corrected_value, similarity
         """
+        if threshold is None:
+            threshold = settings.intent_feedback_similarity_threshold
+
         # Early exit if no corrections exist
         if not await self._has_corrections(feedback_type):
             return []
@@ -262,7 +265,10 @@ class IntentFeedbackService:
             None if no matching correction found
         """
         similar = await self.find_similar_corrections(
-            message, feedback_type="complexity", limit=1, threshold=0.80
+            message,
+            feedback_type="complexity",
+            limit=1,
+            threshold=settings.intent_feedback_complexity_threshold,
         )
         if not similar:
             return None

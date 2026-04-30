@@ -162,6 +162,11 @@ class Settings(BaseSettings):
     mcp_connect_timeout: float = 10.0     # Connection timeout per server (seconds)
     mcp_call_timeout: float = 30.0        # Tool call timeout (seconds)
     mcp_max_response_size: int = Field(default=131072, ge=1024, le=524288)  # 128KB max response — accommodates list_correspondents on real corpora (~70KB at ~900 entries) without truncating mid-payload
+    # MCP exponential-backoff for reconnect / transient failures
+    mcp_backoff_initial_delay: float = Field(default=1.0, ge=0.1, le=60.0)
+    mcp_backoff_max_delay: float = Field(default=300.0, ge=1.0, le=3600.0)
+    mcp_backoff_multiplier: float = Field(default=2.0, ge=1.0, le=10.0)
+    mcp_backoff_jitter: float = Field(default=0.1, ge=0.0, le=1.0)
 
     # W5 — previously hardcoded timeouts now configurable
     geocode_http_timeout: float = Field(default=8.0, ge=1.0, le=30.0)
@@ -397,6 +402,14 @@ class Settings(BaseSettings):
     # Cache TTLs (seconds) — ha_cache_ttl and satellite_package_cache_ttl
     # moved to ha_glue/utils/config.py.
     intent_feedback_cache_ttl: int = Field(default=300, ge=10, le=86400)
+    # Cosine-similarity bars for past-correction matching. Two intentionally
+    # different bars: the general bar (0.75) for surfacing similar past
+    # corrections, and the stricter complexity-routing bar (0.80) for the
+    # binary "is this query simple or complex?" decision where we want fewer
+    # false positives. Both configurable so an operator can tune recall vs
+    # precision per environment without a code change.
+    intent_feedback_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)
+    intent_feedback_complexity_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
     # === Proactive Notifications ===
     proactive_enabled: bool = False                    # Master-Switch (opt-in)

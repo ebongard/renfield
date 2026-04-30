@@ -10,10 +10,10 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 |----------|-------|----------|----------|
 | KRITISCH | 7 | 7 / 7 | Must fix — performance bottlenecks, security gaps |
 | WICHTIG | 14 | 14 / 14 | Should fix — inconsistencies, missing optimizations |
-| EMPFEHLUNG | 18 | 5 / 18 | Nice to have — modernization, cleanup |
+| EMPFEHLUNG | 18 | 11 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG: E12, E14, E16, E17 closed; E11/E13/E15 (frontend), E1-E10/E18 (backend), W9 follow-ups all open. See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E4, E5, E6, E7, E8, E9, E12, E14, E16, E17, E18. Open: E1-E3 (backend perf), E10 (frontend localhost fallbacks), E11/E13/E15 (frontend modernization). See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -123,29 +123,24 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - `Message.conversation_id`, `SpeakerEmbedding.speaker_id`, `User.role_id`, `RoomDevice.room_id`
 - Fix: Add `index=True` to FK columns (or verify implicit indexes exist)
 
-### E4. MCP response size limit hardcoded (40KB)
-- `services/mcp_client.py:42` — MAX_MCP_RESPONSE_SIZE = 40 * 1024
-- Fix: Add to Settings
+### E4. MCP response size limit hardcoded (40KB) — RESOLVED (already)
+- `services/mcp_client.py:72` reads `settings.mcp_max_response_size` (Setting added at `utils/config.py:164`, default raised to 128KB to accommodate real `list_correspondents` payloads). Audit's 40KB framing was stale.
 
-### E5. MCP backoff constants hardcoded
-- `services/mcp_client.py:46-49` — 4 backoff constants
-- Fix: Add to Settings (or keep as sensible defaults)
+### E5. MCP backoff constants hardcoded — RESOLVED
+- 4 backoff constants in `services/mcp_client.py:76-79` now read from Settings (`mcp_backoff_initial_delay`, `mcp_backoff_max_delay`, `mcp_backoff_multiplier`, `mcp_backoff_jitter`). Module-level constants stay as the binding point so downstream `ExponentialBackoff(...)` callers don't need to change. Defaults match the previous values; ranges validated.
 
-### E6. Agent history limit hardcoded (20 steps)
-- `services/agent_service.py:99` — max agent history in prompt
-- Fix: Derive from agent_max_steps or add setting
+### E6. Agent history limit hardcoded (20 steps) — RESOLVED (already)
+- `services/agent_service.py:132` reads `settings.agent_history_limit` (Setting at `utils/config.py:176`, range 1-100).
 
-### E7. Agent response truncation limits
-- `services/agent_service.py:203` — 2000 char truncation limit
-- Fix: Add to Settings
+### E7. Agent response truncation limits — RESOLVED (already)
+- `_truncate()` in `services/agent_service.py:286` and 2 other call sites read `settings.agent_response_truncation` (Setting at `utils/config.py:177`, range 100-50000).
 
-### E8. Embedding dimension hardcoded (768)
-- `models/database.py:433` — can't change without migration
-- Fix: Document dependency on nomic-embed-text, or make configurable with migration
+### E8. Embedding dimension hardcoded (768) — RESOLVED (already)
+- `EMBEDDING_DIMENSION = settings.embedding_dimension` at `models/database.py:216`; Setting at `utils/config.py:183` (range 128-4096). Used at all `Vector(EMBEDDING_DIMENSION)` declaration sites. Resize still requires a migration but the source-of-truth is configurable.
 
-### E9. Similarity threshold inconsistency
-- `intent_feedback_service.py:133` uses 0.75 (param), line 266 uses 0.80 (hardcoded)
-- Fix: Unify to single configurable threshold
+### E9. Similarity threshold inconsistency — RESOLVED (with re-classification)
+- The two thresholds were intentionally different — 0.75 for general past-correction matching, 0.80 for the stricter "is this query simple or complex?" routing decision (fewer false positives wanted on complexity routing). The audit framed this as a unify-into-one fix; that would have collapsed two real decision bars.
+- Fix: Both thresholds promoted to Settings (`intent_feedback_similarity_threshold` = 0.75, `intent_feedback_complexity_threshold` = 0.80). `find_similar_corrections(threshold=None)` falls back to the general bar; the complexity-routing call site explicitly passes the complexity bar. Operators can now tune recall/precision per environment.
 
 ### E10. Frontend hardcoded localhost fallbacks
 - `utils/axios.ts:5`, `useChatWebSocket.js:34`, `useDeviceConnection.ts:171`
@@ -241,6 +236,8 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 
 ### Phase 5: Cleanup
 - [x] E16: Legacy config fields — `plugins_*`/`music_enabled`/`spotify_*` already gone; `piper_voice` renamed to `piper_default_voice`; `ollama_model` re-classified as intentional fallback infrastructure (not dead)
-- [ ] E4-E9: Remaining hardcoded values to Settings
+- [x] E4-E9: Hardcoded values to Settings — E4/E6/E7/E8 already done in earlier work; E5 (MCP backoff) + E9 (intent feedback thresholds, both bars) closed in this PR
+- [x] E17: Redis URL parameterization — 6 platform compose entries use `${REDIS_URL:-redis://redis:6379}`
+- [x] E18: Frigate MQTT broker/port from Settings — defensive hygiene before MQTT consumer ships
 - [ ] E13: ChatPage prop drilling → Context
 - [ ] E15: Enable TypeScript strict mode
