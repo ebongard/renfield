@@ -102,6 +102,11 @@ class Settings(BaseSettings):
     default_language: str = "de"
     supported_languages: str = "de,en"  # Comma-separated list of supported languages
     whisper_model: str = "base"
+    # Recommended overrides via env: WHISPER_MODEL=medium for CPU production,
+    # WHISPER_MODEL=large-v3 on GPU hosts (~3 GB VRAM in float16).
+    whisper_device: str = "cpu"  # "cpu" or "cuda" — set WHISPER_DEVICE=cuda on GPU hosts
+    whisper_compute_type: str = "int8"  # CPU default. Use "float16" with device=cuda; "int8_float16" is the GPU low-memory mode.
+    whisper_beam_size: int = 5
     whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
     piper_voices: str = "de:de_DE-thorsten-high,en:en_US-amy-medium"  # Language:Voice mapping
     piper_default_voice: str = "de_DE-thorsten-high"  # Fallback voice when requested language has no entry in piper_voices

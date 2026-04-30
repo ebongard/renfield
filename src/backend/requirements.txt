@@ -25,10 +25,19 @@ transformers>=4.47.0          # Required for rt_detr_v2 model support
 pgvector>=0.2.4               # PostgreSQL vector extension for SQLAlchemy
 aiofiles>=23.2.0              # Async file operations
 
-# Speech-to-Text (Whisper)
-openai-whisper==20231117
-# faster-whisper benötigt PyAV was Build-Probleme verursacht
-# openai-whisper ist ausreichend und funktioniert ohne PyAV
+# Speech-to-Text (faster-whisper via CTranslate2)
+# Older comment claimed PyAV build issues; faster-whisper 1.x ships manylinux
+# wheels for amd64 + aarch64 and pulls PyAV via wheel only — no source build.
+# CTranslate2 backend gets ~4x speedup on GPU vs openai-whisper and supports
+# device=cuda + compute_type=float16 cleanly.
+faster-whisper>=1.0.0
+
+# Text-to-Speech (Piper, in-process Python bindings)
+# Replaces the per-request `subprocess.Popen('piper', ...)` cold-start in
+# piper_service.py. Voice models still loaded from /usr/share/piper/voices/
+# (downloaded by Dockerfile). The CLI binary stays in the image as a fallback
+# until the in-process path is verified stable in production.
+piper-tts>=1.2.0
 
 # Audio Preprocessing (for better STT quality)
 noisereduce>=3.0.0      # Spectral noise reduction

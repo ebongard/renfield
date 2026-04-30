@@ -1,14 +1,17 @@
-"""Tests for PiperService.
+"""Tests for PiperService (in-process piper-tts bindings).
 
-Tests TTS initialization, voice selection, synthesis methods,
-and availability checks.
+After the Phase A voice-pipeline migration, PiperService loads voice models
+in-process via `piper.voice.PiperVoice.load(...)` instead of shelling out to
+the `piper` CLI per request. These tests mock the in-process API.
 """
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
-# Pre-mock modules not available in test environment
+# Pre-mock modules not available in test environment. piper.voice is imported
+# at module-load time by piper_service so a real stub must answer attribute
+# access for `PiperVoice`.
 _missing_stubs = [
-    "asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
+    "asyncpg", "faster_whisper", "speechbrain",
     "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
 ]
@@ -16,7 +19,14 @@ for _mod in _missing_stubs:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
 
-from unittest.mock import AsyncMock, patch
+# piper / piper.voice need to be MagicMock-shaped so `from piper.voice import PiperVoice`
+# works and `PiperVoice.load(...)` can be patched per-test.
+if "piper" not in sys.modules:
+    sys.modules["piper"] = MagicMock()
+if "piper.voice" not in sys.modules:
+    piper_voice_mod = MagicMock()
+    piper_voice_mod.PiperVoice = MagicMock()
+    sys.modules["piper.voice"] = piper_voice_mod
 
 import pytest
 
@@ -42,26 +52,38 @@ def mock_settings():
 
 @pytest.fixture
 def service(mock_settings):
+    """Service with PIPER_AVAILABLE=True (piper.voice import succeeded)."""
     with patch("services.piper_service.settings", mock_settings), \
-         patch("services.piper_service.subprocess") as mock_subprocess:
-        # Simulate piper being available
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-        mock_subprocess.run.return_value = mock_result
+         patch("services.piper_service.PIPER_AVAILABLE", True):
         svc = PiperService()
     return svc
 
 
 @pytest.fixture
 def service_unavailable(mock_settings):
+    """Service with PIPER_AVAILABLE=False (piper-tts not installed)."""
     with patch("services.piper_service.settings", mock_settings), \
-         patch("services.piper_service.subprocess") as mock_subprocess:
-        # Simulate piper NOT being available
-        mock_result = MagicMock()
-        mock_result.returncode = 1
-        mock_subprocess.run.return_value = mock_result
+         patch("services.piper_service.PIPER_AVAILABLE", False):
         svc = PiperService()
     return svc
+
+
+@pytest.fixture
+def fake_voice():
+    """A PiperVoice-like mock whose synthesize() writes a minimal WAV header."""
+    voice = MagicMock()
+
+    def _synthesize(text, wav_file):
+        # Real PiperVoice.synthesize writes frames into the wave.Wave_write
+        # object. For tests we just write a 4-byte sentinel so the resulting
+        # file isn't empty.
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(22050)
+        wav_file.writeframes(b"\x00\x00\x00\x00")
+
+    voice.synthesize = MagicMock(side_effect=_synthesize)
+    return voice
 
 
 # ============================================================================
@@ -72,32 +94,24 @@ def service_unavailable(mock_settings):
 class TestPiperServiceInit:
 
     def test_init_with_piper_available(self, service):
-        """Service is available when piper binary exists."""
+        """Service is available when piper-tts package is installed."""
         assert service.available is True
 
     def test_init_with_piper_unavailable(self, service_unavailable):
-        """Service is not available when piper binary missing."""
+        """Service is not available when piper-tts is missing."""
         assert service_unavailable.available is False
 
     def test_init_sets_voice_map(self, service):
-        """Voice map is loaded from settings."""
         assert service.voice_map == {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
 
     def test_init_sets_default_voice(self, service):
-        """Default voice is loaded from settings."""
         assert service.default_voice == "de_DE-thorsten-high"
 
     def test_init_sets_default_language(self, service):
         assert service.default_language == "de"
 
-    def test_check_piper_handles_exception(self):
-        """Graceful handling when subprocess.run raises."""
-        mock_s = _make_mock_settings()
-        with patch("services.piper_service.settings", mock_s), \
-             patch("services.piper_service.subprocess") as mock_sub:
-            mock_sub.run.side_effect = FileNotFoundError("which not found")
-            svc = PiperService()
-        assert svc.available is False
+    def test_init_starts_with_empty_voice_cache(self, service):
+        assert service._voice_cache == {}
 
 
 # ============================================================================
@@ -114,24 +128,66 @@ class TestVoiceSelection:
         assert service._get_voice_for_language("en") == "en_US-amy-medium"
 
     def test_get_voice_for_unknown_language_falls_back(self, service):
-        """Unknown language falls back to default voice."""
         result = service._get_voice_for_language("fr")
         assert result == "de_DE-thorsten-high"  # Falls back to default_voice
 
     def test_get_voice_for_none_uses_default_language(self, service):
-        """None language uses default_language setting."""
         result = service._get_voice_for_language(None)
-        assert result == "de_DE-thorsten-high"  # de is default_language
+        assert result == "de_DE-thorsten-high"
 
     def test_get_voice_case_insensitive(self, service):
-        """Language lookup is case-insensitive."""
         result = service._get_voice_for_language("DE")
         assert result == "de_DE-thorsten-high"
 
     def test_get_model_path(self, service):
-        """Model path follows expected convention."""
         path = service._get_model_path("de_DE-thorsten-high")
         assert path == "/usr/share/piper/voices/de_DE-thorsten-high.onnx"
+
+
+# ============================================================================
+# Voice Loading + Caching
+# ============================================================================
+
+@pytest.mark.unit
+class TestVoiceLoading:
+
+    def test_load_voice_caches_result(self, service, fake_voice):
+        """Subsequent calls reuse the cached PiperVoice instance."""
+        with patch("services.piper_service.Path") as mock_path, \
+             patch("services.piper_service.PiperVoice") as mock_pv:
+            mock_path.return_value.exists.return_value = True
+            mock_pv.load.return_value = fake_voice
+
+            v1 = service._load_voice("de_DE-thorsten-high")
+            v2 = service._load_voice("de_DE-thorsten-high")
+
+        assert v1 is fake_voice
+        assert v2 is fake_voice
+        mock_pv.load.assert_called_once()
+
+    def test_load_voice_returns_none_when_model_missing(self, service):
+        """Missing .onnx file → returns None."""
+        with patch("services.piper_service.Path") as mock_path:
+            mock_path.return_value.exists.return_value = False
+            result = service._load_voice("nonexistent-voice")
+
+        assert result is None
+
+    def test_load_voice_returns_none_on_exception(self, service):
+        """PiperVoice.load() raising → returns None, doesn't crash."""
+        with patch("services.piper_service.Path") as mock_path, \
+             patch("services.piper_service.PiperVoice") as mock_pv:
+            mock_path.return_value.exists.return_value = True
+            mock_pv.load.side_effect = RuntimeError("ONNX session init failed")
+
+            result = service._load_voice("broken-voice")
+
+        assert result is None
+
+    def test_load_voice_returns_none_when_unavailable(self, service_unavailable):
+        """When PIPER_AVAILABLE=False, _load_voice short-circuits."""
+        result = service_unavailable._load_voice("de_DE-thorsten-high")
+        assert result is None
 
 
 # ============================================================================
@@ -142,115 +198,72 @@ class TestVoiceSelection:
 class TestSynthesis:
 
     @pytest.mark.asyncio
-    async def test_synthesize_to_file_success(self, service, tmp_path):
-        """Successful synthesis writes file and returns True."""
+    async def test_synthesize_to_file_success(self, service, fake_voice, tmp_path):
+        """Successful synthesis writes a WAV and returns True."""
         output_path = str(tmp_path / "output.wav")
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate.return_value = (b"", b"")
-
-        with patch("services.piper_service.subprocess.Popen", return_value=mock_proc) as mock_popen:
+        with patch.object(service, "_load_voice", return_value=fake_voice):
             result = await service.synthesize_to_file("Hallo Welt", output_path)
 
         assert result is True
-        mock_popen.assert_called_once()
-        # Verify command includes model and output_file
-        call_args = mock_popen.call_args[0][0]
-        assert "piper" in call_args
-        assert "--model" in call_args
-        assert "--output_file" in call_args
+        fake_voice.synthesize.assert_called_once()
+        call_args = fake_voice.synthesize.call_args[0]
+        assert call_args[0] == "Hallo Welt"
+        assert tmp_path.joinpath("output.wav").stat().st_size > 0
 
     @pytest.mark.asyncio
-    async def test_synthesize_to_file_failure(self, service, tmp_path):
-        """Failed synthesis returns False."""
+    async def test_synthesize_to_file_uses_correct_voice_for_language(self, service, fake_voice, tmp_path):
+        """Correct voice is loaded based on language parameter."""
         output_path = str(tmp_path / "output.wav")
+        with patch.object(service, "_load_voice", return_value=fake_voice) as mock_load:
+            await service.synthesize_to_file("Hello world", output_path, language="en")
 
-        mock_proc = MagicMock()
-        mock_proc.returncode = 1
-        mock_proc.communicate.return_value = (b"", b"Error: model not found")
+        mock_load.assert_called_once_with("en_US-amy-medium")
 
-        with patch("services.piper_service.subprocess.Popen", return_value=mock_proc):
+    @pytest.mark.asyncio
+    async def test_synthesize_to_file_returns_false_when_voice_missing(self, service, tmp_path):
+        """When _load_voice returns None, synthesize returns False."""
+        output_path = str(tmp_path / "output.wav")
+        with patch.object(service, "_load_voice", return_value=None):
             result = await service.synthesize_to_file("Hallo", output_path)
 
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_synthesize_to_file_exception(self, service, tmp_path):
-        """Exception during synthesis returns False."""
+    async def test_synthesize_to_file_returns_false_on_exception(self, service, tmp_path):
+        """Exception during synthesize() returns False."""
         output_path = str(tmp_path / "output.wav")
-
-        with patch("services.piper_service.subprocess.Popen", side_effect=OSError("spawn failed")):
+        bad_voice = MagicMock()
+        bad_voice.synthesize.side_effect = RuntimeError("inference error")
+        with patch.object(service, "_load_voice", return_value=bad_voice):
             result = await service.synthesize_to_file("Hallo", output_path)
 
         assert result is False
 
     @pytest.mark.asyncio
     async def test_synthesize_to_file_when_unavailable(self, service_unavailable, tmp_path):
-        """Returns False immediately when piper is not available."""
         result = await service_unavailable.synthesize_to_file("Hello", str(tmp_path / "out.wav"))
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_synthesize_to_file_uses_correct_voice_for_language(self, service, tmp_path):
-        """Correct voice model is used based on language parameter."""
-        output_path = str(tmp_path / "output.wav")
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate.return_value = (b"", b"")
-
-        with patch("services.piper_service.subprocess.Popen", return_value=mock_proc) as mock_popen:
-            await service.synthesize_to_file("Hello world", output_path, language="en")
-
-        call_args = mock_popen.call_args[0][0]
-        # Should use en_US-amy-medium model
-        assert "/usr/share/piper/voices/en_US-amy-medium.onnx" in call_args
-
-    @pytest.mark.asyncio
-    async def test_synthesize_to_bytes_success(self, service, tmp_path):
-        """synthesize_to_bytes returns audio bytes on success."""
-        fake_wav = b"RIFF\x00\x00\x00\x00WAVEfmt "
-
-        with patch.object(service, "synthesize_to_file", new_callable=AsyncMock) as mock_synth:
-            # Simulate synthesize_to_file writing content
-            async def write_and_return(text, path, language=None):
-                from pathlib import Path
-                Path(path).write_bytes(fake_wav)
-                return True
-            mock_synth.side_effect = write_and_return
-
+    async def test_synthesize_to_bytes_success(self, service, fake_voice):
+        """synthesize_to_bytes returns audio bytes when synthesis succeeds."""
+        with patch.object(service, "_load_voice", return_value=fake_voice):
             result = await service.synthesize_to_bytes("Hallo")
 
-        assert result == fake_wav
+        # WAV file should have at least the header (44 bytes) plus our sentinel
+        assert len(result) >= 44
+        assert result[:4] == b"RIFF"
 
     @pytest.mark.asyncio
-    async def test_synthesize_to_bytes_failure_returns_empty(self, service):
-        """synthesize_to_bytes returns empty bytes on failure."""
-        with patch.object(service, "synthesize_to_file", new_callable=AsyncMock, return_value=False):
+    async def test_synthesize_to_bytes_returns_empty_when_voice_missing(self, service):
+        with patch.object(service, "_load_voice", return_value=None):
             result = await service.synthesize_to_bytes("Hallo")
-
         assert result == b""
 
     @pytest.mark.asyncio
     async def test_synthesize_to_bytes_when_unavailable(self, service_unavailable):
-        """Returns empty bytes when piper unavailable."""
         result = await service_unavailable.synthesize_to_bytes("Hello")
         assert result == b""
-
-    @pytest.mark.asyncio
-    async def test_synthesize_sends_text_via_stdin(self, service, tmp_path):
-        """Text is passed to piper via stdin."""
-        output_path = str(tmp_path / "output.wav")
-
-        mock_proc = MagicMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate.return_value = (b"", b"")
-
-        with patch("services.piper_service.subprocess.Popen", return_value=mock_proc):
-            await service.synthesize_to_file("Hallo Welt", output_path)
-
-        mock_proc.communicate.assert_called_once_with(input=b"Hallo Welt")
 
 
 # ============================================================================
@@ -261,9 +274,8 @@ class TestSynthesis:
 class TestEnsureModelDownloaded:
 
     def test_noop_when_available(self, service):
-        """Does nothing when piper is available (piper auto-downloads)."""
+        """Voice models are baked into the image; nothing to do."""
         service.ensure_model_downloaded()  # Should not raise
 
     def test_noop_when_unavailable(self, service_unavailable):
-        """Does nothing when piper is unavailable."""
         service_unavailable.ensure_model_downloaded()  # Should not raise

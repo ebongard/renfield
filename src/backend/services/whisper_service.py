@@ -1,5 +1,10 @@
 """
-Whisper Service - Speech to Text
+Whisper Service - Speech to Text (faster-whisper / CTranslate2 backend)
+
+Replaces the previous `openai-whisper` library with `faster-whisper` for ~4x
+GPU throughput and clean device/compute_type configuration. The public method
+signatures (`transcribe_file`, `transcribe_bytes`, `transcribe_with_speaker`,
+`transcribe_bytes_with_speaker`) are unchanged so callers don't need updates.
 
 Includes optional audio preprocessing for better transcription quality:
 - Noise reduction (removes background noise like fans, AC)
@@ -9,7 +14,7 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import whisper
+from faster_whisper import WhisperModel
 from loguru import logger
 
 from utils.config import settings
@@ -31,7 +36,10 @@ class WhisperService:
 
     def __init__(self):
         self.model_size = settings.whisper_model
-        self.model = None
+        self.device = settings.whisper_device
+        self.compute_type = settings.whisper_compute_type
+        self.beam_size = settings.whisper_beam_size
+        self.model: WhisperModel | None = None
         self.language = settings.default_language
         self.initial_prompt = settings.whisper_initial_prompt or None
 
@@ -51,15 +59,39 @@ class WhisperService:
         """Modell laden"""
         if self.model is None:
             try:
-                logger.info(f"📥 Lade Whisper Modell '{self.model_size}'...")
+                logger.info(
+                    f"📥 Lade Whisper Modell '{self.model_size}' "
+                    f"(device={self.device}, compute_type={self.compute_type})..."
+                )
 
-                # OpenAI Whisper verwenden
-                self.model = whisper.load_model(self.model_size)
+                self.model = WhisperModel(
+                    self.model_size,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                )
 
                 logger.info("✅ Whisper Modell geladen")
             except Exception as e:
                 logger.error(f"❌ Fehler beim Laden des Whisper Modells: {e}")
                 raise
+
+    def _run_transcription(self, transcribe_path: str, language: str) -> str:
+        """
+        Run faster-whisper transcribe and concatenate the segment stream.
+
+        faster-whisper returns (segments_iter, info). The iterator must be
+        drained to actually run inference; converting to a list is the
+        cleanest way to get the full text in one place.
+        """
+        kwargs = {
+            "language": language,
+            "beam_size": self.beam_size,
+        }
+        if self.initial_prompt:
+            kwargs["initial_prompt"] = self.initial_prompt
+
+        segments, _info = self.model.transcribe(transcribe_path, **kwargs)
+        return "".join(segment.text for segment in segments).strip()
 
     async def transcribe_file(self, audio_path: str, language: str = None) -> str:
         """
@@ -85,24 +117,10 @@ class WhisperService:
                     transcribe_path = processed_path
                     logger.info("📊 Using preprocessed audio")
 
-            # Transkribieren mit OpenAI Whisper
-            # fp16=False verhindert die Warnung auf CPU-only Systemen
-            # beam_size=5 und best_of=5 für bessere Genauigkeit
-            transcribe_opts = {
-                "language": transcribe_language,
-                "fp16": False,
-                "beam_size": 5,
-                "best_of": 5,
-            }
-            if self.initial_prompt:
-                transcribe_opts["initial_prompt"] = self.initial_prompt
-
-            result = self.model.transcribe(transcribe_path, **transcribe_opts)
-
-            text = result["text"]
+            text = self._run_transcription(transcribe_path, transcribe_language)
 
             logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
-            return text.strip()
+            return text
         except Exception as e:
             logger.error(f"❌ Transkriptions-Fehler: {e}")
             return ""
@@ -222,17 +240,7 @@ class WhisperService:
 
         try:
             # Transcribe using preprocessed audio
-            transcribe_opts = {
-                "language": transcribe_language,
-                "fp16": False,
-                "beam_size": 5,
-                "best_of": 5,
-            }
-            if self.initial_prompt:
-                transcribe_opts["initial_prompt"] = self.initial_prompt
-
-            result = self.model.transcribe(transcribe_path, **transcribe_opts)
-            text = result["text"].strip()
+            text = self._run_transcription(transcribe_path, transcribe_language)
             logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
 
             # Default speaker info

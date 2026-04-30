@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 # Pre-mock modules not available in test environment
 _missing_stubs = [
-    "asyncpg", "whisper", "piper", "piper.voice", "speechbrain",
+    "asyncpg", "faster_whisper", "piper", "piper.voice", "speechbrain",
     "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
     "librosa", "soundfile",
@@ -16,6 +16,18 @@ _missing_stubs = [
 for _mod in _missing_stubs:
     if _mod not in sys.modules:
         sys.modules[_mod] = MagicMock()
+
+
+def _segments_result(text: str):
+    """Build the (segments_iter, info) tuple that faster-whisper's transcribe returns.
+
+    The real API returns a generator of Segment-like objects each carrying a
+    `.text` attribute, plus an info object. For unit tests we use a single
+    segment with the supplied text — the service joins all segments verbatim.
+    """
+    seg = MagicMock()
+    seg.text = text
+    return ([seg], MagicMock())
 
 from unittest.mock import AsyncMock, patch
 
@@ -26,6 +38,9 @@ from services.whisper_service import WhisperService
 
 def _make_mock_settings(
     whisper_model="base",
+    whisper_device="cpu",
+    whisper_compute_type="int8",
+    whisper_beam_size=5,
     default_language="de",
     whisper_initial_prompt=None,
     whisper_preprocess_enabled=False,
@@ -36,6 +51,9 @@ def _make_mock_settings(
 ):
     s = MagicMock()
     s.whisper_model = whisper_model
+    s.whisper_device = whisper_device
+    s.whisper_compute_type = whisper_compute_type
+    s.whisper_beam_size = whisper_beam_size
     s.default_language = default_language
     s.whisper_initial_prompt = whisper_initial_prompt
     s.whisper_preprocess_enabled = whisper_preprocess_enabled
@@ -96,29 +114,42 @@ class TestWhisperServiceInit:
 @pytest.mark.unit
 class TestModelLoading:
 
-    def test_load_model_calls_whisper(self, service):
+    def test_load_model_calls_whisper_model(self, service):
         mock_model = MagicMock()
-        with patch("services.whisper_service.whisper") as mock_whisper:
-            mock_whisper.load_model.return_value = mock_model
+        with patch("services.whisper_service.WhisperModel") as mock_ctor:
+            mock_ctor.return_value = mock_model
             service.load_model()
 
         assert service.model is mock_model
-        mock_whisper.load_model.assert_called_once_with("base")
+        mock_ctor.assert_called_once_with("base", device="cpu", compute_type="int8")
 
     def test_load_model_only_once(self, service):
         mock_model = MagicMock()
-        with patch("services.whisper_service.whisper") as mock_whisper:
-            mock_whisper.load_model.return_value = mock_model
+        with patch("services.whisper_service.WhisperModel") as mock_ctor:
+            mock_ctor.return_value = mock_model
             service.load_model()
             service.load_model()  # Second call should be noop
 
-        mock_whisper.load_model.assert_called_once()
+        mock_ctor.assert_called_once()
 
     def test_load_model_raises_on_error(self, service):
-        with patch("services.whisper_service.whisper") as mock_whisper:
-            mock_whisper.load_model.side_effect = RuntimeError("CUDA OOM")
+        with patch("services.whisper_service.WhisperModel") as mock_ctor:
+            mock_ctor.side_effect = RuntimeError("CUDA OOM")
             with pytest.raises(RuntimeError, match="CUDA OOM"):
                 service.load_model()
+
+    def test_load_model_passes_gpu_settings(self):
+        """When configured for cuda+float16, settings flow into the constructor."""
+        mock_s = _make_mock_settings(whisper_device="cuda", whisper_compute_type="float16")
+        with patch("services.whisper_service.settings", mock_s), \
+             patch("services.whisper_service.AudioPreprocessor"):
+            svc = WhisperService()
+
+        with patch("services.whisper_service.WhisperModel") as mock_ctor:
+            mock_ctor.return_value = MagicMock()
+            svc.load_model()
+
+        mock_ctor.assert_called_once_with("base", device="cuda", compute_type="float16")
 
 
 # ============================================================================
@@ -132,7 +163,7 @@ class TestTranscription:
     async def test_transcribe_file_success(self, service):
         """Successful transcription returns text."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "  Hallo Welt  "}
+        mock_model.transcribe.return_value = _segments_result("  Hallo Welt  ")
         service.model = mock_model
 
         result = await service.transcribe_file("/tmp/test.wav")
@@ -144,20 +175,20 @@ class TestTranscription:
     async def test_transcribe_file_auto_loads_model(self, service):
         """Model is loaded on first transcription if not yet loaded."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
 
-        with patch("services.whisper_service.whisper") as mock_whisper:
-            mock_whisper.load_model.return_value = mock_model
+        with patch("services.whisper_service.WhisperModel") as mock_ctor:
+            mock_ctor.return_value = mock_model
             result = await service.transcribe_file("/tmp/test.wav")
 
         assert result == "Test"
-        mock_whisper.load_model.assert_called_once()
+        mock_ctor.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_transcribe_file_uses_default_language(self, service):
         """Uses default language when none specified."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Hallo"}
+        mock_model.transcribe.return_value = _segments_result("Hallo")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
@@ -169,7 +200,7 @@ class TestTranscription:
     async def test_transcribe_file_uses_explicit_language(self, service):
         """Uses explicitly provided language."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Hello"}
+        mock_model.transcribe.return_value = _segments_result("Hello")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav", language="en")
@@ -186,7 +217,7 @@ class TestTranscription:
             svc = WhisperService()
 
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Turn on lights"}
+        mock_model.transcribe.return_value = _segments_result("Turn on lights")
         svc.model = mock_model
 
         await svc.transcribe_file("/tmp/test.wav")
@@ -206,29 +237,29 @@ class TestTranscription:
         assert result == ""
 
     @pytest.mark.asyncio
-    async def test_transcribe_file_sets_fp16_false(self, service):
-        """fp16 is set to False for CPU compatibility."""
+    async def test_transcribe_file_does_not_pass_fp16(self, service):
+        """faster-whisper uses compute_type at model-load time, not per-call fp16."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
 
         call_kwargs = mock_model.transcribe.call_args
-        assert call_kwargs[1]["fp16"] is False
+        assert "fp16" not in call_kwargs[1]
+        assert "best_of" not in call_kwargs[1]
 
     @pytest.mark.asyncio
     async def test_transcribe_file_sets_beam_params(self, service):
-        """Beam search parameters are set for accuracy."""
+        """Beam search parameter is set for accuracy."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
 
         call_kwargs = mock_model.transcribe.call_args
         assert call_kwargs[1]["beam_size"] == 5
-        assert call_kwargs[1]["best_of"] == 5
 
 
 # ============================================================================
@@ -292,7 +323,7 @@ class TestPreprocessing:
         """Preprocessing is not called when disabled."""
         service.preprocess_enabled = False
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
@@ -307,7 +338,7 @@ class TestPreprocessing:
         service.preprocess_enabled = True
         service._preprocess_audio = MagicMock(return_value="/tmp/preprocessed.wav")
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
@@ -322,7 +353,7 @@ class TestPreprocessing:
         service.preprocess_enabled = True
         service._preprocess_audio = MagicMock(return_value=None)
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         await service.transcribe_file("/tmp/test.wav")
@@ -341,7 +372,7 @@ class TestTranscribeWithSpeaker:
     async def test_returns_text_and_speaker_info(self, service):
         """Returns dict with text and speaker fields."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Hello"}
+        mock_model.transcribe.return_value = _segments_result("Hello")
         service.model = mock_model
 
         result = await service.transcribe_with_speaker("/tmp/test.wav")
@@ -368,7 +399,7 @@ class TestTranscribeWithSpeaker:
     async def test_skips_speaker_when_disabled(self, service):
         """Speaker recognition skipped when disabled in settings."""
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         service.model = mock_model
 
         # speaker_recognition_enabled defaults to False in our mock
@@ -385,7 +416,7 @@ class TestTranscribeWithSpeaker:
             svc = WhisperService()
 
         mock_model = MagicMock()
-        mock_model.transcribe.return_value = {"text": "Test"}
+        mock_model.transcribe.return_value = _segments_result("Test")
         svc.model = mock_model
 
         result = await svc.transcribe_with_speaker("/tmp/test.wav", db_session=None)

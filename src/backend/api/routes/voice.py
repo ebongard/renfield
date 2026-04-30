@@ -13,17 +13,23 @@ from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.websocket.shared import get_whisper_service
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user
 from services.database import get_db
-from services.piper_service import PiperService
-from services.whisper_service import WhisperService
+from services.piper_service import get_piper_service
 from utils.config import settings
 
 router = APIRouter()
 
-whisper_service = WhisperService()
-piper_service = PiperService()
+# Use the shared singletons. The previous `WhisperService()` + `PiperService()`
+# instantiations at module level loaded the model a SECOND time when the
+# WebSocket path also lazily created its own — verified two competing
+# WhisperService objects in flight. `get_whisper_service` (lives in
+# api/websocket/shared.py) and `get_piper_service` (lives in piper_service.py)
+# are the canonical accessors.
+whisper_service = get_whisper_service()
+piper_service = get_piper_service()
 
 
 class TTSRequest(BaseModel):
