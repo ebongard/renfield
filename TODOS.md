@@ -80,7 +80,9 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 
 **SOURCE:** `~/.gstack/projects/ebongard-renfield/evdb-main-design-20260419-190713-second-brain-circles.md` design-review pass
 
-### Write `docs/STRATEGY.md` — North-Star "WHY circles" doc
+### Write `docs/STRATEGY.md` — North-Star "WHY circles" doc — IN PROGRESS (skeleton landed 2026-04-30)
+
+**Status (2026-04-30):** Draft skeleton committed in `docs/STRATEGY.md`. 9 `[FOUNDER FILL-IN]` placeholders remain — sections that only Eduard can answer (specific strategic conviction, 5-year ideal, invalidation thresholds). Skeleton is honest about "I want it" being a sufficient solo-founder rationale rather than papering over with rationalization.
 
 **WHAT:** A strategic intent document that captures WHY the Second Brain Circles plan exists, distinct from the HOW captured in the design doc and DESIGN.md. Documents the Reva unification thesis, the federation moonshot rationale, the household-product positioning, and the strategic context that motivated the 9-12 month foundation investment over alternative paths (small household features, Reva commercial pursuit, public Renfield launch, 6-week MVP).
 
