@@ -185,9 +185,8 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `ChatPage/index.jsx` passes 12 props to ChatInput
 - Fix: Extract chat input state into Context
 
-### E14. ESLint React version hardcoded as 18.2
-- `.eslintrc.cjs` says 18.2 but React 19.2.3 is installed
-- Fix: Update to `detect` or `19`
+### E14. ESLint React version hardcoded as 18.2 — RESOLVED (already)
+- Verified during E17 sweep: `src/frontend/.eslintrc.cjs:22` already reads `version: 'detect'`. The audit's "hardcoded 18.2" claim was stale; nothing to change.
 
 ### E15. tsconfig strict mode disabled
 - `tsconfig.json` has `strict: false`
@@ -256,7 +255,7 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - [ ] W11: Add Prettier
 - [ ] E11: React Query for data fetching
 - [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
-- [ ] E14: ESLint React version
+- [x] E14: ESLint React version — verified `'detect'` already in `.eslintrc.cjs:22` (audit was stale)
 
 ### Phase 5: Cleanup
 - [x] E16: Legacy config fields — `plugins_*`/`music_enabled`/`spotify_*` already gone; `piper_voice` renamed to `piper_default_voice`; `ollama_model` re-classified as intentional fallback infrastructure (not dead)
