@@ -112,6 +112,7 @@ export function usePatchActiveTools() {
       mutationFn: patchActiveToolsRequest,
       onSuccess: (data) => {
         queryClient.setQueryData([...keys.integrations.list(), 'status'], data);
+        queryClient.invalidateQueries({ queryKey: [...keys.integrations.list(), 'tools'] });
       },
     },
     'integrations.toolToggleError',
