@@ -4,13 +4,11 @@
  * Admin page for auditing Paperless documents using LLM analysis.
  * Provides audit control, review queue, OCR issue tracking, and statistics.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { TFunction } from 'i18next';
 import type { AxiosError } from 'axios';
 import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
 import {
   FileSearch, Play, Square, Loader, Check, X,
   RotateCcw, BarChart3, ClipboardList, Eye, ChevronLeft, ChevronRight,
@@ -19,11 +17,30 @@ import {
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
+import {
+  useAuditStatusQuery,
+  useReviewResultsQuery,
+  useOcrResultsQuery,
+  useCompletenessResultsQuery,
+  useAuditStatsQuery,
+  useDuplicateGroupsQuery,
+  useCorrespondentClustersQuery,
+  useStartAudit,
+  useStopAudit,
+  useApplyResults,
+  useSkipResults,
+  useReOcr,
+  useDetectDuplicates,
+  type AuditMode,
+  type FixMode,
+  type AuditStatus,
+  type AuditResult,
+  type AuditStats,
+  type DuplicateGroup,
+  type CorrespondentCluster,
+} from '../api/resources/paperlessAudit';
 
 type AuditTab = 'control' | 'review' | 'ocr' | 'completeness' | 'duplicates' | 'correspondents' | 'stats';
-type AuditMode = 'new_only' | 'full';
-type FixMode = 'review' | 'auto_threshold' | 'auto_all';
-type OcrLevel = 1 | 2 | 3 | 4 | 5;
 
 const TABS: AuditTab[] = ['control', 'review', 'ocr', 'completeness', 'duplicates', 'correspondents', 'stats'];
 const PAGE_SIZE = 20;
@@ -44,244 +61,156 @@ const OCR_TEXT_COLORS: Partial<Record<number, string>> = {
   5: 'text-green-700 dark:text-green-300',
 };
 
-interface AuditStatus {
-  running: boolean;
-  progress?: number;
-  total?: number;
-}
-
-interface AuditResult {
-  id: number;
-  paperless_doc_id: number;
-  current_title?: string | null;
-  suggested_title?: string | null;
-  current_correspondent?: string | null;
-  suggested_correspondent?: string | null;
-  current_document_type?: string | null;
-  suggested_document_type?: string | null;
-  current_date?: string | null;
-  suggested_date?: string | null;
-  current_storage_path?: string | null;
-  suggested_storage_path?: string | null;
-  detected_language?: string | null;
-  suggested_tags?: string[];
-  missing_fields?: string[];
-  confidence?: number | null;
-  ocr_quality?: number;
-  ocr_issues?: string;
-  content_completeness?: number;
-  completeness_issues?: string;
-}
-
-interface AuditStats {
-  total_audited?: number;
-  changes_needed?: number;
-  applied?: number;
-  skipped?: number;
-  pending?: number;
-  failed?: number;
-  missing_metadata_count?: number;
-  duplicate_groups?: number;
-  avg_confidence?: number;
-  ocr_quality_distribution?: Record<string, number>;
-  ocr_distribution?: Record<string, number>;
-  language_distribution?: Record<string, number>;
-  completeness_distribution?: Record<string, number>;
-}
-
-interface DuplicateDoc {
-  id: number;
-  paperless_doc_id: number;
-  current_title?: string | null;
-  current_correspondent?: string | null;
-  duplicate_score?: number | null;
-}
-
-interface DuplicateGroup {
-  group_id: string;
-  documents: DuplicateDoc[];
-}
-
-interface CorrespondentVariant {
-  name: string;
-  similarity: number;
-}
-
-interface CorrespondentCluster {
-  canonical: string;
-  variants: CorrespondentVariant[];
-}
-
 export default function PaperlessAuditPage() {
   const { t } = useTranslation();
-  const { getAccessToken } = useAuth();
 
   const [activeTab, setActiveTab] = useState<AuditTab>('control');
-  const [notConfigured, setNotConfigured] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Control tab state
-  const [auditStatus, setAuditStatus] = useState<AuditStatus | null>(null);
   const [mode, setMode] = useState<AuditMode>('new_only');
   const [fixMode, setFixMode] = useState<FixMode>('review');
   const [confidenceThreshold, setConfidenceThreshold] = useState(0.8);
-  const [starting, setStarting] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Review tab state
-  const [reviewResults, setReviewResults] = useState<AuditResult[]>([]);
-  const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewPage, setReviewPage] = useState(0);
-  const [reviewTotal, setReviewTotal] = useState(0);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [actionLoading, setActionLoading] = useState<Set<number>>(new Set());
   const [reviewSortBy, setReviewSortBy] = useState<string | null>(null);
   const [reviewSortOrder, setReviewSortOrder] = useState<'asc' | 'desc'>('desc');
   const [reviewSearch, setReviewSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const reviewSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // OCR tab state
-  const [ocrResults, setOcrResults] = useState<AuditResult[]>([]);
-  const [ocrLoading, setOcrLoading] = useState(false);
   const [ocrPage, setOcrPage] = useState(0);
-  const [ocrTotal, setOcrTotal] = useState(0);
   const [ocrActionLoading, setOcrActionLoading] = useState<Set<number>>(new Set());
 
-  // Stats tab state
-  const [stats, setStats] = useState<AuditStats | null>(null);
-  const [statsLoading, setStatsLoading] = useState(false);
-
   // Completeness tab state
-  const [completenessResults, setCompletenessResults] = useState<AuditResult[]>([]);
-  const [completenessLoading, setCompletenessLoading] = useState(false);
   const [completenessPage, setCompletenessPage] = useState(0);
-  const [completenessTotal, setCompletenessTotal] = useState(0);
-
-  // Duplicates tab state
-  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
-  const [duplicatesLoading, setDuplicatesLoading] = useState(false);
-  const [detectingDuplicates, setDetectingDuplicates] = useState(false);
 
   // Correspondents tab state
-  const [correspondentClusters, setCorrespondentClusters] = useState<CorrespondentCluster[]>([]);
-  const [correspondentsLoading, setCorrespondentsLoading] = useState(false);
   const [corrThreshold, setCorrThreshold] = useState(0.82);
+  const [scanCorrespondents, setScanCorrespondents] = useState(false);
 
-  const authHeaders = useCallback(async (): Promise<Record<string, string>> => {
-    const token = await getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }, [getAccessToken]);
+  // Status query (always on; polls every 2s while running via the query's
+  // own refetchInterval callback that reads from the response data).
+  const statusQuery = useAuditStatusQuery();
+  const auditStatus = statusQuery.data ?? null;
 
-  const handleApiError = useCallback((err: unknown) => {
-    const status = (err as AxiosError | undefined)?.response?.status;
-    if (status === 503) {
-      setNotConfigured(true);
-      return;
-    }
-    setError(t('paperlessAudit.error'));
-  }, [t]);
+  // Tab-gated data queries
+  const reviewQuery = useReviewResultsQuery(
+    {
+      page: reviewPage,
+      perPage: PAGE_SIZE,
+      sortBy: reviewSortBy,
+      sortOrder: reviewSortOrder,
+      search: debouncedSearch,
+    },
+    activeTab === 'review',
+  );
+  const reviewResults: AuditResult[] = reviewQuery.data?.results ?? [];
+  const reviewTotal = reviewQuery.data?.total ?? 0;
+  const reviewLoading = reviewQuery.isLoading;
 
-  // --- Control Tab ---
-  const loadStatus = useCallback(async () => {
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<AuditStatus>('/api/admin/paperless-audit/status', { headers });
-      setAuditStatus(res.data);
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    }
-  }, [authHeaders, handleApiError]);
+  const ocrQuery = useOcrResultsQuery(
+    { page: ocrPage, perPage: PAGE_SIZE },
+    activeTab === 'ocr',
+  );
+  const ocrResults: AuditResult[] = ocrQuery.data?.results ?? [];
+  const ocrTotal = ocrQuery.data?.total ?? 0;
+  const ocrLoading = ocrQuery.isLoading;
 
+  const completenessQuery = useCompletenessResultsQuery(
+    { page: completenessPage, perPage: PAGE_SIZE },
+    activeTab === 'completeness',
+  );
+  const completenessResults: AuditResult[] = completenessQuery.data?.results ?? [];
+  const completenessTotal = completenessQuery.data?.total ?? 0;
+  const completenessLoading = completenessQuery.isLoading;
+
+  const statsQuery = useAuditStatsQuery(activeTab === 'stats');
+  const stats: AuditStats | null = statsQuery.data ?? null;
+  const statsLoading = statsQuery.isLoading;
+
+  const duplicatesQuery = useDuplicateGroupsQuery(activeTab === 'duplicates');
+  const duplicateGroups: DuplicateGroup[] = duplicatesQuery.data ?? [];
+  const duplicatesLoading = duplicatesQuery.isLoading;
+
+  const correspondentsQuery = useCorrespondentClustersQuery(
+    corrThreshold,
+    activeTab === 'correspondents' && scanCorrespondents,
+  );
+  const correspondentClusters: CorrespondentCluster[] = correspondentsQuery.data ?? [];
+  const correspondentsLoading = correspondentsQuery.isFetching;
+
+  // Mutations
+  const startMutation = useStartAudit();
+  const stopMutation = useStopAudit();
+  const applyMutation = useApplyResults();
+  const skipMutation = useSkipResults();
+  const reOcrMutation = useReOcr();
+  const detectDuplicatesMutation = useDetectDuplicates();
+
+  const starting = startMutation.isPending;
+  const stopping = stopMutation.isPending;
+  const detectingDuplicates = detectDuplicatesMutation.isPending;
+
+  // 503 → "not configured" surface. Any query returning 503 means the
+  // Paperless integration isn't wired up; the page collapses to a banner.
+  const queryErrors = [
+    statusQuery.error,
+    reviewQuery.error,
+    ocrQuery.error,
+    completenessQuery.error,
+    statsQuery.error,
+    duplicatesQuery.error,
+    correspondentsQuery.error,
+  ];
+  const notConfigured = queryErrors.some(
+    (e) => (e as AxiosError | null)?.response?.status === 503,
+  );
+
+  // Reset selectedIds whenever a fresh review fetch lands. Tracking
+  // reviewQuery.data (the actual query result) avoids the infinite-loop
+  // trap that comes from depending on reviewResults, which gets a new
+  // array reference every render thanks to the `?? []` fallback.
   useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
-
-  // Poll status while running
-  useEffect(() => {
-    if (auditStatus?.running) {
-      pollRef.current = setInterval(loadStatus, 2000);
-    } else if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
+    if (reviewQuery.data !== undefined) {
+      setSelectedIds(new Set());
     }
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [auditStatus?.running, loadStatus]);
+  }, [reviewQuery.data]);
 
   const startAudit = async () => {
-    setStarting(true);
     setError(null);
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/start', {
+      await startMutation.mutateAsync({
         mode,
         fix_mode: fixMode,
         confidence_threshold: confidenceThreshold,
-      }, { headers });
-      await loadStatus();
+      });
     } catch (err) {
-      handleApiError(err);
-    } finally {
-      setStarting(false);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     }
   };
 
   const stopAudit = async () => {
-    setStopping(true);
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/stop', {}, { headers });
-      await loadStatus();
+      await stopMutation.mutateAsync(undefined);
     } catch (err) {
-      handleApiError(err);
-    } finally {
-      setStopping(false);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     }
   };
-
-  // --- Review Tab ---
-  const loadReview = useCallback(async () => {
-    setReviewLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const params: Record<string, unknown> = { status: 'pending', changes_needed: true, per_page: PAGE_SIZE, page: reviewPage + 1 };
-      if (reviewSortBy) {
-        params.sort_by = reviewSortBy;
-        params.sort_order = reviewSortOrder;
-      }
-      if (reviewSearch.trim()) {
-        params.search = reviewSearch.trim();
-      }
-      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', { headers, params });
-      const data = res.data;
-      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
-      setReviewResults(results);
-      setReviewTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
-      setSelectedIds(new Set());
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setReviewLoading(false);
-    }
-  }, [authHeaders, handleApiError, reviewPage, reviewSortBy, reviewSortOrder, reviewSearch]);
-
-  useEffect(() => {
-    if (activeTab === 'review') loadReview();
-  }, [activeTab, loadReview]);
 
   const approveResults = async (ids: number[]) => {
     setActionLoading((prev) => new Set([...prev, ...ids]));
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/apply', { result_ids: ids }, { headers });
-      await loadReview();
+      await applyMutation.mutateAsync(ids);
     } catch (err) {
-      handleApiError(err);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     } finally {
       setActionLoading((prev) => {
         const next = new Set(prev);
@@ -294,11 +223,10 @@ export default function PaperlessAuditPage() {
   const skipResults = async (ids: number[]) => {
     setActionLoading((prev) => new Set([...prev, ...ids]));
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/skip', { result_ids: ids }, { headers });
-      await loadReview();
+      await skipMutation.mutateAsync(ids);
     } catch (err) {
-      handleApiError(err);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     } finally {
       setActionLoading((prev) => {
         const next = new Set(prev);
@@ -339,44 +267,18 @@ export default function PaperlessAuditPage() {
     setReviewSearch(value);
     if (reviewSearchTimer.current) clearTimeout(reviewSearchTimer.current);
     reviewSearchTimer.current = setTimeout(() => {
+      setDebouncedSearch(value);
       setReviewPage(0);
     }, 300);
   };
 
-  // --- OCR Tab ---
-  const loadOcr = useCallback(async () => {
-    setOcrLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', {
-        headers,
-        params: { ocr_quality_max: 2, per_page: PAGE_SIZE, page: ocrPage + 1 },
-      });
-      const data = res.data;
-      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
-      setOcrResults(results);
-      setOcrTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setOcrLoading(false);
-    }
-  }, [authHeaders, handleApiError, ocrPage]);
-
-  useEffect(() => {
-    if (activeTab === 'ocr') loadOcr();
-  }, [activeTab, loadOcr]);
-
   const reOcr = async (ids: number[]) => {
     setOcrActionLoading((prev) => new Set([...prev, ...ids]));
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/re-ocr', { result_ids: ids }, { headers });
-      await loadOcr();
+      await reOcrMutation.mutateAsync(ids);
     } catch (err) {
-      handleApiError(err);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     } finally {
       setOcrActionLoading((prev) => {
         const next = new Set(prev);
@@ -386,108 +288,20 @@ export default function PaperlessAuditPage() {
     }
   };
 
-  // --- Stats Tab ---
-  const loadStats = useCallback(async () => {
-    setStatsLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<AuditStats>('/api/admin/paperless-audit/stats', { headers });
-      setStats(res.data);
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setStatsLoading(false);
-    }
-  }, [authHeaders, handleApiError]);
-
-  useEffect(() => {
-    if (activeTab === 'stats') loadStats();
-  }, [activeTab, loadStats]);
-
-  // --- Completeness Tab ---
-  const loadCompleteness = useCallback(async () => {
-    setCompletenessLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<{ results?: AuditResult[]; total?: number } | AuditResult[]>('/api/admin/paperless-audit/results', {
-        headers,
-        params: { completeness_max: 2, per_page: PAGE_SIZE, page: completenessPage + 1 },
-      });
-      const data = res.data;
-      const results: AuditResult[] = Array.isArray(data) ? data : (data.results ?? []);
-      setCompletenessResults(results);
-      setCompletenessTotal(Array.isArray(data) ? results.length : (data.total ?? results.length));
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setCompletenessLoading(false);
-    }
-  }, [authHeaders, handleApiError, completenessPage]);
-
-  useEffect(() => {
-    if (activeTab === 'completeness') loadCompleteness();
-  }, [activeTab, loadCompleteness]);
-
-  // --- Duplicates Tab ---
-  const loadDuplicates = useCallback(async () => {
-    setDuplicatesLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<DuplicateGroup[]>('/api/admin/paperless-audit/duplicate-groups', { headers });
-      setDuplicateGroups(res.data || []);
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setDuplicatesLoading(false);
-    }
-  }, [authHeaders, handleApiError]);
-
-  useEffect(() => {
-    if (activeTab === 'duplicates') loadDuplicates();
-  }, [activeTab, loadDuplicates]);
-
   const detectDuplicates = async () => {
-    setDetectingDuplicates(true);
     setError(null);
     try {
-      const headers = await authHeaders();
-      await apiClient.post('/api/admin/paperless-audit/detect-duplicates', {}, { headers });
-      await loadDuplicates();
+      await detectDuplicatesMutation.mutateAsync(undefined);
     } catch (err) {
-      handleApiError(err);
-    } finally {
-      setDetectingDuplicates(false);
+      const status = (err as AxiosError | undefined)?.response?.status;
+      if (status !== 503) setError(t('paperlessAudit.error'));
     }
   };
 
-  // --- Correspondents Tab ---
-  const loadCorrespondents = useCallback(async () => {
-    setCorrespondentsLoading(true);
-    setError(null);
-    try {
-      const headers = await authHeaders();
-      const res = await apiClient.get<{ clusters?: CorrespondentCluster[] }>('/api/admin/paperless-audit/correspondent-normalization', {
-        headers,
-        params: { threshold: corrThreshold },
-      });
-      setCorrespondentClusters(res.data.clusters || []);
-      setNotConfigured(false);
-    } catch (err) {
-      handleApiError(err);
-    } finally {
-      setCorrespondentsLoading(false);
-    }
-  }, [authHeaders, handleApiError, corrThreshold]);
-
-  useEffect(() => {
-    if (activeTab === 'correspondents') loadCorrespondents();
-  }, [activeTab, loadCorrespondents]);
+  const loadCorrespondents = () => {
+    setScanCorrespondents(true);
+    correspondentsQuery.refetch();
+  };
 
   // --- Not Configured State ---
   if (notConfigured) {
