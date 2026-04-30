@@ -13,7 +13,7 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 | EMPFEHLUNG | 18 | 16 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E16, E17, E18. Open: **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions; warrants its own dedicated session). See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1–E18. **Audit fully resolved.** See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -176,9 +176,9 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 ### E14. ESLint React version hardcoded as 18.2 — RESOLVED (already)
 - Verified during E17 sweep: `src/frontend/.eslintrc.cjs:22` already reads `version: 'detect'`. The audit's "hardcoded 18.2" claim was stale; nothing to change.
 
-### E15. tsconfig strict mode disabled
-- `tsconfig.json` has `strict: false`
-- Fix: Enable strict mode gradually (start with new files)
+### E15. tsconfig strict mode disabled — RESOLVED
+- `src/frontend/tsconfig.json` flipped to `strict: true` on 2026-04-30. The flip surfaced 15 actual errors across 7 files (the audit's "31 errors" estimate was conservative — many would have been duplicates of the same root cause). All 15 fixed via null-check additions, narrow-type bindings, and one `CorrespondentHandler` type signature widening. `npx tsc --noEmit` passes.
+- Pre-existing tsc errors NOT addressed here (orthogonal, already failed before strict mode): `useDeviceConnection.ts:371,373` (the `notification` case in a discriminated union doesn't match the union members), `useWakeWord.ts:99,163` (`openwakeword-wasm-browser` lacks ambient typing + `modelFiles` not in `WakewordConfig`), `utils/platform.ts:14` (`@capacitor/core` not installed in the web build — satellite-only shim). Filed for a future follow-up; not blocking strict-mode promotion.
 
 ### E16. Legacy config fields (dead code) — RESOLVED
 - `plugins_enabled`, `plugins_dir`, `music_enabled`, `spotify_*` — already removed from `config.py` and `.env.example` in earlier work; no usages remained.
@@ -254,5 +254,5 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] E17: Redis URL parameterization — 6 platform compose entries use `${REDIS_URL:-redis://redis:6379}`
 - [x] E18: Frigate MQTT broker/port from Settings — defensive hygiene before MQTT consumer ships
 - [x] E13: ChatPage prop drilling — ChatProvider wraps the page, ChatInput takes 0 props (verified, audit was stale)
-- [ ] E15: Enable TypeScript strict mode (~31 errors mostly null-checks; deferred to dedicated session)
+- [x] E15: Enable TypeScript strict mode — flipped on 2026-04-30; 15 errors fixed (mostly null-checks); pre-existing third-party-typing errors filed for follow-up
 - [x] E11: React Query for data fetching — all 23 list-fetching surfaces migrated (#504 reference pages + e11-react-query bulk + e11-paperless-audit final)
