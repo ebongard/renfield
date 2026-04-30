@@ -96,6 +96,7 @@ kg-graph-*.png
 tasks/*
 !tasks/todo.md
 !tasks/audit-findings-plan.md
+!tasks/e11-react-query-handover.md
 .mcp.json
 .gstack/
 
