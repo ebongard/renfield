@@ -200,7 +200,7 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
             </div>
             <div>
               <span className="text-gray-500 dark:text-gray-400">{t('satellites.errors1h', 'Errors (1h)')}</span>
-              <p className={`font-medium ${metrics.error_count_1h > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+              <p className={`font-medium ${(metrics.error_count_1h ?? 0) > 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
                 {metrics.error_count_1h || 0}
               </p>
             </div>
@@ -312,8 +312,8 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
             {satellite.capabilities?.speaker && (
               <Badge color="purple">Speaker</Badge>
             )}
-            {satellite.capabilities?.led_count > 0 && (
-              <Badge color="amber">{satellite.capabilities.led_count} LEDs</Badge>
+            {(satellite.capabilities?.led_count ?? 0) > 0 && (
+              <Badge color="amber">{satellite.capabilities?.led_count} LEDs</Badge>
             )}
           </div>
 

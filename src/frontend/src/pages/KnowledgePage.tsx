@@ -717,9 +717,11 @@ export default function KnowledgePage() {
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                      Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
-                    </p>
+                    {doc.created_at && (
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                        Erstellt: {new Date(doc.created_at).toLocaleString('de-DE')}
+                      </p>
+                    )}
                     {doc.status === 'failed' && doc.error_message && (
                       <div className="mt-1">
                         <button

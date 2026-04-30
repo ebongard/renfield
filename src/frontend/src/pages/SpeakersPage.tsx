@@ -437,12 +437,17 @@ export default function SpeakersPage() {
 
                 <div className="flex items-center justify-between text-sm mb-4">
                   <span className="text-gray-500 dark:text-gray-400">{t('speakers.voiceSamples')}:</span>
-                  <span className={`font-medium ${
-                    speaker.embedding_count >= 3 ? 'text-green-600 dark:text-green-400' :
-                    speaker.embedding_count > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
-                  }`}>
-                    {speaker.embedding_count} {speaker.embedding_count >= 3 ? t('speakers.voiceSamplesGood') : speaker.embedding_count > 0 ? t('speakers.voiceSamplesMore') : t('speakers.voiceSamplesNone')}
-                  </span>
+                  {(() => {
+                    const count = speaker.embedding_count ?? 0;
+                    return (
+                      <span className={`font-medium ${
+                        count >= 3 ? 'text-green-600 dark:text-green-400' :
+                        count > 0 ? 'text-yellow-600 dark:text-yellow-400' : 'text-red-600 dark:text-red-400'
+                      }`}>
+                        {count} {count >= 3 ? t('speakers.voiceSamplesGood') : count > 0 ? t('speakers.voiceSamplesMore') : t('speakers.voiceSamplesNone')}
+                      </span>
+                    );
+                  })()}
                 </div>
 
                 <div className="flex space-x-2">
@@ -705,7 +710,7 @@ export default function SpeakersPage() {
                     <p className="text-green-600 dark:text-green-400 font-medium text-lg">{identifyResult.speaker_name}</p>
                     <p className="text-gray-500 dark:text-gray-400">@{identifyResult.speaker_alias}</p>
                     <p className="text-sm text-gray-500 mt-2">
-                      {t('speakers.confidence')}: {(identifyResult.confidence * 100).toFixed(1)}%
+                      {t('speakers.confidence')}: {((identifyResult.confidence ?? 0) * 100).toFixed(1)}%
                     </p>
                   </>
                 ) : (

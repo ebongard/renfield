@@ -987,8 +987,9 @@ function StatsTab({ t, stats, loading }: StatsTabProps) {
           </div>
           <div className="space-y-2">
             {[1, 2, 3, 4, 5].map((level) => {
-              const count = stats.completeness_distribution[level] || 0;
-              const maxComp = Math.max(...Object.values(stats.completeness_distribution), 1);
+              const completenessDist = stats.completeness_distribution ?? {};
+              const count = completenessDist[level] || 0;
+              const maxComp = Math.max(...Object.values(completenessDist), 1);
               const pct = (count / maxComp) * 100;
               return (
                 <div key={level} className="flex items-center gap-3">

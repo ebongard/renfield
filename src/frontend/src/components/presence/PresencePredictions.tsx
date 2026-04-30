@@ -128,7 +128,7 @@ export default function PresencePredictions({ data }: PresencePredictionsProps) 
               width={45}
             />
             <Tooltip
-              formatter={(value: number) => `${value}%`}
+              formatter={(value: number | undefined) => `${value ?? 0}%`}
               contentStyle={{
                 backgroundColor: 'var(--color-bg-tooltip, #fff)',
                 borderColor: 'var(--color-border-tooltip, #e5e7eb)',

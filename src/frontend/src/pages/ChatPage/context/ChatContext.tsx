@@ -163,7 +163,7 @@ export interface ChatContextValue {
   handleFeedbackSubmit: (
     messageText: string,
     feedbackType: string,
-    originalValue: string,
+    originalValue: string | undefined,
     correctedValue: string,
   ) => Promise<void>;
 }
@@ -442,7 +442,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const handleFeedbackSubmit = useCallback(async (
     messageText: string,
     feedbackType: string,
-    originalValue: string,
+    originalValue: string | undefined,
     correctedValue: string,
   ) => {
     try {

@@ -155,11 +155,15 @@ export default function ChatMessages() {
           >
             {/* Agent Steps (collapsible) */}
             {message.agentSteps && message.agentSteps.length > 0 && (() => {
-              const toolCalls = message.agentSteps.filter(s => s.type === 'tool_call');
-              const results = message.agentSteps.filter(s => s.type === 'tool_result');
+              // Bind to a local so the narrowing survives the IIFE boundary —
+              // TypeScript loses the `agentSteps` non-null narrowing across the
+              // arrow function call inside `.some()`.
+              const agentSteps = message.agentSteps;
+              const toolCalls = agentSteps.filter(s => s.type === 'tool_call');
+              const results = agentSteps.filter(s => s.type === 'tool_result');
               const hasError = results.some(s => !s.success);
               const isStillRunning = toolCalls.some(
-                tc => !message.agentSteps.find(s => s.type === 'tool_result' && s.step === tc.step)
+                tc => !agentSteps.find(s => s.type === 'tool_result' && s.step === tc.step)
               );
 
               return (
@@ -191,7 +195,7 @@ export default function ChatMessages() {
                               <span className="font-medium">{step.tool?.split('.').pop()}</span>
                               {step.reason && <span className="ml-1 text-gray-400 dark:text-gray-500">— {step.reason}</span>}
                             </span>
-                            {!message.agentSteps.find(s => s.type === 'tool_result' && s.step === step.step) && (
+                            {!agentSteps.find(s => s.type === 'tool_result' && s.step === step.step) && (
                               <Loader className="w-4 h-4 mt-0.5 animate-spin text-accent-500 dark:text-accent-400" aria-hidden="true" />
                             )}
                           </>
