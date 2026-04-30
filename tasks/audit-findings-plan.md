@@ -13,7 +13,7 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 | EMPFEHLUNG | 18 | 16 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E13, E14, E16, E17, E18. Open: **E11** (React Query — substantial frontend refactor) and **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions). Both warrant their own dedicated session. See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E13, E14, E16, E17, E18. **E11** foundation + 5 reference pages landed in #504 on 2026-04-30 (19 pages + 7 components + 25 spec migrations remain — mechanical follow-up). Open: **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions; warrants its own dedicated session). See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -151,9 +151,14 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - New `src/frontend/src/utils/env.ts` centralizes the fallback with `getApiBaseUrl()` and `getWebSocketUrl()`. Both warn on console (error level in PROD builds, warn in DEV) when the env var is unset, and warn at most once per page load.
 - All three call sites migrated: `utils/axios.ts:5`, `pages/ChatPage/hooks/useChatWebSocket.ts:141`, `hooks/useDeviceConnection.ts:170`. The `VITE_WS_URL` "includes-/ws" convention (per `.env.example` + 4 compose files) is preserved.
 
-### E11. React Query / SWR for data fetching
-- All pages use raw `apiClient.get()` + `useState` + `setLoading`
-- Fix: Adopt React Query for caching, deduplication, error retry
+### E11. React Query / SWR for data fetching — IN PROGRESS (foundation + 5 reference pages landed)
+- #504 on 2026-04-30 landed `@tanstack/react-query` v5 with hardened defaults (mutations.retry: 0, queries.retry bails on 4xx, refetchOnWindowFocus: false), `src/api/queryClient.ts` + `keys.ts` (centralized factories with STALE.{LIVE,DEFAULT,CONFIG} taxonomy) + `hooks.ts` (`useApiQuery`/`useApiMutation` wrappers binding `extractApiError`/`extractFieldErrors` + i18n into RQ's surface).
+- Provider order corrected to `ErrorBoundary → ThemeProvider → AuthProvider → QueryClientProvider → DeviceProvider` so `AuthContext.tsx:226-263` interceptors install before any RQ fetcher fires.
+- 5 reference pages migrated end-to-end with their existing test suites passing: `MemoryPage` (CRUD+filter), `RolesPage` (CRUD+permissions, 13 specs), `IntentsPage` (multi-resource read-only), `SettingsPage` (wakeword GET/PUT + RQ-driven sync polling, 13 specs), `MaintenancePage` (mutation-only, 12 specs).
+- 3 critical regression-guard test files: `tests/frontend/react/api/queryClient.test.jsx`, `hooks.test.jsx`, `invalidation.test.jsx` (14 new passing tests).
+- Test-suite delta: 358 pass / 24 fail (was 348/34 at baseline) — net +10 passing, no regressions introduced.
+- Remaining (mechanical follow-up using committed canonical patterns as templates): 12 mid-tier pages (Integrations, Satellites, Tasks, RoutingDashboard, Brain, BrainReview, CirclesSettings, CirclesPeers, FederationAudit, Camera, HomeAssistant, Presence) + 6 large pages (Users, Rooms, Knowledge, Speakers, KnowledgeGraph, PaperlessAudit) + 7 components (RoomOutputSettings, DeviceSetup, LanguageSwitcher, presence/AnalyticsTab, knowledge-graph/GraphView, PairResponderModal, PairInitiatorModal) + 25 existing spec files to migrate to `renderWithProviders` + `useChatSessions` move from `src/hooks/` to `src/api/resources/chatSessions.ts`.
+- Plan: `~/.claude/plans/pure-questing-blanket.md` (eng review CLEAR + outside-voice addressed).
 
 ### E12. i18n: 13 hardcoded German strings — RESOLVED
 - ErrorBoundary (5) and ConfirmDialog (4) — resolved during W10 TypeScript migration (#487); both files now use `useTranslation()` for every user-facing string.
@@ -235,7 +240,7 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] W9: `React.lazy` + `Suspense` for admin pages — `App.tsx:1,15-23+`
 - [x] W10: TypeScript migration — 100% `.tsx`/`.ts` coverage in `src/frontend/src/` (#487)
 - [x] W11: `.prettierrc` + `.prettierignore` + `format` script in `package.json`
-- [ ] E11: React Query for data fetching
+- [~] E11: React Query for data fetching — foundation + 5 reference pages landed in #504 on 2026-04-30; 19 pages + 7 components + 25 spec migrations + `useChatSessions` rewrite remain
 - [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
 - [x] E14: ESLint React version — verified `'detect'` already in `.eslintrc.cjs:22` (audit was stale)
 
@@ -247,4 +252,4 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] E18: Frigate MQTT broker/port from Settings — defensive hygiene before MQTT consumer ships
 - [x] E13: ChatPage prop drilling — ChatProvider wraps the page, ChatInput takes 0 props (verified, audit was stale)
 - [ ] E15: Enable TypeScript strict mode (~31 errors mostly null-checks; deferred to dedicated session)
-- [ ] E11: React Query for data fetching (large refactor; deferred to dedicated session)
+- [~] E11: React Query for data fetching — foundation + 5 reference pages landed in #504; rest of the pages/components/specs are mechanical follow-up
