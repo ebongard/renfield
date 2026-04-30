@@ -301,10 +301,7 @@ describe('SpeakersPage', () => {
     it('shows error when loading fails', async () => {
       server.use(
         http.get(`${BASE_URL}/api/speakers`, () => {
-          return HttpResponse.json(
-            { detail: 'Failed to load speakers' },
-            { status: 500 }
-          );
+          return new HttpResponse(null, { status: 500 });
         })
       );
 

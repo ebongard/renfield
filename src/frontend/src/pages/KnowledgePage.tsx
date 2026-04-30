@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQueryClient } from '@tanstack/react-query';
 import type { AxiosError } from 'axios';
 import {
   BookOpen,
@@ -32,58 +33,21 @@ import { useDocumentPolling } from '../hooks/useDocumentPolling';
 import type { KbDocument } from '../hooks/useDocumentPolling';
 import type { DocPages } from '../components/knowledge/StatusBadge';
 import { useInflightTabTitle } from '../hooks/useInflightTabTitle';
-
-type DocStatus = 'pending' | 'processing' | 'completed' | 'failed';
-type StatusFilter = DocStatus | 'all';
-
-interface KnowledgeBaseRow {
-  id: number;
-  name: string;
-  description?: string | null;
-  document_count?: number;
-}
-
-interface KnowledgeStats {
-  document_count: number;
-  completed_documents: number;
-  chunk_count: number;
-  knowledge_base_count: number;
-}
-
-interface SearchChunk {
-  content: string;
-  page_number?: number | null;
-  section_title?: string | null;
-}
-
-interface SearchResultDocument {
-  id: number;
-  filename: string;
-}
-
-interface SearchResultChunk {
-  document: SearchResultDocument;
-  chunk: SearchChunk;
-  similarity: number;
-}
-
-interface DocumentRow {
-  id: number;
-  filename: string;
-  status: DocStatus;
-  stage?: string | null;
-  pages?: DocPages | null;
-  queue_position?: number | null;
-  file_type?: string;
-  knowledge_base_id?: number;
-  error_message?: string;
-  size_bytes?: number;
-  file_size?: number;
-  page_count?: number;
-  chunk_count?: number;
-  title?: string;
-  created_at?: string;
-}
+import {
+  useKnowledgeDocumentsQuery,
+  useKnowledgeBasesQuery,
+  useKnowledgeStatsQuery,
+  useSearchKnowledge,
+  useCreateKnowledgeBase,
+  useDeleteKnowledgeBase,
+  useDeleteKnowledgeDocument,
+  useReindexKnowledgeDocument,
+  useMoveKnowledgeDocuments,
+  type StatusFilter,
+  type SearchResultChunk,
+  type DocumentRow,
+} from '../api/resources/knowledge';
+import { keys } from '../api/keys';
 
 interface DuplicateErrorPayload {
   existing_document?: ExistingDocument;
@@ -95,22 +59,18 @@ interface DuplicateErrorPayload {
 export default function KnowledgePage() {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
-  // State
-  const [documents, setDocuments] = useState<DocumentRow[]>([]);
-  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseRow[]>([]);
-  const [stats, setStats] = useState<KnowledgeStats | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
+
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<{ text: string; variant: AlertVariant } | null>(null);
-
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<SearchResultChunk[]>([]);
-  const [searching, setSearching] = useState(false);
 
   // Filter state
   const [selectedKnowledgeBase, setSelectedKnowledgeBase] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResultChunk[]>([]);
 
   // New Knowledge Base state
   const [showNewKbModal, setShowNewKbModal] = useState(false);
@@ -127,54 +87,36 @@ export default function KnowledgePage() {
   const [selectedDocs, setSelectedDocs] = useState<Set<number>>(new Set());
   const [showMoveDropdown, setShowMoveDropdown] = useState<number | 'bulk' | null>(null);
 
-  // Load data
-  const loadDocuments = useCallback(async () => {
-    try {
-      const params: Record<string, unknown> = {};
-      if (selectedKnowledgeBase) params.knowledge_base_id = selectedKnowledgeBase;
-      if (statusFilter !== 'all') params.status = statusFilter;
+  const documentsQuery = useKnowledgeDocumentsQuery({
+    knowledgeBaseId: selectedKnowledgeBase,
+    statusFilter,
+  });
+  const basesQuery = useKnowledgeBasesQuery();
+  const statsQuery = useKnowledgeStatsQuery();
+  const documents = documentsQuery.data ?? [];
+  const knowledgeBases = basesQuery.data ?? [];
+  const stats = statsQuery.data ?? null;
+  const loading = documentsQuery.isLoading || basesQuery.isLoading || statsQuery.isLoading;
 
-      const response = await apiClient.get<DocumentRow[]>('/api/knowledge/documents', { params });
-      setDocuments(response.data);
-    } catch (error) {
-      console.error('Failed to load documents:', error);
-    }
-  }, [selectedKnowledgeBase, statusFilter]);
+  const searchMutation = useSearchKnowledge();
+  const createKbMutation = useCreateKnowledgeBase();
+  const deleteKbMutation = useDeleteKnowledgeBase();
+  const deleteDocMutation = useDeleteKnowledgeDocument();
+  const reindexDocMutation = useReindexKnowledgeDocument();
+  const moveDocsMutation = useMoveKnowledgeDocuments();
 
-  const loadKnowledgeBases = useCallback(async () => {
-    try {
-      const response = await apiClient.get<KnowledgeBaseRow[]>('/api/knowledge/bases');
-      setKnowledgeBases(response.data);
-    } catch (error) {
-      console.error('Failed to load knowledge bases:', error);
-    }
-  }, []);
+  const searching = searchMutation.isPending;
 
-  const loadStats = useCallback(async () => {
-    try {
-      const response = await apiClient.get<KnowledgeStats>('/api/knowledge/stats');
-      setStats(response.data);
-    } catch (error) {
-      console.error('Failed to load stats:', error);
-    }
-  }, []);
-
-  useEffect(() => {
-    const loadAll = async () => {
-      setLoading(true);
-      await Promise.all([loadDocuments(), loadKnowledgeBases(), loadStats()]);
-      setLoading(false);
-    };
-    loadAll();
-  }, [loadDocuments, loadKnowledgeBases, loadStats]);
+  const refreshAfterUpload = async () => {
+    await queryClient.invalidateQueries({ queryKey: keys.knowledge.all });
+  };
 
   // Polling for in-flight uploads (#388). Populated from 202 responses
   // below; each poll refreshes the tracked docs, and on terminal state
   // we trigger a list reload so the row updates in place.
   const { activeDocs, track: trackDocument } = useDocumentPolling({
     onResolved: async () => {
-      await loadDocuments();
-      await loadStats();
+      await refreshAfterUpload();
     },
     onTimeout: (doc) => {
       // 30-min cap hit. Tell the user their poll loop gave up, but leave
@@ -221,12 +163,11 @@ export default function KnowledgePage() {
         setUploadProgress({ text: t('knowledge.uploadQueued'), variant: 'success' });
         trackDocument(response.data as KbDocument);
         setPendingRetryFile(null);
-        await loadDocuments();
+        await refreshAfterUpload();
       } else {
         setUploadProgress({ text: t('knowledge.uploadSuccess'), variant: 'success' });
         setPendingRetryFile(null);
-        await loadDocuments();
-        await loadStats();
+        await refreshAfterUpload();
       }
 
       setTimeout(() => setUploadProgress(null), 2500);
@@ -291,13 +232,9 @@ export default function KnowledgePage() {
       variant: 'danger',
     });
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/knowledge/documents/${id}`);
-      await loadDocuments();
-      await loadStats();
-    } catch (error) {
-      console.error('Delete error:', error);
+      await deleteDocMutation.mutateAsync(id);
+    } catch {
       alert(t('knowledge.deleteFailed'));
     }
   };
@@ -305,11 +242,8 @@ export default function KnowledgePage() {
   // Reindex document
   const handleReindexDocument = async (id: number) => {
     try {
-      await apiClient.post(`/api/knowledge/documents/${id}/reindex`);
-      await loadDocuments();
-      await loadStats();
-    } catch (error) {
-      console.error('Reindex error:', error);
+      await reindexDocMutation.mutateAsync(id);
+    } catch {
       alert(t('knowledge.reindexFailed'));
     }
   };
@@ -317,39 +251,30 @@ export default function KnowledgePage() {
   // Search
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
-
-    setSearching(true);
     try {
-      const response = await apiClient.post<{ results: SearchResultChunk[] }>('/api/knowledge/search', {
+      const results = await searchMutation.mutateAsync({
         query: searchQuery,
-        top_k: 5,
-        knowledge_base_id: selectedKnowledgeBase,
+        knowledgeBaseId: selectedKnowledgeBase,
       });
-      setSearchResults(response.data.results);
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setSearching(false);
+      setSearchResults(results);
+    } catch {
+      // errorMessage surfaces via searchMutation.errorMessage
     }
   };
 
   // Create Knowledge Base
   const handleCreateKnowledgeBase = async () => {
     if (!newKbName.trim()) return;
-
     try {
-      await apiClient.post('/api/knowledge/bases', {
+      await createKbMutation.mutateAsync({
         name: newKbName,
-        description: newKbDescription || null
+        description: newKbDescription || null,
       });
-      await loadKnowledgeBases();
-      await loadStats();
       setShowNewKbModal(false);
       setNewKbName('');
       setNewKbDescription('');
-    } catch (error) {
-      console.error('Create error:', error);
-      alert(extractApiError(error, t('common.error')));
+    } catch (err) {
+      alert(extractApiError(err, t('common.error')));
     }
   };
 
@@ -361,15 +286,10 @@ export default function KnowledgePage() {
       variant: 'danger',
     });
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/knowledge/bases/${id}`);
+      await deleteKbMutation.mutateAsync(id);
       if (selectedKnowledgeBase === id) setSelectedKnowledgeBase(null);
-      await loadKnowledgeBases();
-      await loadDocuments();
-      await loadStats();
-    } catch (error) {
-      console.error('Delete error:', error);
+    } catch {
       alert(t('common.error'));
     }
   };
@@ -377,13 +297,9 @@ export default function KnowledgePage() {
   // Move documents
   const handleMoveDocuments = async (docIds: number[], targetKbId: number | null) => {
     if (!targetKbId || docIds.length === 0) return;
-
     try {
-      const response = await apiClient.post<{ moved_count: number }>('/api/knowledge/documents/move', {
-        document_ids: docIds,
-        target_knowledge_base_id: targetKbId,
-      });
-      const moved = response.data.moved_count;
+      const result = await moveDocsMutation.mutateAsync({ documentIds: docIds, targetKbId });
+      const moved = result.moved_count;
       if (moved > 0) {
         setUploadProgress({ text: t('knowledge.documentsMovedSuccess', { count: moved }), variant: 'success' });
       } else {
@@ -392,10 +308,8 @@ export default function KnowledgePage() {
       setTimeout(() => setUploadProgress(null), 3000);
       setSelectedDocs(new Set());
       setShowMoveDropdown(null);
-      await Promise.all([loadDocuments(), loadKnowledgeBases(), loadStats()]);
-    } catch (error) {
-      console.error('Move error:', error);
-      alert(extractApiError(error, t('common.error')));
+    } catch (err) {
+      alert(extractApiError(err, t('common.error')));
     }
   };
 

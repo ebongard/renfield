@@ -5,38 +5,24 @@ import {
   AlertCircle, Volume2, Shield, ShieldCheck, RefreshCw,
   Edit3, GitMerge,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
-
-interface Speaker {
-  id: number;
-  name: string;
-  alias: string;
-  is_admin: boolean;
-  embedding_count?: number;
-  user_id?: number | null;
-  user_name?: string | null;
-  is_pinned?: boolean;
-}
-
-interface SpeakerServiceStatus {
-  available: boolean;
-  message?: string;
-}
-
-interface IdentifyResult {
-  is_identified: boolean;
-  speaker_id?: number | null;
-  speaker_name?: string | null;
-  speaker_alias?: string | null;
-  confidence?: number;
-  message?: string;
-}
+import {
+  useSpeakersQuery,
+  useSpeakerStatusQuery,
+  useCreateSpeaker,
+  useUpdateSpeaker,
+  useDeleteSpeaker,
+  useMergeSpeakers,
+  useEnrollSpeaker,
+  useIdentifySpeaker,
+  type Speaker,
+  type IdentifyResult,
+} from '../api/resources/speakers';
 
 interface AudioContextCapableWindow {
   AudioContext?: typeof AudioContext;
@@ -48,10 +34,19 @@ export default function SpeakersPage() {
   // Confirm dialog hook
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  // State
-  const [speakers, setSpeakers] = useState<Speaker[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [serviceStatus, setServiceStatus] = useState<SpeakerServiceStatus | null>(null);
+  const speakersQuery = useSpeakersQuery();
+  const statusQuery = useSpeakerStatusQuery();
+  const speakers: Speaker[] = speakersQuery.data ?? [];
+  const loading = speakersQuery.isLoading;
+  const serviceStatus = statusQuery.data ?? null;
+
+  const createSpeakerMutation = useCreateSpeaker();
+  const updateSpeakerMutation = useUpdateSpeaker();
+  const deleteSpeakerMutation = useDeleteSpeaker();
+  const mergeSpeakersMutation = useMergeSpeakers();
+  const enrollMutation = useEnrollSpeaker();
+  const identifyMutation = useIdentifySpeaker();
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEnrollModal, setShowEnrollModal] = useState(false);
   const [showIdentifyModal, setShowIdentifyModal] = useState(false);
@@ -59,15 +54,17 @@ export default function SpeakersPage() {
   const [showMergeModal, setShowMergeModal] = useState(false);
   const [selectedSpeaker, setSelectedSpeaker] = useState<Speaker | null>(null);
   const [mergeTargetId, setMergeTargetId] = useState<string | null>(null);
-  const [merging, setMerging] = useState(false);
   const [recording, setRecording] = useState(false);
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
-  const [enrolling, setEnrolling] = useState(false);
-  const [identifying, setIdentifying] = useState(false);
   const [identifyResult, setIdentifyResult] = useState<IdentifyResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [audioLevel, setAudioLevel] = useState(0);
+
+  const merging = mergeSpeakersMutation.isPending;
+  const enrolling = enrollMutation.isPending;
+  const identifying = identifyMutation.isPending;
+  const updating = updateSpeakerMutation.isPending;
 
   // Form state
   const [newSpeakerName, setNewSpeakerName] = useState('');
@@ -78,7 +75,6 @@ export default function SpeakersPage() {
   const [editSpeakerName, setEditSpeakerName] = useState('');
   const [editSpeakerAlias, setEditSpeakerAlias] = useState('');
   const [editSpeakerIsAdmin, setEditSpeakerIsAdmin] = useState(false);
-  const [updating, setUpdating] = useState(false);
 
   // Refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -88,11 +84,7 @@ export default function SpeakersPage() {
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Load data on mount
-  useEffect(() => {
-    loadServiceStatus();
-    loadSpeakers();
-  }, []);
+  const displayError = error ?? speakersQuery.errorMessage;
 
   // Clear messages after 5 seconds
   useEffect(() => {
@@ -105,50 +97,23 @@ export default function SpeakersPage() {
     }
   }, [error, success]);
 
-  const loadServiceStatus = async () => {
-    try {
-      const response = await apiClient.get<SpeakerServiceStatus>('/api/speakers/status');
-      setServiceStatus(response.data);
-    } catch (err) {
-      console.error('Failed to load service status:', err);
-      setServiceStatus({ available: false, message: t('speakers.serviceNotAvailable') });
-    }
-  };
-
-  const loadSpeakers = async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<Speaker[]>('/api/speakers');
-      setSpeakers(response.data);
-    } catch (err) {
-      console.error('Failed to load speakers:', err);
-      setError(t('speakers.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const createSpeaker = async () => {
     if (!newSpeakerName.trim() || !newSpeakerAlias.trim()) {
       setError(t('speakers.nameAndAliasRequired'));
       return;
     }
-
     try {
-      await apiClient.post('/api/speakers', {
+      await createSpeakerMutation.mutateAsync({
         name: newSpeakerName,
         alias: newSpeakerAlias,
-        is_admin: newSpeakerIsAdmin
+        is_admin: newSpeakerIsAdmin,
       });
-
       setSuccess(t('speakers.speakerCreated', { name: newSpeakerName }));
       setShowCreateModal(false);
       setNewSpeakerName('');
       setNewSpeakerAlias('');
       setNewSpeakerIsAdmin(false);
-      loadSpeakers();
     } catch (err) {
-      console.error('Failed to create speaker:', err);
       setError(extractApiError(err, t('common.error')));
     }
   };
@@ -161,15 +126,11 @@ export default function SpeakersPage() {
       cancelLabel: t('common.cancel'),
       variant: 'danger',
     });
-
     if (!confirmed) return;
-
     try {
-      await apiClient.delete(`/api/speakers/${speaker.id}`);
+      await deleteSpeakerMutation.mutateAsync(speaker.id);
       setSuccess(t('speakers.speakerDeleted', { name: speaker.name }));
-      loadSpeakers();
-    } catch (err) {
-      console.error('Failed to delete speaker:', err);
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -179,23 +140,19 @@ export default function SpeakersPage() {
       setError(t('speakers.nameAndAliasRequired'));
       return;
     }
-
     try {
-      setUpdating(true);
-      await apiClient.patch(`/api/speakers/${selectedSpeaker.id}`, {
-        name: editSpeakerName,
-        alias: editSpeakerAlias,
-        is_admin: editSpeakerIsAdmin
+      await updateSpeakerMutation.mutateAsync({
+        id: selectedSpeaker.id,
+        patch: {
+          name: editSpeakerName,
+          alias: editSpeakerAlias,
+          is_admin: editSpeakerIsAdmin,
+        },
       });
-
       setSuccess(t('speakers.speakerUpdated', { name: editSpeakerName }));
       setShowEditModal(false);
-      loadSpeakers();
     } catch (err) {
-      console.error('Failed to update speaker:', err);
       setError(extractApiError(err, t('common.error')));
-    } finally {
-      setUpdating(false);
     }
   };
 
@@ -221,24 +178,17 @@ export default function SpeakersPage() {
     });
 
     if (!confirmed) return;
-
     try {
-      setMerging(true);
-      const response = await apiClient.post<{ message: string }>('/api/speakers/merge', {
+      const data = await mergeSpeakersMutation.mutateAsync({
         source_speaker_id: selectedSpeaker.id,
         target_speaker_id: mergeTargetIdInt,
       });
-
-      setSuccess(response.data.message);
+      setSuccess(data.message);
       setShowMergeModal(false);
       setSelectedSpeaker(null);
       setMergeTargetId(null);
-      loadSpeakers();
     } catch (err) {
-      console.error('Failed to merge speakers:', err);
       setError(extractApiError(err, t('speakers.mergeFailed')));
-    } finally {
-      setMerging(false);
     }
   };
 
@@ -356,28 +306,13 @@ export default function SpeakersPage() {
       setError(t('speakers.recordFirstSample'));
       return;
     }
-
     try {
-      setEnrolling(true);
-
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'voice_sample.webm');
-
-      const response = await apiClient.post<{ message: string }>(
-        `/api/speakers/${selectedSpeaker.id}/enroll`,
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } },
-      );
-
-      setSuccess(response.data.message);
+      const data = await enrollMutation.mutateAsync({ speakerId: selectedSpeaker.id, audio: audioBlob });
+      setSuccess(data.message);
       setAudioBlob(null);
       setShowEnrollModal(false);
-      loadSpeakers();
     } catch (err) {
-      console.error('Failed to enroll voice sample:', err);
       setError(extractApiError(err, t('speakers.voiceSampleFailed')));
-    } finally {
-      setEnrolling(false);
     }
   };
 
@@ -386,26 +321,12 @@ export default function SpeakersPage() {
       setError(t('speakers.recordFirstSample'));
       return;
     }
-
     try {
-      setIdentifying(true);
       setIdentifyResult(null);
-
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'identify.webm');
-
-      const response = await apiClient.post<IdentifyResult>(
-        '/api/speakers/identify',
-        formData,
-        { headers: { 'Content-Type': 'multipart/form-data' } },
-      );
-
-      setIdentifyResult(response.data);
+      const data = await identifyMutation.mutateAsync(audioBlob);
+      setIdentifyResult(data);
     } catch (err) {
-      console.error('Failed to identify speaker:', err);
       setError(extractApiError(err, t('speakers.identificationFailed')));
-    } finally {
-      setIdentifying(false);
     }
   };
 
@@ -425,7 +346,7 @@ export default function SpeakersPage() {
     <div className="space-y-6">
       {/* Header */}
       <PageHeader icon={Users} title={t('speakers.title')} subtitle={t('speakers.subtitle')}>
-        <button onClick={loadSpeakers} className="btn-icon btn-icon-ghost" aria-label={t('speakers.refreshSpeakers')}>
+        <button onClick={() => speakersQuery.refetch()} className="btn-icon btn-icon-ghost" aria-label={t('speakers.refreshSpeakers')}>
           <RefreshCw className="w-5 h-5" aria-hidden="true" />
         </button>
       </PageHeader>
@@ -443,7 +364,7 @@ export default function SpeakersPage() {
       )}
 
       {/* Alerts */}
-      {error && <Alert variant="error">{error}</Alert>}
+      {displayError && <Alert variant="error">{displayError}</Alert>}
 
       {success && <Alert variant="success">{success}</Alert>}
 
