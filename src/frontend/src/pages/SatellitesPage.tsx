@@ -4,9 +4,8 @@
  * Admin page for monitoring and debugging satellite voice assistants.
  * Shows live status, audio levels, wake word detection, and session history.
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
@@ -17,58 +16,13 @@ import {
   Activity, AlertCircle, CheckCircle, RefreshCw, ChevronDown,
   ChevronUp, Radio, Zap, MemoryStick, ArrowUpCircle, Loader2, Package,
 } from 'lucide-react';
-
-type SatState = 'idle' | 'listening' | 'processing' | 'speaking' | 'error';
-
-interface WakeWordEvent {
-  keyword: string;
-  confidence: number;
-  timestamp: number;
-}
-
-interface SatelliteMetrics {
-  audio_rms?: number;
-  audio_db?: number;
-  is_speech?: boolean;
-  cpu_percent?: number;
-  memory_percent?: number;
-  temperature?: number;
-  session_count_1h?: number;
-  error_count_1h?: number;
-  last_wakeword?: WakeWordEvent;
-}
-
-interface SatelliteCapabilities {
-  local_wakeword?: boolean;
-  speaker?: boolean;
-  led_count?: number;
-}
-
-interface SatelliteSession {
-  duration_seconds: number;
-  audio_chunks_count: number;
-  transcription?: string;
-}
-
-type UpdateStatus = 'in_progress' | 'failed' | 'success' | string;
-
-interface SatelliteData {
-  satellite_id: string;
-  room: string;
-  state: SatState;
-  version?: string;
-  has_active_session?: boolean;
-  uptime_seconds: number;
-  heartbeat_ago_seconds: number;
-  metrics?: SatelliteMetrics;
-  current_session?: SatelliteSession;
-  capabilities?: SatelliteCapabilities;
-  update_available?: boolean;
-  update_status?: UpdateStatus;
-  update_stage?: string;
-  update_progress?: number;
-  update_error?: string;
-}
+import {
+  useSatellitesQuery,
+  useTriggerSatelliteUpdate,
+  type SatState,
+  type SatelliteData,
+} from '../api/resources/satellites';
+import { extractApiError } from '../utils/axios';
 
 interface AudioLevelMeterProps {
   level: number;
@@ -446,55 +400,26 @@ function SatelliteCard({ satellite, expanded, onToggle, latestVersion, onUpdate 
 export default function SatellitesPage() {
   const { t } = useTranslation();
 
-  const [satellites, setSatellites] = useState<SatelliteData[]>([]);
-  const [latestVersion, setLatestVersion] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const refreshIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const satellitesQuery = useSatellitesQuery(autoRefresh);
+  const satellites = satellitesQuery.data?.satellites ?? [];
+  const latestVersion = satellitesQuery.data?.latest_version ?? '';
+  const loading = satellitesQuery.isLoading;
 
-  const loadSatellites = useCallback(async () => {
+  const updateMutation = useTriggerSatelliteUpdate();
+
+  const displayError = error ?? satellitesQuery.errorMessage;
+
+  const triggerUpdate = async (satelliteId: string) => {
     try {
-      const response = await apiClient.get<{ satellites: SatelliteData[]; latest_version?: string }>('/api/satellites');
-      setSatellites(response.data.satellites || []);
-      setLatestVersion(response.data.latest_version || '');
-      setError(null);
+      await updateMutation.mutateAsync(satelliteId);
     } catch (err) {
-      console.error('Failed to load satellites:', err);
-      setError(t('satellites.loadError', { defaultValue: 'Failed to load satellites' }));
-    } finally {
-      setLoading(false);
+      setError(extractApiError(err, t('satellites.updateError', { defaultValue: 'Failed to trigger update' })));
     }
-  }, [t]);
-
-  const triggerUpdate = useCallback(async (satelliteId: string) => {
-    try {
-      await apiClient.post(`/api/satellites/${satelliteId}/update`);
-      // Refresh to see update status
-      await loadSatellites();
-    } catch (err) {
-      console.error('Failed to trigger update:', err);
-      setError(t('satellites.updateError', { defaultValue: 'Failed to trigger update' }));
-    }
-  }, [loadSatellites, t]);
-
-  useEffect(() => {
-    loadSatellites();
-  }, [loadSatellites]);
-
-  // Auto-refresh
-  useEffect(() => {
-    if (autoRefresh) {
-      refreshIntervalRef.current = setInterval(loadSatellites, 2000);
-    }
-    return () => {
-      if (refreshIntervalRef.current) {
-        clearInterval(refreshIntervalRef.current);
-      }
-    };
-  }, [autoRefresh, loadSatellites]);
+  };
 
   const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => {
@@ -545,7 +470,7 @@ export default function SatellitesPage() {
           </label>
 
           <button
-            onClick={loadSatellites}
+            onClick={() => satellitesQuery.refetch()}
             className="btn-icon btn-icon-ghost"
             title={t('common.refresh')}
           >
@@ -582,8 +507,8 @@ export default function SatellitesPage() {
       </div>
 
       {/* Error message */}
-      {error && (
-        <Alert variant="error" className="mb-4">{error}</Alert>
+      {displayError && (
+        <Alert variant="error" className="mb-4">{displayError}</Alert>
       )}
 
       {/* Satellite list */}

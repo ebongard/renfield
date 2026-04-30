@@ -1,21 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
 import { Lightbulb, Power, Search, Loader, Sun, Thermometer } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
-
-interface HaEntityAttributes {
-  friendly_name?: string;
-  brightness?: number;
-  [key: string]: unknown;
-}
-
-interface HaEntity {
-  entity_id: string;
-  state: string;
-  attributes?: HaEntityAttributes;
-}
+import { useHaStatesQuery, useToggleHaEntity, type HaEntity } from '../api/resources/homeAssistant';
 
 interface DomainOption {
   key: string;
@@ -23,44 +11,30 @@ interface DomainOption {
   icon: LucideIcon;
 }
 
+const DOMAINS: DomainOption[] = [
+  { key: 'all', nameKey: 'common.all', icon: Power },
+  { key: 'light', nameKey: 'homeassistant.lights', icon: Lightbulb },
+  { key: 'switch', nameKey: 'homeassistant.switches', icon: Power },
+  { key: 'climate', nameKey: 'homeassistant.climate', icon: Thermometer },
+  { key: 'cover', nameKey: 'homeassistant.covers', icon: Sun },
+];
+
 export default function HomeAssistantPage() {
   const { t } = useTranslation();
-  const [entities, setEntities] = useState<HaEntity[]>([]);
-  const [filteredEntities, setFilteredEntities] = useState<HaEntity[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDomain, setSelectedDomain] = useState('all');
-  const [loading, setLoading] = useState(true);
 
-  const domains: DomainOption[] = [
-    { key: 'all', nameKey: 'common.all', icon: Power },
-    { key: 'light', nameKey: 'homeassistant.lights', icon: Lightbulb },
-    { key: 'switch', nameKey: 'homeassistant.switches', icon: Power },
-    { key: 'climate', nameKey: 'homeassistant.climate', icon: Thermometer },
-    { key: 'cover', nameKey: 'homeassistant.covers', icon: Sun },
-  ];
+  const statesQuery = useHaStatesQuery();
+  const entities = statesQuery.data ?? [];
+  const loading = statesQuery.isLoading;
 
-  const loadEntities = useCallback(async () => {
-    try {
-      const response = await apiClient.get<{ states: HaEntity[] }>('/api/homeassistant/states');
-      setEntities(response.data.states);
-    } catch (error) {
-      console.error('Failed to load Home Assistant entities:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const toggleMutation = useToggleHaEntity();
 
-  useEffect(() => {
-    loadEntities();
-  }, [loadEntities]);
-
-  useEffect(() => {
+  const filteredEntities = useMemo(() => {
     let filtered = entities;
-
     if (selectedDomain !== 'all') {
       filtered = filtered.filter((e) => e.entity_id.startsWith(`${selectedDomain}.`));
     }
-
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filtered = filtered.filter((e) => {
@@ -69,17 +43,11 @@ export default function HomeAssistantPage() {
         return entityId.includes(query) || friendlyName.includes(query);
       });
     }
+    return filtered;
+  }, [entities, selectedDomain, searchQuery]);
 
-    setFilteredEntities(filtered);
-  }, [searchQuery, selectedDomain, entities]);
-
-  const toggleEntity = async (entityId: string) => {
-    try {
-      await apiClient.post(`/api/homeassistant/toggle/${entityId}`);
-      await loadEntities();
-    } catch (error) {
-      console.error('Failed to toggle Home Assistant entity:', error);
-    }
+  const toggleEntity = (entityId: string) => {
+    toggleMutation.mutate(entityId);
   };
 
   const getEntityIcon = (entity: HaEntity) => {
@@ -104,7 +72,6 @@ export default function HomeAssistantPage() {
     <div className="space-y-6">
       <PageHeader icon={Lightbulb} title={t('homeassistant.title')} subtitle={t('homeassistant.subtitle')} />
 
-      {/* Search */}
       <div className="card">
         <div className="relative">
           <label htmlFor="device-search" className="sr-only">{t('homeassistant.searchDevices')}</label>
@@ -120,9 +87,8 @@ export default function HomeAssistantPage() {
         </div>
       </div>
 
-      {/* Domain Filters */}
       <div className="flex space-x-2 overflow-x-auto">
-        {domains.map((domain) => {
+        {DOMAINS.map((domain) => {
           const Icon = domain.icon;
           return (
             <button
@@ -141,7 +107,6 @@ export default function HomeAssistantPage() {
         })}
       </div>
 
-      {/* Entities Grid */}
       <div>
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white">

@@ -1,51 +1,27 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Camera, RefreshCw, User, Car, Dog } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
+import { useCamerasQuery, useCameraEventsQuery } from '../api/resources/cameras';
 
 type CameraLabel = 'person' | 'car' | 'dog' | 'cat';
 type LabelFilter = CameraLabel | 'all';
 
-interface CameraEvent {
-  label: string;
-  camera: string;
-  start_time: number;
-  score?: number;
-}
-
 export default function CameraPage() {
   const { t, i18n } = useTranslation();
-  const [cameras, setCameras] = useState<string[]>([]);
-  const [events, setEvents] = useState<CameraEvent[]>([]);
   const [selectedLabel, setSelectedLabel] = useState<LabelFilter>('all');
-  const [loading, setLoading] = useState(true);
 
-  const loadCameras = useCallback(async () => {
-    try {
-      const response = await apiClient.get<{ cameras: string[] }>('/api/camera/cameras');
-      setCameras(response.data.cameras);
-    } catch (error) {
-      console.error('Failed to load cameras:', error);
-    }
-  }, []);
+  const camerasQuery = useCamerasQuery();
+  const eventsQuery = useCameraEventsQuery(selectedLabel === 'all' ? null : selectedLabel);
 
-  const loadEvents = useCallback(async () => {
-    try {
-      const params = selectedLabel !== 'all' ? { label: selectedLabel } : {};
-      const response = await apiClient.get<{ events: CameraEvent[] }>('/api/camera/events', { params });
-      setEvents(response.data.events);
-    } catch (error) {
-      console.error('Failed to load camera events:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedLabel]);
+  const cameras = camerasQuery.data ?? [];
+  const events = eventsQuery.data ?? [];
+  const loading = eventsQuery.isLoading;
 
-  useEffect(() => {
-    loadCameras();
-    loadEvents();
-  }, [loadCameras, loadEvents]);
+  const refresh = () => {
+    camerasQuery.refetch();
+    eventsQuery.refetch();
+  };
 
   const getLabelIcon = (label: string) => {
     switch (label) {
@@ -67,7 +43,7 @@ export default function CameraPage() {
     <div className="space-y-6">
       <PageHeader icon={Camera} title={t('cameras.title')} subtitle={t('cameras.subtitle')}>
         <button
-          onClick={() => { loadCameras(); loadEvents(); }}
+          onClick={refresh}
           className="btn btn-secondary"
           aria-label={t('cameras.refreshCameras')}
         >
@@ -75,7 +51,6 @@ export default function CameraPage() {
         </button>
       </PageHeader>
 
-      {/* Cameras Overview */}
       <div className="card">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">{t('cameras.cameras')}</h2>
         {cameras.length === 0 ? (
@@ -95,7 +70,6 @@ export default function CameraPage() {
         )}
       </div>
 
-      {/* Label Filters */}
       <div className="flex space-x-2 overflow-x-auto">
         {labels.map((label) => (
           <button
@@ -113,7 +87,6 @@ export default function CameraPage() {
         ))}
       </div>
 
-      {/* Events */}
       <div className="space-y-4">
         <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{t('cameras.latestEvents')}</h2>
 
