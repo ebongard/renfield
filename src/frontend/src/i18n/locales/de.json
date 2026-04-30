@@ -106,6 +106,7 @@
     "yourMessage": "Deine Nachricht",
     "assistantResponse": "Antwort von {{appName}}",
     "readAloud": "Vorlesen",
+    "albumArt": "Albumcover",
     "intent": "Intent",
     "startConversation": "Starte ein Gespräch mit {{appName}}",
     "useTextOrMic": "Du kannst Text eingeben oder das Mikrofon nutzen",

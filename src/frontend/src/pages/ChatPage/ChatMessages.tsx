@@ -19,7 +19,7 @@ type ContentPart =
   | { type: 'link'; label: string; url: string }
   | { type: 'image'; url: string };
 
-function renderMessageContent(text: string): ReactElement {
+function renderMessageContent(text: string, imageAlt: string): ReactElement {
   // Combined pattern: markdown links [text](url), image URLs, or plain URLs
   const pattern = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|https?:\/\/[^\s)]+?\/Items\/[^\s)]+?\/Images\/[^\s)]+|https?:\/\/[^\s)]+\.(?:jpg|jpeg|png|gif|webp)(?:\?[^\s)]*)?|https?:\/\/[^\s)]+/gi;
 
@@ -58,7 +58,7 @@ function renderMessageContent(text: string): ReactElement {
           <img
             key={i}
             src={part.url}
-            alt="Album Art"
+            alt={imageAlt}
             className="rounded-lg max-w-[200px] max-h-[200px] my-2 shadow-md"
             loading="lazy"
             onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
@@ -234,7 +234,7 @@ export default function ChatMessages() {
               </ul>
             )}
 
-            {message.role === 'assistant' ? renderMessageContent(message.content) : <p className="whitespace-pre-wrap">{message.content}</p>}
+            {message.role === 'assistant' ? renderMessageContent(message.content, t('chat.albumArt')) : <p className="whitespace-pre-wrap">{message.content}</p>}
 
             {/* Adaptive Card (from WebSocket card message) */}
             {message.card && (

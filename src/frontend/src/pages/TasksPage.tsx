@@ -30,7 +30,7 @@ export default function TasksPage() {
         const response = await apiClient.get<{ tasks: Task[] }>('/api/tasks/list', { params });
         setTasks(response.data.tasks);
       } catch (error) {
-        console.error('Fehler beim Laden der Tasks:', error);
+        console.error('Failed to load tasks:', error);
       } finally {
         setLoading(false);
       }

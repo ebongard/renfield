@@ -175,9 +175,11 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - All pages use raw `apiClient.get()` + `useState` + `setLoading`
 - Fix: Adopt React Query for caching, deduplication, error retry
 
-### E12. i18n: 13 hardcoded German strings
-- `ErrorBoundary.jsx` (5), `ConfirmDialog.jsx` (4), `ChatMessages.jsx` (1), logs (3)
-- Fix: Move to i18n translation files
+### E12. i18n: 13 hardcoded German strings — RESOLVED
+- ErrorBoundary (5) and ConfirmDialog (4) — resolved during W10 TypeScript migration (#487); both files now use `useTranslation()` for every user-facing string.
+- ChatMessages alt text (1) — `alt="Album Art"` → `t('chat.albumArt')`; new key added to both `de.json` (Albumcover) and `en.json` (Album art).
+- German `console.error` logs (5 found, audit said 3) — converted to English in `CameraPage.tsx`, `HomeAssistantPage.tsx`, `TasksPage.tsx`. Logs are dev-facing, so English consistency with the rest of the codebase is the right fix (no i18n needed for dev logs).
+- Out of E12 scope: `RoomOutputSettings.tsx` has its own substantial i18n debt (~10 hardcoded German strings); filed separately as it was not in the original audit list.
 
 ### E13. ChatPage prop drilling (12+ props)
 - `ChatPage/index.jsx` passes 12 props to ChatInput
@@ -253,7 +255,7 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - [x] W10: TypeScript migration — 100% `.tsx`/`.ts` coverage in `src/frontend/src/` (#487)
 - [ ] W11: Add Prettier
 - [ ] E11: React Query for data fetching
-- [ ] E12: i18n hardcoded strings
+- [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
 - [ ] E14: ESLint React version
 
 ### Phase 5: Cleanup

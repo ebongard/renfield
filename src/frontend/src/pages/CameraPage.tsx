@@ -26,7 +26,7 @@ export default function CameraPage() {
       const response = await apiClient.get<{ cameras: string[] }>('/api/camera/cameras');
       setCameras(response.data.cameras);
     } catch (error) {
-      console.error('Fehler beim Laden der Kameras:', error);
+      console.error('Failed to load cameras:', error);
     }
   }, []);
 
@@ -36,7 +36,7 @@ export default function CameraPage() {
       const response = await apiClient.get<{ events: CameraEvent[] }>('/api/camera/events', { params });
       setEvents(response.data.events);
     } catch (error) {
-      console.error('Fehler beim Laden der Events:', error);
+      console.error('Failed to load camera events:', error);
     } finally {
       setLoading(false);
     }

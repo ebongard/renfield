@@ -44,7 +44,7 @@ export default function HomeAssistantPage() {
       const response = await apiClient.get<{ states: HaEntity[] }>('/api/homeassistant/states');
       setEntities(response.data.states);
     } catch (error) {
-      console.error('Fehler beim Laden der Entities:', error);
+      console.error('Failed to load Home Assistant entities:', error);
     } finally {
       setLoading(false);
     }
@@ -78,7 +78,7 @@ export default function HomeAssistantPage() {
       await apiClient.post(`/api/homeassistant/toggle/${entityId}`);
       await loadEntities();
     } catch (error) {
-      console.error('Fehler beim Umschalten:', error);
+      console.error('Failed to toggle Home Assistant entity:', error);
     }
   };
 
