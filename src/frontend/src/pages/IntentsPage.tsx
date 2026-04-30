@@ -4,11 +4,9 @@
  * Admin page showing all available intents and integration status.
  * Useful for debugging and understanding system capabilities.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
@@ -17,6 +15,7 @@ import {
   ChevronDown, ChevronRight, Home, Brain, Camera, Workflow,
   MessageSquare, Puzzle, Server, Code,
 } from 'lucide-react';
+import { useIntentsQuery, useIntentPromptQuery } from '../api/resources/intents';
 
 const INTEGRATION_ICONS: Record<string, LucideIcon> = {
   homeassistant: Home,
@@ -26,113 +25,30 @@ const INTEGRATION_ICONS: Record<string, LucideIcon> = {
   general: MessageSquare,
 };
 
-interface IntentParameter {
-  name: string;
-  required?: boolean;
-}
-
-interface IntentDescriptor {
-  name: string;
-  description: string;
-  parameters: IntentParameter[];
-}
-
-interface Integration {
-  name: string;
-  title: string;
-  enabled: boolean;
-  intent_count: number;
-  intents: IntentDescriptor[];
-}
-
-interface PluginIntent {
-  name: string;
-  description: string;
-  plugin: string;
-}
-
-interface McpToolIntent {
-  intent: string;
-  description: string;
-  server?: string;
-}
-
-interface IntentsStatus {
-  total_intents: number;
-  enabled_integrations: number;
-  integrations: Integration[];
-  plugins?: PluginIntent[];
-  mcp_tools?: McpToolIntent[];
-}
-
-interface PromptData {
-  language: string;
-  intent_types: string;
-  examples?: string;
-}
-
 export default function IntentsPage() {
   const { t, i18n } = useTranslation();
-  const { getAccessToken } = useAuth();
+  const lang = i18n.language || 'de';
 
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<IntentsStatus | null>(null);
+  const intentsQuery = useIntentsQuery(lang);
+  const status = intentsQuery.data;
+
   const [expandedIntegrations, setExpandedIntegrations] = useState<Set<string>>(new Set());
   const [showPrompt, setShowPrompt] = useState(false);
-  const [promptData, setPromptData] = useState<PromptData | null>(null);
+  const promptQuery = useIntentPromptQuery(lang, showPrompt);
+  const promptData = promptQuery.data;
 
-  // Load intent status
-  const loadStatus = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-
-    try {
-      const token = await getAccessToken();
-      const lang = i18n.language || 'de';
-      const response = await apiClient.get<IntentsStatus>(`/api/intents/status?lang=${lang}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
-      setStatus(response.data);
-
-      // Auto-expand enabled integrations
+  // Auto-expand enabled integrations once status arrives
+  useEffect(() => {
+    if (status?.integrations) {
       const enabled = new Set(
-        response.data.integrations
-          .filter(i => i.enabled)
-          .map(i => i.name)
+        status.integrations.filter((i) => i.enabled).map((i) => i.name),
       );
       setExpandedIntegrations(enabled);
-    } catch (err) {
-      console.error('Failed to load intent status:', err);
-      setError(t('intents.failedToLoad'));
-    } finally {
-      setLoading(false);
     }
-  }, [getAccessToken, i18n.language, t]);
+  }, [status]);
 
-  useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
-
-  // Load prompt for debugging
-  const loadPrompt = async () => {
-    try {
-      const token = await getAccessToken();
-      const lang = i18n.language || 'de';
-      const response = await apiClient.get<PromptData>(`/api/intents/prompt?lang=${lang}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      setPromptData(response.data);
-      setShowPrompt(true);
-    } catch (err) {
-      console.error('Failed to load prompt:', err);
-    }
-  };
-
-  // Toggle integration expansion
   const toggleIntegration = (name: string) => {
-    setExpandedIntegrations(prev => {
+    setExpandedIntegrations((prev) => {
       const next = new Set(prev);
       if (next.has(name)) {
         next.delete(name);
@@ -143,8 +59,7 @@ export default function IntentsPage() {
     });
   };
 
-  // Render loading state
-  if (loading) {
+  if (intentsQuery.isLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <Loader className="w-8 h-8 animate-spin text-blue-500" />
@@ -152,15 +67,14 @@ export default function IntentsPage() {
     );
   }
 
-  // Render error state
-  if (error) {
+  if (intentsQuery.errorMessage) {
     return (
       <div className="p-4">
         <Alert variant="error">
           <span className="flex items-center gap-3">
-            <span className="flex-1">{error}</span>
+            <span className="flex-1">{intentsQuery.errorMessage}</span>
             <button
-              onClick={loadStatus}
+              onClick={() => intentsQuery.refetch()}
               className="btn-icon btn-icon-ghost ml-auto"
             >
               <RefreshCw className="w-4 h-4" />
@@ -173,18 +87,17 @@ export default function IntentsPage() {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <PageHeader icon={Zap} title={t('intents.title')} subtitle={t('intents.subtitle')}>
           <button
-            onClick={loadPrompt}
+            onClick={() => setShowPrompt(true)}
             className="btn btn-secondary flex items-center gap-2"
           >
             <Code className="w-4 h-4" />
             {t('intents.viewPrompt')}
           </button>
           <button
-            onClick={loadStatus}
+            onClick={() => intentsQuery.refetch()}
             className="btn btn-secondary flex items-center gap-2"
           >
             <RefreshCw className="w-4 h-4" />
@@ -193,7 +106,6 @@ export default function IntentsPage() {
         </PageHeader>
       </div>
 
-      {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <div className="card p-4">
           <div className="text-3xl font-bold text-blue-600 dark:text-blue-400">
@@ -229,7 +141,6 @@ export default function IntentsPage() {
         </div>
       </div>
 
-      {/* Integrations List */}
       <div className="space-y-4">
         <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
           {t('intents.coreIntegrations')}
@@ -242,19 +153,14 @@ export default function IntentsPage() {
           return (
             <div
               key={integration.name}
-              className={`card overflow-hidden ${
-                !integration.enabled ? 'opacity-60' : ''
-              }`}
+              className={`card overflow-hidden ${!integration.enabled ? 'opacity-60' : ''}`}
             >
-              {/* Integration Header */}
               <button
                 onClick={() => toggleIntegration(integration.name)}
                 className="w-full p-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors"
               >
                 <div className="flex items-center gap-3">
-                  <Icon className={`w-5 h-5 ${
-                    integration.enabled ? 'text-blue-500' : 'text-gray-400'
-                  }`} />
+                  <Icon className={`w-5 h-5 ${integration.enabled ? 'text-blue-500' : 'text-gray-400'}`} />
                   <div className="text-left">
                     <div className="font-medium text-gray-900 dark:text-white">
                       {integration.title}
@@ -284,7 +190,6 @@ export default function IntentsPage() {
                 </div>
               </button>
 
-              {/* Intent List */}
               {isExpanded && (
                 <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                   <table className="w-full text-sm">
@@ -339,8 +244,7 @@ export default function IntentsPage() {
           );
         })}
 
-        {/* Plugins Section */}
-        {status?.plugins?.length > 0 && (
+        {status?.plugins && status.plugins.length > 0 && (
           <>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mt-8">
               <Puzzle className="w-5 h-5 inline-block mr-2 text-purple-500" />
@@ -384,8 +288,7 @@ export default function IntentsPage() {
           </>
         )}
 
-        {/* MCP Tools Section */}
-        {status?.mcp_tools?.length > 0 && (
+        {status?.mcp_tools && status.mcp_tools.length > 0 && (
           <>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white mt-8">
               <Server className="w-5 h-5 inline-block mr-2 text-orange-500" />
@@ -430,7 +333,6 @@ export default function IntentsPage() {
         )}
       </div>
 
-      {/* Prompt Modal */}
       {showPrompt && promptData && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-4xl w-full max-h-[80vh] overflow-hidden flex flex-col">

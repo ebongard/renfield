@@ -3,11 +3,10 @@
  *
  * Admin page for managing roles and permissions.
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useAuth } from '../context/AuthContext';
-import apiClient, { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
@@ -17,19 +16,18 @@ import {
   Shield, Plus, Pencil, Trash2, Loader,
   Lock, RefreshCw, ChevronDown, ChevronRight,
 } from 'lucide-react';
+import {
+  useRolesQuery,
+  useCreateRole,
+  useUpdateRole,
+  useDeleteRole,
+  type Role,
+} from '../api/resources/roles';
 
 interface PermissionCategoryDef {
   description: string;
   permissions: string[];
   feature?: string;
-}
-
-interface Role {
-  id: number;
-  name: string;
-  description?: string | null;
-  permissions: string[];
-  is_system?: boolean;
 }
 
 interface RoleFormData {
@@ -97,14 +95,18 @@ const PERMISSION_DESCRIPTIONS: Record<string, string> = {
 
 export default function RolesPage() {
   const { t } = useTranslation();
-  const { getAccessToken, isFeatureEnabled } = useAuth();
+  const { isFeatureEnabled } = useAuth();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [roles, setRoles] = useState<Role[]>([]);
-  const [, setAllPermissions] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const rolesQuery = useRolesQuery();
+  const roles = rolesQuery.data ?? [];
+
+  const createRole = useCreateRole();
+  const updateRole = useUpdateRole();
+  const deleteRole = useDeleteRole();
+
   const [success, setSuccess] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
   // Modal states
   const [showModal, setShowModal] = useState(false);
@@ -116,44 +118,22 @@ export default function RolesPage() {
     description: '',
     permissions: [],
   });
-  const [formLoading, setFormLoading] = useState(false);
   const [expandedCategories, setExpandedCategories] = useState<Record<string, boolean>>({});
 
-  // Load data
-  const loadData = useCallback(async () => {
-    try {
-      setLoading(true);
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-
-      const [rolesRes, permsRes] = await Promise.all([
-        apiClient.get<Role[]>('/api/roles', { headers }),
-        apiClient.get<string[]>('/api/auth/permissions', { headers }),
-      ]);
-
-      setRoles(Array.isArray(rolesRes.data) ? rolesRes.data : []);
-      setAllPermissions(Array.isArray(permsRes.data) ? permsRes.data : []);
-    } catch (err) {
-      setError(extractApiError(err, t('roles.failedToLoad')));
-    } finally {
-      setLoading(false);
-    }
-  }, [getAccessToken, t]);
-
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  const error = rolesQuery.errorMessage ?? mutationError;
+  const loading = rolesQuery.isLoading;
+  const formLoading = createRole.isPending || updateRole.isPending;
 
   // Auto-clear alerts
   useEffect(() => {
-    if (error || success) {
+    if (mutationError || success) {
       const timer = setTimeout(() => {
-        setError(null);
+        setMutationError(null);
         setSuccess(null);
       }, 5000);
       return () => clearTimeout(timer);
     }
-  }, [error, success]);
+  }, [mutationError, success]);
 
   // Toggle category expansion
   const toggleCategory = (category: string) => {
@@ -233,39 +213,34 @@ export default function RolesPage() {
   // Submit form
   const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setFormLoading(true);
+    const data = {
+      name: formData.name,
+      description: formData.description || null,
+      permissions: formData.permissions,
+    };
 
     try {
-      const token = getAccessToken();
-      const headers = { Authorization: `Bearer ${token}` };
-
-      const data = {
-        name: formData.name,
-        description: formData.description || null,
-        permissions: formData.permissions
-      };
-
       if (editingRole) {
-        await apiClient.patch(`/api/roles/${editingRole.id}`, data, { headers });
+        await updateRole.mutateAsync({ id: editingRole.id, input: data });
         setSuccess(t('roles.roleUpdated'));
       } else {
-        await apiClient.post('/api/roles', data, { headers });
+        await createRole.mutateAsync(data);
         setSuccess(t('roles.roleCreated'));
       }
-
       setShowModal(false);
-      loadData();
-    } catch (err) {
-      setError(extractApiError(err, t('roles.failedToSave')));
-    } finally {
-      setFormLoading(false);
+    } catch {
+      setMutationError(
+        editingRole
+          ? updateRole.errorMessage ?? t('roles.failedToSave')
+          : createRole.errorMessage ?? t('roles.failedToSave'),
+      );
     }
   };
 
   // Delete role
   const handleDelete = async (role: Role) => {
     if (role.is_system) {
-      setError(t('roles.systemRoleCannotDelete'));
+      setMutationError(t('roles.systemRoleCannotDelete'));
       return;
     }
 
@@ -279,14 +254,10 @@ export default function RolesPage() {
     if (!confirmed) return;
 
     try {
-      const token = getAccessToken();
-      await apiClient.delete(`/api/roles/${role.id}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await deleteRole.mutateAsync(role.id);
       setSuccess(t('roles.roleDeleted'));
-      loadData();
-    } catch (err) {
-      setError(extractApiError(err, t('roles.failedToDelete')));
+    } catch {
+      setMutationError(deleteRole.errorMessage ?? t('roles.failedToDelete'));
     }
   };
 
@@ -323,7 +294,7 @@ export default function RolesPage() {
           <Plus className="w-4 h-4" />
           <span>{t('roles.createRole')}</span>
         </button>
-        <button onClick={loadData} className="btn btn-secondary flex items-center space-x-2">
+        <button onClick={() => rolesQuery.refetch()} className="btn btn-secondary flex items-center space-x-2">
           <RefreshCw className="w-4 h-4" />
           <span>{t('common.refresh')}</span>
         </button>
