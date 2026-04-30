@@ -333,7 +333,7 @@ class TestPiperServiceMultiVoice:
 
         with patch.object(PiperService, '_check_piper_available', return_value=True):
             with patch('services.piper_service.settings') as mock_settings:
-                mock_settings.piper_voice = "de_DE-thorsten-high"
+                mock_settings.piper_default_voice = "de_DE-thorsten-high"
                 mock_settings.piper_voice_map = {
                     "de": "de_DE-thorsten-high",
                     "en": "en_US-amy-medium"

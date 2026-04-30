@@ -18,7 +18,7 @@ class PiperService:
     """Service für Text-to-Speech mit Piper"""
 
     def __init__(self):
-        self.default_voice = settings.piper_voice
+        self.default_voice = settings.piper_default_voice
         self.voice_map = settings.piper_voice_map
         self.default_language = settings.default_language
         self.available = self._check_piper_available()

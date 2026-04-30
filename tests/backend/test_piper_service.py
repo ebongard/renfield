@@ -24,12 +24,12 @@ from services.piper_service import PiperService
 
 
 def _make_mock_settings(
-    piper_voice="de_DE-thorsten-high",
+    piper_default_voice="de_DE-thorsten-high",
     piper_voice_map=None,
     default_language="de",
 ):
     s = MagicMock()
-    s.piper_voice = piper_voice
+    s.piper_default_voice = piper_default_voice
     s.piper_voice_map = piper_voice_map or {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
     s.default_language = default_language
     return s

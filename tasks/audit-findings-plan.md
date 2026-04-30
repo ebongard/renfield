@@ -191,10 +191,10 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `tsconfig.json` has `strict: false`
 - Fix: Enable strict mode gradually (start with new files)
 
-### E16. Legacy config fields (dead code)
-- `ollama_model` (replaced by ollama_chat_model), `piper_voice` (replaced by piper_voices)
-- `plugins_enabled`, `plugins_dir`, `music_enabled`, `spotify_*` (MCP replaced plugins)
-- Fix: Deprecate and remove in next major version
+### E16. Legacy config fields (dead code) — RESOLVED
+- `plugins_enabled`, `plugins_dir`, `music_enabled`, `spotify_*` — already removed from `config.py` and `.env.example` in earlier work; no usages remained.
+- `piper_voice` — renamed to `piper_default_voice` (env: `PIPER_DEFAULT_VOICE`) to make its role explicit: fallback voice when the requested language has no entry in `piper_voices`. Not dead code, just a misleading name.
+- `ollama_model` — re-classified: NOT dead. It is the global model fallback referenced by 13+ services as `settings.X_model or settings.ollama_model` (chat_handler, knowledge_graph_service, kg_retrieval, conversation_memory_service, agent_service, agent_router, orchestrator, notification_service, federation_query_responder, paperless_audit_service, ollama_service, main health check). The original audit's claim that `ollama_chat_model` replaces it is wrong — the two coexist as fallback-chain roles.
 
 ### E17. Redis URL not parameterized in docker-compose
 - `docker-compose.yml:77` — hardcoded `redis://redis:6379`
@@ -257,7 +257,7 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - [ ] E14: ESLint React version
 
 ### Phase 5: Cleanup
-- [ ] E16: Remove legacy config fields
+- [x] E16: Legacy config fields — `plugins_*`/`music_enabled`/`spotify_*` already gone; `piper_voice` renamed to `piper_default_voice`; `ollama_model` re-classified as intentional fallback infrastructure (not dead)
 - [ ] E4-E9: Remaining hardcoded values to Settings
 - [ ] E13: ChatPage prop drilling → Context
 - [ ] E15: Enable TypeScript strict mode

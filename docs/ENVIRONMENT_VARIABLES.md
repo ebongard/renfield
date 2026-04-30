@@ -144,19 +144,19 @@ SUPPORTED_LANGUAGES=de,en
 # Whisper STT Modell
 WHISPER_MODEL=base
 
-# Piper TTS Voice (Standard-Stimme)
-PIPER_VOICE=de_DE-thorsten-high
-
 # Piper Multi-Voice Konfiguration (pro Sprache)
 PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
+
+# Fallback-Stimme, wenn die angeforderte Sprache nicht in PIPER_VOICES enthalten ist
+PIPER_DEFAULT_VOICE=de_DE-thorsten-high
 ```
 
 **Defaults:**
 - `DEFAULT_LANGUAGE`: `de`
 - `SUPPORTED_LANGUAGES`: `de,en`
 - `WHISPER_MODEL`: `base`
-- `PIPER_VOICE`: `de_DE-thorsten-high`
-- `PIPER_VOICES`: (nicht gesetzt, nutzt `PIPER_VOICE` für alle Sprachen)
+- `PIPER_VOICES`: `de:de_DE-thorsten-high,en:en_US-amy-medium`
+- `PIPER_DEFAULT_VOICE`: `de_DE-thorsten-high` (Fallback, wenn die Sprache nicht in `PIPER_VOICES` ist)
 
 **Whisper Modelle:**
 - `tiny` - Sehr schnell, niedrige Qualität
@@ -1174,8 +1174,8 @@ OLLAMA_MODEL=qwen3:14b
 DEFAULT_LANGUAGE=de
 SUPPORTED_LANGUAGES=de,en
 WHISPER_MODEL=base
-PIPER_VOICE=de_DE-thorsten-high
-# PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium  # Multi-Voice
+PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
+PIPER_DEFAULT_VOICE=de_DE-thorsten-high  # Fallback for languages not in PIPER_VOICES
 
 # -----------------------------------------------------------------------------
 # Integrationen

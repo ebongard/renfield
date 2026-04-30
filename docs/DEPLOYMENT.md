@@ -147,7 +147,8 @@ OLLAMA_NUM_CTX=32768
 DEFAULT_LANGUAGE=de
 SUPPORTED_LANGUAGES=de,en
 WHISPER_MODEL=base
-PIPER_VOICE=de_DE-thorsten-high
+PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
+PIPER_DEFAULT_VOICE=de_DE-thorsten-high
 
 # -----------------------------------------------------------------------------
 # Home Assistant Integration

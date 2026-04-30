@@ -103,8 +103,8 @@ class Settings(BaseSettings):
     supported_languages: str = "de,en"  # Comma-separated list of supported languages
     whisper_model: str = "base"
     whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
-    piper_voice: str = "de_DE-thorsten-high"  # Default voice (legacy)
     piper_voices: str = "de:de_DE-thorsten-high,en:en_US-amy-medium"  # Language:Voice mapping
+    piper_default_voice: str = "de_DE-thorsten-high"  # Fallback voice when requested language has no entry in piper_voices
 
     # Audio Preprocessing (for better STT quality)
     whisper_preprocess_enabled: bool = True       # Enable audio preprocessing before Whisper
@@ -463,9 +463,9 @@ class Settings(BaseSettings):
             if ":" in pair:
                 lang, voice = pair.strip().split(":", 1)
                 voice_map[lang.strip().lower()] = voice.strip()
-        # Ensure default language has a voice (fallback to piper_voice)
+        # Ensure default language has a voice (fallback to piper_default_voice)
         if self.default_language not in voice_map:
-            voice_map[self.default_language] = self.piper_voice
+            voice_map[self.default_language] = self.piper_default_voice
         return voice_map
 
     @model_validator(mode="after")
