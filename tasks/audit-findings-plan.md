@@ -13,7 +13,7 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 | EMPFEHLUNG | 18 | 16 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E12, E13, E14, E16, E17, E18. **E11** foundation + 22 of 23 list-fetching surfaces migrated (#504 reference pages + e11-react-query branch); only `PaperlessAuditPage` remains for a dedicated follow-up session. Open: **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions; warrants its own dedicated session). See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E1, E2, E3, E4, E5, E6, E7, E8, E9, E10, E11, E12, E13, E14, E16, E17, E18. Open: **E15** (TS strict mode — 31 errors to fix, ~70% null-check additions; warrants its own dedicated session). See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -151,7 +151,7 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - New `src/frontend/src/utils/env.ts` centralizes the fallback with `getApiBaseUrl()` and `getWebSocketUrl()`. Both warn on console (error level in PROD builds, warn in DEV) when the env var is unset, and warn at most once per page load.
 - All three call sites migrated: `utils/axios.ts:5`, `pages/ChatPage/hooks/useChatWebSocket.ts:141`, `hooks/useDeviceConnection.ts:170`. The `VITE_WS_URL` "includes-/ws" convention (per `.env.example` + 4 compose files) is preserved.
 
-### E11. React Query / SWR for data fetching — IN PROGRESS (foundation + 22 of 23 list-fetching surfaces migrated)
+### E11. React Query / SWR for data fetching — RESOLVED (all 23 list-fetching surfaces migrated)
 - #504 on 2026-04-30 landed `@tanstack/react-query` v5 with hardened defaults (mutations.retry: 0, queries.retry bails on 4xx, refetchOnWindowFocus: false), `src/api/queryClient.ts` + `keys.ts` (centralized factories with STALE.{LIVE,DEFAULT,CONFIG} taxonomy) + `hooks.ts` (`useApiQuery`/`useApiMutation` wrappers binding `extractApiError`/`extractFieldErrors` + i18n into RQ's surface).
 - Provider order: `ErrorBoundary → ThemeProvider → AuthProvider → QueryClientProvider → DeviceProvider` so `AuthContext.tsx:226-263` interceptors install before any RQ fetcher fires.
 - Reference pages from #504: `MemoryPage`, `RolesPage`, `IntentsPage`, `SettingsPage`, `MaintenancePage`.
@@ -160,8 +160,8 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - `useChatSessions`: rewritten on top of React Query at `src/frontend/src/api/resources/chatSessions.ts` with the public shape preserved exactly (`{ conversations, loading, error, refreshConversations, deleteConversation, loadConversationHistory, addConversation, updateConversationPreview }`). Mutations use `setQueryData` for optimistic add/update/delete. `src/frontend/src/hooks/useChatSessions.ts` is now a thin re-export shim so consumers (`ChatContext`, `ChatSidebar`) need no changes; `groupConversationsByDate` lives there.
 - Convention: error fallbacks. `useApiQuery`/`useApiMutation` return server-side `detail` when present, falling back to the i18n key only when the server didn't supply one. Two existing tests (RoomsPage, SpeakersPage) sent `{ detail }` in 500 responses and expected the localized fallback — those were updated to send a null body so the fallback path actually runs (consistent with FederationAuditPage's pattern from #504).
 - Out of scope (skipped intentionally): `useDocumentPolling.ts`, `useDocumentUpload.ts`, `useChatWebSocket.ts`, `AuthContext` core, `PairResponderModal`, `PairInitiatorModal`, `knowledge-graph/GraphView` — multi-step state machines, file-upload `onUploadProgress`, or WebSocket-driven update models that don't fit RQ's request/response shape.
-- Remaining: **PaperlessAuditPage** (1450 LOC, 7 tabs, polling, multiple endpoints). Pragmatic deferral — the handover already ordered this last and a dedicated session is the cleanest way to land it without churn.
-- Plan: `~/.claude/plans/pure-questing-blanket.md` (eng review CLEAR + outside-voice addressed). Branch: `e11-react-query`.
+- 2026-04-30 final: `PaperlessAuditPage` (1450 LOC, 7 tabs) migrated on its own branch `e11-paperless-audit`. Status query uses `refetchInterval` driven by the query's own `running` flag (polls 2s while running, idle otherwise — no manual setInterval). Review/OCR/Completeness tabs share the `/results` endpoint with distinct queryKey segments. Review search is debounced via a separate `debouncedSearch` state so the query key only changes after 300ms. Stats/DuplicateGroups/CorrespondentClusters gated by `activeTab`. 503 ("Paperless not configured") detection inspects each query's `AxiosError` so the page collapses to a banner when the integration isn't wired up.
+- Plan: `~/.claude/plans/pure-questing-blanket.md` (eng review CLEAR + outside-voice addressed).
 
 ### E12. i18n: 13 hardcoded German strings — RESOLVED
 - ErrorBoundary (5) and ConfirmDialog (4) — resolved during W10 TypeScript migration (#487); both files now use `useTranslation()` for every user-facing string.
@@ -243,7 +243,7 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] W9: `React.lazy` + `Suspense` for admin pages — `App.tsx:1,15-23+`
 - [x] W10: TypeScript migration — 100% `.tsx`/`.ts` coverage in `src/frontend/src/` (#487)
 - [x] W11: `.prettierrc` + `.prettierignore` + `format` script in `package.json`
-- [~] E11: React Query for data fetching — foundation + 22 of 23 list-fetching surfaces migrated (#504 + e11-react-query branch); only PaperlessAuditPage remains
+- [x] E11: React Query for data fetching — all 23 list-fetching surfaces migrated (#504 reference pages + e11-react-query bulk + e11-paperless-audit final)
 - [x] E12: i18n hardcoded strings — ErrorBoundary/ConfirmDialog cleared by W10; ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up
 - [x] E14: ESLint React version — verified `'detect'` already in `.eslintrc.cjs:22` (audit was stale)
 
@@ -255,4 +255,4 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - [x] E18: Frigate MQTT broker/port from Settings — defensive hygiene before MQTT consumer ships
 - [x] E13: ChatPage prop drilling — ChatProvider wraps the page, ChatInput takes 0 props (verified, audit was stale)
 - [ ] E15: Enable TypeScript strict mode (~31 errors mostly null-checks; deferred to dedicated session)
-- [~] E11: React Query for data fetching — foundation + 22 of 23 list-fetching surfaces migrated (#504 + e11-react-query branch); only PaperlessAuditPage remains
+- [x] E11: React Query for data fetching — all 23 list-fetching surfaces migrated (#504 reference pages + e11-react-query bulk + e11-paperless-audit final)
