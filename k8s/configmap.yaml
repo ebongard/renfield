@@ -39,7 +39,8 @@ data:
   AGENT_MODEL: "qwen3:14b"
   EMBEDDING_DIMENSION: "2560"
   WHISPER_MODEL: "small"
-  PIPER_VOICE: "de_DE-thorsten-high"
+  PIPER_VOICES: "de:de_DE-thorsten-high,en:en_US-amy-medium"
+  PIPER_DEFAULT_VOICE: "de_DE-thorsten-high"
 
   # RAG
   RAG_ENABLED: "true"

@@ -91,7 +91,8 @@ FRIGATE_URL=http://192.168.1.100:5000
 DEFAULT_LANGUAGE=de
 OLLAMA_MODEL=llama3.2:3b
 WHISPER_MODEL=base
-PIPER_VOICE=de_DE-thorsten-high
+PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
+PIPER_DEFAULT_VOICE=de_DE-thorsten-high
 
 # Externe Ollama-Instanz (optional)
 # OLLAMA_URL=http://cuda.local:11434
