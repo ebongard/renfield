@@ -1,15 +1,18 @@
 /**
  * Analytics tab — user/time-range selectors + heatmap + predictions.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { BarChart3, RefreshCw } from 'lucide-react';
 
-import apiClient from '../../utils/axios';
 import type { HeatmapCell } from './PresenceHeatmap';
 import PresenceHeatmap from './PresenceHeatmap';
 import type { PredictionRow } from './PresencePredictions';
 import PresencePredictions from './PresencePredictions';
+import {
+  usePresenceHeatmapQuery,
+  usePresencePredictionsQuery,
+} from '../../api/resources/presence';
 
 export interface PresenceUser {
   id: string | number;
@@ -32,55 +35,22 @@ interface AnalyticsTabProps {
   users: PresenceUser[];
 }
 
-interface HeatmapQuery {
-  days: number;
-  user_id?: string | number;
-}
-
 export default function AnalyticsTab({ users }: AnalyticsTabProps) {
   const { t } = useTranslation();
 
   const [selectedUserId, setSelectedUserId] = useState<string>('');
   const [days, setDays] = useState<number>(30);
-  const [heatmapData, setHeatmapData] = useState<HeatmapCell[]>([]);
-  const [predictionsData, setPredictionsData] = useState<PredictionRow[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
 
-  const loadHeatmap = useCallback(async (): Promise<void> => {
-    try {
-      const params: HeatmapQuery = { days };
-      if (selectedUserId) params.user_id = selectedUserId;
-      const res = await apiClient.get<HeatmapCell[]>('/api/presence/analytics/heatmap', { params });
-      setHeatmapData(res.data ?? []);
-    } catch {
-      setHeatmapData([]);
-    }
-  }, [days, selectedUserId]);
+  const heatmapQuery = usePresenceHeatmapQuery<HeatmapCell>({ days, userId: selectedUserId });
+  const predictionsQuery = usePresencePredictionsQuery<PredictionRow>({ days, userId: selectedUserId });
+  const heatmapData = heatmapQuery.data ?? [];
+  const predictionsData = predictionsQuery.data ?? [];
+  const loading = heatmapQuery.isFetching || predictionsQuery.isFetching;
 
-  const loadPredictions = useCallback(async (): Promise<void> => {
-    if (!selectedUserId) {
-      setPredictionsData([]);
-      return;
-    }
-    try {
-      const res = await apiClient.get<PredictionRow[]>('/api/presence/analytics/predictions', {
-        params: { user_id: selectedUserId, days },
-      });
-      setPredictionsData(res.data ?? []);
-    } catch {
-      setPredictionsData([]);
-    }
-  }, [selectedUserId, days]);
-
-  const loadAll = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    await Promise.all([loadHeatmap(), loadPredictions()]);
-    setLoading(false);
-  }, [loadHeatmap, loadPredictions]);
-
-  useEffect(() => {
-    loadAll();
-  }, [loadAll]);
+  const reload = () => {
+    heatmapQuery.refetch();
+    predictionsQuery.refetch();
+  };
 
   return (
     <div className="space-y-6">
@@ -123,7 +93,7 @@ export default function AnalyticsTab({ users }: AnalyticsTabProps) {
         </div>
 
         <button
-          onClick={loadAll}
+          onClick={reload}
           disabled={loading}
           className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
           title={t('common.refresh')}

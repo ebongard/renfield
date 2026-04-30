@@ -4,7 +4,6 @@ import {
   Brain, Link2, BarChart3, Search, Trash2, Edit3, Merge, X,
   ChevronLeft, ChevronRight, ArrowRight, Lock, Users, Plus, GitBranch,
 } from 'lucide-react';
-import apiClient from '../utils/axios';
 import { extractApiError } from '../utils/axios';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
@@ -13,10 +12,26 @@ import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
 import { useTheme } from '../context/ThemeContext';
+import {
+  useKgEntitiesQuery,
+  useKgRelationsQuery,
+  useKgStatsQuery,
+  useKgCircleTiersQuery,
+  useKgEntitySearch,
+  useUpdateKgEntity,
+  useDeleteKgEntity,
+  useDeleteKgRelation,
+  useMergeKgEntities,
+  useUpdateKgEntityTier,
+  useCreateKgRelation,
+  useUpdateKgRelation,
+  type EntityType,
+  type KgEntity,
+  type KgRelation,
+} from '../api/resources/knowledgeGraph';
 
 const GraphView = lazy(() => import('../components/knowledge-graph/GraphView'));
 
-type EntityType = 'person' | 'place' | 'organization' | 'thing' | 'event' | 'concept';
 type Tab = 'entities' | 'relations' | 'stats' | 'graph';
 
 const ENTITY_TYPES: EntityType[] = ['person', 'place', 'organization', 'thing', 'event', 'concept'];
@@ -32,72 +47,25 @@ const TYPE_BADGE_COLORS: Record<EntityType, BadgeColor> = {
 
 const TABS: Tab[] = ['entities', 'relations', 'stats', 'graph'];
 
-interface KgEntity {
-  id: number;
-  name: string;
-  entity_type: EntityType;
-  description?: string | null;
-  circle_tier?: number;
-  mention_count?: number;
-  last_seen_at?: string;
-}
-
-interface KgEntityRef {
-  id: number;
-  name: string;
-  entity_type?: EntityType;
-}
-
-interface KgRelation {
-  id: number;
-  predicate: string;
-  confidence?: number;
-  subject?: KgEntityRef;
-  object?: KgEntityRef;
-}
-
-interface CircleTierInfo {
-  tier: number;
-  name: string;
-  label: string;
-  description?: string;
-}
-
-interface KgStats {
-  entity_count?: number;
-  relation_count?: number;
-  entity_types?: Record<string, number>;
-  top_entities?: KgEntity[];
-}
-
 export default function KnowledgeGraphPage() {
   const { t } = useTranslation();
   const { theme } = useTheme();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
   const [activeTab, setActiveTab] = useState<Tab>('entities');
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
   // Entities state
-  const [entities, setEntities] = useState<KgEntity[]>([]);
-  const [entitiesTotal, setEntitiesTotal] = useState(0);
   const [entitiesPage, setEntitiesPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<EntityType | ''>('');
   const [tierFilter, setTierFilter] = useState<string>('all');
-  const [availableTiers, setAvailableTiers] = useState<CircleTierInfo[]>([]);
   const [tierMenuEntity, setTierMenuEntity] = useState<KgEntity | null>(null);
 
   // Relations state
-  const [relations, setRelations] = useState<KgRelation[]>([]);
-  const [relationsTotal, setRelationsTotal] = useState(0);
   const [relationsPage, setRelationsPage] = useState(1);
   const [entityFilter, setEntityFilter] = useState('');
-
-  // Stats state
-  const [stats, setStats] = useState<KgStats | null>(null);
 
   // Edit modal
   const [showEditModal, setShowEditModal] = useState(false);
@@ -134,88 +102,53 @@ export default function KnowledgeGraphPage() {
     }
   }, [error, success]);
 
-  // Load circle tiers
-  const loadTiers = async () => {
-    try {
-      const response = await apiClient.get<{ tiers: CircleTierInfo[] }>('/api/knowledge-graph/circle-tiers', {
-        params: { lang: t('lang') === 'de' ? 'de' : 'en' },
-      });
-      setAvailableTiers(response.data.tiers);
-    } catch (err) {
-      console.error('Failed to load circle tiers:', err);
-      setAvailableTiers([
-        { tier: 0, name: 'self', label: t('knowledgeGraph.personal'), description: '' },
-        { tier: 2, name: 'household', label: t('knowledgeGraph.family'), description: '' },
-        { tier: 4, name: 'public', label: t('knowledgeGraph.public'), description: '' },
-      ]);
-    }
-  };
+  const tiersQuery = useKgCircleTiersQuery(t('lang') === 'de' ? 'de' : 'en');
+  const fallbackTiers = [
+    { tier: 0, name: 'self', label: t('knowledgeGraph.personal'), description: '' },
+    { tier: 2, name: 'household', label: t('knowledgeGraph.family'), description: '' },
+    { tier: 4, name: 'public', label: t('knowledgeGraph.public'), description: '' },
+  ];
+  const availableTiers = tiersQuery.data ?? (tiersQuery.isError ? fallbackTiers : []);
 
-  useEffect(() => {
-    loadTiers();
-  }, []);
+  const entitiesQuery = useKgEntitiesQuery(
+    {
+      page: entitiesPage,
+      size: PAGE_SIZE,
+      type: typeFilter || undefined,
+      search: searchQuery || undefined,
+      circleTier: tierFilter,
+    },
+    activeTab === 'entities',
+  );
+  const entities = entitiesQuery.data?.entities ?? [];
+  const entitiesTotal = entitiesQuery.data?.total ?? 0;
 
-  // Load entities
-  const loadEntities = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      params.set('page', String(entitiesPage));
-      params.set('size', String(PAGE_SIZE));
-      if (typeFilter) params.set('type', typeFilter);
-      if (searchQuery) params.set('search', searchQuery);
-      if (tierFilter && tierFilter !== 'all') params.set('circle_tier', tierFilter);
+  const relationsQuery = useKgRelationsQuery(
+    {
+      page: relationsPage,
+      size: PAGE_SIZE,
+      entityId: entityFilter || undefined,
+    },
+    activeTab === 'relations',
+  );
+  const relations = relationsQuery.data?.relations ?? [];
+  const relationsTotal = relationsQuery.data?.total ?? 0;
 
-      const response = await apiClient.get<{ entities: KgEntity[]; total: number }>(`/api/knowledge-graph/entities?${params}`);
-      setEntities(response.data.entities);
-      setEntitiesTotal(response.data.total);
-      setError(null);
-    } catch (err) {
-      setError(t('knowledgeGraph.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  };
+  const statsQuery = useKgStatsQuery(activeTab === 'stats');
+  const stats = statsQuery.data ?? null;
 
-  // Load relations
-  const loadRelations = async () => {
-    try {
-      setLoading(true);
-      const params = new URLSearchParams();
-      params.set('page', String(relationsPage));
-      params.set('size', String(PAGE_SIZE));
-      if (entityFilter) params.set('entity_id', entityFilter);
+  const loading = entitiesQuery.isLoading || relationsQuery.isLoading || statsQuery.isLoading;
+  const queryError = entitiesQuery.errorMessage ?? relationsQuery.errorMessage ?? statsQuery.errorMessage;
+  const displayError = error ?? queryError;
 
-      const response = await apiClient.get<{ relations: KgRelation[]; total: number }>(`/api/knowledge-graph/relations?${params}`);
-      setRelations(response.data.relations);
-      setRelationsTotal(response.data.total);
-      setError(null);
-    } catch (err) {
-      setError(t('knowledgeGraph.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Load stats
-  const loadStats = async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<KgStats>('/api/knowledge-graph/stats');
-      setStats(response.data);
-      setError(null);
-    } catch (err) {
-      setError(t('knowledgeGraph.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'entities') loadEntities();
-    else if (activeTab === 'relations') loadRelations();
-    else if (activeTab === 'stats') loadStats();
-  }, [activeTab, entitiesPage, relationsPage, typeFilter, searchQuery, tierFilter, entityFilter]);
+  const updateEntityMutation = useUpdateKgEntity();
+  const deleteEntityMutation = useDeleteKgEntity();
+  const deleteRelationMutation = useDeleteKgRelation();
+  const mergeEntitiesMutation = useMergeKgEntities();
+  const updateTierMutation = useUpdateKgEntityTier();
+  const createRelationMutation = useCreateKgRelation();
+  const updateRelationMutation = useUpdateKgRelation();
+  const entitySearchMutation = useKgEntitySearch();
 
   // Edit entity
   const openEditModal = (entity: KgEntity) => {
@@ -229,15 +162,17 @@ export default function KnowledgeGraphPage() {
   const handleSaveEntity = async () => {
     if (!editingEntity) return;
     try {
-      await apiClient.put(`/api/knowledge-graph/entities/${editingEntity.id}`, {
-        name: formName,
-        entity_type: formType,
-        description: formDescription || null,
+      await updateEntityMutation.mutateAsync({
+        id: editingEntity.id,
+        patch: {
+          name: formName,
+          entity_type: formType,
+          description: formDescription || null,
+        },
       });
       setShowEditModal(false);
       setSuccess(t('common.success'));
-      loadEntities();
-    } catch (err) {
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -250,10 +185,9 @@ export default function KnowledgeGraphPage() {
     });
     if (!confirmed) return;
     try {
-      await apiClient.delete(`/api/knowledge-graph/entities/${entity.id}`);
+      await deleteEntityMutation.mutateAsync(entity.id);
       setSuccess(t('common.success'));
-      loadEntities();
-    } catch (err) {
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -266,10 +200,9 @@ export default function KnowledgeGraphPage() {
     });
     if (!confirmed) return;
     try {
-      await apiClient.delete(`/api/knowledge-graph/relations/${relation.id}`);
+      await deleteRelationMutation.mutateAsync(relation.id);
       setSuccess(t('common.success'));
-      loadRelations();
-    } catch (err) {
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -295,15 +228,14 @@ export default function KnowledgeGraphPage() {
     });
     if (!confirmed) return;
     try {
-      await apiClient.post('/api/knowledge-graph/entities/merge', {
+      await mergeEntitiesMutation.mutateAsync({
         source_id: mergeSelection[0].id,
         target_id: mergeSelection[1].id,
       });
       setMergeMode(false);
       setMergeSelection([]);
       setSuccess(t('common.success'));
-      loadEntities();
-    } catch (err) {
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -311,18 +243,13 @@ export default function KnowledgeGraphPage() {
   // Update entity circle_tier
   const handleUpdateCircleTier = async (entity: KgEntity, newTier: number) => {
     try {
-      await apiClient.patch(
-        `/api/knowledge-graph/entities/${entity.id}/circle-tier`,
-        { circle_tier: newTier },
-      );
-
+      await updateTierMutation.mutateAsync({ id: entity.id, circleTier: newTier });
       const tierInfo = availableTiers.find((info) => info.tier === newTier);
       setSuccess(
         t('knowledgeGraph.scopeUpdated', { name: entity.name, scope: tierInfo?.label || String(newTier) })
       );
       setTierMenuEntity(null);
-      loadEntities();
-    } catch (err) {
+    } catch {
       setError(t('common.error'));
     }
   };
@@ -336,12 +263,9 @@ export default function KnowledgeGraphPage() {
 
   // Entity search for relation modal
   const searchEntities = async (query: string, setter: (results: KgEntity[]) => void) => {
-    if (!query || query.length < 1) { setter([]); return; }
     try {
-      const response = await apiClient.get<{ entities: KgEntity[] }>('/api/knowledge-graph/entities', {
-        params: { search: query, size: 10 },
-      });
-      setter(response.data.entities || []);
+      const results = await entitySearchMutation.mutateAsync(query);
+      setter(results);
     } catch {
       setter([]);
     }
@@ -350,11 +274,13 @@ export default function KnowledgeGraphPage() {
   useEffect(() => {
     const timer = setTimeout(() => searchEntities(relFormSubjectSearch, setSubjectResults), 300);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [relFormSubjectSearch]);
 
   useEffect(() => {
     const timer = setTimeout(() => searchEntities(relFormObjectSearch, setObjectResults), 300);
     return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [relFormObjectSearch]);
 
   // Open relation edit modal
@@ -398,14 +324,17 @@ export default function KnowledgeGraphPage() {
     }
     try {
       if (editingRelation) {
-        await apiClient.put(`/api/knowledge-graph/relations/${editingRelation.id}`, {
-          predicate: relFormPredicate,
-          confidence: relFormConfidence,
-          subject_id: Number(relFormSubjectId),
-          object_id: Number(relFormObjectId),
+        await updateRelationMutation.mutateAsync({
+          id: editingRelation.id,
+          patch: {
+            predicate: relFormPredicate,
+            confidence: relFormConfidence,
+            subject_id: Number(relFormSubjectId),
+            object_id: Number(relFormObjectId),
+          },
         });
       } else {
-        await apiClient.post('/api/knowledge-graph/relations', {
+        await createRelationMutation.mutateAsync({
           subject_id: Number(relFormSubjectId),
           predicate: relFormPredicate,
           object_id: Number(relFormObjectId),
@@ -414,7 +343,6 @@ export default function KnowledgeGraphPage() {
       }
       setShowRelationModal(false);
       setSuccess(t('common.success'));
-      loadRelations();
     } catch (err) {
       setError(extractApiError(err, t('common.error')));
     }
@@ -431,7 +359,7 @@ export default function KnowledgeGraphPage() {
       <PageHeader icon={Brain} title={t('knowledgeGraph.title')} subtitle={t('knowledgeGraph.subtitle')} />
 
       {/* Messages */}
-      {error && <Alert variant="error">{error}</Alert>}
+      {displayError && <Alert variant="error">{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
       {/* Tabs */}

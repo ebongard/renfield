@@ -1,8 +1,11 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Globe, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
+import {
+  useLanguagePreferenceQuery,
+  useSetLanguagePreference,
+} from '../api/resources/preferences';
 
 type LanguageCode = 'de' | 'en';
 
@@ -30,25 +33,20 @@ export default function LanguageSwitcher({ compact = false }: LanguageSwitcherPr
 
   const currentLanguage = LANGUAGES.find((lang) => lang.code === i18n.language) ?? LANGUAGES[0];
 
+  const enabled = Boolean(authEnabled && isAuthenticated);
+  const languageQuery = useLanguagePreferenceQuery(enabled);
+  const setLanguageMutation = useSetLanguagePreference();
+
   useEffect(() => {
-    const loadUserLanguage = async () => {
-      if (!authEnabled || !isAuthenticated || initialLoadDone.current) return;
-
-      try {
-        const response = await apiClient.get<{ language?: string }>('/api/preferences/language');
-        const userLanguage = response.data.language;
-
-        if (userLanguage && userLanguage !== i18n.language) {
-          await i18n.changeLanguage(userLanguage);
-        }
-        initialLoadDone.current = true;
-      } catch (error) {
-        console.warn('Failed to load language preference:', error);
-      }
-    };
-
-    loadUserLanguage();
-  }, [isAuthenticated, authEnabled, i18n]);
+    if (initialLoadDone.current) return;
+    const userLanguage = languageQuery.data?.language;
+    if (userLanguage && userLanguage !== i18n.language) {
+      i18n.changeLanguage(userLanguage);
+    }
+    if (languageQuery.data !== undefined) {
+      initialLoadDone.current = true;
+    }
+  }, [languageQuery.data, i18n]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -73,22 +71,16 @@ export default function LanguageSwitcher({ compact = false }: LanguageSwitcherPr
     return () => document.removeEventListener('keydown', handleEscape);
   }, []);
 
-  const syncToBackend = useCallback(
-    async (code: LanguageCode) => {
-      if (!authEnabled || !isAuthenticated) return;
-      try {
-        await apiClient.put('/api/preferences/language', { language: code });
-      } catch (error) {
-        console.warn('Failed to sync language preference:', error);
-      }
-    },
-    [isAuthenticated, authEnabled],
-  );
-
   const changeLanguage = async (code: LanguageCode) => {
     await i18n.changeLanguage(code);
     setIsOpen(false);
-    await syncToBackend(code);
+    if (enabled) {
+      try {
+        await setLanguageMutation.mutateAsync(code);
+      } catch {
+        // Non-critical: language already changed locally
+      }
+    }
   };
 
   return (

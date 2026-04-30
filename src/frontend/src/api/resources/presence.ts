@@ -68,6 +68,26 @@ async function fetchPresenceUsers(): Promise<PresenceUser[]> {
   }
 }
 
+interface AnalyticsArgs {
+  days: number;
+  userId: string;
+}
+
+async function fetchHeatmap({ days, userId }: AnalyticsArgs): Promise<unknown[]> {
+  const params: Record<string, unknown> = { days };
+  if (userId) params.user_id = userId;
+  const response = await apiClient.get<unknown[]>('/api/presence/analytics/heatmap', { params });
+  return response.data ?? [];
+}
+
+async function fetchPredictions({ days, userId }: AnalyticsArgs): Promise<unknown[]> {
+  if (!userId) return [];
+  const response = await apiClient.get<unknown[]>('/api/presence/analytics/predictions', {
+    params: { user_id: userId, days },
+  });
+  return response.data ?? [];
+}
+
 async function fetchPresenceStatus(): Promise<{ enabled: boolean }> {
   try {
     const response = await apiClient.get<{ enabled?: boolean }>('/api/presence/status');
@@ -118,6 +138,28 @@ export function usePresenceUsersQuery() {
       queryKey: [...keys.presence.all, 'users'] as const,
       queryFn: fetchPresenceUsers,
       staleTime: STALE.CONFIG,
+    },
+    'common.error',
+  );
+}
+
+export function usePresenceHeatmapQuery<T = unknown>(args: { days: number; userId: string }) {
+  return useApiQuery(
+    {
+      queryKey: keys.presence.analytics(`heatmap:${args.days}:${args.userId}`),
+      queryFn: () => fetchHeatmap(args) as Promise<T[]>,
+      staleTime: STALE.DEFAULT,
+    },
+    'common.error',
+  );
+}
+
+export function usePresencePredictionsQuery<T = unknown>(args: { days: number; userId: string }) {
+  return useApiQuery(
+    {
+      queryKey: keys.presence.analytics(`predictions:${args.days}:${args.userId}`),
+      queryFn: () => fetchPredictions(args) as Promise<T[]>,
+      staleTime: STALE.DEFAULT,
     },
     'common.error',
   );
