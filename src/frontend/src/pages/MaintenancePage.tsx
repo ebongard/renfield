@@ -10,14 +10,21 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { LucideIcon } from 'lucide-react';
-import { useAuth } from '../context/AuthContext';
-import apiClient from '../utils/axios';
-import { extractApiError } from '../utils/axios';
 import {
   Wrench, Search, Database, Bug, Loader, AlertCircle, CheckCircle,
 } from 'lucide-react';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
+import {
+  useReindexFts,
+  useRefreshKeywords,
+  useReembedAll,
+  useTestIntent,
+  type FtsResult,
+  type KwResult,
+  type EmbedResult,
+  type IntentResult,
+} from '../api/resources/maintenance';
 
 interface ActionRowProps {
   title: string;
@@ -79,130 +86,67 @@ function ResultBox({ success, children }: ResultBoxProps) {
 
 export default function MaintenancePage() {
   const { t } = useTranslation();
-  const { getAccessToken } = useAuth();
 
-  interface FtsResult {
-    updated_count?: number;
-    updated?: number;
-    fts_config?: string;
-  }
-  interface KwResult {
-    keywords_count?: number;
-    count?: number;
-    sample?: string[] | string;
-  }
-  interface EmbedResult {
-    model?: string;
-    counts?: Record<string, number>;
-    errors?: string[];
-  }
-  type IntentResult = Record<string, unknown>;
+  const reindex = useReindexFts();
+  const refreshKw = useRefreshKeywords();
+  const reembed = useReembedAll();
+  const intent = useTestIntent();
 
-  // FTS Reindex
-  const [ftsLoading, setFtsLoading] = useState(false);
   const [ftsResult, setFtsResult] = useState<FtsResult | null>(null);
-  const [ftsError, setFtsError] = useState<string | null>(null);
-
-  // HA Keywords
-  const [kwLoading, setKwLoading] = useState(false);
   const [kwResult, setKwResult] = useState<KwResult | null>(null);
-  const [kwError, setKwError] = useState<string | null>(null);
-
-  // Re-embed
-  const [embedLoading, setEmbedLoading] = useState(false);
   const [embedResult, setEmbedResult] = useState<EmbedResult | null>(null);
-  const [embedError, setEmbedError] = useState<string | null>(null);
-
-  // Intent debug
-  const [intentMessage, setIntentMessage] = useState('');
-  const [intentLoading, setIntentLoading] = useState(false);
   const [intentResult, setIntentResult] = useState<IntentResult | null>(null);
-  const [intentError, setIntentError] = useState<string | null>(null);
 
-  const getAuthHeaders = async (): Promise<Record<string, string>> => {
-    const token = await getAccessToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
-
-  // --- Actions ---
+  const [intentMessage, setIntentMessage] = useState('');
 
   const handleReindexFts = async () => {
-    setFtsLoading(true);
     setFtsResult(null);
-    setFtsError(null);
     try {
-      const headers = await getAuthHeaders();
-      const response = await apiClient.post<FtsResult>('/api/knowledge/reindex-fts', null, { headers });
-      setFtsResult(response.data);
-    } catch (err) {
-      setFtsError(extractApiError(err, t('maintenance.errors.reindexFailed')));
-    } finally {
-      setFtsLoading(false);
+      const data = await reindex.mutateAsync();
+      setFtsResult(data);
+    } catch {
+      // errorMessage surfaces via reindex.errorMessage
     }
   };
 
   const handleRefreshKeywords = async () => {
-    setKwLoading(true);
     setKwResult(null);
-    setKwError(null);
     try {
-      const headers = await getAuthHeaders();
-      const response = await apiClient.post<KwResult>('/admin/refresh-keywords', null, { headers });
-      setKwResult(response.data);
-    } catch (err) {
-      setKwError(extractApiError(err, t('maintenance.errors.refreshKeywordsFailed')));
-    } finally {
-      setKwLoading(false);
+      const data = await refreshKw.mutateAsync();
+      setKwResult(data);
+    } catch {
+      // errorMessage surfaces via refreshKw.errorMessage
     }
   };
 
   const handleReembed = async () => {
     if (!window.confirm(t('maintenance.embeddings.confirmReembed'))) return;
-    setEmbedLoading(true);
     setEmbedResult(null);
-    setEmbedError(null);
     try {
-      const headers = await getAuthHeaders();
-      const response = await apiClient.post<EmbedResult>('/admin/reembed', null, {
-        headers,
-        timeout: 1800000, // 30 minutes
-      });
-      setEmbedResult(response.data);
-    } catch (err) {
-      setEmbedError(extractApiError(err, t('maintenance.errors.reembedFailed')));
-    } finally {
-      setEmbedLoading(false);
+      const data = await reembed.mutateAsync();
+      setEmbedResult(data);
+    } catch {
+      // errorMessage surfaces via reembed.errorMessage
     }
   };
 
   const handleTestIntent = async () => {
     if (!intentMessage.trim()) return;
-    setIntentLoading(true);
     setIntentResult(null);
-    setIntentError(null);
     try {
-      const headers = await getAuthHeaders();
-      const response = await apiClient.post<IntentResult>(
-        `/debug/intent?message=${encodeURIComponent(intentMessage.trim())}`,
-        null,
-        { headers },
-      );
-      setIntentResult(response.data);
-    } catch (err) {
-      setIntentError(extractApiError(err, t('maintenance.errors.intentTestFailed')));
-    } finally {
-      setIntentLoading(false);
+      const data = await intent.mutateAsync(intentMessage.trim());
+      setIntentResult(data);
+    } catch {
+      // errorMessage surfaces via intent.errorMessage
     }
   };
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
-      {/* Header */}
       <div className="mb-6">
         <PageHeader icon={Wrench} title={t('maintenance.title')} subtitle={t('maintenance.subtitle')} />
       </div>
 
-      {/* Section 1: Search & Indexing */}
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Search className="w-6 h-6 text-blue-500" />
@@ -214,12 +158,11 @@ export default function MaintenancePage() {
           {t('maintenance.searchIndexing.description')}
         </p>
 
-        {/* Reindex FTS */}
         <ActionRow
           title={t('maintenance.searchIndexing.reindexFts')}
           description={t('maintenance.searchIndexing.reindexFtsDescription')}
           buttonLabel={t('maintenance.searchIndexing.reindexFts')}
-          loading={ftsLoading}
+          loading={reindex.isPending}
           onAction={handleReindexFts}
         />
         {ftsResult && (
@@ -231,16 +174,15 @@ export default function MaintenancePage() {
             )}
           </ResultBox>
         )}
-        {ftsError && <ResultBox success={false}>{ftsError}</ResultBox>}
+        {reindex.errorMessage && <ResultBox success={false}>{reindex.errorMessage}</ResultBox>}
 
         <div className="border-t border-gray-200 dark:border-gray-700 my-2" />
 
-        {/* Refresh HA Keywords */}
         <ActionRow
           title={t('maintenance.searchIndexing.refreshKeywords')}
           description={t('maintenance.searchIndexing.refreshKeywordsDescription')}
           buttonLabel={t('maintenance.searchIndexing.refreshKeywords')}
-          loading={kwLoading}
+          loading={refreshKw.isPending}
           onAction={handleRefreshKeywords}
         />
         {kwResult && (
@@ -254,10 +196,9 @@ export default function MaintenancePage() {
             )}
           </ResultBox>
         )}
-        {kwError && <ResultBox success={false}>{kwError}</ResultBox>}
+        {refreshKw.errorMessage && <ResultBox success={false}>{refreshKw.errorMessage}</ResultBox>}
       </div>
 
-      {/* Section 2: Embeddings */}
       <div className="card mb-6">
         <div className="flex items-center gap-2 mb-4">
           <Database className="w-6 h-6 text-blue-500" />
@@ -269,7 +210,6 @@ export default function MaintenancePage() {
           {t('maintenance.embeddings.description')}
         </p>
 
-        {/* Warning */}
         <Alert variant="warning" className="mb-4">
           {t('maintenance.embeddings.reembedWarning')}
         </Alert>
@@ -278,7 +218,7 @@ export default function MaintenancePage() {
           title={t('maintenance.embeddings.reembedAll')}
           description={t('maintenance.embeddings.description')}
           buttonLabel={t('maintenance.embeddings.reembedAll')}
-          loading={embedLoading}
+          loading={reembed.isPending}
           onAction={handleReembed}
           variant="warning"
         />
@@ -305,10 +245,9 @@ export default function MaintenancePage() {
             )}
           </ResultBox>
         )}
-        {embedError && <ResultBox success={false}>{embedError}</ResultBox>}
+        {reembed.errorMessage && <ResultBox success={false}>{reembed.errorMessage}</ResultBox>}
       </div>
 
-      {/* Section 3: Debug */}
       <div className="card">
         <div className="flex items-center gap-2 mb-4">
           <Bug className="w-6 h-6 text-blue-500" />
@@ -320,7 +259,6 @@ export default function MaintenancePage() {
           {t('maintenance.debug.description')}
         </p>
 
-        {/* Intent Test */}
         <div className="mb-4">
           <h3 className="text-sm font-medium text-gray-900 dark:text-white mb-1">
             {t('maintenance.debug.testIntent')}
@@ -339,10 +277,10 @@ export default function MaintenancePage() {
             />
             <button
               onClick={handleTestIntent}
-              disabled={intentLoading || !intentMessage.trim()}
+              disabled={intent.isPending || !intentMessage.trim()}
               className="btn btn-primary flex items-center gap-2 shrink-0"
             >
-              {intentLoading ? (
+              {intent.isPending ? (
                 <Loader className="w-4 h-4 animate-spin" />
               ) : (
                 <Bug className="w-4 h-4" />
@@ -360,7 +298,7 @@ export default function MaintenancePage() {
             </pre>
           </ResultBox>
         )}
-        {intentError && <ResultBox success={false}>{intentError}</ResultBox>}
+        {intent.errorMessage && <ResultBox success={false}>{intent.errorMessage}</ResultBox>}
       </div>
     </div>
   );
