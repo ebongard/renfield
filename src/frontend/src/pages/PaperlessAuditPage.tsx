@@ -299,8 +299,11 @@ export default function PaperlessAuditPage() {
   };
 
   const loadCorrespondents = () => {
+    // Flipping `enabled` to true is sufficient — RQ fetches automatically
+    // on the next render when the query has no cached data for the current
+    // queryKey. No manual refetch() needed (and calling it on a disabled
+    // query relies on a behavior we shouldn't depend on).
     setScanCorrespondents(true);
-    correspondentsQuery.refetch();
   };
 
   // --- Not Configured State ---

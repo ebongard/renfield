@@ -240,7 +240,11 @@ export function useAuditStatsQuery(enabled: boolean) {
     {
       queryKey: keys.paperlessAudit.stats(),
       queryFn: fetchStats,
-      staleTime: STALE.LIVE,
+      // Stats are an aggregate that only changes after a mutation — the
+      // mutations already invalidate keys.paperlessAudit.all on success,
+      // so STALE.DEFAULT is correct here. STALE.LIVE would refetch every
+      // 5s for no benefit.
+      staleTime: STALE.DEFAULT,
       enabled,
     },
     'paperlessAudit.error',
