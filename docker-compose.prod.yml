@@ -86,7 +86,7 @@ services:
       - .env
     environment:
       # DATABASE_URL wird dynamisch aus Einzelteilen zusammengebaut (config.py)
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       # Disable telemetry for MCP stdio servers (prevents banner on stdout)
       DO_NOT_TRACK: "1"
@@ -147,7 +147,7 @@ services:
     env_file:
       - .env
     environment:
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       NVIDIA_VISIBLE_DEVICES: all
       DO_NOT_TRACK: "1"

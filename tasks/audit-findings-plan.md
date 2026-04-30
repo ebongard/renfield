@@ -198,9 +198,9 @@ Status nach Branch `audit/k1-k7` (PR aus diesem Branch schliesst K1-K7 komplett)
 - `piper_voice` — renamed to `piper_default_voice` (env: `PIPER_DEFAULT_VOICE`) to make its role explicit: fallback voice when the requested language has no entry in `piper_voices`. Not dead code, just a misleading name.
 - `ollama_model` — re-classified: NOT dead. It is the global model fallback referenced by 13+ services as `settings.X_model or settings.ollama_model` (chat_handler, knowledge_graph_service, kg_retrieval, conversation_memory_service, agent_service, agent_router, orchestrator, notification_service, federation_query_responder, paperless_audit_service, ollama_service, main health check). The original audit's claim that `ollama_chat_model` replaces it is wrong — the two coexist as fallback-chain roles.
 
-### E17. Redis URL not parameterized in docker-compose
-- `docker-compose.yml:77` — hardcoded `redis://redis:6379`
-- Fix: Use `${REDIS_URL:-redis://redis:6379}`
+### E17. Redis URL not parameterized in docker-compose — RESOLVED
+- All 5 platform `REDIS_URL` instances across `docker-compose.yml` (2), `docker-compose.prod.yml` (2), `docker-compose.prod-cpu.yml` (1) now use `${REDIS_URL:-redis://redis:6379}`, matching the existing `OLLAMA_URL` pattern.
+- Out of scope: Evolution-API's `CACHE_REDIS_URI: redis://redis:6379/3` (docker-compose.yml:267) keeps its service-specific DB-index suffix; not platform-Redis.
 
 ### E18. Frigate MQTT defaults hardcoded
 - `integrations/frigate.py:74` — broker="localhost", port=1883
