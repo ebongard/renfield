@@ -219,7 +219,7 @@ export function useChatWebSocket({
     };
 
     ws.onerror = (error: Event) => {
-      console.error('WebSocket Fehler:', error);
+      console.error('WebSocket error:', error);
     };
 
     wsRef.current = ws;
