@@ -50,7 +50,7 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 - **Primary source:** `tasks/audit-findings-plan.md` §EMPFEHLUNG, §Priorisierte Roadmap Phase 4-5
 - **Frontend:** W9 React.lazy code-splitting for admin pages · W11 Prettier · E11 React Query · ~~E12 13 hardcoded German strings~~ (closed: ErrorBoundary/ConfirmDialog cleared by W10, ChatMessages alt + 5 dev logs translated; RoomOutputSettings filed as separate follow-up below) · E13 ChatPage prop drilling → Context · ~~E14 ESLint React version~~ (verified already done — `'detect'` already set) · E15 enable `tsconfig` strict mode (W10 closed via #487 on 2026-04-27)
 - **i18n follow-up (out of E12 scope):** `src/frontend/src/components/RoomOutputSettings.tsx` has ~10 hardcoded German strings (modal labels, button titles, type-selector text). Was not in the original audit; surfaced during the E12 sweep. Not blocking; pick up alongside the next room-management UI revision.
-- **Backend/config:** E1-E3 speaker-loading + eager-load cleanup + FK indexes · ~~E4-E9 remaining hardcoded values~~ (closed: E4/E6/E7/E8 already in earlier work; E5 MCP backoff + E9 intent-feedback dual thresholds promoted to Settings) · E10 frontend localhost fallbacks · ~~E16 legacy config field removal~~ · ~~E17 Redis URL parameterization~~ · ~~E18 Frigate MQTT defaults~~
+- **Backend/config:** E1-E3 speaker-loading + eager-load cleanup + FK indexes · ~~E4-E9~~ · ~~E10 frontend localhost fallbacks~~ (closed: centralized `getApiBaseUrl`/`getWebSocketUrl` helper warns when env vars missing) · ~~E16 legacy config field removal~~ · ~~E17 Redis URL parameterization~~ · ~~E18 Frigate MQTT defaults~~
 
 ### Run `/design-consultation` to formalize DESIGN.md (BEFORE next major frontend surface)
 

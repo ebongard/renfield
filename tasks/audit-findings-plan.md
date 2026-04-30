@@ -10,10 +10,10 @@ Consolidated results from 4 systematic audits (DB Performance, Config Hardcodes,
 |----------|-------|----------|----------|
 | KRITISCH | 7 | 7 / 7 | Must fix — performance bottlenecks, security gaps |
 | WICHTIG | 14 | 14 / 14 | Should fix — inconsistencies, missing optimizations |
-| EMPFEHLUNG | 18 | 11 / 18 | Nice to have — modernization, cleanup |
+| EMPFEHLUNG | 18 | 12 / 18 | Nice to have — modernization, cleanup |
 | GUT | 12 | — | Already well-implemented |
 
-**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E4, E5, E6, E7, E8, E9, E12, E14, E16, E17, E18. Open: E1-E3 (backend perf), E10 (frontend localhost fallbacks), E11/E13/E15 (frontend modernization). See `TODOS.md` P2 for active queue.
+**Status (2026-04-30):** All KRITISCH and WICHTIG items closed. EMPFEHLUNG closed: E4, E5, E6, E7, E8, E9, E10, E12, E14, E16, E17, E18. Open: E1-E3 (backend perf), E11/E13/E15 (frontend modernization). See `TODOS.md` P2 for active queue.
 
 ---
 
@@ -142,9 +142,9 @@ All 14 WICHTIG items closed as of 2026-04-27. Re-verified 2026-04-30 against cur
 - The two thresholds were intentionally different — 0.75 for general past-correction matching, 0.80 for the stricter "is this query simple or complex?" routing decision (fewer false positives wanted on complexity routing). The audit framed this as a unify-into-one fix; that would have collapsed two real decision bars.
 - Fix: Both thresholds promoted to Settings (`intent_feedback_similarity_threshold` = 0.75, `intent_feedback_complexity_threshold` = 0.80). `find_similar_corrections(threshold=None)` falls back to the general bar; the complexity-routing call site explicitly passes the complexity bar. Operators can now tune recall/precision per environment.
 
-### E10. Frontend hardcoded localhost fallbacks
-- `utils/axios.ts:5`, `useChatWebSocket.js:34`, `useDeviceConnection.ts:171`
-- Fix: Add validation/warning when VITE_API_URL not set
+### E10. Frontend hardcoded localhost fallbacks — RESOLVED
+- New `src/frontend/src/utils/env.ts` centralizes the fallback with `getApiBaseUrl()` and `getWebSocketUrl()`. Both warn on console (error level in PROD builds, warn in DEV) when the env var is unset, and warn at most once per page load.
+- All three call sites migrated: `utils/axios.ts:5`, `pages/ChatPage/hooks/useChatWebSocket.ts:141`, `hooks/useDeviceConnection.ts:170`. The `VITE_WS_URL` "includes-/ws" convention (per `.env.example` + 4 compose files) is preserved.
 
 ### E11. React Query / SWR for data fetching
 - All pages use raw `apiClient.get()` + `useState` + `setLoading`

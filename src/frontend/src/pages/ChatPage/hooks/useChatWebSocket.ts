@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { debug } from '../../../utils/debug';
+import { getWebSocketUrl } from '../../../utils/env';
 
 export interface BaseWsMessage {
   type: string;
@@ -138,7 +139,7 @@ export function useChatWebSocket({
       reconnectTimeoutRef.current = null;
     }
 
-    let wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+    let wsUrl = getWebSocketUrl();
     // Append JWT token for WebSocket authentication (falls back to device-token cookie if absent)
     const accessToken = localStorage.getItem('renfield_access_token');
     if (accessToken) {

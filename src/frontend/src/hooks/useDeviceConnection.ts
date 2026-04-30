@@ -9,6 +9,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { debug } from '../utils/debug';
+import { getWebSocketUrl } from '../utils/env';
 import type {
   DeviceType,
   DeviceState,
@@ -166,11 +167,10 @@ export function useDeviceConnection({
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Get WebSocket URL
+  // Get WebSocket URL — strip the conventional `/ws` suffix from the env
+  // value (or warning-emitting fallback) and append the device endpoint.
   const getWsUrl = useCallback((): string => {
-    const baseUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
-    // Replace /ws with /ws/device for the device endpoint
-    return baseUrl.replace(/\/ws$/, '') + '/ws/device';
+    return getWebSocketUrl().replace(/\/ws$/, '') + '/ws/device';
   }, []);
 
   // Stop heartbeat
