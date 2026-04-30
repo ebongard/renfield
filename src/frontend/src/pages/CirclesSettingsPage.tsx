@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import type { FormEvent } from 'react';
 import type { AxiosError } from 'axios';
 import { useTranslation } from 'react-i18next';
@@ -15,17 +15,15 @@ import TierPicker from '../components/TierPicker';
 import PairInitiatorModal from '../components/PairInitiatorModal';
 import PairResponderModal from '../components/PairResponderModal';
 import { useConfirmDialog } from '../components/ConfirmDialog';
-
-interface CircleSettings {
-  default_capture_policy?: { tier?: number; [key: string]: unknown };
-  [key: string]: unknown;
-}
-
-interface CircleMember {
-  member_user_id: number;
-  member_username?: string;
-  dimensions?: { tier?: number; [key: string]: unknown };
-}
+import {
+  useCircleSettingsQuery,
+  useCircleMembersQuery,
+  usePatchCircleSettings,
+  useAddCircleMember,
+  useUpdateCircleMember,
+  useDeleteCircleMember,
+  type CircleMember,
+} from '../api/resources/circles';
 
 interface UserOption {
   id: number;
@@ -36,60 +34,49 @@ export default function CirclesSettingsPage() {
   const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [settings, setSettings] = useState<CircleSettings | null>(null);
-  const [members, setMembers] = useState<CircleMember[]>([]);
+  const settingsQuery = useCircleSettingsQuery();
+  const membersQuery = useCircleMembersQuery();
+  const settings = settingsQuery.data;
+  const members = membersQuery.data ?? [];
+  const loading = settingsQuery.isLoading || membersQuery.isLoading;
+
+  const patchSettings = usePatchCircleSettings();
+  const addMember = useAddCircleMember();
+  const updateMember = useUpdateCircleMember();
+  const deleteMember = useDeleteCircleMember();
+
   const [userOptions, setUserOptions] = useState<UserOption[]>([]);
   const [userOptionsBlocked, setUserOptionsBlocked] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [savingTier, setSavingTier] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  // Add-member modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [showPairInitModal, setShowPairInitModal] = useState(false);
   const [showPairRespModal, setShowPairRespModal] = useState(false);
   const [addUserId, setAddUserId] = useState('');
   const [addTier, setAddTier] = useState<CircleTier>(2);
-  const [adding, setAdding] = useState(false);
-  // Per-member saving guard — prevents out-of-order PATCHes on rapid clicks.
   const [savingMemberIds, setSavingMemberIds] = useState<Set<number>>(() => new Set());
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [settingsResp, membersResp] = await Promise.all([
-        apiClient.get<CircleSettings>('/api/circles/me/settings'),
-        apiClient.get<CircleMember[]>('/api/circles/me/members'),
-      ]);
-      setSettings(settingsResp.data);
-      setMembers(membersResp.data || []);
-      setError(null);
-    } catch {
-      setError(t('circles.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  // Also pull the user list so the add dialog has a picker. Non-admins hit
-  // 403 (USERS_VIEW required); fall back to free-form user_id and surface a
-  // hint in the modal so the user understands why there's no dropdown.
-  const loadUsers = useCallback(async () => {
-    try {
-      const resp = await apiClient.get<{ users?: UserOption[] } | UserOption[]>('/api/users');
-      const list = Array.isArray(resp.data) ? resp.data : (resp.data.users ?? []);
-      setUserOptions(list);
-      setUserOptionsBlocked(false);
-    } catch (err) {
-      setUserOptions([]);
-      const status = (err as AxiosError | undefined)?.response?.status;
-      setUserOptionsBlocked(status === 403);
-    }
+  // User list for add-member dropdown. Non-admins hit 403 (USERS_VIEW required);
+  // fall back to free-form user_id and surface a hint in the modal.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await apiClient.get<{ users?: UserOption[] } | UserOption[]>('/api/users');
+        if (cancelled) return;
+        const list = Array.isArray(resp.data) ? resp.data : (resp.data.users ?? []);
+        setUserOptions(list);
+        setUserOptionsBlocked(false);
+      } catch (err) {
+        if (cancelled) return;
+        setUserOptions([]);
+        const status = (err as AxiosError | undefined)?.response?.status;
+        setUserOptionsBlocked(status === 403);
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => { load(); }, [load]);
-  useEffect(() => { loadUsers(); }, [loadUsers]);
 
   useEffect(() => {
     if (success) {
@@ -98,21 +85,19 @@ export default function CirclesSettingsPage() {
     }
   }, [success]);
 
+  const displayError = error ?? settingsQuery.errorMessage ?? membersQuery.errorMessage;
+
   const currentDefaultTier = Number(settings?.default_capture_policy?.tier ?? 0);
 
   const handleDefaultTierChange = async (newTier: CircleTier) => {
-    if (savingTier || newTier === currentDefaultTier) return;
-    setSavingTier(true);
+    if (patchSettings.isPending || newTier === currentDefaultTier) return;
     try {
-      const resp = await apiClient.patch<CircleSettings>('/api/circles/me/settings', {
+      await patchSettings.mutateAsync({
         default_capture_policy: { ...(settings?.default_capture_policy || {}), tier: newTier },
       });
-      setSettings(resp.data);
       setSuccess(t('common.success'));
-    } catch {
-      setError(t('circles.couldNotSave'));
-    } finally {
-      setSavingTier(false);
+    } catch (err) {
+      setError(extractApiError(err, t('circles.couldNotSave')));
     }
   };
 
@@ -126,20 +111,16 @@ export default function CirclesSettingsPage() {
     e.preventDefault();
     const userIdInt = parseInt(addUserId, 10);
     if (!Number.isFinite(userIdInt)) return;
-    setAdding(true);
     try {
-      await apiClient.post('/api/circles/me/members', {
+      await addMember.mutateAsync({
         member_user_id: userIdInt,
         dimension: 'tier',
         value: addTier,
       });
       setShowAddModal(false);
       setSuccess(t('common.success'));
-      await load();
     } catch (err) {
       setError(extractApiError(err, t('circles.couldNotSave')));
-    } finally {
-      setAdding(false);
     }
   };
 
@@ -147,18 +128,14 @@ export default function CirclesSettingsPage() {
     if (savingMemberIds.has(member.member_user_id)) return;
     setSavingMemberIds((prev) => new Set(prev).add(member.member_user_id));
     try {
-      await apiClient.patch(`/api/circles/me/members/${member.member_user_id}`, {
+      await updateMember.mutateAsync({
+        memberUserId: member.member_user_id,
         dimension: 'tier',
         value: newTier,
       });
-      setMembers((prev) => prev.map((m) =>
-        m.member_user_id === member.member_user_id
-          ? { ...m, dimensions: { ...(m.dimensions || {}), tier: newTier } }
-          : m,
-      ));
       setSuccess(t('common.success'));
-    } catch {
-      setError(t('circles.couldNotSave'));
+    } catch (err) {
+      setError(extractApiError(err, t('circles.couldNotSave')));
     } finally {
       setSavingMemberIds((prev) => {
         const next = new Set(prev);
@@ -178,11 +155,10 @@ export default function CirclesSettingsPage() {
     });
     if (!ok) return;
     try {
-      await apiClient.delete(`/api/circles/me/members/${member.member_user_id}`);
-      setMembers((prev) => prev.filter((m) => m.member_user_id !== member.member_user_id));
+      await deleteMember.mutateAsync(member.member_user_id);
       setSuccess(t('common.success'));
-    } catch {
-      setError(t('circles.couldNotSave'));
+    } catch (err) {
+      setError(extractApiError(err, t('circles.couldNotSave')));
     }
   };
 
@@ -194,7 +170,7 @@ export default function CirclesSettingsPage() {
         subtitle={t('circles.settingsSubtitle')}
       />
 
-      {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
+      {displayError && <Alert variant="error" onClose={() => setError(null)}>{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
       {loading ? (
@@ -203,7 +179,6 @@ export default function CirclesSettingsPage() {
         </div>
       ) : (
         <>
-          {/* Default capture tier */}
           <section className="card space-y-3">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -216,11 +191,10 @@ export default function CirclesSettingsPage() {
             <TierPicker
               value={currentDefaultTier}
               onChange={handleDefaultTierChange}
-              disabled={savingTier}
+              disabled={patchSettings.isPending}
             />
           </section>
 
-          {/* Members */}
           <section className="card space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -284,7 +258,6 @@ export default function CirclesSettingsPage() {
             )}
           </section>
 
-          {/* Federation pairing */}
           <section className="card space-y-4">
             <div>
               <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
@@ -381,7 +354,7 @@ export default function CirclesSettingsPage() {
             <button type="button" onClick={() => setShowAddModal(false)} className="btn-secondary px-4 py-2 rounded-lg">
               {t('common.cancel')}
             </button>
-            <button type="submit" disabled={adding || !addUserId} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">
+            <button type="submit" disabled={addMember.isPending || !addUserId} className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50">
               {t('common.save')}
             </button>
           </div>

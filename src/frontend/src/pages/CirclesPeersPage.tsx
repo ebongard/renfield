@@ -1,60 +1,30 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { Users, Trash2, Clock, Fingerprint, History } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import TierBadge from '../components/TierBadge';
-import type { CircleTier } from '../components/TierBadge';
 import { useConfirmDialog } from '../components/ConfirmDialog';
+import {
+  useFederationPeersQuery,
+  useDeleteFederationPeer,
+  type FederationPeer,
+} from '../api/resources/federation';
+import { extractApiError } from '../utils/axios';
 
-interface FederationPeer {
-  id: string;
-  remote_display_name: string;
-  remote_pubkey: string;
-  circle_tier: CircleTier | number;
-  last_seen_at?: string | null;
-}
-
-/**
- * /settings/circles/peers
- *
- * Lists paired Renfield peers (from F2 pairing). Shows display_name +
- * pubkey fingerprint + tier-granted + last-seen. Revoke button
- * terminates the pairing (F4a — backend calls PeerUser.revoked_at + deletes
- * the CircleMembership + refreshes the MCP registry so the agent-loop
- * tool disappears).
- *
- * Pairing creation (QR handshake) lives on the sibling /settings/circles
- * page as a modal — this page is the post-pair management surface.
- */
 export default function CirclesPeersPage() {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { confirm, ConfirmDialogComponent } = useConfirmDialog();
 
-  const [peers, setPeers] = useState<FederationPeer[]>([]);
-  const [loading, setLoading] = useState(true);
+  const peersQuery = useFederationPeersQuery();
+  const peers = peersQuery.data ?? [];
+
+  const deletePeer = useDeleteFederationPeer();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [revokingIds, setRevokingIds] = useState<Set<string>>(() => new Set());
-
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<{ peers: FederationPeer[] }>('/api/federation/peers');
-      setPeers(response.data.peers || []);
-      setError(null);
-    } catch {
-      setError(t('circles.peersCouldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   useEffect(() => {
     if (success) {
@@ -62,6 +32,8 @@ export default function CirclesPeersPage() {
       return () => clearTimeout(timer);
     }
   }, [success]);
+
+  const displayError = error ?? peersQuery.errorMessage;
 
   const formatRelative = (iso?: string | null): string => {
     if (!iso) return t('circles.peerNeverSeen');
@@ -91,11 +63,10 @@ export default function CirclesPeersPage() {
 
     setRevokingIds((prev) => new Set(prev).add(peer.id));
     try {
-      await apiClient.delete(`/api/federation/peers/${peer.id}`);
-      setPeers((prev) => prev.filter((p) => p.id !== peer.id));
+      await deletePeer.mutateAsync(peer.id);
       setSuccess(t('circles.peerRevoked', { name: peer.remote_display_name }));
-    } catch {
-      setError(t('circles.peerRevokeFailed'));
+    } catch (err) {
+      setError(extractApiError(err, t('circles.peerRevokeFailed')));
     } finally {
       setRevokingIds((prev) => {
         const next = new Set(prev);
@@ -113,7 +84,7 @@ export default function CirclesPeersPage() {
         subtitle={t('circles.peersSubtitle')}
       />
 
-      {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
+      {displayError && <Alert variant="error" onClose={() => setError(null)}>{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
       <div className="text-sm text-gray-500 dark:text-gray-400">
@@ -124,7 +95,7 @@ export default function CirclesPeersPage() {
         .
       </div>
 
-      {loading ? (
+      {peersQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
         </div>

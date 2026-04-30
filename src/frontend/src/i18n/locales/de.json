@@ -348,7 +348,8 @@
     "completed": "Abgeschlossen",
     "pending": "Ausstehend",
     "running": "Läuft",
-    "failed": "Fehlgeschlagen"
+    "failed": "Fehlgeschlagen",
+    "couldNotLoad": "Aufgaben konnten nicht geladen werden"
   },
   "cameras": {
     "title": "Kamera-Überwachung",

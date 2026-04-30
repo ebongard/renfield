@@ -348,7 +348,8 @@
     "completed": "Completed",
     "pending": "Pending",
     "running": "Running",
-    "failed": "Failed"
+    "failed": "Failed",
+    "couldNotLoad": "Could not load tasks"
   },
   "cameras": {
     "title": "Camera Monitoring",

@@ -2,15 +2,12 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Brain, Search } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
 import TierBadge from '../components/TierBadge';
-import type { CircleTier } from '../components/TierBadge';
-
-type AtomType = 'kb_document' | 'kg_node' | 'kg_edge' | 'conversation_memory';
+import { useAtomSearchQuery, type AtomType } from '../api/resources/brain';
 
 const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   kb_document: 'blue',
@@ -19,45 +16,20 @@ const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   conversation_memory: 'teal',
 };
 
-interface AtomMatch {
-  atom: {
-    atom_id: string;
-    atom_type: AtomType;
-    tier?: CircleTier | number;
-  };
-  score: number;
-  snippet: string;
-  rank: number;
-}
-
 export default function BrainPage() {
   const { t } = useTranslation();
 
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<AtomMatch[]>([]);
-  const [searched, setSearched] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [activeQuery, setActiveQuery] = useState('');
+  const searchQuery = useAtomSearchQuery(activeQuery);
+  const results = searchQuery.data ?? [];
+  const searched = activeQuery.trim().length > 0 && !searchQuery.isLoading;
 
-  const handleSearch = async (e?: FormEvent<HTMLFormElement>) => {
+  const handleSearch = (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault?.();
     const q = query.trim();
     if (!q) return;
-
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await apiClient.get<AtomMatch[]>('/api/atoms', {
-        params: { q, top_k: 20 },
-      });
-      setResults(response.data || []);
-      setSearched(true);
-    } catch {
-      setError(t('circles.couldNotLoad'));
-      setResults([]);
-    } finally {
-      setLoading(false);
-    }
+    setActiveQuery(q);
   };
 
   return (
@@ -68,7 +40,7 @@ export default function BrainPage() {
         subtitle={t('circles.brainSubtitle')}
       />
 
-      {error && <Alert variant="error">{error}</Alert>}
+      {searchQuery.errorMessage && <Alert variant="error">{searchQuery.errorMessage}</Alert>}
 
       <form onSubmit={handleSearch} className="flex gap-2">
         <div className="relative flex-1">
@@ -87,14 +59,14 @@ export default function BrainPage() {
         </div>
         <button
           type="submit"
-          disabled={loading || !query.trim()}
+          disabled={searchQuery.isLoading || !query.trim()}
           className="btn-primary px-4 py-2 rounded-lg disabled:opacity-50"
         >
           {t('common.search')}
         </button>
       </form>
 
-      {loading ? (
+      {searchQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
         </div>

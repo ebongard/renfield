@@ -102,7 +102,7 @@ export default function MaintenancePage() {
   const handleReindexFts = async () => {
     setFtsResult(null);
     try {
-      const data = await reindex.mutateAsync();
+      const data = await reindex.mutateAsync(undefined);
       setFtsResult(data);
     } catch {
       // errorMessage surfaces via reindex.errorMessage
@@ -112,7 +112,7 @@ export default function MaintenancePage() {
   const handleRefreshKeywords = async () => {
     setKwResult(null);
     try {
-      const data = await refreshKw.mutateAsync();
+      const data = await refreshKw.mutateAsync(undefined);
       setKwResult(data);
     } catch {
       // errorMessage surfaces via refreshKw.errorMessage
@@ -123,7 +123,7 @@ export default function MaintenancePage() {
     if (!window.confirm(t('maintenance.embeddings.confirmReembed'))) return;
     setEmbedResult(null);
     try {
-      const data = await reembed.mutateAsync();
+      const data = await reembed.mutateAsync(undefined);
       setEmbedResult(data);
     } catch {
       // errorMessage surfaces via reembed.errorMessage

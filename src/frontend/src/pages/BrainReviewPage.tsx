@@ -1,15 +1,19 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Inbox, Calendar } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Alert from '../components/Alert';
 import Badge from '../components/Badge';
 import type { BadgeColor } from '../components/Badge';
 import TierPicker from '../components/TierPicker';
 import type { CircleTier } from '../components/TierBadge';
-
-type AtomType = 'kb_document' | 'kg_node' | 'kg_edge' | 'conversation_memory';
+import {
+  useAtomsForReviewQuery,
+  usePatchAtomTier,
+  type AtomType,
+  type ReviewAtom,
+} from '../api/resources/brain';
+import { extractApiError } from '../utils/axios';
 
 const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
   kb_document: 'blue',
@@ -20,47 +24,19 @@ const ATOM_TYPE_COLORS: Record<AtomType, BadgeColor> = {
 
 const DAY_OPTIONS = [1, 3, 7, 14, 30];
 
-interface ReviewAtom {
-  atom_id: string;
-  atom_type: AtomType;
-  tier?: CircleTier | number;
-  policy?: { tier?: CircleTier | number; [key: string]: unknown };
-  title?: string;
-  preview?: string;
-  created_at?: string;
-}
-
 export default function BrainReviewPage() {
   const { t, i18n } = useTranslation();
 
-  const [atoms, setAtoms] = useState<ReviewAtom[]>([]);
   const [days, setDays] = useState(7);
-  const [loading, setLoading] = useState(true);
+  const reviewQuery = useAtomsForReviewQuery(days);
+  const atoms = reviewQuery.data ?? [];
+
+  const patchTier = usePatchAtomTier();
+
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
-  // per-atom busy flag so the tier picker disables while the PATCH is in flight
   const [savingIds, setSavingIds] = useState<Set<string>>(() => new Set());
 
-  const load = useCallback(async () => {
-    try {
-      setLoading(true);
-      const response = await apiClient.get<ReviewAtom[]>('/api/circles/me/atoms-for-review', {
-        params: { days, limit: 50 },
-      });
-      setAtoms(response.data || []);
-      setError(null);
-    } catch {
-      setError(t('circles.couldNotLoad'));
-    } finally {
-      setLoading(false);
-    }
-  }, [days, t]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Auto-clear success after 3s
   useEffect(() => {
     if (success) {
       const timer = setTimeout(() => setSuccess(null), 3000);
@@ -68,22 +44,20 @@ export default function BrainReviewPage() {
     }
   }, [success]);
 
+  const queryError = reviewQuery.errorMessage;
+  const displayError = error ?? queryError;
+
   const handleTierChange = async (atom: ReviewAtom, newTier: CircleTier) => {
     if ((atom.tier ?? 0) === newTier) return;
     setSavingIds((prev) => new Set(prev).add(atom.atom_id));
     try {
-      await apiClient.patch(`/api/atoms/${atom.atom_id}/tier`, {
+      await patchTier.mutateAsync({
+        atomId: atom.atom_id,
         policy: { ...(atom.policy || {}), tier: newTier },
       });
-      // Optimistic local update
-      setAtoms((rows) => rows.map((a) =>
-        a.atom_id === atom.atom_id
-          ? { ...a, tier: newTier, policy: { ...(a.policy || {}), tier: newTier } }
-          : a,
-      ));
       setSuccess(t('circles.reviewTierChanged'));
-    } catch {
-      setError(t('circles.couldNotSave'));
+    } catch (err) {
+      setError(extractApiError(err, t('circles.couldNotSave')));
     } finally {
       setSavingIds((prev) => {
         const next = new Set(prev);
@@ -114,7 +88,7 @@ export default function BrainReviewPage() {
         subtitle={t('circles.reviewSubtitle', { days })}
       />
 
-      {error && <Alert variant="error" onClose={() => setError(null)}>{error}</Alert>}
+      {displayError && <Alert variant="error" onClose={() => setError(null)}>{displayError}</Alert>}
       {success && <Alert variant="success">{success}</Alert>}
 
       <div className="flex items-center gap-3">
@@ -141,7 +115,7 @@ export default function BrainReviewPage() {
         </div>
       </div>
 
-      {loading ? (
+      {reviewQuery.isLoading ? (
         <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           {t('common.loading')}
         </div>
@@ -169,10 +143,6 @@ export default function BrainReviewPage() {
                       {t('circles.capturedAt')}: {formatDate(atom.created_at)}
                     </span>
                   </div>
-                  {/* Human-readable label resolved by the backend from
-                      the atom's source row. UUID is kept visible but
-                      demoted to a fingerprint so debugging is still
-                      possible. */}
                   {atom.title && (
                     <p className="font-medium text-gray-900 dark:text-white truncate">
                       {atom.title}

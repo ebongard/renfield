@@ -1,42 +1,15 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { CheckSquare, Clock, CheckCircle, XCircle, Loader } from 'lucide-react';
-import apiClient from '../utils/axios';
 import PageHeader from '../components/PageHeader';
 import Badge from '../components/Badge';
-
-type TaskStatus = 'pending' | 'running' | 'completed' | 'failed';
-type TaskFilter = TaskStatus | 'all';
-
-interface Task {
-  id: string | number;
-  status: TaskStatus;
-  title: string;
-  task_type: string;
-  created_at: string;
-  completed_at?: string | null;
-}
+import { useTasksQuery, type TaskStatus, type TaskFilter } from '../api/resources/tasks';
 
 export default function TasksPage() {
   const { t } = useTranslation();
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<TaskFilter>('all');
-
-  useEffect(() => {
-    const loadTasks = async () => {
-      try {
-        const params = filter !== 'all' ? { status: filter } : {};
-        const response = await apiClient.get<{ tasks: Task[] }>('/api/tasks/list', { params });
-        setTasks(response.data.tasks);
-      } catch (error) {
-        console.error('Failed to load tasks:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadTasks();
-  }, [filter]);
+  const tasksQuery = useTasksQuery(filter);
+  const tasks = tasksQuery.data?.tasks ?? [];
 
   const getStatusIcon = (status: TaskStatus) => {
     switch (status) {
@@ -57,14 +30,12 @@ export default function TasksPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <PageHeader
         icon={CheckSquare}
         title={t('tasks.title')}
         subtitle={t('tasks.subtitle')}
       />
 
-      {/* Filters */}
       <div className="flex space-x-2 overflow-x-auto">
         {filters.map((f) => (
           <button
@@ -81,12 +52,16 @@ export default function TasksPage() {
         ))}
       </div>
 
-      {/* Tasks List */}
       <div className="space-y-4">
-        {loading ? (
+        {tasksQuery.isLoading ? (
           <div className="card text-center py-12">
             <Loader className="w-8 h-8 animate-spin mx-auto text-gray-500 dark:text-gray-400 mb-2" />
             <p className="text-gray-500 dark:text-gray-400">{t('tasks.loadingTasks')}</p>
+          </div>
+        ) : tasksQuery.errorMessage ? (
+          <div className="card text-center py-12">
+            <XCircle className="w-12 h-12 mx-auto text-red-500 mb-3" />
+            <p className="font-medium text-gray-700 dark:text-gray-300">{tasksQuery.errorMessage}</p>
           </div>
         ) : tasks.length === 0 ? (
           <div className="card text-center py-12">
