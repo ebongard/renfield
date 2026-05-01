@@ -23,50 +23,150 @@ disable-model-invocation: true
 
 Single-VM `renfield.local` deployment on `/opt/renfield` is legacy / build-box only. Anything calling itself a "prod rsync" is referring to the build box, not production.
 
-## Build + push workflow
-
-Images live in Harbor and are pulled by the cluster via `imagePullPolicy: Always` on the `:latest` tag (or pinned tags like `:v1.3.1`).
-
-Both Dockerfiles expect **their own directory as the build context** — not the repo root. The Dockerfile's `COPY requirements.txt constraints.txt ./` and `COPY wakeword-models /app/wakeword-models` resolve against context root, and those files live at `src/backend/*`, not at the repo root.
+## Release tag (audit trail)
 
 ```bash
-# From the build box (.159). You need to be logged in:
+# From the laptop, after the release commits are merged to main:
+git checkout main && git pull
+git tag -a vX.Y.Z -m "Release vX.Y.Z\n\n<release notes>"
+git push origin vX.Y.Z
+gh release create vX.Y.Z --title "vX.Y.Z — <one-line summary>" --notes "<body>"
+```
+
+`make release` exists but is interactive and only does the tag step. Manual `git tag` + `gh release create` lets you script the whole sequence.
+
+The `release.yml` workflow on tag-push **does not actually build images** (CI is non-functional for this project). Tag is for the audit trail and the git history; the real build happens on .159.
+
+## Build + push workflow (rsync-to-staging — preferred)
+
+Images live in Harbor and are pulled by the cluster via `imagePullPolicy: Always` on the `:latest` tag (or pinned tags like `:vX.Y.Z`).
+
+Both Dockerfiles expect **their own directory as the build context** — not the repo root. `COPY requirements.txt constraints.txt ./` and `COPY wakeword-models /app/wakeword-models` resolve against context root, and those files live at `src/backend/*`, not at the repo root. The wakeword models live at `data/wakeword-models/` in the repo and must be rsynced INTO the backend build context as `wakeword-models/`.
+
+> **Why staging-dir, not `/opt/renfield`?** The `/opt/renfield` checkout on .159 is often on a feature/WIP branch with uncommitted changes. Building from there bakes the WIP into the image, OR (worse) clobbers the WIP if you do `git checkout`. The rsync-to-staging flow below isolates the build from the checkout.
+
+### Step 1 — From the laptop, rsync the build contexts
+
+```bash
+# Prep a fresh staging dir on .159 (use the version tag in the path so concurrent
+# releases don't trample each other and cleanup is unambiguous)
+ssh evdb@192.168.1.159 "rm -rf /tmp/renfield-build-vX.Y.Z; mkdir -p /tmp/renfield-build-vX.Y.Z/src/backend /tmp/renfield-build-vX.Y.Z/src/frontend"
+
+# Rsync src/backend (build context for the backend image)
+rsync -avz --delete \
+  --exclude='__pycache__' --exclude='.pytest_cache' --exclude='*.pyc' \
+  --exclude='.coverage' --exclude='htmlcov' \
+  --exclude='.env' --exclude='.env.local' --exclude='secrets/' \
+  --exclude='Users/' \
+  src/backend/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/backend/
+
+# Rsync src/frontend (build context for the frontend image)
+rsync -avz --delete \
+  --exclude='node_modules' --exclude='dist' --exclude='.vite' \
+  --exclude='.cache' --exclude='.env' --exclude='.env.local' \
+  src/frontend/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/frontend/
+
+# Rsync wakeword models INTO the backend build context (Dockerfile COPYs ./wakeword-models)
+rsync -avz \
+  data/wakeword-models/ evdb@192.168.1.159:/tmp/renfield-build-vX.Y.Z/src/backend/wakeword-models/
+```
+
+### Step 2 — On .159, build + push
+
+```bash
+ssh evdb@192.168.1.159
+
+# Login to Harbor (skip if your session is already authenticated)
 docker login registry.treehouse.x-idra.de
 
 # Backend (CPU image, ~3.5 GB — torch pinned to +cpu wheels via constraints.txt)
-cd /opt/renfield/src/backend
-docker build -t registry.treehouse.x-idra.de/renfield/backend:latest \
-             -t registry.treehouse.x-idra.de/renfield/backend:pr<N>-<sha> \
-             -f Dockerfile .
+# Slowest step; budget 10-20 min if requirements.txt changed (deps layer cache miss).
+# 2-4 min if only Python source changed (deps layer cached).
+cd /tmp/renfield-build-vX.Y.Z/src/backend
+docker build \
+  -t registry.treehouse.x-idra.de/renfield/backend:latest \
+  -t registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z \
+  -f Dockerfile .
 docker push registry.treehouse.x-idra.de/renfield/backend:latest
-docker push registry.treehouse.x-idra.de/renfield/backend:pr<N>-<sha>
+docker push registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
 
-# Frontend (Nginx serving React build, ~144 MB)
-cd /opt/renfield/src/frontend
-docker build -t registry.treehouse.x-idra.de/renfield/frontend:latest -f Dockerfile .
+# Frontend (Nginx serving React build, ~144 MB; ~2-3 min build + push)
+cd /tmp/renfield-build-vX.Y.Z/src/frontend
+docker build \
+  -t registry.treehouse.x-idra.de/renfield/frontend:latest \
+  -t registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z \
+  -f Dockerfile .
 docker push registry.treehouse.x-idra.de/renfield/frontend:latest
+docker push registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z
 ```
 
-Always build + push a pinned tag (`pr<N>-<sha>`) alongside `:latest` — gives you an immutable rollback target (`kubectl set image deploy/backend backend=.../backend:pr<N>-<sha>`).
+### Step 3 — Cleanup
+
+```bash
+# Remove the staging dir once the cluster has rolled (or even before — the images are in Harbor)
+ssh evdb@192.168.1.159 "rm -rf /tmp/renfield-build-vX.Y.Z"
+```
+
+Always build + push a pinned tag (`:vX.Y.Z`) alongside `:latest` — gives you an immutable rollback target (`kubectl set image deploy/backend backend=.../backend:vX.Y.Z`).
 
 **Why the image stays ~3.5 GB:** `src/backend/constraints.txt` pins `torch`/`torchaudio`/`torchvision` to the `+cpu` wheels so transitive deps (docling, easyocr, transformers) can't drag in the 2.7 GB CUDA runtime + 641 MB triton. Don't lift that constraint unless you've thought through the Harbor push timeout.
+
+### Harbor 504 / "Client Closed Request" on the 2.66 GB pip-install layer
+
+When `requirements.txt` changes (so the deps layer cache misses), Docker tries to upload a single 2.66 GB layer to Harbor. The ingress proxy in front of Harbor has been observed timing out on this with `received unexpected HTTP status: 504 Gateway Timeout` or `unknown: Client Closed Request`. The error reproduces on the same layer ID across multiple retries (verified during the v2.3.0 deploy 2026-05-01 — 4 attempts, same `ed85...` layer, same error).
+
+Mitigations to try, in order:
+
+1. **Wait + retry.** Harbor's proxy might be load-shedding. A few minutes can clear it.
+2. **Push the layer first, then the manifest.** `docker push --quiet` cuts logging overhead. If Docker is wasting time on output buffering during the layer upload, the timeout window shrinks.
+3. **Split the requirements install.** Modify the Dockerfile so the heavy deps (torch family, transformers, easyocr, faster-whisper) install in one earlier RUN, and the lighter deps (fastapi, sqlalchemy, etc.) install in a later RUN. Multiple smaller layers stay below the proxy's per-request timeout.
+4. **Investigate the Harbor proxy config.** The ingress in front of `registry.treehouse.x-idra.de` likely has `client_max_body_size` and read/write timeouts set conservatively. Bumping `proxy_read_timeout`, `proxy_send_timeout`, `client_body_timeout`, and `proxy_request_buffering off` on the Harbor proxy fixes this for all Renfield builds. (Requires admin access to the Harbor host.)
+
+When you hit this in the future: don't keep retrying blindly past 3 attempts — the layer ID failing is fixed, so the proxy/Harbor side is the issue. Stop the push, document which release tag couldn't ship, and surface to the operator.
 
 ## Cluster rollout
 
 ```bash
 kubectl config use-context renfield-private
 
-# Rolling restart to pull a new :latest
-kubectl -n renfield rollout restart deploy/backend
-kubectl -n renfield rollout restart deploy/document-worker
-kubectl -n renfield rollout restart deploy/frontend
+# Rolling restart to pull the new :latest. ALL FOUR deploys must be
+# rolled (dlna-mcp also runs the backend image).
+kubectl -n renfield rollout restart deploy/backend deploy/dlna-mcp deploy/document-worker deploy/frontend
 
-# Or pin an explicit tag
+# Or pin an explicit tag (force-pulls even if :latest is cached on the node)
 kubectl -n renfield set image deploy/backend \
-  backend=registry.treehouse.x-idra.de/renfield/backend:v1.3.2
+  backend=registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
 
-# Watch the rollout
-kubectl -n renfield get pods -w
+# Wait for each rollout
+kubectl -n renfield rollout status deploy/backend --timeout=600s
+kubectl -n renfield rollout status deploy/dlna-mcp --timeout=600s
+kubectl -n renfield rollout status deploy/document-worker --timeout=600s
+kubectl -n renfield rollout status deploy/frontend --timeout=600s
+```
+
+> **Image-pull timing.** First pull of a 3.5 GB backend image takes 2-5 minutes per node.
+> Subsequent rollouts on the same node hit the local cache and start in seconds.
+> The pod sits in `PodInitializing` while the image transfers — that's not a stall.
+
+### Verify all pods picked up the new image
+
+```bash
+# Image digests should match what `docker push` returned for :vX.Y.Z
+kubectl -n renfield get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[*].imageID}{"\n"}{end}' | grep -E "backend|frontend"
+```
+
+If a pod shows a stale digest, it's a `imagePullPolicy` issue. Force the pull with the explicit tag:
+
+```bash
+kubectl -n renfield set image deploy/<name> <container>=registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
+kubectl -n renfield rollout status deploy/<name>
+```
+
+### Smoke test
+
+```bash
+kubectl -n renfield exec deploy/backend -c backend -- curl -sS http://localhost:8000/health
+# Expect: {"status":"ok"}
 ```
 
 ### Migrations
@@ -99,6 +199,21 @@ kubectl -n renfield rollout restart deploy/backend
 curl -sk https://renfield.local/health   # {"status":"ok"}
 curl -sI http://renfield.local/          # 308 → https
 ```
+
+## End-to-end checklist (run through this every release)
+
+1. ✅ Merge release commits into `main` (PR review done).
+2. ✅ Tag `vX.Y.Z` locally + push tag + create GitHub release.
+3. ✅ rsync `src/backend`, `src/frontend`, `data/wakeword-models` to `/tmp/renfield-build-vX.Y.Z` on .159 (the model dir lands INSIDE the backend build context as `wakeword-models/`).
+4. ✅ Verify staging — `Dockerfile`, `.dockerignore`, `wakeword-models/` (~9 files) all present; `config/mcp_servers.yaml` etc. NOT present (else the configmap mount breaks).
+5. ✅ Build backend (long if requirements.txt changed) and frontend (fast).
+6. ✅ Push `:latest` and `:vX.Y.Z` for both — verify each `digest:` line in the push output.
+7. ✅ `kubectl rollout restart` on backend, dlna-mcp, document-worker, frontend (all four).
+8. ✅ `kubectl rollout status` per deploy with 600s timeout.
+9. ✅ Verify image digests across all 4 deploys match what was pushed.
+10. ✅ Backend health smoke (`curl -sS http://localhost:8000/health` inside the pod).
+11. ✅ Browser smoke for migrated pages / new features.
+12. ✅ Cleanup `/tmp/renfield-build-vX.Y.Z` on .159.
 
 ## Build-box testing (not production)
 
