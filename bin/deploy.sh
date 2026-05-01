@@ -1,4 +1,4 @@
-  #!/bin/bash
+#!/bin/bash
 
 # Renfield GitHub Deploy Script
 # Committed und pushed alle Dateien ins GitHub Repository
