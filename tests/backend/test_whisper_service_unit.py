@@ -21,13 +21,33 @@ for _mod in _missing_stubs:
 def _segments_result(text: str):
     """Build the (segments_iter, info) tuple that faster-whisper's transcribe returns.
 
-    The real API returns a generator of Segment-like objects each carrying a
-    `.text` attribute, plus an info object. For unit tests we use a single
-    segment with the supplied text — the service joins all segments verbatim.
+    The real API returns a one-shot generator of Segment-like objects each
+    carrying a `.text` attribute, plus an info object. We wrap the segment
+    list in `iter(...)` so that test code accidentally relying on list
+    semantics (`len()`, `[0]`, double-iteration) fails the same way
+    production would — faster-whisper drains the generator on first
+    iteration and a second pass yields nothing.
     """
     seg = MagicMock()
     seg.text = text
-    return ([seg], MagicMock())
+    return (iter([seg]), MagicMock())
+
+
+def _multi_segment_result(*texts: str):
+    """Multi-segment variant of _segments_result.
+
+    faster-whisper splits long audio into multiple segments. Each segment's
+    `.text` typically begins with a space when the tokenizer emits a word
+    boundary, so plain "".join() over `seg.text` produces correctly spaced
+    output. Use this helper to verify the join contract holds for >1
+    segment.
+    """
+    segments = []
+    for t in texts:
+        seg = MagicMock()
+        seg.text = t
+        segments.append(seg)
+    return (iter(segments), MagicMock())
 
 from unittest.mock import AsyncMock, patch
 
@@ -235,6 +255,25 @@ class TestTranscription:
         result = await service.transcribe_file("/tmp/test.wav")
 
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_transcribe_file_joins_multiple_segments(self, service):
+        """Long audio produces multiple segments — verify the join contract.
+
+        faster-whisper segment text typically starts with a space when the
+        tokenizer emits a word boundary, so "".join(...) produces correctly
+        spaced output. Test that we don't accidentally double-space or drop
+        whitespace between segments.
+        """
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = _multi_segment_result(
+            " Hallo", " Welt", " wie", " geht", " es", " dir",
+        )
+        service.model = mock_model
+
+        result = await service.transcribe_file("/tmp/long.wav")
+
+        assert result == "Hallo Welt wie geht es dir"
 
     @pytest.mark.asyncio
     async def test_transcribe_file_does_not_pass_fp16(self, service):

@@ -252,8 +252,8 @@ Gib eine kurze, natürliche Antwort. KEIN JSON, nur Text."""
 
         # Generate TTS audio if response text exists
         if response_text:
-            from services.piper_service import PiperService
-            piper = PiperService()
+            from services.piper_service import get_piper_service
+            piper = get_piper_service()
             tts_audio = await piper.synthesize_to_bytes(response_text)
 
             if tts_audio:
