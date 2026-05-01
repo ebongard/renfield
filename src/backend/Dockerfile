@@ -32,23 +32,44 @@ RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Upgrade pip to fix CVE-2025-8869 (tar extraction vulnerability)
-# setuptools required for openai-whisper (uses pkg_resources)
 RUN pip install --no-cache-dir --upgrade pip>=25.3 setuptools
 
-# Install all Python dependencies with a constraints file that pins torch/torchaudio/torchvision
-# to +cpu wheels from the PyTorch CPU index. This prevents transitive deps (docling, easyocr,
-# transformers) from resolving torch to a full CUDA build which adds ~3GB of nvidia/* wheels.
+# Install Python dependencies. Split across multiple RUN layers so each pushed
+# layer stays well under Harbor's external proxy timeout (the 2.66 GB monolithic
+# layer reliably 504'd on the registry.treehouse.x-idra.de Telekom proxy).
+# The constraints file pins torch/torchaudio/torchvision to +cpu wheels from the
+# PyTorch CPU index — prevents transitive deps (docling, easyocr, transformers)
+# from resolving torch to a full CUDA build (saves ~3 GB of nvidia/* wheels).
 COPY requirements.txt constraints.txt ./
 RUN grep -v "github.com" requirements.txt > requirements-pypi.txt \
-    && (grep "github.com" requirements.txt > requirements-github.txt || true) \
-    && (grep -v "^openai-whisper" requirements-pypi.txt > requirements-pypi-filtered.txt || true) \
-    && pip install --no-cache-dir \
-         --extra-index-url https://download.pytorch.org/whl/cpu \
-         --constraint constraints.txt \
-         -r requirements-pypi-filtered.txt \
-    && pip install --no-cache-dir --no-deps openai-whisper \
-    && pip install --no-cache-dir tiktoken more-itertools \
-    && if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
+    && (grep "github.com" requirements.txt > requirements-github.txt || true)
+
+# Layer 1: torch ecosystem (~700 MB) — biggest single chunk; isolated so the
+# rest of the deps can re-use it from the layer cache on subsequent builds.
+RUN pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      --constraint constraints.txt \
+      torch torchaudio torchvision
+
+# Layer 2: heavy ML/CV deps (~800 MB) — transformers, easyocr, docling, speechbrain, opencv.
+RUN pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      --constraint constraints.txt \
+      transformers easyocr docling docling-core speechbrain opencv-python-headless
+
+# Layer 3: voice/audio stack (~400 MB) — faster-whisper (ctranslate2), piper-tts, librosa.
+RUN pip install --no-cache-dir \
+      --constraint constraints.txt \
+      faster-whisper piper-tts librosa soundfile noisereduce
+
+# Layer 4: remaining pypi reqs (~600 MB) — fastapi, sqlalchemy, ollama, mcp, etc.
+RUN pip install --no-cache-dir \
+      --extra-index-url https://download.pytorch.org/whl/cpu \
+      --constraint constraints.txt \
+      -r requirements-pypi.txt
+
+# Layer 5: github archive deps (small, slow to resolve — kept in its own layer).
+RUN if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
 
 
 # ============================================================================
