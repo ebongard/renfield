@@ -71,6 +71,16 @@ RUN pip install --no-cache-dir \
 # Layer 5: github archive deps (small, slow to resolve — kept in its own layer).
 RUN if [ -s requirements-github.txt ]; then pip install --no-cache-dir --force-reinstall --no-deps -r requirements-github.txt; fi
 
+# Stage the heaviest packages OUTSIDE /opt/venv so the runtime stage can COPY
+# them individually. A single `COPY --from=builder /opt/venv /opt/venv` would
+# otherwise collapse the split RUN layers into one ~2.65 GB layer that 504s on
+# the external Harbor proxy.
+RUN cd /opt/venv/lib/python3.11/site-packages \
+    && mkdir -p /opt/staging/torch /opt/staging/ml /opt/staging/audio \
+    && mv torch torchaudio torchvision /opt/staging/torch/ \
+    && mv transformers easyocr docling docling_core docling_ibm_models speechbrain cv2 /opt/staging/ml/ \
+    && mv ctranslate2 librosa /opt/staging/audio/
+
 
 # ============================================================================
 # Stage 2: Runtime
@@ -101,7 +111,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Copy Python virtual environment from builder
+# Copy Python virtual environment from builder. Split into multiple COPY layers
+# so each pushed layer fits under the external Harbor proxy timeout. The heavy
+# packages were moved out of /opt/venv in the builder; here we copy them back
+# into site-packages individually before the catch-all COPY of the slim venv.
+COPY --from=builder /opt/staging/torch/. /opt/venv/lib/python3.11/site-packages/
+COPY --from=builder /opt/staging/ml/. /opt/venv/lib/python3.11/site-packages/
+COPY --from=builder /opt/staging/audio/. /opt/venv/lib/python3.11/site-packages/
 COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 ENV PYTHONUNBUFFERED=1
