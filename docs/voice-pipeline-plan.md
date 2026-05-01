@@ -28,11 +28,11 @@ The family talks to the assistant via the chat UI on a tablet stuck to the fridg
 A four-person household with three satellites + a kitchen tablet can produce 5+ concurrent voice requests during dinner prep. Today's non-thread-safe Whisper singleton serializes them.
 
 ### Personalization signals available
-- `users` table: family member names, per-user preferences
-- `Speaker` table: voice fingerprints, auto-enrolled embeddings
-- `rooms` table: room names + aliases (Wohnzimmer, Küche, Schlafzimmer)
-- KB top documents per user: bias toward the vocabulary the family actually has indexed
-- Per-user TTS voice choice: NOT yet exposed in UI but the data shape is there
+- `users` table: family member names, per-user preferences (`src/backend/models/database.py`)
+- `speakers` table: voice fingerprints, auto-enrolled embeddings (`src/backend/models/database.py`)
+- `rooms` table: room names + aliases (Wohnzimmer, Küche, Schlafzimmer) — lives in `ha_glue` (`src/backend/ha_glue/models/database.py`); referenced from the main DB via a loose ID, not a hard FK
+- KB top documents per user: needs a per-household ranking service that doesn't exist yet — Phase B would have to introduce one (or v1 can ground the bias on `users.name` + `rooms` only and defer KB-bias to a follow-up)
+- Per-user TTS voice choice: NOT yet exposed in UI but the data shape is there (`piper_voice_map` in `utils/config.py`)
 
 ---
 
@@ -46,10 +46,11 @@ These are pure Renfield-side engineering work that the Reva doc proposes putting
 |---|---|---|
 | **P0-1** | `openai-whisper` → `faster-whisper` | Same CPU-bound openai-whisper in `whisper_service.py` today. CTranslate2 backend gets PRD's GPU node without API-contract change. |
 | **P0-2** | model size bump | Renfield default is `whisper_model="base"` (`config.py`). Bump to `medium` (CPU fallback) / `large-v3` (PRD with cuda) — same logic. |
-| **P0-4** | singleton dedup | Confirmed: `voice.py:25` instantiates `WhisperService()` while `websocket/shared.py:181` lazy-creates a second one. Two model loads under load. |
+| **P0-4** | singleton dedup | Confirmed: `voice.py` instantiates `WhisperService()` directly while `api/websocket/shared.py:get_whisper_service` lazy-creates a second one. Two model loads under load. (Phase A also fixes a third instantiation in `ha_glue/api/websocket/device_handler.py` flagged during code review.) |
 | **P1-1** | in-process Piper | `piper_service.py` shells out via subprocess per request. ~150-300 ms cold-start is felt most in the kitchen-tablet web-chat path. |
 | **P3-1** | worker pool around WhisperService | More important for Renfield than Reva: a household with 4 satellites genuinely produces concurrent voice requests. |
 | **P3-2** | TTS LRU cache | **Bigger win for Renfield than Reva.** Household interactions repeat heavily — "OK", "Erledigt", "Erinnerung gesetzt", "Licht ist an", confirmations on actions. |
+| **P3-4** | Kokoro-82M swap | Better German prosody is a daily-driver win for the household. Apache 2.0, ~80 ms latency, multilingual, runs on CPU. Drop-in at the synth layer. |
 
 ### Translate with Renfield framing
 
@@ -62,7 +63,6 @@ These map but the *contents* differ from Reva.
 | **P1-3** server-side Silero VAD | Useful for the **web-chat path** (browser doesn't VAD reliably). Redundant for the satellite path — Renfield satellite already does VAD on-device. Make it conditional. |
 | **P2-3** per-role prompts in `agent_roles.yaml` | Reva uses this for release/Jira/Confluence roles. Renfield can repurpose for **per-user** or **per-room** prompt bias (e.g. kitchen-room context biases toward recipe vocabulary). |
 | **P3-3** Prometheus metrics | Yes, but rename `reva_voice_*` → `renfield_voice_*`. Add to `/api/metrics`. |
-| **P3-4** Kokoro-82M swap | Better German prosody is a real household win — daily-driver voice should sound natural. Apache 2.0, ~80 ms, multilingual, runs on CPU. Worth a side-by-side blind test. |
 
 ### Skip for Renfield
 
@@ -78,7 +78,7 @@ These matter for Renfield but are out-of-scope for Reva by design:
 
 1. **Per-user TTS voice.** Each household member could pick their preferred voice. Reva doesn't have multi-user voice. Builds naturally on the `voice_map` in `piper_service.py`.
 2. **Speaker recognition × faster-whisper interaction.** Reva says "speaker-recognition path unaffected." For Renfield (auto-enrollment + continuous learning, max 10 embeddings/speaker) the swap needs verification: confirm `faster-whisper`'s output format still feeds the SpeechBrain ECAPA-TDNN embeddings cleanly.
-3. **Backend-side preprocessing for resource-constrained satellites.** Already on `src/satellite/TECHNICAL_DEBT.md` ("Medium priority: Audio Preprocessing auf Backend verschieben"). Pi Zero 2 W can offload noise reduction. Worth bundling with Phase A blast radius.
+3. **Backend-side preprocessing for resource-constrained satellites.** Already on `src/satellite/TECHNICAL_DEBT.md` ("Medium priority: Audio Preprocessing auf Backend verschieben"). Pi Zero 2 W can offload noise reduction. Scoped for Phase B (Section 4) — touches the satellite firmware contract, so it shouldn't be smuggled into Phase A's backend-only blast radius.
 4. **Wake-word path.** Reva explicitly excludes this; Renfield's satellite already runs OpenWakeWord. Reason the Reva framing of "push-to-talk minimum" doesn't fit Renfield.
 5. **Household privacy framing.** Reva's GDPR section talks about individual-performance attribution. Renfield's equivalent: voice metadata of one family member not bleeding into another's `Speaker` profile during auto-enrollment. Already handled at the speaker-service level but worth re-verifying after the swap.
 6. **Opus compression for satellite uplink.** Already on the satellite tech-debt list ("~50% bandwidth"), separate from STT/TTS upgrades but in the same neighborhood.
@@ -162,11 +162,13 @@ Recordings live under `tests/fixtures/voice/` (to be created when Phase A enters
 
 Promote to PRD only if all hold:
 
-1. Quality non-regression vs A — overall WER ≤ A; named-entity WER strictly **better** than A.
+1. Quality non-regression vs A — overall WER ≤ A; **named-entity WER ≥ 5 percentage-points better** than A. (The Reva sibling doc projects 20–40 pp lift from `base` → `large-v3` on noisy domain audio; 5 pp is the floor below which a marginal improvement isn't worth the model-size + GPU-VRAM cost. If named-entity WER landed at <5 pp better, hold for tuning instead of rubber-stamping.)
 2. Latency improvement — STT p50 ≥ 50 % faster than A on PRD's GPU node.
 3. Concurrency — 5 concurrent voice requests survive without errors (smoke-tested in Phase A; full worker-pool guarantee comes in Phase B).
 4. Speaker-recognition non-regression — auto-enrollment still creates new speakers on first hear; identification accuracy on repeat speakers ≥ A.
 5. No regression in the text path — existing E2E markers unaffected.
+
+> **Note on web-chat blocking round-trip.** Phase A does NOT change the kitchen-tablet `/voice-chat` endpoint's blocking serial round-trip; it only makes each leg faster. Streaming TTS (Reva P1-2) is scoped for Phase C, signal-gated on real complaints about TTS lag.
 
 ---
 
@@ -192,9 +194,9 @@ Both via the same plugin-hook architecture in Renfield, customized at integratio
 
 ## 8. See also
 
-- [`../../reva/docs/architecture/voice-pipeline-enhancements.md`](../../reva/docs/architecture/voice-pipeline-enhancements.md) — Reva's perspective on the same engineering, written from Reva's use case
+- [`../../reva/docs/architecture/voice-pipeline-enhancements.md`](../../reva/docs/architecture/voice-pipeline-enhancements.md) — Reva's perspective on the same engineering, written from Reva's use case (assumes the sibling-checkout layout `projects.ai/{renfield,reva}`; link is dead in CI runners that only check out `renfield/`)
 - [`../src/satellite/TECHNICAL_DEBT.md`](../src/satellite/TECHNICAL_DEBT.md) — satellite-side audio pipeline future work (Opus, AEC, 4-mic beamforming, backend preprocessing offload)
-- [`../STRATEGY.md`](./STRATEGY.md) — strategic frame for the Reva-unification thesis that this work tests in practice
+- [`STRATEGY.md`](./STRATEGY.md) — strategic frame for the Reva-unification thesis that this work tests in practice (lands via PR #508; merge that first, or this link will 404 on `main` until it does)
 - `src/backend/services/whisper_service.py` — STT service (modified by Phase A)
 - `src/backend/services/piper_service.py` — TTS service (modified by Phase A)
 - `src/backend/api/routes/voice.py` — voice API surface (singleton dedup in Phase A)
