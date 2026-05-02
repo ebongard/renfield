@@ -40,16 +40,21 @@ class TestHealthEndpoint:
 
     @pytest.mark.asyncio
     async def test_health_tolerates_prompt_manager_failure(self):
-        """If PromptManager raises during access, /health still returns 'ok'."""
+        """If PromptManager raises during access, /health still returns 'ok'.
+
+        The mutating-the-MagicMock-class trick (`type(mock).prop = property(...)`)
+        leaks across tests because unittest.mock.patch does NOT restore class-
+        level descriptor additions. Subclass `MagicMock` instead so the
+        descriptor is scoped to one instance type and is GC'd with the test.
+        """
         from main import health_check
 
-        broken_pm = MagicMock()
-        # Reading the property must raise — use a property descriptor on the class
-        type(broken_pm).prompt_hashes = property(
-            lambda self: (_ for _ in ()).throw(RuntimeError("PM not ready"))
-        )
+        class _BrokenPM(MagicMock):
+            @property
+            def prompt_hashes(self):
+                raise RuntimeError("PM not ready")
 
-        with patch("services.prompt_manager.prompt_manager", broken_pm):
+        with patch("services.prompt_manager.prompt_manager", _BrokenPM()):
             result = await health_check()
 
         assert result["status"] == "ok"
