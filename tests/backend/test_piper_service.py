@@ -37,11 +37,13 @@ def _make_mock_settings(
     piper_default_voice="de_DE-thorsten-high",
     piper_voice_map=None,
     default_language="de",
+    tts_cache_size=0,
 ):
     s = MagicMock()
     s.piper_default_voice = piper_default_voice
     s.piper_voice_map = piper_voice_map or {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
     s.default_language = default_language
+    s.tts_cache_size = tts_cache_size
     return s
 
 
@@ -64,6 +66,16 @@ def service_unavailable(mock_settings):
     """Service with PIPER_AVAILABLE=False (piper-tts not installed)."""
     with patch("services.piper_service.settings", mock_settings), \
          patch("services.piper_service.PIPER_AVAILABLE", False):
+        svc = PiperService()
+    return svc
+
+
+@pytest.fixture
+def service_cached(mock_settings):
+    """Service with a 4-entry TTS cache enabled."""
+    mock_settings.tts_cache_size = 4
+    with patch("services.piper_service.settings", mock_settings), \
+         patch("services.piper_service.PIPER_AVAILABLE", True):
         svc = PiperService()
     return svc
 
@@ -264,6 +276,83 @@ class TestSynthesis:
     async def test_synthesize_to_bytes_when_unavailable(self, service_unavailable):
         result = await service_unavailable.synthesize_to_bytes("Hello")
         assert result == b""
+
+
+# ============================================================================
+# TTS LRU Cache (Phase B)
+# ============================================================================
+
+@pytest.mark.unit
+class TestTtsLruCache:
+
+    @pytest.mark.asyncio
+    async def test_repeat_text_hits_cache_and_skips_synthesis(self, service_cached, fake_voice):
+        """Same (voice, text) on second call returns cached bytes without re-running synthesize."""
+        with patch.object(service_cached, "_load_voice", return_value=fake_voice):
+            first = await service_cached.synthesize_to_bytes("Verstanden")
+            second = await service_cached.synthesize_to_bytes("Verstanden")
+
+        assert first == second
+        assert fake_voice.synthesize.call_count == 1
+        stats = service_cached.cache_stats()
+        assert stats["hits"] == 1
+        assert stats["misses"] == 1
+        assert stats["size"] == 1
+
+    @pytest.mark.asyncio
+    async def test_different_text_misses_cache(self, service_cached, fake_voice):
+        with patch.object(service_cached, "_load_voice", return_value=fake_voice):
+            await service_cached.synthesize_to_bytes("Verstanden")
+            await service_cached.synthesize_to_bytes("Bestätigt")
+
+        assert fake_voice.synthesize.call_count == 2
+        assert service_cached.cache_stats()["size"] == 2
+
+    @pytest.mark.asyncio
+    async def test_different_language_partitions_cache(self, service_cached, fake_voice):
+        """Same text in different languages must not collide — voice is part of the key."""
+        with patch.object(service_cached, "_load_voice", return_value=fake_voice):
+            await service_cached.synthesize_to_bytes("OK", language="de")
+            await service_cached.synthesize_to_bytes("OK", language="en")
+
+        assert fake_voice.synthesize.call_count == 2
+        assert service_cached.cache_stats()["size"] == 2
+
+    @pytest.mark.asyncio
+    async def test_lru_eviction_at_capacity(self, service_cached, fake_voice):
+        """Cache evicts least-recently-used entry when capacity exceeded."""
+        with patch.object(service_cached, "_load_voice", return_value=fake_voice):
+            for text in ("a", "b", "c", "d", "e"):  # capacity=4 → "a" evicted
+                await service_cached.synthesize_to_bytes(text)
+
+            assert service_cached.cache_stats()["size"] == 4
+
+            # "a" was evicted → re-synthesize on next call
+            count_before = fake_voice.synthesize.call_count
+            await service_cached.synthesize_to_bytes("a")
+            assert fake_voice.synthesize.call_count == count_before + 1
+
+    @pytest.mark.asyncio
+    async def test_disabled_cache_does_not_store(self, service, fake_voice):
+        """tts_cache_size=0 disables caching entirely."""
+        with patch.object(service, "_load_voice", return_value=fake_voice):
+            await service.synthesize_to_bytes("Verstanden")
+            await service.synthesize_to_bytes("Verstanden")
+
+        assert fake_voice.synthesize.call_count == 2
+        assert service.cache_stats()["size"] == 0
+
+    @pytest.mark.asyncio
+    async def test_cache_hit_writes_file(self, service_cached, fake_voice, tmp_path):
+        """Cache hit on synthesize_to_file still produces a valid WAV on disk."""
+        path1 = str(tmp_path / "first.wav")
+        path2 = str(tmp_path / "second.wav")
+        with patch.object(service_cached, "_load_voice", return_value=fake_voice):
+            await service_cached.synthesize_to_file("Verstanden", path1)
+            await service_cached.synthesize_to_file("Verstanden", path2)
+
+        assert (tmp_path / "first.wav").read_bytes() == (tmp_path / "second.wav").read_bytes()
+        assert fake_voice.synthesize.call_count == 1
 
 
 # ============================================================================

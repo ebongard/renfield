@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     whisper_initial_prompt: str = ""  # Leer = kein Kontext-Bias (Renfield ist ein offenes System)
     piper_voices: str = "de:de_DE-thorsten-high,en:en_US-amy-medium"  # Language:Voice mapping
     piper_default_voice: str = "de_DE-thorsten-high"  # Fallback voice when requested language has no entry in piper_voices
+    # TTS LRU cache for synthesized WAV bytes. Keyed on (voice, text). 0 disables.
+    # Repeated confirmations ("Verstanden", "Bestätigt", "Wird erledigt") dominate
+    # household TTS; caching them avoids redundant ONNX inference. Each WAV is
+    # ~50-200 KB; default of 256 caps memory at ~50 MB.
+    tts_cache_size: int = 256
 
     # Audio Preprocessing (for better STT quality)
     whisper_preprocess_enabled: bool = True       # Enable audio preprocessing before Whisper

@@ -14,7 +14,9 @@ Configuration via PIPER_VOICES environment variable:
 """
 import io
 import wave
+from collections import OrderedDict
 from pathlib import Path
+from threading import Lock
 
 from loguru import logger
 
@@ -41,13 +43,56 @@ class PiperService:
         # ~200 MB total which is fine.
         self._voice_cache: dict[str, "PiperVoice"] = {}
 
+        # LRU cache for synthesized WAV bytes. Keyed on (voice_name, text). Only
+        # the deterministic synthesis path hits this — anything that takes per-
+        # request audio params (e.g., speaker styling) must bypass.
+        self._wav_cache: "OrderedDict[tuple[str, str], bytes]" = OrderedDict()
+        self._wav_cache_max = max(0, int(settings.tts_cache_size))
+        self._wav_cache_lock = Lock()
+        self._wav_cache_hits = 0
+        self._wav_cache_misses = 0
+
         if not PIPER_AVAILABLE:
             logger.warning(
                 "⚠️  piper-tts Python package not installed. TTS-Funktionen sind deaktiviert. "
                 "Install with: pip install piper-tts>=1.2.0"
             )
         else:
-            logger.info(f"🗣️ Piper voice map: {self.voice_map}")
+            logger.info(
+                f"🗣️ Piper voice map: {self.voice_map} · TTS cache: {self._wav_cache_max} entries"
+            )
+
+    def _cache_get(self, voice_name: str, text: str) -> bytes | None:
+        if self._wav_cache_max == 0:
+            return None
+        key = (voice_name, text)
+        with self._wav_cache_lock:
+            wav = self._wav_cache.get(key)
+            if wav is None:
+                self._wav_cache_misses += 1
+                return None
+            self._wav_cache.move_to_end(key)
+            self._wav_cache_hits += 1
+            return wav
+
+    def _cache_put(self, voice_name: str, text: str, wav: bytes) -> None:
+        if self._wav_cache_max == 0 or not wav:
+            return
+        key = (voice_name, text)
+        with self._wav_cache_lock:
+            self._wav_cache[key] = wav
+            self._wav_cache.move_to_end(key)
+            while len(self._wav_cache) > self._wav_cache_max:
+                self._wav_cache.popitem(last=False)
+
+    def cache_stats(self) -> dict:
+        with self._wav_cache_lock:
+            return {
+                "size": len(self._wav_cache),
+                "max": self._wav_cache_max,
+                "hits": self._wav_cache_hits,
+                "misses": self._wav_cache_misses,
+            }
 
     def _get_voice_for_language(self, language: str = None) -> str:
         """
@@ -112,13 +157,28 @@ class PiperService:
             return False
 
         voice_name = self._get_voice_for_language(language)
+        cached = self._cache_get(voice_name, text)
+        if cached is not None:
+            try:
+                with open(output_path, "wb") as f:
+                    f.write(cached)
+                return True
+            except Exception as e:
+                logger.error(f"❌ TTS Cache-Datei-Schreibfehler ({voice_name}): {e}")
+                return False
+
         voice = self._load_voice(voice_name)
         if voice is None:
             return False
 
         try:
-            with wave.open(output_path, "wb") as wav_file:
+            buffer = io.BytesIO()
+            with wave.open(buffer, "wb") as wav_file:
                 voice.synthesize(text, wav_file)
+            wav_bytes = buffer.getvalue()
+            self._cache_put(voice_name, text, wav_bytes)
+            with open(output_path, "wb") as f:
+                f.write(wav_bytes)
             logger.info(f"✅ TTS erfolgreich ({voice_name}): {output_path}")
             return True
         except Exception as e:
@@ -138,6 +198,10 @@ class PiperService:
             return b""
 
         voice_name = self._get_voice_for_language(language)
+        cached = self._cache_get(voice_name, text)
+        if cached is not None:
+            return cached
+
         voice = self._load_voice(voice_name)
         if voice is None:
             return b""
@@ -148,7 +212,9 @@ class PiperService:
             # frames into the wave object directly.
             with wave.open(buffer, "wb") as wav_file:
                 voice.synthesize(text, wav_file)
-            return buffer.getvalue()
+            wav_bytes = buffer.getvalue()
+            self._cache_put(voice_name, text, wav_bytes)
+            return wav_bytes
         except Exception as e:
             logger.error(f"❌ TTS Fehler ({voice_name}): {e}")
             return b""
