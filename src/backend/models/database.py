@@ -150,6 +150,18 @@ class SpeakerVocabulary(Base):
     circle_tier = Column(SmallInteger, nullable=False, default=0)
     last_updated = Column(DateTime, default=_utcnow, nullable=False)
 
+    # Composite index used by the prompt-builder's read path (top-N terms by
+    # frequency for a given user+language). Declared here so Alembic
+    # autogenerate sees it on subsequent revisions and doesn't emit spurious
+    # diffs for a "missing" index.
+    __table_args__ = (
+        UniqueConstraint("user_id", "term", "language", name="uq_speaker_vocab_user_term_lang"),
+        Index(
+            "ix_speaker_vocab_user_lang_freq",
+            "user_id", "language", frequency.desc(),
+        ),
+    )
+
 
 # --- Room management, device, and output-device models ---
 #

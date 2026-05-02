@@ -20,6 +20,19 @@ from loguru import logger
 
 from utils.config import settings
 
+# Strong-reference set for fire-and-forget background tasks. Without this,
+# Python's asyncio is free to garbage-collect tasks not held anywhere — see
+# https://docs.python.org/3.11/library/asyncio-task.html#asyncio.create_task
+# Tasks remove themselves from the set when they finish via add_done_callback.
+_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> None:
+    """Schedule a fire-and-forget coroutine that won't be GC'd before completion."""
+    task = asyncio.create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
 # Optional: librosa and soundfile for audio preprocessing
 try:
     import librosa
@@ -397,10 +410,13 @@ class WhisperService:
                     # Vocabulary corpus capture (B-3 follow-up): fire-and-forget.
                     # Opens its own session, swallows errors. Skips auto-enrolled
                     # speakers and ones not linked to a User account.
+                    # Use _spawn_background to keep a strong reference — bare
+                    # asyncio.create_task lets the GC eat short-lived tasks
+                    # before the DB commit completes (silent data loss).
                     if settings.speaker_vocab_capture_enabled and text:
                         from services.speaker_vocabulary_service import capture_transcript
 
-                        asyncio.create_task(
+                        _spawn_background(
                             capture_transcript(
                                 speaker_id=identified_speaker.id,
                                 text=text,

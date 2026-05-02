@@ -88,7 +88,11 @@ _TOKEN_RE = re.compile(r"[A-Za-zÄÖÜäöüß][A-Za-zÄÖÜäöüß0-9-]{2,}")
 
 
 def _tokenize(text: str, language: str) -> list[str]:
-    """Conservative tokenizer: regex split, lowercase, filter stopwords + nums."""
+    """Conservative tokenizer: regex split, lowercase, filter stopwords.
+
+    `_TOKEN_RE` requires a leading letter, so pure-numeric runs are filtered
+    at the regex level — no separate `isdigit()` guard needed downstream.
+    """
     stopwords = _STOPWORDS_DE if language.startswith("de") else _STOPWORDS_EN
     out: list[str] = []
     for match in _TOKEN_RE.finditer(text):
@@ -96,8 +100,6 @@ def _tokenize(text: str, language: str) -> list[str]:
         if not (_MIN_TOKEN_LENGTH <= len(token) <= _MAX_TOKEN_LENGTH):
             continue
         if token in stopwords:
-            continue
-        if token.isdigit():
             continue
         out.append(token)
     return out
@@ -174,40 +176,49 @@ async def rebuild_vocabulary(*, db_session) -> dict[str, int]:
     users_processed = 0
     terms_written = 0
 
+    # Per-user commits so a failure on user N doesn't roll back users 1..N-1.
+    # The rebuild is meant to be idempotent — partial progress is fine.
     for (user_id, language), counter in by_key.items():
-        # Replace existing vocab for (user, language) — idempotent rebuild.
-        await db_session.execute(
-            delete(SpeakerVocabulary)
-            .where(SpeakerVocabulary.user_id == user_id)
-            .where(SpeakerVocabulary.language == language)
-        )
+        try:
+            # Replace existing vocab for (user, language) — idempotent rebuild.
+            await db_session.execute(
+                delete(SpeakerVocabulary)
+                .where(SpeakerVocabulary.user_id == user_id)
+                .where(SpeakerVocabulary.language == language)
+            )
 
-        top = counter.most_common(_TOP_N_TERMS)
-        if not top:
-            continue
-        now = datetime.utcnow()
-        rows_to_insert = [
-            {
-                "user_id": user_id,
-                "term": term,
-                "frequency": freq,
-                "language": language,
-                "circle_tier": 0,
-                "last_updated": now,
-            }
-            for term, freq in top
-        ]
-        # ON CONFLICT DO NOTHING is defense-in-depth; the DELETE above
-        # should already have cleared the keyspace for this (user, lang).
-        stmt = pg_insert(SpeakerVocabulary).values(rows_to_insert)
-        stmt = stmt.on_conflict_do_nothing(
-            index_elements=["user_id", "term", "language"]
-        )
-        await db_session.execute(stmt)
-        users_processed += 1
-        terms_written += len(rows_to_insert)
+            top = counter.most_common(_TOP_N_TERMS)
+            if not top:
+                await db_session.commit()
+                continue
+            now = datetime.utcnow()
+            rows_to_insert = [
+                {
+                    "user_id": user_id,
+                    "term": term,
+                    "frequency": freq,
+                    "language": language,
+                    "circle_tier": 0,
+                    "last_updated": now,
+                }
+                for term, freq in top
+            ]
+            # ON CONFLICT DO NOTHING is defense-in-depth; the DELETE above
+            # should already have cleared the keyspace for this (user, lang).
+            stmt = pg_insert(SpeakerVocabulary).values(rows_to_insert)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["user_id", "term", "language"]
+            )
+            await db_session.execute(stmt)
+            await db_session.commit()
+            users_processed += 1
+            terms_written += len(rows_to_insert)
+        except Exception as e:
+            await db_session.rollback()
+            logger.warning(
+                f"speaker_vocabulary rebuild failed for user_id={user_id} lang={language}: {e}"
+            )
 
-    await db_session.commit()
     return {
         "users_processed": users_processed,
         "terms_written": terms_written,
