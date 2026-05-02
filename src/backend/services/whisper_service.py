@@ -124,6 +124,22 @@ class WhisperService:
                 self._run_transcription, transcribe_path, language, initial_prompt
             )
 
+    async def _extract_embedding_async(self, audio_path: str):
+        """Run sync ECAPA-TDNN embedding extraction off the event loop.
+
+        Returns the 192-dim numpy array, or None if speaker recognition is
+        unavailable (SpeechBrain missing) or the audio is too short. Wrapped
+        in `to_thread` so the speaker-recognition stage of the STT pipeline
+        runs in parallel with `_transcribe_async` rather than serializing
+        after it (Phase B-3 latency win — speaker_id ready ~50-150 ms earlier).
+        """
+        from services.speaker_service import get_speaker_service
+
+        service = get_speaker_service()
+        if not service.is_available():
+            return None
+        return await asyncio.to_thread(service.extract_embedding, audio_path)
+
     async def transcribe_file(self, audio_path: str, language: str = None, initial_prompt: str | None = None) -> str:
         """
         Audio-Datei transkribieren mit optionalem Preprocessing.
@@ -273,10 +289,6 @@ class WhisperService:
                 logger.info("📊 Using preprocessed audio for transcription and speaker recognition")
 
         try:
-            # Transcribe using preprocessed audio
-            text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
-            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
-
             # Default speaker info
             speaker_info = {
                 "speaker_id": None,
@@ -286,8 +298,31 @@ class WhisperService:
                 "is_new_speaker": False
             }
 
-            # Try to identify speaker if enabled and db_session provided
-            if not settings.speaker_recognition_enabled or db_session is None:
+            do_speaker_recog = settings.speaker_recognition_enabled and db_session is not None
+
+            # Run STT and speaker-embedding extraction in PARALLEL when speaker
+            # recognition is enabled. Both are I/O-bound (model inference in
+            # threads), so asyncio.gather lets them overlap. Net win: the
+            # speaker-id pipeline completes ~50-150 ms before STT finishes,
+            # so downstream consumers (notification routing, etc.) see the
+            # identified speaker as soon as the turn ends rather than after
+            # an additional sequential embedding extraction.
+            if do_speaker_recog:
+                text, embedding = await asyncio.gather(
+                    self._transcribe_async(transcribe_path, transcribe_language, initial_prompt),
+                    self._extract_embedding_async(transcribe_path),
+                )
+            else:
+                text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
+                embedding = None
+
+            logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
+
+            # Bail out if speaker recog disabled or unavailable.
+            if not do_speaker_recog:
+                return {"text": text, **speaker_info}
+            if embedding is None:
+                logger.debug("Speaker embedding unavailable (recog disabled, audio too short, or backend missing)")
                 return {"text": text, **speaker_info}
 
             try:
@@ -299,17 +334,6 @@ class WhisperService:
                 from services.speaker_service import get_speaker_service
 
                 service = get_speaker_service()
-
-                if not service.is_available():
-                    logger.debug("Speaker recognition not available")
-                    return {"text": text, **speaker_info}
-
-                # Extract embedding from PREPROCESSED audio (better quality!)
-                embedding = service.extract_embedding(transcribe_path)
-
-                if embedding is None:
-                    logger.debug("Could not extract speaker embedding")
-                    return {"text": text, **speaker_info}
 
                 # Load ALL speakers (including those without embeddings for counting)
                 result = await db_session.execute(

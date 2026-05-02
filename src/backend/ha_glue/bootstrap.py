@@ -75,6 +75,7 @@ def register() -> None:
         )
         from ha_glue.services.sweep_handlers import (
             ha_chat_context_established,
+            ha_resolve_room_occupants,
             ha_resolve_user_current_room,
         )
         from ha_glue.services.chat_voice_handlers import (
@@ -93,6 +94,7 @@ def register() -> None:
         register_hook("chat_context_established", ha_chat_context_established)
         register_hook("should_play_tts_for_notification", ha_should_play_tts_for_notification)
         register_hook("resolve_user_current_room", ha_resolve_user_current_room)
+        register_hook("resolve_room_occupants", ha_resolve_room_occupants)
         register_hook("route_chat_tts_to_device_output", ha_route_chat_tts_to_device_output)
         register_hook("resolve_room_context_by_ip", ha_resolve_room_context_by_ip)
         register_hook("fetch_tts_audio_cache", ha_fetch_tts_audio_cache)

@@ -132,12 +132,26 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
         speaker_alias = None
         speaker_confidence = 0.0
 
+        # B-3: device handler has no user_id (devices are unauthenticated voice
+        # endpoints). Pass user=None and language=default — the platform builder
+        # composes a prompt from rooms + users tables alone, no per-speaker bias.
+        from services.whisper_prompt_builder import get_whisper_prompt_builder
+
+        prompt_builder = get_whisper_prompt_builder()
+
         if settings.speaker_recognition_enabled:
             async with AsyncSessionLocal() as db_session:
+                initial_prompt = await prompt_builder.build(
+                    user_id=None,
+                    room_id=None,
+                    language=settings.default_language,
+                    db_session=db_session,
+                )
                 result = await whisper.transcribe_bytes_with_speaker(
                     wav_bytes,
                     filename="device_audio.wav",
-                    db_session=db_session
+                    db_session=db_session,
+                    initial_prompt=initial_prompt,
                 )
                 text = result.get("text", "")
                 speaker_name = result.get("speaker_name")
@@ -147,7 +161,18 @@ async def _process_device_session(app: FastAPI, device_manager: DeviceManager, s
                 if speaker_name:
                     logger.info(f"🎤 Speaker identified: {speaker_name} (@{speaker_alias}) - {speaker_confidence:.2f}")
         else:
-            text = await whisper.transcribe_bytes(wav_bytes, "device_audio.wav")
+            async with AsyncSessionLocal() as db_session:
+                initial_prompt = await prompt_builder.build(
+                    user_id=None,
+                    room_id=None,
+                    language=settings.default_language,
+                    db_session=db_session,
+                )
+            text = await whisper.transcribe_bytes(
+                wav_bytes,
+                "device_audio.wav",
+                initial_prompt=initial_prompt,
+            )
 
         if not text or not text.strip():
             logger.warning(f"⚠️ Empty transcription for session {session_id}")

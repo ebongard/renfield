@@ -67,13 +67,28 @@ async def speech_to_text(
         # Transkribieren mit Sprechererkennung (wenn aktiviert)
         logger.info("🔄 Starte Transkription...")
 
+        # B-3: per-request STT bias prompt. The /stt endpoint has the
+        # authenticated user (via Depends) but no room_context — we pass
+        # user_id only and let the platform-default builder compose a
+        # household-scoped prompt without room-specific bias.
+        from services.whisper_prompt_builder import get_whisper_prompt_builder
+
+        prompt_builder = get_whisper_prompt_builder()
+        initial_prompt = await prompt_builder.build(
+            user_id=getattr(_user, "id", None),
+            room_id=None,
+            language=effective_language,
+            db_session=db,
+        )
+
         if settings.speaker_recognition_enabled:
             # Transkription MIT Sprechererkennung
             result = await whisper_service.transcribe_bytes_with_speaker(
                 audio_bytes,
                 filename=audio.filename,
                 db_session=db,
-                language=language
+                language=language,
+                initial_prompt=initial_prompt,
             )
             text = result.get("text", "")
             speaker_id = result.get("speaker_id")
@@ -90,7 +105,8 @@ async def speech_to_text(
             text = await whisper_service.transcribe_bytes(
                 audio_bytes,
                 filename=audio.filename,
-                language=language
+                language=language,
+                initial_prompt=initial_prompt,
             )
             speaker_id = None
             speaker_name = None
@@ -220,12 +236,24 @@ async def voice_chat(
         # 1. Speech-to-Text mit Sprechererkennung
         audio_bytes = await audio.read()
 
+        # B-3: per-request STT bias from authenticated user.
+        from services.whisper_prompt_builder import get_whisper_prompt_builder
+
+        prompt_builder = get_whisper_prompt_builder()
+        initial_prompt = await prompt_builder.build(
+            user_id=getattr(_user, "id", None),
+            room_id=None,
+            language=effective_language,
+            db_session=db,
+        )
+
         if settings.speaker_recognition_enabled:
             result = await whisper_service.transcribe_bytes_with_speaker(
                 audio_bytes,
                 filename=audio.filename,
                 db_session=db,
-                language=language
+                language=language,
+                initial_prompt=initial_prompt,
             )
             user_text = result.get("text", "")
             speaker_name = result.get("speaker_name")
@@ -235,7 +263,12 @@ async def voice_chat(
             if speaker_name:
                 logger.info(f"🎤 Voice-Chat von: {speaker_name} (@{speaker_alias})")
         else:
-            user_text = await whisper_service.transcribe_bytes(audio_bytes, audio.filename, language=language)
+            user_text = await whisper_service.transcribe_bytes(
+                audio_bytes,
+                audio.filename,
+                language=language,
+                initial_prompt=initial_prompt,
+            )
             speaker_name = None
             speaker_alias = None
             speaker_confidence = 0.0

@@ -516,3 +516,45 @@ class TestTranscribeWithSpeaker:
         result = await svc.transcribe_with_speaker("/tmp/test.wav", db_session=None)
 
         assert result["speaker_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_speaker_id_runs_in_parallel_with_transcribe(self):
+        """B-3: STT and embedding extraction must run concurrently, not sequentially.
+
+        Drives both code paths to a point where we can observe gather()-style
+        parallelism: the embedding-extraction stub must START before transcribe
+        FINISHES. We use an asyncio.Event the test sets after embedding starts
+        and the transcribe stub awaits on.
+        """
+        import asyncio
+
+        mock_s = _make_mock_settings(speaker_recognition_enabled=True)
+        with patch("services.whisper_service.settings", mock_s), \
+             patch("services.whisper_service.AudioPreprocessor"):
+            svc = WhisperService()
+
+        embedding_started = asyncio.Event()
+        observed_parallel = False
+
+        async def fake_transcribe_async(*args, **kwargs):
+            nonlocal observed_parallel
+            # Yield control. If embedding extraction is gathered in parallel,
+            # it has the chance to set the event before we resume.
+            await asyncio.sleep(0.01)
+            observed_parallel = embedding_started.is_set()
+            return "transcribed"
+
+        async def fake_extract_embedding_async(audio_path):
+            embedding_started.set()
+            return None  # simulate "audio too short / not available"
+
+        svc._transcribe_async = fake_transcribe_async
+        svc._extract_embedding_async = fake_extract_embedding_async
+        svc.model = MagicMock()  # sentinel so load_model is skipped
+
+        result = await svc.transcribe_with_speaker(
+            "/tmp/test.wav", db_session=MagicMock()
+        )
+
+        assert result["text"] == "transcribed"
+        assert observed_parallel, "embedding extraction did not run during transcribe"

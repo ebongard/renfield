@@ -91,6 +91,25 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # non-None result wins. Platform default (no handler) leaves the
     # notification un-roomed.
     "resolve_user_current_room",
+    # Reverse lookup of room occupancy. Fired by services that need to know
+    # who is currently in a room (e.g. the Whisper prompt builder uses room
+    # occupancy to bias STT toward likely speaker names when the speaker
+    # has not yet been identified). Kwargs: `room_id: int`. Handlers return
+    # a list of user_ids `list[int]` or None. First well-shaped non-None
+    # result wins. Platform default (no handler): empty list — caller treats
+    # as "occupancy unknown".
+    "resolve_room_occupants",
+    # Build the per-request `initial_prompt` bias string for faster-whisper.
+    # Fired by services that call `transcribe_*` and want a household-aware
+    # vocabulary bias (Phase B-3 of the voice pipeline plan). Kwargs:
+    # `user_id: int | None, room_id: int | None, language: str`. Handlers
+    # return a ~150-200 char prompt string or None to defer to the platform
+    # default. First non-None result wins — registration order determines
+    # precedence. Plugins (e.g. Reva) register before the platform default
+    # so domain-specific vocab biases the platform's household-name list.
+    # The platform default builder pulls user/room names from the DB; see
+    # services/whisper_prompt_builder.py.
+    "build_whisper_initial_prompt",
     # Route a chat response's TTS audio to a device output. Fired by
     # `api/websocket/chat_handler.py` when an LLM response is ready and
     # the chat session has a room context. Kwargs: `room_context: dict,

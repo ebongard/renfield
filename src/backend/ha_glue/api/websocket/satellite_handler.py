@@ -341,9 +341,10 @@ async def satellite_websocket(
 
                 logger.info(f"🎵 Processing {len(audio_bytes)} bytes of audio")
 
-                # Get satellite's configured language
+                # Get satellite's configured language + room context
                 satellite_info = satellite_manager.get_satellite_by_session(session_id)
                 satellite_language = satellite_info.language if satellite_info else settings.default_language
+                satellite_room_id = satellite_info.room_id if satellite_info else None
                 logger.info(f"🌐 Using language: {satellite_language}")
 
                 # Transcribe with Whisper (with speaker recognition)
@@ -369,13 +370,34 @@ async def satellite_websocket(
                     speaker_alias = None
                     speaker_confidence = 0.0
 
+                    # Build the per-request STT bias prompt. Caller-side context:
+                    # the satellite's registered room_id (so the prompt is biased
+                    # toward that room's name + occupants). If presence is healthy
+                    # and someone is currently in this room, seed the speaker name
+                    # too — this is the first-utterance bias path discussed in the
+                    # B-3 plan since speaker recognition has not run yet.
+                    from services.whisper_prompt_builder import (
+                        get_whisper_prompt_builder,
+                        resolve_first_speaker_from_room,
+                    )
+
+                    prompt_builder = get_whisper_prompt_builder()
+                    initial_user_id = await resolve_first_speaker_from_room(room_id=satellite_room_id)
+
                     if settings.speaker_recognition_enabled:
                         async with AsyncSessionLocal() as db_session:
+                            initial_prompt = await prompt_builder.build(
+                                user_id=initial_user_id,
+                                room_id=satellite_room_id,
+                                language=satellite_language,
+                                db_session=db_session,
+                            )
                             result = await whisper.transcribe_bytes_with_speaker(
                                 wav_bytes,
                                 filename="satellite_audio.wav",
                                 db_session=db_session,
-                                language=satellite_language
+                                language=satellite_language,
+                                initial_prompt=initial_prompt,
                             )
                             text = result.get("text", "")
                             speaker_name = result.get("speaker_name")
@@ -387,7 +409,19 @@ async def satellite_websocket(
                             else:
                                 logger.info("🎤 Satellite Sprecher nicht erkannt")
                     else:
-                        text = await whisper.transcribe_bytes(wav_bytes, "satellite_audio.wav", language=satellite_language)
+                        async with AsyncSessionLocal() as db_session:
+                            initial_prompt = await prompt_builder.build(
+                                user_id=initial_user_id,
+                                room_id=satellite_room_id,
+                                language=satellite_language,
+                                db_session=db_session,
+                            )
+                        text = await whisper.transcribe_bytes(
+                            wav_bytes,
+                            "satellite_audio.wav",
+                            language=satellite_language,
+                            initial_prompt=initial_prompt,
+                        )
 
                     if not text or not text.strip():
                         logger.warning(f"⚠️ Empty transcription for session {session_id}")
