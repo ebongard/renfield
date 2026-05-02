@@ -248,6 +248,59 @@ class TestTranscription:
         assert call_kwargs[1]["initial_prompt"] == "Smart Home commands"
 
     @pytest.mark.asyncio
+    async def test_transcribe_file_per_call_prompt_overrides_default(self):
+        """Per-call initial_prompt overrides the service-level default (B-3 plumbing)."""
+        mock_s = _make_mock_settings(whisper_initial_prompt="Service default prompt")
+        with patch("services.whisper_service.settings", mock_s), \
+             patch("services.whisper_service.AudioPreprocessor"):
+            svc = WhisperService()
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = _segments_result("ok")
+        svc.model = mock_model
+
+        await svc.transcribe_file("/tmp/test.wav", initial_prompt="Per-call override")
+
+        call_kwargs = mock_model.transcribe.call_args
+        assert call_kwargs[1]["initial_prompt"] == "Per-call override"
+
+    @pytest.mark.asyncio
+    async def test_transcribe_file_per_call_prompt_none_falls_through(self):
+        """initial_prompt=None falls through to the service default rather than blanking it."""
+        mock_s = _make_mock_settings(whisper_initial_prompt="Service default prompt")
+        with patch("services.whisper_service.settings", mock_s), \
+             patch("services.whisper_service.AudioPreprocessor"):
+            svc = WhisperService()
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = _segments_result("ok")
+        svc.model = mock_model
+
+        await svc.transcribe_file("/tmp/test.wav", initial_prompt=None)
+
+        call_kwargs = mock_model.transcribe.call_args
+        assert call_kwargs[1]["initial_prompt"] == "Service default prompt"
+
+    @pytest.mark.asyncio
+    async def test_transcribe_file_per_call_empty_string_disables_prompt(self):
+        """Empty-string per-call override disables the prompt — distinguished from None."""
+        mock_s = _make_mock_settings(whisper_initial_prompt="Service default prompt")
+        with patch("services.whisper_service.settings", mock_s), \
+             patch("services.whisper_service.AudioPreprocessor"):
+            svc = WhisperService()
+
+        mock_model = MagicMock()
+        mock_model.transcribe.return_value = _segments_result("ok")
+        svc.model = mock_model
+
+        await svc.transcribe_file("/tmp/test.wav", initial_prompt="")
+
+        call_kwargs = mock_model.transcribe.call_args
+        # Empty string is "no prompt" — _run_transcription only sets the kwarg
+        # when the resolved prompt is truthy, so initial_prompt key is absent.
+        assert "initial_prompt" not in call_kwargs[1]
+
+    @pytest.mark.asyncio
     async def test_transcribe_file_error_returns_empty(self, service):
         """Transcription error returns empty string."""
         mock_model = MagicMock()

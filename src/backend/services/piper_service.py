@@ -108,7 +108,15 @@ class PiperService:
         return self._inflight_sem
 
     def _synthesize_sync(self, voice: "PiperVoice", text: str) -> bytes:
-        """Run ONNX synthesis to a WAV byte buffer. Sync — call via to_thread."""
+        """Run ONNX synthesis to a WAV byte buffer. Sync — call via to_thread.
+
+        Deliberately accepts only `(voice, text)`. Multi-speaker `speaker_id`
+        and other PiperVoice.synthesize kwargs are NOT plumbed through because
+        the LRU cache keys on `(voice_name, text)` only — adding a per-call
+        synthesis param without extending the key would mean cached audio is
+        served for the wrong speaker. Extend the cache key first if/when we
+        adopt multi-speaker voices.
+        """
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav_file:
             voice.synthesize(text, wav_file)
@@ -142,6 +150,12 @@ class PiperService:
         Returns None if the model file is missing or fails to load — caller
         falls back to a no-op (matching previous behavior when piper CLI was
         absent).
+
+        Thread-safety: `_voice_cache` is a plain dict mutated only here. This
+        is safe because `_load_voice` is sync and never `await`s — under the
+        single-threaded asyncio loop, no other coroutine can interleave between
+        the cache read and the write below. If `_load_voice` is ever made async
+        or called from a worker thread, add a lock or pre-load voices at startup.
         """
         if not PIPER_AVAILABLE:
             return None
