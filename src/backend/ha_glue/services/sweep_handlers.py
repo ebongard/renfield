@@ -99,18 +99,19 @@ async def ha_resolve_room_occupants(
     """Return the list of user_ids currently in `room_id`, or None.
 
     Used by the Whisper prompt builder (Phase B-3) to seed STT bias from
-    known room occupancy before speaker recognition has run. Returns
-    ``None`` when:
+    known room occupancy before speaker recognition has run.
 
-    - Presence is disabled at the ha_glue level
-    - The presence service raises for any reason
-
-    Returns ``[]`` (truthy: empty list is a valid "nobody here" answer
-    that still resolves the hook) when presence is healthy but no users
-    are tracked in the room — wait, ``run_hooks`` filters None and accepts
-    empty list as a real result. Callers downstream treat ``[]`` as
-    "occupancy known, room empty"; the WhisperPromptBuilder handles this
-    by simply omitting any speaker-name bias.
+    Return value:
+    - ``None`` when presence is disabled or the lookup raised. Callers
+      treat this identically to "no handler registered" — fall through.
+    - ``[]`` when presence is healthy but the room is empty. ``run_hooks``
+      passes this back as a real result (it only filters None), but the
+      downstream consumer ``resolve_first_speaker_from_room`` skips empty
+      lists with ``isinstance(result, list) and result``, so an empty list
+      is functionally indistinguishable from None at the speaker-bias
+      seeding step. That's intentional: an empty room produces no speaker
+      bias either way.
+    - ``[user_id, ...]`` when one or more users are present.
     """
     from ha_glue.utils.config import ha_glue_settings
 

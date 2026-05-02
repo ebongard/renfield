@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.websocket.shared import get_whisper_service
 from services.api_rate_limiter import limiter
 from services.auth_service import get_current_user
-from services.database import get_db
+from services.database import AsyncSessionLocal, get_db
 from services.piper_service import get_piper_service
 from utils.config import settings
 
@@ -71,15 +71,21 @@ async def speech_to_text(
         # authenticated user (via Depends) but no room_context — we pass
         # user_id only and let the platform-default builder compose a
         # household-scoped prompt without room-specific bias.
+        # NOTE: open a SEPARATE session for the prompt build so the
+        # transaction lifecycle is independent of `db`. transcribe_with_speaker
+        # commits mid-flight on auto-enroll; rolling that into the same
+        # session as the prompt SELECTs would silently put any future DB work
+        # in the request handler into a post-commit fresh transaction.
         from services.whisper_prompt_builder import get_whisper_prompt_builder
 
         prompt_builder = get_whisper_prompt_builder()
-        initial_prompt = await prompt_builder.build(
-            user_id=getattr(_user, "id", None),
-            room_id=None,
-            language=effective_language,
-            db_session=db,
-        )
+        async with AsyncSessionLocal() as prompt_db:
+            initial_prompt = await prompt_builder.build(
+                user_id=getattr(_user, "id", None),
+                room_id=None,
+                language=effective_language,
+                db_session=prompt_db,
+            )
 
         if settings.speaker_recognition_enabled:
             # Transkription MIT Sprechererkennung
@@ -236,16 +242,18 @@ async def voice_chat(
         # 1. Speech-to-Text mit Sprechererkennung
         audio_bytes = await audio.read()
 
-        # B-3: per-request STT bias from authenticated user.
+        # B-3: per-request STT bias from authenticated user. See `/stt` above
+        # for the rationale on the separate session.
         from services.whisper_prompt_builder import get_whisper_prompt_builder
 
         prompt_builder = get_whisper_prompt_builder()
-        initial_prompt = await prompt_builder.build(
-            user_id=getattr(_user, "id", None),
-            room_id=None,
-            language=effective_language,
-            db_session=db,
-        )
+        async with AsyncSessionLocal() as prompt_db:
+            initial_prompt = await prompt_builder.build(
+                user_id=getattr(_user, "id", None),
+                room_id=None,
+                language=effective_language,
+                db_session=prompt_db,
+            )
 
         if settings.speaker_recognition_enabled:
             result = await whisper_service.transcribe_bytes_with_speaker(
