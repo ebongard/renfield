@@ -38,12 +38,14 @@ def _make_mock_settings(
     piper_voice_map=None,
     default_language="de",
     tts_cache_size=0,
+    tts_max_concurrent=4,
 ):
     s = MagicMock()
     s.piper_default_voice = piper_default_voice
     s.piper_voice_map = piper_voice_map or {"de": "de_DE-thorsten-high", "en": "en_US-amy-medium"}
     s.default_language = default_language
     s.tts_cache_size = tts_cache_size
+    s.tts_max_concurrent = tts_max_concurrent
     return s
 
 

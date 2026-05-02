@@ -115,6 +115,11 @@ class Settings(BaseSettings):
     # household TTS; caching them avoids redundant ONNX inference. Each WAV is
     # ~50-200 KB; default of 256 caps memory at ~50 MB.
     tts_cache_size: int = 256
+    # Bound concurrent inference so a burst of N satellites speaking at once
+    # doesn't OOM the box. faster-whisper / piper are thread-safe at the model
+    # level, so the Semaphore gates request submission, not the model itself.
+    whisper_max_concurrent: int = 2
+    tts_max_concurrent: int = 4
 
     # Audio Preprocessing (for better STT quality)
     whisper_preprocess_enabled: bool = True       # Enable audio preprocessing before Whisper

@@ -68,6 +68,7 @@ def _make_mock_settings(
     whisper_preprocess_normalize=True,
     whisper_preprocess_target_db=-20.0,
     speaker_recognition_enabled=False,
+    whisper_max_concurrent=2,
 ):
     s = MagicMock()
     s.whisper_model = whisper_model
@@ -81,6 +82,7 @@ def _make_mock_settings(
     s.whisper_preprocess_normalize = whisper_preprocess_normalize
     s.whisper_preprocess_target_db = whisper_preprocess_target_db
     s.speaker_recognition_enabled = speaker_recognition_enabled
+    s.whisper_max_concurrent = whisper_max_concurrent
     return s
 
 

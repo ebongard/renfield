@@ -10,6 +10,7 @@ Includes optional audio preprocessing for better transcription quality:
 - Noise reduction (removes background noise like fans, AC)
 - Audio normalization (consistent volume levels)
 """
+import asyncio
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,12 @@ class WhisperService:
         self.language = settings.default_language
         self.initial_prompt = settings.whisper_initial_prompt or None
 
+        # Bound concurrent transcriptions. faster-whisper / CTranslate2 is
+        # thread-safe at the model level, so this gates submission rather than
+        # the model itself — protects against OOM under multi-satellite bursts.
+        self._max_concurrent = max(1, int(settings.whisper_max_concurrent))
+        self._inflight_sem: asyncio.Semaphore | None = None
+
         # Audio Preprocessor (for noise reduction and normalization)
         self.preprocessor = AudioPreprocessor(
             sample_rate=16000,
@@ -54,6 +61,18 @@ class WhisperService:
 
         if settings.whisper_preprocess_enabled and not LIBROSA_AVAILABLE:
             logger.warning("Audio preprocessing requested but librosa not installed")
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Lazily create the semaphore on the running loop's first call.
+
+        Constructing it in __init__ would bind it to whichever loop is current
+        at import time — typically none — making it brittle in tests and on
+        worker restart. Lazy creation defers binding to the first transcribe
+        call, which is always inside the serving loop.
+        """
+        if self._inflight_sem is None:
+            self._inflight_sem = asyncio.Semaphore(self._max_concurrent)
+        return self._inflight_sem
 
     def load_model(self):
         """Modell laden"""
@@ -75,31 +94,44 @@ class WhisperService:
                 logger.error(f"❌ Fehler beim Laden des Whisper Modells: {e}")
                 raise
 
-    def _run_transcription(self, transcribe_path: str, language: str) -> str:
+    def _run_transcription(self, transcribe_path: str, language: str, initial_prompt: str | None = None) -> str:
         """
         Run faster-whisper transcribe and concatenate the segment stream.
 
         faster-whisper returns (segments_iter, info). The iterator must be
         drained to actually run inference; converting to a list is the
         cleanest way to get the full text in one place.
+
+        `initial_prompt` overrides the service-level default for this call
+        only — used by the per-household bias hook to pass a prompt derived
+        from the active speaker / room / KB.
         """
         kwargs = {
             "language": language,
             "beam_size": self.beam_size,
         }
-        if self.initial_prompt:
-            kwargs["initial_prompt"] = self.initial_prompt
+        prompt = initial_prompt if initial_prompt is not None else self.initial_prompt
+        if prompt:
+            kwargs["initial_prompt"] = prompt
 
         segments, _info = self.model.transcribe(transcribe_path, **kwargs)
         return "".join(segment.text for segment in segments).strip()
 
-    async def transcribe_file(self, audio_path: str, language: str = None) -> str:
+    async def _transcribe_async(self, transcribe_path: str, language: str, initial_prompt: str | None = None) -> str:
+        """Run sync `_run_transcription` off the event loop, gated by the semaphore."""
+        async with self._get_semaphore():
+            return await asyncio.to_thread(
+                self._run_transcription, transcribe_path, language, initial_prompt
+            )
+
+    async def transcribe_file(self, audio_path: str, language: str = None, initial_prompt: str | None = None) -> str:
         """
         Audio-Datei transkribieren mit optionalem Preprocessing.
 
         Args:
             audio_path: Path to the audio file
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
+            initial_prompt: Per-request bias string (overrides whisper_initial_prompt default).
         """
         if self.model is None:
             self.load_model()
@@ -117,7 +149,7 @@ class WhisperService:
                     transcribe_path = processed_path
                     logger.info("📊 Using preprocessed audio")
 
-            text = self._run_transcription(transcribe_path, transcribe_language)
+            text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
 
             logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
             return text
@@ -173,7 +205,7 @@ class WhisperService:
             logger.warning(f"⚠️ Preprocessing failed, using original audio: {e}")
             return None
 
-    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None) -> str:
+    async def transcribe_bytes(self, audio_bytes: bytes, filename: str = "audio.wav", language: str = None, initial_prompt: str | None = None) -> str:
         """
         Audio aus Bytes transkribieren.
 
@@ -181,6 +213,7 @@ class WhisperService:
             audio_bytes: Raw audio bytes
             filename: Original filename (used for extension)
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
+            initial_prompt: Per-request bias string (overrides whisper_initial_prompt default).
         """
         # Temporäre Datei erstellen
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
@@ -188,7 +221,7 @@ class WhisperService:
             tmp_path = tmp.name
 
         try:
-            return await self.transcribe_file(tmp_path, language=language)
+            return await self.transcribe_file(tmp_path, language=language, initial_prompt=initial_prompt)
         finally:
             # Temporäre Datei löschen
             Path(tmp_path).unlink(missing_ok=True)
@@ -197,7 +230,8 @@ class WhisperService:
         self,
         audio_path: str,
         db_session=None,
-        language: str = None
+        language: str = None,
+        initial_prompt: str | None = None,
     ) -> dict:
         """
         Transcribe audio and identify speaker.
@@ -240,7 +274,7 @@ class WhisperService:
 
         try:
             # Transcribe using preprocessed audio
-            text = self._run_transcription(transcribe_path, transcribe_language)
+            text = await self._transcribe_async(transcribe_path, transcribe_language, initial_prompt)
             logger.info(f"✅ Transkription erfolgreich ({transcribe_language}): {len(text)} Zeichen")
 
             # Default speaker info
@@ -440,7 +474,8 @@ class WhisperService:
         audio_bytes: bytes,
         filename: str = "audio.wav",
         db_session=None,
-        language: str = None
+        language: str = None,
+        initial_prompt: str | None = None,
     ) -> dict:
         """
         Transcribe audio bytes and identify speaker.
@@ -450,6 +485,7 @@ class WhisperService:
             filename: Original filename
             db_session: Optional async database session
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
+            initial_prompt: Per-request bias string.
 
         Returns:
             Same as transcribe_with_speaker
@@ -459,6 +495,6 @@ class WhisperService:
             tmp_path = tmp.name
 
         try:
-            return await self.transcribe_with_speaker(tmp_path, db_session, language=language)
+            return await self.transcribe_with_speaker(tmp_path, db_session, language=language, initial_prompt=initial_prompt)
         finally:
             Path(tmp_path).unlink(missing_ok=True)

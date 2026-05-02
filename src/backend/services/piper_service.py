@@ -12,6 +12,7 @@ cache the loaded voice across requests.
 Configuration via PIPER_VOICES environment variable:
   PIPER_VOICES=de:de_DE-thorsten-high,en:en_US-amy-medium
 """
+import asyncio
 import io
 import wave
 from collections import OrderedDict
@@ -51,6 +52,12 @@ class PiperService:
         self._wav_cache_lock = Lock()
         self._wav_cache_hits = 0
         self._wav_cache_misses = 0
+
+        # Bound concurrent synthesis. Voice ONNX inference is sync and gets run
+        # off the event loop via asyncio.to_thread; the semaphore caps how many
+        # threads can be inflight at once.
+        self._max_concurrent = max(1, int(settings.tts_max_concurrent))
+        self._inflight_sem: asyncio.Semaphore | None = None
 
         if not PIPER_AVAILABLE:
             logger.warning(
@@ -93,6 +100,23 @@ class PiperService:
                 "hits": self._wav_cache_hits,
                 "misses": self._wav_cache_misses,
             }
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        """Lazily bind the semaphore to the running loop on first use."""
+        if self._inflight_sem is None:
+            self._inflight_sem = asyncio.Semaphore(self._max_concurrent)
+        return self._inflight_sem
+
+    def _synthesize_sync(self, voice: "PiperVoice", text: str) -> bytes:
+        """Run ONNX synthesis to a WAV byte buffer. Sync — call via to_thread."""
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            voice.synthesize(text, wav_file)
+        return buffer.getvalue()
+
+    async def _synthesize_async(self, voice: "PiperVoice", text: str) -> bytes:
+        async with self._get_semaphore():
+            return await asyncio.to_thread(self._synthesize_sync, voice, text)
 
     def _get_voice_for_language(self, language: str = None) -> str:
         """
@@ -172,10 +196,7 @@ class PiperService:
             return False
 
         try:
-            buffer = io.BytesIO()
-            with wave.open(buffer, "wb") as wav_file:
-                voice.synthesize(text, wav_file)
-            wav_bytes = buffer.getvalue()
+            wav_bytes = await self._synthesize_async(voice, text)
             self._cache_put(voice_name, text, wav_bytes)
             with open(output_path, "wb") as f:
                 f.write(wav_bytes)
@@ -207,12 +228,7 @@ class PiperService:
             return b""
 
         try:
-            buffer = io.BytesIO()
-            # `wave.open` requires a mode string; PiperVoice.synthesize writes
-            # frames into the wave object directly.
-            with wave.open(buffer, "wb") as wav_file:
-                voice.synthesize(text, wav_file)
-            wav_bytes = buffer.getvalue()
+            wav_bytes = await self._synthesize_async(voice, text)
             self._cache_put(voice_name, text, wav_bytes)
             return wav_bytes
         except Exception as e:
