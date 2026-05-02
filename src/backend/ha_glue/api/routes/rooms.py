@@ -14,6 +14,7 @@ from models.database import User
 from models.permissions import Permission
 from services.auth_service import require_permission
 from services.database import get_db
+from utils.hooks import run_hooks
 from ha_glue.services.room_service import RoomService
 
 # Import all schemas from separate file
@@ -66,6 +67,7 @@ async def create_room(
         icon=room.icon
     )
 
+    await run_hooks("household_graph_changed", kind="room", mutation="created")
     return service.room_to_dict(new_room)
 
 
@@ -121,6 +123,7 @@ async def update_room(
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    await run_hooks("household_graph_changed", kind="room", mutation="updated")
     return service.room_to_dict(room)
 
 
@@ -164,10 +167,11 @@ async def delete_room(
     room_name = room.name
     success = await service.delete_room(room_id)
 
-    if success:
-        return {"message": f"Room '{room_name}' deleted"}
-    else:
+    if not success:
         raise HTTPException(status_code=500, detail="Failed to delete room")
+
+    await run_hooks("household_graph_changed", kind="room", mutation="deleted")
+    return {"message": f"Room '{room_name}' deleted"}
 
 
 # --- Home Assistant Sync Endpoints ---
@@ -243,6 +247,8 @@ async def import_ha_areas(
         conflict_resolution=request.conflict_resolution
     )
 
+    if results.get("imported") or results.get("linked") or results.get("overwritten"):
+        await run_hooks("household_graph_changed", kind="room", mutation="created")
     return HAImportResponse(**results)
 
 
@@ -341,6 +347,9 @@ async def sync_with_ha(
         ha_areas=areas,
         conflict_resolution=conflict_resolution
     )
+
+    if import_results.get("imported") or import_results.get("linked") or import_results.get("overwritten"):
+        await run_hooks("household_graph_changed", kind="room", mutation="created")
 
     # Export (rooms without HA link)
     rooms_to_export = await service.get_rooms_for_export()

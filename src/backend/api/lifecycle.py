@@ -623,6 +623,13 @@ async def lifespan(app: "FastAPI"):
         register_hook("post_document_ingest", kg_post_document_ingest_hook)
         logger.info("✅ Knowledge Graph hooks registered")
 
+    # Whisper prompt cache invalidation — listen on household_graph_changed.
+    from services.whisper_prompt_builder import whisper_prompt_household_changed
+    from utils.hooks import register_hook as _register_hook
+
+    _register_hook("household_graph_changed", whisper_prompt_household_changed)
+    logger.info("✅ Whisper prompt-cache invalidation hook registered")
+
     # Backend i18n
     from utils.i18n import load_translations
     load_translations()

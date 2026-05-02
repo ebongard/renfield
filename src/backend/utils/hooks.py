@@ -110,6 +110,16 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # The platform default builder pulls user/room names from the DB; see
     # services/whisper_prompt_builder.py.
     "build_whisper_initial_prompt",
+    # Broadcast — the household graph (users / rooms) mutated. Fired by
+    # user/room mutation routes (POST/PATCH/DELETE on /api/users, /api/rooms)
+    # and by ha_glue's HA-area sync paths when they auto-create or rename
+    # rooms. Kwargs: `kind: str` ("user" | "room"), `mutation: str`
+    # ("created" | "updated" | "deleted"). Handlers are fire-and-forget;
+    # exceptions are swallowed. Currently consumed by the WhisperPromptBuilder
+    # to drop its 5-min TTL cache so renamed rooms / new users land in the
+    # next STT prompt immediately. Other listeners (future entity-list
+    # caches, intent-context builders) plug in here without further wiring.
+    "household_graph_changed",
     # Route a chat response's TTS audio to a device output. Fired by
     # `api/websocket/chat_handler.py` when an LLM response is ready and
     # the chat session has a room context. Kwargs: `room_context: dict,

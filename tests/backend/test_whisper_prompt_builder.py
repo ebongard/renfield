@@ -265,6 +265,31 @@ class TestPromptLength:
 
 
 @pytest.mark.unit
+class TestHouseholdGraphChangedHook:
+
+    @pytest.mark.asyncio
+    async def test_invalidate_handler_clears_cache(self):
+        """The handler that ships with the module clears the singleton's cache."""
+        from services.whisper_prompt_builder import whisper_prompt_household_changed
+
+        builder = get_whisper_prompt_builder()
+        # Seed the cache so we have something to clear.
+        with patch("services.whisper_prompt_builder.run_hooks", AsyncMock(return_value=["seed"])):
+            await builder.build(user_id=1, room_id=10, language="de", db_session=None)
+        assert builder.stats()["size"] == 1
+
+        await whisper_prompt_household_changed(kind="user", mutation="created")
+        assert builder.stats()["size"] == 0
+
+    @pytest.mark.asyncio
+    async def test_handler_returns_none_for_fire_and_forget_contract(self):
+        """Hook returns None so run_hooks() doesn't accumulate it as a result."""
+        from services.whisper_prompt_builder import whisper_prompt_household_changed
+        result = await whisper_prompt_household_changed(kind="room", mutation="updated")
+        assert result is None
+
+
+@pytest.mark.unit
 class TestSingletonAccessor:
 
     def test_get_whisper_prompt_builder_returns_singleton(self):

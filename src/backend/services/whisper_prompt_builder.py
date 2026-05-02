@@ -210,6 +210,20 @@ def get_whisper_prompt_builder() -> WhisperPromptBuilder:
     return _instance
 
 
+async def whisper_prompt_household_changed(
+    *, kind: str, mutation: str
+) -> None:
+    """Hook handler for `household_graph_changed` — drops the prompt cache.
+
+    Fire-and-forget. The cost of an extra DB roundtrip on the next STT call is
+    cheap (5 ms) compared to keeping a stale "Personen" / "Räume" list around
+    for up to 5 minutes after a rename or member change.
+    """
+    get_whisper_prompt_builder().invalidate()
+    logger.debug(f"WhisperPromptBuilder cache invalidated ({kind} {mutation})")
+    return None
+
+
 async def resolve_first_speaker_from_room(
     *, room_id: int | None
 ) -> Optional[int]:

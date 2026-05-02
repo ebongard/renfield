@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 
 from models.database import Speaker, User
 from models.permissions import Permission
+from utils.hooks import run_hooks
 from services.auth_service import (
     get_password_hash,
     get_role_by_id,
@@ -286,6 +287,7 @@ async def create_user(
     await db.commit()
     await db.refresh(user, ["role"])
 
+    await run_hooks("household_graph_changed", kind="user", mutation="created")
     logger.info(f"Created user: {user.username} by {current_user.username if current_user else 'system'}")
 
     return UserResponse(
@@ -389,6 +391,7 @@ async def update_user(
     await db.commit()
     await db.refresh(user, ["role", "speaker"])
 
+    await run_hooks("household_graph_changed", kind="user", mutation="updated")
     logger.info(f"Updated user: {user.username} by {current_user.username if current_user else 'system'}")
 
     return UserResponse(
@@ -444,6 +447,7 @@ async def delete_user(
     await db.delete(user)
     await db.commit()
 
+    await run_hooks("household_graph_changed", kind="user", mutation="deleted")
     logger.info(f"Deleted user: {username} by {current_user.username if current_user else 'system'}")
 
     return {"message": f"User '{username}' deleted successfully"}
