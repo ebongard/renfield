@@ -171,13 +171,25 @@ kubectl -n renfield exec deploy/backend -c backend -- curl -sS http://localhost:
 
 ### Migrations
 
+**Before authoring a new migration**, query the live DB for the current single head. File naming and visual chain inspection don't catch silent collisions — Renfield's `versions/` directory has 50+ files with overlapping naming schemes:
+
+```bash
+kubectl -n renfield exec deploy/backend -c backend -- alembic heads
+kubectl -n renfield exec deploy/backend -c backend -- alembic current
+```
+
+Both should return the same single revision in a healthy chain. Use that string verbatim as `down_revision` in the new migration file. If `heads` returns multiple revisions the chain is already forked — stop and fix it before adding more. (Verified painful 2026-05-02: a chain collision blocked the v2.4.2 deploy with `Multiple head revisions are present` until a fix-forward PR re-pointed the migration.)
+
+**Applying migrations during deploy:**
+
 ```bash
 kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml
-kubectl -n renfield logs -f job/alembic-upgrade
+kubectl -n renfield wait --for=condition=Complete job/alembic-upgrade --timeout=300s
+kubectl -n renfield logs job/alembic-upgrade
 kubectl -n renfield delete job alembic-upgrade
 ```
 
-The job uses the same backend image; if you just pushed a new image, run migrations before the deployment restart so the new code doesn't hit an old schema.
+The job uses the same backend image; if you just pushed a new image, run migrations **before** the deployment restart so the new code doesn't hit an old schema. The Job's `backoffLimit: 2` means 3 attempts max — failures are usually a chain conflict (see check above) or a missed env var, not a transient retry-able problem.
 
 ### ConfigMap changes
 
