@@ -813,6 +813,14 @@ class AgentService:
         utilization = (prompt_tokens + reserved) / max_tokens
         passes_run: list[str] = []
 
+        # Canonical entry-log line. Stable format consumed by Reva's
+        # `test_token_budget_logged` E2E assertion and any future grafana
+        # log-based dashboard. Subsequent "Budget pass N (...)" lines remain
+        # for per-reduction observability.
+        logger.info(
+            f"Token budget: {prompt_tokens + reserved}/{max_tokens} ({utilization:.0%})"
+        )
+
         try:
             if utilization <= threshold:
                 return prompt, memory_context, document_context, conversation_history

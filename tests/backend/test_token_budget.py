@@ -159,3 +159,39 @@ class TestEnforceTokenBudget:
             # History should have been reduced to last 3
             assert returned_hist is not None
             assert len(returned_hist) <= 3
+
+
+class TestTokenBudgetLogLine:
+    """Reva-compat: `_enforce_token_budget` must emit a `Token budget: N/M (X%)`
+    log line on entry. Reva's `test_token_budget_logged` E2E asserts on this
+    substring; subsequent "Budget pass N (...)" lines are observability and
+    not part of the contract.
+    """
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_emits_canonical_log_line(self):
+        agent = _make_agent()
+        ctx = AgentContext(original_message="test")
+        prompt = "Hello " * 100
+
+        captured: list[str] = []
+        with patch("services.agent_service.settings") as s, \
+             patch("services.agent_service.logger") as log:
+            s.ollama_num_ctx = 32768
+            s.agent_default_num_predict = 2048
+            s.agent_budget_threshold = 0.85
+            log.info.side_effect = lambda msg, *a, **kw: captured.append(msg)
+
+            await agent._enforce_token_budget(
+                prompt, ctx, "test", None,
+                memory_context="", document_context="", lang="de",
+            )
+
+        # At least one log line must start with "Token budget:" — that's the
+        # contract Reva relies on. Format: "Token budget: <used>/<max> (<%>)".
+        canonical = [m for m in captured if m.startswith("Token budget:")]
+        assert canonical, f"No canonical log line found. Captured: {captured}"
+        # Sanity-check the format: should contain a slash, a percentage sign, parens.
+        assert "/" in canonical[0]
+        assert "%)" in canonical[0]

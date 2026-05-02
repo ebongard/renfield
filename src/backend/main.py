@@ -274,8 +274,19 @@ async def wakeword_websocket(websocket: WebSocket):
 # Health Check Endpoints
 @app.get("/health")
 async def health_check():
-    """Quick health check for load balancers."""
-    return {"status": "ok"}
+    """Quick health check for load balancers.
+
+    Includes `prompt_hashes` (12-char SHA-256 prefixes per loaded YAML file)
+    so deploy verification can confirm a release actually changed the prompts.
+    Used by Reva's audit trail and the deployment-verification check.
+    """
+    try:
+        from services.prompt_manager import prompt_manager
+        prompt_hashes = prompt_manager.prompt_hashes
+    except Exception:
+        # Health endpoint must never fail — if PromptManager isn't ready, omit the field.
+        prompt_hashes = {}
+    return {"status": "ok", "prompt_hashes": prompt_hashes}
 
 
 _health_redis_client = None
