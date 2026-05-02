@@ -7,7 +7,7 @@ Phase B-3 follow-up: per-user frequency-ranked vocabulary for STT bias.
   by the batch tokenizer.
 
 Revision ID: a0b1c2d3e4f5
-Revises: z9a0b1c2d3e4
+Revises: pc20260426_paperless_upload_tracking
 Create Date: 2026-05-02
 """
 import sqlalchemy as sa
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers
 revision = "a0b1c2d3e4f5"
-down_revision = "z9a0b1c2d3e4"
+down_revision = "pc20260426_paperless_upload_tracking"
 branch_labels = None
 depends_on = None
 
