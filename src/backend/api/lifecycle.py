@@ -143,6 +143,34 @@ def _schedule_reminder_checker():
     )
 
 
+def _schedule_speaker_vocab_rebuild():
+    """Periodically rebuild the per-user STT vocabulary table (Phase B-3 follow-up)."""
+    if not settings.speaker_vocab_capture_enabled:
+        return
+
+    interval = settings.speaker_vocab_rebuild_interval_seconds
+
+    async def vocab_rebuild_loop():
+        # Sleep first so a freshly-restarted pod doesn't hammer the DB on every
+        # boot. The first rebuild happens after one interval; cold-start callers
+        # see the platform default until then.
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                from services.speaker_vocabulary_service import rebuild_vocabulary
+                async with AsyncSessionLocal() as session:
+                    stats = await rebuild_vocabulary(db_session=session)
+                logger.info(f"📚 Speaker vocab rebuilt: {stats}")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"⚠️  Speaker vocab rebuild failed: {e}")
+
+    task = asyncio.create_task(vocab_rebuild_loop())
+    _startup_tasks.append(task)
+    logger.info(f"✅ Speaker vocab rebuild scheduled (interval={interval}s)")
+
+
 def _schedule_memory_cleanup():
     """Schedule periodic cleanup of expired/decayed memories."""
     if not settings.memory_enabled:
@@ -594,6 +622,7 @@ async def lifespan(app: "FastAPI"):
     # from ha_glue.bootstrap.ha_glue_on_startup via the `startup` hook).
     if settings.features["voice"]:
         _schedule_whisper_preload()
+        _schedule_speaker_vocab_rebuild()
     _schedule_notification_cleanup()
     _schedule_reminder_checker()
     _schedule_notification_poller(app)
@@ -629,6 +658,17 @@ async def lifespan(app: "FastAPI"):
 
     _register_hook("household_graph_changed", whisper_prompt_household_changed)
     logger.info("✅ Whisper prompt-cache invalidation hook registered")
+
+    # Speaker vocabulary handler. Registered BEFORE the platform default has a
+    # chance to run (no platform default registers on this hook — the default
+    # is the inline fallback inside WhisperPromptBuilder._resolve, only used
+    # when all hook handlers return None). The vocab handler returns None on
+    # cold-start (no rows yet) so the platform default kicks in transparently.
+    if settings.speaker_vocab_capture_enabled:
+        from services.speaker_vocabulary_service import vocab_initial_prompt_handler
+
+        _register_hook("build_whisper_initial_prompt", vocab_initial_prompt_handler)
+        logger.info("✅ Speaker vocabulary STT-bias hook registered")
 
     # Backend i18n
     from utils.i18n import load_translations

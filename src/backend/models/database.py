@@ -3,7 +3,7 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -111,6 +111,44 @@ class SpeakerEmbedding(Base):
 
     # Beziehungen
     speaker = relationship("Speaker", back_populates="embeddings")
+
+
+class SpeakerVocabularyCorpus(Base):
+    """Raw confirmed-speaker transcripts mined for per-user STT bias.
+
+    Privacy: `circle_tier` defaults to 0 (self) — these are private speech
+    samples and must never cross-bias other users' STT. Only persisted for
+    real (non-auto-enrolled) users with confidence above the recognition
+    threshold. The batch tokenizer reads from here and writes summaries
+    into `SpeakerVocabulary`.
+    """
+    __tablename__ = "speaker_vocabulary_corpus"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    text = Column(Text, nullable=False)
+    language = Column(String(10), nullable=False, default="de")
+    circle_tier = Column(SmallInteger, nullable=False, default=0)
+    created_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+
+
+class SpeakerVocabulary(Base):
+    """Per-user term frequencies, periodically rebuilt by the batch tokenizer.
+
+    The Whisper prompt builder's vocab handler queries the top-N terms by
+    frequency for the active speaker and folds them into the initial_prompt.
+    Cold start (no rows) means the handler returns None → platform default
+    fixed-structure prompt is used instead.
+    """
+    __tablename__ = "speaker_vocabulary"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    term = Column(String(100), nullable=False)
+    frequency = Column(Integer, nullable=False, default=0)
+    language = Column(String(10), nullable=False, default="de")
+    circle_tier = Column(SmallInteger, nullable=False, default=0)
+    last_updated = Column(DateTime, default=_utcnow, nullable=False)
 
 
 # --- Room management, device, and output-device models ---

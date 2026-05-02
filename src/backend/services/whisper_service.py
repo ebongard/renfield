@@ -394,6 +394,21 @@ class WhisperService:
                             db_session, identified_speaker.id, embedding, service
                         )
 
+                    # Vocabulary corpus capture (B-3 follow-up): fire-and-forget.
+                    # Opens its own session, swallows errors. Skips auto-enrolled
+                    # speakers and ones not linked to a User account.
+                    if settings.speaker_vocab_capture_enabled and text:
+                        from services.speaker_vocabulary_service import capture_transcript
+
+                        asyncio.create_task(
+                            capture_transcript(
+                                speaker_id=identified_speaker.id,
+                                text=text,
+                                language=transcribe_language,
+                                is_new_speaker=False,
+                            )
+                        )
+
                 # Case 2: No speaker identified - auto-enroll if enabled
                 elif settings.speaker_auto_enroll:
                     # Count existing "Unbekannter Sprecher" entries

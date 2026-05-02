@@ -133,6 +133,11 @@ class Settings(BaseSettings):
     speaker_recognition_device: str = "cpu"      # Device for inference: "cpu" or "cuda"
     speaker_auto_enroll: bool = True             # Auto-create unknown speakers and save embeddings
     speaker_continuous_learning: bool = True     # Add embeddings to known speakers on each interaction
+    # Per-user vocabulary corpus capture (Phase B-3 follow-up). Confirmed-
+    # speaker transcripts are appended to speaker_vocabulary_corpus and a
+    # daily batch job rebuilds the per-user vocab table for STT bias.
+    speaker_vocab_capture_enabled: bool = True
+    speaker_vocab_rebuild_interval_seconds: int = 86400  # Daily
 
     # Room Management / Satellite OTA moved to ha_glue/utils/config.py.
 
