@@ -67,6 +67,22 @@ curl -L -o /opt/renfield-satellite/models/silero_vad.onnx \
 
 ### Medium Priority
 
+- [ ] **Boot-Window WS-Handshake-Timeout (rotes LED-Blink beim Hochfahren)**
+  - **Symptom:** Nach Pi-Reboot blinken die LEDs ~11 Min rot, dann wechselt der Satellite auf grünen IDLE-Pulse und funktioniert. Pro fehlgeschlagenem Versuch: `Server error: timed out during opening handshake`.
+  - **Verifizierter Beobachtungsfall (2026-05-03, sat-wohnzimmer):** WLAN/DHCP fertig 20:22:27 → 9 fehlgeschlagene WS-Connects 20:23:06 bis 20:29:44 (Backoff 5→10→20→40→60s cap) → NTP `Initial clock synchronization` 20:33:18 → 1. erfolgreicher Connect 20:34:09 (51 s nach NTP-Sync).
+  - **Hard facts:** Backend-Pod hatte 30 h Uptime (kein k8s-seitiges Problem). Backend-Logs zeigen **keinen einzigen** der 9 Versuche → Failure passiert vor dem FastAPI-Handler (TCP, TLS oder Traefik-Stage). WLAN war stabil, kein flap.
+  - **NTP-Korrelation auffällig, Kausalität nicht bewiesen.** Drei verbliebene plausible Mechanismen:
+    1. mDNS-Warmup: Avahi am Pi gerade gestartet, k8s `mdns-responder`-Pod (192.168.1.180) muss `renfield.local → 192.168.1.230` per Multicast publizieren. Bei IGMP-Snooping/Multicast-Filtering im Heimrouter sind initiale Antworten verzögert. Würde sich aber eher als `getaddrinfo`-Hang äußern, nicht als reproduzierbare 10-s-Library-Default-Timeouts.
+    2. TLS-Cert-Validity: Saved-Clock-Init lag bei 20:21:59. Bei `notBefore` der Server-Cert in der Zukunft → TLS-Verify-Fail. *Aber:* würde `CERTIFICATE_VERIFY_FAILED` liefern, nicht „timed out".
+    3. Traefik / k8s-Ingress-Stage — keine Beobachtung möglich (Default-Config loggt keine Access-Lines).
+  - **Diagnoseplan beim nächsten Auftreten:**
+    - `tcpdump` als systemd-service auf dem Pi installieren, der wlan0-Traffic ab Boot mitschneidet
+    - Avahi mit Verbose-Logging starten
+    - Aus pcap eindeutig sehen: TCP-SYN ohne SYN-ACK? TLS-ClientHello ohne ServerHello? mDNS-Anfragen ohne Antwort?
+    - Erst dann Symptom-Hardening (z. B. `open_timeout=30s` in `WebSocketClient` + kürzerer Initial-Backoff) oder echten Root-Cause-Fix entscheiden.
+  - **Workaround heute:** `systemctl restart renfield-satellite` nach Boot reicht aus.
+  - Quelle/Kontext der Untersuchung: Session vom 2026-05-03; Pfade: `src/satellite/renfield_satellite/network/websocket_client.py:240-241` (ping_interval/timeout), `:535-566` (heartbeat fire-and-forget — separate Härtung möglich), `satellite.py:411-446` (`_reconnect_with_discovery`).
+
 - [x] **Sprechererkennung** ✅ (Bereits im Backend implementiert)
   - SpeechBrain ECAPA-TDNN auf Backend
   - Speaker Enrollment via Web-UI
