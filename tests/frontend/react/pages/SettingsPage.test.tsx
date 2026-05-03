@@ -1,41 +1,36 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server';
-import { BASE_URL } from '../mocks/handlers';
+import { server } from '../mocks/server.js';
+import { BASE_URL } from '../mocks/handlers.js';
 import SettingsPage from '../../../../src/frontend/src/pages/SettingsPage';
-import { renderWithProviders } from '../test-utils';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { renderWithProviders } from '../test-utils.jsx';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
+import type { WakewordSettingsData, WakewordInput } from '../../../../src/frontend/src/api/resources/settings';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
-// Default mock values for admin user
-const adminAuthMock = {
-  getAccessToken: () => Promise.resolve('mock-token'),
-  hasPermission: () => true,
-  hasAnyPermission: () => true,
-  isAuthenticated: true,
-  authEnabled: true,
-  loading: false,
-  user: { username: 'admin', role: 'Admin', permissions: ['admin', 'settings.manage'] }
-};
-
-// Mock settings response
-const mockSettingsResponse = {
-  enabled: true,
+// Mock settings response (a few extra fields the backend ships are tolerated by the type via index)
+const mockSettingsResponse: WakewordSettingsData = {
   keyword: 'alexa',
   threshold: 0.5,
   cooldown_ms: 2000,
   available_keywords: [
     { id: 'alexa', label: 'Alexa', description: 'Pre-trained wake word' },
     { id: 'hey_jarvis', label: 'Hey Jarvis', description: 'Pre-trained wake word' },
-    { id: 'hey_mycroft', label: 'Hey Mycroft', description: 'Pre-trained wake word' }
+    { id: 'hey_mycroft', label: 'Hey Mycroft', description: 'Pre-trained wake word' },
   ],
-  server_fallback_available: true,
-  subscriber_count: 3
+  subscriber_count: 3,
 };
 
 describe('SettingsPage', () => {
@@ -47,7 +42,7 @@ describe('SettingsPage', () => {
     server.use(
       http.get(`${BASE_URL}/api/settings/wakeword`, () => {
         return HttpResponse.json(mockSettingsResponse);
-      })
+      }),
     );
   });
 
@@ -77,7 +72,6 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Check for keyword dropdown
       const keywordSelect = screen.getByRole('combobox');
       expect(keywordSelect).toBeInTheDocument();
     });
@@ -92,7 +86,6 @@ describe('SettingsPage', () => {
       const keywordSelect = screen.getByRole('combobox');
       expect(keywordSelect).toHaveValue('alexa');
 
-      // Check that options are present
       expect(screen.getByText('Alexa')).toBeInTheDocument();
       expect(screen.getByText('Hey Jarvis')).toBeInTheDocument();
       expect(screen.getByText('Hey Mycroft')).toBeInTheDocument();
@@ -118,11 +111,9 @@ describe('SettingsPage', () => {
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       expect(saveButton).toBeDisabled();
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      // Save button should now be enabled
       expect(saveButton).not.toBeDisabled();
     });
 
@@ -133,7 +124,6 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
@@ -147,7 +137,6 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Find threshold slider
       const thresholdSlider = screen.getAllByRole('slider')[0];
       expect(thresholdSlider).toBeInTheDocument();
     });
@@ -160,12 +149,12 @@ describe('SettingsPage', () => {
       server.use(
         http.put(`${BASE_URL}/api/settings/wakeword`, async ({ request }) => {
           saveCalled = true;
-          const body = await request.json();
+          const body = (await request.json()) as WakewordInput;
           return HttpResponse.json({
             ...mockSettingsResponse,
-            ...body
+            ...body,
           });
-        })
+        }),
       );
 
       renderWithProviders(<SettingsPage />);
@@ -174,11 +163,9 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      // Click save
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
@@ -192,9 +179,9 @@ describe('SettingsPage', () => {
         http.put(`${BASE_URL}/api/settings/wakeword`, () => {
           return HttpResponse.json({
             ...mockSettingsResponse,
-            keyword: 'hey_jarvis'
+            keyword: 'hey_jarvis',
           });
-        })
+        }),
       );
 
       renderWithProviders(<SettingsPage />);
@@ -203,11 +190,9 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      // Click save
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
@@ -222,7 +207,7 @@ describe('SettingsPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/settings/wakeword`, () => {
           return new HttpResponse(null, { status: 500 });
-        })
+        }),
       );
 
       renderWithProviders(<SettingsPage />);
@@ -237,9 +222,9 @@ describe('SettingsPage', () => {
         http.put(`${BASE_URL}/api/settings/wakeword`, () => {
           return HttpResponse.json(
             { detail: 'Invalid keyword' },
-            { status: 400 }
+            { status: 400 },
           );
-        })
+        }),
       );
 
       renderWithProviders(<SettingsPage />);
@@ -248,11 +233,9 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      // Click save
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 
@@ -265,7 +248,7 @@ describe('SettingsPage', () => {
       server.use(
         http.put(`${BASE_URL}/api/settings/wakeword`, () => {
           return new HttpResponse(null, { status: 403 });
-        })
+        }),
       );
 
       renderWithProviders(<SettingsPage />);
@@ -274,11 +257,9 @@ describe('SettingsPage', () => {
         expect(screen.getByText('Wake Word Einstellungen')).toBeInTheDocument();
       });
 
-      // Change keyword
       const keywordSelect = screen.getByRole('combobox');
       fireEvent.change(keywordSelect, { target: { value: 'hey_jarvis' } });
 
-      // Click save
       const saveButton = screen.getByRole('button', { name: /speichern/i });
       fireEvent.click(saveButton);
 

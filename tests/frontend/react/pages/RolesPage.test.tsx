@@ -1,41 +1,42 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, within, fireEvent, act } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server';
-import { BASE_URL, mockRoles } from '../mocks/handlers';
+import { server } from '../mocks/server.js';
+import { BASE_URL, mockRoles } from '../mocks/handlers.js';
 import RolesPage from '../../../../src/frontend/src/pages/RolesPage';
-import { renderWithProviders } from '../test-utils';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { renderWithProviders } from '../test-utils.jsx';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
+import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
+import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
+import type { Role } from '../../../../src/frontend/src/api/resources/roles';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
-
-// Default mock values for admin user
-const adminAuthMock = {
-  getAccessToken: () => 'mock-token',
-  hasPermission: () => true,
-  hasAnyPermission: () => true,
-  isFeatureEnabled: () => true,
-  isAuthenticated: true,
-  authEnabled: true,
-  loading: false,
-  user: { username: 'admin', role: 'Admin', permissions: ['admin'] }
-};
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
 // Mock ConfirmDialog
-vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => ({
-  useConfirmDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
-    ConfirmDialogComponent: null
-  })
-}));
+vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
+  const result: UseConfirmDialogResult = {
+    confirm: () => Promise.resolve(true),
+    ConfirmDialogComponent: null,
+  };
+  return {
+    useConfirmDialog: (): UseConfirmDialogResult => result,
+  };
+});
 
 // Mock Modal component
 vi.mock('../../../../src/frontend/src/components/Modal', () => ({
-  default: ({ isOpen, onClose, title, children }) => {
+  default: ({ isOpen, onClose, title, children }: ModalProps) => {
     if (!isOpen) return null;
     return (
       <div data-testid="modal">
@@ -44,7 +45,7 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
         {children}
       </div>
     );
-  }
+  },
 }));
 
 describe('RolesPage', () => {
@@ -119,11 +120,9 @@ describe('RolesPage', () => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      // Check for 'Rolle erstellen' title in modal using h2 or by scoping to modal
       const modal = screen.getByTestId('modal');
       expect(within(modal).getByRole('heading', { name: /rolle erstellen/i })).toBeInTheDocument();
     });
-
   });
 
   describe('Edit Role Modal', () => {
@@ -135,7 +134,6 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      // Find and click edit button
       const editButtons = screen.getAllByTitle('Rolle bearbeiten');
       await user.click(editButtons[0]);
 
@@ -161,7 +159,6 @@ describe('RolesPage', () => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      // Role name should be pre-filled
       const nameInput = screen.getByPlaceholderText(/z\.B\. Techniker/i);
       expect(nameInput).toHaveValue('Admin');
     });
@@ -175,30 +172,31 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      // Admin is a system role, should only have edit button
-      // User is not a system role, should have both edit and delete
       const deleteButtons = screen.getAllByTitle('Rolle löschen');
-      expect(deleteButtons.length).toBe(1); // Only User role can be deleted
+      expect(deleteButtons.length).toBe(1);
     });
   });
 
   describe('API Integration', () => {
     it('creates role with basic info', async () => {
       const user = userEvent.setup();
-      let createdRole = null;
+      let createdRole: Partial<Role> | null = null;
 
       server.use(
         http.post(`${BASE_URL}/api/roles`, async ({ request }) => {
-          createdRole = await request.json();
-          return HttpResponse.json({
-            id: 3,
-            ...createdRole,
-            is_system: false,
-            user_count: 0,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }, { status: 201 });
-        })
+          createdRole = (await request.json()) as Partial<Role>;
+          return HttpResponse.json(
+            {
+              id: 3,
+              ...createdRole,
+              is_system: false,
+              user_count: 0,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            },
+            { status: 201 },
+          );
+        }),
       );
 
       renderWithProviders(<RolesPage />);
@@ -207,7 +205,6 @@ describe('RolesPage', () => {
         expect(screen.getByText('Admin')).toBeInTheDocument();
       });
 
-      // Open create modal
       const createButton = screen.getByRole('button', { name: /rolle erstellen/i });
       await user.click(createButton);
 
@@ -217,15 +214,12 @@ describe('RolesPage', () => {
 
       const modal = screen.getByTestId('modal');
 
-      // Fill in name
       const nameInput = within(modal).getByPlaceholderText(/z\.B\. Techniker/i);
       await user.type(nameInput, 'TestRole');
 
-      // Fill in description
       const descInput = within(modal).getByPlaceholderText(/kurze beschreibung/i);
       await user.type(descInput, 'A test role');
 
-      // Submit form - find the submit button
       const submitButton = within(modal).getByRole('button', { name: /rolle erstellen/i });
       await user.click(submitButton);
 
@@ -233,23 +227,23 @@ describe('RolesPage', () => {
         expect(createdRole).not.toBeNull();
       });
 
-      expect(createdRole.name).toBe('TestRole');
-      expect(createdRole.description).toBe('A test role');
+      expect(createdRole!.name).toBe('TestRole');
+      expect(createdRole!.description).toBe('A test role');
     });
 
     it('updates role via PATCH', async () => {
       const user = userEvent.setup();
-      let updatedData = null;
+      let updatedData: Partial<Role> | null = null;
 
       server.use(
         http.patch(`${BASE_URL}/api/roles/:id`, async ({ request }) => {
-          updatedData = await request.json();
+          updatedData = (await request.json()) as Partial<Role>;
           return HttpResponse.json({
             ...mockRoles[1],
             ...updatedData,
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
           });
-        })
+        }),
       );
 
       renderWithProviders(<RolesPage />);
@@ -258,15 +252,13 @@ describe('RolesPage', () => {
         expect(screen.getByText('User')).toBeInTheDocument();
       });
 
-      // Edit the User role (not Admin which is system)
       const editButtons = screen.getAllByTitle('Rolle bearbeiten');
-      await user.click(editButtons[1]); // Second role is User
+      await user.click(editButtons[1]);
 
       await waitFor(() => {
         expect(screen.getByTestId('modal')).toBeInTheDocument();
       });
 
-      // Submit the form
       const updateButton = screen.getByRole('button', { name: /rolle aktualisieren/i });
       await user.click(updateButton);
 
@@ -282,9 +274,9 @@ describe('RolesPage', () => {
         http.get(`${BASE_URL}/api/roles`, () => {
           return HttpResponse.json(
             { detail: 'Failed to load roles' },
-            { status: 500 }
+            { status: 500 },
           );
-        })
+        }),
       );
 
       renderWithProviders(<RolesPage />);
@@ -298,7 +290,7 @@ describe('RolesPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/roles`, () => {
           return HttpResponse.json([]);
-        })
+        }),
       );
 
       renderWithProviders(<RolesPage />);

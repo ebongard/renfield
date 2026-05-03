@@ -13,7 +13,7 @@ import { KeyboardEvent, MouseEvent, ReactNode, useCallback, useEffect, useRef } 
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 
-interface ModalProps {
+export interface ModalProps {
   isOpen: boolean;
   onClose: () => void;
   title?: ReactNode;

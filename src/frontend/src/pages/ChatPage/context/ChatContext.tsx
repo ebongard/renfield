@@ -66,7 +66,7 @@ interface IntentInfo {
   confidence: number;
 }
 
-interface ChatUiMessage {
+export interface ChatUiMessage {
   role: 'user' | 'assistant';
   content: string;
   streaming?: boolean;

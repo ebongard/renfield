@@ -46,7 +46,7 @@ async function fetchHAAreas(): Promise<HAArea[]> {
   return response.data ?? [];
 }
 
-interface CreateRoomInput {
+export interface CreateRoomInput {
   name: string;
   icon?: string | null;
 }

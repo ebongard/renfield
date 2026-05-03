@@ -2,32 +2,45 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RegisterPage from '../../../../src/frontend/src/pages/RegisterPage';
-import { renderWithProviders } from '../test-utils';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { renderWithProviders } from '../test-utils.jsx';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { unauthenticatedAuthMock } from '../test-auth-mock';
+import type { User } from '../../../../src/frontend/src/types/api';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
-// Mock react-router navigate
-const mockNavigate = vi.fn();
+const mockNavigate = vi.fn<(to: string, opts?: { replace?: boolean }) => void>();
 vi.mock('react-router', async () => {
-  const actual = await vi.importActual('react-router');
+  const actual = await vi.importActual<typeof import('react-router')>('react-router');
   return {
     ...actual,
     useNavigate: () => mockNavigate,
-    useLocation: () => ({ state: null, pathname: '/register' })
+    useLocation: () => ({ state: null, pathname: '/register' }),
   };
 });
 
 // Default mock values for unauthenticated user with registration enabled
-const defaultMock = {
-  register: vi.fn(),
-  isAuthenticated: false,
-  authEnabled: true,
+const defaultMock: AuthContextValue = {
+  ...unauthenticatedAuthMock,
   allowRegistration: true,
-  loading: false
+};
+
+const sampleUser: User = {
+  id: 1,
+  username: 'newuser',
+  is_active: true,
+  role_id: 1,
+  created_at: '',
+  updated_at: '',
 };
 
 describe('RegisterPage', () => {
@@ -48,7 +61,6 @@ describe('RegisterPage', () => {
       expect(screen.getByText('Erstelle dein Konto')).toBeInTheDocument();
       expect(screen.getByLabelText(/benutzername/i)).toBeInTheDocument();
       expect(screen.getByLabelText(/e-mail/i)).toBeInTheDocument();
-      // Use placeholder text since labels include asterisks
       expect(screen.getByPlaceholderText(/passwort erstellen/i)).toBeInTheDocument();
       expect(screen.getByPlaceholderText(/passwort bestätigen/i)).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /konto erstellen/i })).toBeInTheDocument();
@@ -57,12 +69,11 @@ describe('RegisterPage', () => {
     it('shows loading state while checking auth', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        loading: true
+        loading: true,
       });
 
       renderWithProviders(<RegisterPage />);
 
-      // Should show loading spinner, not the form
       expect(screen.queryByLabelText(/benutzername/i)).not.toBeInTheDocument();
     });
 
@@ -102,9 +113,9 @@ describe('RegisterPage', () => {
       const passwordInput = screen.getByPlaceholderText(/passwort erstellen/i);
       expect(passwordInput).toHaveAttribute('type', 'password');
 
-      // Find and click the toggle button (the button after password input)
       const toggleButtons = screen.getAllByRole('button');
-      const toggleButton = toggleButtons.find(btn => btn.querySelector('svg'));
+      const toggleButton = toggleButtons.find((btn) => btn.querySelector('svg'));
+      if (!toggleButton) throw new Error('toggle button not found');
       await user.click(toggleButton);
 
       expect(passwordInput).toHaveAttribute('type', 'text');
@@ -169,10 +180,10 @@ describe('RegisterPage', () => {
 
   describe('Form Submission', () => {
     it('calls register function on valid submission', async () => {
-      const mockRegister = vi.fn().mockResolvedValue(undefined);
+      const mockRegister = vi.fn<AuthContextValue['register']>().mockResolvedValue(sampleUser);
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        register: mockRegister
+        register: mockRegister,
       });
 
       const user = userEvent.setup();
@@ -190,10 +201,10 @@ describe('RegisterPage', () => {
     });
 
     it('calls register with null email when not provided', async () => {
-      const mockRegister = vi.fn().mockResolvedValue(undefined);
+      const mockRegister = vi.fn<AuthContextValue['register']>().mockResolvedValue(sampleUser);
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        register: mockRegister
+        register: mockRegister,
       });
 
       const user = userEvent.setup();
@@ -210,10 +221,10 @@ describe('RegisterPage', () => {
     });
 
     it('shows success message after successful registration', async () => {
-      const mockRegister = vi.fn().mockResolvedValue(undefined);
+      const mockRegister = vi.fn<AuthContextValue['register']>().mockResolvedValue(sampleUser);
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        register: mockRegister
+        register: mockRegister,
       });
 
       const user = userEvent.setup();
@@ -230,12 +241,12 @@ describe('RegisterPage', () => {
     });
 
     it('shows error message on registration failure', async () => {
-      const mockRegister = vi.fn().mockRejectedValue({
-        response: { data: { detail: 'Username already exists' } }
+      const mockRegister = vi.fn<AuthContextValue['register']>().mockRejectedValue({
+        response: { data: { detail: 'Username already exists' } },
       });
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        register: mockRegister
+        register: mockRegister,
       });
 
       const user = userEvent.setup();
@@ -256,7 +267,7 @@ describe('RegisterPage', () => {
     it('redirects to home if already authenticated', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        isAuthenticated: true
+        isAuthenticated: true,
       });
 
       renderWithProviders(<RegisterPage />);
@@ -267,7 +278,7 @@ describe('RegisterPage', () => {
     it('redirects to home if auth is disabled', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        authEnabled: false
+        authEnabled: false,
       });
 
       renderWithProviders(<RegisterPage />);
@@ -278,7 +289,7 @@ describe('RegisterPage', () => {
     it('redirects to login if registration is not allowed', () => {
       vi.mocked(useAuth).mockReturnValue({
         ...defaultMock,
-        allowRegistration: false
+        allowRegistration: false,
       });
 
       renderWithProviders(<RegisterPage />);
