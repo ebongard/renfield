@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest';
+import type { DefaultOptions } from '@tanstack/react-query';
 import { queryClient } from '../../../../src/frontend/src/api/queryClient';
+
+// React Query's `retry` option for queries can be either a boolean, a number,
+// or a function `(failureCount, error) => boolean`. The local `queryClient`
+// always installs the function variant; the cast here narrows the public
+// `DefaultOptions` shape down to that concrete callable signature.
+type RetryFn = (failureCount: number, error: unknown) => boolean;
+
+function getQueryRetry(defaults: DefaultOptions): RetryFn {
+  const retry = defaults.queries?.retry;
+  if (typeof retry !== 'function') {
+    throw new Error(`expected queries.retry to be a function, got ${typeof retry}`);
+  }
+  return retry as RetryFn;
+}
+
+interface HttpLikeError {
+  response: { status: number };
+}
+
+const make4xx = (status: number): HttpLikeError => ({ response: { status } });
+const make5xx = (status: number): HttpLikeError => ({ response: { status } });
 
 describe('queryClient defaults', () => {
   it('does not retry mutations (regression guard for E11/D2 — duplicate writes)', () => {
@@ -16,8 +38,7 @@ describe('queryClient defaults', () => {
     const defaults = queryClient.getDefaultOptions();
     expect(typeof defaults.queries?.retry).toBe('function');
 
-    const retryFn = defaults.queries.retry;
-    const make4xx = (status) => ({ response: { status } });
+    const retryFn = getQueryRetry(defaults);
 
     // 4xx should NOT retry
     expect(retryFn(0, make4xx(401))).toBe(false);
@@ -27,8 +48,7 @@ describe('queryClient defaults', () => {
 
   it('retries 5xx and network errors at most once', () => {
     const defaults = queryClient.getDefaultOptions();
-    const retryFn = defaults.queries.retry;
-    const make5xx = (status) => ({ response: { status } });
+    const retryFn = getQueryRetry(defaults);
 
     // First failure: retry
     expect(retryFn(0, make5xx(500))).toBe(true);

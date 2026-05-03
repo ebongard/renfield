@@ -14,6 +14,10 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { TEST_CONFIG } from '../config.js';
 import { useDocumentPolling } from '../../../../src/frontend/src/hooks/useDocumentPolling';
+import type {
+  KbDocument,
+  DocStatus,
+} from '../../../../src/frontend/src/hooks/useDocumentPolling';
 
 const BASE_URL = TEST_CONFIG.API_BASE_URL;
 const BATCH_PATH = `${BASE_URL}/api/knowledge/documents/batch`;
@@ -22,7 +26,23 @@ const BATCH_PATH = `${BASE_URL}/api/knowledge/documents/batch`;
 // interact badly with MSW request interception and RTL's waitFor.
 const TEST_INTERVAL = 10;
 
-function pendingDoc(id, overrides = {}) {
+// The runtime payload from the batch endpoint carries extra columns the hook
+// itself does not consume (chunk_count, page_count, …). We model that with a
+// PendingDocPayload type that extends KbDocument with the fields the mock
+// returns. `error_message` becomes meaningful when status === 'failed'.
+interface PendingDocPayload extends KbDocument {
+  title: string | null;
+  file_type: string;
+  file_size: number;
+  error_message: string | null;
+  chunk_count: number;
+  page_count: number | null;
+  knowledge_base_id: number;
+  created_at: string;
+  processed_at: string | null;
+}
+
+function pendingDoc(id: number, overrides: Partial<PendingDocPayload> = {}): PendingDocPayload {
   return {
     id,
     filename: `f${id}.txt`,
@@ -54,7 +74,7 @@ describe('useDocumentPolling', () => {
   });
 
   it('tracks a pending doc and polls the batch endpoint', async () => {
-    const batchCalls = [];
+    const batchCalls: Array<string | null> = [];
     server.use(
       http.get(BATCH_PATH, ({ request }) => {
         const url = new URL(request.url);
@@ -77,13 +97,11 @@ describe('useDocumentPolling', () => {
   });
 
   it('resolves a doc and fires onResolved when status=completed', async () => {
-    let returned = 'processing';
+    let returned: DocStatus = 'processing';
     server.use(
-      http.get(BATCH_PATH, () =>
-        HttpResponse.json([pendingDoc(99, { status: returned })]),
-      ),
+      http.get(BATCH_PATH, () => HttpResponse.json([pendingDoc(99, { status: returned })])),
     );
-    const onResolved = vi.fn();
+    const onResolved = vi.fn<(doc: KbDocument) => void>();
     const { result } = renderHook(() =>
       useDocumentPolling({ onResolved, intervalMs: TEST_INTERVAL }),
     );
@@ -100,15 +118,18 @@ describe('useDocumentPolling', () => {
   });
 
   it('resolves with status=failed and fires onResolved with error_message', async () => {
-    let returned = 'processing';
+    let returned: DocStatus = 'processing';
     server.use(
       http.get(BATCH_PATH, () =>
         HttpResponse.json([
-          pendingDoc(7, { status: returned, error_message: returned === 'failed' ? 'boom' : null }),
+          pendingDoc(7, {
+            status: returned,
+            error_message: returned === 'failed' ? 'boom' : null,
+          }),
         ]),
       ),
     );
-    const onResolved = vi.fn();
+    const onResolved = vi.fn<(doc: KbDocument) => void>();
     const { result } = renderHook(() =>
       useDocumentPolling({ onResolved, intervalMs: TEST_INTERVAL }),
     );
@@ -125,9 +146,7 @@ describe('useDocumentPolling', () => {
 
   it('drops docs the server no longer returns (e.g. deleted mid-poll)', async () => {
     server.use(http.get(BATCH_PATH, () => HttpResponse.json([])));
-    const { result } = renderHook(() =>
-      useDocumentPolling({ intervalMs: TEST_INTERVAL }),
-    );
+    const { result } = renderHook(() => useDocumentPolling({ intervalMs: TEST_INTERVAL }));
     act(() => result.current.track(pendingDoc(13)));
     await waitFor(() => expect(result.current.activeDocs[13]).toBeUndefined());
   });
@@ -141,9 +160,7 @@ describe('useDocumentPolling', () => {
         return HttpResponse.json([pendingDoc(5, { status: 'processing' })]);
       }),
     );
-    const { result } = renderHook(() =>
-      useDocumentPolling({ intervalMs: TEST_INTERVAL }),
-    );
+    const { result } = renderHook(() => useDocumentPolling({ intervalMs: TEST_INTERVAL }));
     act(() => result.current.track(pendingDoc(5)));
 
     await waitFor(() => expect(call).toBeGreaterThanOrEqual(2));
@@ -154,14 +171,14 @@ describe('useDocumentPolling', () => {
     // Regression: the poll loop used to close over a stale activeDocs
     // snapshot, so if A resolved and B was tracked in the same React
     // batch, the next XHR would still target A and never query B.
-    const requestedIds = [];
-    let aStatus = 'processing';
+    const requestedIds: string[] = [];
+    let aStatus: DocStatus = 'processing';
     server.use(
       http.get(BATCH_PATH, ({ request }) => {
         const url = new URL(request.url);
         const ids = url.searchParams.get('ids') || '';
         requestedIds.push(ids);
-        const rows = [];
+        const rows: PendingDocPayload[] = [];
         for (const raw of ids.split(',').filter(Boolean)) {
           const id = Number(raw);
           if (id === 1) rows.push(pendingDoc(1, { status: aStatus }));

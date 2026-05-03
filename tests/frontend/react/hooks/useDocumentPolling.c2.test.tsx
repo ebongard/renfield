@@ -10,11 +10,33 @@ import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { TEST_CONFIG } from '../config.js';
 import { useDocumentPolling } from '../../../../src/frontend/src/hooks/useDocumentPolling';
+import type {
+  KbDocument,
+  DocStatus,
+} from '../../../../src/frontend/src/hooks/useDocumentPolling';
 
 const BASE_URL = TEST_CONFIG.API_BASE_URL;
 const BATCH_PATH = `${BASE_URL}/api/knowledge/documents/batch`;
 
-function pendingDoc(id, overrides = {}) {
+interface PendingDocPayload extends KbDocument {
+  title: string | null;
+  file_type: string;
+  file_size: number;
+  error_message: string | null;
+  chunk_count: number;
+  page_count: number | null;
+  knowledge_base_id: number;
+  created_at: string;
+  processed_at: string | null;
+}
+
+interface InflightLSEntry {
+  docId: number;
+  filename?: string;
+  startedAt: number;
+}
+
+function pendingDoc(id: number, overrides: Partial<PendingDocPayload> = {}): PendingDocPayload {
   return {
     id,
     filename: `f${id}.txt`,
@@ -43,7 +65,7 @@ describe('useDocumentPolling C2 — backoff', () => {
 
   it('walks through the backoff ladder when no progress is observed', async () => {
     // Record the wall-clock gap between successive batch requests.
-    const stamps = [];
+    const stamps: number[] = [];
     server.use(
       http.get(BATCH_PATH, () => {
         stamps.push(performance.now());
@@ -65,14 +87,14 @@ describe('useDocumentPolling C2 — backoff', () => {
     // Gap between poll 1→2 should be near 5 ms (initial).
     // Gap 2→3 should be near 20 ms. Gap 3→4 should be near 80 ms.
     const gaps = stamps.slice(1).map((t, i) => t - stamps[i]);
-    expect(gaps[0]).toBeLessThan(40);   // step 0 or 1
+    expect(gaps[0]).toBeLessThan(40); // step 0 or 1
     expect(gaps[2]).toBeGreaterThan(gaps[0]); // later gaps grow
   });
 
   it('resets the backoff ladder on an observed progress change', async () => {
-    let stage = 'parsing';
-    let firstStableGap = null;
-    const stamps = [];
+    let stage: string = 'parsing';
+    let firstStableGap: number | null = null;
+    const stamps: number[] = [];
     server.use(
       http.get(BATCH_PATH, () => {
         stamps.push(performance.now());
@@ -94,7 +116,9 @@ describe('useDocumentPolling C2 — backoff', () => {
     // Flip the stage — next poll should go back to the short interval.
     stage = 'embedding';
     const stampsAtFlip = stamps.length;
-    await waitFor(() => expect(stamps.length).toBeGreaterThanOrEqual(stampsAtFlip + 2), { timeout: 2000 });
+    await waitFor(() => expect(stamps.length).toBeGreaterThanOrEqual(stampsAtFlip + 2), {
+      timeout: 2000,
+    });
     const gapAfterReset = stamps[stampsAtFlip + 1] - stamps[stampsAtFlip];
     expect(gapAfterReset).toBeLessThan(firstStableGap);
   });
@@ -134,7 +158,7 @@ describe('useDocumentPolling C2 — Page Visibility', () => {
     const callsAtHide = calls;
 
     // Give the loop time it would have used for several polls.
-    await new Promise((r) => setTimeout(r, 60));
+    await new Promise<void>((r) => setTimeout(r, 60));
     expect(calls).toBe(callsAtHide);
 
     // Restore visibility — a catch-up poll should fire immediately.
@@ -152,9 +176,7 @@ describe('useDocumentPolling C2 — localStorage persistence', () => {
 
   it('writes inflight entries on track() and hydrates them on mount', async () => {
     server.use(
-      http.get(BATCH_PATH, () =>
-        HttpResponse.json([pendingDoc(7, { status: 'processing' })]),
-      ),
+      http.get(BATCH_PATH, () => HttpResponse.json([pendingDoc(7, { status: 'processing' })])),
     );
     const { result, unmount } = renderHook(() =>
       useDocumentPolling({ initialDelayMs: 5, backoffSequenceMs: [5] }),
@@ -163,11 +185,11 @@ describe('useDocumentPolling C2 — localStorage persistence', () => {
     await waitFor(() => expect(result.current.activeDocs[7]).toBeTruthy());
 
     // Entry must be in localStorage.
-    const stored = JSON.parse(window.localStorage.getItem('renfield.kb.inflight'));
+    const raw = window.localStorage.getItem('renfield.kb.inflight');
+    expect(raw).not.toBeNull();
+    const stored = JSON.parse(raw as string) as InflightLSEntry[];
     expect(stored).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ docId: 7, filename: 'big.pdf' }),
-      ]),
+      expect.arrayContaining([expect.objectContaining({ docId: 7, filename: 'big.pdf' })]),
     );
 
     unmount();
@@ -181,11 +203,9 @@ describe('useDocumentPolling C2 — localStorage persistence', () => {
   });
 
   it('clears localStorage for resolved docs', async () => {
-    let returned = 'processing';
+    let returned: DocStatus = 'processing';
     server.use(
-      http.get(BATCH_PATH, () =>
-        HttpResponse.json([pendingDoc(8, { status: returned })]),
-      ),
+      http.get(BATCH_PATH, () => HttpResponse.json([pendingDoc(8, { status: returned })])),
     );
     const { result } = renderHook(() =>
       useDocumentPolling({ initialDelayMs: 5, backoffSequenceMs: [5] }),
@@ -199,23 +219,21 @@ describe('useDocumentPolling C2 — localStorage persistence', () => {
     // LS entry for 8 must be gone.
     await waitFor(() => {
       const raw = window.localStorage.getItem('renfield.kb.inflight') || '[]';
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as InflightLSEntry[];
       expect(parsed.find((e) => e.docId === 8)).toBeUndefined();
     });
   });
 
   it('drops entries older than the 10-min trim window on mount', async () => {
-    const stale = [
+    const stale: InflightLSEntry[] = [
       { docId: 77, filename: 'old.pdf', startedAt: Date.now() - 15 * 60 * 1000 },
     ];
     window.localStorage.setItem('renfield.kb.inflight', JSON.stringify(stale));
 
-    renderHook(() =>
-      useDocumentPolling({ initialDelayMs: 5, backoffSequenceMs: [5] }),
-    );
+    renderHook(() => useDocumentPolling({ initialDelayMs: 5, backoffSequenceMs: [5] }));
     await waitFor(() => {
       const raw = window.localStorage.getItem('renfield.kb.inflight') || '[]';
-      const parsed = JSON.parse(raw);
+      const parsed = JSON.parse(raw) as InflightLSEntry[];
       expect(parsed.find((e) => e.docId === 77)).toBeUndefined();
     });
   });
@@ -229,11 +247,9 @@ describe('useDocumentPolling C2 — timeout CTA', () => {
 
   it('drops docs past the per-doc timeout and fires onTimeout', async () => {
     server.use(
-      http.get(BATCH_PATH, () =>
-        HttpResponse.json([pendingDoc(123, { status: 'processing' })]),
-      ),
+      http.get(BATCH_PATH, () => HttpResponse.json([pendingDoc(123, { status: 'processing' })])),
     );
-    const onTimeout = vi.fn();
+    const onTimeout = vi.fn<(doc: KbDocument) => void>();
     const { result } = renderHook(() =>
       useDocumentPolling({
         initialDelayMs: 5,
@@ -244,9 +260,9 @@ describe('useDocumentPolling C2 — timeout CTA', () => {
     );
     act(() => result.current.track(pendingDoc(123)));
 
-    await waitFor(() => expect(onTimeout).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 123 }),
-    ));
+    await waitFor(() =>
+      expect(onTimeout).toHaveBeenCalledWith(expect.objectContaining({ id: 123 })),
+    );
     await waitFor(() => expect(result.current.activeDocs[123]).toBeUndefined());
   });
 });
