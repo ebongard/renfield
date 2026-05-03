@@ -5,14 +5,15 @@
  * Plus supporting coverage for the progressbar vs role=status switch.
  */
 import { describe, it, expect } from 'vitest';
-import { renderWithProviders } from '../../test-utils';
-import StatusBadge from '../../../../../src/frontend/src/components/knowledge/StatusBadge';
+import { renderWithProviders } from '../../test-utils.jsx';
+import StatusBadge, {
+  type DocLike,
+} from '../../../../../src/frontend/src/components/knowledge/StatusBadge';
 
-function doc(overrides = {}) {
+function doc(overrides: Partial<DocLike> = {}): DocLike {
   return {
-    id: 1,
-    filename: 'hello.pdf',
     status: 'pending',
+    filename: 'hello.pdf',
     stage: null,
     pages: null,
     queue_position: null,

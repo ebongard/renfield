@@ -5,10 +5,12 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent } from '@testing-library/react';
-import { renderWithProviders } from '../../test-utils';
-import DuplicateDialog from '../../../../../src/frontend/src/components/knowledge/DuplicateDialog';
+import { renderWithProviders } from '../../test-utils.jsx';
+import DuplicateDialog, {
+  type ExistingDocument,
+} from '../../../../../src/frontend/src/components/knowledge/DuplicateDialog';
 
-const existing = {
+const existing: ExistingDocument = {
   id: 42,
   filename: 'report.pdf',
   uploaded_at: '2026-04-01T12:00:00Z',
@@ -22,7 +24,7 @@ describe('DuplicateDialog', () => {
     const dialog = getByRole('dialog');
     expect(dialog.getAttribute('aria-modal')).toBe('true');
     // Primary button text per DE i18n: "Zum vorhandenen Eintrag springen"
-    const jumpBtn = dialog.querySelector('.btn-primary');
+    const jumpBtn = dialog.querySelector<HTMLButtonElement>('.btn-primary');
     expect(document.activeElement).toBe(jumpBtn);
   });
 
@@ -33,7 +35,7 @@ describe('DuplicateDialog', () => {
     trigger.focus();
     expect(document.activeElement).toBe(trigger);
 
-    const onClose = vi.fn();
+    const onClose = vi.fn<() => void>();
     const { unmount } = renderWithProviders(
       <DuplicateDialog existing={existing} onClose={onClose} onJump={vi.fn()} />,
     );
@@ -47,7 +49,7 @@ describe('DuplicateDialog', () => {
   });
 
   it('Escape closes the dialog', () => {
-    const onClose = vi.fn();
+    const onClose = vi.fn<() => void>();
     renderWithProviders(
       <DuplicateDialog existing={existing} onClose={onClose} onJump={vi.fn()} />,
     );
@@ -60,8 +62,8 @@ describe('DuplicateDialog', () => {
       <DuplicateDialog existing={existing} onClose={vi.fn()} onJump={vi.fn()} />,
     );
     const dialog = getByRole('dialog');
-    const cancelBtn = dialog.querySelector('.btn-secondary');
-    const jumpBtn = dialog.querySelector('.btn-primary');
+    const cancelBtn = dialog.querySelector<HTMLButtonElement>('.btn-secondary');
+    const jumpBtn = dialog.querySelector<HTMLButtonElement>('.btn-primary');
 
     // Focus starts on jumpBtn (last focusable in DOM order).
     expect(document.activeElement).toBe(jumpBtn);
