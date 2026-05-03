@@ -1,5 +1,6 @@
+import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LanguageSwitcher from '../../../../src/frontend/src/components/LanguageSwitcher';
 import { I18nextProvider } from 'react-i18next';
@@ -11,26 +12,36 @@ import { createTestQueryClient } from '../test-utils.jsx';
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   default: {
     get: vi.fn().mockResolvedValue({ data: { language: 'de' } }),
-    put: vi.fn().mockResolvedValue({ data: { language: 'de' } })
+    put: vi.fn().mockResolvedValue({ data: { language: 'de' } }),
   },
-  extractApiError: (err, fallback) => {
-    const detail = err?.response?.data?.detail;
-    if (typeof detail === 'string') return detail;
+  extractApiError: (err: unknown, fallback: string): string => {
+    if (
+      typeof err === 'object' &&
+      err !== null &&
+      'response' in err &&
+      typeof (err as { response?: { data?: { detail?: unknown } } }).response?.data?.detail === 'string'
+    ) {
+      return (err as { response: { data: { detail: string } } }).response.data.detail;
+    }
     return fallback;
   },
-  extractFieldErrors: () => ({}),
+  extractFieldErrors: (): Record<string, string> => ({}),
 }));
 
 // Mock AuthContext
 vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
     isAuthenticated: false,
-    authEnabled: false
-  }))
+    authEnabled: false,
+  })),
 }));
 
+interface RenderWithI18nOptions {
+  language?: string;
+}
+
 // Helper to render with i18n + QueryClientProvider
-function renderWithI18n(ui, { language = 'de' } = {}) {
+function renderWithI18n(ui: ReactElement, { language = 'de' }: RenderWithI18nOptions = {}) {
   i18n.changeLanguage(language);
   const queryClient = createTestQueryClient();
   return render(
@@ -305,6 +316,7 @@ describe('LanguageSwitcher', () => {
   describe('Backend Sync', () => {
     it('does not sync to backend when not authenticated', async () => {
       const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      const mockedPut = vi.mocked(apiClient.default.put);
       const user = userEvent.setup();
 
       renderWithI18n(<LanguageSwitcher />);
@@ -313,17 +325,34 @@ describe('LanguageSwitcher', () => {
       await user.click(screen.getByRole('option', { name: /english/i }));
 
       // Should not call backend API
-      expect(apiClient.default.put).not.toHaveBeenCalled();
+      expect(mockedPut).not.toHaveBeenCalled();
     });
 
     it('syncs to backend when authenticated', async () => {
       const { useAuth } = await import('../../../../src/frontend/src/context/AuthContext');
-      useAuth.mockReturnValue({
+      const mockedUseAuth = vi.mocked(useAuth);
+      const fullAuth: ReturnType<typeof useAuth> = {
+        user: null,
+        loading: false,
+        authEnabled: true,
+        allowRegistration: false,
         isAuthenticated: true,
-        authEnabled: true
-      });
+        features: {},
+        isFeatureEnabled: () => true,
+        login: vi.fn(),
+        logout: vi.fn(),
+        register: vi.fn(),
+        changePassword: vi.fn(),
+        fetchUser: vi.fn(),
+        hasPermission: () => true,
+        hasAnyPermission: () => true,
+        isAdmin: () => false,
+        getAccessToken: () => null,
+      };
+      mockedUseAuth.mockReturnValue(fullAuth);
 
       const apiClient = await import('../../../../src/frontend/src/utils/axios');
+      const mockedPut = vi.mocked(apiClient.default.put);
       const user = userEvent.setup();
 
       renderWithI18n(<LanguageSwitcher />);
@@ -332,9 +361,9 @@ describe('LanguageSwitcher', () => {
       await user.click(screen.getByRole('option', { name: /english/i }));
 
       await waitFor(() => {
-        expect(apiClient.default.put).toHaveBeenCalledWith(
+        expect(mockedPut).toHaveBeenCalledWith(
           '/api/preferences/language',
-          { language: 'en' }
+          { language: 'en' },
         );
       });
     });

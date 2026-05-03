@@ -1,8 +1,9 @@
+import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
+import type { CorrectionHandler } from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import { renderWithRouter } from '../test-utils.jsx';
-import axios from '../../../../src/frontend/src/utils/axios';
 
 // Mock axios to return MCP tools
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({
@@ -23,12 +24,14 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   },
 }));
 
+type IntentCorrectionButtonProps = ComponentProps<typeof IntentCorrectionButton>;
+
 describe('IntentCorrectionButton', () => {
-  const defaultProps = {
+  const defaultProps: IntentCorrectionButtonProps = {
     messageText: 'Was passierte 1989?',
     detectedIntent: 'knowledge.ask',
     feedbackType: 'intent',
-    onCorrect: vi.fn(),
+    onCorrect: vi.fn<CorrectionHandler>(),
     proactive: false,
   };
 
@@ -98,7 +101,7 @@ describe('IntentCorrectionButton', () => {
   });
 
   it('calls onCorrect when option is selected', async () => {
-    const onCorrect = vi.fn().mockResolvedValue(undefined);
+    const onCorrect = vi.fn<CorrectionHandler>().mockResolvedValue(undefined);
 
     renderWithRouter(
       <IntentCorrectionButton {...defaultProps} onCorrect={onCorrect} />
@@ -118,7 +121,7 @@ describe('IntentCorrectionButton', () => {
   });
 
   it('shows success state after selection', async () => {
-    const onCorrect = vi.fn().mockResolvedValue(undefined);
+    const onCorrect = vi.fn<CorrectionHandler>().mockResolvedValue(undefined);
 
     renderWithRouter(
       <IntentCorrectionButton {...defaultProps} onCorrect={onCorrect} />

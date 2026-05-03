@@ -1,11 +1,17 @@
+import type { ReactElement } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ThemeToggle from '../../../../src/frontend/src/components/ThemeToggle';
 import { ThemeProvider } from '../../../../src/frontend/src/context/ThemeContext';
+import type { ThemePreference } from '../../../../src/frontend/src/context/ThemeContext';
+
+interface RenderWithThemeOptions {
+  theme?: ThemePreference;
+}
 
 // Helper to render with ThemeProvider
-function renderWithTheme(ui, { theme = 'system' } = {}) {
+function renderWithTheme(ui: ReactElement, { theme = 'system' }: RenderWithThemeOptions = {}) {
   // Set initial theme in localStorage
   if (theme) {
     window.localStorage.setItem('renfield_theme', theme);

@@ -13,7 +13,15 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   },
 }));
 
-const FAKE_OFFER = {
+interface PairingOffer {
+  initiator_pubkey: string;
+  nonce: string;
+  signature: string;
+  display_name: string;
+  expires_at: number;
+}
+
+const FAKE_OFFER: PairingOffer = {
   initiator_pubkey: 'a'.repeat(64),
   nonce: 'n'.repeat(32),
   signature: 's'.repeat(128),
@@ -21,10 +29,12 @@ const FAKE_OFFER = {
   expires_at: Math.floor(Date.now() / 1000) + 600,
 };
 
+const mockedApiPost = vi.mocked(apiClient.post);
+
 describe('PairInitiatorModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    apiClient.post.mockReset();
+    mockedApiPost.mockReset();
   });
 
   it('does not render when closed', () => {
@@ -35,7 +45,7 @@ describe('PairInitiatorModal', () => {
   });
 
   it('generates offer and shows QR container on step 1 submit', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_OFFER });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_OFFER });
 
     renderWithRouter(
       <PairInitiatorModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
@@ -45,7 +55,7 @@ describe('PairInitiatorModal', () => {
     fireEvent.click(btn);
 
     await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith('/api/federation/pair/offer', {});
+      expect(mockedApiPost).toHaveBeenCalledWith('/api/federation/pair/offer', {});
       // aria-labeled QR container — "QR-Code mit signierter Kopplungs-Einladung"
       expect(screen.getByRole('img', { name: /kopplungs-einladung/i })).toBeInTheDocument();
     });
@@ -57,7 +67,7 @@ describe('PairInitiatorModal', () => {
   // calls the signature field `signature`, NOT `responder_signature`. If the
   // field list ever regresses to `responder_signature`, this test must fail.
   it('accepts response JSON that uses signature (not responder_signature)', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_OFFER });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_OFFER });
 
     renderWithRouter(
       <PairInitiatorModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
@@ -82,7 +92,7 @@ describe('PairInitiatorModal', () => {
   });
 
   it('rejects response JSON missing the signature field', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_OFFER });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_OFFER });
 
     renderWithRouter(
       <PairInitiatorModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
@@ -105,7 +115,7 @@ describe('PairInitiatorModal', () => {
   });
 
   it('rejects response with wrong nonce', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_OFFER });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_OFFER });
 
     renderWithRouter(
       <PairInitiatorModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
@@ -127,11 +137,11 @@ describe('PairInitiatorModal', () => {
     // (tier picker from step 3 must NOT be present).
     expect(screen.getByText(/nicht zu dieser einladung/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /kopplung abschließen/i })).not.toBeInTheDocument();
-    expect(apiClient.post).toHaveBeenCalledTimes(1); // still only the offer call
+    expect(mockedApiPost).toHaveBeenCalledTimes(1); // still only the offer call
   });
 
   it('calls onPaired on successful complete', async () => {
-    apiClient.post
+    mockedApiPost
       .mockResolvedValueOnce({ data: FAKE_OFFER })       // /offer
       .mockResolvedValueOnce({ data: { ok: true } });    // /complete
     const onPaired = vi.fn();
@@ -161,7 +171,7 @@ describe('PairInitiatorModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopplung abschließen/i }));
 
     await waitFor(() => {
-      expect(apiClient.post).toHaveBeenLastCalledWith(
+      expect(mockedApiPost).toHaveBeenLastCalledWith(
         '/api/federation/pair/complete',
         expect.objectContaining({ response: validResponse, their_tier_for_me: 2 }),
       );
@@ -170,7 +180,7 @@ describe('PairInitiatorModal', () => {
   });
 
   it('renders QR with accessible aria-label', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_OFFER });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_OFFER });
 
     renderWithRouter(
       <PairInitiatorModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
