@@ -1,23 +1,44 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook as rawRenderHook, waitFor, act } from '@testing-library/react';
+import { describe, it, expect, beforeEach } from 'vitest';
+import {
+  renderHook as rawRenderHook,
+  waitFor,
+  act,
+  type RenderHookOptions,
+  type RenderHookResult,
+} from '@testing-library/react';
 import { I18nextProvider } from 'react-i18next';
-import { QueryClientProvider } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server';
-import { BASE_URL, mockConversations, mockConversationHistory } from '../mocks/handlers';
-import { useChatSessions, groupConversationsByDate } from '../../../../src/frontend/src/hooks/useChatSessions';
-import { createTestQueryClient } from '../test-utils';
+import type { ReactNode } from 'react';
+
+import { server } from '../mocks/server.js';
+import { BASE_URL, mockConversations, mockConversationHistory } from '../mocks/handlers.js';
+import {
+  useChatSessions,
+  groupConversationsByDate,
+} from '../../../../src/frontend/src/hooks/useChatSessions';
+import { createTestQueryClient } from '../test-utils.jsx';
 import i18n from '../../../../src/frontend/src/i18n';
+import type { ChatSessionsResult, Conversation } from '../../../../src/frontend/src/types/chat';
+
+interface RenderHookExtraOptions {
+  queryClient?: QueryClient;
+}
 
 // Wrap renderHook with QueryClientProvider so the new RQ-backed hook works.
-function renderHook(hook, options = {}) {
-  const queryClient = options.queryClient ?? createTestQueryClient();
-  const wrapper = ({ children }) => (
+function renderHook<TResult, TProps>(
+  hook: (props: TProps) => TResult,
+  options: RenderHookOptions<TProps> & RenderHookExtraOptions = {} as RenderHookOptions<TProps> &
+    RenderHookExtraOptions,
+): RenderHookResult<TResult, TProps> {
+  const { queryClient: overrideClient, ...rest } = options;
+  const queryClient = overrideClient ?? createTestQueryClient();
+  const wrapper = ({ children }: { children: ReactNode }) => (
     <I18nextProvider i18n={i18n}>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
     </I18nextProvider>
   );
-  return rawRenderHook(hook, { wrapper, ...options });
+  return rawRenderHook<TResult, TProps>(hook, { wrapper, ...rest });
 }
 
 describe('useChatSessions', () => {
@@ -27,7 +48,7 @@ describe('useChatSessions', () => {
 
   describe('Initialization', () => {
     it('fetches conversations on mount', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       // Initially loading
       expect(result.current.loading).toBe(true);
@@ -44,10 +65,10 @@ describe('useChatSessions', () => {
       server.use(
         http.get(`${BASE_URL}/api/chat/conversations`, () => {
           return new HttpResponse(null, { status: 500 });
-        })
+        }),
       );
 
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -61,10 +82,10 @@ describe('useChatSessions', () => {
       server.use(
         http.get(`${BASE_URL}/api/chat/conversations`, () => {
           return HttpResponse.json({ conversations: [], total: 0 });
-        })
+        }),
       );
 
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -77,7 +98,7 @@ describe('useChatSessions', () => {
 
   describe('refreshConversations', () => {
     it('refreshes the conversation list', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -96,12 +117,12 @@ describe('useChatSessions', () => {
                 preview: 'New conversation',
                 message_count: 1,
                 created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString()
-              }
+                updated_at: new Date().toISOString(),
+              },
             ],
-            total: mockConversations.length + 1
+            total: mockConversations.length + 1,
           });
-        })
+        }),
       );
 
       await act(async () => {
@@ -116,13 +137,13 @@ describe('useChatSessions', () => {
 
   describe('deleteConversation', () => {
     it('deletes a conversation and updates local state', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      const sessionToDelete = mockConversations[0].session_id;
+      const sessionToDelete: string = mockConversations[0].session_id;
       const initialLength = result.current.conversations.length;
 
       await act(async () => {
@@ -133,17 +154,19 @@ describe('useChatSessions', () => {
       await waitFor(() => {
         expect(result.current.conversations.length).toBe(initialLength - 1);
       });
-      expect(result.current.conversations.find(c => c.session_id === sessionToDelete)).toBeUndefined();
+      expect(
+        result.current.conversations.find((c: Conversation) => c.session_id === sessionToDelete),
+      ).toBeUndefined();
     });
 
     it('handles delete error gracefully', async () => {
       server.use(
         http.delete(`${BASE_URL}/api/chat/session/:sessionId`, () => {
           return new HttpResponse(null, { status: 500 });
-        })
+        }),
       );
 
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -163,15 +186,14 @@ describe('useChatSessions', () => {
 
   describe('loadConversationHistory', () => {
     it('loads conversation history for a session', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      let history;
-      await act(async () => {
-        history = await result.current.loadConversationHistory('session-today-1');
+      const history = await act(async () => {
+        return result.current.loadConversationHistory('session-today-1');
       });
 
       expect(history).toHaveLength(mockConversationHistory['session-today-1'].length);
@@ -180,15 +202,14 @@ describe('useChatSessions', () => {
     });
 
     it('returns empty array for unknown session', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      let history;
-      await act(async () => {
-        history = await result.current.loadConversationHistory('unknown-session');
+      const history = await act(async () => {
+        return result.current.loadConversationHistory('unknown-session');
       });
 
       expect(history).toHaveLength(0);
@@ -197,7 +218,7 @@ describe('useChatSessions', () => {
 
   describe('addConversation', () => {
     it('adds a new conversation to the list', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
@@ -211,7 +232,7 @@ describe('useChatSessions', () => {
           preview: 'New local conversation',
           message_count: 1,
           created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         });
       });
 
@@ -222,13 +243,13 @@ describe('useChatSessions', () => {
     });
 
     it('does not add duplicate conversations', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      const existingSessionId = mockConversations[0].session_id;
+      const existingSessionId: string = mockConversations[0].session_id;
       const initialLength = result.current.conversations.length;
 
       act(() => {
@@ -237,7 +258,7 @@ describe('useChatSessions', () => {
           preview: 'Duplicate',
           message_count: 1,
           created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
         });
       });
 
@@ -247,13 +268,13 @@ describe('useChatSessions', () => {
 
   describe('updateConversationPreview', () => {
     it('updates the preview of an existing conversation', async () => {
-      const { result } = renderHook(() => useChatSessions());
+      const { result } = renderHook<ChatSessionsResult, void>(() => useChatSessions());
 
       await waitFor(() => {
         expect(result.current.loading).toBe(false);
       });
 
-      const sessionId = mockConversations[0].session_id;
+      const sessionId: string = mockConversations[0].session_id;
       const newPreview = 'Updated preview text';
 
       act(() => {
@@ -261,7 +282,9 @@ describe('useChatSessions', () => {
       });
 
       await waitFor(() => {
-        const updated = result.current.conversations.find(c => c.session_id === sessionId);
+        const updated = result.current.conversations.find(
+          (c: Conversation) => c.session_id === sessionId,
+        );
         expect(updated?.preview).toBe(newPreview);
         expect(updated?.message_count).toBe(10);
       });
@@ -279,11 +302,35 @@ describe('groupConversationsByDate', () => {
     const older = new Date(now);
     older.setDate(now.getDate() - 14);
 
-    const conversations = [
-      { session_id: '1', updated_at: now.toISOString() },
-      { session_id: '2', updated_at: yesterday.toISOString() },
-      { session_id: '3', updated_at: lastWeek.toISOString() },
-      { session_id: '4', updated_at: older.toISOString() }
+    const conversations: Conversation[] = [
+      {
+        session_id: '1',
+        preview: '',
+        message_count: 0,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+      {
+        session_id: '2',
+        preview: '',
+        message_count: 0,
+        created_at: yesterday.toISOString(),
+        updated_at: yesterday.toISOString(),
+      },
+      {
+        session_id: '3',
+        preview: '',
+        message_count: 0,
+        created_at: lastWeek.toISOString(),
+        updated_at: lastWeek.toISOString(),
+      },
+      {
+        session_id: '4',
+        preview: '',
+        message_count: 0,
+        created_at: older.toISOString(),
+        updated_at: older.toISOString(),
+      },
     ];
 
     const grouped = groupConversationsByDate(conversations);
@@ -312,11 +359,19 @@ describe('groupConversationsByDate', () => {
 
   it('uses created_at if updated_at is missing', () => {
     const now = new Date();
-    const conversations = [
-      { session_id: '1', created_at: now.toISOString() }
+    // The runtime hook accepts conversations without `updated_at`. Mirror that
+    // by widening the array element here while keeping the rest of the object
+    // strongly typed.
+    const conversations: Array<Omit<Conversation, 'updated_at'> & { updated_at?: string }> = [
+      {
+        session_id: '1',
+        preview: '',
+        message_count: 0,
+        created_at: now.toISOString(),
+      },
     ];
 
-    const grouped = groupConversationsByDate(conversations);
+    const grouped = groupConversationsByDate(conversations as Conversation[]);
 
     expect(grouped.today).toHaveLength(1);
   });

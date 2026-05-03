@@ -3,6 +3,8 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
+import type { ReactNode } from 'react';
+import type { AxiosError } from 'axios';
 
 import { server } from '../mocks/server';
 import { TEST_CONFIG } from '../config';
@@ -12,18 +14,30 @@ import { useApiQuery, useApiMutation } from '../../../../src/frontend/src/api/ho
 
 const BASE = TEST_CONFIG.API_BASE_URL;
 
-function makeWrapper() {
+type ApiError = AxiosError<{ detail?: unknown }>;
+
+interface OkPayload {
+  ok: true;
+}
+
+interface MutVars {
+  x?: number;
+}
+
+function makeWrapper(): (props: { children: ReactNode }) => JSX.Element {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0, staleTime: 0 },
       mutations: { retry: false },
     },
   });
-  return ({ children }) => (
-    <I18nextProvider i18n={i18n}>
-      <QueryClientProvider client={client}>{children}</QueryClientProvider>
-    </I18nextProvider>
-  );
+  return function Wrapper({ children }: { children: ReactNode }) {
+    return (
+      <I18nextProvider i18n={i18n}>
+        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+      </I18nextProvider>
+    );
+  };
 }
 
 describe('useApiQuery', () => {
@@ -47,10 +61,10 @@ describe('useApiQuery', () => {
 
     const { result } = renderHook(
       () =>
-        useApiQuery(
+        useApiQuery<unknown>(
           {
             queryKey: ['test-422'],
-            queryFn: () => apiClient.get('/api/test-422').then((r) => r.data),
+            queryFn: () => apiClient.get<unknown>('/api/test-422').then((r) => r.data),
           },
           'common.error',
         ),
@@ -70,10 +84,10 @@ describe('useApiQuery', () => {
 
     const { result } = renderHook(
       () =>
-        useApiQuery(
+        useApiQuery<unknown>(
           {
             queryKey: ['test-500'],
-            queryFn: () => apiClient.get('/api/test-500').then((r) => r.data),
+            queryFn: () => apiClient.get<unknown>('/api/test-500').then((r) => r.data),
           },
           'common.error',
         ),
@@ -85,16 +99,14 @@ describe('useApiQuery', () => {
   });
 
   it('falls back to translated key when no detail', async () => {
-    server.use(
-      http.get(`${BASE}/api/test-bare`, () => HttpResponse.json({}, { status: 503 })),
-    );
+    server.use(http.get(`${BASE}/api/test-bare`, () => HttpResponse.json({}, { status: 503 })));
 
     const { result } = renderHook(
       () =>
-        useApiQuery(
+        useApiQuery<unknown>(
           {
             queryKey: ['test-bare'],
-            queryFn: () => apiClient.get('/api/test-bare').then((r) => r.data),
+            queryFn: () => apiClient.get<unknown>('/api/test-bare').then((r) => r.data),
           },
           'common.error',
         ),
@@ -108,16 +120,14 @@ describe('useApiQuery', () => {
   });
 
   it('returns errorMessage = null when no error', async () => {
-    server.use(
-      http.get(`${BASE}/api/test-ok`, () => HttpResponse.json({ ok: true })),
-    );
+    server.use(http.get(`${BASE}/api/test-ok`, () => HttpResponse.json({ ok: true })));
 
     const { result } = renderHook(
       () =>
-        useApiQuery(
+        useApiQuery<OkPayload>(
           {
             queryKey: ['test-ok'],
-            queryFn: () => apiClient.get('/api/test-ok').then((r) => r.data),
+            queryFn: () => apiClient.get<OkPayload>('/api/test-ok').then((r) => r.data),
           },
           'common.error',
         ),
@@ -144,10 +154,10 @@ describe('useApiMutation', () => {
 
     const { result } = renderHook(
       () =>
-        useApiMutation(
+        useApiMutation<unknown, MutVars>(
           {
-            mutationFn: (vars) =>
-              apiClient.post('/api/test-mut-fail', vars).then((r) => r.data),
+            mutationFn: (vars: MutVars) =>
+              apiClient.post<unknown>('/api/test-mut-fail', vars).then((r) => r.data),
           },
           'common.error',
         ),
@@ -183,10 +193,10 @@ describe('useApiMutation', () => {
 
     const { result } = renderHook(
       () =>
-        useApiMutation(
+        useApiMutation<unknown, MutVars>(
           {
-            mutationFn: (vars) =>
-              apiClient.post('/api/test-mut-422', vars).then((r) => r.data),
+            mutationFn: (vars: MutVars) =>
+              apiClient.post<unknown>('/api/test-mut-422', vars).then((r) => r.data),
           },
           'common.error',
         ),
@@ -222,10 +232,10 @@ describe('useApiMutation', () => {
 
     const { result } = renderHook(
       () =>
-        useApiMutation(
+        useApiMutation<unknown, MutVars>(
           {
-            mutationFn: (vars) =>
-              apiClient.post('/api/test-mut-toggle', vars).then((r) => r.data),
+            mutationFn: (vars: MutVars) =>
+              apiClient.post<unknown>('/api/test-mut-toggle', vars).then((r) => r.data),
           },
           'common.error',
         ),
@@ -258,10 +268,10 @@ describe('useApiMutation', () => {
 
     const { result } = renderHook(
       () =>
-        useApiMutation(
+        useApiMutation<unknown, MutVars>(
           {
-            mutationFn: (vars) =>
-              apiClient.post('/api/test-mut-raw', vars).then((r) => r.data),
+            mutationFn: (vars: MutVars) =>
+              apiClient.post<unknown>('/api/test-mut-raw', vars).then((r) => r.data),
           },
           'common.error',
         ),
@@ -277,6 +287,7 @@ describe('useApiMutation', () => {
     });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    expect(result.current.error?.response?.status).toBe(418);
+    const error: ApiError | null = result.current.error;
+    expect(error?.response?.status).toBe(418);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, waitFor, act } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 
 // Mock the wakeword config
 vi.mock('../../../../src/frontend/src/config/wakeword', () => ({
@@ -43,31 +43,46 @@ vi.mock('../../../../src/frontend/src/utils/debug', () => ({
   },
 }));
 
+// Minimal shape of the engine the hook expects. The real engine lives in
+// `openwakeword-wasm-browser` (not installed in the test environment), so
+// these tests treat it as a stub.
+type WakeWordEvent = 'ready' | 'detect' | 'speech-start' | 'speech-end' | 'error';
+type WakeWordEventListener = (data: unknown) => void;
+
+interface MockEngine {
+  load: ReturnType<typeof vi.fn>;
+  start: ReturnType<typeof vi.fn>;
+  stop: ReturnType<typeof vi.fn>;
+  setActiveKeywords: ReturnType<typeof vi.fn>;
+  on: ReturnType<typeof vi.fn>;
+  emit: (event: WakeWordEvent, data?: unknown) => void;
+  _listeners: Partial<Record<WakeWordEvent, WakeWordEventListener>>;
+}
+
 // Create mock WakeWordEngine class
-const createMockEngine = () => {
-  const listeners = {};
-  return {
+const createMockEngine = (): MockEngine => {
+  const listeners: Partial<Record<WakeWordEvent, WakeWordEventListener>> = {};
+  const engine: MockEngine = {
     load: vi.fn().mockResolvedValue(undefined),
     start: vi.fn().mockResolvedValue(undefined),
     stop: vi.fn().mockResolvedValue(undefined),
     setActiveKeywords: vi.fn(),
-    on: vi.fn((event, callback) => {
+    on: vi.fn((event: WakeWordEvent, callback: WakeWordEventListener) => {
       listeners[event] = callback;
-      return () => { delete listeners[event]; };
+      return () => {
+        delete listeners[event];
+      };
     }),
     emit: (event, data) => {
-      if (listeners[event]) {
-        listeners[event](data);
+      const listener = listeners[event];
+      if (listener) {
+        listener(data);
       }
     },
     _listeners: listeners,
   };
+  return engine;
 };
-
-// Track module state for reset between tests
-let mockEngineInstance = null;
-let loadAttempted = false;
-let loadError = null;
 
 // Mock dynamic imports
 vi.mock('onnxruntime-web', () => ({
@@ -85,12 +100,16 @@ vi.mock('onnxruntime-web', () => ({
 // The module will fail to load naturally because it's not installed in test env.
 
 describe('useWakeWord', () => {
-  let mockEngine;
+  let mockEngine: MockEngine;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockEngine = createMockEngine();
-    mockEngineInstance = mockEngine;
+    // Side-effect: keep a reference so jest-style tooling can observe it.
+    // (Not consumed by the assertions below — engine is stubbed at the
+    // openwakeword-wasm-browser layer, which the hook fails to load in the
+    // test environment.)
+    void mockEngine;
 
     // Reset module-level state by reimporting
     vi.resetModules();
@@ -148,7 +167,9 @@ describe('useWakeWord', () => {
   describe('Settings Management', () => {
     it('setThreshold updates settings', async () => {
       const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
-      const { saveWakeWordSettings } = await import('../../../../src/frontend/src/config/wakeword');
+      const { saveWakeWordSettings } = await import(
+        '../../../../src/frontend/src/config/wakeword'
+      );
 
       const { result } = renderHook(() => useWakeWord());
 
@@ -162,7 +183,9 @@ describe('useWakeWord', () => {
 
     it('setKeyword updates settings', async () => {
       const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
-      const { saveWakeWordSettings } = await import('../../../../src/frontend/src/config/wakeword');
+      const { saveWakeWordSettings } = await import(
+        '../../../../src/frontend/src/config/wakeword'
+      );
 
       const { result } = renderHook(() => useWakeWord());
 
@@ -179,19 +202,21 @@ describe('useWakeWord', () => {
     it('accepts callback options', async () => {
       const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
 
-      const onWakeWordDetected = vi.fn();
-      const onSpeechStart = vi.fn();
-      const onSpeechEnd = vi.fn();
-      const onError = vi.fn();
-      const onReady = vi.fn();
+      const onWakeWordDetected = vi.fn<(keyword: string, score: number) => void>();
+      const onSpeechStart = vi.fn<() => void>();
+      const onSpeechEnd = vi.fn<() => void>();
+      const onError = vi.fn<(error: Error) => void>();
+      const onReady = vi.fn<() => void>();
 
-      const { result } = renderHook(() => useWakeWord({
-        onWakeWordDetected,
-        onSpeechStart,
-        onSpeechEnd,
-        onError,
-        onReady,
-      }));
+      const { result } = renderHook(() =>
+        useWakeWord({
+          onWakeWordDetected,
+          onSpeechStart,
+          onSpeechEnd,
+          onError,
+          onReady,
+        }),
+      );
 
       // Hook should initialize without errors
       expect(result.current.error).toBeNull();
@@ -206,7 +231,7 @@ describe('useWakeWord', () => {
 
       // Start enabling - will fail because module not available
       act(() => {
-        result.current.enable();
+        void result.current.enable();
       });
 
       // Should be loading
@@ -216,7 +241,7 @@ describe('useWakeWord', () => {
     it('handles module load failure gracefully', async () => {
       const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
 
-      const onError = vi.fn();
+      const onError = vi.fn<(error: Error) => void>();
       const { result } = renderHook(() => useWakeWord({ onError }));
 
       await act(async () => {
@@ -308,7 +333,7 @@ describe('useWakeWord', () => {
       // Should have registered the event listener
       expect(addEventListenerSpy).toHaveBeenCalledWith(
         'wakeword-config-update',
-        expect.any(Function)
+        expect.any(Function),
       );
 
       // Cleanup
@@ -318,7 +343,9 @@ describe('useWakeWord', () => {
 
     it('setKeyword updates settings directly', async () => {
       const { useWakeWord } = await import('../../../../src/frontend/src/hooks/useWakeWord');
-      const { saveWakeWordSettings } = await import('../../../../src/frontend/src/config/wakeword');
+      const { saveWakeWordSettings } = await import(
+        '../../../../src/frontend/src/config/wakeword'
+      );
 
       const { result } = renderHook(() => useWakeWord());
 

@@ -1,41 +1,54 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { renderHook, act, waitFor } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { useChatWebSocket } from '../../../../src/frontend/src/pages/ChatPage/hooks/useChatWebSocket';
+
+type WsListener<E = unknown> = ((event: E) => void) | null;
 
 // Mock WebSocket whose readyState starts as CONNECTING and becomes OPEN
 // only when fireOpen() is called externally. Lets us model the
 // page-load race: the hook constructs the socket but onopen hasn't fired
 // yet when sendMessage / whenReady are called.
 class ControllableWebSocket {
-  constructor(url) {
+  static instances: ControllableWebSocket[] = [];
+  static OPEN = 1;
+  static CONNECTING = 0;
+  static CLOSED = 3;
+
+  url: string;
+  readyState: number = 0;
+  OPEN = 1;
+  CONNECTING = 0;
+  CLOSED = 3;
+  sent: string[] = [];
+  onopen: WsListener<Event> = null;
+  onclose: WsListener<CloseEvent> = null;
+  onmessage: WsListener<MessageEvent> = null;
+  onerror: WsListener<Event> = null;
+
+  constructor(url: string) {
     this.url = url;
-    this.readyState = 0; // CONNECTING
-    this.OPEN = 1;
-    this.CONNECTING = 0;
-    this.CLOSED = 3;
-    this.sent = [];
-    this.onopen = null;
-    this.onclose = null;
-    this.onmessage = null;
-    this.onerror = null;
     ControllableWebSocket.instances.push(this);
   }
-  fireOpen() {
+  fireOpen(): void {
     this.readyState = 1;
-    this.onopen?.({});
+    this.onopen?.(new Event('open'));
   }
-  fireClose() {
+  fireClose(): void {
     this.readyState = 3;
-    this.onclose?.({});
+    // jsdom may not provide CloseEvent — fall back to a plain Event cast.
+    const closeEvent =
+      typeof CloseEvent !== 'undefined'
+        ? new CloseEvent('close')
+        : (new Event('close') as unknown as CloseEvent);
+    this.onclose?.(closeEvent);
   }
-  send(data) {
+  send(data: string): void {
     this.sent.push(data);
   }
-  close() {
+  close(): void {
     this.fireClose();
   }
 }
-ControllableWebSocket.instances = [];
 
 beforeEach(() => {
   ControllableWebSocket.instances = [];
