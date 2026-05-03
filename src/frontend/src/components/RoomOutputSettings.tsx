@@ -82,7 +82,7 @@ export default function RoomOutputSettings({
 
   const addOutputDevice = async () => {
     if (!selectedDevice) {
-      setError('Bitte ein Geraet auswaehlen');
+      setError(t('rooms.outputErrorSelectDevice'));
       return;
     }
     try {
@@ -104,7 +104,7 @@ export default function RoomOutputSettings({
       await addMutation.mutateAsync({ roomId, payload });
       setShowAddModal(false);
     } catch (err) {
-      setError(extractApiError(err, 'Geraet konnte nicht hinzugefuegt werden'));
+      setError(extractApiError(err, t('rooms.outputErrorAddFailed')));
     }
   };
 
@@ -112,7 +112,7 @@ export default function RoomOutputSettings({
     try {
       await updateMutation.mutateAsync({ deviceId, updates });
     } catch {
-      setError('Geraet konnte nicht aktualisiert werden');
+      setError(t('rooms.outputErrorUpdateFailed'));
     }
   };
 
@@ -126,7 +126,7 @@ export default function RoomOutputSettings({
     try {
       await deleteMutation.mutateAsync(deviceId);
     } catch {
-      setError('Geraet konnte nicht entfernt werden');
+      setError(t('rooms.outputErrorDeleteFailed'));
     }
   };
 
@@ -139,7 +139,7 @@ export default function RoomOutputSettings({
     try {
       await reorderMutation.mutateAsync({ roomId, outputType, deviceIds });
     } catch {
-      setError('Reihenfolge konnte nicht geaendert werden');
+      setError(t('rooms.outputErrorReorderFailed'));
     }
   };
 
@@ -202,7 +202,9 @@ export default function RoomOutputSettings({
           ) : (
             <Volume2 className="w-4 h-4 text-gray-400" />
           )}
-          <span className="text-sm text-gray-300">{isVisual ? 'Visuelle Ausgabe' : 'Audio-Ausgabe'}</span>
+          <span className="text-sm text-gray-300">
+            {isVisual ? t('rooms.outputVisualLabel') : t('rooms.outputAudioLabel')}
+          </span>
           {outputDevices.length > 0 && (
             <span className="text-xs text-gray-500">({outputDevices.length})</span>
           )}
@@ -220,7 +222,7 @@ export default function RoomOutputSettings({
             <div className="text-red-400 text-xs bg-red-900/20 p-2 rounded-sm">
               {error}
               <button onClick={() => setError(null)} className="ml-2 underline">
-                OK
+                {t('rooms.outputDismissError')}
               </button>
             </div>
           )}
@@ -232,12 +234,12 @@ export default function RoomOutputSettings({
           ) : outputDevices.length === 0 ? (
             <p className="text-gray-500 text-xs text-center py-2">
               {isVisual ? (
-                'Kein visuelles Ausgabegeraet konfiguriert.'
+                t('rooms.outputVisualNoneConfigured')
               ) : (
                 <>
-                  Keine Ausgabegeraete konfiguriert.
+                  {t('rooms.outputAudioNoneConfigured')}
                   <br />
-                  TTS wird auf dem Eingabegeraet abgespielt.
+                  {t('rooms.outputAudioNoneConfiguredDetail')}
                 </>
               )}
             </p>
@@ -267,7 +269,7 @@ export default function RoomOutputSettings({
                   )}
 
                   {device.allow_interruption && (
-                    <span className="text-xs text-yellow-400" title="Unterbricht laufende Wiedergabe">
+                    <span className="text-xs text-yellow-400" title={t('rooms.outputDeviceInterruptHint')}>
                       INT
                     </span>
                   )}
@@ -275,7 +277,7 @@ export default function RoomOutputSettings({
                   <button
                     onClick={() => updateOutputDevice(device.id, { is_enabled: !device.is_enabled })}
                     className={`p-1 rounded-sm ${device.is_enabled ? 'text-green-400' : 'text-gray-500'}`}
-                    title={device.is_enabled ? 'Deaktivieren' : 'Aktivieren'}
+                    title={device.is_enabled ? t('rooms.outputDeviceDisable') : t('rooms.outputDeviceEnable')}
                   >
                     {device.is_enabled ? <Power className="w-3 h-3" /> : <PowerOff className="w-3 h-3" />}
                   </button>
@@ -300,7 +302,7 @@ export default function RoomOutputSettings({
                   <button
                     onClick={() => deleteOutputDevice(device.id)}
                     className="p-1 text-red-400 hover:text-red-300"
-                    title="Entfernen"
+                    title={t('rooms.outputDeviceRemove')}
                   >
                     <Trash2 className="w-3 h-3" />
                   </button>
@@ -314,7 +316,11 @@ export default function RoomOutputSettings({
             className="w-full flex items-center justify-center space-x-2 py-2 text-sm text-gray-400 hover:text-gray-300 border border-dashed border-gray-700 rounded-lg hover:border-gray-600"
           >
             <Plus className="w-4 h-4" />
-            <span>Ausgabegeraet hinzufuegen</span>
+            <span>
+              {isVisual
+                ? t('rooms.outputAddVisualButton')
+                : t('rooms.outputAddAudioButton')}
+            </span>
           </button>
         </div>
       )}
@@ -324,12 +330,16 @@ export default function RoomOutputSettings({
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="card max-w-md w-full">
-            <h2 className="text-xl font-bold text-white mb-4">{isVisual ? 'Visuelles Ausgabegeraet hinzufuegen' : 'Audio-Ausgabegeraet hinzufuegen'}</h2>
-            <p className="text-gray-400 text-sm mb-4">Raum: {roomName}</p>
+            <h2 className="text-xl font-bold text-white mb-4">
+              {isVisual
+                ? t('rooms.outputAddDialogVisualTitle')
+                : t('rooms.outputAddDialogAudioTitle')}
+            </h2>
+            <p className="text-gray-400 text-sm mb-4">{t('rooms.outputDialogRoomLabel', { name: roomName })}</p>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Geraetetyp:</label>
+                <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceTypeLabel')}</label>
                 <div className="flex space-x-2">
                   {showHA && (
                     <button
@@ -344,7 +354,7 @@ export default function RoomOutputSettings({
                       }`}
                     >
                       <Speaker className="w-5 h-5 mx-auto mb-1 text-blue-400" />
-                      <span className="text-sm text-gray-300">HA Media Player</span>
+                      <span className="text-sm text-gray-300">{t('rooms.outputDeviceTypeHomeAssistant')}</span>
                     </button>
                   )}
                   <button
@@ -359,7 +369,7 @@ export default function RoomOutputSettings({
                     }`}
                   >
                     <Radio className="w-5 h-5 mx-auto mb-1 text-green-400" />
-                    <span className="text-sm text-gray-300">Renfield Geraet</span>
+                    <span className="text-sm text-gray-300">{t('rooms.outputDeviceTypeRenfield')}</span>
                   </button>
                   <button
                     onClick={() => {
@@ -379,7 +389,7 @@ export default function RoomOutputSettings({
               </div>
 
               <div>
-                <label className="block text-sm text-gray-400 mb-2">Geraet:</label>
+                <label className="block text-sm text-gray-400 mb-2">{t('rooms.outputDeviceLabel')}</label>
                 {loadingAvailable ? (
                   <div className="text-center py-4">
                     <Loader className="w-5 h-5 animate-spin mx-auto text-gray-400" />
@@ -390,7 +400,7 @@ export default function RoomOutputSettings({
                     onChange={(e) => setSelectedDevice(e.target.value)}
                     className="input w-full"
                   >
-                    <option value="">-- Geraet auswaehlen --</option>
+                    <option value="">{t('rooms.outputDeviceSelectPlaceholder')}</option>
                     {getAvailableDevices().map((device) => (
                       <option
                         key={getDeviceKey(device)}
@@ -403,7 +413,7 @@ export default function RoomOutputSettings({
                 )}
                 {getAvailableDevices().length === 0 && !loadingAvailable && (
                   <p className="text-yellow-400 text-xs mt-2">
-                    Keine verfuegbaren Geraete gefunden
+                    {t('rooms.outputNoAvailableDevices')}
                   </p>
                 )}
                 {selectedType === 'dlna' && !loadingAvailable && (
@@ -416,7 +426,7 @@ export default function RoomOutputSettings({
               {!isVisual && (
                 <div>
                   <label className="block text-sm text-gray-400 mb-2">
-                    TTS Lautstaerke: {ttsVolume}%
+                    {t('rooms.outputTtsVolumeLabel', { percent: ttsVolume })}
                   </label>
                   <input
                     type="range"
@@ -427,7 +437,7 @@ export default function RoomOutputSettings({
                     className="w-full"
                   />
                   <p className="text-xs text-gray-500 mt-1">
-                    Lautstaerke fuer TTS-Ausgabe (0 = keine Aenderung)
+                    {t('rooms.outputTtsVolumeHint')}
                   </p>
                 </div>
               )}
@@ -441,11 +451,11 @@ export default function RoomOutputSettings({
                   className="w-4 h-4"
                 />
                 <label htmlFor="allowInterruption" className="text-sm text-gray-300">
-                  Unterbrechung erlauben
+                  {t('rooms.outputAllowInterruption')}
                 </label>
               </div>
               <p className="text-xs text-gray-500 -mt-2">
-                Wenn aktiviert, wird laufende Wiedergabe unterbrochen
+                {t('rooms.outputAllowInterruptionHint')}
               </p>
             </div>
 
@@ -454,7 +464,7 @@ export default function RoomOutputSettings({
                 onClick={() => setShowAddModal(false)}
                 className="flex-1 btn bg-gray-700 hover:bg-gray-600 text-white"
               >
-                Abbrechen
+                {t('rooms.outputCancelButton')}
               </button>
               <button
                 onClick={addOutputDevice}
@@ -464,7 +474,7 @@ export default function RoomOutputSettings({
                 {adding ? (
                   <Loader className="w-4 h-4 animate-spin mx-auto" />
                 ) : (
-                  'Hinzufuegen'
+                  t('rooms.outputAddButton')
                 )}
               </button>
             </div>
