@@ -3,7 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 import type { AxiosError } from 'axios';
 
 import { server } from '../mocks/server';
@@ -24,7 +24,7 @@ interface MutVars {
   x?: number;
 }
 
-function makeWrapper(): (props: { children: ReactNode }) => JSX.Element {
+function makeWrapper(): (props: { children: ReactNode }) => ReactElement {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: 0, staleTime: 0 },
@@ -287,7 +287,13 @@ describe('useApiMutation', () => {
     });
 
     await waitFor(() => expect(result.current.isError).toBe(true));
-    const error: ApiError | null = result.current.error;
+    // Annotation omitted: the test-tree node_modules and src/frontend's
+    // node_modules each ship their own copy of axios, so the locally-declared
+    // `ApiError` (axios from test tree) is structurally identical but
+    // nominally distinct from the one inside `useApiMutation` (axios from
+    // src/frontend tree). Letting TS infer `result.current.error` keeps the
+    // two trees from colliding while preserving the runtime check.
+    const error = result.current.error;
     expect(error?.response?.status).toBe(418);
   });
 });

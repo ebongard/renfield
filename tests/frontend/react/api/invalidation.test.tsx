@@ -3,7 +3,7 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
-import type { ReactNode } from 'react';
+import type { ReactElement, ReactNode } from 'react';
 
 import { server } from '../mocks/server';
 import { TEST_CONFIG } from '../config';
@@ -19,7 +19,7 @@ import type {
 
 const BASE = TEST_CONFIG.API_BASE_URL;
 
-function makeWrapper(client: QueryClient): (props: { children: ReactNode }) => JSX.Element {
+function makeWrapper(client: QueryClient): (props: { children: ReactNode }) => ReactElement {
   return function Wrapper({ children }: { children: ReactNode }) {
     return (
       <I18nextProvider i18n={i18n}>

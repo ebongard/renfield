@@ -1,3 +1,4 @@
+import { createElement, Fragment } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -50,7 +51,7 @@ const mockHAAreas: HAArea[] = [
 vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
   const result: UseConfirmDialogResult = {
     confirm: () => Promise.resolve(true),
-    ConfirmDialogComponent: null,
+    ConfirmDialogComponent: createElement(Fragment),
   };
   return {
     useConfirmDialog: (): UseConfirmDialogResult => result,
