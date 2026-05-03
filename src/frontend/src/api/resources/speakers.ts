@@ -39,7 +39,7 @@ async function fetchSpeakerStatus(): Promise<SpeakerServiceStatus> {
   return response.data;
 }
 
-interface CreateSpeakerInput {
+export interface CreateSpeakerInput {
   name: string;
   alias: string;
   is_admin: boolean;

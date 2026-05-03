@@ -1,42 +1,39 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { BASE_URL } from '../mocks/handlers.js';
 import LoginPage from '../../../../src/frontend/src/pages/LoginPage';
 import { renderWithProviders } from '../test-utils.jsx';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { unauthenticatedAuthMock } from '../test-auth-mock';
+import type { LoginResponse } from '../../../../src/frontend/src/types/api';
+import { server } from '../mocks/server.js';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
-
-// Mock react-router navigate
-const mockNavigate = vi.fn();
-vi.mock('react-router', async () => {
-  const actual = await vi.importActual('react-router');
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
   return {
     ...actual,
-    useNavigate: () => mockNavigate,
-    useLocation: () => ({ state: null, pathname: '/login' })
+    useAuth: vi.fn<() => AuthContextValue>(),
   };
 });
 
-// Default mock values for unauthenticated user
-const unauthenticatedMock = {
-  login: vi.fn(),
-  isAuthenticated: false,
-  authEnabled: true,
-  allowRegistration: false,
-  loading: false
-};
+// Mock react-router navigate
+const mockNavigate = vi.fn<(to: string, opts?: { replace?: boolean }) => void>();
+vi.mock('react-router', async () => {
+  const actual = await vi.importActual<typeof import('react-router')>('react-router');
+  return {
+    ...actual,
+    useNavigate: () => mockNavigate,
+    useLocation: () => ({ state: null, pathname: '/login' }),
+  };
+});
 
 describe('LoginPage', () => {
   beforeEach(() => {
     server.resetHandlers();
-    vi.mocked(useAuth).mockReturnValue(unauthenticatedMock);
+    vi.mocked(useAuth).mockReturnValue(unauthenticatedAuthMock);
     mockNavigate.mockClear();
   });
 
@@ -57,20 +54,19 @@ describe('LoginPage', () => {
 
     it('shows loading state while checking auth', () => {
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        loading: true
+        ...unauthenticatedAuthMock,
+        loading: true,
       });
 
       renderWithProviders(<LoginPage />);
 
-      // Should show loading spinner, not the form
       expect(screen.queryByLabelText(/benutzername/i)).not.toBeInTheDocument();
     });
 
     it('shows registration link when allowed', () => {
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        allowRegistration: true
+        ...unauthenticatedAuthMock,
+        allowRegistration: true,
       });
 
       renderWithProviders(<LoginPage />);
@@ -108,8 +104,7 @@ describe('LoginPage', () => {
       const passwordInput = screen.getByLabelText(/passwort/i);
       expect(passwordInput).toHaveAttribute('type', 'password');
 
-      // Find and click the toggle button
-      const toggleButton = screen.getByRole('button', { name: '' }); // Eye icon button
+      const toggleButton = screen.getByRole('button', { name: '' });
       await user.click(toggleButton);
 
       expect(passwordInput).toHaveAttribute('type', 'text');
@@ -130,10 +125,15 @@ describe('LoginPage', () => {
     });
 
     it('calls login function on valid submission', async () => {
-      const mockLogin = vi.fn().mockResolvedValue(undefined);
+      const mockLogin = vi.fn<AuthContextValue['login']>().mockResolvedValue({
+        access_token: 'mock',
+        refresh_token: 'mock',
+        token_type: 'bearer',
+        user: { id: 1, username: 'admin', is_active: true, role_id: 1, created_at: '', updated_at: '' },
+      } satisfies LoginResponse);
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        login: mockLogin
+        ...unauthenticatedAuthMock,
+        login: mockLogin,
       });
 
       const user = userEvent.setup();
@@ -149,12 +149,12 @@ describe('LoginPage', () => {
     });
 
     it('shows error message on login failure', async () => {
-      const mockLogin = vi.fn().mockRejectedValue({
-        response: { data: { detail: 'Invalid credentials' } }
+      const mockLogin = vi.fn<AuthContextValue['login']>().mockRejectedValue({
+        response: { data: { detail: 'Invalid credentials' } },
       });
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        login: mockLogin
+        ...unauthenticatedAuthMock,
+        login: mockLogin,
       });
 
       const user = userEvent.setup();
@@ -170,10 +170,15 @@ describe('LoginPage', () => {
     });
 
     it('navigates to home after successful login', async () => {
-      const mockLogin = vi.fn().mockResolvedValue(undefined);
+      const mockLogin = vi.fn<AuthContextValue['login']>().mockResolvedValue({
+        access_token: 'mock',
+        refresh_token: 'mock',
+        token_type: 'bearer',
+        user: { id: 1, username: 'admin', is_active: true, role_id: 1, created_at: '', updated_at: '' },
+      });
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        login: mockLogin
+        ...unauthenticatedAuthMock,
+        login: mockLogin,
       });
 
       const user = userEvent.setup();
@@ -192,8 +197,8 @@ describe('LoginPage', () => {
   describe('Redirects', () => {
     it('redirects to home if already authenticated', () => {
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        isAuthenticated: true
+        ...unauthenticatedAuthMock,
+        isAuthenticated: true,
       });
 
       renderWithProviders(<LoginPage />);
@@ -203,8 +208,8 @@ describe('LoginPage', () => {
 
     it('redirects to home if auth is disabled', () => {
       vi.mocked(useAuth).mockReturnValue({
-        ...unauthenticatedMock,
-        authEnabled: false
+        ...unauthenticatedAuthMock,
+        authEnabled: false,
       });
 
       renderWithProviders(<LoginPage />);

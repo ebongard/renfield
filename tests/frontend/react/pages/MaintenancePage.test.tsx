@@ -5,22 +5,19 @@ import { server } from '../mocks/server.js';
 import { BASE_URL } from '../mocks/handlers.js';
 import MaintenancePage from '../../../../src/frontend/src/pages/MaintenancePage';
 import { renderWithProviders } from '../test-utils.jsx';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
-
-const adminAuthMock = {
-  getAccessToken: () => Promise.resolve('mock-token'),
-  hasPermission: () => true,
-  hasAnyPermission: () => true,
-  isAuthenticated: true,
-  authEnabled: true,
-  loading: false,
-  user: { username: 'admin', role: 'Admin', permissions: ['admin'] }
-};
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
 describe('MaintenancePage', () => {
   beforeEach(() => {
@@ -66,7 +63,7 @@ describe('MaintenancePage', () => {
       server.use(
         http.post(`${BASE_URL}/api/knowledge/reindex-fts`, () => {
           return HttpResponse.json({ updated_count: 42, fts_config: 'german' });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);
@@ -86,7 +83,7 @@ describe('MaintenancePage', () => {
       server.use(
         http.post(`${BASE_URL}/api/knowledge/reindex-fts`, () => {
           return HttpResponse.json({ detail: 'DB error' }, { status: 500 });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);
@@ -105,7 +102,7 @@ describe('MaintenancePage', () => {
       server.use(
         http.post(`${BASE_URL}/admin/refresh-keywords`, () => {
           return HttpResponse.json({ keywords_count: 15, sample: ['Wohnzimmer Licht', 'Küche'] });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);
@@ -136,15 +133,15 @@ describe('MaintenancePage', () => {
     });
 
     it('calls reembed endpoint when confirmed', async () => {
-      vi.spyOn(window, 'confirm').mockReturnValue(true);
+      const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
 
       server.use(
         http.post(`${BASE_URL}/admin/reembed`, () => {
           return HttpResponse.json({
             model: 'qwen3-embedding:4b',
-            counts: { rag_chunks: 100, memories: 20 }
+            counts: { rag_chunks: 100, memories: 20 },
           });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);
@@ -158,7 +155,7 @@ describe('MaintenancePage', () => {
 
       expect(screen.getByText(/qwen3-embedding:4b/)).toBeInTheDocument();
 
-      window.confirm.mockRestore();
+      confirmSpy.mockRestore();
     });
   });
 
@@ -171,9 +168,9 @@ describe('MaintenancePage', () => {
           return HttpResponse.json({
             intent: 'mcp.ha.light_turn_on',
             confidence: 0.95,
-            message
+            message,
           });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);
@@ -202,7 +199,7 @@ describe('MaintenancePage', () => {
       server.use(
         http.post(`${BASE_URL}/debug/intent`, () => {
           return HttpResponse.json({ intent: 'general.conversation' });
-        })
+        }),
       );
 
       renderWithProviders(<MaintenancePage />);

@@ -1,14 +1,18 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { BASE_URL } from '../mocks/handlers.js';
 import RoomsPage from '../../../../src/frontend/src/pages/RoomsPage';
 import { renderWithProviders } from '../test-utils.jsx';
+import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
+import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
+import type { RoomOutputSettingsProps } from '../../../../src/frontend/src/components/RoomOutputSettings';
+import type { Room, HAArea, CreateRoomInput } from '../../../../src/frontend/src/api/resources/rooms';
 
 // Mock data
-const mockRooms = [
+const mockRooms: Room[] = [
   {
     id: 1,
     name: 'Wohnzimmer',
@@ -20,8 +24,8 @@ const mockRooms = [
     online_count: 1,
     devices: [
       { device_id: 'sat-1', device_name: 'Satellite', device_type: 'satellite', is_online: true },
-      { device_id: 'web-1', device_name: 'Tablet', device_type: 'web_tablet', is_online: false }
-    ]
+      { device_id: 'web-1', device_name: 'Tablet', device_type: 'web_tablet', is_online: false },
+    ],
   },
   {
     id: 2,
@@ -32,27 +36,30 @@ const mockRooms = [
     ha_area_id: null,
     device_count: 0,
     online_count: 0,
-    devices: []
-  }
+    devices: [],
+  },
 ];
 
-const mockHAAreas = [
+const mockHAAreas: HAArea[] = [
   { area_id: 'area_1', name: 'Living Room', is_linked: true, linked_room_name: 'Wohnzimmer' },
-  { area_id: 'area_2', name: 'Kitchen', is_linked: false, linked_room_name: null },
-  { area_id: 'area_3', name: 'Bedroom', is_linked: false, linked_room_name: null }
+  { area_id: 'area_2', name: 'Kitchen', is_linked: false },
+  { area_id: 'area_3', name: 'Bedroom', is_linked: false },
 ];
 
 // Mock ConfirmDialog
-vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => ({
-  useConfirmDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
-    ConfirmDialogComponent: null
-  })
-}));
+vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
+  const result: UseConfirmDialogResult = {
+    confirm: () => Promise.resolve(true),
+    ConfirmDialogComponent: null,
+  };
+  return {
+    useConfirmDialog: (): UseConfirmDialogResult => result,
+  };
+});
 
 // Mock Modal component
 vi.mock('../../../../src/frontend/src/components/Modal', () => ({
-  default: ({ isOpen, onClose, title, children }) => {
+  default: ({ isOpen, onClose, title, children }: ModalProps) => {
     if (!isOpen) return null;
     return (
       <div data-testid="modal">
@@ -61,29 +68,28 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
         {children}
       </div>
     );
-  }
+  },
 }));
 
 // Mock RoomOutputSettings
 vi.mock('../../../../src/frontend/src/components/RoomOutputSettings', () => ({
-  default: ({ roomId, roomName }) => (
-    <div data-testid={`room-output-settings-${roomId}`}>
+  default: ({ roomId, roomName, outputType = 'audio' }: RoomOutputSettingsProps) => (
+    <div data-testid={`room-output-settings-${roomId}-${outputType}`}>
       Output settings for {roomName}
     </div>
-  )
+  ),
 }));
 
 describe('RoomsPage', () => {
   beforeEach(() => {
     server.resetHandlers();
-    // Set up default handlers
     server.use(
       http.get(`${BASE_URL}/api/rooms`, () => {
         return HttpResponse.json(mockRooms);
       }),
       http.get(`${BASE_URL}/api/rooms/ha/areas`, () => {
         return HttpResponse.json(mockHAAreas);
-      })
+      }),
     );
   });
 
@@ -150,7 +156,6 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      // Check that online count is displayed
       expect(screen.getByText(/\(1 online\)/)).toBeInTheDocument();
     });
 
@@ -161,8 +166,6 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      // Find the device names within the room card
-      // Note: "Satellite" label also exists as device type, so we check for the device name
       const deviceNames = screen.getAllByText(/Satellite|Tablet/);
       expect(deviceNames.length).toBeGreaterThan(0);
     });
@@ -184,7 +187,7 @@ describe('RoomsPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/rooms`, () => {
           return HttpResponse.json([]);
-        })
+        }),
       );
 
       renderWithProviders(<RoomsPage />);
@@ -213,22 +216,25 @@ describe('RoomsPage', () => {
 
     it('creates room with form data', async () => {
       const user = userEvent.setup();
-      let createdRoom = null;
+      let createdRoom: Partial<CreateRoomInput> | null = null;
 
       server.use(
         http.post(`${BASE_URL}/api/rooms`, async ({ request }) => {
-          createdRoom = await request.json();
-          return HttpResponse.json({
-            id: 3,
-            ...createdRoom,
-            alias: 'schlafzimmer',
-            source: 'renfield',
-            ha_area_id: null,
-            device_count: 0,
-            online_count: 0,
-            devices: []
-          }, { status: 201 });
-        })
+          createdRoom = (await request.json()) as Partial<CreateRoomInput>;
+          return HttpResponse.json(
+            {
+              id: 3,
+              ...createdRoom,
+              alias: 'schlafzimmer',
+              source: 'renfield',
+              ha_area_id: null,
+              device_count: 0,
+              online_count: 0,
+              devices: [],
+            },
+            { status: 201 },
+          );
+        }),
       );
 
       renderWithProviders(<RoomsPage />);
@@ -239,32 +245,30 @@ describe('RoomsPage', () => {
 
       await user.click(screen.getByText('Neuer Raum'));
 
-      // Fill in form
       await user.type(screen.getByPlaceholderText('Wohnzimmer'), 'Schlafzimmer');
       await user.type(screen.getByPlaceholderText('mdi:sofa'), 'mdi:bed');
 
-      // Submit
       await user.click(screen.getByText('Erstellen'));
 
       await waitFor(() => {
         expect(createdRoom).not.toBeNull();
       });
 
-      expect(createdRoom.name).toBe('Schlafzimmer');
-      expect(createdRoom.icon).toBe('mdi:bed');
+      expect(createdRoom!.name).toBe('Schlafzimmer');
+      expect(createdRoom!.icon).toBe('mdi:bed');
     });
   });
 
   describe('Delete Room', () => {
     it('deletes room when clicking delete button', async () => {
       const user = userEvent.setup();
-      let deletedId = null;
+      let deletedId: string | readonly string[] | null = null;
 
       server.use(
         http.delete(`${BASE_URL}/api/rooms/:id`, ({ params }) => {
-          deletedId = params.id;
+          deletedId = params.id ?? null;
           return HttpResponse.json({ message: 'Room deleted' });
-        })
+        }),
       );
 
       renderWithProviders(<RoomsPage />);
@@ -273,7 +277,6 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      // Find and click delete button for first room
       const deleteButtons = screen.getAllByLabelText(/löschen/i);
       await user.click(deleteButtons[0]);
 
@@ -341,7 +344,7 @@ describe('RoomsPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/rooms`, () => {
           return new HttpResponse(null, { status: 500 });
-        })
+        }),
       );
 
       renderWithProviders(<RoomsPage />);
@@ -381,7 +384,6 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      // Kueche is not linked
       expect(screen.getByText('Verknüpfen')).toBeInTheDocument();
     });
 
@@ -392,7 +394,6 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      // Wohnzimmer is linked
       expect(screen.getByText('Trennen')).toBeInTheDocument();
     });
   });
@@ -405,8 +406,8 @@ describe('RoomsPage', () => {
         expect(screen.getByText('Wohnzimmer')).toBeInTheDocument();
       });
 
-      expect(screen.getByTestId('room-output-settings-1')).toBeInTheDocument();
-      expect(screen.getByTestId('room-output-settings-2')).toBeInTheDocument();
+      expect(screen.getByTestId('room-output-settings-1-audio')).toBeInTheDocument();
+      expect(screen.getByTestId('room-output-settings-2-audio')).toBeInTheDocument();
     });
   });
 });

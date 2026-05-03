@@ -9,12 +9,12 @@ import apiClient from '../utils/axios';
 import type { User, LoginResponse } from '../types/api';
 
 // Auth user with permissions
-interface AuthUser extends User {
+export interface AuthUser extends User {
   permissions?: string[];
 }
 
 // Context value type
-interface AuthContextValue {
+export interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   authEnabled: boolean;

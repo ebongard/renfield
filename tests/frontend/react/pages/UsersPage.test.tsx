@@ -3,27 +3,40 @@ import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
-import { BASE_URL, mockUsers, mockRoles } from '../mocks/handlers.js';
+import { BASE_URL, mockUsers } from '../mocks/handlers.js';
 import UsersPage from '../../../../src/frontend/src/pages/UsersPage';
 import { renderWithProviders } from '../test-utils.jsx';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
+import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
+import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
+import type { CreateUserInput } from '../../../../src/frontend/src/api/resources/users';
 
 // Mock AuthContext
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
 // Mock ConfirmDialog
-vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => ({
-  useConfirmDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
-    ConfirmDialogComponent: null
-  })
-}));
+vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
+  const result: UseConfirmDialogResult = {
+    confirm: () => Promise.resolve(true),
+    ConfirmDialogComponent: null,
+  };
+  return {
+    useConfirmDialog: (): UseConfirmDialogResult => result,
+  };
+});
 
 // Mock Modal component
 vi.mock('../../../../src/frontend/src/components/Modal', () => ({
-  default: ({ isOpen, onClose, title, children }) => {
+  default: ({ isOpen, onClose, title, children }: ModalProps) => {
     if (!isOpen) return null;
     return (
       <div data-testid="modal">
@@ -32,14 +45,8 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
         {children}
       </div>
     );
-  }
+  },
 }));
-
-// Default mock values for admin user
-const adminAuthMock = {
-  getAccessToken: () => 'mock-token',
-  user: { id: 1, username: 'admin', role: 'Admin' }
-};
 
 describe('UsersPage', () => {
   beforeEach(() => {
@@ -83,9 +90,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      // Admin user should have Admin role badge
       expect(screen.getAllByText('Admin').length).toBeGreaterThan(0);
-      // Regular users should have User role badge
       expect(screen.getAllByText('User').length).toBeGreaterThan(0);
     });
 
@@ -171,7 +176,6 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      // Find and click edit button for a user
       const editButtons = screen.getAllByTitle('Benutzer bearbeiten');
       await user.click(editButtons[0]);
 
@@ -186,18 +190,21 @@ describe('UsersPage', () => {
   describe('API Integration', () => {
     it('creates user with form data', async () => {
       const user = userEvent.setup();
-      let createdUser = null;
+      let createdUser: Partial<CreateUserInput> | null = null;
 
       server.use(
         http.post(`${BASE_URL}/api/users`, async ({ request }) => {
-          createdUser = await request.json();
-          return HttpResponse.json({
-            id: 4,
-            ...createdUser,
-            role_name: 'User',
-            is_active: true
-          }, { status: 201 });
-        })
+          createdUser = (await request.json()) as Partial<CreateUserInput>;
+          return HttpResponse.json(
+            {
+              id: 4,
+              ...createdUser,
+              role_name: 'User',
+              is_active: true,
+            },
+            { status: 201 },
+          );
+        }),
       );
 
       renderWithProviders(<UsersPage />);
@@ -206,7 +213,6 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      // Open create modal
       await user.click(screen.getByRole('button', { name: /benutzer erstellen/i }));
 
       await waitFor(() => {
@@ -215,12 +221,10 @@ describe('UsersPage', () => {
 
       const modal = screen.getByTestId('modal');
 
-      // Fill in form
       await user.type(within(modal).getByPlaceholderText(/benutzernamen eingeben/i), 'newuser');
       await user.type(within(modal).getByPlaceholderText(/deine@email.de/i), 'new@example.com');
       await user.type(within(modal).getByPlaceholderText(/passwort eingeben/i), 'password123');
 
-      // Submit form
       const submitButton = within(modal).getByRole('button', { name: /benutzer erstellen/i });
       await user.click(submitButton);
 
@@ -228,19 +232,19 @@ describe('UsersPage', () => {
         expect(createdUser).not.toBeNull();
       });
 
-      expect(createdUser.username).toBe('newuser');
-      expect(createdUser.email).toBe('new@example.com');
+      expect(createdUser!.username).toBe('newuser');
+      expect(createdUser!.email).toBe('new@example.com');
     });
 
     it('deletes user when clicking delete button', async () => {
       const user = userEvent.setup();
-      let deleteUserId = null;
+      let deleteUserId: string | readonly string[] | null = null;
 
       server.use(
         http.delete(`${BASE_URL}/api/users/:id`, ({ params }) => {
-          deleteUserId = params.id;
+          deleteUserId = params.id ?? null;
           return HttpResponse.json({ message: 'User deleted' });
-        })
+        }),
       );
 
       renderWithProviders(<UsersPage />);
@@ -249,9 +253,7 @@ describe('UsersPage', () => {
         expect(screen.getByText('user1')).toBeInTheDocument();
       });
 
-      // Find delete button for user1 (not the current user)
       const deleteButtons = screen.getAllByTitle('Benutzer löschen');
-      // Click on a delete button (not for current user)
       await user.click(deleteButtons[1]);
 
       await waitFor(() => {
@@ -266,9 +268,9 @@ describe('UsersPage', () => {
         http.get(`${BASE_URL}/api/users`, () => {
           return HttpResponse.json(
             { detail: 'Benutzer konnten nicht geladen werden' },
-            { status: 500 }
+            { status: 500 },
           );
-        })
+        }),
       );
 
       renderWithProviders(<UsersPage />);
@@ -285,9 +287,9 @@ describe('UsersPage', () => {
             users: [],
             total: 0,
             page: 1,
-            page_size: 20
+            page_size: 20,
           });
-        })
+        }),
       );
 
       renderWithProviders(<UsersPage />);
@@ -310,9 +312,9 @@ describe('UsersPage', () => {
             users: mockUsers,
             total: mockUsers.length,
             page: 1,
-            page_size: 20
+            page_size: 20,
           });
-        })
+        }),
       );
 
       renderWithProviders(<UsersPage />);
@@ -321,7 +323,6 @@ describe('UsersPage', () => {
         expect(screen.getByText('admin')).toBeInTheDocument();
       });
 
-      // Click refresh button
       const refreshButton = screen.getByRole('button', { name: /aktualisieren/i });
       await user.click(refreshButton);
 

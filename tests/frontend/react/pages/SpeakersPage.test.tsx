@@ -1,53 +1,45 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { screen, waitFor, within } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { BASE_URL } from '../mocks/handlers.js';
 import SpeakersPage from '../../../../src/frontend/src/pages/SpeakersPage';
 import { renderWithProviders } from '../test-utils.jsx';
+import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
+import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
+import type {
+  Speaker,
+  SpeakerServiceStatus,
+  CreateSpeakerInput,
+} from '../../../../src/frontend/src/api/resources/speakers';
 
 // Mock data
-const mockSpeakers = [
-  {
-    id: 1,
-    name: 'Max Mustermann',
-    alias: 'max',
-    is_admin: true,
-    embedding_count: 5
-  },
-  {
-    id: 2,
-    name: 'Anna Schmidt',
-    alias: 'anna',
-    is_admin: false,
-    embedding_count: 2
-  },
-  {
-    id: 3,
-    name: 'Test User',
-    alias: 'test',
-    is_admin: false,
-    embedding_count: 0
-  }
+const mockSpeakers: Speaker[] = [
+  { id: 1, name: 'Max Mustermann', alias: 'max', is_admin: true, embedding_count: 5 },
+  { id: 2, name: 'Anna Schmidt', alias: 'anna', is_admin: false, embedding_count: 2 },
+  { id: 3, name: 'Test User', alias: 'test', is_admin: false, embedding_count: 0 },
 ];
 
-const mockServiceStatus = {
+const mockServiceStatus: SpeakerServiceStatus = {
   available: true,
-  message: 'SpeechBrain ECAPA-TDNN Model geladen'
+  message: 'SpeechBrain ECAPA-TDNN Model geladen',
 };
 
 // Mock ConfirmDialog
-vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => ({
-  useConfirmDialog: () => ({
-    confirm: vi.fn().mockResolvedValue(true),
-    ConfirmDialogComponent: null
-  })
-}));
+vi.mock('../../../../src/frontend/src/components/ConfirmDialog', () => {
+  const result: UseConfirmDialogResult = {
+    confirm: () => Promise.resolve(true),
+    ConfirmDialogComponent: null,
+  };
+  return {
+    useConfirmDialog: (): UseConfirmDialogResult => result,
+  };
+});
 
 // Mock Modal component
 vi.mock('../../../../src/frontend/src/components/Modal', () => ({
-  default: ({ isOpen, onClose, title, children }) => {
+  default: ({ isOpen, onClose, title, children }: ModalProps) => {
     if (!isOpen) return null;
     return (
       <div data-testid="modal">
@@ -56,20 +48,19 @@ vi.mock('../../../../src/frontend/src/components/Modal', () => ({
         {children}
       </div>
     );
-  }
+  },
 }));
 
 describe('SpeakersPage', () => {
   beforeEach(() => {
     server.resetHandlers();
-    // Set up default handlers
     server.use(
       http.get(`${BASE_URL}/api/speakers/status`, () => {
         return HttpResponse.json(mockServiceStatus);
       }),
       http.get(`${BASE_URL}/api/speakers`, () => {
         return HttpResponse.json(mockSpeakers);
-      })
+      }),
     );
   });
 
@@ -95,7 +86,7 @@ describe('SpeakersPage', () => {
       renderWithProviders(<SpeakersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Speaker Recognition aktiv')).toBeInTheDocument();
+        expect(screen.getByText('Sprechererkennung aktiv')).toBeInTheDocument();
       });
     });
 
@@ -104,15 +95,15 @@ describe('SpeakersPage', () => {
         http.get(`${BASE_URL}/api/speakers/status`, () => {
           return HttpResponse.json({
             available: false,
-            message: 'Model nicht geladen'
+            message: 'Model nicht geladen',
           });
-        })
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Speaker Recognition nicht verfügbar')).toBeInTheDocument();
+        expect(screen.getByText('Sprechererkennung nicht verfügbar')).toBeInTheDocument();
       });
     });
 
@@ -163,7 +154,7 @@ describe('SpeakersPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/speakers`, () => {
           return HttpResponse.json([]);
-        })
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);
@@ -192,17 +183,20 @@ describe('SpeakersPage', () => {
 
     it('creates speaker with form data', async () => {
       const user = userEvent.setup();
-      let createdSpeaker = null;
+      let createdSpeaker: Partial<CreateSpeakerInput> | null = null;
 
       server.use(
         http.post(`${BASE_URL}/api/speakers`, async ({ request }) => {
-          createdSpeaker = await request.json();
-          return HttpResponse.json({
-            id: 4,
-            ...createdSpeaker,
-            embedding_count: 0
-          }, { status: 201 });
-        })
+          createdSpeaker = (await request.json()) as Partial<CreateSpeakerInput>;
+          return HttpResponse.json(
+            {
+              id: 4,
+              ...createdSpeaker,
+              embedding_count: 0,
+            },
+            { status: 201 },
+          );
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);
@@ -213,32 +207,30 @@ describe('SpeakersPage', () => {
 
       await user.click(screen.getByText('Neuer Sprecher'));
 
-      // Fill in form
       await user.type(screen.getByPlaceholderText('Max Mustermann'), 'New Speaker');
       await user.type(screen.getByPlaceholderText('max'), 'newspeaker');
 
-      // Submit
       await user.click(screen.getByText('Erstellen'));
 
       await waitFor(() => {
         expect(createdSpeaker).not.toBeNull();
       });
 
-      expect(createdSpeaker.name).toBe('New Speaker');
-      expect(createdSpeaker.alias).toBe('newspeaker');
+      expect(createdSpeaker!.name).toBe('New Speaker');
+      expect(createdSpeaker!.alias).toBe('newspeaker');
     });
   });
 
   describe('Delete Speaker', () => {
     it('deletes speaker when clicking delete button', async () => {
       const user = userEvent.setup();
-      let deletedId = null;
+      let deletedId: string | readonly string[] | null = null;
 
       server.use(
         http.delete(`${BASE_URL}/api/speakers/:id`, ({ params }) => {
-          deletedId = params.id;
+          deletedId = params.id ?? null;
           return HttpResponse.json({ message: 'Speaker deleted' });
-        })
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);
@@ -247,7 +239,6 @@ describe('SpeakersPage', () => {
         expect(screen.getByText('Max Mustermann')).toBeInTheDocument();
       });
 
-      // Find and click delete button for first speaker
       const deleteButtons = screen.getAllByLabelText(/löschen/i);
       await user.click(deleteButtons[0]);
 
@@ -282,7 +273,7 @@ describe('SpeakersPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/speakers`, () => {
           return HttpResponse.json([]);
-        })
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);
@@ -291,7 +282,6 @@ describe('SpeakersPage', () => {
         expect(screen.getByText('Noch keine Sprecher registriert')).toBeInTheDocument();
       });
 
-      // The text is inside a span, so we need to find the button containing it
       const identifyButton = screen.getByText('Sprecher identifizieren').closest('button');
       expect(identifyButton).toBeDisabled();
     });
@@ -302,7 +292,7 @@ describe('SpeakersPage', () => {
       server.use(
         http.get(`${BASE_URL}/api/speakers`, () => {
           return new HttpResponse(null, { status: 500 });
-        })
+        }),
       );
 
       renderWithProviders(<SpeakersPage />);

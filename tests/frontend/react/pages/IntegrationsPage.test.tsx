@@ -3,37 +3,22 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
-import { BASE_URL, mockMcpStatus, mockMcpTools } from '../mocks/handlers.js';
+import { BASE_URL } from '../mocks/handlers.js';
 import IntegrationsPage from '../../../../src/frontend/src/pages/IntegrationsPage';
 import { renderWithProviders } from '../test-utils.jsx';
-import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
+import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
+import { adminAuthMock } from '../test-auth-mock';
 
 // Mock useAuth hook
-vi.mock('../../../../src/frontend/src/context/AuthContext', () => ({
-  useAuth: vi.fn()
-}));
-
-// Default mock values for admin user
-const adminAuthMock = {
-  getAccessToken: () => 'mock-token',
-  hasPermission: (perm) => perm === 'admin',
-  hasAnyPermission: () => true,
-  isAuthenticated: true,
-  authEnabled: true,
-  loading: false,
-  user: { username: 'admin', role: 'Admin', permissions: ['admin'] }
-};
-
-// Mock values for user without manage permission
-const userAuthMock = {
-  getAccessToken: () => 'mock-token',
-  hasPermission: () => false,
-  hasAnyPermission: () => false,
-  isAuthenticated: true,
-  authEnabled: true,
-  loading: false,
-  user: { username: 'user', role: 'User', permissions: [] }
-};
+vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {
+  const actual = await vi.importActual<typeof import('../../../../src/frontend/src/context/AuthContext')>(
+    '../../../../src/frontend/src/context/AuthContext',
+  );
+  return {
+    ...actual,
+    useAuth: vi.fn<() => AuthContextValue>(),
+  };
+});
 
 describe('IntegrationsPage', () => {
   beforeEach(() => {
@@ -49,7 +34,6 @@ describe('IntegrationsPage', () => {
     it('renders the page title', async () => {
       renderWithProviders(<IntegrationsPage />);
 
-      // Wait for loading to complete
       await waitFor(() => {
         expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
       });
@@ -71,7 +55,6 @@ describe('IntegrationsPage', () => {
         expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
       });
 
-      // MCP Server appears in both stats and section header
       const mcpServerTexts = screen.getAllByText('MCP Server');
       expect(mcpServerTexts.length).toBeGreaterThan(0);
     });
@@ -83,7 +66,6 @@ describe('IntegrationsPage', () => {
         expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
       });
 
-      // MCP stats
       expect(screen.getAllByText('MCP Server').length).toBeGreaterThan(0);
       expect(screen.getByText('Verbunden')).toBeInTheDocument();
       expect(screen.getByText('MCP Tools')).toBeInTheDocument();
@@ -180,11 +162,9 @@ describe('IntegrationsPage', () => {
       await user.click(screen.getByText('turn_on'));
 
       await waitFor(() => {
-        // Modal title shows the tool's original_name
         expect(screen.getByRole('dialog')).toBeInTheDocument();
       });
 
-      // Check for tool name in the modal (the MCP prefixed name)
       expect(screen.getByText('homeassistant__turn_on')).toBeInTheDocument();
       expect(screen.getByText('Turn on a Home Assistant entity')).toBeInTheDocument();
     });
@@ -228,9 +208,9 @@ describe('IntegrationsPage', () => {
           refreshCalled = true;
           return HttpResponse.json({
             message: 'MCP connections refreshed',
-            servers_reconnected: 1
+            servers_reconnected: 1,
           });
-        })
+        }),
       );
 
       renderWithProviders(<IntegrationsPage />);
@@ -254,20 +234,19 @@ describe('IntegrationsPage', () => {
 
   describe('Error Handling', () => {
     it('handles API failure gracefully with empty state', async () => {
-      // When MCP API fails, component catches error and shows empty state
       server.use(
         http.get(`${BASE_URL}/api/mcp/status`, () => {
           return HttpResponse.json(
             { detail: 'MCP service unavailable' },
-            { status: 500 }
+            { status: 500 },
           );
         }),
         http.get(`${BASE_URL}/api/mcp/tools`, () => {
           return HttpResponse.json(
             { detail: 'MCP service unavailable' },
-            { status: 500 }
+            { status: 500 },
           );
-        })
+        }),
       );
 
       renderWithProviders(<IntegrationsPage />);
@@ -276,7 +255,6 @@ describe('IntegrationsPage', () => {
         expect(screen.queryByText('Lade Integrationen...')).not.toBeInTheDocument();
       });
 
-      // Component shows "no servers" state when API fails (catches error gracefully)
       expect(screen.getByText('Keine MCP-Server konfiguriert')).toBeInTheDocument();
     });
 
@@ -287,9 +265,9 @@ describe('IntegrationsPage', () => {
         http.post(`${BASE_URL}/api/mcp/refresh`, () => {
           return HttpResponse.json(
             { detail: 'Refresh failed' },
-            { status: 500 }
+            { status: 500 },
           );
-        })
+        }),
       );
 
       renderWithProviders(<IntegrationsPage />);
@@ -314,13 +292,13 @@ describe('IntegrationsPage', () => {
           return HttpResponse.json({
             enabled: false,
             total_tools: 0,
-            servers: []
+            servers: [],
           });
         }),
         http.get(`${BASE_URL}/api/mcp/tools`, () => {
           return HttpResponse.json({
             tools: [],
-            total: 0
+            total: 0,
           });
         }),
       );
@@ -341,15 +319,15 @@ describe('IntegrationsPage', () => {
           return HttpResponse.json({
             enabled: true,
             total_tools: 0,
-            servers: []
+            servers: [],
           });
         }),
         http.get(`${BASE_URL}/api/mcp/tools`, () => {
           return HttpResponse.json({
             tools: [],
-            total: 0
+            total: 0,
           });
-        })
+        }),
       );
 
       renderWithProviders(<IntegrationsPage />);
@@ -361,5 +339,4 @@ describe('IntegrationsPage', () => {
       expect(screen.getByText('Keine MCP-Server konfiguriert')).toBeInTheDocument();
     });
   });
-
 });

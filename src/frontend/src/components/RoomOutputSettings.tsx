@@ -24,7 +24,7 @@ import {
 type DeviceKind = 'homeassistant' | 'renfield' | 'dlna';
 type AvailableDevice = RenfieldOutputDevice | HaOutputDevice | DlnaOutputDevice;
 
-interface RoomOutputSettingsProps {
+export interface RoomOutputSettingsProps {
   roomId: number;
   roomName: string;
   outputType?: OutputType;

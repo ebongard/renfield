@@ -15,40 +15,29 @@ import { screen } from '@testing-library/react';
 beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
+
 import ChatMessages from '../../../../src/frontend/src/pages/ChatPage/ChatMessages';
 import { renderWithRouter } from '../test-utils.jsx';
+import {
+  useChatContext,
+  type ChatContextValue,
+} from '../../../../src/frontend/src/pages/ChatPage/context/ChatContext';
+import { buildChatContextValue } from '../test-chat-mock';
 
-// ChatMessages pulls a bundle of things from ChatContext (messages list,
-// loading flag, derived selectors, handlers for card / TTS / attachments).
-// Mock the context to a minimal shape so we can drive just the one message
-// we care about.
 vi.mock('../../../../src/frontend/src/pages/ChatPage/context/ChatContext', async () => {
-  const actual = await vi.importActual(
-    '../../../../src/frontend/src/pages/ChatPage/context/ChatContext',
-  );
+  const actual = await vi.importActual<
+    typeof import('../../../../src/frontend/src/pages/ChatPage/context/ChatContext')
+  >('../../../../src/frontend/src/pages/ChatPage/context/ChatContext');
   return {
     ...actual,
-    useChatContext: vi.fn(),
+    useChatContext: vi.fn<() => ChatContextValue>(),
   };
 });
 
-import { useChatContext } from '../../../../src/frontend/src/pages/ChatPage/context/ChatContext';
+type ChatMessage = ChatContextValue['messages'][number];
 
-function driveContext(messages) {
-  useChatContext.mockReturnValue({
-    messages,
-    loading: false,
-    ttsPlaying: null,
-    playTTS: vi.fn(),
-    stopTTS: vi.fn(),
-    handleQuickAction: vi.fn(),
-    openEmailDialog: vi.fn(),
-    closeEmailDialog: vi.fn(),
-    emailDialogOpen: false,
-    emailDialogContext: null,
-    hideSteps: false,
-    hideActions: false,
-  });
+function driveContext(messages: ChatMessage[]): void {
+  vi.mocked(useChatContext).mockReturnValue(buildChatContextValue({ messages }));
 }
 
 const MOM_PUBKEY = 'm'.repeat(64);
@@ -61,7 +50,6 @@ describe('ChatMessages — federation progress', () => {
       { role: 'assistant', content: '', streaming: true },
     ]);
     renderWithRouter(<ChatMessages />);
-    // Nothing matching the per-peer live vocabulary should be on the page
     expect(screen.queryByText(/sucht Wissen/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/formuliert Antwort/i)).not.toBeInTheDocument();
   });
@@ -98,7 +86,7 @@ describe('ChatMessages — federation progress', () => {
     const { container } = renderWithRouter(<ChatMessages />);
     const live = container.querySelector('[aria-live="polite"]');
     expect(live).not.toBeNull();
-    expect(live.textContent).toMatch(/Moms Renfield sucht Wissen/i);
+    expect(live!.textContent).toMatch(/Moms Renfield sucht Wissen/i);
   });
 
   it('falls back to a generic label for unknown progress labels', () => {
@@ -113,7 +101,6 @@ describe('ChatMessages — federation progress', () => {
       },
     ]);
     renderWithRouter(<ChatMessages />);
-    // Fallback copy in DE: "Frage Moms Renfield..."
     expect(screen.getByText(/Frage Moms Renfield/i)).toBeInTheDocument();
   });
 
