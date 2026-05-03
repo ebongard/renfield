@@ -1,9 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, act, waitFor } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ThemeProvider, useTheme } from '../../../../src/frontend/src/context/ThemeContext';
+import {
+  ThemeProvider,
+  useTheme,
+} from '../../../../src/frontend/src/context/ThemeContext';
 
-// Test component that uses the theme context
+// Test component that uses the theme context.
+// Type comes from the real `useTheme` return — no local re-declaration.
 function TestConsumer() {
   const { theme, isDark, setTheme, toggleTheme } = useTheme();
 
@@ -19,9 +23,14 @@ function TestConsumer() {
   );
 }
 
+// Shape that ThemeContext needs from window.matchMedia: enough of MediaQueryList
+// to satisfy the addEventListener/removeEventListener('change', ...) calls.
+type MatchMediaListener = (event: MediaQueryListEvent) => void;
+type MatchMediaImpl = (query: string) => MediaQueryList;
+
 describe('ThemeContext', () => {
-  let matchMediaMock;
-  let matchMediaListeners = [];
+  let matchMediaMock: Mock<MatchMediaImpl>;
+  let matchMediaListeners: MatchMediaListener[] = [];
 
   beforeEach(() => {
     // Clear localStorage mock
@@ -33,24 +42,24 @@ describe('ThemeContext', () => {
     document.documentElement.classList.remove('dark');
 
     // Create a controllable matchMedia mock
-    matchMediaMock = vi.fn().mockImplementation(query => ({
+    matchMediaMock = vi.fn<MatchMediaImpl>().mockImplementation((query: string) => ({
       matches: false, // Default to light system preference
       media: query,
       onchange: null,
       addListener: vi.fn(),
       removeListener: vi.fn(),
-      addEventListener: vi.fn((event, listener) => {
-        if (event === 'change') {
-          matchMediaListeners.push(listener);
+      addEventListener: vi.fn((event: string, listener: EventListenerOrEventListenerObject) => {
+        if (event === 'change' && typeof listener === 'function') {
+          matchMediaListeners.push(listener as MatchMediaListener);
         }
       }),
-      removeEventListener: vi.fn((event, listener) => {
+      removeEventListener: vi.fn((event: string, listener: EventListenerOrEventListenerObject) => {
         if (event === 'change') {
           matchMediaListeners = matchMediaListeners.filter(l => l !== listener);
         }
       }),
       dispatchEvent: vi.fn(),
-    }));
+    } as unknown as MediaQueryList));
 
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
@@ -214,7 +223,7 @@ describe('ThemeContext', () => {
   describe('system preference', () => {
     it('follows system dark preference when theme is system', () => {
       // Mock system preference as dark
-      matchMediaMock.mockImplementation(query => ({
+      matchMediaMock.mockImplementation((query: string) => ({
         matches: true, // Dark system preference
         media: query,
         onchange: null,
@@ -223,7 +232,7 @@ describe('ThemeContext', () => {
         addEventListener: vi.fn(),
         removeEventListener: vi.fn(),
         dispatchEvent: vi.fn(),
-      }));
+      } as unknown as MediaQueryList));
 
       render(
         <ThemeProvider>
@@ -298,7 +307,7 @@ describe('ThemeContext', () => {
     });
 
     it('returns all expected values', () => {
-      let contextValue;
+      let contextValue: ReturnType<typeof useTheme> | undefined;
 
       function Capture() {
         contextValue = useTheme();
@@ -315,8 +324,8 @@ describe('ThemeContext', () => {
       expect(contextValue).toHaveProperty('isDark');
       expect(contextValue).toHaveProperty('setTheme');
       expect(contextValue).toHaveProperty('toggleTheme');
-      expect(typeof contextValue.setTheme).toBe('function');
-      expect(typeof contextValue.toggleTheme).toBe('function');
+      expect(typeof contextValue?.setTheme).toBe('function');
+      expect(typeof contextValue?.toggleTheme).toBe('function');
     });
   });
 });

@@ -1,12 +1,29 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server.js';
 import { BASE_URL } from '../mocks/handlers.js';
 import { AuthProvider, useAuth } from '../../../../src/frontend/src/context/AuthContext';
 
-// The token key used by AuthContext
+// Shape of /api/auth/me used by these tests. Mirrors the JSON the real
+// backend returns and what AuthContext drops verbatim into `user` state via
+// `setUser(response.data)`. The real `User` type in `types/api.ts` carries
+// extra server-only fields (is_active, role_id, timestamps) that the auth
+// status hooks under test never read — keep this local to be precise about
+// the test fixture.
+interface AuthMeFixture {
+  id: number;
+  username: string;
+  role: string; // tests pass a plain role label, not the full Role object
+  permissions: string[];
+}
+
+interface AuthStatusFixture {
+  auth_enabled: boolean;
+  allow_registration: boolean;
+}
+
+// The token key used by AuthContext (private constant; mirrored here)
 const ACCESS_TOKEN_KEY = 'renfield_access_token';
 
 // Test component that uses the auth context
@@ -18,7 +35,7 @@ function TestComponent() {
     hasPermission,
     hasAnyPermission,
     isAdmin,
-    loading
+    loading,
   } = useAuth();
 
   if (loading) {
@@ -68,9 +85,9 @@ describe('AuthContext', () => {
     it('handles auth disabled', async () => {
       server.use(
         http.get(`${BASE_URL}/api/auth/status`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthStatusFixture>({
             auth_enabled: false,
-            allow_registration: false
+            allow_registration: false,
           });
         })
       );
@@ -94,11 +111,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'admin',
             role: 'Admin',
-            permissions: ['admin', 'plugins.manage', 'kb.all']
+            permissions: ['admin', 'plugins.manage', 'kb.all'],
           });
         })
       );
@@ -119,11 +136,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'user',
             role: 'User',
-            permissions: ['plugins.use', 'kb.own'] // No plugins.manage
+            permissions: ['plugins.use', 'kb.own'], // No plugins.manage
           });
         })
       );
@@ -146,11 +163,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'user',
             role: 'User',
-            permissions: ['plugins.use'] // Only plugins.use
+            permissions: ['plugins.use'], // Only plugins.use
           });
         })
       );
@@ -172,11 +189,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'guest',
             role: 'Guest',
-            permissions: ['plugins.none', 'ha.read'] // No plugins.use or plugins.manage
+            permissions: ['plugins.none', 'ha.read'], // No plugins.use or plugins.manage
           });
         })
       );
@@ -195,9 +212,9 @@ describe('AuthContext', () => {
     it('returns all permissions when auth is disabled', async () => {
       server.use(
         http.get(`${BASE_URL}/api/auth/status`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthStatusFixture>({
             auth_enabled: false,
-            allow_registration: false
+            allow_registration: false,
           });
         })
       );
@@ -224,11 +241,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'admin',
             role: 'Admin',
-            permissions: ['admin', 'plugins.manage']
+            permissions: ['admin', 'plugins.manage'],
           });
         })
       );
@@ -249,11 +266,11 @@ describe('AuthContext', () => {
 
       server.use(
         http.get(`${BASE_URL}/api/auth/me`, () => {
-          return HttpResponse.json({
+          return HttpResponse.json<AuthMeFixture>({
             id: 1,
             username: 'user',
             role: 'User',
-            permissions: ['plugins.use']
+            permissions: ['plugins.use'],
           });
         })
       );
@@ -310,11 +327,11 @@ describe('AuthContext with different permission levels', () => {
 
     server.use(
       http.get(`${BASE_URL}/api/auth/me`, () => {
-        return HttpResponse.json({
+        return HttpResponse.json<AuthMeFixture>({
           id: 1,
           username: 'guest',
           role: 'Guest',
-          permissions: ['plugins.none']
+          permissions: ['plugins.none'],
         });
       })
     );
@@ -338,11 +355,11 @@ describe('AuthContext with different permission levels', () => {
 
     server.use(
       http.get(`${BASE_URL}/api/auth/me`, () => {
-        return HttpResponse.json({
+        return HttpResponse.json<AuthMeFixture>({
           id: 1,
           username: 'user',
           role: 'User',
-          permissions: ['plugins.use']
+          permissions: ['plugins.use'],
         });
       })
     );
@@ -365,11 +382,11 @@ describe('AuthContext with different permission levels', () => {
 
     server.use(
       http.get(`${BASE_URL}/api/auth/me`, () => {
-        return HttpResponse.json({
+        return HttpResponse.json<AuthMeFixture>({
           id: 1,
           username: 'admin',
           role: 'Admin',
-          permissions: ['plugins.manage']
+          permissions: ['plugins.manage'],
         });
       })
     );
