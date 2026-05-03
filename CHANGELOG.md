@@ -15,7 +15,8 @@ Brücke zur Reva-Kompatibilität. Schließt die letzten zwei kosmetischen Lücke
 
 ### Behoben
 
-- **NotificationMessage-Shape-Tightening** — Die WebSocket-NotificationMessage-Variante (eingeführt in #519) hatte `urgency: string` und `created_at: string | null` deklariert, beides loser als der Downstream-Konsument `useNotifications.ts` annimmt (Literal-Union `'critical' | 'info' | 'low'`, non-null `created_at`). Auf den Konsumenten-Vertrag verengt — verhindert, dass künftige WebSocket-Nutzer Shapes akzeptieren, die der Renderer nicht stylen kann ([#519](https://github.com/ebongard/renfield/pull/519)).
+- **E15-Strict-Mode-Tail geschlossen** — Die in v2.2.0 zurückgebliebenen fünf strict-Mode-Errors aus dem E15-Audit jetzt eliminiert: zwei `NotificationMessage`-Variant-Errors (`useDeviceConnection.ts`), zwei `useWakeWord.ts`-Errors (fehlende `openwakeword-wasm-browser`-Type-Declaration + `modelFiles`-Option), ein `platform.ts`-Error (`@capacitor/core`-Declaration). Zwei neue ambient `.d.ts`-Files spiegeln nur die tatsächlich genutzte Surface ([#519](https://github.com/ebongard/renfield/pull/519)).
+- **NotificationMessage-Shape-Tightening** — Die im selben PR eingeführte WebSocket-NotificationMessage-Variante hatte `urgency: string` und `created_at: string | null` deklariert, beides loser als der Downstream-Konsument `useNotifications.ts` annimmt (Literal-Union `'critical' | 'info' | 'low'`, non-null `created_at`). Auf den Konsumenten-Vertrag verengt — verhindert, dass künftige WebSocket-Nutzer Shapes akzeptieren, die der Renderer nicht stylen kann ([#519](https://github.com/ebongard/renfield/pull/519)).
 
 ---
 
@@ -124,7 +125,7 @@ Stabilisierungs- und Aufräum-Release. Schließt den **WICHTIG-Audit-Sweep** (W1
 - **E11 — React Query** — alle 23 List-Fetching-Surfaces auf TanStack Query migriert ([#504](https://github.com/ebongard/renfield/pull/504), [#505](https://github.com/ebongard/renfield/pull/505)).
 - **E12 — Hardcoded German Strings** — ChatMessages alt-text + 5 dev-logs durch `useTranslation()` und Englisch-Polish ([#496](https://github.com/ebongard/renfield/pull/496)).
 - **E13 — ChatPage Prop-Drilling → Context** — verifiziert; ChatInput nimmt 0 Props ([#503](https://github.com/ebongard/renfield/pull/503)).
-- **E15 — Strict Mode aktiviert** — 15 Type-Errors gefixt; Audit fully closed ([#506](https://github.com/ebongard/renfield/pull/506)).
+- **E15 — Strict Mode aktiviert** — 15 der 20 Type-Errors gefixt ([#506](https://github.com/ebongard/renfield/pull/506)). Fünf Residual-Fehler in `useDeviceConnection.ts`, `useWakeWord.ts` und `platform.ts` (fehlende ambient module-declarations + `NotificationMessage`-Variante) erst in v2.4.3 ([#519](https://github.com/ebongard/renfield/pull/519)) geschlossen.
 - **E10 — VITE_API_URL/VITE_WS_URL Fallback** zentralisiert mit Warnings ([#501](https://github.com/ebongard/renfield/pull/501)).
 
 #### Orchestrator + Hooks (Phase 1 / 1.5)
@@ -333,4 +334,11 @@ Keine CHANGELOG-Einträge vor `v2.0.0`. Vollständige Commit-Historie: [`git log
 
 ---
 
+[v2.4.3]: https://github.com/ebongard/renfield/compare/v2.4.2...v2.4.3
+[v2.4.2]: https://github.com/ebongard/renfield/compare/v2.4.1...v2.4.2
+[v2.4.1]: https://github.com/ebongard/renfield/compare/v2.4.0...v2.4.1
+[v2.4.0]: https://github.com/ebongard/renfield/compare/v2.3.0...v2.4.0
+[v2.3.0]: https://github.com/ebongard/renfield/compare/v2.2.0...v2.3.0
+[v2.2.0]: https://github.com/ebongard/renfield/compare/v2.1.0...v2.2.0
+[v2.1.0]: https://github.com/ebongard/renfield/compare/v2.0.0...v2.1.0
 [v2.0.0]: https://github.com/ebongard/renfield/compare/v1.2.0...v2.0.0
