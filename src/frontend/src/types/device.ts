@@ -197,11 +197,16 @@ export interface NotificationMessage extends BaseWebSocketMessage {
   notification_id: number;
   title: string;
   message: string;
-  urgency: string;
+  // Literal union mirrors hooks/useNotifications.ts NotificationData. Backend
+  // emits these three strings; widening to plain string would let other
+  // consumers accept shapes the renderer can't actually style.
+  urgency: 'critical' | 'info' | 'low';
   source: string;
   room: string | null;
   tts_handled: boolean;
-  created_at: string | null;
+  // Backend always populates this on persist; non-null aligns with the
+  // useNotifications consumer that uses the value directly.
+  created_at: string;
 }
 
 export type WebSocketMessage =
