@@ -11,7 +11,7 @@ Single prioritized index of every open work item, with a reference back to the s
 
 Long-form strategic items (formerly a separate `TODOS.md`) carry a `**WHAT/WHY/PROS/CONS/CONTEXT/DEPENDS ON**` block when the rationale is non-trivial.
 
-Last reviewed: 2026-04-27 (WICHTIG sweep CLOSED — 14 of 14 items resolved: W1/W4/W7/W8/W9/W11/W12/W14 verified already done in previous work; W2/W3/W5/W6/W13 closed via #482-#485 on 2026-04-26; W10 closed via #487 on 2026-04-27 — full frontend TypeScript migration).
+Last reviewed: 2026-05-03 (post-release sweep). Voice pipeline Phase A (v2.3.0) + Phase B-1/B-2/B-3 (v2.4.0/v2.4.1/v2.4.2) + Reva-compat bridge (v2.4.3) all landed and deployed. Frontend test suite migrated to TypeScript (#519/#520/#521) and `RoomOutputSettings` i18n leftover swept (#522). E11/E12/E13/E14/E15 audit items verified closed; W10 frontend source migration confirmed 100% complete (49 .ts + 68 .tsx, 0 .jsx). Open backlog is signal-gated, blocked, or pending external action.
 
 ---
 
@@ -48,7 +48,7 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 
 ### EMPFEHLUNG audit findings — modernization + cleanup
 - **Primary source:** `tasks/audit-findings-plan.md` §EMPFEHLUNG, §Priorisierte Roadmap Phase 4-5
-- **Frontend:** ~~W9 React.lazy code-splitting~~ · ~~W11 Prettier~~ · ~~E11 React Query~~ (all 23 list-fetching surfaces migrated: #504 foundation + bulk + #505 final on 2026-04-30) · ~~E12 13 hardcoded German strings~~ · ~~E13 ChatPage prop drilling → Context~~ (verified done — ChatInput takes 0 props, all from ChatContext) · ~~E14 ESLint React version~~ · ~~E15 enable `tsconfig` strict mode~~ (closed on 2026-04-30; 15 errors fixed) · W10 closed via #487 on 2026-04-27
+- **Frontend:** ~~W9 React.lazy code-splitting~~ · ~~W11 Prettier~~ · ~~E11 React Query~~ (all 23 list-fetching surfaces migrated: #504 foundation + bulk + #505 final on 2026-04-30) · ~~E12 13 hardcoded German strings~~ (closed; `RoomOutputSettings` i18n leftover swept in #522 on 2026-05-03) · ~~E13 ChatPage prop drilling → Context~~ (verified done — ChatInput takes 0 props, all from ChatContext) · ~~E14 ESLint React version~~ · ~~E15 enable `tsconfig` strict mode~~ (closed on 2026-04-30; 15 errors fixed; final 5 strict-mode tail errors closed in #519 on 2026-05-03 — 100% strict, 0 errors) · W10 closed via #487 on 2026-04-27, full frontend TypeScript including test suite migrated in #520/#521 on 2026-05-03
 - **i18n follow-up (out of E12 scope):** `src/frontend/src/components/RoomOutputSettings.tsx` has ~10 hardcoded German strings (modal labels, button titles, type-selector text). Was not in the original audit; surfaced during the E12 sweep. Not blocking; pick up alongside the next room-management UI revision.
 - **Backend/config:** ~~E1-E3 speaker-loading + eager-load cleanup + FK indexes~~ (verified: per-speaker embedding cap enforced on write; KB listing uses count subquery; all 4 FK columns carry `index=True`) · ~~E4-E9~~ · ~~E10 frontend localhost fallbacks~~ · ~~E16 legacy config field removal~~ · ~~E17 Redis URL parameterization~~ · ~~E18 Frigate MQTT defaults~~
 

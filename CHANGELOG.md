@@ -4,6 +4,167 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ---
 
+## [v2.4.3] — 2026-05-02
+
+Brücke zur Reva-Kompatibilität. Schließt die letzten zwei kosmetischen Lücken aus dem Reva-Compat-Audit (`reva/docs/architecture/renfield-compatibility-requirements.md`); die anderen neun von elf Items waren in vorigen Sprints bereits restauriert. Nach diesem Release kann Reva sein Renfield-Submodul auf `main` bumpen und seine 75 E2E-Tests gegen die hier liegende Codebasis fahren.
+
+### Hinzugefügt
+
+- **`prompt_hashes` auf `/health`** — Der `/health`-Endpoint liefert nun `{"status": "ok", "prompt_hashes": {...}}`, mit zwölf-Zeichen-SHA-256-Präfixen pro geladener Prompt-YAML. Reva nutzt das in seinem Audit-Trail und bei Deploy-Verifikation, um sicherzustellen, dass ein Release tatsächlich die Prompts geändert hat. Der Handler toleriert PromptManager-Fehler mit leerem Dict, sodass der Load-Balancer-Healthcheck nie kaputtgeht ([#518](https://github.com/ebongard/renfield/pull/518)).
+- **Kanonische Token-Budget-Logzeile** — `_enforce_token_budget` emittiert nun beim Eintritt eine Zeile der Form `Token budget: <used>/<max> (<%>)`, mit einer Nachkommastelle Präzision. Reva's `test_token_budget_logged` E2E-Assertion sucht nach genau diesem Substring; bestehende `Budget pass N (...)`-Zeilen pro Reduktion bleiben für Observability erhalten ([#518](https://github.com/ebongard/renfield/pull/518)).
+
+### Behoben
+
+- **NotificationMessage-Shape-Tightening** — Die WebSocket-NotificationMessage-Variante (eingeführt in #519) hatte `urgency: string` und `created_at: string | null` deklariert, beides loser als der Downstream-Konsument `useNotifications.ts` annimmt (Literal-Union `'critical' | 'info' | 'low'`, non-null `created_at`). Auf den Konsumenten-Vertrag verengt — verhindert, dass künftige WebSocket-Nutzer Shapes akzeptieren, die der Renderer nicht stylen kann ([#519](https://github.com/ebongard/renfield/pull/519)).
+
+---
+
+## [v2.4.2] — 2026-05-02
+
+Voice Pipeline Phase B-3 Follow-ups: hook-broadcasted Cache-Invalidierung der Whisper-Prompt-Cache und per-Nutzer-frequenz-gerankte Vokabular-Vorspannung für STT. Plus Migration-Chain-Fix, der den Deploy zwischenzeitlich blockiert hatte.
+
+### ⚠ Aufwärtskompatibilität
+
+- **Migration `a0b1c2d3e4f5_add_speaker_vocabulary`** — Zwei neue Tabellen: `speaker_vocabulary_corpus` (rohe bestätigte Sprecher-Transkripte mit `circle_tier=0` self-tier per Default) und `speaker_vocabulary` (berechnete Term-Frequenzen). Beide tragen `circle_tier`-Spalten von Tag 1, sodass das Vokabular niemals zwischen Sprechern leckt. Eigentumsgranularität ist strikt per Nutzer; die Tabellen sind durch FK-CASCADE an `users.id` gebunden.
+- **Migration kettet vom tatsächlichen DB-Head** (`pc20260426_paperless_upload_tracking`) statt vom semantisch-naheliegenden `z9a0b1c2d3e4` — Letzterer hatte bereits ein Kind und führte zu `Multiple head revisions are present` beim ersten Deploy-Versuch. Hotfix-PR #516 re-chained pre-Tag.
+
+### Hinzugefügt
+
+- **Hook-Broadcast `household_graph_changed`** — Neuer Event-Typ in `utils/hooks.py`. Gefeuert von User/Room-Mutation-Routen (POST/PATCH/DELETE auf `/api/users`, `/api/rooms`) und vom HA-Area-Import. Der `WhisperPromptBuilder` registriert einen Fire-and-Forget-Handler, der seinen 5-Minuten-TTL-Cache verwirft, sodass umbenannte Räume oder neue Haushaltsmitglieder im allernächsten STT-Prompt landen statt erst nach Ablauf der TTL. Künftige Caches (Entity-Listen-Cache, Plugin-Biases) klinken sich hier ein ohne Änderungen an den Mutationssites ([#515](https://github.com/ebongard/renfield/pull/515)).
+- **Per-Nutzer-Frequenz-Vokabular für STT-Bias** — `services/speaker_vocabulary_service.py`. Pipeline aus drei Stufen: (1) **Capture**: nach `transcribe_with_speaker` mit bestätigtem (nicht auto-enrolltem) Sprecher wird die verlinkte `User.id` über `User.speaker_id` aufgelöst und das Transkript an `speaker_vocabulary_corpus` angehängt — fire-and-forget via strong-referenced `asyncio.Task`-Set, damit der GC kurzlebige Tasks nicht vor dem DB-Commit einsammelt; (2) **Tokenize**: tägliche Lifecycle-Loop liest die Korpus-Zeilen der letzten 60 Tage, läuft einen Regex-Tokenizer (lowercase, kürzer als 3 Zeichen verworfen, DE+EN-Stoppwort-Sets), zählt pro `(user_id, language)` und schreibt die Top-200-Terme in `speaker_vocabulary`. Per-User-Commit innerhalb der Loop, damit ein Constraint-Fehler bei Nutzer N nicht die erfolgreichen Nutzer 1..N-1 zurückrollt; (3) **Bias**: `vocab_initial_prompt_handler` registriert auf `build_whisper_initial_prompt`, fragt die Top-30-Terme für aktiven Nutzer + Sprache ab, formatiert als `Sprecher: X. Häufige Begriffe: a, b, c, ...` (DE) bzw. die englische Variante, gekappt bei 220 Zeichen. Cold-Start (keine Korpus-Zeilen) liefert `None` → Plattform-Default greift transparent ([#515](https://github.com/ebongard/renfield/pull/515)).
+- **Konfiguration:** `SPEAKER_VOCAB_CAPTURE_ENABLED=true` (Default), `SPEAKER_VOCAB_REBUILD_INTERVAL_SECONDS=86400` (täglich).
+
+### Behoben
+
+- **Alembic-Migration-Chain-Kollision** — `a0b1c2d3e4f5_add_speaker_vocabulary` hatte fälschlich `down_revision = "z9a0b1c2d3e4"` deklariert; `pc20260331_add_parent_chunk_id` chained bereits an dieser Stelle, was beim Deploy zu `Multiple head revisions are present` führte. Re-chained auf `pc20260426_paperless_upload_tracking` (den tatsächlichen Single-Head laut `alembic current`). Lessons-Learned in `.claude/skills/deploy-production/SKILL.md` aufgenommen: vor jeder neuen Migration `alembic heads` gegen die Live-DB prüfen ([#516](https://github.com/ebongard/renfield/pull/516), [#517](https://github.com/ebongard/renfield/pull/517)).
+
+---
+
+## [v2.4.1] — 2026-05-02
+
+Voice Pipeline Phase B-3 — der Renfield-spezifische Anteil der Voice-Pipeline-Aufrüstung, der Reva nicht braucht: per-Haushalt-Initial-Prompt-Generierung und parallele Sprecher-Identifikation.
+
+### Hinzugefügt
+
+- **`WhisperPromptBuilder`-Service** — Baut pro Anfrage einen `initial_prompt` für faster-whisper aus Haushalts-Kontext. Fester Aufbau: `Sprecher: X. Raum: Y. Personen: ... Räume: ...` (~150-200 Zeichen, DE/EN-Labels, unbekannte Sprachen fallen auf Deutsch zurück). Cache pro `(user_id, room_id, language)` mit 5-Minuten-TTL. Plugins (z. B. Reva) gewinnen über das neue `build_whisper_initial_prompt`-Hook (erstes Non-None gewinnt); fallen sie durch, greift der Plattform-Default mit DB-Query auf `users` + `rooms`. ([#514](https://github.com/ebongard/renfield/pull/514)).
+- **Hook `resolve_room_occupants`** — Reverse-Lookup, gegeben `room_id` liefert `list[user_id]` der aktuellen Anwesenden. ha_glue's Handler wickelt den BLE-Presence-Service. Der Whisper-Prompt-Builder konsultiert das Hook über `resolve_first_speaker_from_room()` BEVOR STT läuft — so kann der Prompt einen wahrscheinlichen Sprechernamen schon in Turn 1 seeden, bevor die Sprechererkennung lief.
+- **Parallele Sprecher-Identifikation** — `transcribe_with_speaker` führt nun STT (`_transcribe_async`) und ECAPA-TDNN-Embedding-Extraktion (`_extract_embedding_async`, neu) gleichzeitig aus via `asyncio.gather`, beide in Worker-Threads. Netto-Latenz unverändert; speaker_id ~50-150 ms vor STT-Ende verfügbar — Downstream-Konsumenten (Notification-Routing etc.) sehen den Sprecher früher.
+- **Quellseitige Type-Exports** (Einzeiler-Erweiterungen, kein Verhaltenswechsel): `AuthContextValue`, `AuthUser`, `ModalProps`, `RoomOutputSettingsProps`, `CreateRoomInput`, `CreateSpeakerInput`, `UseWakeWordResult`, `ChatUiMessage` — angefordert vom B-3-Test-Setup, wirken aber als Vertragsdokumentation für jeden Plugin-Konsumenten.
+
+### Behoben
+
+- **Voice-Routes-DB-Session-Hygiene** — `voice.py /stt` und `/voice-chat` öffnen jetzt eine separate `AsyncSessionLocal` für den Prompt-Build, damit dessen SELECT-Queries nicht in derselben Transaktion landen wie `transcribe_with_speaker`'s Mid-Flight-Commit auf dem Auto-Enroll-Pfad. Aktuell harmlos (kein Code danach), aber zukunftssicher ([#514](https://github.com/ebongard/renfield/pull/514) follow-up).
+
+---
+
+## [v2.4.0] — 2026-05-02
+
+Voice Pipeline Phase B-1 + B-2 — TTS-Cache und Concurrency-Bound. Beide Items adressieren reale Multi-Satellite-Symptomatik, die Phase A nicht behoben hatte.
+
+### Hinzugefügt
+
+- **TTS-LRU-Cache** — Haushalts-TTS ist von kurzen wiederholten Bestätigungen dominiert (`Verstanden`, `Bestätigt`, `Wird erledigt`). Cache mit `(voice_name, text)` als Schlüssel und LRU-Bound (`TTS_CACHE_SIZE`, Default 256 Einträge ≈ 50 MB-Cap). Sowohl `synthesize_to_file` als auch `synthesize_to_bytes` treffen den Cache. Voice ist Teil des Schlüssels — `OK` auf Deutsch und Englisch kollidieren nicht. `speaker_id` und andere Per-Call-Synthese-Parameter werden bewusst NICHT unterstützt; sie würden den Cache-Schlüssel erweitern müssen ([#513](https://github.com/ebongard/renfield/pull/513)).
+- **Thread-Offload und Concurrency-Bound** — `model.transcribe()` und `voice.synthesize()` liefen vorher synchron innerhalb der `async def`-Methoden und blockierten dabei den Event-Loop. Beide laufen nun in `asyncio.to_thread(...)`, gegated durch eine `asyncio.Semaphore` (`WHISPER_MAX_CONCURRENT=2`, `TTS_MAX_CONCURRENT=4`). Zwei Satelliten, die gleichzeitig sprechen, serialisieren nicht mehr; eine Burst von N Satelliten kann den Backend-Box nicht mehr OOM-en. Die Semaphores binden lazy an den laufenden Loop bei der ersten Nutzung, sodass Test-Fixtures, die den Service außerhalb des Event-Loops konstruieren, weiterhin funktionieren.
+- **`initial_prompt`-Parameter durchgereicht** — Alle vier `transcribe_*`-Signaturen akzeptieren nun ein optionales `initial_prompt`, gereicht bis zu `_run_transcription` und faster-whisper. Override-wins / `None`-fällt-durch / Empty-String-deaktiviert-Bias-Semantik getestet. Ruhend bis Phase B-3 (v2.4.1) das Hook-System verdrahtete.
+
+---
+
+## [v2.3.0] — 2026-05-01
+
+Voice Pipeline Phase A — Backend-Swap auf faster-whisper und in-process Piper. Dieselbe Blast-Radius wie Reva's empfehlene erste Schicht, plus Verifikation, dass Sprecher-Embeddings nach dem Engine-Wechsel weiterhin alignen. Latenz fällt von ~4 s auf ~1.5 s auf der GPU-PRD; deutsche Fachvokabel-WER fällt materiell.
+
+### ⚠ Aufwärtskompatibilität
+
+- **`openai-whisper`-Python-Paket entfernt**, ersetzt durch `faster-whisper>=1.0.0`. Der CTranslate2-Backend liefert ~4× GPU-Throughput und ein sauberes `device=cuda + compute_type=float16`-Setup. Manylinux-Wheels für amd64 + aarch64 — keine PyAV-Source-Builds mehr. Public API (`transcribe_file`, `transcribe_bytes`, `transcribe_with_speaker`, `transcribe_bytes_with_speaker`) ist signaturkompatibel.
+- **In-process Piper** — `piper-tts>=1.2.0` Python-Bindings ersetzen den Per-Request `subprocess.Popen('piper', ...)`-Cold-Start (~150-300 ms gespart pro TTS-Aufruf). Voice-Modelle leben weiterhin unter `/usr/share/piper/voices/<voice>.onnx`; das CLI-Binary bleibt im Image als Fallback.
+- **Singleton-Dedup für Whisper und Piper** — `voice.py` instantiierte `WhisperService()` direkt, während `api/websocket/shared.py:get_whisper_service` lazy einen zweiten erzeugte. Zwei Modell-Loads unter Last. Phase A behebt zusätzlich eine dritte Instantiierung in `ha_glue/api/websocket/device_handler.py`. Alle Aufrufer nutzen nun `get_whisper_service()` / `get_piper_service()` ([#509](https://github.com/ebongard/renfield/pull/509)).
+
+### Hinzugefügt
+
+- **Konfiguration**: `WHISPER_DEVICE` (cpu/cuda), `WHISPER_COMPUTE_TYPE` (int8 für CPU, float16 für GPU, int8_float16 für GPU-Low-Memory), `WHISPER_BEAM_SIZE` (Default 5).
+- **Strategy-Skelett** — `docs/STRATEGY.md` mit Solo-Founder-Frame und neun [FOUNDER FILL-IN]-Platzhaltern dokumentiert das WHY hinter dem maximalistischen Circles-Plan, distinct vom HOW im Design-Doc ([#508](https://github.com/ebongard/renfield/pull/508)).
+- **Voice-Pipeline-Plan** — `docs/voice-pipeline-plan.md` als Renfield-seitiges Companion-Doc zu Reva's `voice-pipeline-enhancements.md`, mit phasiertem Rollout-Plan und Vergleichsprotokoll ([#510](https://github.com/ebongard/renfield/pull/510)).
+- **dlna-mcp `imagePullPolicy: Always`** — Vorher `IfNotPresent`; ein `kubectl rollout restart` auf `dlna-mcp` cachte stillschweigend das alte `:latest` weiter, selbst nach frischem Push. Verifiziert während v2.2.0-Deploy ([#507](https://github.com/ebongard/renfield/pull/507)).
+
+### Behoben
+
+- **Harbor-Push-Timeout auf der monolithischen 2.66-GB-Pip-Install-Schicht** — Wenn `requirements.txt` änderte, baute Docker eine 2.66 GB große Layer, die der externe HTTPS-Proxy vor `registry.treehouse.x-idra.de` (Telekom-IP `93.241.252.154`) reproducierbar mit `504 Gateway Timeout` / `Client Closed Request` nach 3.9 s und 45.9 MB ablehnte. Mitigation: Dockerfile teilt den pip-Install in fünf RUN-Stufen UND verschiebt die Heavy-Packages (torch, transformers, easyocr, docling*, speechbrain, cv2, ctranslate2, librosa) aus `/opt/venv` heraus in `/opt/staging/{torch,ml,audio}/`, die im Runtime-Stage einzeln zurück-COPY't werden. Resultat: 722 MB / 205 MB / 63 MB / 1.66 GB-Layer statt einer 2.65 GB. Upstream-Fix (`proxy_request_buffering off` o. ä. auf dem Harbor-Proxy) braucht Admin-Zugriff; Layer-Split umgeht das Problem deploy-seitig ([#511](https://github.com/ebongard/renfield/pull/511), [#512](https://github.com/ebongard/renfield/pull/512)).
+- **`device_handler.py` Piper-Singleton-Bypass** — Code-Review-Fund: `device_handler.py:255-256` instantiierte `PiperService()` direkt statt `get_piper_service()` zu nutzen. Letzte Stelle, die noch zwei Voice-Singletons zerstörte ([#509](https://github.com/ebongard/renfield/pull/509)).
+
+### Dokumentation
+
+- Neu: [`docs/STRATEGY.md`](docs/STRATEGY.md), [`docs/voice-pipeline-plan.md`](docs/voice-pipeline-plan.md).
+- Aktualisiert: `.claude/skills/deploy-production/SKILL.md` mit rsync-zu-Staging-Flow, Harbor-504-Mitigationsleitfaden, 12-Schritte-End-to-End-Checklist.
+
+---
+
+## [v2.2.0] — 2026-04-30
+
+Stabilisierungs- und Aufräum-Release. Schließt den **WICHTIG-Audit-Sweep** (W1-W14, alle 14 Items resolved), die **EMPFEHLUNG-Audit-Items E1-E18**, einen kompletten **Frontend-TypeScript-Migration** (W10) und die **Paperless-Metadaten-LLM-Pipeline** (PR 2-4). Keine Architektur-Schritte; viel Schliff.
+
+### ⚠ Aufwärtskompatibilität
+
+- **Frontend ist nun 100% TypeScript** unter `src/frontend/src/` (~145 Dateien). Tests bleiben vorerst `.jsx` (separate Migration in v2.4.x). Strict-Mode aktiv (`E15` aus dem Audit-Sweep) — keine `as any`, keine `@ts-nocheck`. Konsumenten sehen nur typed exports; Plugin-seitiger Import-Pfad bleibt identisch ([#487](https://github.com/ebongard/renfield/pull/487), [#506](https://github.com/ebongard/renfield/pull/506)).
+- **`piper_voice` → `piper_default_voice`** Settings-Feld umbenannt. `.env`-Dateien mit dem alten Namen müssen aktualisiert werden ([#495](https://github.com/ebongard/renfield/pull/495)).
+- **Paperless-Upload-MCP auf v1.4.0 gepinnt** — der vorhergehende Stand hatte einen 400-Bug auf bestimmten Content-Type-Kombinationen ([#466](https://github.com/ebongard/renfield/pull/466)).
+
+### Hinzugefügt
+
+#### Paperless LLM-Metadaten-Extraktion
+
+- **PR 2a + 2b** — LLM-Metadaten-Extraktor-Core mit Cold-Start-Confirm-Flow ([#456](https://github.com/ebongard/renfield/pull/456), [#457](https://github.com/ebongard/renfield/pull/457)).
+- **PR 3** — Lernen aus Korrekturen via Prompt-Augmentation ([#458](https://github.com/ebongard/renfield/pull/458)).
+- **PR 4** — UI-Edit-Sweeper + Abandoned-Confirm-Cleanup ([#459](https://github.com/ebongard/renfield/pull/459)).
+- **Server-Side Taxonomy Resolution** — Taxonomy aus Prompt entfernt; Server löst per User-Wahl auf ([#476](https://github.com/ebongard/renfield/pull/476)).
+- Design-Dokument: [`docs/design/paperless-llm-metadata.md`](docs/design/paperless-llm-metadata.md).
+
+#### Frontend-Modernisierung
+
+- **W10 — Full Frontend TypeScript Migration** (71 Dateien) — `src/frontend/src/` von `.jsx` auf `.tsx`, alle Pages + Hooks + Komponenten + Contexts mit echten Typen, kein Shortcut-Workaround ([#487](https://github.com/ebongard/renfield/pull/487)).
+- **E11 — React Query** — alle 23 List-Fetching-Surfaces auf TanStack Query migriert ([#504](https://github.com/ebongard/renfield/pull/504), [#505](https://github.com/ebongard/renfield/pull/505)).
+- **E12 — Hardcoded German Strings** — ChatMessages alt-text + 5 dev-logs durch `useTranslation()` und Englisch-Polish ([#496](https://github.com/ebongard/renfield/pull/496)).
+- **E13 — ChatPage Prop-Drilling → Context** — verifiziert; ChatInput nimmt 0 Props ([#503](https://github.com/ebongard/renfield/pull/503)).
+- **E15 — Strict Mode aktiviert** — 15 Type-Errors gefixt; Audit fully closed ([#506](https://github.com/ebongard/renfield/pull/506)).
+- **E10 — VITE_API_URL/VITE_WS_URL Fallback** zentralisiert mit Warnings ([#501](https://github.com/ebongard/renfield/pull/501)).
+
+#### Orchestrator + Hooks (Phase 1 / 1.5)
+
+- **Sub-Agent-Hooks + Plugin-Role-Extension** — `pre_sub_agent`, `post_sub_agent`, `extend_orchestrator_roles` ([#488](https://github.com/ebongard/renfield/pull/488)).
+- **Synthesis-Hooks für Plugin-Extension** — `build_synthesis_context`, `synthesis_prompt_override` ([#489](https://github.com/ebongard/renfield/pull/489)).
+- **`pre_mcp_call`-Event** für Plugin-Tool-Call-Rewriting (z. B. Reva's Release-ID-Resolver) ([#491](https://github.com/ebongard/renfield/pull/491)).
+- **MCP-Auto-Reconnect + universeller `probe_server()`** für streamable_http-Transport ([#492](https://github.com/ebongard/renfield/pull/492)).
+
+#### WICHTIG / EMPFEHLUNG-Audit-Sweep
+
+- **W2** — IVFFlat→HNSW-Switchover dokumentiert; stale Model-Comment entfernt ([#485](https://github.com/ebongard/renfield/pull/485)).
+- **W3** — Batch-Parent-INSERTs in `_ingest_parent_child` ([#483](https://github.com/ebongard/renfield/pull/483)).
+- **W5 + W13** — Config-Hygiene-Bundle: Timeouts in Settings, changeme-Default-Detection ([#484](https://github.com/ebongard/renfield/pull/484)).
+- **W6** — Alle LLM-Optionen routen über `prompts/agent.yaml` ([#482](https://github.com/ebongard/renfield/pull/482)).
+- **K1-K7 KRITISCH-Findings** — N+1, Secrets-Inventory, Env-Config ([#464](https://github.com/ebongard/renfield/pull/464), [#465](https://github.com/ebongard/renfield/pull/465)).
+- **E5 + E9** — MCP-Backoff- und Intent-Feedback-Thresholds in Settings ([#500](https://github.com/ebongard/renfield/pull/500)).
+- **E14, E16, E17, E18** — ESLint-React-Version, Settings-Field-Renaming, Compose-REDIS_URL-Parameter, Frigate MQTT-Defaults ([#495](https://github.com/ebongard/renfield/pull/495), [#497](https://github.com/ebongard/renfield/pull/497), [#499](https://github.com/ebongard/renfield/pull/499)).
+- **E1-E3** — Speaker-Loading + Eager-Load-Cleanup + FK-Indexes verifiziert done ([#502](https://github.com/ebongard/renfield/pull/502)).
+
+### Behoben
+
+- **Alembic-Baseline-Width** — `alembic_version.version_num` auf VARCHAR(64) verbreitert (auto-widen + explicit migration) ([#477](https://github.com/ebongard/renfield/pull/477), [#462](https://github.com/ebongard/renfield/pull/462), [#478](https://github.com/ebongard/renfield/pull/478)).
+- **Atoms-Tier-PATCH** — `PATCH /api/atoms/{id}/tier` 500: id-Cast auf Text im Cascade-Statement ([#470](https://github.com/ebongard/renfield/pull/470)).
+- **Chat-Upload Duplicate-Reuse** — bei `(file_hash, kb_id)`-Kollision wird das bestehende Doc wiederverwendet statt 500 ([#472](https://github.com/ebongard/renfield/pull/472)).
+- **Paperless-Cold-Start-Flow** — JSON-safe MCP-Truncation, ISO-Date-Serialization, Polling auf Consume-Task, drop von Vision-Model in Extraction-Fallback, loguru `%`-Format-Bugs ([#467](https://github.com/ebongard/renfield/pull/467), [#471](https://github.com/ebongard/renfield/pull/471), [#473](https://github.com/ebongard/renfield/pull/473), [#475](https://github.com/ebongard/renfield/pull/475)).
+- **Agent action_required Short-Circuit** — `final_answer` wird nun NICHT emittiert, wenn ein Tool `action_required` zurückliefert ([#474](https://github.com/ebongard/renfield/pull/474)).
+- **Chat-WebSocket-Handshake-Wait** — kurzes Warten auf WS-Handshake bevor REST-Fallback feuert ([#490](https://github.com/ebongard/renfield/pull/490)).
+- **AgentTools async create() classmethod** ersetzt den `_hook_task`-Workaround ([#493](https://github.com/ebongard/renfield/pull/493)).
+- **Orchestrator Synthesis-Fallback-Logging** — Timeout vom generischen Exception getrennt ([#494](https://github.com/ebongard/renfield/pull/494)).
+- ~45 weitere kleinere Fixes; Details im Git-Log.
+
+### Dokumentation
+
+- **deploy-production-Skill** — komplette Überarbeitung für die k8s-Topologie: .159-Build-Box, Harbor, privates Cluster ([#461](https://github.com/ebongard/renfield/pull/461)).
+- **Per-Area-E2E-Browser-Test-Scaffold** mit HTML-Report-Runner ([#469](https://github.com/ebongard/renfield/pull/469)).
+- **TODOS-Konsolidierung** — `tasks/todo.md` in `TODOS.md` integriert ([#479](https://github.com/ebongard/renfield/pull/479)).
+
+---
+
 ## [v2.1.0] — 2026-04-22
 
 Stabilisierung von `v2.0.0` mit einer architektonischen Nachkorrektur und zwei zuvor unentdeckten Access-Control-Lücken. Die namensgebende Änderung — **Atoms per Document** — verschiebt die Eigentumsgranularität der Circles-Schicht vom Chunk zum Dokument. Inhaltlich semantisch sauberer (ein Dokument ist eine Informationseinheit, ein Chunk ist ein Retrieval-Fragment); technisch reduziert es die KB-Share-Explosion um zwei bis drei Größenordnungen.

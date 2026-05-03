@@ -1,6 +1,6 @@
 # Voice Pipeline Plan — Renfield
 
-> **Status:** Living plan. Phase A in flight as PR #509. Phase B/C signal-gated, no firing trigger yet.
+> **Status:** Living plan. **Phase A landed in v2.3.0** (#509). **Phase B-1, B-2, B-3 landed across v2.4.0 / v2.4.1 / v2.4.2** (#513, #514, #515). Phase B-4 (audio-preprocessing offload) and Phase C/D remain signal-gated. See the per-phase status notes in §6.
 > **Audience:** Future maintainers reading the codebase cold; the founder coming back after a Reva-focused stretch; a Reva-side developer figuring out which voice work belongs upstream in Renfield vs. local in Reva.
 > **Companion doc:** [`../../reva/docs/architecture/voice-pipeline-enhancements.md`](../../reva/docs/architecture/voice-pipeline-enhancements.md) — same engineering scope from Reva's angle.
 
@@ -87,7 +87,7 @@ These matter for Renfield but are out-of-scope for Reva by design:
 
 ## 4. Phased rollout
 
-### Phase A — Backend swap (in flight as PR #509)
+### Phase A — Backend swap — LANDED in v2.3.0 (PR #509)
 
 Same blast radius as Reva's recommended first slice, plus speaker-recognition verification:
 
@@ -99,14 +99,14 @@ Same blast radius as Reva's recommended first slice, plus speaker-recognition ve
 
 Latency drops from ~4 s to ~1.5 s on PRD; German technical-term WER drops materially. Both projects benefit; Reva picks it up via submodule bump.
 
-### Phase B — Renfield-specific value (1-week PR after Phase A soak)
+### Phase B — Renfield-specific value — B-1, B-2, B-3 LANDED; B-4 still signal-gated
 
-The household differentiation that Reva doesn't ask for:
+The household differentiation that Reva doesn't ask for. Final shape after the May 1-3 sprint:
 
-- **TTS LRU cache** (P3-2 from Reva) — biggest practical UX win for repeated confirmations. LRU keyed on `hash(text|lang|voice)`; size bound to keep memory predictable.
-- **Worker pool** (P3-1 from Reva) — necessary for multi-satellite households. Either an `asyncio.Queue` worker or N model copies sized to GPU headroom.
-- **Per-household `initial_prompt` hook** (P0-3 from Reva, adapted) — pull from `rooms` + `users` + KB top titles. Plugin hook so each household auto-derives its own bias string. Important architecture decision: the bias should be per-request, not per-WhisperService-instance, so it can adapt to which family member just spoke.
-- **Backend audio-preprocessing offload** — moves noise reduction off Pi Zero 2 W (already on satellite tech-debt list). Reduces satellite CPU pressure under sustained voice use.
+- **B-1 — TTS LRU cache** — landed in v2.4.0 (#513). Keyed on `(voice_name, text)`; default size 256 entries (~50 MB cap). Repeated confirmations ("Verstanden", "Bestätigt") avoid re-running ONNX inference.
+- **B-2 — Thread-offload + concurrency bound** — landed in v2.4.0 (#513). `model.transcribe()` and `voice.synthesize()` now run in `asyncio.to_thread(...)` gated by an `asyncio.Semaphore` (`WHISPER_MAX_CONCURRENT=2`, `TTS_MAX_CONCURRENT=4`). Two satellites speaking concurrently no longer serialize.
+- **B-3 — Per-household `initial_prompt` hook** — landed in v2.4.1 (#514). `WhisperPromptBuilder` assembles "Sprecher: X. Raum: Y. Personen: ... Räume: ..." from the DB, cached for 5 min per `(user, room, language)`. New hooks `build_whisper_initial_prompt` (plugins win) and `resolve_room_occupants` (ha_glue handler wraps BLE presence). Speaker-id and STT now run in parallel via `asyncio.gather` so speaker is identified ~50-150 ms before STT finishes. v2.4.2 (#515) added the cache-invalidation broadcast hook (`household_graph_changed`) plus per-user frequency-ranked vocabulary corpus (daily rebuild loop, hook handler that folds top-30 terms into the prompt when corpus exists).
+- **B-4 — Backend audio-preprocessing offload** — STILL DEFERRED. Soft-blocked on Opus encoding (otherwise raw PCM trades CPU for bandwidth); hard-blocked on the XVF3800 hardware-AEC vs software-only architecture decision. Re-evaluate when satellite firmware coordination is available.
 
 ### Phase C — Defer, signal-gated
 

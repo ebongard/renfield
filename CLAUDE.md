@@ -31,7 +31,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 ### Frontend Rules
 
-- **TypeScript only.** All frontend source under `src/frontend/src/` is `.tsx`/`.ts`; do NOT add new `.jsx`/`.js`. Type real shapes — no `as any`, no `@ts-nocheck`, no shim files. If a refactor is too big to type cleanly in one pass, leave it as `.jsx` rather than fake-type it as `.tsx` (W10 migration history: fake-`.tsx` is worse than honest `.jsx`).
+- **TypeScript only — migration complete.** `src/frontend/src/` is 100% TS (49 .ts + 68 .tsx, 0 .jsx as of v2.4.3). `tests/frontend/react/` migrated alongside. Both have strict mode on with a `npm run typecheck` gate. Type real shapes — no `as any`, no `@ts-nocheck`, no shim files. The "fake-`.tsx` is worse than honest `.jsx`" rule from the W10 migration still applies to any future refactor that can't be typed cleanly in one pass.
 - **DESIGN.md is the source of truth.** Before any UI change, read `DESIGN.md` at repo root. Color tokens, fonts, spacing, motion, semantic colors, and the tier visual language are defined there. Do NOT deviate without explicit user approval. In `/review` and `/qa`, flag any code that doesn't match DESIGN.md.
 - **Dark Mode**: ALL components must use Tailwind `dark:` variants. Never hardcode colors.
 - **i18n**: ALL user-facing strings must use `useTranslation()`. Never hardcode text.
@@ -123,18 +123,22 @@ Tests in `tests/` at project root. Backend: 1,300+ tests.
 
 **Markers:** `@pytest.mark.unit`, `@pytest.mark.database`, `@pytest.mark.integration`, `@pytest.mark.e2e`, `@pytest.mark.backend`, `@pytest.mark.frontend`, `@pytest.mark.satellite`
 
-**React tests:** Vitest + RTL + MSW in `tests/frontend/react/` (separate `package.json`).
+**React tests:** Vitest + RTL + MSW in `tests/frontend/react/` (separate `package.json`, own `tsconfig.json`). `npm run typecheck` runs `tsc --noEmit` against the test files for compile-time validation; `npm test` runs vitest itself.
+
+**Backend tests run on .159 build box, not in CI.** GitHub CI is intentionally non-functional for this project. See `memory/reference_test_runner_159.md` for the ssh/docker exec workflow.
 
 ## CI/CD Pipeline
 
-| Workflow | Trigger | Description |
-|----------|---------|-------------|
-| `ci.yml` | Push to main/develop, PRs | Full CI: ruff lint, test (with coverage threshold), build |
-| `pr-check.yml` | Pull requests | Quick PR checks (ruff lint, eslint) |
-| `release.yml` | Tag push (v*.*.*) | Build + push Docker images to GHCR |
+| Workflow | Trigger | Reality |
+|----------|---------|---------|
+| `ci.yml` | Push to main/develop, PRs | **Non-functional** — kept for the audit trail; tests are run on `.159` instead |
+| `pr-check.yml` | Pull requests | **Non-functional** — same |
+| `release.yml` | Tag push (v*.*.*) | **Non-functional** — does NOT actually build images; tag is for git audit only |
+
+The real release flow lives in `.claude/skills/deploy-production/SKILL.md`: build on `192.168.1.159`, push to Harbor at `registry.treehouse.x-idra.de`, kubectl rollout against the private cluster (context `renfield-private`). Backend image is multi-stage Dockerfile with split pip-install layers (Harbor proxy times out on >2.5 GB layers). Migrations: `kubectl -n renfield apply -f k8s/alembic-upgrade-job.yaml` BEFORE the rolling restart.
 
 ```bash
-make release    # Create and push version tag
+make release    # Create + push version tag — does NOT deploy. See deploy-production skill for the real flow.
 ```
 
 ## Skills & Agents
