@@ -283,7 +283,6 @@
     "outputAudioNoneConfiguredDetail": "TTS wird auf dem Eingabegerät abgespielt.",
     "outputAddVisualButton": "Visuelles Ausgabegerät hinzufügen",
     "outputAddAudioButton": "Audio-Ausgabegerät hinzufügen",
-    "outputAddDeviceFallback": "Ausgabegerät hinzufügen",
     "outputAddDialogVisualTitle": "Visuelles Ausgabegerät hinzufügen",
     "outputAddDialogAudioTitle": "Audio-Ausgabegerät hinzufügen",
     "outputDialogRoomLabel": "Raum: {{name}}",

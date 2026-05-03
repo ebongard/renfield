@@ -283,7 +283,6 @@
     "outputAudioNoneConfiguredDetail": "TTS will play on the input device.",
     "outputAddVisualButton": "Add visual output device",
     "outputAddAudioButton": "Add audio output device",
-    "outputAddDeviceFallback": "Add output device",
     "outputAddDialogVisualTitle": "Add visual output device",
     "outputAddDialogAudioTitle": "Add audio output device",
     "outputDialogRoomLabel": "Room: {{name}}",
