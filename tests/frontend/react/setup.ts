@@ -2,11 +2,11 @@ import '@testing-library/jest-dom';
 import { cleanup } from '@testing-library/react';
 import { configure } from '@testing-library/dom';
 import { afterEach, beforeAll, afterAll, vi } from 'vitest';
-import { server } from './mocks/server.js';
+import { server } from './mocks/server';
 
 // Configure testing-library with longer default timeout for async operations
 configure({
-  asyncUtilTimeout: 3000
+  asyncUtilTimeout: 3000,
 });
 
 // Start MSW server before all tests
@@ -26,7 +26,7 @@ afterEach(() => {
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: vi.fn().mockImplementation(query => ({
+  value: vi.fn().mockImplementation((query: string) => ({
     matches: false,
     media: query,
     onchange: null,
@@ -39,17 +39,23 @@ Object.defineProperty(window, 'matchMedia', {
 });
 
 // Mock localStorage with actual storage
-const localStorageData = {};
-const localStorageMock = {
-  getItem: vi.fn((key) => localStorageData[key] ?? null),
-  setItem: vi.fn((key, value) => {
+const localStorageData: Record<string, string> = {};
+const localStorageMock: Storage = {
+  get length(): number {
+    return Object.keys(localStorageData).length;
+  },
+  key: vi.fn((index: number): string | null => {
+    return Object.keys(localStorageData)[index] ?? null;
+  }),
+  getItem: vi.fn((key: string): string | null => localStorageData[key] ?? null),
+  setItem: vi.fn((key: string, value: string): void => {
     localStorageData[key] = value;
   }),
-  removeItem: vi.fn((key) => {
+  removeItem: vi.fn((key: string): void => {
     delete localStorageData[key];
   }),
-  clear: vi.fn(() => {
-    Object.keys(localStorageData).forEach(key => delete localStorageData[key]);
+  clear: vi.fn((): void => {
+    Object.keys(localStorageData).forEach((key) => delete localStorageData[key]);
   }),
 };
 Object.defineProperty(window, 'localStorage', {

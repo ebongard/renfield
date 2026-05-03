@@ -5,7 +5,7 @@ import LanguageSwitcher from '../../../../src/frontend/src/components/LanguageSw
 import { I18nextProvider } from 'react-i18next';
 import { QueryClientProvider } from '@tanstack/react-query';
 import i18n from '../../../../src/frontend/src/i18n';
-import { createTestQueryClient } from '../test-utils.jsx';
+import { createTestQueryClient } from '../test-utils';
 
 // Mock axios
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({

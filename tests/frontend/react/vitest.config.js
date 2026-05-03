@@ -28,7 +28,7 @@ export default defineConfig({
       // qrcode.react's real package resolves React from src/frontend/node_modules,
       // which is a different copy than the aliased test React → duplicate
       // React dispatchers → null useMemo. Point tests at a no-op stub.
-      'qrcode.react': path.join(__dirname, 'stubs/qrcode.react.js'),
+      'qrcode.react': path.join(__dirname, 'stubs/qrcode.react.ts'),
       // Same React-duplicate problem hits @tanstack/react-query (its
       // QueryClientProvider context closes over a React copy). Pin to the test
       // tree so providers and hooks share one React.
@@ -44,7 +44,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'jsdom',
-    setupFiles: ['./setup.js'],
+    setupFiles: ['./setup.ts'],
     include: ['./**/*.{test,spec}.{js,jsx,ts,tsx}'],
     testTimeout: 10000,
     pool: 'forks',

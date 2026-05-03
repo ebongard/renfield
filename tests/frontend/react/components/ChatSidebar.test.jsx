@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChatSidebar from '../../../../src/frontend/src/components/ChatSidebar';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 
 // Mock conversations for testing
 const mockConversations = [

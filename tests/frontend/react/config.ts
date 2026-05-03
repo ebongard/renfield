@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 /**
  * Test configuration for frontend React tests
  *
@@ -8,9 +9,13 @@
  *   VITE_API_URL=http://localhost:8080 npm test
  */
 
+export interface TestConfig {
+  /** Base URL for API requests - configurable via VITE_API_URL environment variable */
+  API_BASE_URL: string;
+}
+
 // Use Vite's import.meta.env for environment variables, with fallback
-export const TEST_CONFIG = {
-  // Base URL for API requests - configurable via VITE_API_URL environment variable
+export const TEST_CONFIG: TestConfig = {
   API_BASE_URL: import.meta.env.VITE_API_URL || 'http://localhost:8000',
 };
 

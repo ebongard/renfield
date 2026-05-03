@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { BASE_URL } from '../mocks/handlers.js';
+import { server } from '../mocks/server';
+import { BASE_URL } from '../mocks/handlers';
 import RoomsPage from '../../../../src/frontend/src/pages/RoomsPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 
 // Mock data
 const mockRooms = [
