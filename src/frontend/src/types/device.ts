@@ -189,6 +189,21 @@ export interface ConfigUpdateMessage extends BaseWebSocketMessage {
   };
 }
 
+// Server-pushed proactive notification.
+// Shape mirrors `ws_message` built in
+// `src/backend/ha_glue/services/device_handlers.py` (broadcast_notification).
+export interface NotificationMessage extends BaseWebSocketMessage {
+  type: 'notification';
+  notification_id: number;
+  title: string;
+  message: string;
+  urgency: string;
+  source: string;
+  room: string | null;
+  tts_handled: boolean;
+  created_at: string | null;
+}
+
 export type WebSocketMessage =
   | RegisterMessage
   | RegisterAckMessage
@@ -202,4 +217,5 @@ export type WebSocketMessage =
   | ErrorMessage
   | HeartbeatMessage
   | HeartbeatAckMessage
-  | ConfigUpdateMessage;
+  | ConfigUpdateMessage
+  | NotificationMessage;

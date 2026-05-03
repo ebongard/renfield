@@ -25,6 +25,12 @@ interface WakeWordEngineConstructor {
   new (options: {
     baseAssetUrl: string;
     keywords: string[];
+    /**
+     * Optional override of the built-in keyword -> model-file map. Required
+     * for custom wake words like `hey_renfield` which aren't in the
+     * library's default `MODEL_FILE_MAP`.
+     */
+    modelFiles?: Record<string, string>;
     detectionThreshold: number;
     cooldownMs: number;
   }): WakeWordEngine;
