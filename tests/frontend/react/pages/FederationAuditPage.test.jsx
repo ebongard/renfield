@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import FederationAuditPage from '../../../../src/frontend/src/pages/FederationAuditPage';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import apiClient from '../../../../src/frontend/src/utils/axios';
 
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({

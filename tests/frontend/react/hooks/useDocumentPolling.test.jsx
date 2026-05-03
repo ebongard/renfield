@@ -11,8 +11,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { TEST_CONFIG } from '../config.js';
+import { server } from '../mocks/server';
+import { TEST_CONFIG } from '../config';
 import { useDocumentPolling } from '../../../../src/frontend/src/hooks/useDocumentPolling';
 
 const BASE_URL = TEST_CONFIG.API_BASE_URL;

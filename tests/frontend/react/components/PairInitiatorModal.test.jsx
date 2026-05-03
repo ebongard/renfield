@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import PairInitiatorModal from '../../../../src/frontend/src/components/PairInitiatorModal';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import apiClient from '../../../../src/frontend/src/utils/axios';
 
 // qrcode.react is stubbed to a no-op via vitest.config.js alias; assertions

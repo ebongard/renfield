@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import axios from '../../../../src/frontend/src/utils/axios';
 
 // Mock axios to return MCP tools

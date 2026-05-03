@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import Layout from '../../../../src/frontend/src/components/Layout';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
 
 // Mock AuthContext

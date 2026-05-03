@@ -16,7 +16,7 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 import ChatMessages from '../../../../src/frontend/src/pages/ChatPage/ChatMessages';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 
 // ChatMessages pulls a bundle of things from ChatContext (messages list,
 // loading flag, derived selectors, handlers for card / TTS / attachments).

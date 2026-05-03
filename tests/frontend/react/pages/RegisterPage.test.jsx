@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RegisterPage from '../../../../src/frontend/src/pages/RegisterPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
 
 // Mock AuthContext

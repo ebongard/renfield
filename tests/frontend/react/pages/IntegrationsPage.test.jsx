@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { BASE_URL, mockMcpStatus, mockMcpTools } from '../mocks/handlers.js';
+import { server } from '../mocks/server';
+import { BASE_URL, mockMcpStatus, mockMcpTools } from '../mocks/handlers';
 import IntegrationsPage from '../../../../src/frontend/src/pages/IntegrationsPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
 
 // Mock useAuth hook

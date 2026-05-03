@@ -4,8 +4,8 @@ import { http, HttpResponse } from 'msw';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { I18nextProvider } from 'react-i18next';
 
-import { server } from '../mocks/server.js';
-import { TEST_CONFIG } from '../config.js';
+import { server } from '../mocks/server';
+import { TEST_CONFIG } from '../config';
 import i18n from '../../../../src/frontend/src/i18n';
 import apiClient from '../../../../src/frontend/src/utils/axios';
 import { useApiQuery, useApiMutation } from '../../../../src/frontend/src/api/hooks';
