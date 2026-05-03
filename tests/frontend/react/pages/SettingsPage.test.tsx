@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { BASE_URL } from '../mocks/handlers.js';
+import { server } from '../mocks/server';
+import { BASE_URL } from '../mocks/handlers';
 import SettingsPage from '../../../../src/frontend/src/pages/SettingsPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
 import { adminAuthMock } from '../test-auth-mock';
 import type { WakewordSettingsData, WakewordInput } from '../../../../src/frontend/src/api/resources/settings';

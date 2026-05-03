@@ -2,10 +2,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
-import { server } from '../mocks/server.js';
-import { BASE_URL } from '../mocks/handlers.js';
+import { server } from '../mocks/server';
+import { BASE_URL } from '../mocks/handlers';
 import SpeakersPage from '../../../../src/frontend/src/pages/SpeakersPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import type { ModalProps } from '../../../../src/frontend/src/components/Modal';
 import type { UseConfirmDialogResult } from '../../../../src/frontend/src/components/ConfirmDialog';
 import type {

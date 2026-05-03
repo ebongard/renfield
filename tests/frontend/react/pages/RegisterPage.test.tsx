@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import RegisterPage from '../../../../src/frontend/src/pages/RegisterPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
 import { unauthenticatedAuthMock } from '../test-auth-mock';
 import type { User } from '../../../../src/frontend/src/types/api';

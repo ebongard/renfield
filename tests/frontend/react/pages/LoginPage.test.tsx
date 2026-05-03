@@ -2,11 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import LoginPage from '../../../../src/frontend/src/pages/LoginPage';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import { useAuth, type AuthContextValue } from '../../../../src/frontend/src/context/AuthContext';
 import { unauthenticatedAuthMock } from '../test-auth-mock';
 import type { LoginResponse } from '../../../../src/frontend/src/types/api';
-import { server } from '../mocks/server.js';
+import { server } from '../mocks/server';
 
 // Mock AuthContext
 vi.mock('../../../../src/frontend/src/context/AuthContext', async () => {

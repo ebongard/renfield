@@ -5,7 +5,7 @@
  * Plus supporting coverage for the progressbar vs role=status switch.
  */
 import { describe, it, expect } from 'vitest';
-import { renderWithProviders } from '../../test-utils.jsx';
+import { renderWithProviders } from '../../test-utils';
 import StatusBadge, {
   type DocLike,
 } from '../../../../../src/frontend/src/components/knowledge/StatusBadge';

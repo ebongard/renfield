@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import IntentCorrectionButton from '../../../../src/frontend/src/components/IntentCorrectionButton';
 import type { CorrectionHandler } from '../../../../src/frontend/src/components/IntentCorrectionButton';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 
 // Mock axios to return MCP tools
 vi.mock('../../../../src/frontend/src/utils/axios', () => ({

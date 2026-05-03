@@ -5,7 +5,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { fireEvent } from '@testing-library/react';
-import { renderWithProviders } from '../../test-utils.jsx';
+import { renderWithProviders } from '../../test-utils';
 import DuplicateDialog, {
   type ExistingDocument,
 } from '../../../../../src/frontend/src/components/knowledge/DuplicateDialog';

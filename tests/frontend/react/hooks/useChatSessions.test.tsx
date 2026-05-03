@@ -11,13 +11,13 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { http, HttpResponse } from 'msw';
 import type { ReactNode } from 'react';
 
-import { server } from '../mocks/server.js';
-import { BASE_URL, mockConversations, mockConversationHistory } from '../mocks/handlers.js';
+import { server } from '../mocks/server';
+import { BASE_URL, mockConversations, mockConversationHistory } from '../mocks/handlers';
 import {
   useChatSessions,
   groupConversationsByDate,
 } from '../../../../src/frontend/src/hooks/useChatSessions';
-import { createTestQueryClient } from '../test-utils.jsx';
+import { createTestQueryClient } from '../test-utils';
 import i18n from '../../../../src/frontend/src/i18n';
 import type { ChatSessionsResult, Conversation } from '../../../../src/frontend/src/types/chat';
 

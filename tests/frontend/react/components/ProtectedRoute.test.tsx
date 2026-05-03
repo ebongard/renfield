@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen } from '@testing-library/react';
-import { renderWithProviders } from '../test-utils.jsx';
+import { renderWithProviders } from '../test-utils';
 import ProtectedRoute, { AdminRoute } from '../../../../src/frontend/src/components/ProtectedRoute';
 import { useAuth } from '../../../../src/frontend/src/context/AuthContext';
 

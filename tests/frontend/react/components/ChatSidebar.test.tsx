@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChatSidebar from '../../../../src/frontend/src/components/ChatSidebar';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import type { Conversation } from '../../../../src/frontend/src/types/chat';
 
 function makeConversation(overrides: Partial<Conversation> & Pick<Conversation, 'session_id'>): Conversation {

@@ -17,7 +17,7 @@ beforeAll(() => {
 });
 
 import ChatMessages from '../../../../src/frontend/src/pages/ChatPage/ChatMessages';
-import { renderWithRouter } from '../test-utils.jsx';
+import { renderWithRouter } from '../test-utils';
 import {
   useChatContext,
   type ChatContextValue,
