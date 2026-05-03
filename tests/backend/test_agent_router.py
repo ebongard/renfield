@@ -1279,6 +1279,99 @@ class TestSetSemanticRouter:
 
 
 # ---------------------------------------------------------------------------
+# SemanticRouter keyword-boost: word-boundary matching
+# Regression: substring matching let `'board'` (jira keyword) trigger on
+# `'dashboard'` and steal release/my_dashboard routing for "Mein Dashboard".
+# ---------------------------------------------------------------------------
+
+
+class TestSemanticRouterKeywordBoostBoundary:
+    """Keyword boost must match whole words, not arbitrary substrings."""
+
+    def _build_router(self, keyword_boost_map):
+        """Build a SemanticRouter with one embedding per role and a module-
+        level _KEYWORD_BOOST set to ``keyword_boost_map``.
+
+        Each role gets the same embedding vector so semantic similarity
+        does not preselect one role over another — the boost is the only
+        differentiator.
+        """
+        from services import semantic_router as sr_module
+
+        sr = sr_module.SemanticRouter(threshold=0.75)
+        same_vec = [1.0, 0.0, 0.0]
+        sr._role_embeddings = {role: [same_vec] for role in keyword_boost_map}
+        sr._initialized = True
+
+        embed_response = MagicMock()
+        embed_response.embedding = same_vec
+        client = AsyncMock()
+        client.embeddings = AsyncMock(return_value=embed_response)
+        sr._ollama_client = client
+
+        sr_module._KEYWORD_BOOST.clear()
+        sr_module._KEYWORD_BOOST.update(
+            {role: [k.lower() for k in kws] for role, kws in keyword_boost_map.items()}
+        )
+        return sr
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_dashboard_does_not_match_board_keyword(self):
+        """`'board'` is a jira keyword — must not fire on `'dashboard'`."""
+        from services import semantic_router as sr_module
+
+        sr = self._build_router({
+            "release": ["release", "releases"],
+            "jira": ["jira", "ticket", "board", "epic"],
+        })
+        try:
+            role, _sub, _sim = await sr.classify("Mein Dashboard")
+        finally:
+            sr_module._KEYWORD_BOOST.clear()
+
+        # No keyword in {"mein", "dashboard"} matches release or jira → no
+        # boost → caller falls back to LLM (returns None at threshold).
+        # The crucial assertion: jira boost must NOT have fired.
+        assert role != "jira"
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_explicit_board_keyword_still_boosts(self):
+        """Whole-word `'board'` must still trigger the jira boost."""
+        from services import semantic_router as sr_module
+
+        sr = self._build_router({
+            "release": ["release"],
+            "jira": ["board"],
+        })
+        try:
+            role, _sub, sim = await sr.classify("Show me the board")
+        finally:
+            sr_module._KEYWORD_BOOST.clear()
+
+        assert role == "jira"
+        assert sim >= 0.75
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_german_umlaut_keyword_matches_word(self):
+        """`'störung'` must match as a word in German messages."""
+        from services import semantic_router as sr_module
+
+        sr = self._build_router({
+            "jira": ["ticket"],
+            "itsm": ["störung"],
+        })
+        try:
+            role, _sub, _sim = await sr.classify("Ich habe eine Störung gemeldet")
+        finally:
+            sr_module._KEYWORD_BOOST.clear()
+
+        assert role == "itsm"
+
+
+# ---------------------------------------------------------------------------
 # Anti-dashboard guard + sub_intent inference on fast paths
 # (follow-up to PR #384 review findings)
 # ---------------------------------------------------------------------------

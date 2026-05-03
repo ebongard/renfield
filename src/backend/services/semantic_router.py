@@ -7,6 +7,7 @@ via cosine similarity. Falls back to None if no role exceeds the threshold.
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -184,13 +185,17 @@ class SemanticRouter:
         # Keyword boost operates on role-level only (sub_intents rely on
         # their explicit utterances rather than keyword hints).
         if _KEYWORD_BOOST:
-            msg_lower = message.lower()
+            # Tokenize into lowercase word set so substring traps like
+            # `'board' in 'dashboard'` cannot fire a boost. `\w+` with
+            # default UNICODE flag handles ö/ä/ü/ß, so keywords like
+            # 'störung' still match.
+            msg_words = set(re.findall(r"\w+", message.lower()))
             boosted_role = None
             boosted_sim = 0.0
             for role_name, keywords in _KEYWORD_BOOST.items():
                 if role_name not in self._role_embeddings:
                     continue
-                if any(kw in msg_lower for kw in keywords):
+                if any(kw in msg_words for kw in keywords):
                     sim = _best_of(self._role_embeddings[role_name], 0.0) + _KEYWORD_BOOST_AMOUNT
                     if sim > boosted_sim:
                         boosted_sim = sim
