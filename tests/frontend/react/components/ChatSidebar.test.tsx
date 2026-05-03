@@ -1,11 +1,24 @@
+import type { ComponentProps } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { screen, fireEvent, within } from '@testing-library/react';
+import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import ChatSidebar from '../../../../src/frontend/src/components/ChatSidebar';
-import { renderWithRouter } from '../test-utils';
+import { renderWithRouter } from '../test-utils.jsx';
+import type { Conversation } from '../../../../src/frontend/src/types/chat';
+
+function makeConversation(overrides: Partial<Conversation> & Pick<Conversation, 'session_id'>): Conversation {
+  const now = new Date().toISOString();
+  return {
+    preview: '',
+    message_count: 0,
+    created_at: now,
+    updated_at: now,
+    ...overrides,
+  };
+}
 
 // Mock conversations for testing
-const mockConversations = [
+const mockConversations: Conversation[] = [
   {
     session_id: 'session-today-1',
     preview: 'Wie ist das Wetter heute?',
@@ -36,16 +49,18 @@ const mockConversations = [
   }
 ];
 
+type ChatSidebarProps = ComponentProps<typeof ChatSidebar>;
+
 describe('ChatSidebar', () => {
-  const defaultProps = {
+  const defaultProps: ChatSidebarProps = {
     conversations: mockConversations,
     activeSessionId: null,
-    onSelectConversation: vi.fn(),
-    onNewChat: vi.fn(),
-    onDeleteConversation: vi.fn(),
+    onSelectConversation: vi.fn<(sessionId: string) => void>(),
+    onNewChat: vi.fn<() => void>(),
+    onDeleteConversation: vi.fn<(sessionId: string) => void>(),
     isOpen: true,
-    onClose: vi.fn(),
-    loading: false
+    onClose: vi.fn<() => void>(),
+    loading: false,
   };
 
   beforeEach(() => {
@@ -93,12 +108,13 @@ describe('ChatSidebar', () => {
     });
 
     it('handles singular message count', () => {
-      const singleMessageConv = [{
-        session_id: 'single',
-        preview: 'Single message',
-        message_count: 1,
-        updated_at: new Date().toISOString()
-      }];
+      const singleMessageConv: Conversation[] = [
+        makeConversation({
+          session_id: 'single',
+          preview: 'Single message',
+          message_count: 1,
+        }),
+      ];
 
       renderWithRouter(<ChatSidebar {...defaultProps} conversations={singleMessageConv} />);
 
@@ -131,7 +147,10 @@ describe('ChatSidebar', () => {
       const user = userEvent.setup();
       renderWithRouter(<ChatSidebar {...defaultProps} />);
 
-      const conversationItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
+      const conversationItem = screen
+        .getByText('Wie ist das Wetter heute?')
+        .closest('[role="button"]');
+      if (!conversationItem) throw new Error('conversation item not found');
       await user.click(conversationItem);
 
       expect(defaultProps.onSelectConversation).toHaveBeenCalledWith('session-today-1');
@@ -164,7 +183,10 @@ describe('ChatSidebar', () => {
       const user = userEvent.setup();
       renderWithRouter(<ChatSidebar {...defaultProps} />);
 
-      const conversationItem = screen.getByText('Wie ist das Wetter heute?').closest('[role="button"]');
+      const conversationItem = screen
+        .getByText('Wie ist das Wetter heute?')
+        .closest<HTMLElement>('[role="button"]');
+      if (!conversationItem) throw new Error('conversation item not found');
 
       // Focus the item
       conversationItem.focus();
@@ -243,12 +265,14 @@ describe('ConversationItem', () => {
   // but we can add specific ConversationItem tests here if needed
 
   it('truncates long preview text via CSS', () => {
-    const longPreviewConv = [{
-      session_id: 'long',
-      preview: 'This is a very long preview text that should be truncated because it exceeds the available space in the sidebar',
-      message_count: 1,
-      updated_at: new Date().toISOString()
-    }];
+    const longPreviewConv: Conversation[] = [
+      makeConversation({
+        session_id: 'long',
+        preview:
+          'This is a very long preview text that should be truncated because it exceeds the available space in the sidebar',
+        message_count: 1,
+      }),
+    ];
 
     renderWithRouter(
       <ChatSidebar
@@ -268,12 +292,13 @@ describe('ConversationItem', () => {
   });
 
   it('shows fallback text for empty preview', () => {
-    const emptyPreviewConv = [{
-      session_id: 'empty',
-      preview: '',
-      message_count: 0,
-      updated_at: new Date().toISOString()
-    }];
+    const emptyPreviewConv: Conversation[] = [
+      makeConversation({
+        session_id: 'empty',
+        preview: '',
+        message_count: 0,
+      }),
+    ];
 
     renderWithRouter(
       <ChatSidebar

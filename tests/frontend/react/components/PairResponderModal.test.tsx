@@ -12,7 +12,21 @@ vi.mock('../../../../src/frontend/src/utils/axios', () => ({
   },
 }));
 
-const FAKE_OFFER = {
+interface PairingOffer {
+  initiator_pubkey: string;
+  nonce: string;
+  signature: string;
+  display_name: string;
+  expires_at: number;
+}
+
+interface PairingResponse {
+  responder_pubkey: string;
+  signature: string;
+  nonce: string;
+}
+
+const FAKE_OFFER: PairingOffer = {
   initiator_pubkey: 'a'.repeat(64),
   nonce: 'n'.repeat(32),
   signature: 's'.repeat(128),
@@ -20,16 +34,18 @@ const FAKE_OFFER = {
   expires_at: Math.floor(Date.now() / 1000) + 600,
 };
 
-const FAKE_RESPONSE = {
+const FAKE_RESPONSE: PairingResponse = {
   responder_pubkey: 'b'.repeat(64),
   signature: 'r'.repeat(128),
   nonce: FAKE_OFFER.nonce,
 };
 
+const mockedApiPost = vi.mocked(apiClient.post);
+
 describe('PairResponderModal', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    apiClient.post.mockReset();
+    mockedApiPost.mockReset();
   });
 
   it('does not render when closed', () => {
@@ -114,7 +130,7 @@ describe('PairResponderModal', () => {
 
   it('posts accept with offer + tier and renders response QR', async () => {
     const onPaired = vi.fn();
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_RESPONSE });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_RESPONSE });
 
     renderWithRouter(
       <PairResponderModal isOpen={true} onClose={() => {}} onPaired={onPaired} />,
@@ -128,7 +144,7 @@ describe('PairResponderModal', () => {
     fireEvent.click(screen.getByRole('button', { name: /kopplung annehmen/i }));
 
     await waitFor(() => {
-      expect(apiClient.post).toHaveBeenCalledWith(
+      expect(mockedApiPost).toHaveBeenCalledWith(
         '/api/federation/pair/accept',
         expect.objectContaining({ offer: FAKE_OFFER, my_tier_for_you: 2 }),
       );
@@ -142,7 +158,7 @@ describe('PairResponderModal', () => {
   });
 
   it('renders response QR with accessible aria-label', async () => {
-    apiClient.post.mockResolvedValueOnce({ data: FAKE_RESPONSE });
+    mockedApiPost.mockResolvedValueOnce({ data: FAKE_RESPONSE });
 
     renderWithRouter(
       <PairResponderModal isOpen={true} onClose={() => {}} onPaired={() => {}} />,
