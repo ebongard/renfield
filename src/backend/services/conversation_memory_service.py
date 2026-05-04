@@ -30,7 +30,7 @@ from models.database import (
     MemoryHistory,
 )
 from utils.config import settings
-from utils.llm_client import get_embed_client
+from utils.llm_client import get_default_client, get_embed_client
 
 # ---------------------------------------------------------------------------
 # Memory Poisoning Defense — pattern lists for extraction gating
@@ -71,7 +71,8 @@ class ConversationMemoryService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._ollama_client = None
+        self._embed_client = None
+        self._chat_client = None
         # Cached fallback admin id for atoms registration when save() is
         # called without an authenticated user_id (single-user mode). See
         # _resolve_owner_user_id.
@@ -103,15 +104,31 @@ class ConversationMemoryService:
         from services.atom_service import AtomService
         return AtomService(self.db)
 
+    async def _get_embed_client(self):
+        """Lazy initialization of LLM client for embeddings (Qwen3-Embedding via llama-server-embed)."""
+        if self._embed_client is None:
+            self._embed_client = get_embed_client()
+        return self._embed_client
+
+    async def _get_chat_client(self):
+        """Lazy initialization of LLM client for chat/extraction (Qwen3.6 via llama-server-agent)."""
+        if self._chat_client is None:
+            self._chat_client = get_default_client()
+        return self._chat_client
+
     async def _get_ollama_client(self):
-        """Lazy initialization of Ollama client for embeddings."""
-        if self._ollama_client is None:
-            self._ollama_client = get_embed_client()
-        return self._ollama_client
+        """Deprecated alias kept for any external callers; returns the embed client.
+
+        Internal call-sites must use ``_get_embed_client`` (for embeddings) or
+        ``_get_chat_client`` (for chat/extraction) explicitly. Mixing the two
+        sends chat traffic to the CPU-only embed pod and adds 1-2 minutes per
+        request.
+        """
+        return await self._get_embed_client()
 
     async def _get_embedding(self, text_input: str) -> list[float]:
-        """Generate embedding using Ollama (nomic-embed-text, 768 dims)."""
-        client = await self._get_ollama_client()
+        """Generate embedding via the embed-tier LLM client."""
+        client = await self._get_embed_client()
         response = await client.embeddings(
             model=settings.ollama_embed_model,
             prompt=text_input
@@ -308,9 +325,15 @@ class ConversationMemoryService:
         )
         llm_options = prompt_manager.get_config("memory", "llm_options") or {}
 
-        # LLM call
+        # LLM call. Extraction expects strict JSON, so we disable thinking
+        # mode for thinking-capable models (Qwen3, Qwen3.6, deepseek-r1, …);
+        # otherwise the JSON ends up in `reasoning_content` and `content` is
+        # empty, returning an "extracted=0" silent miss. Same fix pattern as
+        # the KG and intent paths (see utils/llm_client.py).
+        from utils.llm_client import extract_response_content, get_classification_chat_kwargs
+
         try:
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             extraction_model = settings.memory_extraction_model or settings.ollama_model
             response = await client.chat(
                 model=extraction_model,
@@ -319,8 +342,9 @@ class ConversationMemoryService:
                     {"role": "user", "content": prompt},
                 ],
                 options=llm_options,
+                **get_classification_chat_kwargs(extraction_model),
             )
-            raw_text = response.message.content
+            raw_text = extract_response_content(response)
         except Exception as e:
             logger.warning(f"Memory extraction LLM call failed: {e}")
             return []
@@ -937,8 +961,10 @@ class ConversationMemoryService:
         )
         llm_options = prompt_manager.get_config("memory", "contradiction_llm_options") or {}
 
+        from utils.llm_client import extract_response_content, get_classification_chat_kwargs
+
         try:
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             extraction_model = settings.memory_extraction_model or settings.ollama_model
             response = await client.chat(
                 model=extraction_model,
@@ -947,8 +973,9 @@ class ConversationMemoryService:
                     {"role": "user", "content": prompt},
                 ],
                 options=llm_options,
+                **get_classification_chat_kwargs(extraction_model),
             )
-            raw_text = response.message.content
+            raw_text = extract_response_content(response)
         except Exception as e:
             logger.warning(f"Contradiction resolution LLM call failed: {e}")
             return None

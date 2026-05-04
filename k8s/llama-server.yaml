@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-server-agent
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: llama-server-agent
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: llama-server-agent
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-server-agent
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: llama-server-agent
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama-server-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama-server-agent
+        app.kubernetes.io/part-of: renfield
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-gpu-1
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server-cuda
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-m"
+            - "/models/qwen3.6-35b-a3b-q4kxl.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "-ngl"
+            - "99"
+            - "--tensor-split"
+            - "16,16"
+            - "-c"
+            - "65536"
+            - "--parallel"
+            - "4"
+            - "-fa"
+            - "on"
+            - "-ctk"
+            - "q8_0"
+            - "-ctv"
+            - "q8_0"
+            - "--temp"
+            - "0.6"
+            - "--top-p"
+            - "0.95"
+            - "--alias"
+            - "qwen3.6"
+            - "--metrics"
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: LLAMA_ARG_N_GPU_LAYERS
+              value: "99"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+              nvidia.com/gpu: 2
+            limits:
+              cpu: "8"
+              memory: 24Gi
+              nvidia.com/gpu: 2
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 600
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: models
+          hostPath:
+            path: /mnt/llm
+            type: Directory

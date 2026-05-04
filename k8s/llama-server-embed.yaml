@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: llama-server-embed
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: llama-server-embed
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: llama-server-embed
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: llama-server-embed
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: llama-server-embed
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: llama-server-embed
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: llama-server-embed
+        app.kubernetes.io/part-of: renfield
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: k8s-gpu-2
+      containers:
+        - name: llama-server
+          image: ghcr.io/ggml-org/llama.cpp:server
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-m"
+            - "/models/qwen3-embedding-4b-q4km.gguf"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8080"
+            - "--embedding"
+            - "--pooling"
+            - "last"
+            - "-c"
+            - "8192"
+            - "--parallel"
+            - "4"
+            - "--alias"
+            - "qwen3-embedding"
+            - "--metrics"
+            - "-t"
+            - "6"
+          ports:
+            - containerPort: 8080
+              name: http
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "6"
+              memory: 12Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: models
+          hostPath:
+            path: /mnt/llm
+            type: Directory

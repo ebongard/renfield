@@ -248,7 +248,17 @@ async def _extract_memories_background(
     session_id: str | None,
     lang: str,
 ) -> None:
-    """Background task: extract and save memories from a conversation exchange."""
+    """Background task: extract and save memories from a conversation exchange.
+
+    Always logs the extraction outcome (including 0 memories) so silent
+    failures of the LLM extractor or guard short-circuits are visible in
+    production logs. Without this, missing memories look identical to a
+    bug-skipped trigger.
+    """
+    logger.info(
+        f"📝 Memory extraction starting (session={session_id}, user_id={user_id}, "
+        f"user_msg_len={len(user_message)}, assistant_msg_len={len(assistant_response)})"
+    )
     try:
         async with AsyncSessionLocal() as db:
             from services.conversation_memory_service import ConversationMemoryService
@@ -260,10 +270,12 @@ async def _extract_memories_background(
                 session_id=session_id,
                 lang=lang,
             )
-            if memories:
-                logger.info(f"Extracted {len(memories)} memories from conversation")
+            logger.info(
+                f"📝 Memory extraction done: extracted={len(memories)} "
+                f"(session={session_id})"
+            )
     except Exception as e:
-        logger.warning(f"Memory extraction failed: {e}")
+        logger.warning(f"Memory extraction failed: {e}", exc_info=True)
 
 
 def _format_file_size(size_bytes: int | None) -> str:
@@ -410,6 +422,7 @@ async def _stream_rag_response(
     document_context: str = "",
     personality_style: str | None = None,
     personality_prompt: str | None = None,
+    user_id: int | None = None,
 ) -> str:
     """Stream a RAG-enhanced or plain conversation response.
 
@@ -1131,6 +1144,7 @@ async def websocket_endpoint(
                             document_context=document_context,
                             personality_style=user_personality_style,
                             personality_prompt=user_personality_prompt,
+                            user_id=user_id,
                         )
                     else:
                         async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
@@ -1147,6 +1161,7 @@ async def websocket_endpoint(
                         document_context=document_context,
                         personality_style=user_personality_style,
                         personality_prompt=user_personality_prompt,
+                        user_id=user_id,
                     )
 
                 else:
@@ -1331,6 +1346,7 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                                 document_context=document_context,
                                 personality_style=user_personality_style,
                                 personality_prompt=user_personality_prompt,
+                                user_id=user_id,
                             )
                         else:
                             async for chunk in ollama.chat_stream(content, history=session_state.conversation_history, memory_context=memory_context, document_context=document_context, personality_style=user_personality_style, personality_prompt=user_personality_prompt):
@@ -1459,10 +1475,16 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
             # memories from error-response text would otherwise re-inject the
             # error string into long-term memory as if it were a stable fact.
             _action_success = assistant_metadata.get("action_success")
-            if (settings.memory_enabled
-                    and settings.memory_extraction_enabled
-                    and full_response
-                    and _action_success is not False):
+            _mem_should_run = (
+                settings.memory_enabled
+                and settings.memory_extraction_enabled
+                and full_response
+                and _action_success is not False
+            )
+            if _mem_should_run:
+                logger.debug(
+                    f"📝 Scheduling memory extraction (session={msg_session_id})"
+                )
                 task = asyncio.create_task(
                     _extract_memories_background(
                         user_message=content,
@@ -1474,6 +1496,19 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
                 )
                 _background_tasks.add(task)
                 task.add_done_callback(_background_tasks.discard)
+            else:
+                # WARN-level so the absence of extraction is auditable.
+                # The conversation/knowledge route can silently bypass this
+                # block today (e.g. when full_response is empty after a RAG
+                # fallback), and silent skips were previously indistinguishable
+                # from extractor success on an unmemorable turn.
+                logger.warning(
+                    f"📝 Memory extraction skipped: memory_enabled="
+                    f"{settings.memory_enabled} extraction_enabled="
+                    f"{settings.memory_extraction_enabled} "
+                    f"has_response={bool(full_response)} "
+                    f"action_success={_action_success}"
+                )
 
             # Hook: post_message (fire-and-forget for plugins like renfield-twin)
             from utils.hooks import run_hooks

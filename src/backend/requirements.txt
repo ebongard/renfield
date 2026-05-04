@@ -16,6 +16,7 @@ celery>=5.3.6
 
 # LLM & AI
 ollama>=0.4.0                 # Ollama Python client (async support)
+openai>=1.55.0                # OpenAI-compatible client for llama-server / vLLM endpoints
 
 # RAG & Document Processing
 docling>=2.0.0                # IBM Docling for document parsing (includes docling-ibm-models)

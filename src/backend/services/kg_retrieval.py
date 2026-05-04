@@ -62,7 +62,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KGEntity, KGRelation
 from utils.config import settings
-from utils.llm_client import get_embed_client
+from utils.llm_client import get_default_client, get_embed_client
 
 
 class KGRetrieval:
@@ -81,17 +81,24 @@ class KGRetrieval:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._ollama_client = None
+        self._embed_client = None
+        self._chat_client = None
 
-    async def _get_ollama_client(self):
-        """Lazy init of the embedding/extraction Ollama client."""
-        if self._ollama_client is None:
-            self._ollama_client = get_embed_client()
-        return self._ollama_client
+    async def _get_embed_client(self):
+        """Embed-tier LLM client (Qwen3-Embedding via llama-server-embed)."""
+        if self._embed_client is None:
+            self._embed_client = get_embed_client()
+        return self._embed_client
+
+    async def _get_chat_client(self):
+        """Chat-tier LLM client (Qwen3.6 via llama-server-agent) for entity-name extraction."""
+        if self._chat_client is None:
+            self._chat_client = get_default_client()
+        return self._chat_client
 
     async def _get_embedding(self, text_input: str) -> list[float]:
         """Generate embedding for query/entity text."""
-        client = await self._get_ollama_client()
+        client = await self._get_embed_client()
         response = await client.embeddings(
             model=settings.ollama_embed_model,
             prompt=text_input,
@@ -120,7 +127,7 @@ class KGRetrieval:
             llm_options = prompt_manager.get_config("knowledge_graph", "llm_options") or {}
             model = settings.kg_extraction_model or settings.ollama_model
 
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             response = await client.chat(
                 model=model,
                 messages=[

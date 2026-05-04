@@ -53,7 +53,8 @@ spec:
             - |
               echo "waiting for postgres..."; until nc -z postgres 5432; do sleep 1; done
               echo "waiting for redis...";    until nc -z redis 6379;    do sleep 1; done
-              echo "waiting for ollama...";   until nc -z ollama 11434;  do sleep 1; done
+              echo "waiting for llama-server-agent..."; until nc -z llama-server-agent 8080; do sleep 1; done
+              echo "waiting for llama-server-embed..."; until nc -z llama-server-embed 8080; do sleep 1; done
               echo "deps ready"
               mkdir -p /app/data/cache-home/.cache /app/data/cache-home/.EasyOCR
           resources:

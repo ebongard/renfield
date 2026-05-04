@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KG_ENTITY_TYPES, TIER_PUBLIC, KGEntity, KGRelation
 from utils.config import settings
-from utils.llm_client import get_embed_client
+from utils.llm_client import get_default_client, get_embed_client
 
 # =============================================================================
 # Compiled regex patterns for entity validation (module-level for performance)
@@ -108,7 +108,8 @@ class KnowledgeGraphService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        self._ollama_client = None
+        self._embed_client = None
+        self._chat_client = None
         # Cached fallback owner id — resolved lazily via _resolve_owner_user_id
         # when a writer doesn't carry an authenticated user (auth disabled, or
         # background jobs extracted from anonymous context). Matches the
@@ -147,14 +148,21 @@ class KnowledgeGraphService:
         from services.atom_service import AtomService
         return AtomService(self.db)
 
-    async def _get_ollama_client(self):
-        if self._ollama_client is None:
-            self._ollama_client = get_embed_client()
-        return self._ollama_client
+    async def _get_embed_client(self):
+        """Embed-tier LLM client (Qwen3-Embedding via llama-server-embed)."""
+        if self._embed_client is None:
+            self._embed_client = get_embed_client()
+        return self._embed_client
+
+    async def _get_chat_client(self):
+        """Chat-tier LLM client (Qwen3.6 via llama-server-agent) for KG extraction."""
+        if self._chat_client is None:
+            self._chat_client = get_default_client()
+        return self._chat_client
 
     async def _get_embedding(self, text_input: str) -> list[float]:
-        """Generate embedding using Ollama."""
-        client = await self._get_ollama_client()
+        """Generate embedding via the embed-tier LLM client."""
+        client = await self._get_embed_client()
         response = await client.embeddings(
             model=settings.ollama_embed_model,
             prompt=text_input,
@@ -183,7 +191,7 @@ class KnowledgeGraphService:
             llm_options = prompt_manager.get_config("knowledge_graph", "llm_options") or {}
             model = settings.kg_extraction_model or settings.ollama_model
 
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             response = await client.chat(
                 model=model,
                 messages=[
@@ -615,7 +623,7 @@ class KnowledgeGraphService:
         try:
             from utils.llm_client import extract_response_content, get_classification_chat_kwargs
 
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             response = await client.chat(
                 model=model,
                 messages=[
@@ -766,7 +774,7 @@ class KnowledgeGraphService:
         try:
             from utils.llm_client import extract_response_content, get_classification_chat_kwargs
 
-            client = await self._get_ollama_client()
+            client = await self._get_chat_client()
             response = await client.chat(
                 model=model,
                 messages=[

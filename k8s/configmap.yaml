@@ -29,13 +29,29 @@ data:
   # on the cluster subnet.
   PAPERLESS_API_URL: "http://192.168.1.162:8000"
 
-  # Models (auto-pulled by Ollama on first use if missing from NFS)
+  # OpenAI-compatible LLM endpoints (llama-server pods on the cluster).
+  #   - Chat/Agent/RAG/Intent/KG/Memory → llama-server-agent (Qwen3.6-35B-A3B
+  #     MoE Q4_K_XL on k8s-gpu-1 with tensor-split across both GPUs).
+  #   - Embeddings → llama-server-embed (Qwen3-Embedding-4B Q4_K_M on
+  #     k8s-gpu-2 CPU-only, with --embedding --pooling last).
+  # Vision is currently disabled (OLLAMA_VISION_MODEL=""); a third
+  # llama-server-vision pod can be added in a follow-up step.
+  LLM_OPENAI_BASE_URL: "http://llama-server-agent:8080/v1"
+  LLM_OPENAI_API_KEY: "no-key"
+  LLM_OPENAI_MODEL: "qwen3.6"
+  LLM_OPENAI_EMBED_BASE_URL: "http://llama-server-embed:8080/v1"
+  LLM_OPENAI_EMBED_MODEL: "qwen3-embedding"
+
+  # Legacy Ollama model names kept for back-compat with config code paths
+  # that read them as defaults. They're NOT used while the LLM_OPENAI_*
+  # endpoints are set, except OLLAMA_VISION_MODEL which gates the vision
+  # tier (empty = disabled).
   OLLAMA_MODEL: "qwen3:14b"
   OLLAMA_CHAT_MODEL: "qwen3:14b"
   OLLAMA_RAG_MODEL: "qwen3:14b"
   OLLAMA_INTENT_MODEL: "qwen3:8b"
   OLLAMA_EMBED_MODEL: "qwen3-embedding:4b"
-  OLLAMA_VISION_MODEL: "qwen3-vl:8b"
+  OLLAMA_VISION_MODEL: ""
   AGENT_MODEL: "qwen3:14b"
   EMBEDDING_DIMENSION: "2560"
   WHISPER_MODEL: "small"

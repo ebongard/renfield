@@ -161,6 +161,29 @@ class Settings(BaseSettings):
     agent_total_timeout: float = Field(default=120.0, ge=5.0, le=600.0)
     agent_model: str | None = None     # Optional: separate model for agent (default: ollama_model)
     agent_ollama_url: str | None = None # Optional: separate Ollama instance for agent (default: ollama_url)
+
+    # OpenAI-compatible LLM endpoint (e.g. llama-server). When set, the agent
+    # tier (and optionally chat/RAG/intent via per-tier overrides below) routes
+    # through this endpoint instead of Ollama. The URL must include the
+    # OpenAI-compatible path prefix, typically `…/v1`.
+    llm_openai_base_url: str | None = None
+    llm_openai_api_key: SecretStr | None = None    # Any non-empty string is accepted by llama-server
+    llm_openai_model: str = "qwen3.6"               # Logical model name exposed by the server (`--alias`)
+    # Per-tier opt-in: when True, that tier uses llm_openai_base_url instead of Ollama.
+    # `agent` defaults to True if llm_openai_base_url is set; chat/rag/intent default
+    # to following the agent setting unless explicitly overridden.
+    llm_openai_for_agent: bool | None = None
+    llm_openai_for_chat: bool | None = None
+    llm_openai_for_rag: bool | None = None
+    llm_openai_for_intent: bool | None = None
+    llm_openai_for_kg: bool | None = None
+    llm_openai_for_memory: bool | None = None
+
+    # Separate OpenAI-compatible endpoint for embeddings (a llama-server pod
+    # configured with `--embedding`, hosting an embedding-specific GGUF like
+    # Qwen3-Embedding-4B). When set, embeddings route here instead of Ollama.
+    llm_openai_embed_base_url: str | None = None
+    llm_openai_embed_model: str = "qwen3-embedding"
     agent_conv_context_messages: int = 12  # Number of conversation history messages in agent loop
     conversation_summary_threshold: int = 10  # Trigger LLM summary when message count exceeds this
     agent_roles_path: str = "config/agent_roles.yaml"  # Path to agent role definitions
