@@ -4,6 +4,16 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ---
 
+## [v2.4.4] — 2026-05-04
+
+Hotfix für das deployte k8s-Frontend-Bundle: ohne explizites `VITE_API_URL`-Build-Arg fiel der Production-Build auf `http://localhost:8000` zurück, was im Browser zu Mixed-Content-Blocking auf `https://renfield.local` führte (`/admin/satellites` zeigte "Satelliten konnten nicht geladen werden", DevTools-Console zeigte `XMLHttpRequest cannot load http://localhost:8000/api/satellites due to access control checks`). Backend war unverändert erreichbar; das Bundle zeigte nur auf den falschen Host.
+
+### Behoben
+
+- **Frontend Same-Origin-Default** — `getApiBaseUrl()` in `src/frontend/src/utils/env.ts` liefert in Production-Builds (`import.meta.env.PROD`) bei fehlendem oder leerem `VITE_API_URL` jetzt einen leeren String. axios verwendet dadurch relative URLs, die im Same-Origin-Reverse-Proxy-Setup (Traefik routet `/api/*` und `/ws` auf demselben Host wie `/`) automatisch korrekt aufgelöst werden — ohne dass der Build-Schritt einen `--build-arg VITE_API_URL=...` setzen muss. Das frühere Verhalten — Fallback auf `http://localhost:8000` mit Console-Warning — bleibt im Dev-Modus (`npm run dev`) erhalten. `deploy-production`-Skill um die Erläuterung ergänzt, dass der Build-Arg jetzt nur noch für echte Cross-Origin-Deployments nötig ist.
+
+---
+
 ## [v2.4.3] — 2026-05-02
 
 Brücke zur Reva-Kompatibilität. Schließt die letzten zwei kosmetischen Lücken aus dem Reva-Compat-Audit (`reva/docs/architecture/renfield-compatibility-requirements.md`); die anderen neun von elf Items waren in vorigen Sprints bereits restauriert. Nach diesem Release kann Reva sein Renfield-Submodul auf `main` bumpen und seine 75 E2E-Tests gegen die hier liegende Codebasis fahren.

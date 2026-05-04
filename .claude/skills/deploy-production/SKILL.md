@@ -100,6 +100,13 @@ docker push registry.treehouse.x-idra.de/renfield/frontend:latest
 docker push registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z
 ```
 
+> **No `--build-arg VITE_API_URL` required.** Since v2.4.4 the frontend defaults
+> to relative URLs in production builds (axios `baseURL=""` → same-origin). As
+> long as Traefik routes `/api/*` and `/ws` on the same host as the frontend
+> (which the `renfield-private` ingress does), the bundle works out of the
+> box. Pass `--build-arg VITE_API_URL=https://other.host` only for cross-origin
+> deployments. See `src/frontend/src/utils/env.ts`.
+
 ### Step 3 — Cleanup
 
 ```bash

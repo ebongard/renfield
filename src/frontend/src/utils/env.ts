@@ -36,12 +36,19 @@ function warnFallback(varName: string, fallbackValue: string): void {
 }
 
 /**
- * REST API base URL for the Renfield backend. Falls back to localhost:8000
- * when `VITE_API_URL` is unset, with a console warning.
+ * REST API base URL for the Renfield backend.
+ *
+ * - DEV (`npm run dev`): falls back to `http://localhost:8000` with a console warning.
+ * - PROD (built bundle) without `VITE_API_URL`: returns `""` so axios uses
+ *   relative URLs against the same origin. Standard same-origin reverse-proxy
+ *   deployment (Traefik routes `/api/*` to backend, `/` to frontend) just works
+ *   without any build-arg. Set `VITE_API_URL` only if the API is hosted on a
+ *   different origin.
  */
 export function getApiBaseUrl(): string {
   const value = import.meta.env.VITE_API_URL as string | undefined;
   if (value && value.length > 0) return value;
+  if (import.meta.env.PROD) return '';
   warnFallback('VITE_API_URL', FALLBACK_API_URL);
   return FALLBACK_API_URL;
 }
