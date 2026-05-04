@@ -7,6 +7,7 @@ Tests:
 - Agent client: URL priority resolution (role → fallback → default)
 """
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -18,8 +19,17 @@ if "ollama" not in sys.modules:
     _ollama_stub.AsyncClient = MagicMock()
     sys.modules["ollama"] = _ollama_stub
 
+# Same for openai — OpenAICompatibleClient instantiates openai.AsyncOpenAI in
+# __init__. The stub gets replaced with the real package in production images;
+# the tests below patch openai.AsyncOpenAI per-test to control return values.
+if "openai" not in sys.modules:
+    _openai_stub = MagicMock()
+    _openai_stub.AsyncOpenAI = MagicMock()
+    sys.modules["openai"] = _openai_stub
+
 from utils.llm_client import (
     LLMClient,
+    OpenAICompatibleClient,
     clear_client_cache,
     create_llm_client,
     extract_response_content,
@@ -27,7 +37,10 @@ from utils.llm_client import (
     get_classification_chat_kwargs,
     get_default_client,
     get_embed_client,
+    get_openai_compat_client,
+    get_openai_compat_embed_client,
     is_thinking_model,
+    use_openai_for_tier,
 )
 
 
@@ -157,6 +170,8 @@ class TestGetDefaultClient:
     @patch("utils.llm_client.settings")
     def test_uses_settings_ollama_url(self, mock_settings, mock_cls):
         """get_default_client() creates a client for settings.ollama_url."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://my-ollama:11434"
         mock_settings.ollama_fallback_url = ""  # no fallback
         mock_settings.ollama_connect_timeout = 10.0
@@ -177,6 +192,8 @@ class TestGetDefaultClient:
         """When OLLAMA_FALLBACK_URL is set, get_default_client returns a _FallbackLLMClient."""
         from utils.llm_client import _FallbackLLMClient
 
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://cuda.local:11434"
         mock_settings.ollama_fallback_url = "http://host.docker.internal:11434"
         mock_settings.ollama_connect_timeout = 10.0
@@ -199,6 +216,8 @@ class TestGetDefaultClient:
         """No _FallbackLLMClient when fallback URL equals primary URL."""
         from utils.llm_client import _FallbackLLMClient
 
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://cuda.local:11434"
         mock_settings.ollama_fallback_url = "http://cuda.local:11434"
         mock_settings.ollama_connect_timeout = 10.0
@@ -222,6 +241,8 @@ class TestGetEmbedClient:
     @patch("utils.llm_client.settings")
     def test_uses_embed_url_when_configured(self, mock_settings, mock_cls):
         """get_embed_client() creates a client for settings.ollama_embed_url."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_embed_url = "http://embed-host:11434"
         mock_settings.ollama_fallback_url = ""
         mock_settings.ollama_connect_timeout = 10.0
@@ -241,6 +262,8 @@ class TestGetEmbedClient:
     def test_falls_back_to_default_when_no_embed_url(self, mock_settings, mock_cls):
         """get_embed_client() uses default client when ollama_embed_url is None."""
         mock_settings.ollama_embed_url = None
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""
         mock_settings.ollama_connect_timeout = 10.0
@@ -261,6 +284,8 @@ class TestGetEmbedClient:
         """When OLLAMA_FALLBACK_URL is set, embed client also gets fallback wrapper."""
         from utils.llm_client import _FallbackLLMClient
 
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_embed_url = "http://embed-host:11434"
         mock_settings.ollama_fallback_url = "http://fallback:11434"
         mock_settings.ollama_connect_timeout = 10.0
@@ -277,6 +302,8 @@ class TestGetEmbedClient:
     def test_empty_string_embed_url_uses_default(self, mock_settings, mock_cls):
         """Empty string ollama_embed_url falls through to default."""
         mock_settings.ollama_embed_url = ""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""
         mock_settings.ollama_connect_timeout = 10.0
@@ -302,6 +329,8 @@ class TestGetAgentClient:
     @patch("utils.llm_client.settings")
     def test_role_url_has_highest_priority(self, mock_settings, mock_cls):
         """role_url wins over fallback_url and default."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""  # no fallback
         mock_settings.ollama_connect_timeout = 10.0
@@ -322,6 +351,8 @@ class TestGetAgentClient:
     @patch("utils.llm_client.settings")
     def test_fallback_url_used_when_no_role_url(self, mock_settings, mock_cls):
         """fallback_url is used when role_url is None."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""  # no fallback
         mock_settings.ollama_connect_timeout = 10.0
@@ -342,6 +373,8 @@ class TestGetAgentClient:
     @patch("utils.llm_client.settings")
     def test_default_url_used_when_no_overrides(self, mock_settings, mock_cls):
         """settings.ollama_url is used when both role_url and fallback_url are None."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""  # no fallback
         mock_settings.ollama_connect_timeout = 10.0
@@ -359,6 +392,8 @@ class TestGetAgentClient:
     @patch("utils.llm_client.settings")
     def test_empty_string_fallback_treated_as_falsy(self, mock_settings, mock_cls):
         """Empty string fallback_url falls through to default."""
+        mock_settings.llm_openai_base_url = None
+        mock_settings.llm_openai_embed_base_url = None
         mock_settings.ollama_url = "http://default:11434"
         mock_settings.ollama_fallback_url = ""  # no fallback
         mock_settings.ollama_connect_timeout = 10.0
@@ -590,3 +625,456 @@ class TestExtractResponseContent:
         result = extract_response_content(response)
         assert result == ""
         assert "Secret reasoning" not in result
+
+
+# ============================================================================
+# OpenAICompatibleClient — adapter against an OpenAI-shaped REST endpoint
+# (llama-server, vLLM, …) that surfaces Ollama-shaped response objects so
+# call-sites that read `.message.content` / `.message.tool_calls` /
+# `.message.thinking` keep working unchanged.
+# ============================================================================
+
+
+def _stub_openai_choice(content="", tool_calls=None, reasoning_content=None):
+    """Build a non-stream openai.ChatCompletion-shaped fake."""
+    msg = SimpleNamespace(
+        content=content,
+        tool_calls=tool_calls,
+        reasoning_content=reasoning_content,
+        role="assistant",
+    )
+    return SimpleNamespace(message=msg, finish_reason="stop", index=0)
+
+
+def _stub_openai_response(content="", tool_calls=None, reasoning_content=None):
+    """Top-level non-stream openai response with a single choice."""
+    choice = _stub_openai_choice(content, tool_calls, reasoning_content)
+    return SimpleNamespace(choices=[choice], usage=None, model="qwen3.6")
+
+
+async def _async_iter(items):
+    """Helper: turn a list into an async iterator (mocks an openai stream)."""
+    for item in items:
+        yield item
+
+
+def _make_openai_compat(monkeypatch, *, stub_factory=None) -> OpenAICompatibleClient:
+    """Construct an OpenAICompatibleClient with `openai.AsyncOpenAI` patched
+    to a controllable fake. Returns the adapter; the underlying fake is
+    accessible via adapter._client."""
+    fake_client = MagicMock()
+    fake_client.chat = MagicMock()
+    fake_client.chat.completions = MagicMock()
+    fake_client.chat.completions.create = AsyncMock()
+    fake_client.embeddings = MagicMock()
+    fake_client.embeddings.create = AsyncMock()
+    fake_client.models = MagicMock()
+    fake_client.models.list = AsyncMock()
+
+    if stub_factory:
+        stub_factory(fake_client)
+
+    fake_async_openai = MagicMock(return_value=fake_client)
+    monkeypatch.setattr("openai.AsyncOpenAI", fake_async_openai)
+
+    adapter = OpenAICompatibleClient(
+        base_url="http://llama:8080/v1",
+        api_key="test-key",
+        default_model="qwen3.6",
+    )
+    return adapter
+
+
+class TestOpenAICompatibleClientChat:
+    """Non-streaming chat() call shape."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_returns_ollama_shaped_response(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response(
+            content="Hi there"
+        )
+
+        response = await adapter.chat(
+            model="qwen3.6",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert response.message.content == "Hi there"
+        assert response.message.role == "assistant"
+        assert response.message.tool_calls is None
+        assert response.message.thinking is None
+        assert response.model == "qwen3.6"
+        assert response.done is True
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_passes_through_tool_calls(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        tc = SimpleNamespace(
+            function=SimpleNamespace(name="home_assistant_query", arguments='{"area":"wohnzimmer"}'),
+            id="call_1",
+            type="function",
+        )
+        adapter._client.chat.completions.create.return_value = _stub_openai_response(
+            content="", tool_calls=[tc]
+        )
+
+        response = await adapter.chat(
+            messages=[{"role": "user", "content": "Welche Lampen?"}],
+        )
+
+        assert response.message.content == ""
+        assert response.message.tool_calls is not None
+        assert response.message.tool_calls[0].function.name == "home_assistant_query"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_reasoning_content_surfaces_as_thinking(self, monkeypatch):
+        """When llama-server returns reasoning_content (thinking models), the
+        adapter exposes it as response.message.thinking — same field name as
+        ollama-python uses, so extract_response_content() works unchanged."""
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response(
+            content="", reasoning_content="Step 1, step 2…"
+        )
+
+        response = await adapter.chat(messages=[{"role": "user", "content": "?"}])
+        assert response.message.thinking == "Step 1, step 2…"
+        assert response.message.content == ""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_default_model_used_when_caller_omits(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(messages=[{"role": "user", "content": "x"}])
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert kwargs["model"] == "qwen3.6"  # default_model from constructor
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_strips_images_from_user_message(self, monkeypatch):
+        """Vision payloads (`images=[…]`) on user messages aren't supported
+        by the agent llama-server (single-model) and would otherwise be sent
+        as an unknown field. The adapter strips them silently."""
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(
+            messages=[
+                {"role": "user", "content": "describe", "images": ["base64-blob"]},
+            ],
+        )
+
+        sent = adapter._client.chat.completions.create.call_args.kwargs["messages"]
+        assert sent[0] == {"role": "user", "content": "describe"}
+        assert "images" not in sent[0]
+
+
+class TestOpenAICompatibleClientStreaming:
+    """Streaming chat() returns Ollama-shaped chunks via async generator."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_yields_ollama_shaped_chunks(self, monkeypatch):
+        chunk1 = SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content="Hello", tool_calls=None),
+                finish_reason=None,
+                index=0,
+            )]
+        )
+        chunk2 = SimpleNamespace(
+            choices=[SimpleNamespace(
+                delta=SimpleNamespace(content=" world", tool_calls=None),
+                finish_reason="stop",
+                index=0,
+            )]
+        )
+
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _async_iter([chunk1, chunk2])
+
+        # Mirrors the production call pattern used in services/ollama_service.py:
+        # `async for chunk in await client.chat(stream=True)`.
+        gen = await adapter.chat(messages=[{"role": "user", "content": "x"}], stream=True)
+        chunks = []
+        async for c in gen:
+            chunks.append(c)
+
+        assert [c.message.content for c in chunks] == ["Hello", " world"]
+        assert all(c.message.role == "assistant" for c in chunks)
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_stream_skips_chunks_with_no_choices(self, monkeypatch):
+        empty = SimpleNamespace(choices=[])
+        good = SimpleNamespace(choices=[SimpleNamespace(
+            delta=SimpleNamespace(content="ok", tool_calls=None),
+            finish_reason="stop", index=0,
+        )])
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _async_iter([empty, good])
+
+        gen = await adapter.chat(messages=[{"role": "user", "content": "x"}], stream=True)
+        chunks = [c async for c in gen]
+        assert len(chunks) == 1
+        assert chunks[0].message.content == "ok"
+
+
+class TestOpenAICompatibleClientOptionsMapping:
+    """Ollama `options` dict + kwargs are translated to OpenAI parameters."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_ollama_options_translate_to_openai(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(
+            messages=[{"role": "user", "content": "x"}],
+            options={
+                "temperature": 0.6,
+                "top_p": 0.95,
+                "num_predict": 64,
+                "seed": 42,
+                "stop": ["</done>"],
+                "mirostat": 1,  # ollama-only — should be silently dropped
+            },
+        )
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert kwargs["temperature"] == 0.6
+        assert kwargs["top_p"] == 0.95
+        assert kwargs["max_tokens"] == 64
+        assert kwargs["seed"] == 42
+        assert kwargs["stop"] == ["</done>"]
+        assert "mirostat" not in kwargs
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_format_json_translates_to_response_format(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(
+            messages=[{"role": "user", "content": "x"}],
+            format="json",
+        )
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert kwargs["response_format"] == {"type": "json_object"}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_think_false_disables_thinking_via_chat_template_kwargs(self, monkeypatch):
+        """`think=False` (the Ollama-side flag) translates to llama-server's
+        chat-template extension. Without this, Qwen3 models leave content
+        empty and put the JSON answer in reasoning_content — the silent
+        memory-extraction bug from the migration."""
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(
+            messages=[{"role": "user", "content": "x"}],
+            think=False,
+        )
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert kwargs["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_think_omitted_does_not_send_extra_body(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+
+        await adapter.chat(messages=[{"role": "user", "content": "x"}])
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        # Either absent, or explicitly None — both are fine; what matters is
+        # we don't pin enable_thinking to False when the caller didn't ask.
+        assert kwargs.get("extra_body") is None
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_tools_pass_through(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.chat.completions.create.return_value = _stub_openai_response()
+        tool_schema = {"type": "function", "function": {"name": "x", "parameters": {}}}
+
+        await adapter.chat(
+            messages=[{"role": "user", "content": "x"}],
+            tools=[tool_schema],
+            tool_choice="auto",
+        )
+
+        kwargs = adapter._client.chat.completions.create.call_args.kwargs
+        assert kwargs["tools"] == [tool_schema]
+        assert kwargs["tool_choice"] == "auto"
+
+
+class TestOpenAICompatibleClientEmbeddings:
+    """embeddings() returns Ollama-shaped {.embedding, .model}."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_returns_ollama_shaped_embedding(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.embeddings.create.return_value = SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.1, 0.2, 0.3], index=0)],
+            model="qwen3-embedding",
+        )
+
+        result = await adapter.embeddings(model="qwen3-embedding", prompt="hello")
+        assert result.embedding == [0.1, 0.2, 0.3]
+        assert result.model == "qwen3-embedding"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_empty_data_returns_empty_embedding(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.embeddings.create.return_value = SimpleNamespace(data=[])
+
+        result = await adapter.embeddings(prompt="hello")
+        assert result.embedding == []
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_uses_default_model_when_caller_omits(self, monkeypatch):
+        adapter = _make_openai_compat(monkeypatch)
+        adapter._client.embeddings.create.return_value = SimpleNamespace(
+            data=[SimpleNamespace(embedding=[0.0])],
+        )
+
+        await adapter.embeddings(prompt="hello")
+        kwargs = adapter._client.embeddings.create.call_args.kwargs
+        assert kwargs["model"] == "qwen3.6"
+
+
+class TestOpenAICompatFactories:
+    """Module-level factories for the OpenAI-compatible adapter."""
+
+    @pytest.mark.unit
+    def test_returns_none_when_unconfigured(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", None)
+        assert get_openai_compat_client() is None
+        assert get_openai_compat_embed_client() is None
+
+    @pytest.mark.unit
+    def test_chat_and_embed_clients_are_separately_cached(self, monkeypatch):
+        """Chat and embed adapters point at different llama-server pods, so
+        they must NOT share the same cache slot."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_base_url", "http://embed:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_model", "qwen3-embedding")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+
+        chat = get_openai_compat_client()
+        embed = get_openai_compat_embed_client()
+        assert chat is not None
+        assert embed is not None
+        assert chat is not embed
+        assert chat._base_url == "http://chat:8080/v1"
+        assert embed._base_url == "http://embed:8080/v1"
+
+    @pytest.mark.unit
+    def test_chat_client_is_cached_on_repeated_calls(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+
+        first = get_openai_compat_client()
+        second = get_openai_compat_client()
+        assert first is second
+
+
+class TestUseOpenAIForTier:
+    """Per-tier routing to the OpenAI-compatible endpoint."""
+
+    @pytest.mark.unit
+    def test_returns_false_when_endpoint_unset(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", None)
+        for tier in ("agent", "chat", "embed", "intent", "kg", "memory"):
+            assert use_openai_for_tier(tier) is False
+
+    @pytest.mark.unit
+    def test_default_routes_all_tiers_when_endpoint_set(self, monkeypatch):
+        """If no per-tier override is present and the endpoint is configured,
+        every tier defaults to using the llama-server. This is what makes
+        `OLLAMA_VISION_MODEL=""` enough to disable vision without a flag."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        for attr in ("llm_openai_for_agent", "llm_openai_for_chat",
+                     "llm_openai_for_rag", "llm_openai_for_intent",
+                     "llm_openai_for_kg", "llm_openai_for_memory"):
+            monkeypatch.setattr(f"utils.llm_client.settings.{attr}", None)
+
+        for tier in ("agent", "chat", "rag", "intent", "kg", "memory"):
+            assert use_openai_for_tier(tier) is True
+
+    @pytest.mark.unit
+    def test_per_tier_override_keeps_one_tier_on_ollama(self, monkeypatch):
+        """Setting LLM_OPENAI_FOR_INTENT=false routes only intent back to Ollama."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_intent", False)
+
+        assert use_openai_for_tier("agent") is True
+        assert use_openai_for_tier("intent") is False
+
+    @pytest.mark.unit
+    def test_explicit_agent_false_disables_default_for_unspecified_tiers(self, monkeypatch):
+        """When agent is explicitly off and a tier has no own override, it
+        follows the agent setting (off)."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", False)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_chat", None)
+
+        assert use_openai_for_tier("agent") is False
+        assert use_openai_for_tier("chat") is False
+
+
+class TestGetDefaultClientRoutesToOpenAI:
+    """get_default_client() / get_agent_client() prefer OpenAI when configured."""
+
+    @pytest.mark.unit
+    def test_default_client_returns_openai_adapter_when_configured(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://llama:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_chat", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_for_agent", None)
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+
+        client = get_default_client()
+        assert isinstance(client, OpenAICompatibleClient)
+
+    @pytest.mark.unit
+    def test_default_client_falls_through_to_ollama_when_disabled(self, monkeypatch):
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", None)
+        monkeypatch.setattr("utils.llm_client.settings.ollama_url", "http://ollama:11434")
+        monkeypatch.setattr("utils.llm_client.settings.ollama_fallback_url", "")
+
+        client = get_default_client()
+        assert not isinstance(client, OpenAICompatibleClient)
+
+    @pytest.mark.unit
+    def test_embed_client_uses_openai_embed_endpoint_not_chat(self, monkeypatch):
+        """Critical post-migration invariant: the embed factory points at the
+        embed pod, NOT at get_default_client which may have been swapped to
+        the chat-only llama-server. Mixing the two routed chat traffic to
+        the CPU-only embed pod and added 2+ minutes per turn (#527)."""
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_base_url", "http://chat:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_base_url", "http://embed:8080/v1")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_model", "qwen3.6")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_embed_model", "qwen3-embedding")
+        monkeypatch.setattr("utils.llm_client.settings.llm_openai_api_key", None)
+
+        embed = get_embed_client()
+        assert isinstance(embed, OpenAICompatibleClient)
+        assert embed._base_url == "http://embed:8080/v1"
+        assert embed._default_model == "qwen3-embedding"
