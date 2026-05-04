@@ -55,8 +55,13 @@ export function getApiBaseUrl(): string {
 
 /**
  * WebSocket URL for the Renfield backend (includes `/ws` path per convention).
- * Falls back to `ws://localhost:8000/ws` when `VITE_WS_URL` is unset, with a
- * console warning.
+ *
+ * - DEV (`npm run dev`): falls back to `ws://localhost:8000/ws` with a warning.
+ * - PROD (built bundle) without `VITE_WS_URL`: derives a same-origin WS URL
+ *   from `window.location` (e.g. `wss://renfield.local/ws`). Mirror of the
+ *   `getApiBaseUrl()` same-origin behaviour landed in PR #526. Without this,
+ *   a HTTPS-served bundle attempted `ws://localhost:8000/ws` from the
+ *   browser — mixed-content, blocked by Chrome.
  *
  * Consumers that need a different endpoint (e.g. `/ws/device`) should strip
  * the trailing `/ws` from the return value and append their own path —
@@ -65,6 +70,10 @@ export function getApiBaseUrl(): string {
 export function getWebSocketUrl(): string {
   const value = import.meta.env.VITE_WS_URL as string | undefined;
   if (value && value.length > 0) return value;
+  if (import.meta.env.PROD && typeof window !== 'undefined' && window.location) {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${proto}//${window.location.host}/ws`;
+  }
   warnFallback('VITE_WS_URL', FALLBACK_WS_URL);
   return FALLBACK_WS_URL;
 }

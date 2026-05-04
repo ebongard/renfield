@@ -117,9 +117,15 @@ class PiperService:
         served for the wrong speaker. Extend the cache key first if/when we
         adopt multi-speaker voices.
         """
+        # piper-tts API change: `synthesize()` now returns AudioChunk
+        # iterators and no longer writes to a wave file directly. Use the
+        # split `synthesize_wav()` method which preserves the prior contract
+        # (text in, populated WAV file out, sample format auto-set). Without
+        # this, `wave.close()` raises "# channels not specified" because the
+        # 2nd arg got interpreted as a SynthesisConfig and silently ignored.
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as wav_file:
-            voice.synthesize(text, wav_file)
+            voice.synthesize_wav(text, wav_file)
         return buffer.getvalue()
 
     async def _synthesize_async(self, voice: "PiperVoice", text: str) -> bytes:
