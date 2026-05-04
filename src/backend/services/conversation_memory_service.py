@@ -116,16 +116,6 @@ class ConversationMemoryService:
             self._chat_client = get_default_client()
         return self._chat_client
 
-    async def _get_ollama_client(self):
-        """Deprecated alias kept for any external callers; returns the embed client.
-
-        Internal call-sites must use ``_get_embed_client`` (for embeddings) or
-        ``_get_chat_client`` (for chat/extraction) explicitly. Mixing the two
-        sends chat traffic to the CPU-only embed pod and adds 1-2 minutes per
-        request.
-        """
-        return await self._get_embed_client()
-
     async def _get_embedding(self, text_input: str) -> list[float]:
         """Generate embedding via the embed-tier LLM client."""
         client = await self._get_embed_client()

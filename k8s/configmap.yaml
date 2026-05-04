@@ -37,7 +37,10 @@ data:
   # Vision is currently disabled (OLLAMA_VISION_MODEL=""); a third
   # llama-server-vision pod can be added in a follow-up step.
   LLM_OPENAI_BASE_URL: "http://llama-server-agent:8080/v1"
-  LLM_OPENAI_API_KEY: "no-key"
+  # LLM_OPENAI_API_KEY is sourced from the `renfield-secrets`/`llm-openai-api-key`
+  # Secret in backend.yaml. llama-server accepts any non-empty value today;
+  # the Secret indirection lets us swap to a real bearer (vLLM, OpenAI…)
+  # without re-applying this ConfigMap.
   LLM_OPENAI_MODEL: "qwen3.6"
   LLM_OPENAI_EMBED_BASE_URL: "http://llama-server-embed:8080/v1"
   LLM_OPENAI_EMBED_MODEL: "qwen3-embedding"

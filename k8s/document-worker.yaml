@@ -53,8 +53,10 @@ spec:
             - |
               echo "waiting for postgres..."; until nc -z postgres 5432; do sleep 1; done
               echo "waiting for redis...";    until nc -z redis 6379;    do sleep 1; done
-              echo "waiting for llama-server-agent..."; until nc -z llama-server-agent 8080; do sleep 1; done
-              echo "waiting for llama-server-embed..."; until nc -z llama-server-embed 8080; do sleep 1; done
+              # /health on llama-server returns {"status":"ok"} only once the GGUF
+              # model is fully loaded; TCP-only would pass before warmup.
+              echo "waiting for llama-server-agent /health..."; until wget -q -O- http://llama-server-agent:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              echo "waiting for llama-server-embed /health..."; until wget -q -O- http://llama-server-embed:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
               echo "deps ready"
               mkdir -p /app/data/cache-home/.cache /app/data/cache-home/.EasyOCR
           resources:
