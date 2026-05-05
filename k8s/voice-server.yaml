@@ -1,0 +1,165 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: voice-server
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: voice-server
+    app.kubernetes.io/part-of: renfield
+spec:
+  selector:
+    app.kubernetes.io/name: voice-server
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: http
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: voice-server-hf-cache
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: voice-server
+    app.kubernetes.io/part-of: renfield
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: voice-server
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: voice-server
+    app.kubernetes.io/part-of: renfield
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate          # only one GPU on k8s-gpu-3, can't run two replicas
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: voice-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: voice-server
+        app.kubernetes.io/part-of: renfield
+    spec:
+      nodeSelector:
+        renfield.io/role: voice-llm
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: voice-server
+          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: WHISPER_MODEL
+              value: "Systran/faster-whisper-medium"
+            - name: WHISPER_COMPUTE_TYPE
+              value: "int8_float16"
+            - name: WHISPER_DEVICE
+              value: "cuda"
+            - name: PIPER_VOICES_DIR
+              value: "/mnt/llm/voice/piper"
+            - name: PIPER_DEFAULT_VOICE_DE
+              value: "de_DE-thorsten-medium"
+            - name: PIPER_DEFAULT_VOICE_EN
+              value: "en_US-amy-medium"
+            - name: PIPER_USE_CUDA
+              value: "true"
+            - name: SPEAKER_MODEL_PATH
+              value: "/mnt/llm/voice/ecapa_tdnn.onnx"
+            - name: AUTH_MODE
+              value: "local"
+            - name: HF_HUB_CACHE
+              value: "/cache/huggingface"
+            - name: SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: renfield-secrets
+                  key: secret-key
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "6"
+              memory: 12Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: models
+              mountPath: /mnt/llm
+              readOnly: true
+            - name: hf-cache
+              mountPath: /cache
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 60        # ~10 min for first-pull of whisper-medium
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 600
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: models
+          hostPath:
+            path: /mnt/llm
+            type: Directory
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: voice-server-hf-cache
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: voice-server
+  namespace: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: renfield-https-redirect@kubernetescrd
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: renfield.local
+      http:
+        paths:
+          - path: /ws/voice
+            pathType: Prefix
+            backend:
+              service:
+                name: voice-server
+                port:
+                  number: 8080
+  tls:
+    - hosts:
+        - renfield.local
+      secretName: renfield-tls
