@@ -697,7 +697,20 @@ async def websocket_endpoint(
             # stay as user_id=None and the public-tier-only fallback
             # holds — full guest-identity support is option C in the
             # design (deferred PR).
-            if user_id is None and speaker_info and speaker_info.get("speaker_id"):
+            #
+            # Confidence floor (reuses settings.voice_auth_min_confidence,
+            # default 0.7 — same threshold the /api/auth/voice endpoint
+            # uses to issue JWTs from voice biometrics). The internal
+            # speaker_recognition_threshold (0.25) is sized for
+            # display/logging purposes; for an identity claim that
+            # grants access to private data, defense-in-depth at the
+            # promotion site is appropriate.
+            if (
+                user_id is None
+                and speaker_info
+                and speaker_info.get("speaker_id")
+                and speaker_info.get("speaker_confidence", 0.0) >= settings.voice_auth_min_confidence
+            ):
                 try:
                     voice_user_id = await _lookup_user_id_for_speaker(
                         speaker_info["speaker_id"]
@@ -706,10 +719,27 @@ async def websocket_endpoint(
                         user_id = voice_user_id
                         logger.info(
                             f"🎤 voice-driven identity: speaker "
-                            f"{speaker_info.get('speaker_name')} → user_id={user_id}"
+                            f"{speaker_info.get('speaker_name')} "
+                            f"(conf={speaker_info.get('speaker_confidence', 0):.2f}) "
+                            f"→ user_id={user_id}"
                         )
                 except Exception as e:
                     logger.warning(f"⚠️ speaker→user identity lookup failed: {e}")
+            elif (
+                user_id is None
+                and speaker_info
+                and speaker_info.get("speaker_id")
+            ):
+                # Match found but below confidence floor — log so we can
+                # see when legitimate users are being denied. No identity
+                # promotion; falls through to public-tier behavior.
+                logger.info(
+                    f"🎤 voice match below identity threshold: "
+                    f"speaker {speaker_info.get('speaker_name')} "
+                    f"(conf={speaker_info.get('speaker_confidence', 0):.2f} < "
+                    f"{settings.voice_auth_min_confidence}) — "
+                    f"identity not elevated"
+                )
 
             user_permissions = None
             user_personality_style = None
