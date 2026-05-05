@@ -45,6 +45,26 @@ except ImportError:
 from services.audio_preprocessor import AudioPreprocessor
 
 
+# B.4.c thin-client helpers — used when delegating to voice-server.
+# The bearer token is needed for voice-server's local-mode JWT auth.
+# In-route callers have a real user token; non-route callers (document
+# worker, scheduled jobs) need a service-account token signed with the
+# same SECRET_KEY voice-server validates against.
+def _get_service_token() -> str:
+    """Mint a short-lived service-account JWT for cross-pod auth."""
+    from services.auth_service import create_access_token
+    return create_access_token({"sub": "service:whisper", "scope": "voice"})
+
+
+def _content_type_for_filename(filename: str) -> str:
+    ext = Path(filename).suffix.lower()
+    if ext in (".webm",):
+        return "audio/webm;codecs=opus"
+    if ext in (".ogg", ".opus"):
+        return "audio/ogg;codecs=opus"
+    return "audio/wav"
+
+
 class WhisperService:
     """Service für Speech-to-Text mit Whisper"""
 
@@ -243,7 +263,19 @@ class WhisperService:
             filename: Original filename (used for extension)
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
             initial_prompt: Per-request bias string (overrides whisper_initial_prompt default).
+
+        B.4.c.2: when settings.voice_server_url is configured, delegate to
+        the voice-server pod over HTTP. `initial_prompt` is dropped on
+        that path — voice-server doesn't currently accept a per-request
+        bias and the cluster bias prompt logic was always satellite-route
+        specific. In-process Whisper code stays as the dev-environment
+        fallback.
         """
+        if settings.voice_server_url:
+            return await self._transcribe_bytes_via_voice_server(
+                audio_bytes, filename=filename, language=language
+            )
+
         # Temporäre Datei erstellen
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
@@ -254,6 +286,34 @@ class WhisperService:
         finally:
             # Temporäre Datei löschen
             Path(tmp_path).unlink(missing_ok=True)
+
+    async def _transcribe_bytes_via_voice_server(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str = "audio.wav",
+        language: str = None,
+    ) -> str:
+        """Delegate STT to the voice-server pod (B.4.c thin-client path)."""
+        from services.voice_server_client import VoiceServerError, stt as vs_stt
+
+        # Caller passes the bearer token implicitly via FastAPI Depends
+        # in the route layer; this method is reachable from non-route
+        # paths (e.g. document_worker) too. For non-route callers we
+        # mint a service-account token from the platform secret_key.
+        token = _get_service_token()
+        try:
+            result = await vs_stt(
+                audio_bytes,
+                filename=filename,
+                content_type=_content_type_for_filename(filename),
+                language=language,
+                auth_token=token,
+            )
+        except VoiceServerError as e:
+            logger.error(f"voice-server STT failed: {e}")
+            return ""
+        return result.get("text", "") or ""
 
     async def transcribe_with_speaker(
         self,
@@ -544,7 +604,21 @@ class WhisperService:
 
         Returns:
             Same as transcribe_with_speaker
+
+        B.4.c.2: when settings.voice_server_url is configured, this method
+        delegates STT to the voice-server pod and resolves the speaker
+        via services.speaker_resolver. Same return shape as the legacy
+        in-process path so existing callers (`/api/voice/stt`) don't
+        change.
         """
+        if settings.voice_server_url:
+            return await self._transcribe_bytes_with_speaker_via_voice_server(
+                audio_bytes,
+                filename=filename,
+                db_session=db_session,
+                language=language,
+            )
+
         with tempfile.NamedTemporaryFile(suffix=Path(filename).suffix, delete=False) as tmp:
             tmp.write(audio_bytes)
             tmp_path = tmp.name
@@ -553,3 +627,58 @@ class WhisperService:
             return await self.transcribe_with_speaker(tmp_path, db_session, language=language, initial_prompt=initial_prompt)
         finally:
             Path(tmp_path).unlink(missing_ok=True)
+
+    async def _transcribe_bytes_with_speaker_via_voice_server(
+        self,
+        audio_bytes: bytes,
+        *,
+        filename: str = "audio.wav",
+        db_session=None,
+        language: str = None,
+    ) -> dict:
+        """Delegate STT + resolve speaker via wire embedding (B.4.c)."""
+        from services.database import AsyncSessionLocal
+        from services.speaker_resolver import resolve_speaker_from_embedding
+        from services.voice_server_client import VoiceServerError, stt as vs_stt
+
+        token = _get_service_token()
+        try:
+            result = await vs_stt(
+                audio_bytes,
+                filename=filename,
+                content_type=_content_type_for_filename(filename),
+                language=language,
+                auth_token=token,
+            )
+        except VoiceServerError as e:
+            logger.error(f"voice-server STT failed: {e}")
+            return {
+                "text": "",
+                "speaker_id": None,
+                "speaker_name": None,
+                "speaker_alias": None,
+                "speaker_confidence": 0.0,
+                "is_new_speaker": False,
+            }
+
+        text = result.get("text", "") or ""
+        embedding = result.get("speaker_embedding")
+
+        speaker_info = {
+            "speaker_id": None,
+            "speaker_name": None,
+            "speaker_alias": None,
+            "speaker_confidence": 0.0,
+            "is_new_speaker": False,
+        }
+        if embedding and settings.speaker_recognition_enabled:
+            # The resolver commits mid-flight on auto-enrol + continuous
+            # learning. Use a dedicated session so we don't commit the
+            # caller's borrowed `db_session` mid-request.
+            try:
+                async with AsyncSessionLocal() as spk_db:
+                    speaker_info = await resolve_speaker_from_embedding(spk_db, embedding)
+            except Exception as e:
+                logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
+
+        return {"text": text, **speaker_info}

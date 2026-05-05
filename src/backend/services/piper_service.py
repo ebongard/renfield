@@ -227,15 +227,28 @@ class PiperService:
         Args:
             text: Text to synthesize
             language: Optional language code (e.g., 'de', 'en'). Falls back to default_language.
-        """
-        if not self.available:
-            logger.warning("Piper nicht verfügbar, TTS übersprungen")
-            return b""
 
+        B.4.c.3: when settings.voice_server_url is configured, delegate
+        to voice-server's /api/voice/tts. The WAV cache stays useful —
+        a cache hit avoids the network round-trip entirely. Cache key
+        is `(voice_name, text)`; voice_name resolves the same way for
+        both the local and the wire path so the cache survives a flip
+        of voice_server_url.
+        """
         voice_name = self._get_voice_for_language(language)
         cached = self._cache_get(voice_name, text)
         if cached is not None:
             return cached
+
+        if settings.voice_server_url:
+            wav_bytes = await self._synthesize_via_voice_server(text, language=language)
+            if wav_bytes:
+                self._cache_put(voice_name, text, wav_bytes)
+            return wav_bytes
+
+        if not self.available:
+            logger.warning("Piper nicht verfügbar, TTS übersprungen")
+            return b""
 
         voice = self._load_voice(voice_name)
         if voice is None:
@@ -247,6 +260,20 @@ class PiperService:
             return wav_bytes
         except Exception as e:
             logger.error(f"❌ TTS Fehler ({voice_name}): {e}")
+            return b""
+
+    async def _synthesize_via_voice_server(self, text: str, *, language: str | None = None) -> bytes:
+        """Delegate TTS to the voice-server pod (B.4.c thin-client)."""
+        from services.auth_service import create_access_token
+        from services.voice_server_client import VoiceServerError, tts as vs_tts
+
+        # Service-account token signed with the platform SECRET_KEY,
+        # which voice-server validates in local mode.
+        token = create_access_token({"sub": "service:piper", "scope": "voice"})
+        try:
+            return await vs_tts(text, language=language, auth_token=token)
+        except VoiceServerError as e:
+            logger.error(f"voice-server TTS failed: {e}")
             return b""
 
 

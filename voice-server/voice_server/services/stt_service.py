@@ -72,13 +72,24 @@ class STTService:
         self,
         audio_pcm: np.ndarray,
         language: str | None = None,
+        *,
+        partial: bool = False,
     ) -> AsyncIterator[TranscriptSegment]:
         """Transcribe a complete audio buffer, yielding partial segments as they finalize.
 
         Caller passes the entire accumulated audio so far (float32 mono
         16 kHz). faster-whisper's segment iterator finalizes segments as
-        the decoder advances; we forward each one as it arrives, marking
-        the last as partial=False.
+        the decoder advances; we forward each one as it arrives.
+
+        Set `partial=True` for the in-flight pass while the user is
+        still speaking. With `vad_filter=True` (the default for
+        finalisation) the decoder only emits segments after ≥500 ms of
+        silence — empirically zero output during continuous speech.
+        For partials we drop `vad_filter` (and trust a confidence
+        floor + the WS handler's de-dup against `last_partial_text`)
+        so the user sees their utterance as it accumulates instead of
+        only at end-of-utterance. The final pass uses the strict
+        path so the persisted transcript stays clean.
 
         After the iterator is exhausted, the auto-detected language is
         accessible via `self.last_language` — populated each time
@@ -94,14 +105,17 @@ class STTService:
         loop = asyncio.get_running_loop()
         async with self._lock:
             def _run():
-                segments, info = self._model.transcribe(
-                    audio_pcm,
-                    language=language or settings.whisper_language_default,
-                    vad_filter=True,
-                    vad_parameters={"min_silence_duration_ms": settings.whisper_vad_min_silence_ms},
-                    beam_size=1,
-                    no_speech_threshold=0.5,
-                )
+                kwargs: dict = {
+                    "language": language or settings.whisper_language_default,
+                    "beam_size": 1,
+                    "no_speech_threshold": 0.5,
+                }
+                if not partial:
+                    kwargs["vad_filter"] = True
+                    kwargs["vad_parameters"] = {
+                        "min_silence_duration_ms": settings.whisper_vad_min_silence_ms,
+                    }
+                segments, info = self._model.transcribe(audio_pcm, **kwargs)
                 return list(segments), info
 
             segments, info = await loop.run_in_executor(None, _run)

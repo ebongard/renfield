@@ -49,6 +49,11 @@ router = APIRouter()
 
 PARTIAL_INTERVAL_S = 0.7
 MAX_UTTERANCE_S = 60
+# Suppress partial_transcript events below this confidence — protects
+# against faster-whisper hallucinations on near-silence when vad_filter
+# is off (the partials path). Empirically calibrated; the final pass
+# uses VAD so isn't subject to this floor.
+PARTIAL_CONFIDENCE_FLOOR = 0.5
 
 
 @dataclass
@@ -98,9 +103,20 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
     try:
         seg_texts: list[str] = []
         last_conf = 0.0
-        async for seg in stt.transcribe_stream(audio):
+        # B.4.c.1: partial=True drops vad_filter so segments emit during
+        # continuous speech instead of only after a 500 ms silence pause
+        # (the bug the final B.4 review surfaced — Phase B's "partials
+        # while user speaks" promise was being silently broken).
+        async for seg in stt.transcribe_stream(audio, partial=True):
             seg_texts.append(seg.text)
             last_conf = seg.confidence
+
+        # Confidence floor: with vad_filter off, faster-whisper sometimes
+        # hallucinates plausible text on near-silence. Suppress partials
+        # below 0.5 to keep the displayed transcript clean. The final
+        # pass uses VAD and is unaffected.
+        if last_conf < PARTIAL_CONFIDENCE_FLOOR:
+            return
 
         combined = " ".join(t.strip() for t in seg_texts if t.strip())
         if combined and combined != state.last_partial_text:

@@ -45,6 +45,14 @@ data:
   LLM_OPENAI_EMBED_BASE_URL: "http://llama-server-embed:8080/v1"
   LLM_OPENAI_EMBED_MODEL: "qwen3-embedding"
 
+  # Voice-server (B.4): when set, backend's /api/voice/voice-chat
+  # orchestrator delegates STT + TTS to the voice-server pod
+  # (k8s-gpu-3) instead of running them in-process. Backend retains
+  # the in-process whisper_service + piper_service as a fallback for
+  # dev environments without a voice-server deployment until B.4.c
+  # removes them.
+  VOICE_SERVER_URL: "http://voice-server:8080"
+
   # Legacy Ollama model names kept for back-compat with config code paths
   # that read them as defaults. They're NOT used while the LLM_OPENAI_*
   # endpoints are set, except OLLAMA_VISION_MODEL which gates the vision
