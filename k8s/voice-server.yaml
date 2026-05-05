@@ -65,7 +65,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: voice-server
-          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.2
+          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.3
           # NOTE: until the release process pins immutable image digests,
           # use Always to avoid silently running a stale rebuild under the
           # same tag.

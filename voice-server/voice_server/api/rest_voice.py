@@ -26,7 +26,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from voice_server.auth import AuthError, authenticate
-from voice_server.services.audio_decoder import AudioDecoder
+from voice_server.services.audio_oneshot import OneshotDecodeError, decode_audio_to_pcm
 from voice_server.services.speaker_service import SpeakerService
 from voice_server.services.stt_service import STTService
 from voice_server.services.tts_service import TTSService
@@ -69,25 +69,20 @@ async def stt_endpoint(
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="empty audio")
 
-    content_type = (audio.content_type or "").lower()
-    codec = (
-        "audio/wav"
-        if "wav" in content_type or audio.filename and audio.filename.lower().endswith(".wav")
-        else "audio/webm;codecs=opus" if "webm" in content_type
-        else "audio/ogg;codecs=opus" if "ogg" in content_type
-        else "audio/wav"
-    )
-
-    decoder = AudioDecoder(codec)
+    # REST gives us a complete file — let ffmpeg auto-detect the container
+    # and codec. The streaming AudioDecoder pins -f to a codec hint
+    # because chunks can't be auto-detected, but that hint over-constrains
+    # full-file uploads (e.g. browser MediaRecorder webm/opus rejected by
+    # `-f webm`). The one-shot decoder also captures stderr so failures
+    # produce a real error message instead of silent 0 PCM.
     try:
-        await decoder.start()
-        await decoder.push(audio_bytes)
-        pcm = await decoder.flush()
-    finally:
-        await decoder.close()
+        pcm = await decode_audio_to_pcm(audio_bytes)
+    except OneshotDecodeError as e:
+        logger.warning("STT decode failed: %s", e)
+        raise HTTPException(status_code=400, detail=f"audio decode failed: {e}") from e
 
     if pcm.size == 0:
-        raise HTTPException(status_code=400, detail="ffmpeg produced no PCM")
+        raise HTTPException(status_code=400, detail="empty PCM after decode")
 
     stt: STTService = request.app.state.stt
     speaker: SpeakerService = request.app.state.speaker
