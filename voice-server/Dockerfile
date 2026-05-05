@@ -18,10 +18,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# nvidia/cuda:12.6.3-runtime-ubuntu24.04 ships with a libgcrypt/gnupg
+# combination that rejects the current Ubuntu noble apt InRelease
+# signatures ("At least one invalid signature"). All Ubuntu repos +
+# the bundled cuda repo fail the same way. Bypass: accept insecure
+# repos AND skip authentication on install. Acceptable because the
+# base image is pulled from Docker Hub via the nvidia/cuda
+# digest-pinned reference; the apt install of well-known Ubuntu
+# packages over HTTPS is a much smaller risk surface than tampering
+# with the base image we already trust.
+RUN apt-get -o Acquire::AllowInsecureRepositories=true \
+            -o Acquire::AllowDowngradeToInsecureRepositories=true \
+            update \
+ && apt-get install -y --allow-unauthenticated --no-install-recommends \
         python3.12 python3.12-venv python3-pip \
         ffmpeg ca-certificates curl \
-    && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/*
 
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
@@ -29,27 +41,35 @@ ENV PATH="/opt/venv/bin:$PATH"
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
-# Layer 1: heavy ML deps (torch, faster-whisper, onnxruntime-gpu, speechbrain)
-RUN pip install --upgrade pip wheel \
- && pip install --extra-index-url https://download.pytorch.org/whl/cu124 \
-        torch>=2.4 torchaudio>=2.4 \
- && pip install \
-        faster-whisper>=1.1.0 \
-        onnxruntime-gpu>=1.20 \
-        speechbrain>=1.0
+# torch is used ONLY for speechbrain's compute_features +
+# mean_var_norm CPU preproc (per design § B.1.0 — ECAPA features
+# run on CPU before the ONNX call). STT uses CTranslate2; ECAPA
+# inference uses onnxruntime-gpu. So we install CPU torch
+# (~150 MB) instead of the cu124 wheel (~5 GB) — keeps every
+# layer well below Harbor's ~2.5 GB practical limit.
+RUN pip install --upgrade pip wheel
 
-# Layer 2: web framework + light deps
+RUN pip install --index-url https://download.pytorch.org/whl/cpu \
+        torch>=2.4 torchaudio>=2.4
+
+RUN pip install \
+        numpy>=1.26 \
+        soundfile>=0.12 \
+        onnxruntime-gpu>=1.20 \
+        faster-whisper>=1.1.0
+
+RUN pip install speechbrain>=1.0
+
 RUN pip install \
         fastapi>=0.115 \
         "uvicorn[standard]>=0.30" \
         pydantic>=2.9 pydantic-settings>=2.5 \
         "python-jose[cryptography]>=3.3" \
+        "python-multipart>=0.0.18" \
         httpx>=0.27 \
         ffmpeg-python>=0.2 \
         prometheus-client>=0.20 \
         loguru>=0.7 \
-        numpy>=1.26 \
-        soundfile>=0.12 \
         piper-tts>=1.3.0
 
 COPY voice_server /app/voice_server

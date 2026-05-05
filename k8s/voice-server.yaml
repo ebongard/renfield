@@ -55,6 +55,8 @@ spec:
     spec:
       nodeSelector:
         renfield.io/role: voice-llm
+      imagePullSecrets:
+        - name: harbor-pull-secret
       tolerations:
         - key: nvidia.com/gpu
           operator: Exists
