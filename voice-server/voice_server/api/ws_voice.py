@@ -149,7 +149,6 @@ async def _finalize(
     duration_s = float(audio.size) / 16000.0
 
     final_text = ""
-    language = "de"
     try:
         async for seg in stt.transcribe_stream(audio):
             final_text = (final_text + " " + seg.text).strip()
@@ -158,6 +157,11 @@ async def _finalize(
         await _send_error(ws, "stt_failed", str(e))
         state.audio_pcm.clear()
         return
+
+    # Read the auto-detected language from the side-channel populated
+    # by transcribe_stream. Fixes the review finding that final_transcript
+    # was hardcoded to "de" regardless of what Whisper actually detected.
+    language = stt.last_language or "de"
 
     embedding: list[float] | None = None
     try:

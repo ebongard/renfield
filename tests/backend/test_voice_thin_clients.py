@@ -97,13 +97,71 @@ async def test_whisper_with_speaker_passes_embedding_to_resolver(monkeypatch) ->
 
     from services.whisper_service import WhisperService
 
+    # Sentinel db_session — the wire path needs a non-None caller
+    # session to opt-in to speaker resolution (mirrors the in-process
+    # contract). The resolver itself receives a fresh session opened
+    # internally, so the sentinel is never actually used for queries.
     svc = WhisperService()
-    result = await svc.transcribe_bytes_with_speaker(b"\0" * 100, language="de")
+    result = await svc.transcribe_bytes_with_speaker(
+        b"\0" * 100,
+        language="de",
+        db_session=object(),
+    )
     assert result["text"] == "spoken text"
     assert result["speaker_id"] == 42
     assert result["speaker_name"] == "Test User"
     assert len(received_embedding) == 1
     assert len(received_embedding[0]) == 192
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whisper_with_speaker_skips_resolution_when_db_session_none(monkeypatch) -> None:
+    """db_session=None opt-out (mirrors in-process contract) suppresses speaker resolution."""
+    resolver_called = []
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "text": "hello",
+                "language": "de",
+                "audio_duration_s": 1.0,
+                "speaker_embedding": [0.1] * 192,
+            },
+        )
+
+    _patch_async_client(monkeypatch, handler)
+
+    async def fake_resolver(_db, _embedding):
+        resolver_called.append(True)
+        return {
+            "speaker_id": 99,
+            "speaker_name": "WRONG",
+            "speaker_alias": "wrong",
+            "speaker_confidence": 1.0,
+            "is_new_speaker": True,
+        }
+
+    monkeypatch.setattr(
+        "services.speaker_resolver.resolve_speaker_from_embedding",
+        fake_resolver,
+    )
+
+    from utils.config import settings
+    monkeypatch.setattr(settings, "speaker_recognition_enabled", True)
+
+    from services.whisper_service import WhisperService
+
+    svc = WhisperService()
+    result = await svc.transcribe_bytes_with_speaker(
+        b"\0" * 100,
+        language="de",
+        db_session=None,
+    )
+    assert result["text"] == "hello"
+    assert result["speaker_id"] is None  # opt-out honored
+    assert resolver_called == []          # resolver never called
 
 
 @pytest.mark.unit

@@ -671,7 +671,12 @@ class WhisperService:
             "speaker_confidence": 0.0,
             "is_new_speaker": False,
         }
-        if embedding and settings.speaker_recognition_enabled:
+        # Mirror the in-process path's contract: passing db_session=None
+        # is the documented way to suppress speaker recognition for a
+        # given call (e.g., document-worker batch transcription where
+        # speaker rows are not desired). The wire path was silently
+        # ignoring that opt-out and always resolving — fixed.
+        if embedding and settings.speaker_recognition_enabled and db_session is not None:
             # The resolver commits mid-flight on auto-enrol + continuous
             # learning. Use a dedicated session so we don't commit the
             # caller's borrowed `db_session` mid-request.
