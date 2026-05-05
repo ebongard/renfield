@@ -365,7 +365,9 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   // Ref for sendMessageInternal (used by handleTranscription before
   // sendMessageInternal is declared below).
-  const sendMessageInternalRef = useRef<(text: string, fromVoice?: boolean) => Promise<void>>(
+  const sendMessageInternalRef = useRef<
+    (text: string, fromVoice?: boolean, voiceMeta?: { speakerEmbedding?: number[] | null }) => Promise<void>
+  >(
     async () => undefined,
   );
 
@@ -790,12 +792,13 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // the conditional-hook rule isn't violated.
   const handleStreamFinal = useCallback((result: FinalTranscript) => {
     debug.log('voice-stream final transcript:', result.text);
-    void sendMessageInternalRef.current(result.text, true);
-    // R1 wiring: speaker_embedding + audio_duration_s flow into the
-    // chat-WS envelope in B.4.b (backend speaker_service.find_or_create
-    // consumes them). For now we just route the text through the same
-    // sendMessage path; backend keeps doing in-process speaker rec when
-    // speaker_embedding is absent.
+    // B.4.a: forward speaker_embedding through the chat-WS envelope so
+    // the backend resolves the speaker without re-running Whisper. The
+    // backend handler treats the field as nullable; text-only flows
+    // skip it.
+    void sendMessageInternalRef.current(result.text, true, {
+      speakerEmbedding: result.speakerEmbedding,
+    });
   }, []);
 
   const handleStreamError = useCallback((code: string, message: string) => {
@@ -925,7 +928,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
   startRecordingRef.current = startRecording;
 
   // Internal send message function
-  const sendMessageInternal = useCallback(async (text: string, fromVoice = false): Promise<void> => {
+  const sendMessageInternal = useCallback(async (
+    text: string,
+    fromVoice = false,
+    voiceMeta?: { speakerEmbedding?: number[] | null },
+  ): Promise<void> => {
     if (!text.trim()) return;
 
     if (!fromVoice) {
@@ -987,6 +994,11 @@ export function ChatProvider({ children }: ChatProviderProps) {
       use_rag: useRag,
       knowledge_base_id: selectedKnowledgeBase,
       ...(completedIds.length > 0 && { attachment_ids: completedIds }),
+      // B.4.a: ECAPA speaker embedding from voice-server flows here.
+      // Backend chat handler resolves the Speaker DB row when present.
+      ...(voiceMeta?.speakerEmbedding && {
+        speaker_embedding: voiceMeta.speakerEmbedding,
+      }),
     };
 
     // wsSendMessage re-checks readyState before .send() and returns false

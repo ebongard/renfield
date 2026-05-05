@@ -588,9 +588,40 @@ async def websocket_endpoint(
                 use_rag = msg.use_rag
                 knowledge_base_id = msg.knowledge_base_id
                 attachment_ids = msg.attachment_ids or []
+                msg_speaker_embedding = msg.speaker_embedding
+                msg_request_id = msg.request_id
             except ValidationError as e:
                 await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
+
+            # Phase B (B.4.a): resolve voice-server-supplied speaker
+            # embedding. When present, this came in via the streaming
+            # voice path (voice-server /ws/voice → frontend → chat-WS).
+            # We log + run the same find-or-auto-enrol policy that the
+            # in-process Whisper path uses, then thread `speaker_info`
+            # through the chat_context_established hook so domain
+            # consumers (Reva tenancy, ha_glue presence) react to the
+            # right speaker. Best-effort: failures fall back to the
+            # authenticated user identity.
+            speaker_info: dict | None = None
+            if msg_speaker_embedding:
+                try:
+                    from services.speaker_resolver import resolve_speaker_from_embedding
+                    async with AsyncSessionLocal() as spk_session:
+                        speaker_info = await resolve_speaker_from_embedding(
+                            spk_session, msg_speaker_embedding
+                        )
+                    if speaker_info and speaker_info.get("speaker_id"):
+                        logger.info(
+                            f"🎤 chat-WS speaker resolved: "
+                            f"{speaker_info.get('speaker_name')} "
+                            f"(id={speaker_info.get('speaker_id')}, "
+                            f"conf={speaker_info.get('speaker_confidence', 0):.2f}, "
+                            f"new={speaker_info.get('is_new_speaker')})"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ Speaker resolution from wire-embedding failed: {e}")
+                    speaker_info = None
 
             _log_user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
             logger.info(f"📨 WebSocket Nachricht: {message_type} - '{content[:100]}' (RAG: {use_rag}, session: {msg_session_id}, user: {_log_user_id})")
@@ -666,6 +697,10 @@ async def websocket_endpoint(
                     room_id=room_context["room_id"],
                     room_name=room_context.get("room_name"),
                     lang=lang,
+                    # B.4.a: pass through speaker resolution when this
+                    # message came in via the streaming voice path.
+                    # Hooks that don't care can ignore the kwarg.
+                    speaker_info=speaker_info,
                 )
 
             # === Media Transport Shortcut (pre-memory, pre-router) ===

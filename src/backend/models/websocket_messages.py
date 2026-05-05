@@ -189,6 +189,16 @@ class WSChatMessage(BaseModel):
     knowledge_base_id: int | None = Field(None, description="Specific knowledge base to search")
     # Document upload context
     attachment_ids: list[int] | None = Field(None, description="IDs of uploaded documents to include as context")
+    # Phase B voice integration (B.4.a). Voice-server emits a 192-dim
+    # ECAPA-TDNN speaker embedding on `final_transcript`; the frontend
+    # forwards it here so the chat handler can resolve a Speaker DB row
+    # without re-running Whisper. Nullable — text-only flows omit it.
+    speaker_embedding: list[float] | None = Field(
+        default=None,
+        description="ECAPA-TDNN 192-dim speaker embedding from voice-server",
+        min_length=192,
+        max_length=192,
+    )
 
 
 # =============================================================================
