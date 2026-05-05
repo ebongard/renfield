@@ -59,6 +59,10 @@ ARG VITE_APP_LOGO_URL=
 #   --build-arg VITE_CHAT_STARTERS='["Status REL-100","Open Jira tickets"]'
 # Defaults to i18n examples (weather/light/music) when unset.
 ARG VITE_CHAT_STARTERS=
+# Phase B streaming voice path. Set to "true" to activate the
+# /ws/voice WebSocket UI (live partial transcripts, sub-second TTS
+# first-byte). Default unset = legacy REST path (request-response).
+ARG VITE_FEATURE_VOICE_STREAM=
 
 # Set environment variables for build
 ENV VITE_API_URL=${VITE_API_URL}
@@ -66,6 +70,7 @@ ENV VITE_WS_URL=${VITE_WS_URL}
 ENV VITE_APP_NAME=${VITE_APP_NAME}
 ENV VITE_APP_LOGO_URL=${VITE_APP_LOGO_URL}
 ENV VITE_CHAT_STARTERS=${VITE_CHAT_STARTERS}
+ENV VITE_FEATURE_VOICE_STREAM=${VITE_FEATURE_VOICE_STREAM}
 
 # App Code kopieren
 COPY . .
