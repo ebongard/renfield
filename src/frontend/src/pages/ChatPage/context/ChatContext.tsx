@@ -803,10 +803,31 @@ export function ChatProvider({ children }: ChatProviderProps) {
     handleRecordingError(`${code}: ${message}`);
   }, [handleRecordingError]);
 
+  // Token: read once, refresh via storage event so a token rotation
+  // mid-session updates the ref without re-rendering this provider for
+  // every state change.
+  const [streamToken, setStreamToken] = useState<string | null>(() =>
+    localStorage.getItem(ACCESS_TOKEN_KEY),
+  );
+  useEffect(() => {
+    const handler = (e: StorageEvent) => {
+      if (e.key === ACCESS_TOKEN_KEY) setStreamToken(e.newValue);
+    };
+    window.addEventListener('storage', handler);
+    return () => window.removeEventListener('storage', handler);
+  }, []);
+
   const voiceStream = useVoiceStream({
-    token: localStorage.getItem(ACCESS_TOKEN_KEY),
+    token: streamToken,
     onFinal: handleStreamFinal,
     onError: handleStreamError,
+    // R7 fix from B.3 review: lastInputChannelRef + autoTTSPendingRef +
+    // wake-word-pause are all set in handleRecordingStart; without these
+    // hooks the streaming path silently bypasses auto-TTS for voice
+    // messages. Wire them so the streaming and legacy paths behave
+    // identically from the orchestration layer's view.
+    onRecordingStart: handleRecordingStart,
+    onRecordingStop: handleRecordingStop,
   });
 
   const recording = VOICE_STREAM_ENABLED ? voiceStream.recording : audioRec.recording;

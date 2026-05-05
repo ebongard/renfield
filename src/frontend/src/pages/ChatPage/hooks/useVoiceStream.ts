@@ -12,7 +12,7 @@
  *
  * Playback path:
  *   ws.onmessage(binary) → strip 24-byte RFWA header → decode WAV →
- *     AudioContext queue
+ *     bounded playback queue (decoded buffers played sequentially)
  *
  * Gated by `VITE_FEATURE_VOICE_STREAM=true`; consumers pick this hook
  * vs `useAudioRecording` based on the flag. The hook does NOT do its
@@ -45,6 +45,8 @@ interface UseVoiceStreamOptions {
   onFinal?: (result: FinalTranscript) => void;
   onError?: (code: string, message: string, requestId?: string) => void;
   onTtsDone?: (requestId: string) => void;
+  onRecordingStart?: () => void | Promise<void>;
+  onRecordingStop?: () => void;
 }
 
 function buildVoiceWsUrl(token: string): string {
@@ -77,48 +79,84 @@ function generateRequestId(): string {
   });
 }
 
-export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }: UseVoiceStreamOptions) {
+export function useVoiceStream({
+  token,
+  onPartial,
+  onFinal,
+  onError,
+  onTtsDone,
+  onRecordingStart,
+  onRecordingStop,
+}: UseVoiceStreamOptions) {
   const wsRef = useRef<WebSocket | null>(null);
+  const pendingSocketRef = useRef<Promise<WebSocket> | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const playbackQueueRef = useRef<Promise<void>>(Promise.resolve());
   const sessionReadyRef = useRef(false);
+  const unmountedRef = useRef(false);
+
+  // Bounded playback queue: decoded WAV buffers played sequentially via
+  // a single drain coroutine. Replaces the unbounded `.then` chain that
+  // would otherwise grow microtask wrappers across long sessions.
+  const chunkQueueRef = useRef<ArrayBuffer[]>([]);
+  const drainingRef = useRef(false);
 
   const [recording, setRecording] = useState(false);
   const [partialText, setPartialText] = useState<string>('');
   const [connected, setConnected] = useState(false);
 
+  // 'closed' is a valid AudioContextState at runtime but the TS DOM
+  // lib version this project ships with omits it from the union.
+  // Compare via string coercion to avoid `as any` and preserve the
+  // recreate-after-close safety check.
   const ensureAudioContext = useCallback((): AudioContext => {
-    if (!audioContextRef.current) {
+    if (!audioContextRef.current || (audioContextRef.current.state as string) === 'closed') {
       const Ctor = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       audioContextRef.current = new Ctor();
     }
     return audioContextRef.current;
   }, []);
 
-  const playWavChunk = useCallback(async (wavBuf: ArrayBuffer) => {
-    const ctx = ensureAudioContext();
-    if (ctx.state === 'suspended') {
-      try { await ctx.resume(); } catch {/* user gesture not granted yet */}
-    }
-    // Serialize playback so chunks play in order (MediaRecorder chunks
-    // arrive sequentially but decodeAudioData is async).
-    playbackQueueRef.current = playbackQueueRef.current.then(async () => {
-      try {
-        const audioBuffer = await ctx.decodeAudioData(wavBuf.slice(0));
-        const source = ctx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(ctx.destination);
-        await new Promise<void>((resolve) => {
-          source.onended = () => resolve();
-          source.start();
-        });
-      } catch (err) {
-        debug.log('voice: WAV chunk decode failed', err);
+  const drainQueue = useCallback(async () => {
+    if (drainingRef.current) return;
+    drainingRef.current = true;
+    try {
+      while (chunkQueueRef.current.length > 0) {
+        if (unmountedRef.current) return;
+        const wavBuf = chunkQueueRef.current.shift();
+        if (!wavBuf) continue;
+        try {
+          const ctx = ensureAudioContext();
+          if ((ctx.state as string) === 'closed') return;
+          if (ctx.state === 'suspended') {
+            try { await ctx.resume(); } catch { /* user-gesture not granted yet */ }
+          }
+          const audioBuffer = await ctx.decodeAudioData(wavBuf);
+          if (unmountedRef.current || (ctx.state as string) === 'closed') return;
+          const source = ctx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(ctx.destination);
+          await new Promise<void>((resolve) => {
+            source.onended = () => resolve();
+            source.start();
+          });
+        } catch (err) {
+          if (!unmountedRef.current) {
+            debug.log('voice: WAV chunk decode/playback failed', err);
+          }
+        }
       }
-    });
+    } finally {
+      drainingRef.current = false;
+    }
   }, [ensureAudioContext]);
+
+  const enqueuePlayback = useCallback((wavBuf: ArrayBuffer) => {
+    if (unmountedRef.current) return;
+    chunkQueueRef.current.push(wavBuf);
+    void drainQueue();
+  }, [drainQueue]);
 
   const handleTextMessage = useCallback((raw: string) => {
     let msg: Record<string, unknown>;
@@ -169,9 +207,14 @@ export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }
   }, [onPartial, onFinal, onError, onTtsDone]);
 
   const ensureSocket = useCallback((): Promise<WebSocket> => {
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && sessionReadyRef.current) {
-      return Promise.resolve(wsRef.current);
+    // Fast-path: already open and session_ready.
+    const existing = wsRef.current;
+    if (existing && existing.readyState === WebSocket.OPEN && sessionReadyRef.current) {
+      return Promise.resolve(existing);
     }
+    // Concurrent callers: share the in-flight handshake promise so we
+    // never create a second WebSocket while one is CONNECTING.
+    if (pendingSocketRef.current) return pendingSocketRef.current;
 
     if (!token) {
       return Promise.reject(new Error('voice-stream: no auth token'));
@@ -190,12 +233,11 @@ export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }
     ws.onclose = () => {
       setConnected(false);
       sessionReadyRef.current = false;
-      wsRef.current = null;
-      // If recording was active when WS dropped, stop the recorder so
-      // the user gets feedback (R3 — bidirectional cleanup).
+      if (wsRef.current === ws) wsRef.current = null;
+      // R3: bidirectional cleanup — stop recorder if WS dropped mid-session.
       const rec = recorderRef.current;
       if (rec && rec.state !== 'inactive') {
-        try { rec.stop(); } catch {/* ignore */}
+        try { rec.stop(); } catch { /* ignore */ }
       }
       setRecording(false);
     };
@@ -210,36 +252,75 @@ export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }
       if (ev.data instanceof ArrayBuffer) {
         const decoded = decodeRfwaHeader(ev.data);
         if (decoded) {
-          // Reconstitute a standalone WAV by stripping the RFWA prefix
-          // (decoded.wavBody is already the full WAV with its own header).
-          void playWavChunk(decoded.wavBody);
+          // decoded.wavBody is a standalone WAV with its own header.
+          enqueuePlayback(decoded.wavBody);
         } else {
           debug.log('voice: binary frame missing RFWA header, dropping');
         }
       }
     };
 
-    return new Promise<WebSocket>((resolve, reject) => {
-      const onReady = () => {
-        if (sessionReadyRef.current) {
-          ws.removeEventListener('message', onReady);
-          resolve(ws);
+    const handshake = new Promise<WebSocket>((resolve, reject) => {
+      const cleanup = () => {
+        ws.removeEventListener('message', onReady);
+        ws.removeEventListener('close', onCloseEarly);
+        ws.removeEventListener('error', onErrorEarly);
+      };
+      const onReady = (ev: MessageEvent) => {
+        if (typeof ev.data !== 'string') return;
+        try {
+          const m = JSON.parse(ev.data as string) as { type?: string };
+          if (m.type !== 'session_ready') return;
+        } catch {
+          return;
         }
+        cleanup();
+        resolve(ws);
+      };
+      const onCloseEarly = () => {
+        cleanup();
+        reject(new Error('voice-stream: ws closed before session_ready'));
+      };
+      const onErrorEarly = () => {
+        cleanup();
+        reject(new Error('voice-stream: ws error before session_ready'));
       };
       ws.addEventListener('message', onReady);
-      ws.addEventListener('close', () => reject(new Error('voice-stream: ws closed before session_ready')), { once: true });
-      ws.addEventListener('error', () => reject(new Error('voice-stream: ws error before session_ready')), { once: true });
+      ws.addEventListener('close', onCloseEarly, { once: true });
+      ws.addEventListener('error', onErrorEarly, { once: true });
     });
-  }, [token, handleTextMessage, playWavChunk]);
+
+    pendingSocketRef.current = handshake;
+    handshake.finally(() => {
+      if (pendingSocketRef.current === handshake) pendingSocketRef.current = null;
+    });
+    return handshake;
+  }, [token, handleTextMessage, enqueuePlayback]);
 
   const startRecording = useCallback(async (): Promise<void> => {
     if (recording) return;
-    const ws = await ensureSocket();
 
     if (!MediaRecorder.isTypeSupported(VOICE_CODEC)) {
-      throw new Error(`browser does not support codec ${VOICE_CODEC}`);
+      onError?.('codec_unsupported', `browser does not support codec ${VOICE_CODEC}`);
+      return;
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    let ws: WebSocket;
+    try {
+      ws = await ensureSocket();
+    } catch (e) {
+      onError?.('ws_open_failed', e instanceof Error ? e.message : String(e));
+      return;
+    }
+
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      onError?.('mic_denied', e instanceof Error ? e.message : String(e));
+      return;
+    }
+
     streamRef.current = stream;
     const recorder = new MediaRecorder(stream, { mimeType: VOICE_CODEC });
     recorderRef.current = recorder;
@@ -259,11 +340,19 @@ export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }
       streamRef.current = null;
       recorderRef.current = null;
       setRecording(false);
+      try { onRecordingStop?.(); } catch (e) { debug.log('voice: onRecordingStop threw', e); }
     };
+
+    try {
+      const maybe = onRecordingStart?.();
+      if (maybe instanceof Promise) await maybe;
+    } catch (e) {
+      debug.log('voice: onRecordingStart threw', e);
+    }
 
     recorder.start(CHUNK_INTERVAL_MS);
     setRecording(true);
-  }, [recording, ensureSocket]);
+  }, [recording, ensureSocket, onError, onRecordingStart, onRecordingStop]);
 
   const stopRecording = useCallback((): void => {
     const rec = recorderRef.current;
@@ -291,18 +380,21 @@ export function useVoiceStream({ token, onPartial, onFinal, onError, onTtsDone }
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
+      unmountedRef.current = true;
       const rec = recorderRef.current;
       if (rec && rec.state !== 'inactive') {
-        try { rec.stop(); } catch {/* ignore */}
+        try { rec.stop(); } catch { /* ignore */ }
       }
       streamRef.current?.getTracks().forEach((t) => t.stop());
       const ws = wsRef.current;
       if (ws && ws.readyState !== WebSocket.CLOSED) {
-        try { ws.close(); } catch {/* ignore */}
+        try { ws.close(); } catch { /* ignore */ }
       }
+      // Clear any queued chunks so the drain loop exits promptly.
+      chunkQueueRef.current = [];
       const ctx = audioContextRef.current;
-      if (ctx && ctx.state !== 'closed') {
-        try { void ctx.close(); } catch {/* ignore */}
+      if (ctx && (ctx.state as string) !== 'closed') {
+        try { void ctx.close(); } catch { /* ignore */ }
       }
     };
   }, []);
