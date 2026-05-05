@@ -38,7 +38,7 @@ class SpeakerService:
             return
 
         logger.info("loading ECAPA ONNX from %s", path)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _load():
             import onnxruntime as ort
@@ -78,5 +78,5 @@ class SpeakerService:
     async def embed(self, audio_pcm: np.ndarray) -> np.ndarray:
         if not self.ready:
             raise RuntimeError("SpeakerService not ready")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._embed_sync, audio_pcm)

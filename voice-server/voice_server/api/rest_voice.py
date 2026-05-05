@@ -21,7 +21,7 @@ import logging
 import wave
 
 import numpy as np
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Header, Request, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -54,6 +54,7 @@ class STTResponse(BaseModel):
 
 @router.post("/api/voice/stt", response_model=STTResponse)
 async def stt_endpoint(
+    request: Request,
     audio: UploadFile = File(...),
     language: str | None = Form(default=None),
     _user: dict = Depends(_require_token),
@@ -83,11 +84,8 @@ async def stt_endpoint(
     if pcm.size == 0:
         raise HTTPException(status_code=400, detail="ffmpeg produced no PCM")
 
-    # voice-server services are warmed at lifespan startup — this avoids a
-    # circular import via FastAPI's app.state.
-    from voice_server.main import app
-    stt: STTService = app.state.stt
-    speaker: SpeakerService = app.state.speaker
+    stt: STTService = request.app.state.stt
+    speaker: SpeakerService = request.app.state.speaker
 
     text_parts: list[str] = []
     detected_language = language or "de"
@@ -119,6 +117,7 @@ class TTSRequest(BaseModel):
 @router.post("/api/voice/tts")
 async def tts_endpoint(
     body: TTSRequest,
+    request: Request,
     _user: dict = Depends(_require_token),
 ) -> Response:
     """Synthesize text to a single WAV file (one-shot — full text in one go)."""
@@ -127,8 +126,7 @@ async def tts_endpoint(
     if not body.text or not body.text.strip():
         raise HTTPException(status_code=400, detail="empty text")
 
-    from voice_server.main import app
-    tts: TTSService = app.state.tts
+    tts: TTSService = request.app.state.tts
 
     # Concatenate all sentence WAVs into one. The header per frame from
     # stream_sentences is needed for WS routing; for REST we strip it and

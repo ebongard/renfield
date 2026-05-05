@@ -28,7 +28,12 @@ logger = logging.getLogger(__name__)
 MAGIC = b"RFWA"
 HEADER_LEN = 4 + 16 + 4  # magic + uuid + sequence
 
-_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ])")
+# Split on sentence-terminator (.!?) followed by whitespace, but stay
+# liberal about what comes after — German output may continue with a
+# numeral, a quote ("„"), or a lowercase word after an abbreviation.
+# We use a positive lookbehind only; the next sentence boundary is
+# whatever follows the whitespace.
+_SENTENCE_RE = re.compile(r"(?<=[.!?])\s+")
 _COMMA_FALLBACK_RE = re.compile(r"(?<=,)\s+")
 
 
@@ -48,7 +53,6 @@ def _split_sentences(text: str, max_chars: int = 240) -> list[str]:
         if len(p) <= max_chars:
             out.append(p)
             continue
-        # Comma-fallback for runaway sentences
         sub = [s.strip() for s in _COMMA_FALLBACK_RE.split(p) if s.strip()]
         out.extend(sub or [p])
     return out
@@ -102,7 +106,16 @@ class TTSService:
         request_id: uuid.UUID,
         language: str | None = None,
     ) -> AsyncIterator[bytes]:
-        """Yield binary frames (WAV with header), one per sentence, in order."""
+        """Yield binary frames (WAV with header), one per sentence, in order.
+
+        The lock guards `_voice_cache` mutation in `_load_voice` only. We
+        deliberately do NOT hold it during synthesis: the iterator may be
+        cancelled or hit a slow consumer, which under `async with` would
+        leak the lock until generator GC. Synthesis itself runs in a
+        thread (`asyncio.to_thread`) so concurrent TTS requests proceed
+        in parallel as long as Piper voice objects are reentrant — which
+        they are for the same loaded voice instance.
+        """
         sentences = _split_sentences(text)
         if not sentences:
             return
@@ -116,6 +129,6 @@ class TTSService:
                 logger.error("piper voice missing: %s", e)
                 raise
 
-            for seq, sentence in enumerate(sentences):
-                wav_bytes = await asyncio.to_thread(self._synth_one_sentence, voice, sentence)
-                yield encode_binary_frame(request_id, seq, wav_bytes)
+        for seq, sentence in enumerate(sentences):
+            wav_bytes = await asyncio.to_thread(self._synth_one_sentence, voice, sentence)
+            yield encode_binary_frame(request_id, seq, wav_bytes)

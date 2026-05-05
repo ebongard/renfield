@@ -59,7 +59,7 @@ class AudioDecoder:
             *argv,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
         )
         self._reader_task = asyncio.create_task(self._drain_stdout())
         logger.debug("ffmpeg started: codec=%s", self.codec)
@@ -84,13 +84,7 @@ class AudioDecoder:
             self._proc.stdin.write(encoded_chunk)
             await self._proc.stdin.drain()
         except (BrokenPipeError, ConnectionResetError) as e:
-            stderr = b""
-            if self._proc.stderr:
-                try:
-                    stderr = await asyncio.wait_for(self._proc.stderr.read(2048), timeout=0.5)
-                except asyncio.TimeoutError:
-                    pass
-            logger.error("ffmpeg pipe broken: %s; stderr=%s", e, stderr.decode("utf-8", errors="replace"))
+            logger.error("ffmpeg pipe broken: %s", e)
             raise
 
     async def take_pcm(self) -> np.ndarray:

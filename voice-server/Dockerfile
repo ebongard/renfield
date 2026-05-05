@@ -6,7 +6,11 @@
 # out on >2.5 GB layers (same pattern as the backend image). torch +
 # faster-whisper land in their own layer; the rest in another.
 
-FROM nvidia/cuda:13.0.0-runtime-ubuntu24.04 AS runtime
+# CUDA 12.6 chosen to match the Speaches container we deployed successfully
+# on k8s-gpu-3 (RTX 4060 Ti, sm_89). The host driver (580.142) supports both
+# 12.x and 13.x runtimes via forward-compat, but pytorch's prebuilt wheels
+# track 12.x, so 12.6 is the path with the fewest moving parts.
+FROM nvidia/cuda:12.6.3-runtime-ubuntu24.04 AS runtime
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \

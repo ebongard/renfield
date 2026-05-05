@@ -5,10 +5,11 @@ Client→Server (text JSON unless noted):
   - <binary frame>                                     audio chunk in announced codec
   - stt_flush                                          finalize STT (alt. to VAD-stop)
   - tts_request { request_id, text, language?, voice? }
-  - cancel { request_id }                              reserved (Phase B.next)
+  - cancel { request_id }                              cancels in-flight TTS
   - ping                                               keepalive
 
 Server→Client:
+  - session_ready                                      after a successful session_start
   - partial_transcript { text, confidence }
   - final_transcript { text, language, speaker_embedding[192], audio_duration_s }
   - <binary WAV with 24-byte RFWA header>              one frame per TTS sentence
@@ -17,6 +18,12 @@ Server→Client:
   - pong
 
 See VOICE_PIPELINE_DESIGN.md § "WebSocket protocol" for the full table.
+
+Concurrency model:
+  TTS runs as an asyncio.Task so the receive loop keeps consuming audio
+  chunks, ping, and cancel while synthesis is in flight. Per-request_id
+  task tracking lets `cancel` actually stop the audio stream
+  (Phase B.next barge-in arrives "for free" once the frontend wires it).
 """
 
 from __future__ import annotations
@@ -40,13 +47,7 @@ from voice_server.services.speaker_service import SpeakerService
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# How often to run incremental STT while audio is streaming. Whisper-medium
-# runs in 0.3-0.5x realtime on the 4060 Ti, so polling every ~700 ms keeps
-# the GPU busy without thrashing.
 PARTIAL_INTERVAL_S = 0.7
-
-# Hard ceiling on a single utterance. Beyond this we force-flush even if
-# the client never signals stt_flush. Prevents pathological memory growth.
 MAX_UTTERANCE_S = 60
 
 
@@ -59,6 +60,7 @@ class SessionState:
     last_partial_at: float = 0.0
     last_partial_text: str = ""
     started_at: float = 0.0
+    tts_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
 
 
 def _accumulated_seconds(state: SessionState) -> float:
@@ -90,23 +92,22 @@ async def _maybe_emit_partial(ws: WebSocket, state: SessionState, stt: STTServic
 
     state.last_partial_at = now
     audio = np.concatenate(state.audio_pcm)
-    if audio.size < 16000 * 0.3:  # less than 300 ms — too short to bother
+    if audio.size < 16000 * 0.3:
         return
 
     try:
-        last_seg_text = ""
+        seg_texts: list[str] = []
         last_conf = 0.0
         async for seg in stt.transcribe_stream(audio):
-            last_seg_text = seg.text
+            seg_texts.append(seg.text)
             last_conf = seg.confidence
-        # Concatenate all segment texts for the cumulative partial
-        # (faster-whisper's segment iterator finalizes them so we just
-        # take the latest as a heuristic — partials are advisory anyway).
-        if last_seg_text and last_seg_text != state.last_partial_text:
-            state.last_partial_text = last_seg_text
+
+        combined = " ".join(t.strip() for t in seg_texts if t.strip())
+        if combined and combined != state.last_partial_text:
+            state.last_partial_text = combined
             await _send_json(ws, {
                 "type": "partial_transcript",
-                "text": last_seg_text,
+                "text": combined,
                 "confidence": last_conf,
             })
     except Exception as e:
@@ -136,8 +137,6 @@ async def _finalize(
     try:
         async for seg in stt.transcribe_stream(audio):
             final_text = (final_text + " " + seg.text).strip()
-        # faster-whisper exposes detected language via info — we already
-        # passed language hint, so reflect it back.
     except Exception as e:
         logger.error("final STT failed: %s", e)
         await _send_error(ws, "stt_failed", str(e))
@@ -151,8 +150,6 @@ async def _finalize(
     except Exception as e:
         logger.warning("speaker embed failed: %s", e)
         await _send_error(ws, "speaker_extract_failed", str(e))
-        # Spec: speaker_extract_failed must NOT abort the transcript.
-        embedding = None
 
     payload: dict = {
         "type": "final_transcript",
@@ -168,8 +165,33 @@ async def _finalize(
     state.last_partial_text = ""
 
 
-async def _handle_tts_request(
+async def _run_tts(
     ws: WebSocket,
+    request_id: uuid.UUID,
+    text: str,
+    language: str | None,
+    tts: TTSService,
+) -> None:
+    """Stream TTS frames for one request. Runs as a Task so the receive loop is unblocked."""
+    try:
+        async for frame in tts.stream_sentences(text, request_id, language=language):
+            await ws.send_bytes(frame)
+        await _send_json(ws, {"type": "tts_done", "request_id": str(request_id)})
+    except asyncio.CancelledError:
+        # Barge-in: client sent `cancel` for this request_id. Best-effort
+        # tts_done so the frontend cleans up its playback queue.
+        await _send_error(ws, "tts_failed", "cancelled by client", str(request_id))
+        raise
+    except FileNotFoundError as e:
+        await _send_error(ws, "model_unavailable", str(e), str(request_id))
+    except Exception as e:
+        logger.exception("tts failed for %s", request_id)
+        await _send_error(ws, "tts_failed", str(e), str(request_id))
+
+
+async def _spawn_tts(
+    ws: WebSocket,
+    state: SessionState,
     msg: dict,
     tts: TTSService,
 ) -> None:
@@ -178,30 +200,53 @@ async def _handle_tts_request(
     language = msg.get("language")
 
     if not request_id_raw or not text:
-        await _send_error(ws, "invalid_audio", "tts_request missing request_id or text")
+        await _send_error(ws, "bad_message", "tts_request missing request_id or text")
         return
     try:
         request_id = uuid.UUID(request_id_raw)
-    except (ValueError, AttributeError):
-        await _send_error(ws, "invalid_audio", "request_id is not a UUID", request_id_raw)
+    except (ValueError, AttributeError, TypeError):
+        await _send_error(ws, "bad_message", "request_id is not a UUID", str(request_id_raw))
         return
 
-    try:
-        async for frame in tts.stream_sentences(text, request_id, language=language):
-            await ws.send_bytes(frame)
-        await _send_json(ws, {"type": "tts_done", "request_id": str(request_id)})
-    except FileNotFoundError as e:
-        await _send_error(ws, "model_unavailable", str(e), str(request_id))
-    except Exception as e:
-        logger.exception("tts failed for %s", request_id)
-        await _send_error(ws, "tts_failed", str(e), str(request_id))
+    rid_key = str(request_id)
+    if rid_key in state.tts_tasks:
+        await _send_error(ws, "bad_message", "duplicate request_id in flight", rid_key)
+        return
+
+    async def _wrapped() -> None:
+        try:
+            await _run_tts(ws, request_id, text, language, tts)
+        finally:
+            state.tts_tasks.pop(rid_key, None)
+
+    state.tts_tasks[rid_key] = asyncio.create_task(_wrapped())
+
+
+async def _cancel_tts(state: SessionState, request_id_raw: str | None) -> None:
+    if not request_id_raw:
+        return
+    task = state.tts_tasks.get(str(request_id_raw))
+    if task is not None and not task.done():
+        task.cancel()
+
+
+async def _close_decoder(state: SessionState) -> None:
+    if state.decoder is not None:
+        try:
+            await state.decoder.close()
+        except Exception:
+            pass
+        state.decoder = None
 
 
 @router.websocket("/ws/voice")
 async def ws_voice(websocket: WebSocket, token: str = Query(...)) -> None:
+    # Starlette requires accept() before any close(). For an auth
+    # rejection we accept-then-close-with-policy-violation.
     try:
         payload = await authenticate(token)
     except AuthError as e:
+        await websocket.accept()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))
         return
 
@@ -223,8 +268,8 @@ async def ws_voice(websocket: WebSocket, token: str = Query(...)) -> None:
 
             if "bytes" in msg and msg["bytes"] is not None:
                 if state.decoder is None:
-                    await _send_error(ws=websocket, code="invalid_audio",
-                                       message="binary frame before session_start")
+                    await _send_error(websocket, "bad_message",
+                                       "binary frame before session_start")
                     continue
                 try:
                     await state.decoder.push(msg["bytes"])
@@ -237,7 +282,7 @@ async def ws_voice(websocket: WebSocket, token: str = Query(...)) -> None:
                         await _finalize(websocket, state, stt, speaker)
                 except Exception as e:
                     logger.exception("audio chunk error")
-                    await _send_error(ws=websocket, code="invalid_audio", message=str(e))
+                    await _send_error(websocket, "invalid_audio", str(e))
                 continue
 
             if "text" not in msg or msg["text"] is None:
@@ -246,48 +291,49 @@ async def ws_voice(websocket: WebSocket, token: str = Query(...)) -> None:
             try:
                 data = json.loads(msg["text"])
             except json.JSONDecodeError:
-                await _send_error(ws=websocket, code="invalid_audio", message="bad json")
+                await _send_error(websocket, "bad_message", "bad json")
                 continue
 
             mtype = data.get("type")
 
             if mtype == "session_start":
                 codec = data.get("codec")
+                # Replacing an existing decoder leaks the old ffmpeg subprocess
+                # if we don't close first.
+                await _close_decoder(state)
                 try:
                     state.decoder = AudioDecoder(codec)
                     await state.decoder.start()
                     state.codec = codec
                     await _send_json(websocket, {"type": "session_ready"})
                 except ValueError as e:
-                    await _send_error(ws=websocket, code="invalid_audio", message=str(e))
+                    await _send_error(websocket, "invalid_audio", str(e))
 
             elif mtype == "stt_flush":
                 await _finalize(websocket, state, stt, speaker)
 
             elif mtype == "tts_request":
-                await _handle_tts_request(websocket, data, tts)
+                await _spawn_tts(websocket, state, data, tts)
 
             elif mtype == "cancel":
-                # Phase B.next — barge-in. For now, ack only.
-                await _send_json(websocket, {
-                    "type": "tts_done",
-                    "request_id": data.get("request_id"),
-                })
+                await _cancel_tts(state, data.get("request_id"))
 
             elif mtype == "ping":
                 await _send_json(websocket, {"type": "pong"})
 
             else:
-                await _send_error(ws=websocket, code="invalid_audio",
-                                   message=f"unknown type: {mtype}")
+                await _send_error(websocket, "bad_message", f"unknown type: {mtype}")
 
     except WebSocketDisconnect:
         logger.info("voice session disconnected user=%s", user_id)
     except Exception:
         logger.exception("voice session crashed user=%s", user_id)
     finally:
-        if state.decoder is not None:
-            try:
-                await state.decoder.close()
-            except Exception:
-                pass
+        # Cancel any in-flight TTS so background tasks don't outlive the session.
+        for task in list(state.tts_tasks.values()):
+            if not task.done():
+                task.cancel()
+        # Wait for cancellations to settle so we don't leak frame writes.
+        if state.tts_tasks:
+            await asyncio.gather(*state.tts_tasks.values(), return_exceptions=True)
+        await _close_decoder(state)

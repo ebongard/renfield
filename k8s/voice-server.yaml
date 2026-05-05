@@ -64,7 +64,10 @@ spec:
       containers:
         - name: voice-server
           image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.0
-          imagePullPolicy: IfNotPresent
+          # NOTE: until the release process pins immutable image digests,
+          # use Always to avoid silently running a stale rebuild under the
+          # same tag.
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: http
@@ -130,6 +133,14 @@ spec:
             periodSeconds: 30
             failureThreshold: 5
       volumes:
+        # NOTE: hostPath mirrors the existing llama-server.yaml pattern.
+        # Cluster /mnt/llm is an NFS mount on each GPU node (see node
+        # /etc/fstab). type: Directory means the path must exist at pod
+        # start — if NFS is degraded after a reboot the pod will fail to
+        # start and startupProbe cannot recover. Operational mitigation:
+        # node fstab uses `_netdev,soft` so mount blocks reboot until
+        # network is up. Migration to a real NFS PV is deferred —
+        # cross-cutting change shared with llama-server, not B.1 scope.
         - name: models
           hostPath:
             path: /mnt/llm

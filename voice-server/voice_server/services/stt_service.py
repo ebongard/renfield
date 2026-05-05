@@ -27,13 +27,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TranscriptSegment:
-    """One segment from faster-whisper. partial=True until VAD-stop closes the buffer."""
+    """One segment from faster-whisper."""
 
     text: str
     start_s: float
     end_s: float
     confidence: float
-    partial: bool
 
 
 class STTService:
@@ -52,7 +51,7 @@ class STTService:
         logger.info("loading faster-whisper: %s", settings.whisper_model)
         from faster_whisper import WhisperModel
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _load():
             return WhisperModel(
@@ -86,7 +85,7 @@ class STTService:
         if audio_pcm.dtype != np.float32:
             audio_pcm = audio_pcm.astype(np.float32)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         async with self._lock:
             def _run():
                 segments, info = self._model.transcribe(
@@ -104,13 +103,11 @@ class STTService:
         if not segments:
             return
 
-        for i, seg in enumerate(segments):
-            is_last = i == len(segments) - 1
+        for seg in segments:
             confidence = float(np.exp(seg.avg_logprob)) if seg.avg_logprob is not None else 0.0
             yield TranscriptSegment(
                 text=seg.text.strip(),
                 start_s=float(seg.start),
                 end_s=float(seg.end),
                 confidence=confidence,
-                partial=not is_last,
             )
