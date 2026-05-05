@@ -65,7 +65,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: voice-server
-          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.0
+          image: registry.treehouse.x-idra.de/renfield/voice-server:v0.1.1
           # NOTE: until the release process pins immutable image digests,
           # use Always to avoid silently running a stale rebuild under the
           # same tag.
@@ -92,6 +92,13 @@ spec:
               value: "/mnt/llm/voice/ecapa_tdnn.onnx"
             - name: AUTH_MODE
               value: "local"
+            # Match cluster posture: AUTH_ENABLED=false in backend means
+            # household trusts the network and identifies users via voice
+            # biometrics (speaker_resolver) + BLE presence (ha_glue), not
+            # via JWT login. Voice-server skips token validation when
+            # absent; a token IS still validated if present.
+            - name: AUTH_REQUIRED
+              value: "false"
             - name: HF_HUB_CACHE
               value: "/cache/huggingface"
             - name: SECRET_KEY
@@ -158,9 +165,28 @@ metadata:
   name: voice-server
   namespace: renfield
   annotations:
-    traefik.ingress.kubernetes.io/router.middlewares: renfield-https-redirect@kubernetescrd
+    # Match the chat-WS ingress (renfield-https). Without
+    # router.entrypoints + router.tls, Traefik does not bind this
+    # route to the HTTPS listener, and wss://renfield.local/ws/voice
+    # connections close abnormally (code 1006) before reaching the
+    # voice-server pod. Discovered during the B.6 frontend flag-on
+    # smoke test.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # /ws/voice (this ingress) and /ws (renfield-https) both match
+    # paths under /ws/voice. Priority 100 makes the longer-match win
+    # (auto-priority based on rule length sometimes ties). Verified
+    # by curl after the cluster has an IngressClass resource OR the
+    # ingressClassName field is omitted (this cluster has neither —
+    # Traefik runs in default-class mode and only picks up Ingresses
+    # without an explicit class).
+    traefik.ingress.kubernetes.io/router.priority: "100"
 spec:
-  ingressClassName: traefik
+  # NOT setting `ingressClassName: traefik` here. The cluster has no
+  # `IngressClass` resource named "traefik", so any Ingress that
+  # explicitly requests it is ignored by Traefik (which picks up
+  # only no-class ingresses by default — confirmed by inspecting the
+  # working `renfield-https` ingress and Traefik's `/api/http/routers`).
   rules:
     - host: renfield.local
       http:

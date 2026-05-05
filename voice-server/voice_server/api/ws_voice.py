@@ -260,11 +260,14 @@ async def _close_decoder(state: SessionState) -> None:
 
 
 @router.websocket("/ws/voice")
-async def ws_voice(websocket: WebSocket, token: str = Query(...)) -> None:
+async def ws_voice(websocket: WebSocket, token: str | None = Query(default=None)) -> None:
     # Starlette requires accept() before any close(). For an auth
     # rejection we accept-then-close-with-policy-violation.
+    # token defaults to None so AUTH_REQUIRED=false deployments can
+    # connect without a query param — auth.authenticate() short-circuits
+    # to anonymous when both token is empty and auth_required is False.
     try:
-        payload = await authenticate(token)
+        payload = await authenticate(token or "")
     except AuthError as e:
         await websocket.accept()
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e))

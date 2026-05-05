@@ -49,11 +49,16 @@ interface UseVoiceStreamOptions {
   onRecordingStop?: () => void;
 }
 
-function buildVoiceWsUrl(token: string): string {
+function buildVoiceWsUrl(token: string | null): string {
   // VITE_WS_URL convention includes a trailing /ws — strip it and
   // append /ws/voice. Mirror useDeviceConnection's pattern.
+  // Token is omitted entirely when null so voice-server's
+  // auth_required=False path works for AUTH_ENABLED=false deployments.
   const base = getWebSocketUrl().replace(/\/ws$/, '');
-  return `${base}/ws/voice?token=${encodeURIComponent(token)}`;
+  if (token) {
+    return `${base}/ws/voice?token=${encodeURIComponent(token)}`;
+  }
+  return `${base}/ws/voice`;
 }
 
 function decodeRfwaHeader(buf: ArrayBuffer): { sequence: number; wavBody: ArrayBuffer } | null {
@@ -216,10 +221,9 @@ export function useVoiceStream({
     // never create a second WebSocket while one is CONNECTING.
     if (pendingSocketRef.current) return pendingSocketRef.current;
 
-    if (!token) {
-      return Promise.reject(new Error('voice-stream: no auth token'));
-    }
-
+    // token=null is allowed (no-auth deployments). buildVoiceWsUrl
+    // omits the query param; voice-server's auth.authenticate treats
+    // empty token as anonymous when auth_required=False.
     const url = buildVoiceWsUrl(token);
     const ws = new WebSocket(url);
     ws.binaryType = 'arraybuffer';

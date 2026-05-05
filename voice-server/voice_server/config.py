@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Auth (D5)
+    # auth_required=False mirrors backend's AUTH_ENABLED=false — for
+    # single-user / no-auth deployments where /ws/voice is reachable
+    # only on the cluster network. When False, authenticate() short-
+    # circuits and returns an anonymous payload. JWT validation is
+    # still applied when a token IS provided so the same image
+    # runs in both modes.
+    auth_required: bool = True
     auth_mode: Literal["local", "callback"] = "local"
     secret_key: SecretStr = SecretStr("changeme-in-production")
     jwt_algorithm: str = "HS256"

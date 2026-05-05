@@ -37,8 +37,15 @@ async def authenticate(token: str) -> dict[str, Any]:
 
     Raises AuthError on any failure. Caller turns this into a 401 (REST)
     or close-with-policy-violation (WS).
+
+    When `auth_required=False` and no token is supplied, returns an
+    anonymous payload — matches backend's AUTH_ENABLED=false semantics
+    for single-user / cluster-internal deployments. A token IS still
+    validated when present, so the same image works in both modes.
     """
     if not token:
+        if not settings.auth_required:
+            return {"sub": "anonymous", "scope": "anonymous"}
         raise AuthError("missing token")
 
     if settings.auth_mode == "local":

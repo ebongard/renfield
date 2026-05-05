@@ -37,7 +37,12 @@ router = APIRouter()
 
 async def _require_token(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(status_code=401, detail="missing bearer token")
+        # Match WebSocket path: defer to authenticate() so auth_required=False
+        # treats missing tokens as anonymous instead of rejecting.
+        try:
+            return await authenticate("")
+        except AuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
     token = authorization.split(" ", 1)[1].strip()
     try:
         return await authenticate(token)
