@@ -134,6 +134,9 @@ export interface ChatContextValue {
   recording: boolean;
   audioLevel: number;
   silenceTimeRemaining: number;
+  // Streaming voice partial transcript (B.3 + B.4.c.1). Empty string
+  // when not recording or when VITE_FEATURE_VOICE_STREAM is off.
+  partialText: string;
   toggleRecording: () => void;
 
   // RAG
@@ -836,6 +839,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
   const recording = VOICE_STREAM_ENABLED ? voiceStream.recording : audioRec.recording;
   const audioLevel = VOICE_STREAM_ENABLED ? 0 : audioRec.audioLevel;
   const silenceTimeRemaining = VOICE_STREAM_ENABLED ? 0 : audioRec.silenceTimeRemaining;
+  // Live partial transcript from voice-server while user is speaking.
+  // Falls back to empty string on the legacy path so consumers can
+  // render unconditionally without checking the flag.
+  const partialText = VOICE_STREAM_ENABLED ? voiceStream.partialText : '';
   // Stable callback identities — without these the conditional ternaries
   // would create a new function every render, breaking memoization
   // downstream (the main exported context object).
@@ -1176,6 +1183,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     recording,
     audioLevel,
     silenceTimeRemaining,
+    partialText,
     toggleRecording,
 
     // RAG
@@ -1220,7 +1228,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     sessionId, sidebarOpen, switchConversation, startNewChat, handleDeleteConversation,
     conversations, conversationsLoading,
     wsConnected,
-    recording, audioLevel, silenceTimeRemaining, toggleRecording,
+    recording, audioLevel, silenceTimeRemaining, partialText, toggleRecording,
     useRag, toggleRag, selectedKnowledgeBase,
     attachments, uploading, uploadError, handleUploadDocument, removeAttachment, uploadStates,
     wakeWord, wakeWordStatus,

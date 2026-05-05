@@ -15,7 +15,7 @@ export default function ChatInput() {
   const { t } = useTranslation();
   const {
     input, setInput, sendMessage, loading, recording, toggleRecording,
-    audioLevel, silenceTimeRemaining,
+    audioLevel, silenceTimeRemaining, partialText,
     useRag, toggleRag, selectedKnowledgeBase, setSelectedKnowledgeBase,
     attachments, uploading, uploadDocument, removeAttachment, uploadStates,
   } = useChatContext();
@@ -216,6 +216,18 @@ export default function ChatInput() {
           audioLevel={audioLevel}
           silenceTimeRemaining={silenceTimeRemaining}
         />
+      )}
+
+      {/* Live partial transcript while user speaks (streaming voice path).
+          Renders unconditionally — empty when not recording or when the
+          legacy useAudioRecording hook is active (partialText='' there). */}
+      {recording && partialText && (
+        <div
+          aria-live="polite"
+          className="px-3 py-2 mb-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-blue-900 dark:text-blue-100 text-sm italic"
+        >
+          {partialText}
+        </div>
       )}
 
       {/* Input Area */}
