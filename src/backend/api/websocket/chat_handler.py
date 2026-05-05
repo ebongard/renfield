@@ -91,6 +91,25 @@ def _detect_media_transport(message: str) -> tuple[str, str | None] | None:
 _background_tasks: set[asyncio.Task] = set()
 
 
+async def _lookup_user_id_for_speaker(speaker_id: int) -> int | None:
+    """Look up the User.id linked to a Speaker via the User.speaker_id FK.
+
+    Used by the voice-driven identity claim when no JWT user is present.
+    Opens a fresh AsyncSessionLocal so the caller's session lifecycle is
+    untouched. Returns None when the Speaker has no linked User (e.g.
+    auto-enrolled guests).
+    """
+    from sqlalchemy import select
+
+    from models.database import User
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User.id).where(User.speaker_id == speaker_id)
+        )
+        return result.scalar_one_or_none()
+
+
 def _parse_mcp_raw_data(data: list) -> any:
     """Parse MCP raw_data format: [{"type": "text", "text": "{JSON}"}] → parsed content.
 
@@ -663,6 +682,35 @@ async def websocket_endpoint(
 
             # Retrieve user info and permissions
             user_id = auth_result.get("user_id") if isinstance(auth_result, dict) else None
+
+            # Voice-driven identity claim: when no JWT user is set
+            # (AUTH_ENABLED=false household deployment) and the wire
+            # embedding resolved to a Speaker with a linked User, use
+            # that User.id as the request-scoped identity. Without
+            # this, voice queries land with user_id=None and the
+            # circles SQL filter degrades to public-tier-only —
+            # meaning the household member can hear themselves
+            # identified yet still can't access their own private
+            # documents/memories. The biometric resolution is the
+            # identity claim in this deployment model. Guest voices
+            # (auto-enrolled Unbekannter Sprecher with no User link)
+            # stay as user_id=None and the public-tier-only fallback
+            # holds — full guest-identity support is option C in the
+            # design (deferred PR).
+            if user_id is None and speaker_info and speaker_info.get("speaker_id"):
+                try:
+                    voice_user_id = await _lookup_user_id_for_speaker(
+                        speaker_info["speaker_id"]
+                    )
+                    if voice_user_id is not None:
+                        user_id = voice_user_id
+                        logger.info(
+                            f"🎤 voice-driven identity: speaker "
+                            f"{speaker_info.get('speaker_name')} → user_id={user_id}"
+                        )
+                except Exception as e:
+                    logger.warning(f"⚠️ speaker→user identity lookup failed: {e}")
+
             user_permissions = None
             user_personality_style = None
             user_personality_prompt = None
