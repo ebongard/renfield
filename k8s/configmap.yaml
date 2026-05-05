@@ -65,9 +65,13 @@ data:
   OLLAMA_VISION_MODEL: ""
   AGENT_MODEL: "qwen3:14b"
   EMBEDDING_DIMENSION: "2560"
-  WHISPER_MODEL: "small"
-  PIPER_VOICES: "de:de_DE-thorsten-high,en:en_US-amy-medium"
-  PIPER_DEFAULT_VOICE: "de_DE-thorsten-high"
+  # B.4.d: WHISPER_MODEL, PIPER_VOICES, PIPER_DEFAULT_VOICE removed.
+  # The voice tier runs in voice-server (k8s-gpu-3) since B.1; backend
+  # services only consume STT/TTS via voice_server_client. The
+  # in-process Whisper/Piper code paths are gated on
+  # `VOICE_SERVER_URL` being unset and exist for local dev only.
+  # Pydantic Settings keeps reasonable defaults if anything reads
+  # these — the env vars themselves are no longer authoritative.
 
   # RAG
   RAG_ENABLED: "true"
