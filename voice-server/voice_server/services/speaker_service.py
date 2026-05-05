@@ -54,11 +54,34 @@ class SpeakerService:
 
         self._session, self._encoder = await loop.run_in_executor(None, _load)
 
-        # Warm one inference
-        warm = np.zeros(32000, dtype=np.float32)
+        # Warm one inference. Use low-amplitude noise rather than zeros:
+        # all-zero audio runs through compute_features → mean_var_norm with
+        # near-zero variance and can NaN-propagate through the ONNX graph.
+        # Some EPs silently retry NaN-producing nodes on CPU, which would
+        # let warmup pass without exercising the CUDA code path.
+        rng = np.random.default_rng(0)
+        warm = (rng.standard_normal(32000) * 0.01).astype(np.float32)
         await loop.run_in_executor(None, self._embed_sync, warm)
         self.ready = True
-        logger.info("speaker service warm (providers=%s)", self._session.get_providers())
+
+        # NOTE: get_providers() reports providers REGISTERED with the session
+        # at construction, not which one actually executed nodes. There is
+        # a known onnxruntime issue where CUDA EP is registered but every
+        # node falls back to CPU silently (see issue #25145). The warning
+        # below catches the catastrophic case (CUDA not registered at all);
+        # silent per-node fallback would still pass this check.
+        registered = self._session.get_providers()
+        logger.info("speaker service warm — registered providers=%s", registered)
+        if (
+            "CUDAExecutionProvider" not in registered
+            and "CUDAExecutionProvider" in settings.speaker_providers
+        ):
+            logger.warning(
+                "ECAPA CUDA provider not registered — running on %s. "
+                "Check Dockerfile (cuDNN >=9.1 + onnxruntime-gpu nuke-and-"
+                "reinstall) and GPU passthrough on the node.",
+                registered[0] if registered else "no-provider",
+            )
 
     def _embed_sync(self, audio_pcm: np.ndarray) -> np.ndarray:
         """Synchronous embedding extraction. Audio: float32 mono 16 kHz."""

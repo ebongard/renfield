@@ -38,6 +38,15 @@ RUN apt-get -o Acquire::AllowInsecureRepositories=true \
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
+# onnxruntime-gpu's CUDAExecutionProvider dlopens libcudart + libcublas
+# from /usr/local/cuda/lib64 (base image) and libcudnn from the
+# nvidia-cudnn-cu12 pip wheel. The pip wheel installs at
+# /opt/venv/lib/python3.12/site-packages/nvidia/cudnn/lib — onnxruntime
+# adds that automatically via its preload code, but we set
+# LD_LIBRARY_PATH explicitly so any other consumer (and ldconfig) sees
+# the same view.
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/venv/lib/python3.12/site-packages/nvidia/cudnn/lib:${LD_LIBRARY_PATH:-}
+
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 
@@ -55,11 +64,22 @@ RUN pip install --index-url https://download.pytorch.org/whl/cpu \
 RUN pip install \
         numpy>=1.26 \
         soundfile>=0.12 \
-        onnxruntime-gpu>=1.20 \
         faster-whisper>=1.1.0
 
+# speechbrain pulls in plain `onnxruntime` (CPU) as a transitive. Install
+# it BEFORE onnxruntime-gpu so the GPU wheel wins the final import path.
 RUN pip install speechbrain>=1.0
 
+# cuDNN is required by onnxruntime-gpu's CUDAExecutionProvider but is
+# NOT included in nvidia/cuda:12.6-runtime base. Pull it via pip wheel.
+# Pin >=9.1 — onnxruntime-gpu>=1.20 dlopens libcudnn.so.9; an
+# unconstrained install today resolves to 9.x but a future resolver
+# could downgrade to 8.x and silently break GPU dispatch.
+RUN pip install "nvidia-cudnn-cu12>=9.1"
+
+# Web framework + light deps — including piper-tts. piper-tts depends
+# on `onnxruntime` (CPU). Install it BEFORE the final onnxruntime-gpu
+# cleanup, otherwise piper's transitive overwrites our GPU build.
 RUN pip install \
         fastapi>=0.115 \
         "uvicorn[standard]>=0.30" \
@@ -71,6 +91,28 @@ RUN pip install \
         prometheus-client>=0.20 \
         loguru>=0.7 \
         piper-tts>=1.3.0
+
+# ABSOLUTE LAST pip step. faster-whisper, speechbrain, and piper-tts
+# all transitively pull `onnxruntime` (CPU) which shares the import
+# path with onnxruntime-gpu. Co-installed, the CUDA EP gets masked
+# at import time and only Azure+CPU providers show up. Empirically the
+# only reliable fix is to nuke the onnxruntime/* directory and the
+# onnxruntime{,_gpu}-*.dist-info dirs (pip uninstall is conservative
+# and leaves dist-info in place when files are co-owned), then do a
+# clean onnxruntime-gpu install. After this, get_available_providers
+# includes CUDAExecutionProvider. Verified by speaker_service warmup
+# log on every boot.
+# NOTE: this approach is load-bearing on the two-package split between
+# `onnxruntime` (CPU) and `onnxruntime-gpu` on PyPI, with the dist-info
+# names `onnxruntime-X.Y.Z.dist-info` and `onnxruntime_gpu-X.Y.Z.dist-info`.
+# If onnxruntime ever consolidates into a single auto-detect package (under
+# discussion upstream), this Dockerfile breaks and the right fix becomes
+# pinning the GPU package via a pip --constraint file rather than nuke-and-
+# reinstall. Adjust the globs below if the dist-info naming changes.
+RUN rm -rf /opt/venv/lib/python3.12/site-packages/onnxruntime \
+           /opt/venv/lib/python3.12/site-packages/onnxruntime-*.dist-info \
+           /opt/venv/lib/python3.12/site-packages/onnxruntime_gpu-*.dist-info \
+ && pip install --no-cache-dir "onnxruntime-gpu>=1.20"
 
 COPY voice_server /app/voice_server
 COPY scripts /app/scripts
