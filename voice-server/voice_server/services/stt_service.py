@@ -40,6 +40,7 @@ class STTService:
         self._model = None
         self.ready: bool = False
         self._lock = asyncio.Lock()  # whisper-medium doesn't multiplex well
+        self.last_language: str | None = None  # populated after each transcribe_stream
 
     async def warmup(self) -> None:
         """Load the model and run one tiny inference so the first user request is hot.
@@ -78,6 +79,11 @@ class STTService:
         16 kHz). faster-whisper's segment iterator finalizes segments as
         the decoder advances; we forward each one as it arrives, marking
         the last as partial=False.
+
+        After the iterator is exhausted, the auto-detected language is
+        accessible via `self.last_language` — populated each time
+        transcribe_stream completes. Callers needing the detection can
+        read it after the `async for` loop drains.
         """
         if not self.ready or self._model is None:
             raise RuntimeError("STTService not ready")
@@ -99,6 +105,11 @@ class STTService:
                 return list(segments), info
 
             segments, info = await loop.run_in_executor(None, _run)
+
+        # Side-channel: callers that need the detected language read it
+        # after consuming the iterator. Avoids a breaking-change to
+        # the segment shape (consumers don't all care).
+        self.last_language = getattr(info, "language", None) or language or settings.whisper_language_default
 
         if not segments:
             return

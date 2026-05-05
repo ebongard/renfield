@@ -88,10 +88,14 @@ async def stt_endpoint(
     speaker: SpeakerService = request.app.state.speaker
 
     text_parts: list[str] = []
-    detected_language = language or "de"
     async for seg in stt.transcribe_stream(pcm, language=language):
         text_parts.append(seg.text)
     text = " ".join(t.strip() for t in text_parts if t.strip())
+    # Pull the auto-detected language from the side-channel set by
+    # transcribe_stream. Falls back to the requested language, then
+    # to the service default. Reflects what faster-whisper actually
+    # detected on the audio rather than echoing the request.
+    detected_language = stt.last_language or language or "de"
 
     embedding: list[float] | None = None
     try:

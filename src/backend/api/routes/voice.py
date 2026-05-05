@@ -366,8 +366,14 @@ async def _voice_chat_via_voice_server(
     speaker_info = {"speaker_id": None, "speaker_name": None, "speaker_alias": None, "speaker_confidence": 0.0, "is_new_speaker": False}
     embedding = stt_result.get("speaker_embedding")
     if embedding and settings.speaker_recognition_enabled:
+        # The resolver commits mid-flight on auto-enrol + continuous-
+        # learning paths. Use a dedicated session so we don't commit
+        # the route's `db` (which is owned by the FastAPI dependency)
+        # in the middle of the request — same pattern the chat-WS path
+        # uses (see chat_handler.py speaker_info block).
         try:
-            speaker_info = await resolve_speaker_from_embedding(db, embedding)
+            async with AsyncSessionLocal() as spk_db:
+                speaker_info = await resolve_speaker_from_embedding(spk_db, embedding)
         except Exception as e:
             logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
 

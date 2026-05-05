@@ -696,7 +696,14 @@ async def websocket_endpoint(
                     user_id=int(user_id),
                     room_id=room_context["room_id"],
                     room_name=room_context.get("room_name"),
-                    lang=lang,
+                    # Pre-existing bug surfaced by the B.4.a review: the
+                    # outer scope has no `lang` symbol. The handler uses
+                    # `ollama.default_lang` everywhere else (lines ~759,
+                    # 763, 771). Without this fix every voice message
+                    # from a room-aware client raises NameError, which
+                    # the outer `except Exception` swallows by closing
+                    # the WebSocket.
+                    lang=ollama.default_lang,
                     # B.4.a: pass through speaker resolution when this
                     # message came in via the streaming voice path.
                     # Hooks that don't care can ignore the kwarg.
