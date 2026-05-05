@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     paperless_extraction_model: str = ""
     ollama_embed_url: str | None = None          # Separate Ollama URL for embeddings (default: ollama_url)
 
+    # Voice-server (B.4) — when set, backend's /api/voice/voice-chat
+    # orchestrator delegates STT + TTS to the voice-server pod instead
+    # of running them in-process. None = legacy in-process path
+    # (whisper_service + piper_service). After B.4 lands the in-process
+    # path becomes a fallback for dev environments without a
+    # voice-server deployment.
+    voice_server_url: str | None = None
+
     # Home Assistant / Frigate settings moved to ha_glue/utils/config.py
     # (see `HaGlueSettings`). Access via:
     #     from ha_glue.utils.config import ha_glue_settings

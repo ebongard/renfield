@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.websocket.shared import get_whisper_service
 from services.api_rate_limiter import limiter
-from services.auth_service import get_current_user
+from services.auth_service import get_current_user, oauth2_scheme
 from services.database import AsyncSessionLocal, get_db
 from services.piper_service import get_piper_service
 from utils.config import settings
@@ -220,7 +220,8 @@ async def voice_chat(
     audio: UploadFile = File(...),
     language: str | None = Query(None, description="Language code (e.g., 'de', 'en'). Falls back to default."),
     db: AsyncSession = Depends(get_db),
-    _user=Depends(get_current_user)
+    _user=Depends(get_current_user),
+    _bearer: str | None = Depends(oauth2_scheme),
 ):
     """
     Kompletter Voice-Chat Flow:
@@ -229,6 +230,13 @@ async def voice_chat(
     3. Antwort zu Audio (TTS)
 
     Multi-language support: Pass ?language=en to use English for both STT and TTS.
+
+    B.4.b: when settings.voice_server_url is configured, STT and TTS
+    are delegated to the voice-server pod (k8s-gpu-3) via HTTP — the
+    backend only orchestrates speaker resolution + the agent loop in
+    between. Without voice_server_url, the legacy in-process path
+    (whisper_service + piper_service) runs unchanged. Same response
+    shape either way — satellite firmware doesn't notice the move.
     """
     try:
         # Validate language if provided
@@ -241,6 +249,19 @@ async def voice_chat(
 
         # 1. Speech-to-Text mit Sprechererkennung
         audio_bytes = await audio.read()
+
+        # If voice_server is configured, delegate STT+TTS to the pod.
+        if settings.voice_server_url and _bearer:
+            return await _voice_chat_via_voice_server(
+                audio_bytes=audio_bytes,
+                filename=audio.filename or "audio.wav",
+                content_type=audio.content_type or "audio/wav",
+                language=language,
+                effective_language=effective_language,
+                db=db,
+                bearer_token=_bearer,
+                request=request,
+            )
 
         # B-3: per-request STT bias from authenticated user. See `/stt` above
         # for the rationale on the separate session.
@@ -306,3 +327,75 @@ async def voice_chat(
     except Exception as e:
         logger.error(f"❌ Voice Chat Fehler: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+async def _voice_chat_via_voice_server(
+    *,
+    audio_bytes: bytes,
+    filename: str,
+    content_type: str,
+    language: str | None,
+    effective_language: str,
+    db: AsyncSession,
+    bearer_token: str,
+    request: Request,
+) -> dict:
+    """B.4.b orchestrator path: voice-server does STT+TTS, backend
+    resolves the speaker + invokes the LLM agent. Same response shape
+    as the legacy in-process path so satellites notice no difference.
+    """
+    from services.speaker_resolver import resolve_speaker_from_embedding
+    from services.voice_server_client import VoiceServerError, stt as vs_stt, tts as vs_tts
+
+    try:
+        stt_result = await vs_stt(
+            audio_bytes,
+            filename=filename,
+            content_type=content_type,
+            language=language,
+            auth_token=bearer_token,
+        )
+    except VoiceServerError as e:
+        logger.error(f"voice-server STT failed: {e}")
+        raise HTTPException(status_code=502, detail="voice-server STT unavailable") from e
+
+    user_text: str = stt_result.get("text") or ""
+    if not user_text:
+        raise HTTPException(status_code=400, detail="Konnte Audio nicht verstehen")
+
+    speaker_info = {"speaker_id": None, "speaker_name": None, "speaker_alias": None, "speaker_confidence": 0.0, "is_new_speaker": False}
+    embedding = stt_result.get("speaker_embedding")
+    if embedding and settings.speaker_recognition_enabled:
+        try:
+            speaker_info = await resolve_speaker_from_embedding(db, embedding)
+        except Exception as e:
+            logger.warning(f"⚠️ wire-embedding speaker resolve failed: {e}")
+
+    if speaker_info.get("speaker_name"):
+        logger.info(f"🎤 Voice-Chat (orchestrated): {speaker_info['speaker_name']}")
+
+    from main import app
+    from services.ollama_service import OllamaService
+
+    ollama: OllamaService = app.state.ollama
+    response_text = await ollama.chat(user_text)
+
+    try:
+        response_audio = await vs_tts(
+            response_text,
+            language=language,
+            auth_token=bearer_token,
+        )
+    except VoiceServerError as e:
+        logger.error(f"voice-server TTS failed: {e}")
+        raise HTTPException(status_code=502, detail="voice-server TTS unavailable") from e
+
+    return {
+        "user_text": user_text,
+        "assistant_text": response_text,
+        "audio": response_audio.hex() if response_audio else None,
+        "language": effective_language,
+        "speaker_name": speaker_info.get("speaker_name"),
+        "speaker_alias": speaker_info.get("speaker_alias"),
+        "speaker_confidence": speaker_info.get("speaker_confidence", 0.0),
+    }
