@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: speaches
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: speaches
+    app.kubernetes.io/part-of: renfield
+    spike: voice-buy-vs-build
+spec:
+  selector:
+    app.kubernetes.io/name: speaches
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: speaches
+  namespace: renfield
+  labels:
+    app.kubernetes.io/name: speaches
+    app.kubernetes.io/part-of: renfield
+    spike: voice-buy-vs-build
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: speaches
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: speaches
+        app.kubernetes.io/part-of: renfield
+    spec:
+      nodeSelector:
+        renfield.io/role: voice-llm
+      securityContext:
+        fsGroup: 1000
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: speaches
+          image: ghcr.io/speaches-ai/speaches:latest-cuda-12.6.3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: LOOPBACK_HOST_URL
+              value: "http://localhost:8000"
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+              nvidia.com/gpu: 1
+            limits:
+              cpu: "4"
+              memory: 12Gi
+              nvidia.com/gpu: 1
+          volumeMounts:
+            - name: hf-cache
+              mountPath: /home/ubuntu/.cache/huggingface
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 300
+            periodSeconds: 30
+            failureThreshold: 5
+      volumes:
+        - name: hf-cache
+          persistentVolumeClaim:
+            claimName: speaches-hf-cache
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: speaches-hf-cache
+  namespace: renfield
+  labels:
+    spike: voice-buy-vs-build
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: longhorn
+  resources:
+    requests:
+      storage: 30Gi
