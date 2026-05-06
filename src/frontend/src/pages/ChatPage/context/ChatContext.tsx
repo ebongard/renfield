@@ -837,8 +837,10 @@ export function ChatProvider({ children }: ChatProviderProps) {
   });
 
   const recording = VOICE_STREAM_ENABLED ? voiceStream.recording : audioRec.recording;
-  const audioLevel = VOICE_STREAM_ENABLED ? 0 : audioRec.audioLevel;
-  const silenceTimeRemaining = VOICE_STREAM_ENABLED ? 0 : audioRec.silenceTimeRemaining;
+  // useVoiceStream's VAD loop now exposes audioLevel + silenceTimeRemaining
+  // so AudioVisualizer renders the same listening indicator on both paths.
+  const audioLevel = VOICE_STREAM_ENABLED ? voiceStream.audioLevel : audioRec.audioLevel;
+  const silenceTimeRemaining = VOICE_STREAM_ENABLED ? voiceStream.silenceTimeRemaining : audioRec.silenceTimeRemaining;
   // Live partial transcript from voice-server while user is speaking.
   // Falls back to empty string on the legacy path so consumers can
   // render unconditionally without checking the flag.

@@ -123,6 +123,10 @@ export function useVoiceStream({
   const [recording, setRecording] = useState(false);
   const [partialText, setPartialText] = useState<string>('');
   const [connected, setConnected] = useState(false);
+  // Surfaced to consumers so they can render the same listening
+  // indicator as the legacy hook (RMS bar + countdown).
+  const [audioLevel, setAudioLevel] = useState(0);
+  const [silenceTimeRemaining, setSilenceTimeRemaining] = useState(0);
 
   // 'closed' is a valid AudioContextState at runtime but the TS DOM
   // lib version this project ships with omits it from the union.
@@ -384,9 +388,15 @@ export function useVoiceStream({
         const now = Date.now();
         const recordingTime = now - recordingStart;
 
+        // Surface the audio level so the AudioVisualizer can render
+        // the live mic input. Same scale as the legacy hook (Math.round
+        // of RMS) so the visualizer's existing colour ramp still works.
+        setAudioLevel(Math.round(rms));
+
         if (rms > VAD.SILENCE_THRESHOLD) {
           lastSoundAt = now;
           speechSeen = true;
+          setSilenceTimeRemaining(0);
         } else if (
           speechSeen
           && recordingTime > VAD.MIN_RECORDING_MS
@@ -397,6 +407,10 @@ export function useVoiceStream({
           try { rec.stop(); } catch { /* ignore */ }
           vadFrameRef.current = null;
           return;
+        } else if (speechSeen && recordingTime > VAD.MIN_RECORDING_MS) {
+          // In silence countdown — show how long until auto-stop.
+          const remaining = Math.max(0, VAD.SILENCE_DURATION_MS - (now - lastSoundAt));
+          setSilenceTimeRemaining(remaining);
         }
         vadFrameRef.current = requestAnimationFrame(checkSilence);
       };
@@ -425,6 +439,8 @@ export function useVoiceStream({
       streamRef.current = null;
       recorderRef.current = null;
       setRecording(false);
+      setAudioLevel(0);
+      setSilenceTimeRemaining(0);
       try { onRecordingStop?.(); } catch (e) { debug.log('voice: onRecordingStop threw', e); }
     };
 
@@ -497,6 +513,8 @@ export function useVoiceStream({
     recording,
     partialText,
     connected,
+    audioLevel,
+    silenceTimeRemaining,
   };
 }
 
