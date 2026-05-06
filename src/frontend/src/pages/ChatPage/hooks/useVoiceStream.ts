@@ -32,6 +32,21 @@ const HEADER_LEN = 24; // 4 magic + 16 uuid + 4 sequence
 const VOICE_CODEC = 'audio/webm;codecs=opus';
 const CHUNK_INTERVAL_MS = 100;
 
+// Timing diagnostics for voice pipeline. Toggle in browser console:
+//   localStorage.setItem('renfield_voice_timing', '1') → enable
+//   localStorage.removeItem('renfield_voice_timing') → disable
+// Outputs structured timestamps so the perceived-latency breakdown
+// is reconstructable from the console.
+function vlog(stage: string, extra?: Record<string, unknown>): void {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('renfield_voice_timing')) {
+      const ms = performance.now().toFixed(1);
+      // eslint-disable-next-line no-console
+      console.log(`🎤 [+${ms}ms] ${stage}`, extra ?? '');
+    }
+  } catch { /* ignore */ }
+}
+
 // Voice-activity detection — mirrors useAudioRecording's defaults so the
 // streaming path's end-of-utterance UX matches what users learned with
 // the legacy hook. Server-side VAD also runs as a safety net (C.2).
@@ -196,11 +211,13 @@ export function useVoiceStream({
       case 'partial_transcript': {
         const text = (msg.text as string) ?? '';
         const confidence = (msg.confidence as number) ?? 0;
+        vlog('partial_transcript', { text: text.slice(0, 40), confidence: confidence.toFixed(2) });
         setPartialText(text);
         onPartial?.(text, confidence);
         break;
       }
       case 'final_transcript': {
+        vlog('final_transcript', { text: ((msg.text as string) || '').slice(0, 60), conf: (msg.speaker_confidence as number)?.toFixed(2) });
         // Server-side VAD beat browser-side VAD (or the user clicked
         // stop simultaneously) — stop the recorder so we don't keep
         // streaming chunks against a now-flushed decoder. recorder.onstop
@@ -222,6 +239,7 @@ export function useVoiceStream({
         break;
       }
       case 'tts_done':
+        vlog('tts_done', { rid: msg.request_id });
         onTtsDone?.((msg.request_id as string) ?? '');
         break;
       case 'error':
@@ -283,6 +301,7 @@ export function useVoiceStream({
       if (ev.data instanceof ArrayBuffer) {
         const decoded = decodeRfwaHeader(ev.data);
         if (decoded) {
+          vlog('binary_frame', { size: decoded.wavBody.byteLength, seq: decoded.sequence });
           // decoded.wavBody is a standalone WAV with its own header.
           enqueuePlayback(decoded.wavBody);
         } else {
@@ -447,6 +466,7 @@ export function useVoiceStream({
       }
       analyserRef.current = null;
       if (ws.readyState === WebSocket.OPEN) {
+        vlog('stt_flush_sent');
         ws.send(JSON.stringify({ type: 'stt_flush' }));
       }
       streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -479,9 +499,11 @@ export function useVoiceStream({
   }, []);
 
   const speakText = useCallback(async (text: string, language?: string): Promise<string> => {
+    vlog('speakText:start', { len: text.length, preview: text.slice(0, 40) });
     const ws = await ensureSocket();
     const requestId = generateRequestId();
     ws.send(JSON.stringify({ type: 'tts_request', request_id: requestId, text, language }));
+    vlog('tts_request_sent', { rid: requestId, len: text.length });
     return requestId;
   }, [ensureSocket]);
 

@@ -379,6 +379,30 @@ export function ChatProvider({ children }: ChatProviderProps) {
   // to a no-op; assigned after speakText is declared below.
   const speakTextRef = useRef<(text: string) => Promise<void>>(async () => undefined);
 
+  // Sentence-streaming auto-TTS (option A). Tracks accumulated chat
+  // content so we can dispatch each completed sentence as its own
+  // tts_request as the LLM streams. Voice-server's TTSService lock
+  // serializes them, so frames arrive in dispatch order which is the
+  // same as the user's reading order. Saves ~LLM-streaming-time of
+  // perceived latency on long answers (~19s on a typical Qwen3.6
+  // German response, measured).
+  const sentenceStreamRef = useRef<{
+    accumulated: string;
+    dispatchedIdx: number;
+    active: boolean;
+    pending: Set<string>;
+    streamDone: boolean;
+  }>({
+    accumulated: '',
+    dispatchedIdx: 0,
+    active: false,
+    pending: new Set(),
+    streamDone: false,
+  });
+  // Ref for streaming-TTS-aware speakText one-shot so the chunk handler
+  // can dispatch sentences before voiceStream is declared in scope.
+  const streamSpeakRef = useRef<(text: string) => Promise<string | null>>(async () => null);
+
   // AbortController used to cancel any in-flight WebSocket-handshake wait
   // (see sendMessageInternal). Aborted on unmount so we don't continue to
   // touch state from a destroyed component.
@@ -516,7 +540,27 @@ export function ChatProvider({ children }: ChatProviderProps) {
             }, 3000);
           }
         } else if (lastInputChannelRef.current === 'voice' && completedMessage.role === 'assistant') {
-          if (autoTTSPendingRef.current) {
+          // Sentence-streaming path (option A): if we already
+          // dispatched sentences during the stream, just flush the
+          // tail (any text after the last sentence terminator) and
+          // skip the full-response speakText below — it would
+          // duplicate every sentence.
+          const stream = sentenceStreamRef.current;
+          if (stream.active) {
+            stream.streamDone = true;
+            const tail = completedMessage.content.slice(stream.dispatchedIdx).trim();
+            if (tail) {
+              debug.log('sentence-streaming: dispatching tail', tail.slice(0, 40));
+              void streamSpeakRef.current(tail).then((rid) => {
+                if (rid) stream.pending.add(rid);
+              });
+            }
+            // Wakeword resumes when all in-flight TTS complete (handled
+            // via onTtsDone elsewhere). Mark autoTTS-pending so the
+            // existing dedup logic doesn't re-fire.
+            autoTTSPendingRef.current = true;
+            lastAutoTTSTextRef.current = completedMessage.content;
+          } else if (autoTTSPendingRef.current) {
             debug.log('Auto-TTS skipped: Request already active');
           } else if (lastAutoTTSTextRef.current === completedMessage.content) {
             debug.log('Auto-TTS skipped: Same text already played');
@@ -529,6 +573,12 @@ export function ChatProvider({ children }: ChatProviderProps) {
               // Indirection via ref so this callback can be declared before
               // the streaming-aware speakText (which depends on the
               // useVoiceStream hook below).
+              try {
+                if (typeof localStorage !== 'undefined' && localStorage.getItem('renfield_voice_timing')) {
+                  // eslint-disable-next-line no-console
+                  console.log(`🎤 [+${performance.now().toFixed(1)}ms] autoTTS_fired`, { len: completedMessage.content.length });
+                }
+              } catch { /* ignore */ }
               speakTextRef.current(completedMessage.content).finally(() => {
                 autoTTSPendingRef.current = false;
 
@@ -559,8 +609,58 @@ export function ChatProvider({ children }: ChatProviderProps) {
     setLoading(false);
   }, [resumeWakeWord]);
 
+  // Sentence boundary regex for streaming TTS dispatch. Matches a
+  // sentence terminator followed by whitespace.
+  const _SENTENCE_BOUNDARY = /[.!?]\s/g;
+
+  // Look at the streaming buffer; for each completed sentence not yet
+  // dispatched, fire a tts_request via the streaming hook.
+  const dispatchPendingSentences = useCallback(() => {
+    const stream = sentenceStreamRef.current;
+    if (!stream.active) return;
+    const tail = stream.accumulated.slice(stream.dispatchedIdx);
+    const matches = Array.from(tail.matchAll(_SENTENCE_BOUNDARY));
+    let cursor = 0;
+    for (const m of matches) {
+      const end = (m.index ?? 0) + m[0].length;
+      const sentence = tail.slice(cursor, end).trim();
+      cursor = end;
+      if (!sentence) continue;
+      void streamSpeakRef.current(sentence).then((rid) => {
+        if (rid) stream.pending.add(rid);
+      });
+    }
+    if (cursor > 0) {
+      stream.dispatchedIdx += cursor;
+    }
+  }, []);
+
   // Handle stream chunk
   const handleStreamChunk = useCallback((content: string) => {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('renfield_voice_timing')) {
+        // Only log first chunk per response, otherwise too noisy.
+        const w = window as unknown as { __vTimingFirstChunk?: boolean };
+        if (!w.__vTimingFirstChunk) {
+          w.__vTimingFirstChunk = true;
+          // eslint-disable-next-line no-console
+          console.log(`🎤 [+${performance.now().toFixed(1)}ms] first_chat_token`, { content: content.slice(0, 40) });
+        }
+      }
+    } catch { /* ignore */ }
+    // Sentence-streaming TTS path (option A): when the input came from
+    // voice AND we're on the streaming flag, dispatch each completed
+    // sentence to TTS as it arrives. Disables the after-`done` autoTTS
+    // path below to avoid double-speaking.
+    if (
+      VOICE_STREAM_ENABLED
+      && lastInputChannelRef.current === 'voice'
+      && !sentenceStreamRef.current.streamDone
+    ) {
+      sentenceStreamRef.current.active = true;
+      sentenceStreamRef.current.accumulated += content;
+      dispatchPendingSentences();
+    }
     setMessages((prev) => {
       const lastMsg = prev[prev.length - 1];
       if (lastMsg && lastMsg.role === 'assistant' && lastMsg.streaming) {
@@ -823,10 +923,34 @@ export function ChatProvider({ children }: ChatProviderProps) {
     return () => window.removeEventListener('storage', handler);
   }, []);
 
+  // Sentence-streaming TTS bookkeeping — onTtsDone fires per dispatched
+  // sentence; when the stream is done AND no requests are in flight,
+  // resume wake word + clear the autoTTS-pending lock.
+  const handleStreamTtsDone = useCallback((requestId: string) => {
+    const stream = sentenceStreamRef.current;
+    if (!stream.active) return;
+    stream.pending.delete(requestId);
+    if (stream.streamDone && stream.pending.size === 0) {
+      // Reset for the next utterance.
+      stream.active = false;
+      stream.accumulated = '';
+      stream.dispatchedIdx = 0;
+      stream.streamDone = false;
+      autoTTSPendingRef.current = false;
+      if (wakeWordEnabledRef.current && wakeWordActivatedRef.current) {
+        debug.log('Resuming wake word detection after streaming TTS...');
+        resumeWakeWord();
+        setWakeWordStatus('listening');
+        wakeWordActivatedRef.current = false;
+      }
+    }
+  }, [resumeWakeWord]);
+
   const voiceStream = useVoiceStream({
     token: streamToken,
     onFinal: handleStreamFinal,
     onError: handleStreamError,
+    onTtsDone: handleStreamTtsDone,
     // R7 fix from B.3 review: lastInputChannelRef + autoTTSPendingRef +
     // wake-word-pause are all set in handleRecordingStart; without these
     // hooks the streaming path silently bypasses auto-TTS for voice
@@ -835,6 +959,19 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onRecordingStart: handleRecordingStart,
     onRecordingStop: handleRecordingStop,
   });
+
+  // Wire the streaming-TTS dispatcher used by handleStreamChunk now
+  // that voiceStream is declared.
+  useEffect(() => {
+    streamSpeakRef.current = async (text: string) => {
+      try {
+        return await voiceStream.speakText(text);
+      } catch (e) {
+        debug.log('streamSpeak error', e);
+        return null;
+      }
+    };
+  }, [voiceStream]);
 
   const recording = VOICE_STREAM_ENABLED ? voiceStream.recording : audioRec.recording;
   // useVoiceStream's VAD loop now exposes audioLevel + silenceTimeRemaining
@@ -944,11 +1081,29 @@ export function ChatProvider({ children }: ChatProviderProps) {
   ): Promise<void> => {
     if (!text.trim()) return;
 
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage.getItem('renfield_voice_timing')) {
+        const w = window as unknown as { __vTimingFirstChunk?: boolean };
+        w.__vTimingFirstChunk = false;
+        // eslint-disable-next-line no-console
+        console.log(`🎤 [+${performance.now().toFixed(1)}ms] sendMessage`, { fromVoice, len: text.length });
+      }
+    } catch { /* ignore */ }
+
     if (!fromVoice) {
       lastInputChannelRef.current = 'text';
       lastAutoTTSTextRef.current = '';
       debug.log('Channel set to: text');
     }
+
+    // Reset sentence-streaming bookkeeping for the upcoming response.
+    // Pending tts requests from a prior utterance are left in flight —
+    // their tts_done events still decrement `pending` even though
+    // `active` and `accumulated` are now cleared.
+    sentenceStreamRef.current.accumulated = '';
+    sentenceStreamRef.current.dispatchedIdx = 0;
+    sentenceStreamRef.current.active = false;
+    sentenceStreamRef.current.streamDone = false;
 
     lastUserQueryRef.current = text;
     lastIntentInfoRef.current = null;
