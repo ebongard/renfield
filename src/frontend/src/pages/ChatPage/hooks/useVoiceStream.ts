@@ -373,6 +373,12 @@ export function useVoiceStream({
       const recordingStart = Date.now();
       let lastSoundAt = Date.now();
       let speechSeen = false;
+      // Throttle React state updates from the 60 Hz rAF loop to ~15 Hz
+      // (every ~66 ms). Updating state every frame caused so much
+      // context-consumer re-rendering that the partial-transcript
+      // bubble's setState calls were getting visually lost in the
+      // churn. RMS at 15 Hz is still smooth for the visualizer.
+      let lastStateAt = 0;
 
       const checkSilence = () => {
         const a = analyserRef.current;
@@ -388,15 +394,20 @@ export function useVoiceStream({
         const now = Date.now();
         const recordingTime = now - recordingStart;
 
-        // Surface the audio level so the AudioVisualizer can render
-        // the live mic input. Same scale as the legacy hook (Math.round
-        // of RMS) so the visualizer's existing colour ramp still works.
-        setAudioLevel(Math.round(rms));
+        // Compute the silence-auto-stop decision every frame (cheap,
+        // VAD timing precision matters), but throttle React state
+        // updates to ~15 Hz so we don't churn ChatContext consumers
+        // (which would also drown out partial_transcript updates).
+        const shouldUpdateState = now - lastStateAt > 66;
 
         if (rms > VAD.SILENCE_THRESHOLD) {
           lastSoundAt = now;
           speechSeen = true;
-          setSilenceTimeRemaining(0);
+          if (shouldUpdateState) {
+            setAudioLevel(Math.round(rms));
+            setSilenceTimeRemaining(0);
+            lastStateAt = now;
+          }
         } else if (
           speechSeen
           && recordingTime > VAD.MIN_RECORDING_MS
@@ -407,10 +418,13 @@ export function useVoiceStream({
           try { rec.stop(); } catch { /* ignore */ }
           vadFrameRef.current = null;
           return;
-        } else if (speechSeen && recordingTime > VAD.MIN_RECORDING_MS) {
-          // In silence countdown — show how long until auto-stop.
-          const remaining = Math.max(0, VAD.SILENCE_DURATION_MS - (now - lastSoundAt));
-          setSilenceTimeRemaining(remaining);
+        } else if (shouldUpdateState) {
+          setAudioLevel(Math.round(rms));
+          if (speechSeen && recordingTime > VAD.MIN_RECORDING_MS) {
+            const remaining = Math.max(0, VAD.SILENCE_DURATION_MS - (now - lastSoundAt));
+            setSilenceTimeRemaining(remaining);
+          }
+          lastStateAt = now;
         }
         vadFrameRef.current = requestAnimationFrame(checkSilence);
       };
