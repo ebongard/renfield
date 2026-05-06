@@ -32,6 +32,17 @@ const HEADER_LEN = 24; // 4 magic + 16 uuid + 4 sequence
 const VOICE_CODEC = 'audio/webm;codecs=opus';
 const CHUNK_INTERVAL_MS = 100;
 
+// Voice-activity detection — mirrors useAudioRecording's defaults so the
+// streaming path's end-of-utterance UX matches what users learned with
+// the legacy hook. Server-side VAD also runs as a safety net (C.2).
+const VAD = {
+  SILENCE_THRESHOLD: 10,      // RMS below this counts as silence
+  SILENCE_DURATION_MS: 1500,  // total silence before auto-stop
+  MIN_RECORDING_MS: 800,      // ignore silence in the first ~800 ms
+  FFT_SIZE: 512,
+  SMOOTHING: 0.3,
+};
+
 interface FinalTranscript {
   text: string;
   language: string;
@@ -98,6 +109,8 @@ export function useVoiceStream({
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const vadFrameRef = useRef<number | null>(null);
   const sessionReadyRef = useRef(false);
   const unmountedRef = useRef(false);
 
@@ -184,6 +197,16 @@ export function useVoiceStream({
         break;
       }
       case 'final_transcript': {
+        // Server-side VAD beat browser-side VAD (or the user clicked
+        // stop simultaneously) — stop the recorder so we don't keep
+        // streaming chunks against a now-flushed decoder. recorder.onstop
+        // sends stt_flush, which is a no-op on the server side after
+        // the auto-finalize already ran (server is idempotent on
+        // double-flush). C.4 from the design.
+        const rec = recorderRef.current;
+        if (rec && rec.state !== 'inactive') {
+          try { rec.stop(); } catch { /* ignore */ }
+        }
         const result: FinalTranscript = {
           text: (msg.text as string) ?? '',
           language: (msg.language as string) ?? 'de',
@@ -329,6 +352,59 @@ export function useVoiceStream({
     const recorder = new MediaRecorder(stream, { mimeType: VOICE_CODEC });
     recorderRef.current = recorder;
 
+    // Voice-activity detector — auto-stop after 1.5 s of silence so
+    // users don't have to find the mic button. Mirrors the legacy
+    // useAudioRecording's RMS check. Server-side VAD (C.2) is the
+    // safety net for browsers without AnalyserNode access.
+    try {
+      const ctx = ensureAudioContext();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = VAD.FFT_SIZE;
+      analyser.smoothingTimeConstant = VAD.SMOOTHING;
+      source.connect(analyser);
+      analyserRef.current = analyser;
+
+      const dataArray = new Uint8Array(analyser.frequencyBinCount);
+      const recordingStart = Date.now();
+      let lastSoundAt = Date.now();
+      let speechSeen = false;
+
+      const checkSilence = () => {
+        const a = analyserRef.current;
+        const rec = recorderRef.current;
+        if (!a || !rec || rec.state === 'inactive') {
+          vadFrameRef.current = null;
+          return;
+        }
+        a.getByteFrequencyData(dataArray);
+        let sum = 0;
+        for (let i = 0; i < dataArray.length; i += 1) sum += dataArray[i] * dataArray[i];
+        const rms = Math.sqrt(sum / dataArray.length);
+        const now = Date.now();
+        const recordingTime = now - recordingStart;
+
+        if (rms > VAD.SILENCE_THRESHOLD) {
+          lastSoundAt = now;
+          speechSeen = true;
+        } else if (
+          speechSeen
+          && recordingTime > VAD.MIN_RECORDING_MS
+          && now - lastSoundAt >= VAD.SILENCE_DURATION_MS
+        ) {
+          // Silence-auto-stop. recorder.onstop fires next, which
+          // sends stt_flush and the server takes it from there.
+          try { rec.stop(); } catch { /* ignore */ }
+          vadFrameRef.current = null;
+          return;
+        }
+        vadFrameRef.current = requestAnimationFrame(checkSilence);
+      };
+      vadFrameRef.current = requestAnimationFrame(checkSilence);
+    } catch (e) {
+      debug.log('voice: VAD setup failed; recording without silence-auto-stop', e);
+    }
+
     recorder.ondataavailable = (e: BlobEvent) => {
       if (!e.data || e.data.size === 0) return;
       if (ws.readyState !== WebSocket.OPEN) return;
@@ -337,6 +413,11 @@ export function useVoiceStream({
       });
     };
     recorder.onstop = () => {
+      if (vadFrameRef.current !== null) {
+        cancelAnimationFrame(vadFrameRef.current);
+        vadFrameRef.current = null;
+      }
+      analyserRef.current = null;
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'stt_flush' }));
       }
@@ -356,7 +437,7 @@ export function useVoiceStream({
 
     recorder.start(CHUNK_INTERVAL_MS);
     setRecording(true);
-  }, [recording, ensureSocket, onError, onRecordingStart, onRecordingStop]);
+  }, [recording, ensureSocket, ensureAudioContext, onError, onRecordingStart, onRecordingStop]);
 
   const stopRecording = useCallback((): void => {
     const rec = recorderRef.current;
@@ -385,6 +466,11 @@ export function useVoiceStream({
   useEffect(() => {
     return () => {
       unmountedRef.current = true;
+      if (vadFrameRef.current !== null) {
+        cancelAnimationFrame(vadFrameRef.current);
+        vadFrameRef.current = null;
+      }
+      analyserRef.current = null;
       const rec = recorderRef.current;
       if (rec && rec.state !== 'inactive') {
         try { rec.stop(); } catch { /* ignore */ }
