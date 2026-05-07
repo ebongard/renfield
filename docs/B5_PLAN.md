@@ -98,15 +98,18 @@ class TTSEngine(Protocol):
 
 - [x] **Why use Piper-synthesised thorsten as the reference?** It directly answers the brand-consistency question: *"can XTTS reproduce the exact voice the household has been hearing for months?"* Using a real Thorsten Müller dataset clip would test "can XTTS sound like the original speaker," which is a different (less-relevant) question for our decision.
 
-### Step 4 — Corpus (≈45 min)
+### Step 4 — Corpus — code COMPLETE (2026-05-07)
 
-- [ ] Hand-written: 25 prompts in `voice-server/tests/b5/corpus_handwritten.txt`.
-  - 5 short (≤5 words): typical confirmations, refusals, one-word answers
-  - 10 medium (1-2 sentences): typical assistant replies
-  - 5 long (paragraph): full RAG answer or summary
-  - 5 special-content: `numbers` (dates, times, prices), `anglicisms` ("Container deployen", "Status checken"), `technical` (Hostnamen, Kommandos), `german names + addresses`, `mixed code-switching`
-- [ ] Production sample: 10 prompts pulled from the last 7 days of `services/piper_service.py` log lines in the backend pod. Anonymise by replacing family names with `[NAME]`, addresses with `[ORT]`. Save as `voice-server/tests/b5/corpus_production.txt`.
-- [ ] Privacy guarantee: the report references prod prompts as `prod-01..prod-10` only; the raw text is not in the report or the git repo. The corpus file itself stays untracked (`.gitignore` entry).
+- [x] Hand-written: 25 prompts in `voice-server/tests/b5/corpus_handwritten.txt`. Format `prompt_id: text` per line, category derived from prefix (`short-` / `med-` / `long-` / `spec-`). 2026-05-07.
+  - 5 short — confirmations, refusals, one-word answers
+  - 10 medium — typical assistant replies (lamp control, calendar, weather, family chat, etc.)
+  - 5 long — paragraph; covers the autoregressive-drift gate (Step 7 #4 metric): weather summary, news headlines, recipe instructions, day overview, troubleshooting how-to
+  - 5 special — one prompt per sub-category: numbers/dates/prices, anglicisms (deployt, checken, dashboard), technical (hostnames, ports, commands), German names+addresses+phone, code-switching (push-notification, standup-meeting)
+- [x] Production-sample procedure documented in `voice-server/tests/b5/README.md`. **Discovery during Step 4:** the backend's `piper_service.py` does NOT log synth text (status-only logging) — the v3 plan assumption "pull from log lines" doesn't work. The README pivots to a Postgres query against the backend's `messages` table (`role='assistant'`, last 7 days, length-filtered, `ORDER BY random() LIMIT 30`) and an anonymisation table (NAME / ORT / TEL / EMAIL / DATUM / PII). 2026-05-07.
+- [x] `voice-server/tests/b5/corpus_production.txt` added to `.gitignore`. Privacy guarantee holds — the file never ships in the repo. 2026-05-07.
+- [ ] **Pending operator action** — run the SQL extraction inside the maintenance-window prep, anonymise + pick 10 representative prompts, save to the (gitignored) corpus_production.txt.
+
+Privacy guarantee: the report (`docs/B5_XTTS_EVAL.md`) references prod prompts as `prod-01..prod-10` only; the raw text is not in the report or the git repo.
 
 ### Step 5 — Benchmark harness (≈2 h)
 

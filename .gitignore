@@ -113,3 +113,7 @@ tests/e2e/screenshots/
 tests/e2e/test-screenshots/
 tests/e2e/results/
 .playwright-mcp/
+
+# B.5 spike — production-sample corpus contains anonymised real prompts
+# but stays out of the repo regardless. See voice-server/tests/b5/README.md.
+voice-server/tests/b5/corpus_production.txt

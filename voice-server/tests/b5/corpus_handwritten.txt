@@ -1,0 +1,53 @@
+# B.5 hand-written corpus — assistant-style German replies covering the
+# four matrix categories the spike measures (short / medium / long / special).
+#
+# Format: prompt_id ":" SPACE text  (one prompt per line, # for comments)
+# Category derives from prompt_id prefix:
+#   short-*  ≤5 words — confirmations, refusals, one-word answers
+#   med-*    1-2 sentences — typical assistant replies
+#   long-*   paragraph (3-5 sentences) — RAG answers, summaries; tests XTTS-v2
+#            voice-character drift (the gate-#4 metric in Step 7)
+#   spec-*   special content — numbers / anglicisms / technical / names+addresses
+#            / code-switching. One prompt per sub-category.
+#
+# 25 prompts total: 5 short + 10 medium + 5 long + 5 special.
+# Listening pass aggregates by category; XTTS-v2 winning on long-* but
+# losing on spec-* would be visible in the per-category MOS breakdown.
+
+# ── short (5) ──────────────────────────────────────────────────────────
+short-01: Ja, gerne.
+short-02: Das habe ich erledigt.
+short-03: Nein, das geht leider nicht.
+short-04: Verstanden, einen Moment.
+short-05: Bitte sehr.
+
+# ── medium (10) — typical 1-2 sentence assistant replies ───────────────
+med-01: Ich habe die Lampe im Wohnzimmer ausgeschaltet.
+med-02: Der nächste Termin ist morgen um zehn Uhr beim Zahnarzt.
+med-03: Dein Lieblingslied läuft jetzt im Wohnzimmer.
+med-04: Es regnet heute Nachmittag, denk an deinen Schirm.
+med-05: Die Wäsche ist fertig. Soll ich sie in den Trockner geben?
+med-06: Es sind drei E-Mails ungelesen. Möchtest du sie hören?
+med-07: Der Heizofen im Bad steht jetzt auf zweiundzwanzig Grad.
+med-08: Niemand ist gerade online im Familienchat.
+med-09: Die Kinder haben heute schulfrei. Was hast du geplant?
+med-10: Ich habe eine Erinnerung für übermorgen achtzehn Uhr eingerichtet.
+
+# ── long (5) — paragraph; tests autoregressive voice drift ─────────────
+long-01: Heute wird es vormittags überwiegend bewölkt mit Temperaturen um achtzehn Grad. Am Nachmittag kommt vereinzelt etwas Sonne durch, aber Schauer bleiben möglich. Der Wind weht mäßig aus Westen. Morgen früh ist mit Nebelfeldern zu rechnen, danach setzt sich die Sonne durch. Ich empfehle eine leichte Jacke für den Spaziergang nach dem Mittagessen.
+long-02: Die wichtigsten Nachrichten heute: Der Bundestag debattiert über das neue Klimagesetz, der Deutsche Wetterdienst warnt vor Hochwasser im Süden, und die Forschungsgemeinschaft hat eine Studie zur Auswirkung von Bildschirmzeit auf Kinder veröffentlicht. International gab es Verhandlungen zwischen mehreren Staaten über Handelsabkommen. Möchtest du eine Nachricht im Detail hören?
+long-03: Für die Lasagne brauchst du zunächst eine kräftige Bolognese, die mindestens eine Stunde köcheln sollte. Anschließend bereitest du eine Béchamelsauce zu: Butter schmelzen, Mehl unterrühren, mit Milch aufgießen und mit Muskat würzen. In einer Auflaufform schichtest du dann abwechselnd Lasagneplatten, Bolognese und Béchamel. Den geriebenen Parmesan zum Schluss großzügig darüberstreuen. Bei einhundertachtzig Grad Umluft etwa fünfundvierzig Minuten backen, bis die Oberfläche goldbraun ist.
+long-04: Im Kalender stehen heute drei Termine an. Um zehn Uhr ein Gespräch mit der Schule deines Sohnes, danach um halb eins der Zahnarzttermin in der Innenstadt. Am späten Nachmittag, gegen siebzehn Uhr, ist eine Videokonferenz mit dem Team. Zwischen den Terminen hast du etwa zwei Stunden Pufferzeit, ich empfehle eine kurze Pause und einen Spaziergang an der frischen Luft.
+long-05: Um den Router neu zu starten, ziehst du zuerst den Stromstecker für etwa zehn Sekunden ab. Während dieser Zeit kannst du auch die Verbindung am Computer prüfen, falls etwas dauerhaft nicht erreichbar war. Steck dann den Stecker wieder ein und warte etwa zwei Minuten, bis alle Lichter wieder grün leuchten. Sollte das Problem weiterbestehen, prüfe ich gerne, ob es eine Störung im Netz deines Anbieters gibt.
+
+# ── special (5) — one per sub-category ─────────────────────────────────
+# spec-01: numbers (dates, times, prices, ordinals)
+spec-01: Der Termin ist am dreiundzwanzigsten Mai zweitausendsechsundzwanzig um neun Uhr fünfundvierzig. Die Rechnung beläuft sich auf einhundertsiebenundachtzig Euro und zwei Cent.
+# spec-02: anglicisms in everyday German
+spec-02: Den Container mit dem neuen Backend habe ich gerade deployt. Den Status der Pipeline kannst du im Dashboard checken. Der Build ist durchgelaufen, das Release-Tag ist v zwei Punkt sieben Punkt null.
+# spec-03: technical content — hostnames, ports, commands
+spec-03: Der Server unter der Adresse renfield Punkt local antwortet wieder. Den Port acht null acht null habe ich freigegeben. Führe danach im Terminal das Kommando docker compose up minus d aus.
+# spec-04: German names with hyphens, phone numbers, addresses
+spec-04: Frau Schäfer-Müller hat angerufen. Sie wartet auf einen Rückruf an die Nummer null eins fünf eins, vier acht sieben zwei sechs neun. Sie wohnt in der Hauptstraße zwölf in achtundsechzig hundertneunzehn Heidelberg.
+# spec-05: code-switching German/English in a single sentence
+spec-05: Die Push-Notification wurde erfolgreich gesendet. Du hast eine neue Direct Message von einem Stakeholder bekommen. Das Standup-Meeting beginnt gleich, den Video-Call-Link findest du im Slack-Channel.
