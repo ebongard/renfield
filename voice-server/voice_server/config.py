@@ -55,28 +55,5 @@ class Settings(BaseSettings):
     piper_default_voice_en: str = "en_US-amy-medium"
     piper_use_cuda: bool = True
 
-    # B.5 — XTTS-v2 spike (off in production; on in the spike image only).
-    # When False, main.py does NOT construct XTTSService, the coqui-tts
-    # import is never triggered, and engine=xtts-* requests at the REST
-    # endpoint return 503. This keeps v0.1.5 (which doesn't ship coqui-tts)
-    # importable and runnable unchanged.
-    xtts_enabled: bool = False
-    # XTTS model lives in HF cache; resolved at load time. Override path
-    # only if the cache layout differs from the standard HF snapshot.
-    xtts_repo_id: str = "coqui/XTTS-v2"
-    # When engine=xtts-clone, this is the speaker_wav reference passed to
-    # XTTS. Set to None for a non-cloning default-speaker run. Step 3
-    # of the plan synthesises the reference clip via Piper-thorsten and
-    # stores it at the path below.
-    xtts_clone_voice_ref: Path | None = Path("/mnt/llm/voice/xtts_refs/thorsten_ref.wav")
-    xtts_use_cuda: bool = True
-    # Per the plan, sample-rate parity normalises everything to 22.05 kHz
-    # before measurement and listening (Piper's native rate). XTTS native
-    # is 24 kHz; we resample its output.
-    xtts_target_sample_rate: int = 22050
-    # XTTS-v2 drifts and OOMs on long inputs. Plan-imposed manual chunking
-    # threshold matches the existing _split_sentences default (240 chars).
-    xtts_max_chunk_chars: int = 240
-
 
 settings = Settings()
