@@ -55,13 +55,15 @@ The check items below are kept as a forensic record of how the gate was structur
 - [x] Resolve via one of three exits — exit (a) chosen.
 - [n/a] If exit (c): retitle plan and swap engine references — not triggered.
 
-### Step 1 — Spike image (≈2 h)
+### Step 1 — Spike image (≈2 h, +30 min for torch GPU swap)
 
-- [ ] Add `voice-server/Dockerfile.spike`, layered on top of the v0.1.5 base. Pulls `coqui-tts==0.27.0` from the active fork (`idiap/coqui-ai-TTS` — the original `coqui-ai/TTS` is archived).
-- [ ] Bake XTTS-v2 model download into `voice-server/scripts/predownload_xtts.py`. Model lands at `/cache/huggingface/hub/models--coqui--XTTS-v2`. Reuses the existing `voice-server-hf-cache` Longhorn PVC; no extra storage allocation.
-- [ ] Build + push as `registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1` from `.159` per the existing `deploy-production` skill flow.
+- [x] Add `voice-server/Dockerfile.spike`, layered on top of the v0.1.5 base. Pulls `coqui-tts==0.27.0` from the active fork (the package is published as `coqui-tts` on PyPI by the `idiap/coqui-ai-TTS` maintainers; the original `coqui-ai/TTS` repo is archived). 2026-05-07.
+- [x] **Discovery during Step 1: torch CPU→GPU swap required.** v0.1.5 ships CPU torch (`~150 MB`) because torch is used only for ECAPA's CPU-side feature preproc. XTTS-v2 needs GPU torch (`~1.5-2 GB compressed layer`) for CUDA inference. The spike Dockerfile uninstalls CPU torch and installs `torch>=2.4` from the cu124 wheel index. GPU torch is a superset of CPU torch — ECAPA's CPU ops continue working unchanged. This wasn't in the v3 plan; surfacing here so future readers know the v0.1.5 → spike delta is "more than adding a pip package." 2026-05-07.
+- [x] Bake XTTS-v2 model download into `voice-server/scripts/predownload_xtts.py`. Uses `huggingface_hub.snapshot_download` with `allow_patterns` for the four required files (model.pth, config.json, vocab.json, speakers_xtts.pth — skips ~50 MB of training-state and samples). Model lands at `$HF_HUB_CACHE/hub/models--coqui--XTTS-v2`. Reuses the existing `voice-server-hf-cache` Longhorn PVC; no extra storage allocation. 2026-05-07.
+- [x] Pre-accept CPML in non-interactive contexts via `ENV COQUI_TOS_AGREED=1` in the Dockerfile. The actual license text + rationale for accepting under CPML's testing/evaluation clause is documented in `docs/B5_LICENSE_NOTE.md`. 2026-05-07.
+- [ ] Build + push as `registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1` from `.159` per the existing `deploy-production` skill flow. (Pending — requires `.159` build box access.)
 
-**Risks:** Coqui TTS pip install on CUDA 12.6 + Python 3.12 is non-trivial. The Dockerfile already has the `--allow-unauthenticated` apt workaround for nvidia/cuda 12.6.3 on Ubuntu 24.04. If `coqui-tts` wheel breaks, fall back to a `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0` source install. Add ~30 min if hit.
+**Risks:** Coqui TTS pip install on CUDA 12.6 + Python 3.12 is non-trivial. PyPI confirms `coqui-tts==0.27.0` exists with `requires_python: <3.15,>=3.10` and a `py3-none-any` wheel (pure-Python wrapper). If install breaks at build time, fall back to `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0` source install. Add ~30 min if hit. Additional risk surfaced in Step 1: GPU torch layer is ~1.5-2 GB compressed; under Harbor's 2.5 GB practical layer limit but tight. If the build fails on layer size, split the GPU torch install into two RUN steps (nvidia-* deps first, then torch itself).
 
 ### Step 2 — Dual-engine TTS code (≈2 h)
 
