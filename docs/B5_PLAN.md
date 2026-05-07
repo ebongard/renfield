@@ -1,6 +1,6 @@
 # Phase B.5 — XTTS-v2 Evaluation Spike — Plan
 
-**Status:** v4 — Step 0 executed (license clearance complete, exit (a) chosen 2026-05-07). Steps 1-8 ready to execute.
+**Status:** v4 — Step 0 executed (license clearance complete, exit (a) chosen 2026-05-07). Steps 1-5 code-complete. Steps 6-7 are operator-driven; see [`docs/B5_RUNBOOK.md`](B5_RUNBOOK.md) for the copy-paste sequence from "build on .159" through "report written."
 **Author:** ebongard (with Claude Code).
 **Date:** 2026-05-07.
 **Branch:** `spike/b5-xtts-eval`.
