@@ -414,6 +414,8 @@ function useVoiceStream() {
 
 6. **B.5 — XTTS-v2 evaluation spike** (per D2). 1 day. Build a parallel voice-server image with XTTS-v2, benchmark German MOS + latency + VRAM against Piper on the same prompts. Decision artefact: short report appended to this doc. Swap-in or keep Piper based on the numbers.
 
+   **B.5 outcome (2026-05-07): stay on Piper.** XTTS-clone p95 TTFB = 1367 ms vs Piper p95 = 128 ms — fails the 2× latency gate by 5.3×. Architectural: XTTS-v2 in our integration synthesises the full prompt before the first byte (vs Piper's sentence-streaming). VRAM passes (4.25 GB measured vs 8 GB envelope; ~3 GB under projection). 28 % of XTTS-clone short-prompt synths failed duration validation (model echoes/pads on short inputs — known weakness). License gate (CPML) was independently disqualifying for Reva-shared production. Full report: [`docs/B5_XTTS_EVAL.md`](B5_XTTS_EVAL.md). The spike's harness, corpus, runbook, and reference-clip generator stay in tree for the next TTS evaluation (ChatterboxTTS — MIT, multilingual — is the primary follow-up candidate; see [`docs/B5_LICENSE_NOTE.md`](B5_LICENSE_NOTE.md)).
+
 7. **B.6 — Remove the feature flag** once Phase B is stable for ≥1 week. **This is also the trigger for Phase C** (see D3).
 
 Estimated effort: **3-4 days for B.1.0-B.4** (one extra day vs v1.0 for ECAPA + voice-chat orchestrator), plus **1 day for B.5**. B.6 is a no-op flip after the soak period.
