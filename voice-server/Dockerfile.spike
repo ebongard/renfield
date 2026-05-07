@@ -20,42 +20,29 @@
 
 FROM registry.treehouse.x-idra.de/renfield/voice-server:v0.1.5 AS spike
 
-# Step 1 of the v0.1.5 → spike delta:
-#   Swap CPU torch for GPU torch.
+# Step 1 of the v0.1.5 → spike delta: swap CPU torch for GPU torch.
 #
 # v0.1.5 installed CPU torch (~150 MB) because torch was used ONLY for
 # speechbrain's CPU feature preproc. XTTS-v2 needs GPU torch for inference.
 # GPU torch supersedes CPU torch (CPU ops still work on GPU torch), so the
-# ECAPA path keeps working unchanged.
+# ECAPA path keeps working unchanged. Single ~5.2 GB layer (uncompressed).
 #
-# IMPORTANT: split the GPU torch install across 3 RUN layers. A single
-# install creates one ~5.2 GB layer that exceeds Harbor's ~2.5 GB practical
-# layer limit (the proxy times out with "Client Closed Request" mid-upload,
-# verified empirically on the first build of :b5-spike-rc1). The split
-# below puts the largest single dep (nvidia-cusparselt, ~1.2 GB) in its
-# own layer, the cluster of mid-size nvidia-* libs in a second, and torch
-# itself in a third. Each layer ends up well under 2 GB compressed.
+# A previous revision of this file split the install across 3 RUN layers
+# to dodge a Harbor push 504. That split made the image ~2 GB BIGGER (pip
+# downgrade behaviour duplicates heavy nvidia-* binaries across layers
+# whenever the torch install pulls older pinned versions than the layer-2
+# install resolved). The proxy chain in front of Harbor (HAProxy →
+# Traefik) was the real culprit; once timeouts were bumped on both layers
+# to 30m (see public_k8s/docs/proxy-chain-timeouts.md), a single 5.2 GB
+# layer pushes through cleanly. Reverting to single RUN.
 #
 # We uninstall first to avoid pip thinking everything is satisfied.
 RUN /opt/venv/bin/pip uninstall -y torch torchaudio
 
-# Layer 1 — the single largest cu124 dep. Splitting it out alone makes
-# the most-likely-to-time-out single layer 50% smaller.
-RUN /opt/venv/bin/pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cu124 \
-        nvidia-cusparselt-cu12
-
-# Layer 2 — the mid-size nvidia GPU libs. Listed explicitly so they land
-# in this layer rather than getting bundled with torch in the next.
-RUN /opt/venv/bin/pip install --no-cache-dir \
-        --index-url https://download.pytorch.org/whl/cu124 \
-        nvidia-cudnn-cu12 nvidia-cublas-cu12 nvidia-cusparse-cu12 \
-        nvidia-cufft-cu12 nvidia-cusolver-cu12 nvidia-nccl-cu12
-
-# Layer 3 — torch + torchaudio + remaining smaller transitives (triton,
-# nvidia-cuda-runtime-cu12, etc.). cu124 wheels matched the cu12.6 base
-# in v0.1.5; the upstream pytorch compatibility matrix permits forward
-# compat. If this breaks, fall back to cu121.
+# CUDA 12.4 wheel index — matches the cu12.6 base image (forward compat
+# from cu12.4 wheels onto cu12.6 runtime is expected; verified by the
+# upstream pytorch compatibility matrix). If this breaks, fall back to
+# cu121.
 RUN /opt/venv/bin/pip install --no-cache-dir \
         --index-url https://download.pytorch.org/whl/cu124 \
         torch>=2.4 torchaudio>=2.4
