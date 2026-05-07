@@ -102,6 +102,15 @@ spec:
               value: "true"
             - name: COQUI_TOS_AGREED
               value: "1"
+            # Coqui TTS' default cache is ~/.local/share/tts/ — that
+            # lives on ephemeral storage and the XTTS-v2 model + its
+            # downloads bloat it past the node's threshold (discovered
+            # mid-window 2026-05-07: pod was Evicted with DiskPressure
+            # after using 1.5 GB). Redirect to the Longhorn PVC mount.
+            - name: TTS_HOME
+              value: "/cache/coqui-tts"
+            - name: HOME
+              value: "/cache/coqui-tts-home"
             # XTTS clone voice reference. Production NFS (/mnt/llm) is
             # mounted readOnly per the production manifest, so we cannot
             # write thorsten_ref.wav there. Phase 2.1 of the runbook
@@ -116,6 +125,11 @@ spec:
               cpu: "2"
               memory: 4Gi
               nvidia.com/gpu: 1
+              # Reserve ephemeral so the kubelet's eviction logic doesn't
+              # surprise-evict us. The XTTS-v2 spike turned out to use
+              # ~1.5 GiB even with TTS_HOME redirected (transient downloads,
+              # ONNX session caches, /tmp scratch). 4 GiB is plenty.
+              ephemeral-storage: 4Gi
             limits:
               cpu: "6"
               # +4 GiB vs production: XTTS-v2 + GPU torch + librosa pulls
@@ -123,6 +137,7 @@ spec:
               # measured tight number.
               memory: 16Gi
               nvidia.com/gpu: 1
+              ephemeral-storage: 8Gi
           volumeMounts:
             - name: models
               mountPath: /mnt/llm
