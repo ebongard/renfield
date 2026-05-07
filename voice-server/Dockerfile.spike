@@ -50,14 +50,19 @@ RUN /opt/venv/bin/pip install --no-cache-dir \
 # Step 2: install coqui-tts (XTTS-v2 wrapper).
 #
 # coqui-tts is the maintained idiap fork of the now-archived
-# coqui-ai/TTS package. Pinned to 0.27.0 per the plan — pip resolution
-# pulls a few transitives (encodec, einops, librosa, etc.) but does
-# NOT pull torch (we already satisfy >=2.0).
+# coqui-ai/TTS package. Pinned to 0.27.0 per the plan.
 #
-# If 0.27.0 breaks pip resolution on Python 3.12 + CUDA 12.6, the
-# plan's mitigation is `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0`
-# (source install). Add ~30 min if hit.
-RUN /opt/venv/bin/pip install --no-cache-dir coqui-tts==0.27.0
+# Transformers pin (DISCOVERED 2026-05-07 mid-window):
+# coqui-tts 0.27.0's xtts loader does
+# `from transformers.pytorch_utils import isin_mps_friendly`. This
+# symbol exists in transformers 4.x but was removed in 5.x. coqui-tts'
+# `requires` declares only `transformers` (no version pin), so pip
+# resolves to the latest (5.x at the time of the spike) and the
+# import explodes. Pin transformers <5.0 explicitly here.
+#
+# If coqui-tts ever ships a 0.28+ that supports transformers 5.x, the
+# pin can be relaxed.
+RUN /opt/venv/bin/pip install --no-cache-dir coqui-tts==0.27.0 'transformers>=4.40,<5.0'
 
 # Step 3: ensure huggingface_hub is current (predownload script needs
 # snapshot_download). Should already be present as a faster-whisper /
