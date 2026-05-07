@@ -75,6 +75,15 @@ class SessionState:
     last_partial_text: str = ""
     started_at: float = 0.0
     tts_tasks: dict[str, asyncio.Task] = field(default_factory=dict)
+    # During _finalize the decoder is closed and a fresh one is
+    # spawned. Browser recorder buffers ~100 ms of chunks ahead, so
+    # several arrive after the close. They previously hit
+    # AudioDecoder.push and raised "decoder closed" /
+    # "WriteUnixTransport closed" — the chunk handler surfaced these
+    # as `invalid_audio` events which the frontend rendered as chat
+    # messages. Now we set draining=True for the swap window and
+    # silently drop chunks during it.
+    draining: bool = False
     # C.2 server-side VAD: track when speech was last detected so we
     # can auto-finalize after SERVER_VAD_SILENCE_S of trailing quiet.
     # Browser-side VAD (C.1) is the primary trigger; this is the
@@ -212,17 +221,21 @@ async def _finalize(
     state.last_partial_at = 0.0
     state.last_speech_at = 0.0
     state.speech_seen = False
-    if state.codec and state.decoder is not None:
+    # Inter-utterance protocol: close the decoder and DON'T auto-
+    # restart. The next utterance starts when the client sends a
+    # fresh session_start, which spawns a clean decoder. Chunks
+    # arriving between _finalize and that session_start are silently
+    # dropped (debug log) — they're MediaRecorder's pre-stop buffer
+    # crossing the finalize boundary, and there's no way to splice
+    # them mid-stream into either the old or new decoder cleanly
+    # (webm cluster headers).
+    if state.decoder is not None:
         try:
             await state.decoder.close()
         except Exception:
             pass
-        state.decoder = AudioDecoder(state.codec)
-        try:
-            await state.decoder.start()
-        except Exception as e:
-            logger.warning("decoder restart failed: %s", e)
-            state.decoder = None
+        state.decoder = None
+        state.draining = True  # signal to chunk handler: between utterances
 
 
 async def _run_tts(
@@ -331,8 +344,29 @@ async def ws_voice(websocket: WebSocket, token: str | None = Query(default=None)
 
             if "bytes" in msg and msg["bytes"] is not None:
                 if state.decoder is None:
-                    await _send_error(websocket, "bad_message",
-                                       "binary frame before session_start")
+                    # Two legitimate cases:
+                    #  1. Binary frame before any session_start — protocol
+                    #     violation, but rare (frontend sends session_start
+                    #     before chunks).
+                    #  2. After _finalize: MediaRecorder's pre-stop buffer
+                    #     crosses the finalize boundary. Browser doesn't
+                    #     know we already finalized. Drop silently — these
+                    #     chunks belong neither to the prior utterance
+                    #     (already transcribed) nor cleanly to the next
+                    #     (need a fresh decoder which only the next
+                    #     session_start spawns). Logging at debug, not
+                    #     surfacing as an error event so the chat doesn't
+                    #     fill with internal-protocol noise.
+                    if state.draining:
+                        logger.debug(
+                            "voice session %s drop chunk between utterances (draining)",
+                            user_id,
+                        )
+                    else:
+                        logger.debug(
+                            "voice session %s drop chunk before session_start",
+                            user_id,
+                        )
                     continue
                 try:
                     await state.decoder.push(msg["bytes"])
@@ -391,12 +425,22 @@ async def ws_voice(websocket: WebSocket, token: str | None = Query(default=None)
             if mtype == "session_start":
                 codec = data.get("codec")
                 # Replacing an existing decoder leaks the old ffmpeg subprocess
-                # if we don't close first.
+                # if we don't close first. Sent at WS open AND at the
+                # start of each subsequent utterance — the second-and-
+                # later calls signal "starting a new utterance after a
+                # finalize."
                 await _close_decoder(state)
                 try:
                     state.decoder = AudioDecoder(codec)
                     await state.decoder.start()
                     state.codec = codec
+                    state.draining = False  # back to "live recording" state
+                    state.audio_pcm.clear()
+                    state.last_partial_text = ""
+                    state.last_partial_at = 0.0
+                    state.last_speech_at = 0.0
+                    state.speech_seen = False
+                    state.started_at = time.monotonic()
                     await _send_json(websocket, {"type": "session_ready"})
                 except ValueError as e:
                     await _send_error(websocket, "invalid_audio", str(e))

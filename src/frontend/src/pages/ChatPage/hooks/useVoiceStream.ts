@@ -363,6 +363,18 @@ export function useVoiceStream({
       return;
     }
 
+    // Each utterance gets its own session_start so the server can
+    // spawn a fresh decoder. Without this, the first utterance works
+    // (decoder created on WS open), but every subsequent recording
+    // hits "decoder is None" on the server (finalize tore it down).
+    // Server's session_start handler is idempotent. WS message order
+    // is preserved end-to-end and the receive loop is sequential, so
+    // the session_start fully completes (decoder up) before the
+    // first MediaRecorder chunk arrives 100 ms later.
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'session_start', codec: VOICE_CODEC }));
+    }
+
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true });
