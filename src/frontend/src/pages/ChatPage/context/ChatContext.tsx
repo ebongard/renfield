@@ -381,11 +381,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
 
   // Sentence-streaming auto-TTS (option A). Tracks accumulated chat
   // content so we can dispatch each completed sentence as its own
-  // tts_request as the LLM streams. Voice-server's TTSService lock
-  // serializes them, so frames arrive in dispatch order which is the
-  // same as the user's reading order. Saves ~LLM-streaming-time of
-  // perceived latency on long answers (~19s on a typical Qwen3.6
-  // German response, measured).
+  // tts_request as the LLM streams. The voice-server's tts handler
+  // spawns an asyncio.Task per request so multiple in-flight TTS
+  // requests run CONCURRENTLY (measured on a 4-sentence response:
+  // all four binary frames arrived within a 43 ms span). Frames
+  // self-describe via the 24-byte RFWA header (request_id +
+  // sequence) so the playback queue routes them correctly even
+  // when interleaved on the wire. Empirically saves ~22 s of
+  // perceived latency on a typical Qwen3.6 German response (29.4 s
+  // → 7.1 s end-to-end final-transcript-to-last-audio).
   const sentenceStreamRef = useRef<{
     accumulated: string;
     dispatchedIdx: number;
