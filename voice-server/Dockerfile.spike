@@ -64,11 +64,16 @@ RUN /opt/venv/bin/pip install --no-cache-dir coqui-tts==0.27.0
 # speechbrain transitive in v0.1.5 — this is a noop in the happy path.
 RUN /opt/venv/bin/pip install --no-cache-dir "huggingface_hub>=0.24"
 
-# Step 4: bring in the spike-specific scripts and the test corpus.
-# The benchmark resolves /app/tests/b5/ by default; the corpus
-# (corpus_handwritten.txt + README) lives there. corpus_production.txt
-# is gitignored — operator copies it in via `kubectl cp` after the spike
-# pod is up and before running the benchmark.
+# Step 4: bring in the latest voice_server code, the spike-specific
+# scripts, and the test corpus.
+#
+# CRITICAL: COPY voice_server is required even though the v0.1.5 base
+# image already has it. The base bakes in pre-spike code (no engine
+# dispatch, no xtts_service, no _engine_adapter). Without this COPY,
+# /api/voice/tts ignores `engine` and always runs Piper — discovered
+# the hard way during Phase 3.6 of the runbook on 2026-05-07. Always
+# COPY the latest source on top of the base.
+COPY voice_server /app/voice_server
 COPY scripts /app/scripts
 COPY tests /app/tests
 
