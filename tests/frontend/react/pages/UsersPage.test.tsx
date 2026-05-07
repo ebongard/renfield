@@ -261,6 +261,71 @@ describe('UsersPage', () => {
         expect(deleteUserId).not.toBeNull();
       });
     });
+
+    it('unlinks speaker via DELETE /api/users/:id/link-speaker', async () => {
+      // Regression: previous code called DELETE /unlink-speaker (typo); the
+      // backend route is DELETE /link-speaker (REST verb-on-noun).
+      // The 404 was swallowed silently and the unlink button looked broken.
+      const user = userEvent.setup();
+      let unlinkUrl: string | null = null;
+
+      server.use(
+        http.delete(`${BASE_URL}/api/users/:id/link-speaker`, ({ request, params }) => {
+          unlinkUrl = new URL(request.url).pathname;
+          return HttpResponse.json({ id: parseInt(params.id as string, 10), speaker_id: null });
+        }),
+      );
+
+      renderWithProviders(<UsersPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('user1')).toBeInTheDocument();
+      });
+
+      // user1 (id=2) has speaker_id=1, so its row shows the unlink button.
+      const unlinkButtons = screen.getAllByTitle('Sprecher trennen');
+      await user.click(unlinkButtons[0]);
+
+      await waitFor(() => {
+        expect(unlinkUrl).toBe('/api/users/2/link-speaker');
+      });
+    });
+
+    it('links speaker via POST /api/users/:id/link-speaker', async () => {
+      const user = userEvent.setup();
+      let linkPostBody: { speaker_id?: number } | null = null;
+      let linkUrl: string | null = null;
+
+      server.use(
+        http.post<{ id: string }>(`${BASE_URL}/api/users/:id/link-speaker`, async ({ request, params }) => {
+          linkUrl = new URL(request.url).pathname;
+          linkPostBody = (await request.json()) as { speaker_id?: number };
+          return HttpResponse.json({ id: parseInt(params.id, 10), speaker_id: linkPostBody.speaker_id });
+        }),
+      );
+
+      renderWithProviders(<UsersPage />);
+
+      await waitFor(() => {
+        expect(screen.getByText('admin')).toBeInTheDocument();
+      });
+
+      // admin (id=1) has speaker_id=null — its row shows the link button.
+      // Speaker 2 in the mock is the only unlinked one (Speaker 1 is on user1).
+      const linkButtons = screen.getAllByTitle('Sprecher verknüpfen');
+      await user.click(linkButtons[0]);
+
+      // Modal opens with available speakers; click Speaker 2.
+      await waitFor(() => {
+        expect(screen.getByText('Speaker 2')).toBeInTheDocument();
+      });
+      await user.click(screen.getByText('Speaker 2'));
+
+      await waitFor(() => {
+        expect(linkUrl).toBe('/api/users/1/link-speaker');
+        expect(linkPostBody).toEqual({ speaker_id: 2 });
+      });
+    });
   });
 
   describe('Error Handling', () => {

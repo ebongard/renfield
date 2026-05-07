@@ -103,7 +103,10 @@ async function linkSpeakerRequest(args: { userId: number; speakerId: number }): 
 }
 
 async function unlinkSpeakerRequest(userId: number): Promise<void> {
-  await apiClient.delete(`/api/users/${userId}/unlink-speaker`);
+  // Backend uses REST verb-on-noun: POST /link-speaker creates the link,
+  // DELETE /link-speaker removes it. There is no `/unlink-speaker` route
+  // — it returned 404 silently and the unlink button looked broken.
+  await apiClient.delete(`/api/users/${userId}/link-speaker`);
 }
 
 export function useUsersQuery() {
