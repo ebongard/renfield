@@ -85,11 +85,18 @@ class TTSEngine(Protocol):
 
 **Files touched:** `voice-server/voice_server/api/rest_voice.py` (+90 / -2), `voice-server/voice_server/services/_engine_adapter.py` (new, 113), `voice-server/voice_server/services/xtts_service.py` (new, 140), `voice-server/voice_server/main.py` (+11), `voice-server/voice_server/config.py` (+23), `voice-server/Dockerfile.spike` (+6 — XTTS_ENABLED=true env). `voice_server/services/__init__.py` left empty (the v2/v3 plan listed it as touched, but the package uses explicit submodule imports — no exports needed). No frontend changes.
 
-### Step 3 — Reference clip for cloning (≈15 min)
+### Step 3 — Reference clip for cloning — code COMPLETE (2026-05-07)
 
-- [ ] Synthesize a 15-second canonical reference using the *current* production Piper-thorsten voice. Phonetically diverse German text — TBD: candidate text in plan-review.
-- [ ] Store at `/mnt/llm/voice/xtts_refs/thorsten_ref.wav` (the existing NFS share, voice-server already mounts it read-only).
-- [ ] **Why use Piper-synthesised thorsten as the reference?** It directly answers the brand-consistency question: *"can XTTS reproduce the exact voice the household has been hearing for months?"* Using a real Thorsten Müller dataset clip would test "can XTTS sound like the original speaker," which is a different (less-relevant) question for our decision.
+- [x] **Canonical text picked** (~40 words, ~13-14 s when spoken at thorsten-medium's natural pace, inside the XTTS-v2 5-30 s reference window): a natural German passage covering varied sentence lengths and the umlaut/sch-dominant phoneme set typical of household German. Text constant lives in `voice-server/scripts/generate_thorsten_ref.py:CANONICAL_TEXT`. 2026-05-07.
+- [x] Wrote `voice-server/scripts/generate_thorsten_ref.py` (115 lines). Loads Piper-thorsten via the same `PiperVoice.load` API the production service uses, synthesises the canonical text, validates the WAV (channels, sample width, sample rate, duration in 5-30 s window), and writes to `/mnt/llm/voice/xtts_refs/thorsten_ref.wav`. Honours env overrides (`PIPER_VOICES_DIR`, `PIPER_DEFAULT_VOICE_DE`, `XTTS_REF_OUTPUT`). Idempotent overwrite — running twice produces the same reference. 2026-05-07.
+- [ ] **Pending operator action** — run the script inside the production voice-server pod **before** scaling down for the maintenance window, so the reference exists on the NFS share before the spike pod boots:
+  ```
+  kubectl exec -n renfield deploy/voice-server -- \
+      python /app/scripts/generate_thorsten_ref.py
+  ```
+  (Production v0.1.5 doesn't currently have this script in its image; the script needs to land in the production image first via a routine rebuild, OR be copied into the running pod at runtime via `kubectl cp`. Latter is the cheap path: `kubectl cp voice-server/scripts/generate_thorsten_ref.py renfield/voice-server-pod:/tmp/ && kubectl exec ... -- python /tmp/generate_thorsten_ref.py`.)
+
+- [x] **Why use Piper-synthesised thorsten as the reference?** It directly answers the brand-consistency question: *"can XTTS reproduce the exact voice the household has been hearing for months?"* Using a real Thorsten Müller dataset clip would test "can XTTS sound like the original speaker," which is a different (less-relevant) question for our decision.
 
 ### Step 4 — Corpus (≈45 min)
 
