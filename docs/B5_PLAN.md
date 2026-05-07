@@ -63,7 +63,9 @@ The check items below are kept as a forensic record of how the gate was structur
 - [x] Pre-accept CPML in non-interactive contexts via `ENV COQUI_TOS_AGREED=1` in the Dockerfile. The actual license text + rationale for accepting under CPML's testing/evaluation clause is documented in `docs/B5_LICENSE_NOTE.md`. 2026-05-07.
 - [ ] Build + push as `registry.treehouse.x-idra.de/renfield/voice-server:b5-spike-rc1` from `.159` per the existing `deploy-production` skill flow. (Pending — requires `.159` build box access.)
 
-**Risks:** Coqui TTS pip install on CUDA 12.6 + Python 3.12 is non-trivial. PyPI confirms `coqui-tts==0.27.0` exists with `requires_python: <3.15,>=3.10` and a `py3-none-any` wheel (pure-Python wrapper). If install breaks at build time, fall back to `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0` source install. Add ~30 min if hit. Additional risk surfaced in Step 1: GPU torch layer is ~1.5-2 GB compressed; under Harbor's 2.5 GB practical layer limit but tight. If the build fails on layer size, split the GPU torch install into two RUN steps (nvidia-* deps first, then torch itself).
+**Risks:** Coqui TTS pip install on CUDA 12.6 + Python 3.12 is non-trivial. PyPI confirms `coqui-tts==0.27.0` exists with `requires_python: <3.15,>=3.10` and a `py3-none-any` wheel (pure-Python wrapper). If install breaks at build time, fall back to `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0` source install. Add ~30 min if hit.
+
+**Risk (TRIGGERED 2026-05-07): GPU torch layer >2.5 GB.** First build of `:b5-spike-rc1` layered all GPU-torch deps (~5.2 GB uncompressed / ~2-3 GB compressed) into a single RUN, and Harbor rejected the push with `Client Closed Request` after retries. Fix applied to Dockerfile.spike: 3-RUN split — (1) `nvidia-cusparselt-cu12` alone (the largest single dep, ~1.2 GB), (2) the mid-size cluster `nvidia-cudnn-cu12 nvidia-cublas-cu12 nvidia-cusparse-cu12 nvidia-cufft-cu12 nvidia-cusolver-cu12 nvidia-nccl-cu12`, (3) `torch torchaudio` plus remaining transitives. Each resulting layer is well under 2 GB compressed.
 
 ### Step 2 — Dual-engine TTS code — COMPLETE (2026-05-07)
 
