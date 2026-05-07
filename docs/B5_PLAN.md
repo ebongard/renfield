@@ -111,26 +111,36 @@ class TTSEngine(Protocol):
 
 Privacy guarantee: the report (`docs/B5_XTTS_EVAL.md`) references prod prompts as `prod-01..prod-10` only; the raw text is not in the report or the git repo.
 
-### Step 5 — Benchmark harness (≈2 h)
+### Step 5 — Benchmark harness — code COMPLETE (2026-05-07)
 
-- [ ] `voice-server/scripts/b5_benchmark.py`. Inputs: corpus paths, output dir. For each `(prompt, engine)` pair:
-  - HTTP `POST localhost:8080/api/voice/tts` with the engine param
-  - Captures: time-to-first-byte (ms), total synthesis time (ms), WAV bytes, RMS audio level (sanity check that audio isn't silence), measured WAV duration (seconds)
-  - VRAM: snapshot via `nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits` before/during/after each engine's measured synths (post-warmup, steady-state)
-- [ ] **Warmup loop:** before the measured trials, run N=3 throwaway synths per engine using prompts NOT in the corpus. XTTS first inference includes model compilation + kernel autotuning (typically 5-15 s); without warmup, p95 latency is dominated by cold-start and the comparison is misleading. Warmup results are written to `_warmup.csv` for record but excluded from aggregate metrics.
-- [ ] **Sample-rate normalization:** Piper outputs 22.05 kHz, XTTS-v2 outputs 24 kHz. Resample both engines' output to a common 22.05 kHz before writing the WAV. Document the resample step in the report. Latency comparisons measured *before* resample (so the engine's native synth time is captured); listening pass uses the resampled outputs.
-- [ ] **Output validation per trial:**
-  - WAV bytes ≥ 1 KB (catches HTTP errors that wrote empty files)
+- [x] `voice-server/scripts/b5_benchmark.py` (483 lines). Designed to run INSIDE the spike pod (has librosa via coqui-tts transitive, has localhost API access). Operator copies results out via `kubectl cp` post-run. 2026-05-07.
+- [x] **HTTP request flow:** for each `(prompt, engine)` pair, `POST /api/voice/tts` with `{text, engine, voice_ref?, language}`. Captures HTTP wall-clock + the per-chunk timing in the `X-Synth-Chunk-Times-Ms` response header (added in Step 2). Per-chunk timing is the gate-metric source for TTFB-on-first-sentence and total synth.
+- [x] **Warmup loop:** N=3 throwaway prompts per engine before measured trials. Written to `_warmup.csv` for record but excluded from aggregate metrics. Toggleable via `--skip-warmup` for dev iteration.
+- [x] **Sample-rate normalization** is handled inside `XTTSService.synth_one` (Step 2 deliverable) — XTTS native 24 kHz → 22.05 kHz via librosa. Per-chunk timings recorded BEFORE resample in `xtts_service.py`, so the X-Synth-Chunk-Times-Ms header reflects native synth time. The benchmark reads the WAV (already 22.05 kHz) for listening-pass uniformity.
+- [x] **Output validation per trial** (`validate_trial`):
+  - WAV bytes ≥ 1 KB (catches HTTP-error empty files)
   - RMS audio level > 0.001 (catches silent-audio bugs that would otherwise score as MOS=1)
-  - Measured duration within 50 %-200 % of expected for the prompt length (catches truncation / runaway synthesis)
-  - **Voice drift check (long prompts only, XTTS engines only).** Compute spectral-centroid delta between first 3 s and last 3 s of the WAV (`librosa.feature.spectral_centroid` on each window, take absolute mean delta in Hz). XTTS-v2 is autoregressive and is well-known to drift speaker identity on inputs >200 chars — its weakness is precisely the brand-consistency question D2 is designed to answer. The spectral-centroid delta is a cheap mechanical proxy: small delta = stable voice, large delta = drift. Threshold tuned in-flight from the medium-prompt distribution as a baseline; record raw delta per trial. Listener subjective drift judgement (Step 7) is the authoritative signal; this check exists so we know to look harder when it fires.
-  - Trials that fail any check go to `_failures.csv` with reason; the listening pass and aggregation exclude them. If failure rate >10 % for any engine, abort the run and investigate.
-- [ ] Output structure:
-  - `b5_results.json` — full raw data, per-trial (includes pre-resample and post-resample numbers)
-  - `b5_results.csv` — flat table, easy to paste into the report
-  - `_warmup.csv` — N=3 throwaway results per engine
+  - Measured duration within 50 %-200 % of expected (heuristic: words ÷ 3 wps + sentences × 0.15 s pause; tested against the corpus and lands inside the validation window for typical prompts)
+  - **Voice drift check** (long+xtts only): `centroid_delta_hz()` computes `|mean(spectral_centroid(first 3 s)) - mean(spectral_centroid(last 3 s))|` via librosa. Returned as `centroid_delta_hz` field on the trial record, raw — listener subjective judgement (Step 7) is the authoritative signal.
+  - Failed trials → `_failures.csv` with reason. **Failure-rate gate:** if any engine exceeds 10 %, the harness exits with code 2 — the comparison is too noisy to feed the listening pass.
+- [x] **VRAM measurement.** Captured at engine boundaries (before first measured synth of an engine, after last) via `nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits`. Per-trial polling under load aliases against the active synth and contaminates the measurement; engine-boundary snapshots are clean.
+- [x] **Output structure**:
+  - `b5_results.json` — full raw data, per-trial, JSON-pretty
+  - `b5_results.csv` — flat table for paste-into-report (chunk_times_ms serialised as a comma-separated string)
+  - `_warmup.csv` — warmup-trial results
   - `_failures.csv` — any (prompt, engine) pair that failed validation
-  - `wavs/{prompt_id}_{engine}.wav` — one file per (prompt, engine), normalized to 22.05 kHz, ~120 files total
+  - `wavs/{prompt_id}_{engine}.wav` — one file per (prompt, engine), already at 22.05 kHz from the engine layer, ~75 files total (25 prompts × 3 engines; +30 if production corpus also loads)
+- [x] Updated `voice-server/Dockerfile.spike` to `COPY tests /app/tests` so the corpus is in the image; benchmark resolves `--corpus-dir` to `/app/tests/b5/` by default.
+
+**Files touched:** `voice-server/scripts/b5_benchmark.py` (new, 483 lines), `voice-server/Dockerfile.spike` (+5 lines for `COPY tests`).
+
+**CLI surface** (sanity-tested via manual regex parse against the hand-written corpus, all 25 prompts parsed, category counts match):
+```
+python /app/scripts/b5_benchmark.py \
+    --output-dir /tmp/b5_results \
+    --voice-ref /mnt/llm/voice/xtts_refs/thorsten_ref.wav
+```
+Useful flags: `--skip-warmup` (dev iteration), `--max-prompts N` (smoke a small subset), `--engines piper,xtts-clone` (skip xtts-default), `--no-drift-check` (if librosa missing).
 
 ### Step 6 — Maintenance window swap (≈50 min)
 

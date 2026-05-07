@@ -57,8 +57,13 @@ RUN /opt/venv/bin/pip install --no-cache-dir coqui-tts==0.27.0
 # speechbrain transitive in v0.1.5 — this is a noop in the happy path.
 RUN /opt/venv/bin/pip install --no-cache-dir "huggingface_hub>=0.24"
 
-# Step 4: bring in the spike-specific scripts.
+# Step 4: bring in the spike-specific scripts and the test corpus.
+# The benchmark resolves /app/tests/b5/ by default; the corpus
+# (corpus_handwritten.txt + README) lives there. corpus_production.txt
+# is gitignored — operator copies it in via `kubectl cp` after the spike
+# pod is up and before running the benchmark.
 COPY scripts /app/scripts
+COPY tests /app/tests
 
 # Coqui TTS' license-prompt — `tts.tts(...)` calls in non-interactive
 # environments hang waiting for a y/n confirm of the CPML acceptance.
