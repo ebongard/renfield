@@ -102,6 +102,15 @@ spec:
               value: "true"
             - name: COQUI_TOS_AGREED
               value: "1"
+            # XTTS clone voice reference. Production NFS (/mnt/llm) is
+            # mounted readOnly per the production manifest, so we cannot
+            # write thorsten_ref.wav there. Phase 2.1 of the runbook
+            # generates the clip inside the prod voice-server pod, copies
+            # it out to local, and creates a ConfigMap (xtts-thorsten-ref).
+            # The ConfigMap is mounted below at /etc/xtts-ref/, and this
+            # env override points the xtts service at it.
+            - name: XTTS_CLONE_VOICE_REF
+              value: "/etc/xtts-ref/thorsten_ref.wav"
           resources:
             requests:
               cpu: "2"
@@ -120,6 +129,9 @@ spec:
               readOnly: true
             - name: hf-cache
               mountPath: /cache
+            - name: xtts-ref
+              mountPath: /etc/xtts-ref
+              readOnly: true
           startupProbe:
             httpGet:
               path: /health
@@ -150,3 +162,11 @@ spec:
         - name: hf-cache
           persistentVolumeClaim:
             claimName: voice-server-hf-cache
+        - name: xtts-ref
+          configMap:
+            name: xtts-thorsten-ref
+            # Single-key map; default mount layout creates
+            # /etc/xtts-ref/thorsten_ref.wav.
+            items:
+              - key: thorsten_ref.wav
+                path: thorsten_ref.wav

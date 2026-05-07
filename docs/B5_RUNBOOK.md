@@ -60,28 +60,46 @@ If any of the following fails, surface BEFORE the maintenance window — debuggi
 
 Three artefacts need to exist on the cluster BEFORE the maintenance window. None of these touch production traffic.
 
-### 2.1  Generate the thorsten reference clip
+### 2.1  Generate the thorsten reference clip + ConfigMap
 
-The XTTS-v2 clone reference. Runs against the LIVE production voice-server pod (no downtime).
+The XTTS-v2 clone reference. Runs against the LIVE production voice-server pod (no downtime). 
+
+**Storage:** the production NFS mount `/mnt/llm` is **read-only** by design (production should not mutate the model store). The clip is generated to a writable `/tmp/` path inside the pod, copied out via `kubectl cp`, and delivered to the spike pod via a `ConfigMap` (the WAV is ~470 KB, well under the 1 MB ConfigMap limit).
 
 ```bash
-# Copy the script into the running prod pod
 POD=$(kubectl --context renfield-private -n renfield get pod \
     -l app.kubernetes.io/name=voice-server \
     -o jsonpath='{.items[0].metadata.name}')
+
+# Copy the script in
 kubectl --context renfield-private cp \
     voice-server/scripts/generate_thorsten_ref.py \
     renfield/$POD:/tmp/
 
-# Run it
+# Run it; XTTS_REF_OUTPUT redirects writes from the read-only /mnt/llm
+# default to the pod-local /tmp.
 kubectl --context renfield-private exec -n renfield $POD -- \
+    env XTTS_REF_OUTPUT=/tmp/thorsten_ref.wav \
     python /tmp/generate_thorsten_ref.py
+# Expect: ~470 KB WAV, 22.05 kHz mono 16-bit, ~10-14s duration.
+
+# Pull out
+mkdir -p /tmp/b5-prep
+kubectl --context renfield-private cp \
+    renfield/$POD:/tmp/thorsten_ref.wav \
+    /tmp/b5-prep/thorsten_ref.wav
+
+# Create ConfigMap (use `create` not `apply` — `apply`'s
+# last-applied-configuration annotation hits the 256 KB limit on this
+# binary-data ConfigMap).
+kubectl --context renfield-private -n renfield create configmap xtts-thorsten-ref \
+    --from-file=thorsten_ref.wav=/tmp/b5-prep/thorsten_ref.wav
 
 # Verify
-kubectl --context renfield-private exec -n renfield $POD -- \
-    ls -la /mnt/llm/voice/xtts_refs/thorsten_ref.wav
-# Expect: ~600 KB, ~14s WAV at 22.05 kHz
+kubectl --context renfield-private -n renfield describe configmap xtts-thorsten-ref
 ```
+
+The spike Deployment manifest (`k8s/voice-server-spike.yaml`) already mounts this ConfigMap at `/etc/xtts-ref/` and sets `XTTS_CLONE_VOICE_REF=/etc/xtts-ref/thorsten_ref.wav`. No further action needed at deploy time.
 
 ### 2.2  Extract production corpus sample
 
