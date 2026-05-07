@@ -1,6 +1,6 @@
 # Phase B.5 — XTTS-v2 Evaluation Spike — Plan
 
-**Status:** REVISED post plan-eng-review (2026-05-07). Awaiting human review on the revised version.
+**Status:** v4 — Step 0 executed (license clearance complete, exit (a) chosen 2026-05-07). Steps 1-8 ready to execute.
 **Author:** ebongard (with Claude Code).
 **Date:** 2026-05-07.
 **Branch:** `spike/b5-xtts-eval`.
@@ -9,7 +9,8 @@
 **Review history:**
 - v1 (DRAFT) — initial 8-step plan.
 - v2 — post plan-eng-review: Step 0 license gate, Step 5 output validation + warmup, Step 6 smoke-test + Piper regression check + sample-rate parity + satellite reconnect, Step 7 blind randomized scoring + pre-committed decision threshold.
-- v3 (this revision) — post code-reviewer agent pass on PR #538: Step 2 explicit adapter contract (Piper service has `stream_sentences` not `synthesize`; XTTS-v2 returns float samples not WAV bytes), Step 6 unloaded-VRAM probe before benchmark, Step 5 + Step 7 long-prompt voice-drift detection (mechanical spectral-centroid + listener yes/no), Step 7 latency gate retargeted from "p95 total" to "p95 TTFB on first sentence" (streaming dispatch means TTFB is what users feel).
+- v3 — post code-reviewer agent pass on PR #538: Step 2 explicit adapter contract (Piper service has `stream_sentences` not `synthesize`; XTTS-v2 returns float samples not WAV bytes), Step 6 unloaded-VRAM probe before benchmark, Step 5 + Step 7 long-prompt voice-drift detection (mechanical spectral-centroid + listener yes/no), Step 7 latency gate retargeted from "p95 total" to "p95 TTFB on first sentence" (streaming dispatch means TTFB is what users feel).
+- v4 (this revision) — Step 0 executed: CPML text recovered from `huggingface.co/coqui/XTTS-v2/raw/main/LICENSE.txt`, full analysis in `docs/B5_LICENSE_NOTE.md`, **exit (a) chosen** (run the spike under CPML's testing/evaluation clause; do not auto-promote XTTS to default on win because Reva framework consumer is commercial). Verified open-licensed alternatives — ChatterboxTTS (MIT/MIT) is the primary post-XTTS candidate, F5-TTS eliminated (CC-BY-NC weights mirror the CPML problem), Sherpa-onnx VITS-de identified as effectively redundant with current Piper. Step 7 decision rule amended to "swap-or-document-as-future-target on win." Step 8 decision branch expanded from 2 to 3 outcomes.
 
 ---
 
@@ -36,21 +37,23 @@ XTTS-v2 has to win on MOS *and* stay within the 8 GB peak-while-overlapping-STT 
 
 9 steps (Step 0 is a license gate that must close before any code lands). Each is checkable for review-time progress tracking. Step ordering is a real dependency chain — Step 6 (the maintenance window) cannot start until Steps 1-5 are all done, and Step 0 must close before Step 1.
 
-### Step 0 — License clearance (≈30 min)
+### Step 0 — License clearance — COMPLETE (2026-05-07, exit (a))
 
-The Coqui company shut down end-2023; the canonical CPML text at `coqui.ai/cpml` returns 404. The HuggingFace XTTS-v2 model card still references CPML but the license terms are functionally unrecoverable via the open web. Per general knowledge of CPML, non-commercial use is free, commercial use requires a paid license — but with Coqui defunct, no party can grant commercial licenses anymore.
+**Resolved.** Full analysis in `docs/B5_LICENSE_NOTE.md`. Headline:
 
-**This is a go/no-go for the spike.** Renfield-as-household self-hosted use is plausibly fine on the non-commercial branch. But Renfield is also positioned as the framework underlying Reva (commercial Enterprise Teams-Bot per `memory/project_reva_compatibility.md`). If we adopt XTTS for production, Reva inherits the engine; that's commercial use of a CPML model with no licensor available to negotiate.
+- CPML text recovered from `huggingface.co/coqui/XTTS-v2/raw/main/LICENSE.txt` (LICENSE.txt is shipped alongside the model weights — the canonical `coqui.ai/cpml` URL is dead, but the model repo carries an authoritative copy).
+- Renfield-household: clearly permitted (personal-use clause, no payment).
+- Reva-commercial: NOT permitted for production deployment; CPML's commercial-entity branch caps at testing/evaluation. Compounded by Coqui being defunct (no commercial license available even for purchase).
+- **Exit (b) closed** — XTTS cannot be Renfield's default engine while the framework is shared with a commercial consumer.
+- **Exit (a) chosen** — run the spike under CPML's evaluation clause. On win, the swap is gated on a Reva-side license discussion and likely ships as opt-in only (default stays Piper). The harness + corpus + listening UI become reusable for any future TTS evaluation.
+- **Verified post-XTTS candidates** (for any future re-evaluation): ChatterboxTTS (MIT code AND MIT weights, multilingual incl. German) is the primary alternative. F5-TTS eliminated (CC-BY-NC weights replicate the CPML problem). Sherpa-onnx VITS-de is effectively redundant with current Piper. GPT-SoVITS is fallback if Chatterbox underperforms on German.
 
-- [ ] Recover CPML text from a non-broken source: web.archive.org snapshot of `coqui.ai/cpml`, the `coqui-ai/TTS` GitHub repo's archived README, or a vendored copy in any active fork.
-- [ ] Read the CPML's "Non-Commercial Purpose" definition and the "Commercial Use" clause. Document quotes in `docs/B5_LICENSE_NOTE.md` (new file, kept in tree).
-- [ ] Resolve via one of three exits:
-  - **(a) Cleared for evaluation only.** CPML allows the spike (research/eval is non-commercial). Continue to Step 1, but the swap-in PR is gated on a separate license review with the Reva owner.
-  - **(b) Cleared for production.** Self-hosted household + Reva together fit under "Non-Commercial" per the CPML reading. Proceed without further gating.
-  - **(c) Blocked.** CPML restricts our use case. Spike pivots: same harness, different candidate. F5-TTS (CC-BY-NC-4.0 — same problem), ChatterboxTTS (MIT — clear), GPT-SoVITS (MIT — clear), Sherpa-onnx VITS-de (Apache 2.0 — clear). Pick one open-licensed alternative for the spike instead of XTTS, redo the comparison.
-- [ ] If exit (c): retitle this plan to `B.5 — open-licensed TTS alternative spike`, swap engine references throughout, restart Step 1. The harness, corpus, and listening methodology stay; only the engine changes.
+The check items below are kept as a forensic record of how the gate was structured; all are completed.
 
-**Output:** `docs/B5_LICENSE_NOTE.md` with the CPML quote and the chosen exit (a/b/c). Required as a deliverable regardless of decision.
+- [x] Recover CPML text from a non-broken source — done via HuggingFace `LICENSE.txt`, with web.archive.org snapshots as cross-check.
+- [x] Read CPML's "Non-Commercial Purpose" definition and "Commercial Use" clause — quoted verbatim in `docs/B5_LICENSE_NOTE.md`.
+- [x] Resolve via one of three exits — exit (a) chosen.
+- [n/a] If exit (c): retitle plan and swap engine references — not triggered.
 
 ### Step 1 — Spike image (≈2 h)
 
@@ -184,19 +187,22 @@ If any of the four fails: recommendation is "stay on Piper." XTTS-default is inf
 - [ ] **Threshold evaluation:** apply the 3-gate decision rule above. Document each gate's pass/fail. Record the recommendation.
 - [ ] Write `docs/B5_XTTS_EVAL.md`:
   - Methodology (this plan, condensed)
-  - License gate result from Step 0
-  - Results tables (latency, VRAM, MOS per category, inter-pass agreement)
-  - 3-gate threshold evaluation
+  - License gate result from Step 0 (per `docs/B5_LICENSE_NOTE.md`: exit (a) selected; XTTS may not auto-promote even on win because of CPML / Reva framework constraint)
+  - Results tables (latency, VRAM, MOS per category, drift count, inter-pass agreement)
+  - 4-gate threshold evaluation
   - Reference-WAV pairs for each category (3 picks, embedded as relative links to the wavs/ tarball)
-  - **Decision:** swap / don't-swap, with the failing gate(s) explicitly named if don't-swap.
+  - **Decision:** **`swap-or-document-as-future-target` / stay-on-Piper** (amended from v2's "swap / don't-swap" per Step 0 exit (a)). On win, the report explicitly does NOT recommend an automatic production swap — it documents the XTTS numbers as the calibration bar, and the swap itself is gated on a separate Reva-side license discussion. With the failing gate(s) explicitly named if stay-on-Piper.
 - [ ] Append a 1-paragraph summary + the decision to `docs/VOICE_PIPELINE_DESIGN.md` directly under the existing B.5 line.
 
 ### Step 8 — Decision branch
 
-Two pre-planned outcomes:
+Three pre-planned outcomes (amended from v2's two, per Step 0 exit (a)):
 
-- **XTTS wins** → spike branch becomes the base for `feat/b5-xtts-swap` PR. Promotes XTTS to the production engine, bumps voice-server to `v0.2.0` (matches the doc-defined milestone). Includes the benchmark harness as a regression suite. Also adds streaming sentence-by-sentence dispatch through XTTS — non-trivial follow-up scope, +1 day.
-- **Piper stays** → spike branch closed, no production change. Keep `voice-server/scripts/b5_benchmark.py` and the corpus in tree (under `voice-server/tests/b5/`) for re-runs when the next TTS candidate emerges. Report stays as the historical record.
+- **XTTS wins ON ALL 4 GATES → swap-or-document-as-future-target.** No automatic swap-in PR. Instead, the result feeds two follow-ups: (1) a Reva-side license discussion to determine whether Reva can opt out of XTTS at the framework boundary (resolution #1 or #2 from `docs/B5_LICENSE_NOTE.md`), and (2) a separate evaluation spike against ChatterboxTTS (verified MIT-MIT) to test whether an open-licensed engine matches the bar XTTS just set. The XTTS numbers become the calibration target for that next spike, not an immediate production swap. If after both follow-ups XTTS is still the right choice for non-Reva-affected operators, a `feat/b5-xtts-optin` PR ships XTTS as opt-in (default stays Piper), bumps voice-server to `v0.2.0`. Production swap to XTTS-as-default remains blocked by CPML.
+- **XTTS wins on MOS but fails latency/VRAM/drift gate → stay on Piper, ChatterboxTTS spike planned.** XTTS is "good enough quality but wrong fit." The numbers still serve as the calibration bar for the ChatterboxTTS evaluation.
+- **XTTS doesn't beat Piper → stay on Piper, no follow-up.** Spike branch closed, no production change. Keep `voice-server/scripts/b5_benchmark.py` and the corpus in tree for re-runs when the next TTS candidate emerges. Report stays as the historical record.
+
+In all three branches, `voice-server/scripts/b5_benchmark.py`, `voice-server/tests/b5/corpus_handwritten.txt`, and the listening UI become permanent reusable infrastructure for the next TTS evaluation.
 
 ## 4. Deliverables
 
