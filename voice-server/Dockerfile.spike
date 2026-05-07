@@ -66,6 +66,12 @@ COPY scripts /app/scripts
 # B5_LICENSE_NOTE.md captures the actual CPML text we accept here.
 ENV COQUI_TOS_AGREED=1
 
+# Spike-only flag — gates XTTSService construction in main.py. v0.1.5
+# defaults to xtts_enabled=False, so the same code path is safe in
+# production (XTTS service simply not constructed; engine=xtts-* returns
+# 503). The spike image flips this on so the benchmark can hit XTTS.
+ENV XTTS_ENABLED=true
+
 # Same CMD as v0.1.5 — uvicorn launches voice_server.main:app. The
 # benchmark hits /api/voice/tts directly (REST), no streaming WS path
 # changes for the spike.

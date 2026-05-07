@@ -44,6 +44,17 @@ async def lifespan(app: FastAPI):
     app.state.stt = STTService()
     app.state.tts = TTSService()
     app.state.speaker = SpeakerService()
+    app.state.xtts = None  # populated below if XTTS is enabled
+
+    # B.5 spike — XTTS-v2 service is built only when explicitly enabled
+    # (the spike image sets XTTS_ENABLED=true). Production v0.1.5 doesn't
+    # ship coqui-tts so the import path here would error out — gating
+    # on the flag keeps the same image runnable in both modes.
+    if settings.xtts_enabled:
+        from voice_server.services.xtts_service import XTTSService
+
+        app.state.xtts = XTTSService()
+        logger.info("xtts service registered (lazy-load on first request)")
 
     await app.state.stt.warmup()
     await app.state.speaker.warmup()

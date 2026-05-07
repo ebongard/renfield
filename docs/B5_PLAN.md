@@ -65,30 +65,25 @@ The check items below are kept as a forensic record of how the gate was structur
 
 **Risks:** Coqui TTS pip install on CUDA 12.6 + Python 3.12 is non-trivial. PyPI confirms `coqui-tts==0.27.0` exists with `requires_python: <3.15,>=3.10` and a `py3-none-any` wheel (pure-Python wrapper). If install breaks at build time, fall back to `pip install git+https://github.com/idiap/coqui-ai-TTS.git@v0.27.0` source install. Add ~30 min if hit. Additional risk surfaced in Step 1: GPU torch layer is ~1.5-2 GB compressed; under Harbor's 2.5 GB practical layer limit but tight. If the build fails on layer size, split the GPU torch install into two RUN steps (nvidia-* deps first, then torch itself).
 
-### Step 2 — Dual-engine TTS code (≈2 h)
+### Step 2 — Dual-engine TTS code — COMPLETE (2026-05-07)
 
 **Adapter contract (NEW, explicit — not a mirror).** v2's "mirrors `tts_service.py`" was incorrect: Piper service exposes `stream_sentences(text, request_id, language) -> AsyncIterator[bytes]` publicly with `_synth_one_sentence` privately. XTTS-v2's API is `tts.tts(text, speaker_wav, language) -> list[float]` (raw float samples, not WAV bytes). The "shapes" don't match in either direction.
 
-The spike defines a new uniform engine adapter, used ONLY by the benchmark, NOT by the production streaming path:
-
 ```python
-# voice-server/voice_server/services/_engine_adapter.py (new, spike-only)
+# voice-server/voice_server/services/_engine_adapter.py
 class TTSEngine(Protocol):
-    def synth_one(self, text: str, voice_ref: Path | None, language: str) -> bytes:
+    async def synth_one(self, text: str, voice_ref: Path | None, language: str) -> bytes:
         """One-shot synthesis. Returns 22.05 kHz PCM-16 mono WAV bytes."""
 ```
 
-- [ ] New `voice-server/voice_server/services/_engine_adapter.py` with the `TTSEngine` Protocol and a Piper implementation that wraps `_synth_one_sentence` (Piper already produces WAV bytes at the right sample rate).
-- [ ] New `voice-server/voice_server/services/xtts_service.py` implementing the adapter:
-  - Loads XTTS-v2 once; subsequent calls switch via `speaker_wav` only
-  - Calls `tts.tts(text, speaker_wav=voice_ref, language=language)` to get `list[float]` samples at 24 kHz
-  - Resamples to 22.05 kHz (per Step 5's sample-rate normalization)
-  - Wraps as PCM-16 mono WAV using `wave` module
-  - For long prompts (>250 chars): pre-splits on sentence boundaries (`re.split(r'(?<=[.!?])\s+')`), synths each, concatenates raw PCM. XTTS-v2 OOMs and drifts on >250-token inputs; manual chunking is required, not optional. Benchmark records one TTFB (first chunk) and total synth time across all chunks.
-- [ ] Extend `/api/voice/tts` REST handler to accept `engine: "piper" | "xtts-default" | "xtts-clone"` and `voice_ref: str | None`. Default stays `piper` for safety.
-- [ ] No streaming sentence-by-sentence path through XTTS for the spike. Benchmark hits the one-shot endpoint. Production streaming integration is a follow-up if the swap happens.
+- [x] New `voice-server/voice_server/services/_engine_adapter.py` (113 lines). `TTSEngine` Protocol + `PiperEngine` adapter wrapping `TTSService._synth_one_sentence`. The Piper adapter is documentation of the contract; the REST handler still routes `engine=piper` through `TTSService.stream_sentences()` directly so production code paths are not perturbed by the spike. 2026-05-07.
+- [x] New `voice-server/voice_server/services/xtts_service.py` (140 lines). Lazy-loads coqui-tts on first synth (so production v0.1.5 image, which doesn't ship coqui-tts, never triggers the import). Long-prompt manual chunking via `_split_sentences(max_chars=settings.xtts_max_chunk_chars)`. 24 kHz → 22.05 kHz resample via librosa (a coqui-tts transitive). Per-chunk timings exposed to the REST handler so the benchmark reads first-chunk TTFB from `X-Synth-Chunk-Times-Ms` response header. 2026-05-07.
+- [x] Extended `voice-server/voice_server/api/rest_voice.py` (+90 lines). `TTSRequest` adds `engine: str | None` and `voice_ref: str | None` (both default-None to keep production callers unchanged). Handler dispatches: `piper` (default, existing path) / `xtts-default` / `xtts-clone`. Both engine paths emit `X-Synth-Chunk-Times-Ms` header for uniform benchmark timing. `engine=xtts-*` returns 503 when `xtts_enabled=False`. 2026-05-07.
+- [x] Wired XTTSService construction in `voice_server/main.py` behind `settings.xtts_enabled` flag (default `False`). The spike Dockerfile sets `ENV XTTS_ENABLED=true`. Production v0.1.5 image: flag stays False, XTTS service not constructed, coqui-tts never imported. 2026-05-07.
+- [x] Added xtts_* settings to `voice_server/config.py` (+23 lines): `xtts_enabled`, `xtts_repo_id`, `xtts_clone_voice_ref` (path), `xtts_use_cuda`, `xtts_target_sample_rate=22050`, `xtts_max_chunk_chars=240`. 2026-05-07.
+- [x] No streaming sentence-by-sentence path through XTTS for the spike. Benchmark hits the one-shot endpoint. Production streaming integration is a Step 8 follow-up if the swap happens.
 
-**Files modified:** `voice-server/voice_server/api/rest_voice.py` (add engine param), `voice-server/voice_server/services/_engine_adapter.py` (new), `voice-server/voice_server/services/xtts_service.py` (new), `voice-server/voice_server/services/__init__.py` (export). No frontend changes — benchmark is server-side only.
+**Files touched:** `voice-server/voice_server/api/rest_voice.py` (+90 / -2), `voice-server/voice_server/services/_engine_adapter.py` (new, 113), `voice-server/voice_server/services/xtts_service.py` (new, 140), `voice-server/voice_server/main.py` (+11), `voice-server/voice_server/config.py` (+23), `voice-server/Dockerfile.spike` (+6 — XTTS_ENABLED=true env). `voice_server/services/__init__.py` left empty (the v2/v3 plan listed it as touched, but the package uses explicit submodule imports — no exports needed). No frontend changes.
 
 ### Step 3 — Reference clip for cloning (≈15 min)
 
