@@ -1,0 +1,31 @@
+{
+  "_comment": "Edition='pro' overlay applied on top of de.json when VITE_APP_EDITION=pro. Replaces household-flavored Circles vocabulary with enterprise/banking-friendly equivalents (Sichtbarkeit / Team / Organisation / Vertraulich). Keys not listed here fall through to de.json. See src/i18n/index.ts merge logic.",
+  "nav": {
+    "circles": "Sichtbarkeit"
+  },
+  "circles": {
+    "tier": {
+      "1": "Vertraulich",
+      "2": "Team",
+      "3": "Organisation"
+    },
+    "tierDescription": {
+      "1": "Für vertrauliche Empfänger sichtbar.",
+      "2": "Für mein Team sichtbar.",
+      "3": "Für die gesamte Organisation sichtbar."
+    },
+    "tierAriaLabel": "Sichtbarkeitsstufe {{tier}}: {{label}}",
+    "tierPickerLabel": "Sichtbarkeitsstufe wählen",
+    "settingsTitle": "Sichtbarkeit & Mitglieder",
+    "settingsSubtitle": "Verwalte Sichtbarkeitsstufen und wer in jeder eingeladen ist.",
+    "defaultCaptureTier": "Standard-Sichtbarkeit",
+    "defaultCaptureHint": "Neue Einträge werden standardmäßig auf dieser Sichtbarkeitsstufe erfasst.",
+    "noMembers": "Noch keine Mitglieder in deinen Sichtbarkeitsstufen.",
+    "removeMemberConfirm": "{{name}} aus allen Sichtbarkeitsstufen entfernen?",
+    "peersSubtitle": "Gekoppelte {{appName}}-Instanzen anderer Organisationsmitglieder.",
+    "peersManageHint": "Neue Peers koppelst du auf der Sichtbarkeits-Einstellungsseite:",
+    "pairingSubtitle": "Koppele deine {{appName}}-Instanz mit der eines anderen Organisationsmitglieds für föderierte Anfragen.",
+    "pairInitiateStep3Instruction": "Kopplung fast abgeschlossen. Welche Sichtbarkeitsstufe willst du {{name}} geben?",
+    "pairAcceptStep2Instruction": "Kopplung mit {{name}} annehmen. Welche Sichtbarkeitsstufe willst du ihnen geben?"
+  }
+}

@@ -63,6 +63,14 @@ ARG VITE_CHAT_STARTERS=
 # /ws/voice WebSocket UI (live partial transcripts, sub-second TTS
 # first-byte). Default unset = legacy REST path (request-response).
 ARG VITE_FEATURE_VOICE_STREAM=
+# Edition selector for translation overlays. "community" (default) keeps
+# the household-flavored Circles vocabulary (tier 2 = "Household",
+# settings = "Circles & Members"). "pro" loads the de.pro.json /
+# en.pro.json overlays which substitute enterprise-friendly vocabulary
+# (tier 2 = "Team", settings = "Visibility & Members") for white-label
+# multi-tenant deploys (e.g. Reva for X-IDRA Systems). See
+# src/i18n/index.ts deepMerge for resolution.
+ARG VITE_APP_EDITION=community
 
 # Set environment variables for build
 ENV VITE_API_URL=${VITE_API_URL}
@@ -71,6 +79,7 @@ ENV VITE_APP_NAME=${VITE_APP_NAME}
 ENV VITE_APP_LOGO_URL=${VITE_APP_LOGO_URL}
 ENV VITE_CHAT_STARTERS=${VITE_CHAT_STARTERS}
 ENV VITE_FEATURE_VOICE_STREAM=${VITE_FEATURE_VOICE_STREAM}
+ENV VITE_APP_EDITION=${VITE_APP_EDITION}
 
 # App Code kopieren
 COPY . .

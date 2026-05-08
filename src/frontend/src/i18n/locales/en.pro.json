@@ -1,0 +1,30 @@
+{
+  "_comment": "Edition='pro' overlay applied on top of en.json when VITE_APP_EDITION=pro. Replaces household-flavored Circles vocabulary with enterprise/banking-friendly equivalents (visibility / team / organization / confidential). Keys not listed here fall through to en.json. See src/i18n/index.ts merge logic.",
+  "circles": {
+    "tier": {
+      "0": "Personal",
+      "1": "Confidential",
+      "2": "Team",
+      "3": "Organization"
+    },
+    "tierDescription": {
+      "0": "Visible only to me.",
+      "1": "Visible to confidential recipients.",
+      "2": "Visible to my team.",
+      "3": "Visible to the entire organization."
+    },
+    "tierAriaLabel": "Visibility {{tier}}: {{label}}",
+    "tierPickerLabel": "Choose visibility",
+    "settingsTitle": "Visibility & Members",
+    "settingsSubtitle": "Manage visibility levels and who is invited into each.",
+    "defaultCaptureTier": "Default visibility",
+    "defaultCaptureHint": "New entries are captured at this visibility by default.",
+    "noMembers": "No members in your visibility levels yet.",
+    "removeMemberConfirm": "Remove {{name}} from all visibility levels?",
+    "peersSubtitle": "Paired {{appName}} instances from other organization members.",
+    "peersManageHint": "You pair new peers from the visibility settings page:",
+    "pairingSubtitle": "Pair your {{appName}} with another organization member's for federated queries.",
+    "pairInitiateStep3Instruction": "Almost done — what visibility do you want to grant {{name}}?",
+    "pairAcceptStep2Instruction": "Accept pairing with {{name}}. What visibility do you want to grant them?"
+  }
+}
