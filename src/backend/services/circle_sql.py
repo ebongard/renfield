@@ -115,13 +115,22 @@ def circles_filter_clause(
     # Tier-membership check: asker is in owner's circles AND their tier
     # value is at-or-below the atom's tier (deeper-placed members can
     # reach atoms at their depth or wider).
+    #
+    # ``circle_memberships.value`` is JSON (int for dimension='tier', str for
+    # dimension='tenant'/'project' — see CircleMembership model). PostgreSQL
+    # cannot cast `json` directly to `integer` (raises CannotCoerceError);
+    # the canonical idiom is to go through `text`. Filter on dimension='tier'
+    # already guarantees the JSON value is a number, so `::text::int` always
+    # parses cleanly here. SQLite is permissive about the direct cast which
+    # is why the string-shape tests (run on SQLite) didn't catch this — the
+    # production bug surfaced as 500 on /knowledge-graph against asyncpg.
     parts.append(
         f"EXISTS ("
         f"  SELECT 1 FROM circle_memberships m "
         f"  WHERE m.circle_owner_id = {owner_alias}.{owner_col} "
         f"  AND m.member_user_id = :{asker_param} "
         f"  AND m.dimension = 'tier' "
-        f"  AND (m.value)::int <= {table_alias}.{tier_col}"
+        f"  AND (m.value::text)::int <= {table_alias}.{tier_col}"
         f")"
     )
 

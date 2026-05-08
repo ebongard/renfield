@@ -46,7 +46,7 @@ class TestCirclesFilterClause:
         assert "circle_memberships m" in clause
         assert "m.circle_owner_id = e.user_id" in clause
         assert "m.dimension = 'tier'" in clause
-        assert "(m.value)::int <= e.circle_tier" in clause
+        assert "(m.value::text)::int <= e.circle_tier" in clause
 
     def test_owner_table_alias_overrides_only_owner_col(self):
         # When owner is on a JOINed table (kb), tier should still come from
@@ -61,7 +61,7 @@ class TestCirclesFilterClause:
         assert "kb.owner_id = :asker_id" in clause
         assert "dc.circle_tier = :asker_id_pub" in clause
         assert "m.circle_owner_id = kb.owner_id" in clause
-        assert "(m.value)::int <= dc.circle_tier" in clause
+        assert "(m.value::text)::int <= dc.circle_tier" in clause
 
     def test_source_id_expr_overrides_default(self):
         clause = circles_filter_clause(
