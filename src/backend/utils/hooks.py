@@ -256,35 +256,40 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # voice_originated: bool`` and return:
     #
     #   * ``None`` — defer to other handlers / platform (proceed normally)
-    #   * ``{"abort": True, "user_response": <str | dict>, "audit": {...}}``
-    #     — skip the tool call. ``user_response`` is returned to the agent
-    #     loop as if it were the tool result (string for plain text,
-    #     Adaptive Card dict for rich UI). ``audit`` is a free-form dict
-    #     surfaced to other registered handlers via the same hook return
-    #     channel — platform itself doesn't persist it.
-    #   * ``{"abort": False}`` — explicit allow (currently equivalent to None;
-    #     reserved for future "force-allow over a later abort" semantics).
+    #   * ``{"abort": True, "user_response": <str | dict>}`` — skip the
+    #     tool call. ``user_response`` is returned to the agent loop in
+    #     the synthesized result (string in ``message`` for plain text,
+    #     Adaptive Card dict in ``data`` for rich UI). The synthesized
+    #     result has ``success=False, action_taken=False`` so the agent
+    #     loop does NOT chain a follow-up tool call.
+    #   * ``{"abort": False}`` — explicit allow (currently equivalent to
+    #     None; reserved for future "force-allow over a later abort"
+    #     semantics).
     #
-    # Ordering: ``verify_tool_call`` runs BEFORE ``pre_mcp_call``. Rationale:
-    # the gate decides whether to execute at all; param repair is wasted
-    # work if the call is going to be aborted, and the audit row should
-    # log what the LLM intended (pre-rewrite), not the platform-corrected
-    # version.
+    # Multi-handler resolution: ``run_hooks`` filters None and returns
+    # all non-None contributions in registration order. ActionExecutor
+    # iterates and short-circuits on the FIRST ``{"abort": True}`` —
+    # later handlers' aborts are discarded silently. If you need to
+    # observe later handlers' opinions even after an abort, do that
+    # plumbing in your handler, not on the platform side.
     #
-    # Forward-compat note for new ``pre_mcp_call`` handlers: if your
-    # handler normalizes a field that a ``verify_tool_call`` handler's
-    # policy reads (e.g. case-folding ``transition_issue.status``), the
-    # gate will see the pre-normalized value. Either move the rewrite
-    # to a different hook or update the policy to match the post-rewrite
-    # shape.
+    # Ordering vs ``pre_mcp_call``: ``verify_tool_call`` runs FIRST.
+    # The gate decides whether to execute at all; param repair is
+    # wasted work if the call is going to be aborted, and an audit log
+    # should record what the LLM intended (pre-rewrite), not the
+    # platform-corrected version. If your ``pre_mcp_call`` handler
+    # normalizes a field a ``verify_tool_call`` policy reads (e.g.
+    # case-folding ``transition_issue.status``), the gate sees the
+    # pre-normalized value. Plugin authors: either move the rewrite to
+    # a different hook or write the policy against the LLM-shaped value.
     #
-    # First abort-sentinel result wins (registration order). Handler
-    # exceptions are caught and logged via ``run_hooks``; a crashed
-    # handler returns no opinion (proceeds to next handler / tool call).
-    # Plugins that need fail-closed semantics (BaFin / regulated tenants
-    # where a crashed gate must not silently allow voice-destructive
-    # calls through) should register a sibling watchdog handler that
-    # observes their primary handler's heartbeat.
+    # Failure semantics: handler exceptions are caught and logged via
+    # ``run_hooks`` — a crashed handler returns no opinion and the call
+    # proceeds. This is fail-OPEN at the platform layer. Plugins that
+    # need fail-CLOSED semantics (e.g. BaFin/regulated tenants where a
+    # crashed gate must not silently allow voice-destructive calls)
+    # MUST add their own outer try/except inside the handler that
+    # converts any exception to an abort sentinel.
     #
     # Platform default (no handler) is a no-op — proceeds to
     # ``pre_mcp_call`` and the MCP call as before.

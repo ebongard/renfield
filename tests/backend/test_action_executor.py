@@ -367,6 +367,11 @@ class TestActionExecutorVerifyToolCall:
         action_executor.mcp_manager.execute_tool.assert_not_called()
         assert result["verify_aborted"] is True
         assert result["action_taken"] is False
+        # success=False is intentional: agent loop must NOT chain another
+        # tool call thinking the original succeeded. The user response IS
+        # the operation's outcome (a confirmation prompt), not a delivered
+        # action.
+        assert result["success"] is False
         assert result["message"] == "Bitte bestätige diese Aktion."
 
     @pytest.mark.unit
@@ -393,6 +398,7 @@ class TestActionExecutorVerifyToolCall:
 
         action_executor.mcp_manager.execute_tool.assert_not_called()
         assert result["verify_aborted"] is True
+        assert result["success"] is False
         assert result["data"] == card
 
     @pytest.mark.unit
@@ -528,6 +534,95 @@ class TestActionExecutorVerifyToolCall:
             _hooks["verify_tool_call"].remove(crashing)
 
         # Handler crashed → run_hooks logged + skipped → MCP call proceeds.
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_multiple_handlers_first_returns_none_second_aborts(self, action_executor):
+        """When multiple handlers register: None defers to next; first abort wins.
+
+        Pins the multi-handler resolution that the contract docstring
+        documents — without this test, a future refactor that breaks
+        ordering wouldn't be caught.
+        """
+        from utils.hooks import _hooks, register_hook
+
+        async def handler_a_none(intent, parameters, **kwargs):
+            return None
+
+        async def handler_b_aborts(intent, parameters, **kwargs):
+            return {"abort": True, "user_response": "blocked by B"}
+
+        register_hook("verify_tool_call", handler_a_none)
+        register_hook("verify_tool_call", handler_b_aborts)
+        try:
+            result = await action_executor.execute({
+                "intent": "mcp.release.delete_release",
+                "parameters": {"id": "REL-1"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(handler_a_none)
+            _hooks["verify_tool_call"].remove(handler_b_aborts)
+
+        action_executor.mcp_manager.execute_tool.assert_not_called()
+        assert result["verify_aborted"] is True
+        assert result["message"] == "blocked by B"
+
+    @pytest.mark.unit
+    async def test_multiple_abort_handlers_first_wins(self, action_executor):
+        """First abort sentinel wins, later abort discarded silently.
+
+        Pins the contract: registration order determines precedence.
+        Plugin authors who register a verify_tool_call handler need to
+        know that a later handler can never override an earlier abort.
+        """
+        from utils.hooks import _hooks, register_hook
+
+        async def handler_a_aborts(intent, parameters, **kwargs):
+            return {"abort": True, "user_response": "first abort"}
+
+        async def handler_b_aborts(intent, parameters, **kwargs):
+            return {"abort": True, "user_response": "second abort"}
+
+        register_hook("verify_tool_call", handler_a_aborts)
+        register_hook("verify_tool_call", handler_b_aborts)
+        try:
+            result = await action_executor.execute({
+                "intent": "mcp.release.delete_release",
+                "parameters": {"id": "REL-1"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(handler_a_aborts)
+            _hooks["verify_tool_call"].remove(handler_b_aborts)
+
+        action_executor.mcp_manager.execute_tool.assert_not_called()
+        assert result["message"] == "first abort"
+
+    @pytest.mark.unit
+    async def test_malformed_sentinel_proceeds(self, action_executor):
+        """Truthy non-bool 'abort' values do NOT trigger an abort.
+
+        Strict interpretation of the contract: only ``abort is True`` aborts.
+        Strings, numbers, dicts in the abort field are treated as no-opinion
+        — caller bug, fail-OPEN to MCP. Plugins must use the literal True.
+        """
+        from utils.hooks import _hooks, register_hook
+
+        async def malformed(intent, parameters, **kwargs):
+            return {"abort": "yes", "user_response": "blocked?"}  # truthy non-bool
+
+        register_hook("verify_tool_call", malformed)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.list_releases",
+                "parameters": {},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(malformed)
+
+        # Malformed sentinel ignored → MCP call proceeds normally.
         action_executor.mcp_manager.execute_tool.assert_called_once()
 
 

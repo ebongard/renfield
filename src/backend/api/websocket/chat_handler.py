@@ -22,6 +22,7 @@ from services.input_guard import detect_injection
 from services.websocket_auth import WSAuthError, authenticate_websocket
 from services.websocket_rate_limiter import get_rate_limiter
 from utils.config import settings
+from utils.voice_context import voice_originated
 
 from .shared import (
     ConversationSessionState,
@@ -598,6 +599,14 @@ async def websocket_endpoint(
                 await send_ws_error(websocket, WSErrorCode.RATE_LIMITED, reason)
                 continue
 
+            # Voice-origin signal: clear FIRST, then set after validation.
+            # Two-step so we can't leak the previous message's value if a
+            # future refactor adds an early-return path before the post-
+            # validation .set(). Child tasks spawned via
+            # ``asyncio.create_task`` / ``asyncio.gather`` inherit the
+            # value automatically (Python 3.7+ context propagation).
+            voice_originated.set(False)
+
             # Validate message
             try:
                 msg = WSChatMessage(**data)
@@ -613,15 +622,7 @@ async def websocket_endpoint(
                 await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
 
-            # Voice-origin signal for downstream gates (plugin hooks like
-            # Reva's voice-2FA destructive-tool gate). Truthy embedding =
-            # came from the voice path; null/empty = text. Set per-message
-            # via ContextVar; child tasks spawned with ``asyncio.create_task``
-            # / ``asyncio.gather`` inherit the value automatically (Python
-            # 3.7+ context propagation). Each iteration of the WS loop
-            # overwrites the previous value, so a voice message followed
-            # by a text message correctly clears the flag.
-            from utils.voice_context import voice_originated
+            # Truthy embedding = came from the voice path; null/empty = text.
             voice_originated.set(bool(msg_speaker_embedding))
 
             # Phase B (B.4.a): resolve voice-server-supplied speaker

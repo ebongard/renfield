@@ -156,10 +156,17 @@ class ActionExecutor:
                     )
                     user_response = verdict.get("user_response", "")
                     # Adaptive Card dict OR plain string. Both flow back
-                    # into the agent loop as if they were the tool result;
-                    # downstream rendering is the chat handler's job.
+                    # into the agent loop as the tool result; downstream
+                    # rendering is the chat handler's job.
+                    #
+                    # success=False is intentional: the agent loop must
+                    # NOT chain another tool call thinking the original
+                    # succeeded. The user response IS the operation's
+                    # outcome — a confirmation prompt — not a delivered
+                    # action. action_taken=False reinforces this for the
+                    # legacy execution-state signal.
                     return {
-                        "success": True,
+                        "success": False,
                         "message": user_response if isinstance(user_response, str) else "",
                         "data": user_response if isinstance(user_response, dict) else None,
                         "action_taken": False,
