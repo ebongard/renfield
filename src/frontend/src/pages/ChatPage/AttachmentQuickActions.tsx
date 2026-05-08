@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import type { MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader } from 'lucide-react';
+import { MoreVertical, BookOpen, Send, FileSearch, Mail, Loader, Layers } from 'lucide-react';
 import apiClient from '../../utils/axios';
 import type { MessageAttachment } from './context/ChatContext';
 
@@ -10,10 +10,15 @@ interface KnowledgeBase {
   name: string;
 }
 
+// Which submenu the user is currently viewing inside the popover.
+// `null` = top-level menu; the others show a per-action KB picker.
+type SubMenu = null | 'kb' | 'both';
+
 interface AttachmentQuickActionsProps {
   attachment: MessageAttachment;
   onIndexToKb: (attachmentId: string, kbId: string | number) => void;
   onSendToPaperless: (attachmentId: string) => void;
+  onSendToBoth: (attachmentId: string, kbId: string | number) => void;
   onSendViaEmail?: (attachmentId: string) => void;
   onSummarize: (attachmentId: string) => void;
   actionLoading?: Record<string, string>;
@@ -23,13 +28,18 @@ export default function AttachmentQuickActions({
   attachment,
   onIndexToKb,
   onSendToPaperless,
+  onSendToBoth,
   onSendViaEmail,
   onSummarize,
   actionLoading,
 }: AttachmentQuickActionsProps) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const [showKbList, setShowKbList] = useState(false);
+  // Which submenu (KB picker) is shown inside the popover. The picker is
+  // shared between "Add to KB" and "Send to Paperless + KB"; the active
+  // submenu remembers which top-level action selected it so picking a
+  // KB dispatches the right call.
+  const [submenu, setSubmenu] = useState<SubMenu>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [kbLoading, setKbLoading] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -43,7 +53,7 @@ export default function AttachmentQuickActions({
       const target = e.target as Node | null;
       if (menuRef.current && target && !menuRef.current.contains(target)) {
         setOpen(false);
-        setShowKbList(false);
+        setSubmenu(null);
       }
     };
     document.addEventListener('mousedown', handleMouseDown);
@@ -54,15 +64,14 @@ export default function AttachmentQuickActions({
     e.stopPropagation();
     if (isDisabled) return;
     setOpen((prev) => !prev);
-    setShowKbList(false);
+    setSubmenu(null);
   };
 
-  const handleAddToKb = async (e: MouseEvent<HTMLButtonElement>) => {
-    e.stopPropagation();
-    if (showKbList) {
-      setShowKbList(false);
-      return;
-    }
+  // Lazy-load the KB list the first time any submenu opens, then reuse
+  // the cached list while the popover is open. Clearing happens on
+  // popover close (via useEffect below).
+  const ensureKbList = async () => {
+    if (knowledgeBases.length > 0) return;
     setKbLoading(true);
     try {
       const response = await apiClient.get<KnowledgeBase[]>('/api/knowledge/bases');
@@ -72,14 +81,38 @@ export default function AttachmentQuickActions({
     } finally {
       setKbLoading(false);
     }
-    setShowKbList(true);
+  };
+
+  const handleAddToKb = async (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (submenu === 'kb') {
+      setSubmenu(null);
+      return;
+    }
+    await ensureKbList();
+    setSubmenu('kb');
+  };
+
+  const handleSendToBoth = async (e: MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (submenu === 'both') {
+      setSubmenu(null);
+      return;
+    }
+    await ensureKbList();
+    setSubmenu('both');
   };
 
   const handleSelectKb = (e: MouseEvent<HTMLButtonElement>, kbId: string | number) => {
     e.stopPropagation();
+    const dispatchTarget = submenu;
     setOpen(false);
-    setShowKbList(false);
-    onIndexToKb(attachment.id, kbId);
+    setSubmenu(null);
+    if (dispatchTarget === 'both') {
+      onSendToBoth(attachment.id, kbId);
+    } else {
+      onIndexToKb(attachment.id, kbId);
+    }
   };
 
   const handlePaperless = (e: MouseEvent<HTMLButtonElement>) => {
@@ -117,7 +150,19 @@ export default function AttachmentQuickActions({
       )}
 
       {open && (
-        <div className="absolute top-full right-0 mt-1 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
+        <div className="absolute top-full right-0 mt-1 w-56 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50 py-1">
+          {/* Send to Paperless + KB — primary combo. Hidden when already
+              indexed since the index half would no-op. */}
+          {!attachment.indexed && (
+            <button
+              onClick={handleSendToBoth}
+              className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+            >
+              <Layers className="w-3.5 h-3.5 flex-shrink-0" aria-hidden="true" />
+              {t('chat.sendToPaperlessAndKb')}
+            </button>
+          )}
+
           {/* Add to KB — hide when already indexed */}
           {!attachment.indexed && (
             <button
@@ -129,8 +174,10 @@ export default function AttachmentQuickActions({
             </button>
           )}
 
-          {/* KB sub-list */}
-          {showKbList && !attachment.indexed && (
+          {/* KB sub-list, shared between 'kb' and 'both' submenus —
+              `submenu` remembers which top-level action opened it so
+              `handleSelectKb` can route the click to the right dispatcher. */}
+          {submenu !== null && !attachment.indexed && (
             <div className="border-t border-gray-100 dark:border-gray-700 max-h-32 overflow-y-auto">
               {kbLoading ? (
                 <div className="px-3 py-1.5 text-xs text-gray-400">

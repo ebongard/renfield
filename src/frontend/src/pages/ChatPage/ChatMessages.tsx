@@ -83,7 +83,7 @@ export default function ChatMessages() {
   const { t } = useTranslation();
   const {
     messages, loading, historyLoading, speakText, handleFeedbackSubmit,
-    actionLoading, actionResult, indexToKb, sendToPaperless, handleSummarize,
+    actionLoading, actionResult, indexToKb, sendToPaperless, sendToBoth, handleSummarize,
     handleSendViaEmail, emailDialog, confirmSendViaEmail, cancelEmailDialog,
     sendMessage,
   } = useChatContext();
@@ -281,6 +281,7 @@ export default function ChatMessages() {
                       attachment={att}
                       onIndexToKb={indexToKb}
                       onSendToPaperless={sendToPaperless}
+                      onSendToBoth={sendToBoth}
                       onSendViaEmail={handleSendViaEmail}
                       onSummarize={handleSummarize}
                       actionLoading={actionLoading}
@@ -342,9 +343,11 @@ export default function ChatMessages() {
           {actionResult.success
             ? (actionResult.type === 'indexing' ? t('chat.indexingSuccess')
               : actionResult.type === 'email' ? t('chat.emailSuccess')
+              : actionResult.type === 'both' ? t('chat.sendToPaperlessAndKbSuccess')
               : t('chat.paperlessSuccess'))
             : (actionResult.type === 'indexing' ? t('chat.indexingFailed')
               : actionResult.type === 'email' ? t('chat.emailFailed')
+              : actionResult.type === 'both' ? t('chat.sendToPaperlessAndKbFailed', { detail: actionResult.message })
               : t('chat.paperlessFailed'))
           }
         </div>

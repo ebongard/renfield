@@ -103,7 +103,7 @@ interface TtsErrorWindow {
 }
 
 type WakeWordHook = ReturnType<typeof useWakeWord>;
-type ActionLoading = Record<string, 'indexing' | 'paperless' | 'email'>;
+type ActionLoading = Record<string, 'indexing' | 'paperless' | 'email' | 'both'>;
 type ActionResult = ReturnType<typeof useQuickActions>['actionResult'];
 
 export interface ChatContextValue {
@@ -162,6 +162,7 @@ export interface ChatContextValue {
   actionResult: ActionResult;
   indexToKb: (uploadId: string, kbId: string | number) => Promise<void>;
   sendToPaperless: (uploadId: string) => Promise<void>;
+  sendToBoth: (uploadId: string, kbId: string | number) => Promise<void>;
   handleSummarize: (uploadId: string) => void;
   handleSendViaEmail: (uploadId: string) => void;
 
@@ -1041,7 +1042,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
   }, []);
 
   // Quick actions hook
-  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendViaEmail } = useQuickActions();
+  const { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendToBoth, sendViaEmail } = useQuickActions();
 
   // Email dialog state
   const [emailDialog, setEmailDialog] = useState<EmailDialogState | null>(null);
@@ -1373,6 +1374,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     actionResult,
     indexToKb,
     sendToPaperless,
+    sendToBoth,
     handleSummarize,
     handleSendViaEmail,
 

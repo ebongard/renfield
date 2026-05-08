@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import type { AxiosError } from 'axios';
 import apiClient from '../../../utils/axios';
 
-type ActionKind = 'indexing' | 'paperless' | 'email';
+type ActionKind = 'indexing' | 'paperless' | 'email' | 'both';
 
 interface ActionResult {
   type: ActionKind;
@@ -67,6 +67,64 @@ export function useQuickActions() {
     }
   }, []);
 
+  const sendToBoth = useCallback(
+    async (uploadId: string, knowledgeBaseId: string | number) => {
+      // Forward the same upload to BOTH Paperless and the KB in parallel.
+      // The two backend endpoints operate on independent state (Paperless
+      // task queue vs. RAG document index), so they can run concurrently.
+      // We report success only if both succeed; on partial failure the
+      // listener sees the error message naming which side failed and can
+      // retry the failed one via the per-action menu items below.
+      setActionLoading((prev) => ({ ...prev, [uploadId]: 'both' }));
+      try {
+        const [paperlessRes, indexRes] = await Promise.allSettled([
+          apiClient.post<ActionResponse>(`/api/chat/upload/${uploadId}/paperless`),
+          apiClient.post<ActionResponse>(`/api/chat/upload/${uploadId}/index`, {
+            knowledge_base_id: knowledgeBaseId,
+          }),
+        ]);
+
+        const paperlessOk = paperlessRes.status === 'fulfilled';
+        // 409 from /index means the doc is already indexed (auto-index ran);
+        // treat as success consistent with the standalone indexToKb branch.
+        const indexOk =
+          indexRes.status === 'fulfilled' ||
+          (indexRes.status === 'rejected' &&
+            (indexRes.reason as AxiosError | undefined)?.response?.status === 409);
+
+        if (paperlessOk && indexOk) {
+          setActionResult({ type: 'both', success: true, message: '' });
+        } else {
+          const failures: string[] = [];
+          if (!paperlessOk) {
+            failures.push(
+              detailFromError(
+                (paperlessRes as PromiseRejectedResult).reason,
+                'Paperless failed',
+              ),
+            );
+          }
+          if (!indexOk) {
+            failures.push(
+              detailFromError(
+                (indexRes as PromiseRejectedResult).reason,
+                'Indexing failed',
+              ),
+            );
+          }
+          setActionResult({ type: 'both', success: false, message: failures.join(' | ') });
+        }
+      } finally {
+        setActionLoading((prev) => {
+          const next = { ...prev };
+          delete next[uploadId];
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
   const sendViaEmail = useCallback(
     async (uploadId: string, to: string, subject: string, body: string) => {
       setActionLoading((prev) => ({ ...prev, [uploadId]: 'email' }));
@@ -94,5 +152,13 @@ export function useQuickActions() {
     setActionResult(null);
   }, []);
 
-  return { actionLoading, actionResult, clearResult, indexToKb, sendToPaperless, sendViaEmail };
+  return {
+    actionLoading,
+    actionResult,
+    clearResult,
+    indexToKb,
+    sendToPaperless,
+    sendToBoth,
+    sendViaEmail,
+  };
 }
