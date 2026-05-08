@@ -1,5 +1,10 @@
 {
   "_comment": "Edition='pro' overlay applied on top of de.json when VITE_APP_EDITION=pro. Replaces household-flavored Circles vocabulary with enterprise/banking-friendly equivalents (Sichtbarkeit / Team / Organisation / Vertraulich). Keys not listed here fall through to de.json. See src/i18n/index.ts merge logic.",
+  "auth": {
+    "personalAssistant": "KI-Assistent für Release Management",
+    "tenantPrefix": "Anmeldung bei",
+    "complianceFooter": "DSGVO-konform · BaFin-kompatibel · Auf .de gehostet"
+  },
   "nav": {
     "circles": "Sichtbarkeit"
   },

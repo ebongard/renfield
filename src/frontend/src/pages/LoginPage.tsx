@@ -90,21 +90,46 @@ export default function LoginPage() {
     );
   }
 
+  // Edition-aware variants. ``pro`` is the white-label enterprise build
+  // (Reva for X-IDRA): tone the dramatic radial-vignette down to a subtle
+  // cool-steel gradient, suppress the self-register link, prepend tenant
+  // context to the hero, and surface compliance trust markers in the footer.
+  // ``community`` (default) keeps the household-warm aesthetic untouched.
+  const isPro = import.meta.env.VITE_APP_EDITION === 'pro';
+  const tenantName = (import.meta.env.VITE_APP_TENANT_NAME || '').toString();
+  const appName = import.meta.env.VITE_APP_NAME || 'Renfield';
+
+  // Pro background: subtle linear gradient instead of theatrical radial
+  // vignette + noise. Banking customers expect restrained surfaces, not
+  // consumer-app drama. Community keeps the warm-editorial radial.
+  const bgClass = isPro
+    ? 'min-h-screen bg-gradient-to-b from-slate-900 via-[#0f1419] to-slate-950 flex items-center justify-center px-4 relative'
+    : 'min-h-screen bg-[radial-gradient(ellipse_at_center,_rgba(0,255,208,0.08)_0%,_#0f1117_70%)] flex items-center justify-center px-4 relative';
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_center,_rgba(0,255,208,0.08)_0%,_#0f1117_70%)] flex items-center justify-center px-4 relative">
-      {/* Noise overlay */}
-      <div
-        className="absolute inset-0 opacity-[0.03] pointer-events-none"
-        style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
-        }}
-      />
+    <div className={bgClass}>
+      {/* Noise overlay — community only; pro reads cleaner without it */}
+      {!isPro && (
+        <div
+          className="absolute inset-0 opacity-[0.03] pointer-events-none"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")`,
+          }}
+        />
+      )}
 
       <div className="max-w-md w-full relative z-10">
-        {/* Logo/Title */}
+        {/* Brand lockup: logo above wordmark; tenant context (when present)
+            in muted cream below. Pro edition tightens the vertical rhythm
+            so the lockup reads as a single unit. */}
         <div className="text-center mb-8">
           <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
-          <h1 className="text-4xl font-bold font-display text-cream">{import.meta.env.VITE_APP_NAME || 'Renfield'}</h1>
+          <h1 className="text-4xl font-bold font-display text-cream">{appName}</h1>
+          {isPro && tenantName ? (
+            <p className="text-gray-400 mt-1 text-sm">
+              {t('auth.tenantPrefix')} <span className="text-cream/90">{tenantName}</span>
+            </p>
+          ) : null}
           <p className="text-gray-400 mt-2">{t('auth.signInToAccount')}</p>
         </div>
 
@@ -187,8 +212,13 @@ export default function LoginPage() {
             </button>
           </form>
 
-          {/* Registration Link */}
-          {allowRegistration && (
+          {/* Registration Link — community edition only. Pro tenants
+              provision users via LDAP / Microsoft Graph; surfacing
+              self-register on the login page contradicts the security
+              model and creates user confusion. (Backend-side rejection
+              of /api/auth/register for pro is a separate hardening
+              follow-up.) */}
+          {allowRegistration && !isPro && (
             <div className="mt-6 pt-6 border-t border-gray-700 text-center">
               <p className="text-gray-400">
                 {t('auth.dontHaveAccount')}{' '}
@@ -203,10 +233,17 @@ export default function LoginPage() {
           )}
         </div>
 
-        {/* Footer */}
+        {/* Footer — pro edition adds compliance trust markers below the
+            product line. Banking customers look for these as legitimacy
+            signals on the auth surface. */}
         <p className="text-center text-gray-500 text-sm mt-8">
-          {import.meta.env.VITE_APP_NAME || 'Renfield'} - {t('auth.personalAssistant')}
+          {appName} · {t('auth.personalAssistant')}
         </p>
+        {isPro && (
+          <p className="text-center text-gray-600 text-xs mt-2 tracking-wide">
+            {t('auth.complianceFooter')}
+          </p>
+        )}
       </div>
     </div>
   );

@@ -71,6 +71,11 @@ ARG VITE_FEATURE_VOICE_STREAM=
 # multi-tenant deploys (e.g. Reva for X-IDRA Systems). See
 # src/i18n/index.ts deepMerge for resolution.
 ARG VITE_APP_EDITION=community
+# Tenant name displayed on the login page hero ("Sign in to {tenant}").
+# Pro edition only — empty in community deploys. White-label deploys set
+# this to the customer organization name (e.g. "X-IDRA Systems"). See
+# pages/LoginPage.tsx for the render logic.
+ARG VITE_APP_TENANT_NAME=
 
 # Set environment variables for build
 ENV VITE_API_URL=${VITE_API_URL}
@@ -80,6 +85,7 @@ ENV VITE_APP_LOGO_URL=${VITE_APP_LOGO_URL}
 ENV VITE_CHAT_STARTERS=${VITE_CHAT_STARTERS}
 ENV VITE_FEATURE_VOICE_STREAM=${VITE_FEATURE_VOICE_STREAM}
 ENV VITE_APP_EDITION=${VITE_APP_EDITION}
+ENV VITE_APP_TENANT_NAME=${VITE_APP_TENANT_NAME}
 
 # App Code kopieren
 COPY . .

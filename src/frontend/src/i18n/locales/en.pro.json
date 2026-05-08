@@ -1,5 +1,10 @@
 {
   "_comment": "Edition='pro' overlay applied on top of en.json when VITE_APP_EDITION=pro. Replaces household-flavored Circles vocabulary with enterprise/banking-friendly equivalents (visibility / team / organization / confidential). Keys not listed here fall through to en.json. See src/i18n/index.ts merge logic.",
+  "auth": {
+    "personalAssistant": "AI for Release Management",
+    "tenantPrefix": "Sign in to",
+    "complianceFooter": "GDPR-compliant · BaFin-conformant · Hosted on .de"
+  },
   "circles": {
     "tier": {
       "0": "Personal",
