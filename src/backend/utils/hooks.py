@@ -250,6 +250,45 @@ HOOK_EVENTS: frozenset[str] = frozenset({
     # title to its API id when the LLM passed the wrong parameter
     # shape). Platform default (no handler) is a no-op.
     "pre_mcp_call",
+    # Pre-MCP tool call gate — fired by ActionExecutor BEFORE
+    # ``pre_mcp_call`` for any ``mcp.*`` intent. Handlers receive
+    # ``intent: str, parameters: dict, user_id: int | None,
+    # voice_originated: bool`` and return:
+    #
+    #   * ``None`` — defer to other handlers / platform (proceed normally)
+    #   * ``{"abort": True, "user_response": <str | dict>, "audit": {...}}``
+    #     — skip the tool call. ``user_response`` is returned to the agent
+    #     loop as if it were the tool result (string for plain text,
+    #     Adaptive Card dict for rich UI). ``audit`` is a free-form dict
+    #     surfaced to other registered handlers via the same hook return
+    #     channel — platform itself doesn't persist it.
+    #   * ``{"abort": False}`` — explicit allow (currently equivalent to None;
+    #     reserved for future "force-allow over a later abort" semantics).
+    #
+    # Ordering: ``verify_tool_call`` runs BEFORE ``pre_mcp_call``. Rationale:
+    # the gate decides whether to execute at all; param repair is wasted
+    # work if the call is going to be aborted, and the audit row should
+    # log what the LLM intended (pre-rewrite), not the platform-corrected
+    # version.
+    #
+    # Forward-compat note for new ``pre_mcp_call`` handlers: if your
+    # handler normalizes a field that a ``verify_tool_call`` handler's
+    # policy reads (e.g. case-folding ``transition_issue.status``), the
+    # gate will see the pre-normalized value. Either move the rewrite
+    # to a different hook or update the policy to match the post-rewrite
+    # shape.
+    #
+    # First abort-sentinel result wins (registration order). Handler
+    # exceptions are caught and logged via ``run_hooks``; a crashed
+    # handler returns no opinion (proceeds to next handler / tool call).
+    # Plugins that need fail-closed semantics (BaFin / regulated tenants
+    # where a crashed gate must not silently allow voice-destructive
+    # calls through) should register a sibling watchdog handler that
+    # observes their primary handler's heartbeat.
+    #
+    # Platform default (no handler) is a no-op — proceeds to
+    # ``pre_mcp_call`` and the MCP call as before.
+    "verify_tool_call",
 })
 
 HookFn = Callable[..., Coroutine[Any, Any, Any]]

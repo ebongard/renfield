@@ -613,6 +613,17 @@ async def websocket_endpoint(
                 await send_ws_error(websocket, WSErrorCode.INVALID_MESSAGE, str(e))
                 continue
 
+            # Voice-origin signal for downstream gates (plugin hooks like
+            # Reva's voice-2FA destructive-tool gate). Truthy embedding =
+            # came from the voice path; null/empty = text. Set per-message
+            # via ContextVar; child tasks spawned with ``asyncio.create_task``
+            # / ``asyncio.gather`` inherit the value automatically (Python
+            # 3.7+ context propagation). Each iteration of the WS loop
+            # overwrites the previous value, so a voice message followed
+            # by a text message correctly clears the flag.
+            from utils.voice_context import voice_originated
+            voice_originated.set(bool(msg_speaker_embedding))
+
             # Phase B (B.4.a): resolve voice-server-supplied speaker
             # embedding. When present, this came in via the streaming
             # voice path (voice-server /ws/voice → frontend → chat-WS).

@@ -300,6 +300,238 @@ class TestActionExecutorPreMCPCall:
 
 
 # ============================================================================
+# verify_tool_call hook Tests
+# ============================================================================
+
+class TestActionExecutorVerifyToolCall:
+    """Tests for the verify_tool_call gate hook.
+
+    The hook fires BEFORE pre_mcp_call. Plugins (e.g. Reva voice-2FA)
+    return an abort sentinel to short-circuit the MCP call and surface
+    a confirmation card to the user instead.
+    """
+
+    @pytest.mark.unit
+    async def test_no_handler_falls_through_to_pre_mcp_call(self, action_executor):
+        """No verify_tool_call handler registered: MCP execute proceeds normally."""
+        await action_executor.execute({
+            "intent": "mcp.release.list_releases",
+            "parameters": {"status": "active"},
+            "confidence": 0.9,
+        })
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_none_return_proceeds(self, action_executor):
+        """Handler returning None defers — MCP call proceeds."""
+        from utils.hooks import _hooks, register_hook
+
+        async def noop(intent, parameters, user_id=None, voice_originated=False, **_):
+            return None
+
+        register_hook("verify_tool_call", noop)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.list_releases",
+                "parameters": {},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(noop)
+
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_abort_true_skips_mcp_and_returns_user_response(self, action_executor):
+        """Handler returning {abort: True, user_response: str} skips the MCP call."""
+        from utils.hooks import _hooks, register_hook
+
+        async def abort_handler(
+            intent, parameters, user_id=None, voice_originated=False, **_,
+        ):
+            return {
+                "abort": True,
+                "user_response": "Bitte bestätige diese Aktion.",
+            }
+
+        register_hook("verify_tool_call", abort_handler)
+        try:
+            result = await action_executor.execute({
+                "intent": "mcp.release.delete_release",
+                "parameters": {"id": "REL-4711"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(abort_handler)
+
+        action_executor.mcp_manager.execute_tool.assert_not_called()
+        assert result["verify_aborted"] is True
+        assert result["action_taken"] is False
+        assert result["message"] == "Bitte bestätige diese Aktion."
+
+    @pytest.mark.unit
+    async def test_abort_with_dict_user_response_returns_in_data(self, action_executor):
+        """Adaptive Card dict in user_response lands in result['data']."""
+        from utils.hooks import _hooks, register_hook
+
+        card = {"type": "AdaptiveCard", "body": [{"type": "TextBlock", "text": "Confirm?"}]}
+
+        async def abort_handler(
+            intent, parameters, user_id=None, voice_originated=False, **_,
+        ):
+            return {"abort": True, "user_response": card}
+
+        register_hook("verify_tool_call", abort_handler)
+        try:
+            result = await action_executor.execute({
+                "intent": "mcp.release.delete_release",
+                "parameters": {"id": "REL-4711"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(abort_handler)
+
+        action_executor.mcp_manager.execute_tool.assert_not_called()
+        assert result["verify_aborted"] is True
+        assert result["data"] == card
+
+    @pytest.mark.unit
+    async def test_abort_false_proceeds(self, action_executor):
+        """Handler returning {abort: False} is treated as no-opinion / proceed."""
+        from utils.hooks import _hooks, register_hook
+
+        async def explicit_allow(
+            intent, parameters, user_id=None, voice_originated=False, **_,
+        ):
+            return {"abort": False}
+
+        register_hook("verify_tool_call", explicit_allow)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.list_releases",
+                "parameters": {},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(explicit_allow)
+
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_runs_before_pre_mcp_call(self, action_executor):
+        """verify_tool_call fires before pre_mcp_call. If gate aborts,
+        pre_mcp_call's parameter-rewrite never happens.
+        """
+        from utils.hooks import _hooks, register_hook
+
+        rewrite_called = []
+
+        async def gate(intent, parameters, user_id=None, voice_originated=False, **_):
+            return {"abort": True, "user_response": "blocked"}
+
+        async def rewrite(intent, parameters, user_id=None, **_):
+            rewrite_called.append(True)
+            return {"id": "rewritten"}
+
+        register_hook("verify_tool_call", gate)
+        register_hook("pre_mcp_call", rewrite)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.delete_release",
+                "parameters": {"title": "REL-4711"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(gate)
+            _hooks["pre_mcp_call"].remove(rewrite)
+
+        assert rewrite_called == [], (
+            "pre_mcp_call must NOT run when verify_tool_call returns abort=True"
+        )
+        action_executor.mcp_manager.execute_tool.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_voice_originated_kwarg_threaded_from_contextvar(self, action_executor):
+        """The handler receives voice_originated=True when the ContextVar is set."""
+        from utils.hooks import _hooks, register_hook
+        from utils.voice_context import voice_originated as voice_originated_var
+
+        captured_kwargs = {}
+
+        async def capture_handler(intent, parameters, **kwargs):
+            captured_kwargs.update(kwargs)
+            return None
+
+        register_hook("verify_tool_call", capture_handler)
+        try:
+            voice_originated_var.set(True)
+            await action_executor.execute({
+                "intent": "mcp.release.start_release",
+                "parameters": {"id": "REL-4711"},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(capture_handler)
+            # Reset for any subsequent test in the same task context.
+            voice_originated_var.set(False)
+
+        assert captured_kwargs.get("voice_originated") is True
+        assert captured_kwargs.get("user_id") is None  # default from fixture
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+    @pytest.mark.unit
+    async def test_voice_originated_default_false(self, action_executor):
+        """When ContextVar is unset (text channel), handler receives False."""
+        from utils.hooks import _hooks, register_hook
+
+        captured = {}
+
+        async def capture_handler(intent, parameters, **kwargs):
+            captured["voice"] = kwargs.get("voice_originated")
+            return None
+
+        register_hook("verify_tool_call", capture_handler)
+        try:
+            # Do NOT set voice_originated. Default False applies.
+            await action_executor.execute({
+                "intent": "mcp.release.list_releases",
+                "parameters": {},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(capture_handler)
+
+        assert captured["voice"] is False
+
+    @pytest.mark.unit
+    async def test_handler_exception_does_not_abort(self, action_executor):
+        """Handler crash is caught by run_hooks; MCP call proceeds.
+
+        Fail-open behavior at this layer is intentional — fail-closed
+        semantics are the responsibility of the registering plugin
+        (which should pair the gate with a watchdog handler if its
+        regulatory posture requires it).
+        """
+        from utils.hooks import _hooks, register_hook
+
+        async def crashing(intent, parameters, **kwargs):
+            raise RuntimeError("simulated handler crash")
+
+        register_hook("verify_tool_call", crashing)
+        try:
+            await action_executor.execute({
+                "intent": "mcp.release.list_releases",
+                "parameters": {},
+                "confidence": 0.9,
+            })
+        finally:
+            _hooks["verify_tool_call"].remove(crashing)
+
+        # Handler crashed → run_hooks logged + skipped → MCP call proceeds.
+        action_executor.mcp_manager.execute_tool.assert_called_once()
+
+
+# ============================================================================
 # ActionExecutor Edge Cases Tests
 # ============================================================================
 
