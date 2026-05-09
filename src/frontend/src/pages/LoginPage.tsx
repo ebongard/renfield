@@ -120,11 +120,24 @@ export default function LoginPage() {
 
       <div className="max-w-md w-full relative z-10">
         {/* Brand lockup: logo above wordmark; tenant context (when present)
-            in muted cream below. Pro edition tightens the vertical rhythm
-            so the lockup reads as a single unit. */}
+            in muted cream below. Pro edition uses the existing white-label
+            VITE_APP_LOGO_URL — the Reva asset is a horizontal lockup that
+            already contains the wordmark, so we display it at h-20 w-auto
+            and skip the H1 to avoid rendering "Reva" twice. Community keeps
+            the square icon + Cormorant H1 lockup that Renfield ships with. */}
         <div className="text-center mb-8">
-          <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
-          <h1 className="text-4xl font-bold font-display text-cream">{appName}</h1>
+          {isPro ? (
+            <img
+              src={import.meta.env.VITE_APP_LOGO_URL || '/reva-logo.png'}
+              alt={appName}
+              className="h-20 w-auto mx-auto mb-4"
+            />
+          ) : (
+            <>
+              <img src="/logo-icon.svg" alt="" className="w-20 h-20 mx-auto mb-4" aria-hidden="true" />
+              <h1 className="text-4xl font-bold font-display text-cream">{appName}</h1>
+            </>
+          )}
           {isPro && tenantName ? (
             <p className="text-gray-400 mt-1 text-sm">
               {t('auth.tenantPrefix')} <span className="text-cream/90">{tenantName}</span>
