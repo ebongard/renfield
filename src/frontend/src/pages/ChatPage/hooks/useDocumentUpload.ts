@@ -73,12 +73,13 @@ export function useDocumentUpload() {
   }, []);
 
   const uploadDocuments = useCallback(async (files: File[], sessionId: string): Promise<Array<UploadedDocument | null>> => {
-    const results: Array<UploadedDocument | null> = [];
-    for (const file of files) {
-      const result = await uploadDocument(file, sessionId);
-      results.push(result);
-    }
-    return results;
+    // Parallel uploads. Each upload has its own progress slot via
+    // `fileKey` (counter-based, see uploadDocument), so the concurrent
+    // progress bars don't collide. The earlier sequential `for-await`
+    // implementation cost ~N × single-upload time when picking N files
+    // at once — for a typical 3-5 doc batch this matters. Backend is
+    // async FastAPI on multipart, no concurrency issue.
+    return Promise.all(files.map((file) => uploadDocument(file, sessionId)));
   }, [uploadDocument]);
 
   const clearError = useCallback((fileKey?: string) => {

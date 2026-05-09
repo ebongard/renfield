@@ -622,6 +622,178 @@ class TestChatUploadPaperless:
         assert response.status_code == 404
 
     @pytest.mark.backend
+    async def test_paperless_uses_extracted_metadata(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Auto-extracted metadata flows into mcp.paperless.upload_document params.
+
+        When the metadata extractor returns a non-empty PaperlessMetadata
+        (correspondent, document_type, tags, etc.), the route must include
+        those fields in the MCP tool call — not just title/filename. This
+        is the scenario that turns a one-click forward into a fully-tagged
+        Paperless document.
+        """
+        from datetime import date as _date
+
+        from services.paperless_metadata_extractor import (
+            ExtractionResult,
+            PaperlessMetadata,
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 test content")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="paperless-meta-test",
+                filename="rechnung.pdf",
+                file_type="pdf",
+                file_size=500,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            import json
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({
+                    "success": True,
+                    "data": {"task_id": "meta-456"},
+                }),
+            }
+
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+
+            # Mock the extractor to return resolved metadata. We patch the
+            # class on the import path the route uses (lazy import inside
+            # the handler) so ``PaperlessMetadataExtractor(mcp_manager=...)``
+            # returns our mock instance.
+            extracted = ExtractionResult(
+                metadata=PaperlessMetadata(
+                    title="Rechnung Wehrmann 2026-04",
+                    correspondent="Wehrmann GmbH",
+                    document_type="Rechnung",
+                    tags=["steuer", "2026"],
+                    storage_path="Belege/2026",
+                    created_date=_date(2026, 4, 15),
+                ),
+                doc_text="dummy",
+                error=None,
+            )
+            mock_extractor = AsyncMock()
+            mock_extractor.extract = AsyncMock(return_value=extracted)
+
+            from main import app
+            app.state.mcp_manager = mock_manager
+
+            try:
+                with patch(
+                    "services.paperless_metadata_extractor.PaperlessMetadataExtractor",
+                    return_value=mock_extractor,
+                ):
+                    response = await async_client.post(
+                        f"/api/chat/upload/{upload.id}/paperless"
+                    )
+            finally:
+                app.state.mcp_manager = None
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is True
+            assert body["paperless_task_id"] == "meta-456"
+            # Response message names which fields were auto-filled — UI uses
+            # this to show the user what got attached. Empty fields stay out.
+            assert "title" in body["message"]
+            assert "correspondent" in body["message"]
+
+            # The actual MCP call must carry every resolved field. A
+            # regression here means metadata was extracted but lost on the
+            # way to Paperless — silent and hard to spot in the UI.
+            sent_params = mock_manager.execute_tool.call_args[0][1]
+            assert sent_params["title"] == "Rechnung Wehrmann 2026-04"
+            assert sent_params["correspondent"] == "Wehrmann GmbH"
+            assert sent_params["document_type"] == "Rechnung"
+            assert sent_params["tags"] == ["steuer", "2026"]
+            assert sent_params["storage_path"] == "Belege/2026"
+            assert sent_params["created_date"] == "2026-04-15"
+            assert sent_params["filename"] == "rechnung.pdf"
+            assert "file_content_base64" in sent_params
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
+    async def test_paperless_falls_back_when_extractor_errors(
+        self, async_client: AsyncClient, db_session: AsyncSession
+    ):
+        """Extractor failure must NOT block the bare upload.
+
+        OCR errors, taxonomy fetch failures, and LLM timeouts all funnel
+        into the same fallback path. The user still gets the document into
+        Paperless — just without auto-extracted metadata.
+        """
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(b"%PDF-1.4 unreadable")
+            tmp_path = f.name
+
+        try:
+            upload = ChatUpload(
+                session_id="paperless-fallback-test",
+                filename="scan.pdf",
+                file_type="pdf",
+                file_size=500,
+                status="completed",
+                file_path=tmp_path,
+            )
+            db_session.add(upload)
+            await db_session.commit()
+            await db_session.refresh(upload)
+
+            import json
+            mcp_result = {
+                "success": True,
+                "message": json.dumps({"success": True, "data": {"task_id": "fb-789"}}),
+            }
+
+            mock_manager = AsyncMock()
+            mock_manager.execute_tool = AsyncMock(return_value=mcp_result)
+
+            mock_extractor = AsyncMock()
+            mock_extractor.extract = AsyncMock(side_effect=RuntimeError("Docling crashed"))
+
+            from main import app
+            app.state.mcp_manager = mock_manager
+            try:
+                with patch(
+                    "services.paperless_metadata_extractor.PaperlessMetadataExtractor",
+                    return_value=mock_extractor,
+                ):
+                    response = await async_client.post(
+                        f"/api/chat/upload/{upload.id}/paperless"
+                    )
+            finally:
+                app.state.mcp_manager = None
+
+            assert response.status_code == 200
+            body = response.json()
+            assert body["success"] is True
+            assert body["paperless_task_id"] == "fb-789"
+
+            # Filename-only fallback — no metadata fields in the MCP call.
+            sent_params = mock_manager.execute_tool.call_args[0][1]
+            assert sent_params["title"] == "scan.pdf"
+            assert "correspondent" not in sent_params
+            assert "document_type" not in sent_params
+            assert "tags" not in sent_params
+            assert "created_date" not in sent_params
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+
+    @pytest.mark.backend
     async def test_paperless_mcp_not_available(self, async_client: AsyncClient, db_session: AsyncSession):
         """No MCP manager returns 503"""
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:

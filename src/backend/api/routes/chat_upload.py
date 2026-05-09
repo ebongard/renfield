@@ -279,15 +279,70 @@ async def forward_to_paperless(
         file_bytes = await f.read()
     file_content_base64 = base64.b64encode(file_bytes).decode("ascii")
 
-    # Execute MCP tool
+    # Build the upload-tool params. Default is filename-only — same as the
+    # pre-auto-extraction behaviour, kept as the safe fallback if the
+    # extractor errors. The metadata-extraction block below populates
+    # additional fields (correspondent, document_type, tags, etc.) when
+    # they resolve cleanly against the live Paperless taxonomy.
+    upload_params: dict = {
+        "title": upload.filename,
+        "filename": upload.filename,
+        "file_content_base64": file_content_base64,
+    }
+    extracted_fields: list[str] = []  # for the response message
+
+    # Auto-extract metadata. Same pipeline the audit flow uses, just with
+    # the ambiguity-resolution step skipped — only EXACT/strong-fuzzy
+    # resolutions on the live taxonomy go into upload_params. Anything
+    # the extractor flagged as needing user decision is dropped silently
+    # so this stays a one-click action; users who want curation reach for
+    # the audit flow instead.
+    try:
+        from services.paperless_metadata_extractor import PaperlessMetadataExtractor
+
+        extractor = PaperlessMetadataExtractor(mcp_manager=manager)
+        extraction = await extractor.extract(
+            attachment_id=upload_id,
+            session_id=upload.session_id,
+            lang="de",
+        )
+        if extraction.error:
+            logger.info(
+                f"Paperless metadata extraction returned an error; "
+                f"falling back to filename-only: {extraction.error}"
+            )
+        else:
+            meta = extraction.metadata
+            if meta.title:
+                upload_params["title"] = meta.title
+                extracted_fields.append("title")
+            if meta.correspondent:
+                upload_params["correspondent"] = meta.correspondent
+                extracted_fields.append("correspondent")
+            if meta.document_type:
+                upload_params["document_type"] = meta.document_type
+                extracted_fields.append("type")
+            if meta.tags:
+                upload_params["tags"] = meta.tags
+                extracted_fields.append(f"{len(meta.tags)} tags")
+            if meta.storage_path:
+                upload_params["storage_path"] = meta.storage_path
+                extracted_fields.append("path")
+            if meta.created_date:
+                upload_params["created_date"] = meta.created_date.isoformat()
+                extracted_fields.append("date")
+    except Exception as e:
+        # The extractor is best-effort; never let it block the bare upload.
+        # OCR failures, taxonomy fetch errors, and LLM timeouts all funnel
+        # here. The user still gets the document into Paperless — just
+        # without auto-filled metadata.
+        logger.warning(f"Paperless metadata extraction failed; falling back to filename-only: {e}")
+
+    # Execute MCP tool with the (possibly metadata-enriched) params.
     try:
         mcp_result = await manager.execute_tool(
             "mcp.paperless.upload_document",
-            {
-                "title": upload.filename,
-                "filename": upload.filename,
-                "file_content_base64": file_content_base64,
-            },
+            upload_params,
         )
     except Exception as e:
         logger.error(f"Paperless forward failed: {e}")
@@ -306,10 +361,15 @@ async def forward_to_paperless(
     if not mcp_result or not mcp_result.get("success"):
         raise HTTPException(status_code=502, detail="Paperless forwarding failed")
 
+    if extracted_fields:
+        message = f"Sent to Paperless with auto-extracted: {', '.join(extracted_fields)}"
+    else:
+        message = "Sent to Paperless"
+
     return PaperlessResponse(
         success=True,
         paperless_task_id=str(task_id) if task_id else None,
-        message="Sent to Paperless",
+        message=message,
     )
 
 
