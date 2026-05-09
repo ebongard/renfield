@@ -84,6 +84,13 @@ interface LayoutProps {
   children: ReactNode;
 }
 
+// Pro-edition deploys (e.g. Reva for X-IDRA) put 12+ nav items in a
+// release-management workflow where icon-only rails create constant
+// "what was that one again?" friction. Expand the sidebar by default
+// at lg+. Community deploys keep the collapsed-rail-with-hover pattern
+// — appropriate for a household assistant with fewer destinations.
+const IS_PRO_EDITION = import.meta.env.VITE_APP_EDITION === 'pro';
+
 export default function Layout({ children }: LayoutProps) {
   const { t } = useTranslation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -218,7 +225,7 @@ export default function Layout({ children }: LayoutProps) {
           <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent-400 rounded-r" />
         )}
         <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{item.name}</span>
+        <span className={`${IS_PRO_EDITION ? '' : 'lg:opacity-0 lg:group-hover/sidebar:opacity-100'} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{item.name}</span>
       </Link>
     );
   };
@@ -234,7 +241,7 @@ export default function Layout({ children }: LayoutProps) {
       </a>
 
       {/* Fixed Header */}
-      <header className="fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors lg:pl-16">
+      <header className={`fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors ${IS_PRO_EDITION ? 'lg:pl-72' : 'lg:pl-16'}`}>
         <div className="h-full px-4 flex items-center justify-between">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center space-x-2">
@@ -253,11 +260,16 @@ export default function Layout({ children }: LayoutProps) {
             </Link>
           </div>
 
-          {/* Right: Language + Theme Toggle + Device Status + User */}
+          {/* Right: Language + Theme Toggle + Device Status + User.
+              DeviceStatus is the voice-satellite/device-setup pill — only
+              meaningful for community deploys (households with multi-room
+              voice hardware). For pro edition deploys (e.g. Reva for
+              X-IDRA), users have no satellites; the "Set up device" button
+              links to a flow that doesn't apply. Hide it. */}
           <div className="flex items-center space-x-2 sm:space-x-3">
             <LanguageSwitcher compact />
             <ThemeToggle />
-            <DeviceStatus compact />
+            {import.meta.env.VITE_APP_EDITION !== 'pro' && <DeviceStatus compact />}
 
             {/* User/Auth in Header */}
             {authEnabled && (
@@ -300,7 +312,7 @@ export default function Layout({ children }: LayoutProps) {
         ref={sidebarRef}
         id="sidebar"
         className={`group/sidebar fixed top-0 left-0 h-full flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-all duration-300 ease-out
-          w-72 lg:w-16 lg:hover:w-72 lg:translate-x-0
+          w-72 ${IS_PRO_EDITION ? 'lg:w-72' : 'lg:w-16 lg:hover:w-72'} lg:translate-x-0
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
         aria-label={t('nav.mainNavigation')}
@@ -444,7 +456,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <main
         id="main-content"
-        className="pt-16 min-h-screen lg:pl-16"
+        className={`pt-16 min-h-screen ${IS_PRO_EDITION ? 'lg:pl-72' : 'lg:pl-16'}`}
         tabIndex={-1}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">

@@ -162,6 +162,7 @@ export default function BrainReviewPage() {
                 </div>
                 <div className="sm:ml-4 sm:flex-shrink-0">
                   <TierPicker
+                    variant="compact"
                     value={tier}
                     onChange={(t2) => handleTierChange(atom, t2)}
                     disabled={saving}

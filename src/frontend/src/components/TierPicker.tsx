@@ -13,13 +13,41 @@ interface TierPickerProps {
   onChange: (tier: CircleTier) => void;
   disabled?: boolean;
   className?: string;
+  /**
+   * Render as a compact native <select> instead of a 5-pill radiogroup.
+   * Used in dense list contexts (e.g. the review queue) where the 5-pill
+   * row wraps onto two lines per atom and inflates the row height. The
+   * pill version stays the default for the settings page where one
+   * picker per page reads clearly.
+   */
+  variant?: 'pills' | 'compact';
 }
 
 const ALL_TIERS: CircleTier[] = [0, 1, 2, 3, 4];
 
-export default function TierPicker({ value, onChange, disabled = false, className = '' }: TierPickerProps) {
+export default function TierPicker({ value, onChange, disabled = false, className = '', variant = 'pills' }: TierPickerProps) {
   const { t } = useTranslation();
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  if (variant === 'compact') {
+    const current: CircleTier = (value != null ? (value as CircleTier) : 0);
+    return (
+      <select
+        aria-label={t('circles.tierPickerLabel')}
+        value={current}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value) as CircleTier)}
+        className={`text-xs font-medium px-2 py-1 rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-hidden focus:ring-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+      >
+        {ALL_TIERS.map((tier) => (
+          <option key={tier} value={tier}>
+            {TIER_SYMBOLS[tier]} {t(`circles.tier.${tier}`)}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
   // Track which tier *we* just moved to via keyboard so we can restore focus
   // after React re-renders with the new selection. Without this, roving-tabindex
   // leaves focus on the previously-selected (now tabindex=-1) button and the

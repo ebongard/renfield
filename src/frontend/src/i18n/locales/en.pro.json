@@ -5,6 +5,16 @@
     "tenantPrefix": "Sign in to",
     "complianceFooter": "GDPR-compliant · BaFin-conformant · Hosted on .de"
   },
+  "nav": {
+    "brain": "Knowledge",
+    "memory": "Notes",
+    "brainReview": "Review queue",
+    "circles": "Visibility"
+  },
+  "memory": {
+    "title": "Notes",
+    "subtitle": "Long-term context for releases, tickets, and decisions"
+  },
   "circles": {
     "tier": {
       "0": "Personal",
@@ -18,6 +28,11 @@
       "2": "Visible to my team.",
       "3": "Visible to the entire organization."
     },
+    "brainTitle": "Knowledge base",
+    "brainSubtitle": "Search across documents, tickets, releases, and captured context.",
+    "brainSearchPlaceholder": "Try \"open releases\" or \"PROJ-1234\"...",
+    "brainEmpty": "Type a query above to search. Try \"open releases\", \"my tickets\", or \"Sprint 23 retro\".",
+    "brainNoMatches": "No knowledge entries matched. Try a broader query or different wording.",
     "tierAriaLabel": "Visibility {{tier}}: {{label}}",
     "tierPickerLabel": "Choose visibility",
     "settingsTitle": "Visibility & Members",

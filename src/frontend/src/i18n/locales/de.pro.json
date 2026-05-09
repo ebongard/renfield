@@ -6,7 +6,14 @@
     "complianceFooter": "DSGVO-konform · BaFin-kompatibel · Auf .de gehostet"
   },
   "nav": {
+    "brain": "Wissensbasis",
+    "memory": "Notizen",
+    "brainReview": "Prüf-Eingang",
     "circles": "Sichtbarkeit"
+  },
+  "memory": {
+    "title": "Notizen",
+    "subtitle": "Langfristiger Kontext zu Releases, Tickets und Entscheidungen"
   },
   "circles": {
     "tier": {
@@ -19,6 +26,11 @@
       "2": "Für mein Team sichtbar.",
       "3": "Für die gesamte Organisation sichtbar."
     },
+    "brainTitle": "Wissensbasis",
+    "brainSubtitle": "Suche in Dokumenten, Tickets, Releases und erfasstem Kontext.",
+    "brainSearchPlaceholder": "Versuche „offene Releases\" oder „PROJ-1234\"…",
+    "brainEmpty": "Stelle eine Suchanfrage. Versuche „offene Releases\", „meine Tickets\" oder „Sprint 23 Retro\".",
+    "brainNoMatches": "Keine Wissens-Einträge gefunden. Versuche eine allgemeinere Anfrage.",
     "tierAriaLabel": "Sichtbarkeitsstufe {{tier}}: {{label}}",
     "tierPickerLabel": "Sichtbarkeitsstufe wählen",
     "settingsTitle": "Sichtbarkeit & Mitglieder",
