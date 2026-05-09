@@ -246,17 +246,9 @@ export default function LoginPage() {
           )}
         </div>
 
-        {/* Footer — pro edition adds compliance trust markers below the
-            product line. Banking customers look for these as legitimacy
-            signals on the auth surface. */}
         <p className="text-center text-gray-500 text-sm mt-8">
           {appName} · {t('auth.personalAssistant')}
         </p>
-        {isPro && (
-          <p className="text-center text-gray-600 text-xs mt-2 tracking-wide">
-            {t('auth.complianceFooter')}
-          </p>
-        )}
       </div>
     </div>
   );
