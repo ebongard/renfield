@@ -18,6 +18,35 @@ if (_edition === 'pro') {
   document.documentElement.dataset.edition = 'pro';
 }
 
+// OIDC URL-fragment hand-off. After a successful OIDC dance the backend
+// redirects to /#access_token=<JWT>&expires_in=<seconds>&provider=entra.
+// We move those tokens into localStorage (the standard storage the rest
+// of the app reads from) and clear the fragment before React mounts —
+// otherwise AuthContext's mount-time fetchUser() would miss the token
+// and the user would briefly see the login page before the fetch retried.
+// Fragment is never sent to the server, so the JWT does NOT show up in
+// any HTTP request log even though it lands in the URL bar momentarily.
+function _consumeOidcHashHandoff(): void {
+  const hash = window.location.hash;
+  if (!hash || !hash.startsWith('#access_token=')) {
+    return;
+  }
+  const params = new URLSearchParams(hash.slice(1));
+  const accessToken = params.get('access_token');
+  if (!accessToken) return;
+
+  localStorage.setItem('renfield_access_token', accessToken);
+  // Clear the fragment from the URL bar without triggering a navigation.
+  // Replacing with `window.location.pathname + window.location.search` keeps
+  // any path/query the backend included (e.g. ?from=/brain).
+  history.replaceState(
+    null,
+    '',
+    window.location.pathname + window.location.search,
+  );
+}
+_consumeOidcHashHandoff();
+
 const rootElement = document.getElementById('root');
 if (!rootElement) {
   throw new Error('Root element #root not found in document');

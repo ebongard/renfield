@@ -95,7 +95,19 @@
     "emailPlaceholder": "your@email.com",
     "optional": "optional",
     "alreadyHaveAccount": "Already have an account?",
-    "createAccount": "Create Account"
+    "createAccount": "Create Account",
+    "signInWithSso": "Sign in with SSO",
+    "ssoOrDivider": "or",
+    "oidcError": {
+      "oidc_state_invalid": "Login session expired. Try again.",
+      "oidc_token_invalid": "Could not verify identity. Try again.",
+      "oidc_code_invalid": "Login link expired. Try again.",
+      "oidc_disabled": "Your account has been disabled. Contact your administrator.",
+      "oidc_idp_unreachable": "Identity provider is temporarily unavailable. Try password login below.",
+      "oidc_idp_error": "Identity provider returned an error. Try again.",
+      "oidc_cancelled": "Login was cancelled.",
+      "oidc_internal": "An internal error occurred. Try again or contact support."
+    }
   },
   "chat": {
     "title": "Chat",

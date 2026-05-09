@@ -46,6 +46,24 @@ export default function LoginPage() {
   const fromState = (location.state as LocationStateWithFrom | null) ?? null;
   const from = fromState?.from?.pathname ?? '/';
 
+  // OIDC SSO flag — backend route mounting and frontend button visibility
+  // are independently gated. The frontend flag must match the backend's
+  // REVA_OIDC_ENABLED for the dance to actually work end-to-end. When the
+  // backend is on but the frontend flag is off, the button is hidden but
+  // direct navigation to /auth/oidc/login still works.
+  const oidcEnabled = import.meta.env.VITE_OIDC_ENABLED === 'true';
+
+  // Surface OIDC error redirects from the backend. After a failed dance
+  // /auth/oidc/callback redirects to /login?error=<code> where <code> is
+  // one of the documented values (oidc_state_invalid, oidc_token_invalid,
+  // oidc_code_invalid, oidc_disabled, oidc_idp_unreachable, oidc_idp_error,
+  // oidc_cancelled, oidc_internal). Render the localized message above
+  // the credentials form so the user knows what happened.
+  const oidcErrorCode = (() => {
+    const code = new URLSearchParams(location.search).get('error');
+    return code && code.startsWith('oidc_') ? code : null;
+  })();
+
   // Redirect if already authenticated or auth is disabled
   useEffect(() => {
     if (!authLoading && (isAuthenticated || !authEnabled)) {
@@ -148,6 +166,21 @@ export default function LoginPage() {
 
         {/* Login Card */}
         <div className="card-primary bg-gray-900 border-gray-700">
+          {/* OIDC error banner — shown when /auth/oidc/callback redirected
+              here with ?error=<code>. Distinct from the form `error` state
+              so a fresh form-submit error doesn't suppress the OIDC banner
+              the user just landed with. */}
+          {oidcErrorCode && (
+            <div className="bg-amber-900/20 border border-amber-700 rounded-lg p-4 mb-6">
+              <div className="flex items-center space-x-3">
+                <AlertCircle className="w-5 h-5 text-amber-500 shrink-0" />
+                <p className="text-amber-400">
+                  {t(`auth.oidcError.${oidcErrorCode}`, t('auth.oidcError.oidc_internal'))}
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Error Alert */}
           {error && (
             <div className="bg-red-900/20 border border-red-700 rounded-lg p-4 mb-6">
@@ -224,6 +257,48 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          {/* OIDC SSO button — full-page navigation (not Link/navigate)
+              because /auth/oidc/login responds 302 to the IdP, which is
+              outside our origin and can't be handled by react-router.
+              The backend's `_redirect_login_error` brings the user back
+              to /login?error=<code> on failure; the OIDC error banner
+              above renders the localized copy. */}
+          {oidcEnabled && (
+            <>
+              <div className="relative my-6" aria-hidden="true">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-700" />
+                </div>
+                <div className="relative flex justify-center text-xs">
+                  <span className="bg-gray-900 px-3 text-gray-500 uppercase tracking-wider">
+                    {t('auth.ssoOrDivider')}
+                  </span>
+                </div>
+              </div>
+              <a
+                href="/auth/oidc/login"
+                className="w-full btn bg-white text-gray-900 hover:bg-gray-100 py-3 flex items-center justify-center space-x-3 font-medium"
+              >
+                {/* Microsoft logo (4-square mark). Inline SVG keeps the
+                    button self-contained — no extra asset request, no
+                    icon-library dep. The 4 brand hex values are fixed by
+                    Microsoft's brand guidelines and not localized. */}
+                <svg
+                  className="w-5 h-5"
+                  viewBox="0 0 21 21"
+                  xmlns="http://www.w3.org/2000/svg"
+                  aria-hidden="true"
+                >
+                  <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+                  <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+                  <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+                  <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+                </svg>
+                <span>{t('auth.signInWithSso')}</span>
+              </a>
+            </>
+          )}
 
           {/* Registration Link — community edition only. Pro tenants
               provision users via LDAP / Microsoft Graph; surfacing

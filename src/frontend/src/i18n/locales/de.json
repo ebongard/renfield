@@ -95,7 +95,19 @@
     "emailPlaceholder": "deine@email.de",
     "optional": "optional",
     "alreadyHaveAccount": "Bereits ein Konto?",
-    "createAccount": "Konto erstellen"
+    "createAccount": "Konto erstellen",
+    "signInWithSso": "Mit SSO anmelden",
+    "ssoOrDivider": "oder",
+    "oidcError": {
+      "oidc_state_invalid": "Anmelde-Sitzung abgelaufen. Bitte erneut versuchen.",
+      "oidc_token_invalid": "Identität konnte nicht überprüft werden. Bitte erneut versuchen.",
+      "oidc_code_invalid": "Anmelde-Link abgelaufen. Bitte erneut versuchen.",
+      "oidc_disabled": "Ihr Konto wurde deaktiviert. Bitte wenden Sie sich an Ihren Administrator.",
+      "oidc_idp_unreachable": "Identitätsanbieter vorübergehend nicht erreichbar. Versuche es weiter unten mit Passwort-Login.",
+      "oidc_idp_error": "Identitätsanbieter hat einen Fehler zurückgegeben. Bitte erneut versuchen.",
+      "oidc_cancelled": "Anmeldung wurde abgebrochen.",
+      "oidc_internal": "Ein interner Fehler ist aufgetreten. Bitte erneut versuchen oder Support kontaktieren."
+    }
   },
   "chat": {
     "title": "Chat",

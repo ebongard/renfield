@@ -76,6 +76,11 @@ ARG VITE_APP_EDITION=community
 # this to the customer organization name (e.g. "X-IDRA Systems"). See
 # pages/LoginPage.tsx for the render logic.
 ARG VITE_APP_TENANT_NAME=
+# OIDC SSO ("Sign in with Microsoft" button on LoginPage). Set to "true"
+# when the backend's REVA_OIDC_ENABLED is also true. The frontend gates
+# the button + the URL-fragment hand-off parser on this flag. Default
+# false — community deploys don't ship OIDC and the button stays hidden.
+ARG VITE_OIDC_ENABLED=false
 
 # Set environment variables for build
 ENV VITE_API_URL=${VITE_API_URL}
@@ -86,6 +91,7 @@ ENV VITE_CHAT_STARTERS=${VITE_CHAT_STARTERS}
 ENV VITE_FEATURE_VOICE_STREAM=${VITE_FEATURE_VOICE_STREAM}
 ENV VITE_APP_EDITION=${VITE_APP_EDITION}
 ENV VITE_APP_TENANT_NAME=${VITE_APP_TENANT_NAME}
+ENV VITE_OIDC_ENABLED=${VITE_OIDC_ENABLED}
 
 # App Code kopieren
 COPY . .
