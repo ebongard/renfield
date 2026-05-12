@@ -54,6 +54,7 @@ interface Cluster {
   entity_count: number;
   hubs: Hub[];
   color_seed: number;
+  namesake_entity_id: string | null;
 }
 
 interface GraphResponse {
@@ -154,11 +155,19 @@ export default function GraphView() {
     // Track all labelable things (cluster spheres OR focus entities)
     // for the 2D label overlay + raycaster targets that drive
     // click-to-refocus.
+    //
+    // `tier` controls label styling: 'primary' (cluster center / focus
+    // entity) shows full size; 'secondary' (hubs / hop1 / hop2) is
+    // smaller, fades with distance so the center label stays readable.
+    // `object` is read each frame for the world position so orbiting
+    // hop1 nodes carry their labels.
     const labeled: Array<{
-      pos: THREE.Vector3;
+      object: THREE.Object3D;
       name: string;
       sub?: string;
       yOffset: number;
+      tier: 'primary' | 'secondary';
+      entityId?: string;
     }> = [];
     const clickable: Array<{ mesh: THREE.Object3D; entityId: string }> = [];
 
@@ -168,30 +177,80 @@ export default function GraphView() {
       buildFocusScene(scene, focusData, labeled, clickable);
     }
 
+    const tmpWorld = new THREE.Vector3();
     function updateLabels() {
       if (!labelsLayer) return;
       while (labelsLayer.firstChild) labelsLayer.removeChild(labelsLayer.firstChild);
+      const camPos = camera.position;
       for (const item of labeled) {
-        const v = item.pos.clone();
-        v.y += item.yOffset;
-        v.project(camera);
+        item.object.getWorldPosition(tmpWorld);
+        const distance = tmpWorld.distanceTo(camPos);
+        tmpWorld.y += item.yOffset;
+        const v = tmpWorld.clone().project(camera);
         if (v.z > 1) continue;
         const x = (v.x + 1) * 0.5 * W();
         const y = (1 - (v.y + 1) * 0.5) * H();
+
+        // Secondary labels fade gently with distance (orbit-controls
+        // maxDistance is 80) so far-back nodes don't shout louder than
+        // close ones, but everything stays readable in the default
+        // camera frame. Primary labels stay fully opaque.
+        let opacity = 1;
+        if (item.tier === 'secondary') {
+          opacity = Math.max(0.35, Math.min(1, 1.15 - (distance - 18) / 50));
+        }
+
         const div = document.createElement('div');
-        div.className = 'pointer-events-none absolute font-semibold text-white text-xs whitespace-nowrap';
+        // Labels that point to an entity are clickable (the user
+        // naturally aims at the caption, not the small sphere).
+        // Labels with no entityId stay click-transparent so they
+        // don't block scene drag/zoom.
+        const clickableLabel = !!item.entityId;
+        div.className = clickableLabel
+          ? 'absolute whitespace-nowrap cursor-pointer select-none'
+          : 'pointer-events-none absolute whitespace-nowrap';
         div.style.left = `${x}px`;
         div.style.top = `${y}px`;
         div.style.transform = 'translate(-50%, -100%)';
-        div.style.textShadow = '0 1px 2px rgba(0,0,0,0.8)';
+        div.style.textShadow = '0 1px 2px rgba(0,0,0,0.95), 0 0 4px rgba(0,0,0,0.85)';
+        div.style.opacity = String(opacity);
+        if (item.tier === 'secondary') {
+          // Pill background so labels stay readable when they overlap.
+          div.style.padding = '1px 5px';
+          div.style.background = 'rgba(10,15,28,0.55)';
+          div.style.borderRadius = '3px';
+        }
+        if (clickableLabel) {
+          const eid = item.entityId!;
+          div.addEventListener('click', (e) => {
+            e.stopPropagation();
+            setSearchParams((prev) => {
+              const next = new URLSearchParams(prev);
+              next.set('focus', eid);
+              return next;
+            });
+          });
+        }
+
         const name = document.createElement('div');
-        name.className = 'text-sm';
-        name.style.fontFamily = 'Cormorant, Georgia, serif';
-        name.textContent = item.name;
+        if (item.tier === 'primary') {
+          name.className = 'font-semibold text-white text-sm';
+          name.style.fontFamily = 'Cormorant, Georgia, serif';
+        } else {
+          name.className = 'font-medium text-white/90 text-[11px]';
+        }
+        // Truncate very long names so neighboring labels don't overlap.
+        const maxLen = item.tier === 'primary' ? 48 : 24;
+        name.textContent = item.name.length > maxLen
+          ? item.name.slice(0, maxLen - 1) + '…'
+          : item.name;
         div.appendChild(name);
+
         if (item.sub) {
           const sub = document.createElement('div');
-          sub.className = 'text-[10px] font-normal text-gray-400';
+          sub.className = item.tier === 'primary'
+            ? 'text-[10px] font-normal text-gray-400'
+            : 'text-[9px] font-normal text-gray-400/80';
           sub.textContent = item.sub;
           div.appendChild(sub);
         }
@@ -326,10 +385,19 @@ export default function GraphView() {
 // Scene builders
 // =========================================================================
 
+type Labeled = {
+  object: THREE.Object3D;
+  name: string;
+  sub?: string;
+  yOffset: number;
+  tier: 'primary' | 'secondary';
+  entityId?: string;
+};
+
 function buildCorpusScene(
   scene: THREE.Scene,
   data: GraphResponse,
-  labeled: Array<{ pos: THREE.Vector3; name: string; sub?: string; yOffset: number }>,
+  labeled: Labeled[],
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
 ) {
   const N = data.clusters.length;
@@ -349,18 +417,34 @@ function buildCorpusScene(
     group.position.copy(pos);
     group.userData = { cluster: c };
 
-    group.add(new THREE.Mesh(
+    // Translucent body — keep clickable so users can grab the whole
+    // cluster from anywhere on the sphere, not just the small core.
+    const body = new THREE.Mesh(
       new THREE.SphereGeometry(radius, 32, 32),
       new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.10, depthWrite: false }),
-    ));
+    );
+    group.add(body);
     group.add(new THREE.Mesh(
       new THREE.SphereGeometry(radius * 1.02, 24, 16),
       new THREE.MeshBasicMaterial({ color, wireframe: true, transparent: true, opacity: 0.32 }),
     ));
-    group.add(new THREE.Mesh(
+    const core = new THREE.Mesh(
       new THREE.SphereGeometry(0.5, 16, 16),
       new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.45, roughness: 0.4 }),
-    ));
+    );
+    group.add(core);
+
+    // Cluster centre is clickable when we have a namesake. Click
+    // anywhere on the body or core → focus on the cluster's namesake
+    // entity. Loose-ends has no namesake so the cluster stays
+    // non-clickable (its individual hubs remain clickable instead).
+    if (c.namesake_entity_id) {
+      const eid = c.namesake_entity_id;
+      body.userData = { entityId: eid };
+      core.userData = { entityId: eid };
+      clickable.push({ mesh: body, entityId: eid });
+      clickable.push({ mesh: core, entityId: eid });
+    }
 
     c.hubs.forEach((hub, hi) => {
       const theta = (hi / Math.max(c.hubs.length, 1)) * Math.PI * 2;
@@ -378,17 +462,32 @@ function buildCorpusScene(
       hubMesh.userData = { entityId: hub.entity_id, hub };
       group.add(hubMesh);
       clickable.push({ mesh: hubMesh, entityId: hub.entity_id });
+      labeled.push({
+        object: hubMesh,
+        name: hub.name,
+        sub: hub.entity_type,
+        yOffset: 0.7,
+        tier: 'secondary',
+        entityId: hub.entity_id,
+      });
     });
 
     scene.add(group);
-    labeled.push({ pos: pos.clone(), name: c.label, sub: c.sub_label, yOffset: radius * 1.1 });
+    labeled.push({
+      object: group,
+      name: c.label,
+      sub: c.sub_label,
+      yOffset: radius * 1.1,
+      tier: 'primary',
+      entityId: c.namesake_entity_id || undefined,
+    });
   });
 }
 
 function buildFocusScene(
   scene: THREE.Scene,
   data: FocusNeighborhood,
-  labeled: Array<{ pos: THREE.Vector3; name: string; sub?: string; yOffset: number }>,
+  labeled: Labeled[],
   clickable: Array<{ mesh: THREE.Object3D; entityId: string }>,
 ) {
   const focusColor = 0xe63e54;
@@ -412,10 +511,14 @@ function buildFocusScene(
     }),
   ));
   labeled.push({
-    pos: new THREE.Vector3(0, 0, 0),
+    object: focusMesh,
     name: data.focus.display_name,
     sub: data.focus.entity_type,
     yOffset: 3.2,
+    tier: 'primary',
+    // The focus label is the entity you're already on — no need to
+    // re-focus on click; leaving entityId unset keeps it
+    // click-transparent so the user can drag-orbit through the centre.
   });
 
   // hop1 ring — orbiting hubs at radius ~7. Group so we can lazy-orbit.
@@ -430,6 +533,14 @@ function buildFocusScene(
     mesh.userData = { entityId: e.entity_id, entity: e };
     hop1Group.add(mesh);
     clickable.push({ mesh, entityId: e.entity_id });
+    labeled.push({
+      object: mesh,
+      name: e.display_name,
+      sub: e.entity_type,
+      yOffset: 0.8,
+      tier: 'secondary',
+      entityId: e.entity_id,
+    });
 
     // Edge from focus to hop1 (faint line).
     const lineGeom = new THREE.BufferGeometry().setFromPoints([
@@ -455,6 +566,14 @@ function buildFocusScene(
     mesh.userData = { entityId: e.entity_id, entity: e };
     scene.add(mesh);
     clickable.push({ mesh, entityId: e.entity_id });
+    labeled.push({
+      object: mesh,
+      name: e.display_name,
+      sub: e.entity_type,
+      yOffset: 0.6,
+      tier: 'secondary',
+      entityId: e.entity_id,
+    });
   });
 
   // Wireframe outer-shell hint (the "2 HOPS" boundary from the A4 mock).

@@ -826,7 +826,16 @@ export function ChatProvider({ children }: ChatProviderProps) {
       // Attach to most recent assistant message
       for (let i = updated.length - 1; i >= 0; i--) {
         if (updated[i].role === 'assistant') {
-          updated[i] = { ...updated[i], card: data.card };
+          // When the backend supplies replace_text, swap the streamed
+          // prose for the 1-line lede so the bubble doesn't duplicate
+          // the same info the card displays right below it. DB stays
+          // as the full prose (cards aren't persisted), so reload shows
+          // the original answer with no card and no duplication.
+          updated[i] = {
+            ...updated[i],
+            card: data.card,
+            ...(data.replace_text ? { content: data.replace_text } : {}),
+          };
           break;
         }
       }

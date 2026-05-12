@@ -90,6 +90,11 @@ export interface AgentFederationProgressMessage extends BaseWsMessage {
 export interface CardMessage extends BaseWsMessage {
   type: 'card';
   card?: Record<string, unknown>;
+  // When present, the frontend overwrites the most recent assistant
+  // bubble's content with this 1-line lede. Lets the backend collapse
+  // a long streamed prose answer when the same information is now in
+  // the card right below it.
+  replace_text?: string;
 }
 
 interface UseChatWebSocketOptions {
