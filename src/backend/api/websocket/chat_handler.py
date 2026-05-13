@@ -1049,6 +1049,7 @@ async def websocket_endpoint(
                             sub_intent_handled = True
                             full_response = si_result.get("answer", "") or ""
                             card = si_result.get("card")
+                            replace_text = si_result.get("replace_text")
                             intent = {
                                 "intent": f"sub_intent.{role.sub_intent}",
                                 "confidence": 1.0,
@@ -1070,10 +1071,14 @@ async def websocket_endpoint(
                                     "content": full_response,
                                 })
                             if card:
-                                await websocket.send_json({
-                                    "type": "card",
-                                    "card": card,
-                                })
+                                card_msg: dict = {"type": "card", "card": card}
+                                if replace_text:
+                                    # Frontend overwrites the streamed
+                                    # bubble's content with this lede so
+                                    # the prose doesn't duplicate the
+                                    # card's contents.
+                                    card_msg["replace_text"] = replace_text
+                                await websocket.send_json(card_msg)
                             logger.info(
                                 f"Sub-intent '{role.name}/{role.sub_intent}' "
                                 f"handled by plugin (answer_chars={len(full_response)}, "
@@ -1173,6 +1178,7 @@ async def websocket_endpoint(
                         # Tool steps still stream live for in-progress UX.
                         deferred_final_answer: str | None = None
                         deferred_card: dict | None = None
+                        deferred_replace_text: str | None = None
 
                         async def _typing_callback() -> None:
                             await websocket.send_json({"type": "typing"})
@@ -1201,6 +1207,10 @@ async def websocket_endpoint(
                                 # is on the wire — frontend attaches the
                                 # card to the latest assistant message.
                                 deferred_card = (step.data or {}).get("card")
+                                # post_orchestration may also supply a
+                                # 1-line lede via ``replace_text`` to
+                                # collapse the streamed synthesis bubble.
+                                deferred_replace_text = (step.data or {}).get("replace_text")
                             else:
                                 await websocket.send_json(step_to_ws_message(step))
                             if step.step_type == "tool_result" and step.success and step.data:
@@ -1273,10 +1283,10 @@ async def websocket_endpoint(
                             })
 
                         if deferred_card:
-                            await websocket.send_json({
-                                "type": "card",
-                                "card": deferred_card,
-                            })
+                            card_msg: dict = {"type": "card", "card": deferred_card}
+                            if deferred_replace_text:
+                                card_msg["replace_text"] = deferred_replace_text
+                            await websocket.send_json(card_msg)
 
                         if agent_tool_results:
                             action_result = _build_agent_action_result(agent_tool_results)

@@ -1958,11 +1958,15 @@ def step_to_ws_message(step: AgentStep) -> dict:
     elif step.step_type == "card":
         # Adaptive Card payload from a post_orchestration hook handler.
         # Frontend renders via AdaptiveCardRenderer attached to the latest
-        # assistant message.
-        return {
-            "type": "card",
-            "card": (step.data or {}).get("card"),
-        }
+        # assistant message. When the hook also returned a 1-line lede
+        # via ``replace_text``, the frontend overwrites the assistant
+        # bubble's prose so the card isn't doubled by the streamed
+        # synthesis.
+        data = step.data or {}
+        msg: dict = {"type": "card", "card": data.get("card")}
+        if data.get("replace_text"):
+            msg["replace_text"] = data["replace_text"]
+        return msg
     else:
         return {
             "type": "agent_thinking",

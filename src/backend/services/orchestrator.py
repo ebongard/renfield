@@ -328,11 +328,19 @@ class QueryOrchestrator:
         )
         for hr in hook_results:
             if isinstance(hr, dict) and hr.get("card"):
+                # Pass through replace_text alongside the card so the
+                # frontend can collapse the streamed synthesis bubble
+                # into a 1-line caption above the card. Empty / missing
+                # replace_text = preserve previous behaviour (keep the
+                # streamed prose).
+                step_data: dict = {"card": hr["card"]}
+                if hr.get("replace_text"):
+                    step_data["replace_text"] = hr["replace_text"]
                 yield AgentStep(
                     step_number=100,
                     step_type="card",
                     content="",
-                    data={"card": hr["card"]},
+                    data=step_data,
                 )
                 break
 
