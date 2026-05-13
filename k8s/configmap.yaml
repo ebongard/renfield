@@ -29,14 +29,19 @@ data:
   # on the cluster subnet.
   PAPERLESS_API_URL: "http://192.168.1.162:8000"
 
-  # OpenAI-compatible LLM endpoints (llama-server pods on the cluster).
-  #   - Chat/Agent/RAG/Intent/KG/Memory → llama-server-agent (Qwen3.6-35B-A3B
-  #     MoE Q4_K_XL on k8s-gpu-1 with tensor-split across both GPUs).
-  #   - Embeddings → llama-server-embed (Qwen3-Embedding-4B Q4_K_M on
-  #     k8s-gpu-2 CPU-only, with --embedding --pooling last).
-  # Vision is currently disabled (OLLAMA_VISION_MODEL=""); a third
-  # llama-server-vision pod can be added in a follow-up step.
-  LLM_OPENAI_BASE_URL: "http://llama-server-agent:8080/v1"
+  # OpenAI-compatible LLM endpoints — moved to cuda.local (RTX 5090) on
+  # 2026-05-13 per reva/docs/architecture/gpu-allocation.md.
+  #   - Chat/Agent/RAG/Intent/KG/Memory → cuda.local:8081 (llama-server with
+  #     full Qwen3.6-35B-A3B MoE, shared with Reva). Previous in-cluster
+  #     llama-server-agent (Q4 on k8s-gpu-1) is now scaled to 0 — kept as
+  #     a fast failover via `kubectl scale --replicas=1`.
+  #   - Embeddings → still llama-server-embed (Qwen3-Embedding-4B Q4_K_M on
+  #     k8s-gpu-2 CPU). Switching to Ollama's qwen3-embedding:4b on
+  #     k8s-gpu-1 GPU is faster but the quant levels differ — would
+  #     require re-embedding the stored corpus. Tracked separately.
+  # Vision still disabled (OLLAMA_VISION_MODEL=""); add llama-server-vision
+  # pod if/when vision tier is wanted.
+  LLM_OPENAI_BASE_URL: "http://cuda.local:8081/v1"
   # LLM_OPENAI_API_KEY is sourced from the `renfield-secrets`/`llm-openai-api-key`
   # Secret in backend.yaml. llama-server accepts any non-empty value today;
   # the Secret indirection lets us swap to a real bearer (vLLM, OpenAI…)
