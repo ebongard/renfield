@@ -436,6 +436,7 @@ async def reembed_all(
     from models.database import (
         ConversationMemory,
         DocumentChunk,
+        EpisodicMemory,
         IntentCorrection,
         KGEntity,
         Notification,
@@ -449,6 +450,13 @@ async def reembed_all(
     table_configs = [
         (DocumentChunk, lambda r: r.content, "document_chunks"),
         (ConversationMemory, lambda r: r.content, "conversation_memories"),
+        # Reva has thousands of episodic_memories rows; without this entry
+        # /admin/reembed silently skipped all of them on a model switch.
+        # `summary` is the primary content (NOT NULL); topic + outcome add
+        # cheap context without much noise.
+        (EpisodicMemory,
+         lambda r: f"{r.summary} {r.topic or ''} {r.outcome or ''}".strip(),
+         "episodic_memories"),
         (IntentCorrection, lambda r: r.message_text, "intent_corrections"),
         (Notification, lambda r: f"{r.title} {r.message}", "notifications"),
         (NotificationSuppression, lambda r: r.event_pattern, "notification_suppressions"),
