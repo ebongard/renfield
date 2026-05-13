@@ -17,6 +17,7 @@ resources:
   - frontend.yaml
   - middleware-https-redirect.yaml
   - ingress.yaml
+  - external-llm-ingress.yaml
   - shared-pvcs.yaml
   - document-worker.yaml
 

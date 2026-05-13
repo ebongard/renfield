@@ -1,0 +1,85 @@
+# External Ingress for LLM + voice services in private_k8s.
+#
+# Exposes the in-cluster ClusterIP services through Traefik on the
+# shared MetalLB VIP 192.168.1.230 with host-header routing. Lets
+# consumers outside this cluster (notably Reva in the prod kubeadm
+# cluster at 192.168.99.0/24) reach the GPU services by hostname.
+#
+# All three services run without per-tenant auth: llama-server has no
+# auth layer by design (LAN-only), voice-server uses AUTH_REQUIRED=false
+# in this deployment, and Ollama has no auth. Trust boundary is the
+# LAN itself. Tracked as TD-21 in reva/docs/technical-debt.md.
+#
+# DNS: OPNsense Unbound has a wildcard *.test.local → 192.168.1.230
+# (per private_k8s/README.md). No DNS update needed when adding hosts here.
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-ollama-external
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: ollama.test.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ollama
+                port:
+                  number: 11434
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: voice-server-external
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: voice.test.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: voice-server
+                port:
+                  number: 8080
+---
+# llama-server-agent (Q4 backup of Qwen3.6-35B-A3B on k8s-gpu-1).
+# Currently idle per the GPU allocation plan — the deployment exists
+# but the model isn't loaded. Ingress is staged here so failover is a
+# single env-var flip on Reva's side when needed; remove the Ingress
+# resource if you prefer to keep it un-exposed until that day.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: llm-agent-external
+  namespace: renfield
+  labels:
+    app.kubernetes.io/part-of: renfield
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  rules:
+    - host: llama-agent.test.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: llama-server-agent
+                port:
+                  number: 8080
