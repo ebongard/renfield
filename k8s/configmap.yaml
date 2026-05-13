@@ -47,6 +47,14 @@ data:
   # the Secret indirection lets us swap to a real bearer (vLLM, OpenAI…)
   # without re-applying this ConfigMap.
   LLM_OPENAI_MODEL: "qwen3.6"
+  # Explicit: routes memory extraction through the chat tier (llama-server
+  # on cuda.local, Qwen3.6-35B-A3B). Without this, `_get_chat_client()`
+  # still resolves to llama-server because LLM_OPENAI_BASE_URL is set, but
+  # the model name passed to client.chat() falls back to OLLAMA_MODEL
+  # (qwen3:14b) — currently safe because llama-server overrides via
+  # --alias, but the configmap reads as misleading. See Agent B audit
+  # in reva/docs/architecture/memory-architecture-plan.md.
+  MEMORY_EXTRACTION_MODEL: "qwen3.6"
   LLM_OPENAI_EMBED_BASE_URL: "http://ollama:11434/v1"
   LLM_OPENAI_EMBED_MODEL: "qwen3-embedding:4b"
 

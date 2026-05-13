@@ -69,8 +69,14 @@ spec:
               value: "0.0.0.0:11434"
             - name: OLLAMA_MODELS
               value: /root/.ollama/models
+            # Keep loaded models resident indefinitely. The hot-path
+            # small models (llama3.2:3b router, qwen3-embedding:4b)
+            # combined fit easily in the 32 GB combined VRAM (5070 Ti
+            # + 5060 Ti) so eviction has no upside. Previously 30m,
+            # which let Ollama unload between bursts of traffic and
+            # added ~12 s cold-load tail latency to router calls.
             - name: OLLAMA_KEEP_ALIVE
-              value: "30m"
+              value: "-1"
           volumeMounts:
             - name: models
               mountPath: /root/.ollama
