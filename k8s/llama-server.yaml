@@ -24,7 +24,13 @@ metadata:
     app.kubernetes.io/name: llama-server-agent
     app.kubernetes.io/part-of: renfield
 spec:
-  replicas: 1
+  # Idle in steady state — primary chat/agent moved to cuda.local (RTX 5090)
+  # for both Reva and Renfield (see reva/docs/architecture/gpu-allocation.md).
+  # This Q4 deployment stays as a fast failover: `kubectl scale deploy/llama-server-agent
+  # -n renfield --replicas=1` boots the model in ~30-45s. While idle, the
+  # 5070 Ti + 5060 Ti on k8s-gpu-1 are free for the Ollama small-models tier
+  # (one GPU claimed by Ollama; the other available for failover or future workloads).
+  replicas: 0
   strategy:
     type: Recreate
   selector:

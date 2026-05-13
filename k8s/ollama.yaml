@@ -23,19 +23,23 @@ metadata:
     app.kubernetes.io/name: ollama
     app.kubernetes.io/part-of: renfield
 spec:
-  # ROLLBACK MANIFEST — NOT in kustomization.yaml.
+  # Shared small-models tier for Reva + Renfield (2026-05-13).
   #
-  # The text-LLM tier moved to the two `llama-server-*` pods. This Ollama
-  # deployment is kept as a fast rollback path: if the llama-server route
-  # ever needs to be reverted, `kubectl apply -f k8s/ollama.yaml` brings
-  # it back. Apply ONLY when also reverting the LLM_OPENAI_* settings in
-  # `configmap.yaml` so the backend doesn't end up with a half-migrated
-  # routing table (chat to llama-server, embed to Ollama, or vice versa).
+  # Hosts four small models that don't justify llama-server's per-model
+  # process overhead but benefit from GPU inference:
+  #   - llama3.2:3b           ~2 GB  — Reva router, Renfield intent fallback
+  #   - qwen3:8b              ~5 GB  — Renfield intent
+  #   - qwen3-embedding:4b    ~3 GB  — Renfield embeddings (shared with
+  #                                    legacy llama-server-embed until that's
+  #                                    retired; see follow-up note)
+  #   - nomic-embed-text     ~0.5 GB — Reva embeddings
+  # Total resident: ~10 GB.
   #
-  # Targets k8s-gpu-2 explicitly because k8s-gpu-1 is now reserved for
-  # llama-server-agent's `nvidia.com/gpu: 2` claim. CPU-only runtime
-  # depends on k8s-gpu-2's containerd `default_runtime_name = runc`
-  # (see private_k8s/README.md).
+  # Pinned to k8s-gpu-1 (5070 Ti + 5060 Ti, 32 GB combined). Claims one
+  # GPU; the other stays free for the idle llama-server-agent Q4 model
+  # (replicas=0 in steady state) when failover is needed.
+  #
+  # See reva/docs/architecture/gpu-allocation.md for the cluster layout.
   replicas: 1
   strategy:
     type: Recreate
@@ -49,7 +53,11 @@ spec:
         app.kubernetes.io/part-of: renfield
     spec:
       nodeSelector:
-        kubernetes.io/hostname: k8s-gpu-2
+        kubernetes.io/hostname: k8s-gpu-1
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: ollama
           image: ollama/ollama:latest
@@ -82,9 +90,11 @@ spec:
             requests:
               cpu: "2"
               memory: 4Gi
+              nvidia.com/gpu: 1
             limits:
               cpu: "6"
               memory: 16Gi
+              nvidia.com/gpu: 1
       volumes:
         - name: models
           hostPath:
@@ -124,11 +134,9 @@ spec:
           args:
             - |
               set -euo pipefail
-              # Rollback prepull: only models the llama-server path doesn't
-              # provide today. Embeddings live on llama-server-embed in the
-              # current architecture, so prepulling qwen3-embedding here is
-              # only needed when you actually flip the rollback switch.
-              for m in qwen3-embedding:4b qwen3-vl:8b; do
+              # Pre-pull the four small models hosted on this Ollama:
+              # router (Reva), intent (Renfield), embeddings for both.
+              for m in llama3.2:3b qwen3:8b qwen3-embedding:4b nomic-embed-text; do
                 echo "Pulling $m ..."
                 code=$(curl -sS -o /tmp/out -w '%{http_code}' -X POST http://ollama:11434/api/pull \
                   -H 'Content-Type: application/json' \
