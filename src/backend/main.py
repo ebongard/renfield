@@ -441,7 +441,7 @@ async def reembed_all(
         Notification,
         NotificationSuppression,
     )
-    from utils.llm_client import get_default_client
+    from utils.llm_client import get_embed_client
 
     BATCH_SIZE = 50
 
@@ -455,8 +455,16 @@ async def reembed_all(
         (KGEntity, lambda r: r.name, "kg_entities"),
     ]
 
-    client = get_default_client()
-    embed_model = settings.ollama_embed_model
+    # Route through the EMBED tier, not the default chat tier. Previously this
+    # used get_default_client() which resolves to the chat-tier llama-server
+    # (no `--embedding` flag) — every re-embed call returned HTTP 501
+    # "This server does not support embeddings". get_embed_client() respects
+    # LLM_OPENAI_EMBED_BASE_URL / OLLAMA_EMBED_URL.
+    client = get_embed_client()
+    embed_model = (
+        settings.llm_openai_embed_model
+        or settings.ollama_embed_model
+    )
     counts: dict[str, int] = {}
     errors: dict[str, int] = {}
 

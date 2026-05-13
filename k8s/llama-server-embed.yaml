@@ -24,7 +24,11 @@ metadata:
     app.kubernetes.io/name: llama-server-embed
     app.kubernetes.io/part-of: renfield
 spec:
-  replicas: 1
+  # Scaled to 0 on 2026-05-13 — embeddings now served by the in-cluster
+  # Ollama on k8s-gpu-1 GPU (qwen3-embedding:4b on 5070 Ti, 10-20x faster
+  # than this CPU path on k8s-gpu-2). Kept as a fast rollback: scale to 1
+  # and patch LLM_OPENAI_EMBED_BASE_URL back to http://llama-server-embed:8080/v1.
+  replicas: 0
   strategy:
     type: Recreate
   selector:
