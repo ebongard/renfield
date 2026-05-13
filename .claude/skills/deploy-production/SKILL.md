@@ -93,12 +93,21 @@ docker push registry.treehouse.x-idra.de/renfield/backend:vX.Y.Z
 # Frontend (Nginx serving React build, ~144 MB; ~2-3 min build + push)
 cd /tmp/renfield-build-vX.Y.Z/src/frontend
 docker build \
+  --build-arg VITE_FEATURE_VOICE_STREAM=true \
   -t registry.treehouse.x-idra.de/renfield/frontend:latest \
   -t registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z \
   -f Dockerfile .
 docker push registry.treehouse.x-idra.de/renfield/frontend:latest
 docker push registry.treehouse.x-idra.de/renfield/frontend:vX.Y.Z
 ```
+
+> **`--build-arg VITE_FEATURE_VOICE_STREAM=true`** enables the streaming
+> voice pipeline (Phase B, useVoiceStream hook → voice-server `/ws/voice`).
+> Without it the bundle is tree-shaken and falls back to the legacy
+> record-then-POST `/api/voice/stt` flow; the user has to wait until they
+> stop talking before any transcription happens. The flag was added by
+> default in the Reva build (`bin/build-frontend.sh`) on 2026-05-13 and
+> mirrored here for Renfield in the same rollout.
 
 > **No `--build-arg VITE_API_URL` required.** Since v2.4.4 the frontend defaults
 > to relative URLs in production builds (axios `baseURL=""` → same-origin). As
