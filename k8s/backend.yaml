@@ -55,8 +55,13 @@ spec:
               # GGUF model is fully loaded (~60-90s cold start). A plain TCP
               # check would pass too early, the backend would start serving,
               # and the first LLM call would 503 until the model warmed up.
-              echo "waiting for llama-server-agent /health..."
-              until wget -q -O- http://llama-server-agent:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              #
+              # Agent endpoint moved to cuda.local (RTX 5090) on 2026-05-13 —
+              # see reva/docs/architecture/gpu-allocation.md. The in-cluster
+              # llama-server-agent is now idle (replicas=0) as failover; if
+              # you flip back to that endpoint, re-enable its health check too.
+              echo "waiting for cuda.local llama-server /health..."
+              until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
               echo "waiting for llama-server-embed /health..."
               until wget -q -O- http://llama-server-embed:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
               echo "deps ready"
