@@ -62,8 +62,13 @@ spec:
               # you flip back to that endpoint, re-enable its health check too.
               echo "waiting for cuda.local llama-server /health..."
               until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
-              echo "waiting for llama-server-embed /health..."
-              until wget -q -O- http://llama-server-embed:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              # Embeddings moved to the in-cluster ollama service on
+              # 2026-05-13 (configmap OLLAMA_EMBED_URL=http://ollama:11434);
+              # llama-server-embed is scaled to 0. /api/version confirms the
+              # server is up — ollama lazy-loads the embed model on first
+              # request and the backend has retry/fallback for the warm-up.
+              echo "waiting for ollama embed endpoint..."
+              until wget -q -O- http://ollama:11434/api/version 2>/dev/null | grep -q '"version"'; do sleep 2; done
               echo "deps ready"
               # Ensure the persistent HOME exists so Python libs can create
               # their cache dirs there on first run (EasyOCR, HF, torch, whisper).

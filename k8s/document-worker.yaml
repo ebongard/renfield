@@ -55,8 +55,11 @@ spec:
               echo "waiting for redis...";    until nc -z redis 6379;    do sleep 1; done
               # /health on llama-server returns {"status":"ok"} only once the GGUF
               # model is fully loaded; TCP-only would pass before warmup.
-              echo "waiting for llama-server-agent /health..."; until wget -q -O- http://llama-server-agent:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
-              echo "waiting for llama-server-embed /health..."; until wget -q -O- http://llama-server-embed:8080/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              # Agent endpoint moved to cuda.local, embeddings to in-cluster
+              # ollama on 2026-05-13; both in-cluster llama-server-* are
+              # scaled to 0. See k8s/backend.yaml init container for rationale.
+              echo "waiting for cuda.local llama-server /health..."; until wget -q -O- http://cuda.local:8081/health 2>/dev/null | grep -q '"ok"'; do sleep 2; done
+              echo "waiting for ollama embed endpoint...";           until wget -q -O- http://ollama:11434/api/version 2>/dev/null | grep -q '"version"'; do sleep 2; done
               echo "deps ready"
               mkdir -p /app/data/cache-home/.cache /app/data/cache-home/.EasyOCR
           resources:
