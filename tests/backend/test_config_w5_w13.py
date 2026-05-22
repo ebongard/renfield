@@ -74,17 +74,22 @@ def test_w5_call_sites_use_settings_not_literals():
     import re
     from pathlib import Path
 
-    repo_root = Path(__file__).resolve().parents[2]
+    # Resolve the backend source root from an importable package, not by
+    # walking up from __file__: in the container the tests are mounted at
+    # /tests while the backend is at /app (no src/backend prefix).
+    import utils.config as _config_module
+
+    backend_root = Path(_config_module.__file__).resolve().parent.parent
     cases = [
-        ("src/backend/services/agent_service.py", "settings.agent_preselect_timeout", r"\btimeout=10\.0\b"),
-        ("src/backend/services/orchestrator.py", "settings.orchestrator_synthesis_timeout", r"\btimeout=30\.0\b"),
-        ("src/backend/services/mcp_client.py", "settings.geocode_http_timeout", r"\btimeout=8\.0\b"),
-        ("src/backend/services/federation_query_responder.py", "settings.federation_synthesis_timeout", r"\btimeout=30\.0\b"),
-        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_answer_timeout", r"\btimeout=60\b"),
-        ("src/backend/services/rag_eval_service.py", "settings.rag_eval_score_timeout", r"\btimeout=30\b"),
+        ("services/agent_service.py", "settings.agent_preselect_timeout", r"\btimeout=10\.0\b"),
+        ("services/orchestrator.py", "settings.orchestrator_synthesis_timeout", r"\btimeout=30\.0\b"),
+        ("services/mcp_client.py", "settings.geocode_http_timeout", r"\btimeout=8\.0\b"),
+        ("services/federation_query_responder.py", "settings.federation_synthesis_timeout", r"\btimeout=30\.0\b"),
+        ("services/rag_eval_service.py", "settings.rag_eval_answer_timeout", r"\btimeout=60\b"),
+        ("services/rag_eval_service.py", "settings.rag_eval_score_timeout", r"\btimeout=30\b"),
     ]
     for rel_path, must_contain, banned_literal_re in cases:
-        src = (repo_root / rel_path).read_text()
+        src = (backend_root / rel_path).read_text()
         assert must_contain in src, (
             f"{rel_path}: missing reference `{must_contain}` — "
             "W5 fix expects this call site to use the Settings field"
@@ -110,15 +115,26 @@ def test_w13_warns_in_production_when_postgres_password_is_changeme(monkeypatch)
     offending field.
     """
     monkeypatch.setenv("RENFIELD_ENV", "production")
-    for var in ("POSTGRES_PASSWORD", "SECRET_KEY", "DEFAULT_ADMIN_PASSWORD"):
-        monkeypatch.delenv(var, raising=False)
+
+    from utils.config import Settings
+
+    # The build/CI container ships a populated `.env` AND OS env vars with
+    # real (non-placeholder) secrets — both layered on by pydantic-settings.
+    # To exercise the W13 validator's "placeholder still in use" branch
+    # deterministically, construct Settings with the secret fields set
+    # explicitly to their class-level placeholder defaults (read live from
+    # model_fields so this never drifts from the real default strings).
+    placeholders = {}
+    for field_name in ("postgres_password", "secret_key", "default_admin_password"):
+        default = Settings.model_fields[field_name].default
+        placeholders[field_name] = (
+            default.get_secret_value() if hasattr(default, "get_secret_value") else default
+        )
 
     captured = io.StringIO()
     sink_id = logger.add(captured, level="WARNING", format="{level}|{message}")
     try:
-        from utils.config import Settings
-
-        Settings()  # instantiation triggers the validator
+        Settings(_env_file=None, **placeholders)  # triggers the validator
     finally:
         logger.remove(sink_id)
 

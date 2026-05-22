@@ -167,9 +167,12 @@ class TestConfigurationValues:
 
         assert response.status_code == 200
         data = response.json()
-        # The default keyword is "alexa" from environment or DB
+        # The default keyword comes from environment / DB; assert it is one
+        # of the currently supported keywords rather than a frozen list.
+        from services.wakeword_config_manager import VALID_KEYWORDS
+
         assert "keyword" in data
-        assert data["keyword"] in ["alexa", "hey_jarvis", "hey_mycroft"]
+        assert data["keyword"] in VALID_KEYWORDS
 
     @pytest.mark.integration
     async def test_threshold_value(self, async_client: AsyncClient):

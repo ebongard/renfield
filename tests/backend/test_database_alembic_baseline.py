@@ -34,8 +34,12 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATABASE_PY = REPO_ROOT / "src" / "backend" / "services" / "database.py"
+# Resolve the backend source from the importable package: in the container
+# the test tree is mounted at /tests but the backend source is at /app
+# (no src/backend prefix), so Path(__file__).parents[2] resolves to "/".
+import services.database as _database_module
+
+DATABASE_PY = Path(_database_module.__file__).resolve()
 
 
 def _baseline_function_source() -> str:

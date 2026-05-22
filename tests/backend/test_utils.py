@@ -145,19 +145,27 @@ class TestSecretsAndDatabaseUrl:
 
     @pytest.mark.unit
     def test_secret_fields_exist(self):
-        """Test: Alle Secret-Felder existieren in Settings"""
+        """Test: Alle Secret-Felder existieren in den Settings-Klassen.
+
+        Core platform secrets live on ``Settings``; integration secrets
+        (Home Assistant, Jellyfin) moved to ``HaGlueSettings`` when the
+        ha_glue boundary was extracted. ``openweather_api_key`` /
+        ``newsapi_key`` were removed entirely (those integrations are now
+        configured via MCP servers, not platform Settings fields).
+        """
         from utils.config import Settings
+        from ha_glue.utils.config import HaGlueSettings
 
         settings = Settings(database_url=None)
 
-        # Felder die als Secrets unterstützt werden
+        # Core platform secrets
         assert hasattr(settings, "postgres_password")
-        assert hasattr(settings, "home_assistant_token")
         assert hasattr(settings, "secret_key")
         assert hasattr(settings, "default_admin_password")
-        assert hasattr(settings, "openweather_api_key")
-        assert hasattr(settings, "newsapi_key")
-        assert hasattr(settings, "jellyfin_api_key")
+
+        # Integration secrets on the ha_glue settings boundary
+        assert "home_assistant_token" in HaGlueSettings.model_fields
+        assert "jellyfin_api_key" in HaGlueSettings.model_fields
 
     @pytest.mark.unit
     def test_postgres_password_from_env(self):

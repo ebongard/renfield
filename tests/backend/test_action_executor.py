@@ -738,7 +738,16 @@ class TestActionExecutorUserIdPropagation:
 
     @pytest.mark.unit
     async def test_user_id_injected_into_mcp_params(self, action_executor):
-        """user_id is injected as _user_id into MCP tool parameters."""
+        """user_id is passed to execute_tool as a kwarg, NOT merged into the
+        MCP tool's parameters dict.
+
+        MCP tools have strict Pydantic schemas — an unknown ``user_id`` key
+        in ``parameters`` triggers "Unexpected keyword argument" and the
+        call fails. ActionExecutor therefore keeps ``user_id`` out of
+        ``parameters`` and passes it as a dedicated ``execute_tool`` kwarg
+        (used for permission checks + audit). See the comment in
+        ``action_executor._execute_mcp``.
+        """
         action_executor.mcp_manager.execute_tool.return_value = {
             "success": True,
             "message": "OK",
@@ -753,11 +762,12 @@ class TestActionExecutorUserIdPropagation:
 
         await action_executor.execute(intent_data, user_id=42)
 
-        # Verify user_id was injected into the parameters
         call_args = action_executor.mcp_manager.execute_tool.call_args
         params = call_args.args[1]  # second positional arg = arguments
-        assert params["user_id"] == 42
+        # user_id must NOT pollute the tool parameters dict.
+        assert "user_id" not in params
         assert params["calendar"] == "work"
+        # ...but it IS passed as a kwarg.
         assert call_args.kwargs["user_id"] == 42
 
     @pytest.mark.unit

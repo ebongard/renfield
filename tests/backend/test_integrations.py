@@ -20,19 +20,34 @@ class TestHomeAssistantClient:
 
     @pytest.fixture
     def ha_client(self):
-        """Create HomeAssistantClient with test settings"""
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        """Create HomeAssistantClient with test settings.
+
+        HomeAssistantClient reads its config from ``ha_glue_settings``
+        (the ha_glue settings boundary), not the core ``settings`` — patch
+        that. ``home_assistant_token`` is a SecretStr; use a real SecretStr
+        so ``.get_secret_value()`` works in __init__.
+        """
+        from pydantic import SecretStr
+
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = "http://ha.local:8123"
-            mock_settings.home_assistant_token = "test_token"
+            mock_settings.home_assistant_token = SecretStr("test_token")
+            mock_settings.ha_cache_ttl = 30
+            mock_settings.ha_timeout = 10.0
 
             from ha_glue.integrations.homeassistant import HomeAssistantClient
             return HomeAssistantClient()
 
     @pytest.mark.unit
     def test_client_initialization(self, ha_client):
-        """Test: Client wird korrekt initialisiert"""
+        """Test: Client wird korrekt initialisiert.
+
+        The client now exposes ``base_url`` + ``token``; the Authorization
+        header is built per-request inside ``get_ha_http_client()`` rather
+        than stored as a ``headers`` attribute.
+        """
         assert ha_client.base_url == "http://ha.local:8123"
-        assert "Bearer test_token" in ha_client.headers["Authorization"]
+        assert ha_client.token == "test_token"
 
     @pytest.mark.unit
     async def test_get_states(self, ha_client):
@@ -305,16 +320,28 @@ class TestIntegrationEdgeCases:
     @pytest.mark.unit
     async def test_ha_client_not_configured(self):
         """Test: HA Client ohne Konfiguration"""
-        with patch('ha_glue.integrations.homeassistant.settings') as mock_settings:
+        import ha_glue.integrations.homeassistant as ha_mod
+
+        with patch('ha_glue.integrations.homeassistant.ha_glue_settings') as mock_settings:
             mock_settings.home_assistant_url = None
             mock_settings.home_assistant_token = None
+            mock_settings.ha_cache_ttl = 30
+            mock_settings.ha_timeout = 10.0
 
-            from ha_glue.integrations.homeassistant import HomeAssistantClient
-            client = HomeAssistantClient()
-
-            # Should return empty/False without throwing
-            result = await client.get_states()
-            assert result == []
+            # get_ha_http_client caches a module-global httpx client; a prior
+            # test may have built it against a real HA URL. Reset it so this
+            # test's no-URL config is actually used.
+            prev_client = ha_mod._shared_http_client
+            ha_mod._shared_http_client = None
+            try:
+                client = ha_mod.HomeAssistantClient()
+                # Should return empty/False without throwing
+                result = await client.get_states()
+                assert result == []
+            finally:
+                if ha_mod._shared_http_client is not None:
+                    await ha_mod._shared_http_client.aclose()
+                ha_mod._shared_http_client = prev_client
 
     @pytest.mark.unit
     async def test_ha_client_timeout(self):
