@@ -104,7 +104,7 @@ OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 **Empfohlene Modelle:**
 - `qwen3:14b` - Chat, RAG, Intent (empfohlen mit GPU)
 - `qwen3:8b` - Gute Alternative für weniger RAM
-- `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch (768 dim)
+- `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch (2560 dim)
 
 Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Rolle.
 
@@ -115,7 +115,7 @@ Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Ro
 ```bash
 # Vision-fähiges Modell für Kamera-Snapshots von Satellites
 # Leer = Visual Queries deaktiviert (Bilder werden ignoriert)
-OLLAMA_VISION_MODEL=qwen3-vl
+OLLAMA_VISION_MODEL=qwen3-vl:8b
 
 # Optional: Separate Ollama-URL für das Vision-Modell
 # Nützlich wenn Vision auf einer anderen GPU läuft als Chat
@@ -123,10 +123,10 @@ OLLAMA_VISION_URL=http://host.docker.internal:11434
 ```
 
 **Defaults:**
-- `OLLAMA_VISION_MODEL`: `""` (deaktiviert)
+- `OLLAMA_VISION_MODEL`: `""` (deaktiviert) — Code-Default. **Produktion setzt `qwen3-vl:8b`** (siehe `k8s/configmap.yaml`); der Vision-Tier ist seit 2026-05-22 aktiv und läuft auf dem cluster-internen `ollama`-Pod (k8s-gpu-1).
 - `OLLAMA_VISION_URL`: `None` (verwendet Standard-OLLAMA_URL)
 
-**Empfohlenes Modell:** `qwen3-vl` (~12 GB VRAM, passt auf 16 GB Karten, gutes Deutsch).
+**Empfohlenes Modell:** `qwen3-vl:8b` (~12 GB VRAM, passt auf 16 GB Karten, gutes Deutsch).
 
 Siehe [SATELLITE_CAMERA.md](SATELLITE_CAMERA.md) für Setup und Modellvergleich.
 
@@ -638,7 +638,7 @@ CB_AGENT_RECOVERY_TIMEOUT=60.0
 EMBEDDING_DIMENSION=768
 ```
 
-**Default:** `768` (passend für `nomic-embed-text` und `qwen3-embedding:4b`)
+**Default:** `768` (Code-Default, passend für `nomic-embed-text`). Produktion nutzt `2560` für `qwen3-embedding:4b` — siehe `k8s/configmap.yaml`. Bei Modellwechsel muss der Vektor-Index neu angelegt werden.
 
 ---
 

@@ -9,7 +9,7 @@ and send it alongside the transcribed speech to a Vision-LLM for image-aware res
 
 1. Wakeword detected -> camera snapshot captured in background
 2. User finishes speaking -> audio transcribed, snapshot attached to `audio_end` message
-3. Backend receives image + text -> routes to Vision-LLM (e.g. `minicpm-v`)
+3. Backend receives image + text -> routes to Vision-LLM (`qwen3-vl:8b`)
 4. Vision-LLM describes what it sees -> TTS response spoken back
 
 ## Architecture
@@ -55,7 +55,7 @@ Set in `.env`:
 
 ```bash
 # Vision model (must support Ollama's images parameter)
-OLLAMA_VISION_MODEL=qwen3-vl
+OLLAMA_VISION_MODEL=qwen3-vl:8b
 
 # Optional: dedicated Ollama instance for vision (e.g. GPU server)
 OLLAMA_VISION_URL=http://host.docker.internal:11434
@@ -64,7 +64,7 @@ OLLAMA_VISION_URL=http://host.docker.internal:11434
 Then pull the model:
 
 ```bash
-ollama pull qwen3-vl
+ollama pull qwen3-vl:8b
 ```
 
 If `OLLAMA_VISION_MODEL` is empty (default), visual queries are disabled and the
@@ -120,19 +120,21 @@ No new message types are introduced. Satellites without cameras simply omit the 
 
 ## Vision Models
 
-Tested models:
+Candidate models:
 
-| Model | Size | VRAM | Speed (GPU) | Quality |
-|-------|------|------|-------------|---------|
-| **`qwen3-vl`** | 6.0GB | ~12GB | ~30s | Excellent scene description, good German |
-| `qwen2.5vl` | 5.0GB | ~10GB | ~25s | Good vision, slightly older |
-| `minicpm-v` | 5.5GB | ~19GB | ~50s (partial offload on 16GB) | Good for text reading |
-| `llava:7b` | 4.7GB | ~6GB | ~8s | Good general vision |
-| `llava:13b` | 8.0GB | ~12GB | ~15s | Better quality, slower |
+| Model | Size | VRAM | Quality |
+|-------|------|------|---------|
+| **`qwen3-vl:8b`** | ~6GB | ~12GB | Excellent scene description, good German |
+| `qwen2.5vl` | ~5GB | ~10GB | Good vision, slightly older |
+| `minicpm-v` | ~5.5GB | ~19GB | Good for text reading |
+| `llava:7b` | ~4.7GB | ~6GB | Good general vision |
+| `llava:13b` | ~8GB | ~12GB | Better quality, slower |
 
-**Recommendation:** `qwen3-vl` fits entirely in 16GB VRAM and delivers excellent results
-in German. `minicpm-v` requires 19GB and partially offloads to CPU on 16GB cards, causing
-~50s latency.
+**Recommendation:** `qwen3-vl:8b` fits entirely in 16 GB VRAM and delivers excellent
+results in German. `minicpm-v` requires ~19 GB and partially offloads to CPU on 16 GB
+cards.
 
-**Production (renfield.local):** `qwen3-vl` on RTX 5060 Ti (16GB), ~30s per query
-(including ~25s prompt evaluation for image tokens).
+**Production:** `qwen3-vl:8b` is served by the in-cluster `ollama` pod on `k8s-gpu-1`
+(RTX 5060 Ti, 16 GB) — `OLLAMA_VISION_URL` routes there, so no separate vision pod is
+needed. A single test-snapshot inference measured ~1 s end-to-end on the GPU; image-heavy
+scene descriptions with longer responses take proportionally longer.
