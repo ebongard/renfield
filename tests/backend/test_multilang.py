@@ -331,7 +331,7 @@ class TestPiperServiceMultiVoice:
         """Test voice selection based on language"""
         from services.piper_service import PiperService
 
-        with patch.object(PiperService, '_check_piper_available', return_value=True):
+        with patch('services.piper_service.PIPER_AVAILABLE', True):
             with patch('services.piper_service.settings') as mock_settings:
                 mock_settings.piper_default_voice = "de_DE-thorsten-high"
                 mock_settings.piper_voice_map = {
@@ -339,6 +339,8 @@ class TestPiperServiceMultiVoice:
                     "en": "en_US-amy-medium"
                 }
                 mock_settings.default_language = "de"
+                mock_settings.tts_cache_size = 0
+                mock_settings.tts_max_concurrent = 4
 
                 service = PiperService()
 

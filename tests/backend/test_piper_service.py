@@ -65,11 +65,14 @@ def service(mock_settings):
 
 @pytest.fixture
 def service_unavailable(mock_settings):
-    """Service with PIPER_AVAILABLE=False (piper-tts not installed)."""
+    """Service with PIPER_AVAILABLE=False (piper-tts not installed).
+
+    The ``PIPER_AVAILABLE`` patch must stay active for the whole test, not
+    just ``__init__`` — ``_load_voice`` re-reads the module global directly.
+    """
     with patch("services.piper_service.settings", mock_settings), \
          patch("services.piper_service.PIPER_AVAILABLE", False):
-        svc = PiperService()
-    return svc
+        yield PiperService()
 
 
 @pytest.fixture
@@ -84,19 +87,24 @@ def service_cached(mock_settings):
 
 @pytest.fixture
 def fake_voice():
-    """A PiperVoice-like mock whose synthesize() writes a minimal WAV header."""
+    """A PiperVoice-like mock whose synthesize_wav() writes a minimal WAV.
+
+    piper-tts changed its API: ``PiperService._synthesize_sync`` now calls
+    ``voice.synthesize_wav(text, wav_file)`` (the split method that writes
+    into a ``wave.Wave_write`` object), not the old ``synthesize()``.
+    """
     voice = MagicMock()
 
-    def _synthesize(text, wav_file):
-        # Real PiperVoice.synthesize writes frames into the wave.Wave_write
-        # object. For tests we just write a 4-byte sentinel so the resulting
-        # file isn't empty.
+    def _synthesize_wav(text, wav_file):
+        # Real PiperVoice.synthesize_wav writes frames into the
+        # wave.Wave_write object. For tests we write a 4-byte sentinel so
+        # the resulting file isn't empty and wave.close() has channels set.
         wav_file.setnchannels(1)
         wav_file.setsampwidth(2)
         wav_file.setframerate(22050)
         wav_file.writeframes(b"\x00\x00\x00\x00")
 
-    voice.synthesize = MagicMock(side_effect=_synthesize)
+    voice.synthesize_wav = MagicMock(side_effect=_synthesize_wav)
     return voice
 
 
@@ -219,8 +227,8 @@ class TestSynthesis:
             result = await service.synthesize_to_file("Hallo Welt", output_path)
 
         assert result is True
-        fake_voice.synthesize.assert_called_once()
-        call_args = fake_voice.synthesize.call_args[0]
+        fake_voice.synthesize_wav.assert_called_once()
+        call_args = fake_voice.synthesize_wav.call_args[0]
         assert call_args[0] == "Hallo Welt"
         assert tmp_path.joinpath("output.wav").stat().st_size > 0
 
@@ -247,7 +255,7 @@ class TestSynthesis:
         """Exception during synthesize() returns False."""
         output_path = str(tmp_path / "output.wav")
         bad_voice = MagicMock()
-        bad_voice.synthesize.side_effect = RuntimeError("inference error")
+        bad_voice.synthesize_wav.side_effect = RuntimeError("inference error")
         with patch.object(service, "_load_voice", return_value=bad_voice):
             result = await service.synthesize_to_file("Hallo", output_path)
 
@@ -295,7 +303,7 @@ class TestTtsLruCache:
             second = await service_cached.synthesize_to_bytes("Verstanden")
 
         assert first == second
-        assert fake_voice.synthesize.call_count == 1
+        assert fake_voice.synthesize_wav.call_count == 1
         stats = service_cached.cache_stats()
         assert stats["hits"] == 1
         assert stats["misses"] == 1
@@ -307,7 +315,7 @@ class TestTtsLruCache:
             await service_cached.synthesize_to_bytes("Verstanden")
             await service_cached.synthesize_to_bytes("Bestätigt")
 
-        assert fake_voice.synthesize.call_count == 2
+        assert fake_voice.synthesize_wav.call_count == 2
         assert service_cached.cache_stats()["size"] == 2
 
     @pytest.mark.asyncio
@@ -317,7 +325,7 @@ class TestTtsLruCache:
             await service_cached.synthesize_to_bytes("OK", language="de")
             await service_cached.synthesize_to_bytes("OK", language="en")
 
-        assert fake_voice.synthesize.call_count == 2
+        assert fake_voice.synthesize_wav.call_count == 2
         assert service_cached.cache_stats()["size"] == 2
 
     @pytest.mark.asyncio
@@ -330,9 +338,9 @@ class TestTtsLruCache:
             assert service_cached.cache_stats()["size"] == 4
 
             # "a" was evicted → re-synthesize on next call
-            count_before = fake_voice.synthesize.call_count
+            count_before = fake_voice.synthesize_wav.call_count
             await service_cached.synthesize_to_bytes("a")
-            assert fake_voice.synthesize.call_count == count_before + 1
+            assert fake_voice.synthesize_wav.call_count == count_before + 1
 
     @pytest.mark.asyncio
     async def test_disabled_cache_does_not_store(self, service, fake_voice):
@@ -341,7 +349,7 @@ class TestTtsLruCache:
             await service.synthesize_to_bytes("Verstanden")
             await service.synthesize_to_bytes("Verstanden")
 
-        assert fake_voice.synthesize.call_count == 2
+        assert fake_voice.synthesize_wav.call_count == 2
         assert service.cache_stats()["size"] == 0
 
     @pytest.mark.asyncio
@@ -354,7 +362,7 @@ class TestTtsLruCache:
             await service_cached.synthesize_to_file("Verstanden", path2)
 
         assert (tmp_path / "first.wav").read_bytes() == (tmp_path / "second.wav").read_bytes()
-        assert fake_voice.synthesize.call_count == 1
+        assert fake_voice.synthesize_wav.call_count == 1
 
 
 # ============================================================================
