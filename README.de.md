@@ -241,8 +241,6 @@ AGENT_MODEL=                      # Optional: Agent-Modell
 AGENT_OLLAMA_URL=                 # Optional: Separate Ollama-Instanz
 ```
 
-Siehe [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) für Modell-Empfehlungen.
-
 ### Integrationen (MCP)
 
 ```env
@@ -425,7 +423,6 @@ curl -X POST "http://localhost:8000/admin/reembed"
 |----------|--------|
 | [docs/FEATURES.md](docs/FEATURES.md) | Ausführliche Feature-Dokumentation |
 | [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) | Vollständige Konfigurationsreferenz |
-| [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) | Modell-Empfehlungen und Konfiguration |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment-Anleitung |
 | [docs/SECRETS_MANAGEMENT.md](docs/SECRETS_MANAGEMENT.md) | Docker Secrets für Produktion |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security Headers, CSP, Abhängigkeitssicherheit |

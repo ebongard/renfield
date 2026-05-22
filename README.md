@@ -167,8 +167,6 @@ OLLAMA_RAG_MODEL=qwen3:14b        # RAG answers
 OLLAMA_EMBED_MODEL=nomic-embed-text  # embeddings (768 dim)
 ```
 
-See [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) for model recommendations.
-
 ### Key Settings
 
 ```env
@@ -210,7 +208,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development guide.
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute |
 | [docs/FEATURES.md](docs/FEATURES.md) | Detailed feature documentation |
 | [docs/ENVIRONMENT_VARIABLES.md](docs/ENVIRONMENT_VARIABLES.md) | Full configuration reference |
-| [docs/LLM_MODEL_GUIDE.md](docs/LLM_MODEL_GUIDE.md) | Model recommendations |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Deployment guide |
 | [docs/SECRETS_MANAGEMENT.md](docs/SECRETS_MANAGEMENT.md) | Docker secrets for production |
 | [docs/SECURITY.md](docs/SECURITY.md) | Security headers, CSP, dependency security |

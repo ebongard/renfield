@@ -719,8 +719,6 @@ Ollama kann auf einem separaten GPU-Server laufen:
 OLLAMA_URL=http://cuda.local:11434
 ```
 
-Siehe [LLM_MODEL_GUIDE.md](LLM_MODEL_GUIDE.md) für Modell-Empfehlungen und Benchmarks.
-
 ### LLM Client Factory
 
 Alle Services nutzen eine zentrale Factory (`utils/llm_client.py`) mit URL-basiertem Caching (gleiche URL → gleiche Client-Instanz) und einem `LLMClient` Protocol.

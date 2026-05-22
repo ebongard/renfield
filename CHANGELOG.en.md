@@ -8,6 +8,12 @@ For earlier history (v1.2.0 - v2.5.0), see [CHANGELOG.md](CHANGELOG.md) (German 
 
 ---
 
+## [v2.8.1] — 2026-05-22
+
+### Changed
+
+- **Vision tier enabled** — `OLLAMA_VISION_MODEL` is now set to `qwen3-vl:8b` (previously empty = disabled). Image queries from satellite cameras are answered again. The model runs on the in-cluster `ollama` pod (k8s-gpu-1, RTX 5060 Ti); a config-only change with no new image. PR [#604](https://github.com/ebongard/renfield/pull/604).
+
 ## [v2.8.0] — 2026-05-22
 
 Voice barge-in: the user can interrupt the assistant's speech by simply talking over it (Fork A — acoustic). A Phase 0 measurement confirmed up front that the browser's echo cancellation reliably separates the assistant's own TTS from the user speaking (6.8× margin on laptop speakers). PR [#601](https://github.com/ebongard/renfield/pull/601).

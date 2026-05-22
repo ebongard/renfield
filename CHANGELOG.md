@@ -6,6 +6,12 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ---
 
+## [v2.8.1] — 2026-05-22
+
+### Geändert
+
+- **Vision-Tier aktiviert** — `OLLAMA_VISION_MODEL` ist nun auf `qwen3-vl:8b` gesetzt (zuvor leer = deaktiviert). Bild-Anfragen von Satelliten-Kameras werden wieder beantwortet. Das Modell läuft auf dem cluster-internen `ollama`-Pod (k8s-gpu-1, RTX 5060 Ti); reine Konfigurationsänderung ohne neues Image. PR [#604](https://github.com/ebongard/renfield/pull/604).
+
 ## [v2.8.0] — 2026-05-22
 
 Voice-Barge-in: Der Nutzer kann die Sprachausgabe des Assistenten unterbrechen, indem er einfach weiterspricht (Fork A — akustisch). Eine Phase-0-Messung bestätigte vorab, dass die Echo-Unterdrückung des Browsers die eigene TTS-Ausgabe zuverlässig vom Sprechen des Nutzers trennt (6,8-facher Abstand auf Laptop-Lautsprechern). PR [#601](https://github.com/ebongard/renfield/pull/601).

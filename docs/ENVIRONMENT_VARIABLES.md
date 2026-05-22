@@ -106,8 +106,6 @@ OLLAMA_NUM_CTX=32768                  # Context Window für alle Ollama-Calls
 - `qwen3:8b` - Gute Alternative für weniger RAM
 - `qwen3-embedding:4b` - Embedding-Modell mit exzellentem Deutsch (2560 dim)
 
-Siehe `docs/LLM_MODEL_GUIDE.md` für eine vollständige Modell-Übersicht pro Rolle.
-
 ---
 
 ### Vision LLM (Satellite Camera)

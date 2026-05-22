@@ -95,7 +95,6 @@ Important env vars: `MCP_ENABLED`, `AGENT_ENABLED`, `AUTH_ENABLED`, `PRESENCE_EN
 ## Documentation Index
 
 - `docs/ENVIRONMENT_VARIABLES.md` — All env vars
-- `docs/LLM_MODEL_GUIDE.md` — Model recommendations
 - `docs/ACCESS_CONTROL.md` — Auth & permissions
 - `docs/SECRETS_MANAGEMENT.md` — Production secrets
 - `docs/MULTILANGUAGE.md` — i18n guide

@@ -8,7 +8,7 @@ Renfield is a fully offline-capable, self-hosted **digital assistant** — a per
 
 **Tech Stack:** Python 3.11 + FastAPI + SQLAlchemy | React 18 + TypeScript + Vite + Tailwind CSS + PWA | Docker Compose, PostgreSQL 16, Redis 7, Ollama | Satellites: Pi Zero 2 W + ReSpeaker + OpenWakeWord
 
-**LLM:** Local models via Ollama (multi-model: chat, intent, RAG, agent, vision, embeddings). See `docs/LLM_MODEL_GUIDE.md`.
+**LLM:** Local models via Ollama (multi-model: chat, intent, RAG, agent, vision, embeddings).
 
 **Integrations:** Home Assistant, Frigate, n8n, SearXNG, Jellyfin, DLNA, Paperless, Email, Calendar — all via MCP servers.
 
