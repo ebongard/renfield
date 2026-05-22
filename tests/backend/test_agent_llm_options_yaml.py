@@ -33,9 +33,15 @@ from pathlib import Path
 import pytest
 import yaml
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-AGENT_YAML = REPO_ROOT / "src" / "backend" / "prompts" / "agent.yaml"
-AGENT_SERVICE_PY = REPO_ROOT / "src" / "backend" / "services" / "agent_service.py"
+# Resolve the backend source root from importable packages rather than
+# walking up from __file__: in the container the test tree is mounted at
+# /tests but the backend source lives at /app (no src/backend prefix), so
+# Path(__file__).parents[2] resolves to "/".
+import services.agent_service as _agent_service_module
+
+AGENT_SERVICE_PY = Path(_agent_service_module.__file__).resolve()
+BACKEND_ROOT = AGENT_SERVICE_PY.parent.parent  # .../services/agent_service.py
+AGENT_YAML = BACKEND_ROOT / "prompts" / "agent.yaml"
 
 _REQUIRED_KEYS = (
     "llm_options",

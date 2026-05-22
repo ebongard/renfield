@@ -32,6 +32,28 @@ _shared_agent_client = MagicMock()
 _shared_agent_client.supports_native_tools = False
 
 
+def _is_preselect_call(kwargs: dict) -> bool:
+    """True when this ``chat()`` call is the agent's tool pre-selection
+    step rather than a real ReAct step.
+
+    ``_preselect_tools`` (fires when >6 tools are registered) sends a
+    single ``role: user`` message; every real agent step sends
+    ``[system, user]``. Test mocks use this to answer the pre-select call
+    separately so it doesn't consume a scripted agent-step response.
+    """
+    messages = kwargs.get("messages") or []
+    return bool(messages) and messages[0].get("role") == "user"
+
+
+def _preselect_response():
+    """An empty chat response — ``_preselect_tools`` treats it as a parse
+    failure and falls back to using all tools."""
+    resp = MagicMock()
+    resp.message = MagicMock()
+    resp.message.content = ""
+    return resp
+
+
 @pytest.fixture(autouse=True)
 def _patch_get_agent_client(monkeypatch):
     """Prevent ``import ollama`` and bridge test mocks to agent_client."""
@@ -587,6 +609,14 @@ class TestAgentServiceRun:
         """
         Create a mock OllamaService whose client.chat() returns
         successive JSON responses.
+
+        The agent loop now runs a tool pre-selection LLM call before the
+        real ReAct steps (``_preselect_tools``, fires when >6 tools are
+        registered). That call uses a single ``role: user`` message,
+        whereas every real agent step sends ``[system, user]``. Pre-select
+        calls are answered separately and do NOT consume the ``responses``
+        sequence, so the test's response list maps 1:1 onto agent steps
+        exactly as it did before pre-selection existed.
         """
         ollama = MagicMock()
         ollama.client = MagicMock()
@@ -595,15 +625,22 @@ class TestAgentServiceRun:
 
         async def mock_chat(**kwargs):
             nonlocal call_count
-            idx = min(call_count, len(responses) - 1)
-            call_count += 1
+            messages = kwargs.get("messages") or []
+            is_preselect = bool(messages) and messages[0].get("role") == "user"
             resp = MagicMock()
             resp.message = MagicMock()
+            if is_preselect:
+                # Return an empty string → _preselect_tools treats it as a
+                # parse failure and falls back to all tools. No response is
+                # consumed from the agent-step sequence.
+                resp.message.content = ""
+                return resp
+            idx = min(call_count, len(responses) - 1)
+            call_count += 1
             resp.message.content = responses[idx]
             return resp
 
         ollama.client.chat = mock_chat
-        _shared_agent_client.chat = mock_chat
         _shared_agent_client.chat = mock_chat
         return ollama
 
@@ -811,9 +848,16 @@ class TestAgentServiceRun:
 
         async def slow_then_fast_chat(**kwargs):
             nonlocal call_count
-            call_count += 1
-            # First call is slow (triggers timeout), summary call is fast
             messages = kwargs.get("messages", [])
+            # The tool pre-selection call (single user message) must return
+            # fast — otherwise it eats the slow path meant for agent step 1.
+            if messages and messages[0].get("role") == "user":
+                resp = MagicMock()
+                resp.message = MagicMock()
+                resp.message.content = ""
+                return resp
+            call_count += 1
+            # First agent step is slow (triggers timeout), summary is fast.
             user_content = messages[-1].get("content", "") if messages else ""
             if "Fasse die Ergebnisse" in user_content or call_count > 1:
                 resp = MagicMock()
@@ -852,11 +896,16 @@ class TestAgentServiceRun:
         agent = AgentService(registry, max_steps=5)
 
         # Capture the chat call to verify history is not in prompt.
+        # Only record real agent-step calls ([system, user]); the tool
+        # pre-selection call sends a lone user message and would shift the
+        # indices / break the messages[1] lookup below.
         chat_calls = []
         original_chat = ollama.client.chat
 
         async def capturing_chat(**kwargs):
-            chat_calls.append(kwargs)
+            messages = kwargs.get("messages") or []
+            if messages and messages[0].get("role") == "system":
+                chat_calls.append(kwargs)
             return await original_chat(**kwargs)
 
         ollama.client.chat = capturing_chat
@@ -881,11 +930,15 @@ class TestAgentServiceRun:
         ])
         executor = self._make_executor_mock()
 
+        # Only capture real agent-step calls ([system, user]); the tool
+        # pre-selection call sends a lone user message.
         chat_calls = []
         original_chat = ollama.client.chat
 
         async def capturing_chat(**kwargs):
-            chat_calls.append(kwargs)
+            messages = kwargs.get("messages") or []
+            if messages and messages[0].get("role") == "system":
+                chat_calls.append(kwargs)
             return await original_chat(**kwargs)
 
         ollama.client.chat = capturing_chat
@@ -901,6 +954,20 @@ class TestAgentServiceRun:
         )
         assert chat_calls, "Expected at least one LLM call"
         return chat_calls[0]["messages"][1]["content"]
+
+    @staticmethod
+    def _has_failed_action_marker(prompt: str) -> bool:
+        """True when a conversation-history line is actually *prefixed* with
+        the failed-action marker.
+
+        The marker token also appears verbatim in the prompt's instructional
+        HINWEIS/NOTE text ("Zeilen, die mit [VORHERIGE_FEHLGESCHLAGENE_AKTION]
+        beginnen ..."), so a plain substring check yields a false positive on
+        every prompt. Only a line *starting* with the marker indicates an
+        actually-marked history entry.
+        """
+        marker = "[VORHERIGE_FEHLGESCHLAGENE_AKTION]"
+        return any(line.lstrip().startswith(marker) for line in prompt.splitlines())
 
     @pytest.mark.unit
     async def test_failed_action_history_marker_present(self):
@@ -919,7 +986,7 @@ class TestAgentServiceRun:
             },
         ]
         prompt_content = await self._capture_prompt(history)
-        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" in prompt_content
+        assert self._has_failed_action_marker(prompt_content)
         # The historical failure text is still visible (marker does not drop context)
         assert "403" in prompt_content
 
@@ -935,7 +1002,7 @@ class TestAgentServiceRun:
             },
         ]
         prompt_content = await self._capture_prompt(history)
-        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" not in prompt_content
+        assert not self._has_failed_action_marker(prompt_content)
 
     @pytest.mark.unit
     async def test_history_without_metadata_unmarked(self):
@@ -945,7 +1012,7 @@ class TestAgentServiceRun:
             {"role": "assistant", "content": "15°C in Berlin."},
         ]
         prompt_content = await self._capture_prompt(history)
-        assert "[VORHERIGE_FEHLGESCHLAGENE_AKTION]" not in prompt_content
+        assert not self._has_failed_action_marker(prompt_content)
 
 
 # ============================================================================
@@ -1231,6 +1298,8 @@ class TestToolResultDataInclusion:
 
         async def mock_chat(**kwargs):
             nonlocal call_count
+            if _is_preselect_call(kwargs):
+                return _preselect_response()
             call_count += 1
             resp = MagicMock()
             resp.message = MagicMock()
@@ -1274,6 +1343,8 @@ class TestToolResultDataInclusion:
 
         async def mock_chat(**kwargs):
             nonlocal call_count
+            if _is_preselect_call(kwargs):
+                return _preselect_response()
             call_count += 1
             resp = MagicMock()
             resp.message = MagicMock()
@@ -1577,6 +1648,8 @@ class TestAgentMusicPlaybackChain:
 
         async def mock_chat(**kwargs):
             nonlocal call_count
+            if _is_preselect_call(kwargs):
+                return _preselect_response()
             call_count += 1
             resp = MagicMock()
             resp.message = MagicMock()

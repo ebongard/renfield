@@ -430,7 +430,12 @@ class TestBuildToolsSchema:
     def _make_registry_with_tools(self, tools):
         mcp_manager = MagicMock()
         mcp_manager.get_all_tools.return_value = tools
-        return AgentToolRegistry(mcp_manager=mcp_manager, _init_only=True)
+        # internal_filter=[] suppresses the always-on platform internal
+        # tools (knowledge_search, chat-upload tools) so build_tools_schema
+        # reflects exactly the MCP tools under test.
+        return AgentToolRegistry(
+            mcp_manager=mcp_manager, internal_filter=[], _init_only=True
+        )
 
     @pytest.mark.unit
     def test_returns_openai_tools_format(self):
@@ -485,7 +490,9 @@ class TestBuildToolsSchema:
     @pytest.mark.unit
     def test_tool_without_input_schema_gets_synthesised_schema(self):
         """ToolDefinition with only flattened parameters gets a minimal fallback."""
-        registry = AgentToolRegistry(_init_only=True)
+        # internal_filter=[] keeps the registry empty so schema[0] is the
+        # plugin tool added below, not an always-on internal tool.
+        registry = AgentToolRegistry(internal_filter=[], _init_only=True)
         registry._tools["plugin.custom"] = ToolDefinition(
             name="plugin.custom",
             description="Plugin-registered tool",
