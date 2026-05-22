@@ -36,14 +36,20 @@ def _make_output_device(
     *,
     renfield_device_id=None,
     ha_entity_id=None,
+    dlna_renderer_name=None,
     tts_volume=0.5,
 ):
     """Create a mock RoomOutputDevice."""
     dev = MagicMock()
     dev.renfield_device_id = renfield_device_id
     dev.ha_entity_id = ha_entity_id
+    dev.dlna_renderer_name = dlna_renderer_name
     dev.tts_volume = tts_volume
+    # play_audio dispatches on these three flags. They must be real bools —
+    # a bare MagicMock attribute is truthy, which would route every device
+    # down the renfield/DLNA branch regardless of intent.
     dev.is_renfield_device = renfield_device_id is not None
+    dev.is_dlna_device = dlna_renderer_name is not None
     return dev
 
 

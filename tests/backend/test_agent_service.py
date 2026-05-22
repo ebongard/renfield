@@ -957,17 +957,28 @@ class TestAgentServiceRun:
 
     @staticmethod
     def _has_failed_action_marker(prompt: str) -> bool:
-        """True when a conversation-history line is actually *prefixed* with
-        the failed-action marker.
+        """True when a conversation-history entry actually carries the
+        failed-action marker.
 
-        The marker token also appears verbatim in the prompt's instructional
-        HINWEIS/NOTE text ("Zeilen, die mit [VORHERIGE_FEHLGESCHLAGENE_AKTION]
-        beginnen ..."), so a plain substring check yields a false positive on
-        every prompt. Only a line *starting* with the marker indicates an
-        actually-marked history entry.
+        The marker token also appears once verbatim in the prompt's
+        instructional HINWEIS/NOTE text ("... die mit
+        [VORHERIGE_FEHLGESCHLAGENE_AKTION] beginnen ..."), so a plain
+        substring check yields a false positive on every prompt. The
+        instructional line uses the phrase "mit <marker> beginnen"; a real
+        marked history entry has the marker immediately followed by a space
+        and the failure text. Distinguish on that: count occurrences NOT
+        preceded by "mit " / "with ".
         """
         marker = "[VORHERIGE_FEHLGESCHLAGENE_AKTION]"
-        return any(line.lstrip().startswith(marker) for line in prompt.splitlines())
+        idx = 0
+        while True:
+            idx = prompt.find(marker, idx)
+            if idx == -1:
+                return False
+            preceding = prompt[max(0, idx - 5):idx]
+            if not preceding.endswith(("mit ", "with ")):
+                return True
+            idx += len(marker)
 
     @pytest.mark.unit
     async def test_failed_action_history_marker_present(self):

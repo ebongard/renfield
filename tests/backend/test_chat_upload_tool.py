@@ -115,7 +115,7 @@ class TestForwardAttachmentToPaperless:
                 "services.database.AsyncSessionLocal",
                 _mock_db_returning(None),
                 create=True,
-            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+            ):
                 result = await forward_attachment_to_paperless(
                     {"attachment_id": 999}, mcp_manager=AsyncMock()
                 )
@@ -134,7 +134,7 @@ class TestForwardAttachmentToPaperless:
                 "services.database.AsyncSessionLocal",
                 _mock_db_returning(upload),
                 create=True,
-            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+            ):
                 result = await forward_attachment_to_paperless(
                     {"attachment_id": 42}, mcp_manager=AsyncMock()
                 )
@@ -170,7 +170,7 @@ class TestForwardAttachmentToPaperless:
                     "services.database.AsyncSessionLocal",
                     _mock_db_returning(upload),
                     create=True,
-                ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                ):
                     result = await forward_attachment_to_paperless(
                         {"attachment_id": 42, "correspondent": "ACME"},
                         mcp_manager=mock_mcp,
@@ -217,7 +217,7 @@ class TestForwardAttachmentToPaperless:
                     "services.database.AsyncSessionLocal",
                     _mock_db_returning(upload),
                     create=True,
-                ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                ):
                     await forward_attachment_to_paperless(
                         {"attachment_id": 42, "title": "Invoice January"},
                         mcp_manager=mock_mcp,
@@ -253,7 +253,7 @@ class TestForwardAttachmentToPaperless:
                     "services.database.AsyncSessionLocal",
                     _mock_db_returning(upload),
                     create=True,
-                ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                ):
                     result = await forward_attachment_to_paperless(
                         {"attachment_id": 42}, mcp_manager=mock_mcp
                     )
@@ -283,7 +283,7 @@ class TestForwardAttachmentToPaperless:
                 "services.database.AsyncSessionLocal",
                 _mock_db_returning(upload, captured_query_holder=captured),
                 create=True,
-            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+            ):
                 await forward_attachment_to_paperless(
                     {"attachment_id": 42},
                     mcp_manager=AsyncMock(),
@@ -319,7 +319,7 @@ class TestForwardAttachmentToPaperless:
                 "services.database.AsyncSessionLocal",
                 _mock_db_returning(upload, captured_query_holder=captured),
                 create=True,
-            ), patch("models.database.ChatUpload", MagicMock(), create=True):
+            ):
                 await forward_attachment_to_paperless(
                     {"attachment_id": 42},
                     mcp_manager=AsyncMock(),
@@ -363,7 +363,7 @@ class TestForwardAttachmentToPaperless:
                     "services.database.AsyncSessionLocal",
                     _mock_db_returning(upload),
                     create=True,
-                ), patch("models.database.ChatUpload", MagicMock(), create=True):
+                ):
                     result = await forward_attachment_to_paperless(
                         {"attachment_id": 42}, mcp_manager=mock_mcp
                     )
