@@ -332,9 +332,14 @@ class TestPlayInRoom:
 
         mock_ha_client = MagicMock()
         mock_ha_client.call_service = AsyncMock(return_value=True)
+        # _play_in_room ignores call_service's result and verifies playback
+        # by polling get_state — must be an AsyncMock, and asyncio.sleep is
+        # patched out so the 6s settle wait doesn't slow the test.
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/universal",
                 "room_name": "Arbeitszimmer",
@@ -353,7 +358,7 @@ class TestPlayInRoom:
                 "media_content_id": "http://jellyfin:8096/Audio/abc123/universal",
                 "media_content_type": "music",
             },
-            timeout=30.0,
+            timeout=15.0,
         )
 
     @pytest.mark.unit
@@ -390,16 +395,20 @@ class TestPlayInRoom:
 
         mock_ha_client = MagicMock()
         mock_ha_client.call_service = AsyncMock(return_value=False)
+        # _play_in_room ignores the call_service result and verifies success
+        # by polling get_state. A non-playing state → "failed to play".
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "off"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc123/universal",
                 "room_name": "Arbeitszimmer",
             })
 
         assert result["success"] is False
-        assert "failed to play" in result["message"]
+        assert "Playback failed" in result["message"]
 
     @pytest.mark.unit
     async def test_play_in_room_ha_exception(self, internal_tools):
@@ -488,10 +497,12 @@ class TestPlayInRoom:
 
         mock_ha_client = MagicMock()
         mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
 
         with patch.object(internal_tools, "_resolve_room_player",
                           new_callable=AsyncMock, return_value=busy_result), \
-             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://jellyfin:8096/Audio/abc/universal",
                 "room_name": "Arbeitszimmer",
@@ -518,9 +529,11 @@ class TestPlayInRoom:
 
         mock_ha_client = MagicMock()
         mock_ha_client.call_service = AsyncMock(return_value=True)
+        mock_ha_client.get_state = AsyncMock(return_value={"state": "playing"})
 
         with patch.object(internal_tools, "_resolve_room_player", new_callable=AsyncMock, return_value=resolve_result), \
-             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client):
+             patch("ha_glue.integrations.homeassistant.HomeAssistantClient", return_value=mock_ha_client), \
+             patch("asyncio.sleep", new_callable=AsyncMock):
             result = await internal_tools._play_in_room({
                 "media_url": "http://example.com/playlist.m3u",
                 "room_name": "Wohnzimmer",
@@ -2044,7 +2057,21 @@ class TestPlayRadio:
             },
         }
 
+        # _play_radio resolves the room via _resolve_room_player first, then
+        # delegates to _play_in_room for the HA target.
+        resolve_result = {
+            "success": True,
+            "data": {
+                "target_type": "homeassistant",
+                "entity_id": "media_player.arbeitszimmer",
+                "room_name": "Arbeitszimmer",
+                "device_name": "Speaker",
+            },
+        }
+
         with self._patch_main_app(mock_mcp_manager), \
+             patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
              patch.object(internal_tools, "_play_in_room",
                           new_callable=AsyncMock, return_value=play_result):
             result = await internal_tools._play_radio({
@@ -2156,7 +2183,19 @@ class TestPlayRadio:
             "data": {},
         }
 
+        resolve_result = {
+            "success": True,
+            "data": {
+                "target_type": "homeassistant",
+                "entity_id": "media_player.wohnzimmer",
+                "room_name": "Wohnzimmer",
+                "device_name": "Speaker",
+            },
+        }
+
         with self._patch_main_app(mock_mcp_manager), \
+             patch.object(internal_tools, "_resolve_room_player",
+                          new_callable=AsyncMock, return_value=resolve_result), \
              patch.object(internal_tools, "_play_in_room",
                           new_callable=AsyncMock, return_value=play_result) as mock_play:
             await internal_tools._play_radio({
