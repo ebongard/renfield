@@ -1,4 +1,4 @@
-# Open Follow-Ups — refreshed 2026-05-21
+# Open Follow-Ups — refreshed 2026-05-22
 
 Shipped / superseded items from the old voice-pipeline plan:
 
@@ -10,9 +10,11 @@ Shipped / superseded items from the old voice-pipeline plan:
 | End-of-utterance robustness | Shipped: PRs #535, #536 ("5 compounded design flaws") |
 | Voice-originated tool-call guard | Shipped: PR #542 (`verify_tool_call` hook + `voice_originated` ContextVar) |
 | **Voice barge-in (Fork A acoustic)** | **Shipped — v2.8.0** (PR #601, deployed 2026-05-22): interrupt the assistant by speaking. AEC spike passed 6.77×; two independent reviews. Plan: `tasks/voice-barge-in-plan.md`. **Open:** run the PR's 8-step manual barge-in checklist live (needs a human + mic). |
+| **Vision tier (`qwen3-vl:8b`)** | **Shipped — 2026-05-22** (PR #604): `OLLAMA_VISION_MODEL` flipped on. `qwen3-vl:8b` is served by the in-cluster `ollama` pod on k8s-gpu-1 (idle 16 GB GPU); `OLLAMA_VISION_URL` already routed there. The old "new CPU pod on k8s-gpu-2" plan was moot — model + routing already existed. Verified: accurate sub-second image inference. |
 | Cosmetic `AGENT_MODEL=qwen3.6` | Done in `k8s/configmap.yaml` |
 | `:llama-rc5` re-tag to versioned | Moot — backend is on `:latest` with `imagePullPolicy: Always` |
 | Reva submodule bump (Stage 1) | Moot — submodule pointer is current (`v2.6.1-21-g856ae13`) |
+| Local repo cleanup | Done 2026-05-22 — merged `[gone]` branches pruned, no stale stashes. Recurring hygiene, not a backlog item. |
 
 Voice runs through `/ws/voice` on the `voice-server` pod with the frontend `useVoiceStream` hook, gated by `VITE_FEATURE_VOICE_STREAM=true`. Frames use the `RFWA` binary header (4-byte magic + 16-byte UUID + 4-byte sequence).
 
@@ -28,19 +30,7 @@ Not actionable. Watch upstream releases of Moshi (Kyutai), Llama-Voice, Qwen-Voi
 
 ---
 
-## 3. Vision tier (`Qwen3-VL`) reactivation
-
-Still off in production: `k8s/configmap.yaml` → `OLLAMA_VISION_MODEL: ""`. Plan unchanged from old file:
-
-a) **Third llama-server pod on `k8s-gpu-2`** (CPU-only) with `Qwen3-VL-4B-Q4_K_M`. 30-60 s/Bild on CPU is acceptable for sporadic use (satellite-camera, Paperless OCR fallback). **Recommended.**
-
-b) Reva's existing cuda.local Qwen3-VL via new `LLM_OPENAI_VISION_BASE_URL` env. Cross-project coupling — would need Reva-owner sign-off.
-
-c) Drop vision entirely if the use-cases don't justify the effort.
-
----
-
-## 4. Reva cross-migration — Stages 2 + 3 still open
+## 3. Reva cross-migration — Stages 2 + 3 still open
 
 Stage 1 (submodule bump) is moot; current pointer tracks main. Open:
 
@@ -51,11 +41,4 @@ Neither urgent; Reva works as-is.
 
 ---
 
-## 5. Local repo cleanup
-
-- `git fetch -p && git branch -vv | awk '/: gone]/ {print $1}' | xargs -r git branch -D`
-- `git stash list` — check for stale WIP stashes and drop if obsolete
-
----
-
-*Last refreshed 2026-05-21 after voice barge-in (T1–T5) shipped to PR #601.*
+*Last refreshed 2026-05-22 — voice barge-in (v2.8.0) + vision tier (PR #604) shipped; local branch cleanup done.*
