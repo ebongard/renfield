@@ -11,11 +11,11 @@ Tests the centralized wake word settings system including:
 - config_ack handling
 """
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import SETTING_WAKEWORD_KEYWORD, Role, SystemSetting, User
 from models.permissions import Permission
@@ -81,44 +81,47 @@ async def regular_user(db_session: AsyncSession) -> User:
     return user
 
 
+async def _login(async_client: AsyncClient, async_engine, username: str, password: str) -> dict:
+    """Log in via the real registry, but point the always-on ``db`` auth
+    provider at the in-memory test engine. The provider deliberately opens
+    its own ``AsyncSessionLocal`` session (not the request session), so the
+    ``get_db`` dependency override does not reach it — patch it here."""
+    test_sessionmaker = async_sessionmaker(
+        async_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    original = settings.auth_enabled
+    settings.auth_enabled = True
+    try:
+        with patch("auth.providers.db.AsyncSessionLocal", test_sessionmaker):
+            response = await async_client.post(
+                "/api/auth/login",
+                data={"username": username, "password": password},
+            )
+        if response.status_code == 200:
+            token = response.json()["access_token"]
+            return {"Authorization": f"Bearer {token}"}
+        pytest.fail(
+            f"Login failed with status {response.status_code}: {response.text}"
+        )
+    finally:
+        settings.auth_enabled = original
+    return {}
+
+
 @pytest.fixture
-async def admin_auth_headers(async_client: AsyncClient, admin_user: User) -> dict:
+async def admin_auth_headers(
+    async_client: AsyncClient, async_engine, admin_user: User
+) -> dict:
     """Get auth headers for admin user"""
-    original = settings.auth_enabled
-    settings.auth_enabled = True
-    try:
-        response = await async_client.post(
-            "/api/auth/login",
-            data={"username": "test_admin", "password": "admin123"}
-        )
-        if response.status_code == 200:
-            token = response.json()["access_token"]
-            return {"Authorization": f"Bearer {token}"}
-        else:
-            pytest.fail(f"Login failed with status {response.status_code}: {response.text}")
-    finally:
-        settings.auth_enabled = original
-    return {}
+    return await _login(async_client, async_engine, "test_admin", "admin123")
 
 
 @pytest.fixture
-async def user_auth_headers(async_client: AsyncClient, regular_user: User) -> dict:
+async def user_auth_headers(
+    async_client: AsyncClient, async_engine, regular_user: User
+) -> dict:
     """Get auth headers for regular user"""
-    original = settings.auth_enabled
-    settings.auth_enabled = True
-    try:
-        response = await async_client.post(
-            "/api/auth/login",
-            data={"username": "test_user", "password": "user123"}
-        )
-        if response.status_code == 200:
-            token = response.json()["access_token"]
-            return {"Authorization": f"Bearer {token}"}
-        else:
-            pytest.fail(f"Login failed with status {response.status_code}: {response.text}")
-    finally:
-        settings.auth_enabled = original
-    return {}
+    return await _login(async_client, async_engine, "test_user", "user123")
 
 
 class TestWakeWordConfig:
