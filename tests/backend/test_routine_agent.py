@@ -57,6 +57,9 @@ def _make_mock_agent_client(responses: list[str]):
 
     client = MagicMock()
     client.chat = mock_chat
+    # ReAct path (not native function-calling) — keeps the scripted JSON
+    # responses on the exercised code path.
+    client.supports_native_tools = False
     return client
 
 
@@ -190,10 +193,26 @@ class TestRoutineAgentExecution:
     """Test the routine agent's multi-step execution via mocked LLM + executor."""
 
     def _make_routine_agent(self):
-        """Create an AgentService configured with the routine role."""
+        """Create an AgentService configured with the routine role.
+
+        The routine role's `internal_tools` (get_all_presence, play_in_room,
+        …) are registered at runtime by the ha_glue `register_tools` hook,
+        which only fires via the async `AgentToolRegistry.create()`. A bare
+        `_init_only=True` registry therefore has 0 tools, so the agent
+        rejects every tool call. Register the routine tools manually as
+        ToolDefinitions — same approach as the music-chain agent test.
+        """
+        from services.agent_tools import ToolDefinition
+
         roles = _parse_roles(ROUTINE_ROLE_CONFIG)
         role = roles["routine"]
         registry = AgentToolRegistry(internal_filter=role.internal_tools, _init_only=True)
+        for name in role.internal_tools:
+            registry._tools[name] = ToolDefinition(
+                name=name,
+                description=f"Routine tool {name}",
+                parameters={},
+            )
         return AgentService(registry, role=role)
 
     def _patch_agent_deps(self, llm_responses: list[str]):
@@ -222,7 +241,19 @@ class TestRoutineAgentExecution:
                 mock_settings.ollama_model = "test-model"
                 mock_settings.agent_ollama_url = None
                 mock_settings.agent_model = None
+                # The agent loop also reads these numeric settings for token
+                # budgeting / pre-selection — leaving them as bare MagicMocks
+                # breaks f"{...:.1f}" formatting and arithmetic.
+                mock_settings.ollama_num_ctx = 32768
+                mock_settings.agent_default_num_predict = 1024
+                mock_settings.agent_budget_threshold = 0.9
+                mock_settings.agent_conv_context_messages = 6
+                mock_settings.agent_history_limit = 10
+                mock_settings.agent_parallel_tools = False
+                mock_settings.agent_preselect_timeout = 5.0
+                mock_settings.agent_response_truncation = 4000
                 mock_pm.get.return_value = "Du bist ein Routine-Agent. AUFGABE: {message}"
+                mock_pm.get_config.return_value = {}
                 return self_inner
 
             def __exit__(self_inner, *args):

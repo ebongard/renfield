@@ -146,76 +146,78 @@ class TestEntityContextScoring:
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_friendly_name_match_uses_set_intersection(self):
-        """Entity scoring should match words via set intersection."""
-        with patch('services.ollama_service.settings') as mock_settings:
-            mock_settings.ollama_url = "http://localhost:11434"
-            mock_settings.ollama_model = "test"
-            mock_settings.default_language = "de"
+        """Entity scoring should match words via set intersection.
 
-            from services.ollama_service import OllamaService
-            service = OllamaService()
+        The entity-context-building logic moved out of
+        ``OllamaService._build_entity_context`` (now a thin
+        ``build_entity_context`` hook dispatcher) into the ha_glue handler
+        ``ha_build_entity_context``. Call that handler directly — it is the
+        real unit under test.
+        """
+        from ha_glue.services.intent_context import ha_build_entity_context
 
-            mock_entities = [
-                {
-                    "entity_id": "light.arbeitszimmer",
-                    "friendly_name": "Arbeitszimmer Licht",
-                    "domain": "light",
-                    "room": "Arbeitszimmer",
-                    "state": "off"
-                },
-                {
-                    "entity_id": "light.wohnzimmer",
-                    "friendly_name": "Wohnzimmer Decke",
-                    "domain": "light",
-                    "room": "Wohnzimmer",
-                    "state": "on"
-                }
-            ]
+        mock_entities = [
+            {
+                "entity_id": "light.arbeitszimmer",
+                "friendly_name": "Arbeitszimmer Licht",
+                "domain": "light",
+                "room": "Arbeitszimmer",
+                "state": "off"
+            },
+            {
+                "entity_id": "light.wohnzimmer",
+                "friendly_name": "Wohnzimmer Decke",
+                "domain": "light",
+                "room": "Wohnzimmer",
+                "state": "on"
+            }
+        ]
 
-            with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
-                        new_callable=AsyncMock, return_value=mock_entities):
-                result = await service._build_entity_context(
-                    "Schalte das Licht im Arbeitszimmer an",
-                    room_context=None
-                )
+        with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
+                    new_callable=AsyncMock, return_value=mock_entities):
+            result = await ha_build_entity_context(
+                message="Schalte das Licht im Arbeitszimmer an",
+                room_context=None,
+            )
 
-                # Arbeitszimmer entities should be listed
-                assert "Arbeitszimmer" in result
+        # Arbeitszimmer entities should be listed
+        assert result is not None
+        assert "Arbeitszimmer" in result
 
     @pytest.mark.unit
     @pytest.mark.asyncio
     async def test_device_keyword_matching(self):
-        """Device keyword matching should use pre-computed domain set."""
-        with patch('services.ollama_service.settings') as mock_settings:
-            mock_settings.ollama_url = "http://localhost:11434"
-            mock_settings.ollama_model = "test"
-            mock_settings.default_language = "de"
+        """Device keyword matching should use pre-computed domain set.
 
-            from services.ollama_service import OllamaService
-            service = OllamaService()
+        Exercises the ha_glue ``ha_build_entity_context`` handler directly
+        (see test above for why).
+        """
+        from ha_glue.services.intent_context import ha_build_entity_context
 
-            mock_entities = [
-                {
-                    "entity_id": "light.test",
-                    "friendly_name": "Test Lampe",
-                    "domain": "light",
-                    "room": "Test",
-                    "state": "off"
-                },
-                {
-                    "entity_id": "climate.heizung",
-                    "friendly_name": "Heizung Test",
-                    "domain": "climate",
-                    "room": "Test",
-                    "state": "heat"
-                }
-            ]
+        mock_entities = [
+            {
+                "entity_id": "light.test",
+                "friendly_name": "Test Lampe",
+                "domain": "light",
+                "room": "Test",
+                "state": "off"
+            },
+            {
+                "entity_id": "climate.heizung",
+                "friendly_name": "Heizung Test",
+                "domain": "climate",
+                "room": "Test",
+                "state": "heat"
+            }
+        ]
 
-            with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
-                        new_callable=AsyncMock, return_value=mock_entities):
-                # "Licht" should match light domain
-                result = await service._build_entity_context("Schalte das Licht ein")
-                assert "Test Lampe" in result
+        with patch('ha_glue.integrations.homeassistant.HomeAssistantClient.get_entity_map',
+                    new_callable=AsyncMock, return_value=mock_entities):
+            # "Licht" should match light domain
+            result = await ha_build_entity_context(message="Schalte das Licht ein")
+
+        assert result is not None
+        assert "Test Lampe" in result
 
 
 # =============================================================================
