@@ -185,7 +185,7 @@ METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 ```bash
 make lint                    # lint all code (ruff + eslint)
 make test                    # all tests
-make test-backend            # backend tests (2,100+)
+make test-backend            # backend tests (3,400+)
 make test-frontend-react     # React tests (Vitest + RTL)
 make test-coverage           # tests with coverage report
 ```

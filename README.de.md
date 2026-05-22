@@ -298,7 +298,7 @@ METRICS_ENABLED=false             # Prometheus /metrics (opt-in)
 make lint                    # Lint all code (ruff + eslint)
 make format-backend          # Format + auto-fix mit ruff
 make test                    # Alle Tests
-make test-backend            # Backend-Tests (2.100+)
+make test-backend            # Backend-Tests (3.400+)
 make test-frontend-react     # React-Tests (Vitest + RTL)
 make test-coverage           # Tests mit Coverage-Report (fail-under=50%)
 ```

@@ -149,7 +149,7 @@ For memory-retrieval callers: pass `user_id=asker_id`. For RAG search: pass `use
 
 ## Testing
 
-Tests in `tests/` at project root. Backend: 1,300+ tests.
+Tests in `tests/` at project root. Backend: 3,400+ tests.
 
 **Markers:** `@pytest.mark.unit`, `@pytest.mark.database`, `@pytest.mark.integration`, `@pytest.mark.e2e`, `@pytest.mark.backend`, `@pytest.mark.frontend`, `@pytest.mark.satellite`
 
