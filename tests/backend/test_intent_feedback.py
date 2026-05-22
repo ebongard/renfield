@@ -15,7 +15,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import IntentCorrection
+from models.database import EMBEDDING_DIMENSION, IntentCorrection
 
 # ============================================================================
 # Fixtures
@@ -124,7 +124,7 @@ class TestIntentFeedbackService:
     async def test_save_correction_intent(self, feedback_service, db_session):
         """Test saving an intent correction."""
         with patch.object(feedback_service, '_get_embedding', new_callable=AsyncMock) as mock_embed:
-            mock_embed.return_value = [0.1] * 768
+            mock_embed.return_value = [0.1] * EMBEDDING_DIMENSION
 
             correction = await feedback_service.save_correction(
                 message_text="Was passierte 1989?",
@@ -143,7 +143,7 @@ class TestIntentFeedbackService:
     async def test_save_correction_agent_tool(self, feedback_service):
         """Test saving an agent tool correction with context."""
         with patch.object(feedback_service, '_get_embedding', new_callable=AsyncMock) as mock_embed:
-            mock_embed.return_value = [0.2] * 768
+            mock_embed.return_value = [0.2] * EMBEDDING_DIMENSION
 
             correction = await feedback_service.save_correction(
                 message_text="Aktienkurs Tesla",
@@ -160,7 +160,7 @@ class TestIntentFeedbackService:
     async def test_save_correction_complexity(self, feedback_service):
         """Test saving a complexity correction."""
         with patch.object(feedback_service, '_get_embedding', new_callable=AsyncMock) as mock_embed:
-            mock_embed.return_value = [0.3] * 768
+            mock_embed.return_value = [0.3] * EMBEDDING_DIMENSION
 
             correction = await feedback_service.save_correction(
                 message_text="Wetter und Hotel suchen",
@@ -195,7 +195,7 @@ class TestIntentFeedbackService:
         IntentFeedbackService._count_cache["intent"] = (0, time.time())
 
         with patch.object(feedback_service, '_get_embedding', new_callable=AsyncMock) as mock_embed:
-            mock_embed.return_value = [0.1] * 768
+            mock_embed.return_value = [0.1] * EMBEDDING_DIMENSION
             await feedback_service.save_correction(
                 message_text="Test",
                 feedback_type="intent",
@@ -416,7 +416,7 @@ class TestFeedbackAPI:
         """Test POST /api/feedback/correction"""
         with patch('services.intent_feedback_service.IntentFeedbackService._get_embedding',
                    new_callable=AsyncMock) as mock_embed:
-            mock_embed.return_value = [0.1] * 768
+            mock_embed.return_value = [0.1] * EMBEDDING_DIMENSION
 
             response = await async_client.post("/api/feedback/correction", json={
                 "message_text": "Was passierte 1989?",

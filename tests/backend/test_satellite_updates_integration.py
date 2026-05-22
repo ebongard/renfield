@@ -143,7 +143,7 @@ class TestSatelliteUpdateAPIFlow:
 
         try:
             # Step 1: Check versions - should show update available
-            with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
                 mock_settings.satellite_latest_version = "2.0.0"
 
                 response = await async_client.get("/api/satellites/versions")
@@ -225,7 +225,7 @@ class TestSatelliteUpdateAPIFlow:
         )
 
         try:
-            with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+            with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
                 mock_settings.satellite_latest_version = "2.0.0"
                 mock_settings.advertise_host = "localhost"
                 mock_settings.advertise_port = 8000
@@ -303,8 +303,8 @@ class TestVersionComparisonIntegration:
         )
 
         try:
-            with patch('ha_glue.api.routes.satellites.settings') as mock_route_settings, \
-                 patch('ha_glue.services.satellite_update_service.settings') as mock_svc_settings:
+            with patch('ha_glue.api.routes.satellites.ha_glue_settings') as mock_route_settings, \
+                 patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_svc_settings:
                 mock_route_settings.satellite_latest_version = "2.0.0"
                 mock_svc_settings.satellite_latest_version = "2.0.0"
 
@@ -348,7 +348,7 @@ class TestUpdatePackageIntegration:
         import tempfile
         from pathlib import Path
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
 
             # Create a mock package

@@ -183,7 +183,7 @@ class TestSatelliteUpdateService:
         """get_latest_version should return config value"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
             assert service.get_latest_version() == "2.0.0"
@@ -193,7 +193,7 @@ class TestSatelliteUpdateService:
         """is_update_available should return True when newer version exists"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
 
@@ -205,7 +205,7 @@ class TestSatelliteUpdateService:
         """is_update_available should return False when same version"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
@@ -216,7 +216,7 @@ class TestSatelliteUpdateService:
         """is_update_available should return False when current is newer"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
@@ -227,7 +227,7 @@ class TestSatelliteUpdateService:
         """is_update_available should return False for unknown version"""
         from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.ha_glue_settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
