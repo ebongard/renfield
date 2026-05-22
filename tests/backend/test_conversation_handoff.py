@@ -22,21 +22,6 @@ def clear_debounce():
     _last_handoff.clear()
 
 
-# services/conversation_handoff.py:110 orders the message-copy query by
-# ``Message.created_at`` — but the Message model's timestamp column is
-# named ``timestamp``, not ``created_at``. Any handoff whose source
-# conversation has a NULL summary hits that branch and raises
-# ``AttributeError: type object 'Message' has no attribute 'created_at'``,
-# which the broad except in try_handoff_context swallows into a False
-# return. This is a real source bug — the fix (Message.created_at ->
-# Message.timestamp) belongs in PR 2; these three tests correctly catch it.
-_HANDOFF_MESSAGE_COPY_SOURCE_BUG = pytest.mark.skip(
-    reason="services/conversation_handoff.py references Message.created_at "
-    "but the column is Message.timestamp — NULL-summary handoffs raise "
-    "AttributeError. Real source bug; fix belongs in PR 2."
-)
-
-
 def _make_conversation(session_id, speaker_id, user_id=None, context_vars=None, summary=None, minutes_ago=5):
     """Create a Conversation-like mock for testing."""
     conv = MagicMock(spec=Conversation)
@@ -145,7 +130,6 @@ async def test_handoff_idempotent(db_session):
     assert target.context_vars == {"new": True}
 
 
-@_HANDOFF_MESSAGE_COPY_SOURCE_BUG
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handoff_debounce(db_session):
@@ -176,7 +160,6 @@ async def test_handoff_debounce(db_session):
     assert result2 is False
 
 
-@_HANDOFF_MESSAGE_COPY_SOURCE_BUG
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handoff_null_summary_copies_messages(db_session):
@@ -264,7 +247,6 @@ async def test_handoff_expired_source(db_session):
     assert result is False
 
 
-@_HANDOFF_MESSAGE_COPY_SOURCE_BUG
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_handoff_auth_disabled_speaker_only(db_session):

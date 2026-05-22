@@ -359,7 +359,11 @@ async def _geocode_location_arguments(arguments: dict, input_schema: dict) -> di
     Returns:
         Arguments with location resolved to latitude/longitude if applicable.
     """
-    if not input_schema:
+    # Geocoding only applies to dict-shaped arguments against a schema that
+    # declares lat/lon. A non-dict payload (a malformed tool call) passes
+    # through untouched so the real validation error surfaces downstream
+    # instead of an AttributeError raised from inside geocoding.
+    if not input_schema or not isinstance(arguments, dict):
         return arguments
 
     properties = input_schema.get("properties", {})

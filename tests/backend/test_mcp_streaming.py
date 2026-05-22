@@ -101,6 +101,7 @@ class TestExecuteToolStreamingYieldOnce:
             arguments={"x": 1},
             user_permissions=["a"],
             user_id=42,
+            progress_sink=None,
         )
         assert chunks == [sentinel]
 
@@ -145,18 +146,28 @@ class TestExecuteToolStreamingYieldOnce:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_aclose_mid_call_cancels_background_task(self):
-        """If the consumer closes the iterator while execute_tool is still
-        running, the underlying await is cancelled. The result is discarded
-        (not yielded anywhere)."""
+    async def test_cancel_mid_call_cancels_underlying_tool(self):
+        """If the consumer's iteration is cancelled while execute_tool is
+        still running, the cancellation propagates into the generator and
+        the underlying tool await is cancelled — no orphaned work.
+
+        A consumer aborts mid-call by cancelling the task driving the
+        iterator. `aclose()` cannot serve here: calling it from another
+        task while an `__anext__()` is in flight raises RuntimeError at the
+        Python level — not a usage pattern real consumers have."""
         import asyncio
 
         manager = MCPManager()
         started = asyncio.Event()
+        tool_cancelled = asyncio.Event()
 
         async def slow_tool(*args, **kwargs):
             started.set()
-            await asyncio.sleep(10)  # would exceed test timeout if not cancelled
+            try:
+                await asyncio.sleep(10)  # exceeds test timeout if not cancelled
+            except asyncio.CancelledError:
+                tool_cancelled.set()
+                raise
             return {"success": True, "message": "", "data": None}
 
         with patch.object(manager, "execute_tool", new=AsyncMock(side_effect=slow_tool)):
@@ -167,11 +178,11 @@ class TestExecuteToolStreamingYieldOnce:
 
             task = asyncio.create_task(consume_first())
             await started.wait()  # execute_tool is now running
-            await it.aclose()     # close mid-await
-            # The consume task should fail because the generator closed
-            # before yielding anything.
-            with pytest.raises((StopAsyncIteration, asyncio.CancelledError, GeneratorExit)):
+            task.cancel()         # consumer aborts its iteration
+            with pytest.raises(asyncio.CancelledError):
                 await task
+            # the cancellation reached the underlying tool await
+            await asyncio.wait_for(tool_cancelled.wait(), timeout=1.0)
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -228,6 +239,24 @@ def _streaming_manager(session_call_tool):
     )
     manager._tool_index["mcp.peer1.query_brain"] = tool
     return manager
+
+
+class TestGeocodeArgumentGuard:
+    """`_geocode_location_arguments` must not choke on a non-dict payload."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_non_dict_arguments_pass_through(self):
+        """A malformed (non-dict) argument payload is returned untouched, so
+        the real validation error surfaces downstream instead of an
+        AttributeError raised from inside geocoding."""
+        from services.mcp_client import _geocode_location_arguments
+
+        schema = {
+            "type": "object",
+            "properties": {"latitude": {}, "longitude": {}},
+        }
+        assert await _geocode_location_arguments([], schema) == []
 
 
 class TestExecuteToolStreamingWire:
@@ -354,16 +383,19 @@ class TestExecuteToolStreamingWire:
     @pytest.mark.unit
     async def test_unrelated_typeerror_is_not_swallowed(self):
         """Narrow catch: only the 'unexpected keyword progress_callback'
-        TypeError triggers the fallback. Other TypeErrors (e.g. bad
-        arguments type) must propagate instead of silently retrying."""
+        TypeError triggers the fallback. Any other TypeError raised by the
+        tool call must propagate instead of silently retrying."""
         def bad_call_tool(name, arguments, progress_callback=None):
-            # Simulates a genuinely broken call (e.g. arguments type mismatch)
-            # that happens to raise TypeError without mentioning progress_callback.
-            raise TypeError("arguments must be a dict, got list")
+            # An unrelated TypeError from the tool call itself — its message
+            # does NOT mention progress_callback, so it must propagate rather
+            # than trigger the no-progress-callback fallback retry.
+            raise TypeError("tool exploded")
 
         manager = _streaming_manager(bad_call_tool)
-        with pytest.raises(TypeError, match="must be a dict"):
-            async for _ in manager.execute_tool_streaming("mcp.peer1.query_brain", []):
+        # Valid (dict) arguments so the call reaches call_tool — a non-dict
+        # payload would be rejected earlier by input-schema validation.
+        with pytest.raises(TypeError, match="tool exploded"):
+            async for _ in manager.execute_tool_streaming("mcp.peer1.query_brain", {}):
                 pass
 
     @pytest.mark.asyncio

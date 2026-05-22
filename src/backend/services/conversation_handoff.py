@@ -107,7 +107,7 @@ async def try_handoff_context(
             msg_result = await db.execute(
                 select(Message)
                 .where(Message.conversation_id == source.id)
-                .order_by(Message.created_at.desc())
+                .order_by(Message.timestamp.desc())
                 .limit(5)
             )
             seed_messages = list(reversed(msg_result.scalars().all()))
