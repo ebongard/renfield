@@ -80,6 +80,19 @@ def _briefing_payload(**overrides) -> dict:
 class TestWebhookE2E:
     """End-to-end tests for POST /api/notifications/webhook."""
 
+    @pytest.fixture(autouse=True)
+    def _proactive_enabled(self, request, monkeypatch):
+        """The webhook route 503s when ``settings.proactive_enabled`` is
+        false, and the ambient container ``.env`` ships it disabled. Force
+        it on for the happy-path tests; the two tests that deliberately
+        exercise the disabled / auth paths opt out via their own settings
+        patch, so skip the autouse override for them."""
+        if request.node.name in {"test_503_when_disabled", "test_401_missing_auth"}:
+            return
+        from utils.config import settings as _route_settings
+
+        monkeypatch.setattr(_route_settings, "proactive_enabled", True)
+
     @pytest.mark.integration
     async def test_full_webhook_flow(
         self, async_client: AsyncClient, e2e_webhook_token: str, e2e_room: Room,

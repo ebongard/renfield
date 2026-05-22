@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 from models.database import (
     Atom,
     Base,
+    Role,
     User,
     WBEventLog,
     WBFieldProvenance,
@@ -131,7 +132,9 @@ async def test_atom_purge_archives_legal_hold_rows():
     async with AsyncSession(engine) as s:
         now = datetime.now(UTC).replace(tzinfo=None)
         # Need a user for atom FK.
-        s.add(User(id=1, username="t", email="t@t", password_hash="x"))
+        s.add(Role(id=1, name="member"))
+        await s.flush()
+        s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
         await s.flush()
         s.add(Atom(
             atom_id="atom-1", atom_type="test", source_table="tests",
@@ -189,7 +192,9 @@ async def test_atom_purge_with_no_legal_hold_rows():
 
     async with AsyncSession(engine) as s:
         now = datetime.now(UTC).replace(tzinfo=None)
-        s.add(User(id=1, username="t", email="t@t", password_hash="x"))
+        s.add(Role(id=1, name="member"))
+        await s.flush()
+        s.add(User(id=1, username="t", email="t@t", password_hash="x", role_id=1))
         await s.flush()
         s.add(Atom(
             atom_id="atom-2", atom_type="test", source_table="tests",

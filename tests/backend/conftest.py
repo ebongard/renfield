@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import BigInteger
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -37,6 +38,20 @@ from sqlalchemy.pool import StaticPool
 @compiles(TSVECTOR, "sqlite")
 def _tsvector_sqlite(element, compiler, **kw):
     return "TEXT"
+
+
+@compiles(BigInteger, "sqlite")
+def _biginteger_sqlite(element, compiler, **kw):
+    # SQLite only treats a column declared exactly ``INTEGER PRIMARY KEY`` as
+    # an alias for ROWID (i.e. autoincrementing). A ``BIGINT PRIMARY KEY``
+    # column is NOT aliased, so inserts that rely on autoincrement fail with
+    # "NOT NULL constraint failed: <table>.id" under the in-memory test
+    # engine. Several production models (wb_field_provenance,
+    # wb_field_provenance_archive, wb_event_log, ...) use BigInteger PKs.
+    # Compiling BigInteger to plain INTEGER on SQLite restores autoincrement;
+    # SQLite's INTEGER is already 8-byte, so there is no range loss. Postgres
+    # DDL is unaffected — the override only fires when dialect == sqlite.
+    return "INTEGER"
 
 
 try:  # pgvector is a soft dependency in the image; tolerate its absence.

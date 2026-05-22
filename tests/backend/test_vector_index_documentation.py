@@ -19,9 +19,16 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DATABASE_PY = REPO_ROOT / "src" / "backend" / "models" / "database.py"
-MIGRATIONS_DIR = REPO_ROOT / "src" / "backend" / "alembic" / "versions"
+# Locate the backend source root from the importable package rather than
+# walking up from __file__: in the container the test tree is mounted at
+# /tests but the backend source lives at /app (no src/backend prefix), so
+# Path(__file__).parents[2] resolves to "/". `models.database.__file__`
+# always points at the real source file in any layout.
+import models.database as _database_module
+
+DATABASE_PY = Path(_database_module.__file__).resolve()
+BACKEND_ROOT = DATABASE_PY.parent.parent  # .../models/database.py -> backend root
+MIGRATIONS_DIR = BACKEND_ROOT / "alembic" / "versions"
 
 
 @pytest.mark.unit

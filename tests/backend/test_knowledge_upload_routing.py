@@ -52,26 +52,24 @@ async def test_upload_duplicate_hash_returns_409(
     frontend reads from."""
     payload = b"duplicate-content-2026-04-19"
 
-    # First upload succeeds (mock ingestion so we don't hit Docling).
+    # First upload succeeds via the worker path (#388): worker alive →
+    # 202 + pending row enqueued. Mock the heartbeat + enqueue so no
+    # Redis is required.
     with patch(
-        "services.rag_service.RAGService.ingest_document",
-        new=AsyncMock(
-            return_value=Document(
-                id=1,
-                filename="dup.txt",
-                status="completed",
-                knowledge_base_id=kb.id,
-                file_hash="fixed",
-            )
-        ),
+        "api.routes.knowledge._worker_is_alive",
+        new=AsyncMock(return_value=True),
+    ), patch(
+        "api.routes.knowledge.DocumentTaskQueue.enqueue",
+        new=AsyncMock(return_value="1-0"),
     ):
         response = await async_client.post(
             f"/api/knowledge/upload?knowledge_base_id={kb.id}",
             files=[_fake_upload(payload, "dup.txt")],
         )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 202, response.text
 
-    # Second upload of identical bytes → 409.
+    # Second upload of identical bytes → 409 (pre-insert dup SELECT
+    # fires before the worker heartbeat check, so no worker mock needed).
     response = await async_client.post(
         f"/api/knowledge/upload?knowledge_base_id={kb.id}",
         files=[_fake_upload(payload, "dup.txt")],
@@ -168,7 +166,12 @@ async def test_batch_endpoint_returns_requested_ids(
     async_client: AsyncClient, db_session, kb
 ):
     docs = [
-        Document(filename=f"f{i}.txt", status="pending", knowledge_base_id=kb.id)
+        Document(
+            filename=f"f{i}.txt",
+            file_path=f"/tmp/f{i}.txt",
+            status="pending",
+            knowledge_base_id=kb.id,
+        )
         for i in range(3)
     ]
     db_session.add_all(docs)
