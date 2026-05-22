@@ -3,6 +3,7 @@ Tests for PromptManager — YAML-based prompt externalization.
 """
 
 import asyncio
+import os
 
 import pytest
 
@@ -594,6 +595,12 @@ class TestPromptManagerFileSystem:
         assert manager.get("test", "msg", default="gone") == "gone"
 
     @pytest.mark.unit
+    @pytest.mark.skipif(
+        os.geteuid() == 0,
+        reason="Test relies on chmod(0o000) making a file unreadable, but "
+        "the backend test container runs as root, which bypasses POSIX "
+        "permission checks — the 'unreadable' file is still readable.",
+    )
     def test_file_becomes_unreadable(self, tmp_path):
         """Should handle file that becomes unreadable mid-operation."""
         prompts_dir = tmp_path / "prompts"

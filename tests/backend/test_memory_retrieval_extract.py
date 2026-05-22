@@ -52,9 +52,14 @@ class TestMemoryCirclesFilter:
         assert "m.user_id = :asker_id" in clause
         assert "m.circle_tier = :asker_id_pub" in clause
         assert "atom_explicit_grants" in clause
-        assert "a.source_table = 'conversation_memories'" in clause
+        # source_table is bound as a parameter, not inlined as a literal.
+        assert "a.source_table = :asker_id_src" in clause
         assert "circle_memberships" in clause
-        assert params == {"asker_id": 42, "asker_id_pub": TIER_PUBLIC}
+        assert params == {
+            "asker_id": 42,
+            "asker_id_pub": TIER_PUBLIC,
+            "asker_id_src": "conversation_memories",
+        }
 
 
 class TestRecencyScoreParity:

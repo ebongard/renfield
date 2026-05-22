@@ -242,15 +242,25 @@ class TestTTSCacheAPI:
 
     @pytest.mark.integration
     async def test_tts_cache_found(self, async_client: AsyncClient):
-        """Testet GET /api/voice/tts-cache mit gecachtem Audio"""
+        """Testet GET /api/voice/tts-cache mit gecachtem Audio.
+
+        The route resolves cached audio through the ``fetch_tts_audio_cache``
+        hook (ha_glue owns the cache storage), not a direct
+        ``get_audio_output_service`` call — register a temporary hook
+        handler that returns the bytes.
+        """
+        from utils.hooks import _hooks
+
         cached_audio = b'RIFF' + b'\x00' * 100
 
-        with patch('ha_glue.services.audio_output_service.get_audio_output_service') as mock_service:
-            mock_instance = MagicMock()
-            mock_instance.get_cached_audio.return_value = cached_audio
-            mock_service.return_value = mock_instance
+        async def _fake_fetch(*, audio_id):
+            return cached_audio
 
+        _hooks["fetch_tts_audio_cache"].append(_fake_fetch)
+        try:
             response = await async_client.get("/api/voice/tts-cache/valid-audio-id")
+        finally:
+            _hooks["fetch_tts_audio_cache"].remove(_fake_fetch)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"

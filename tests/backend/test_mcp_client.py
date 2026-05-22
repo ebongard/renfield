@@ -743,10 +743,17 @@ class TestMCPToolsInRegistry:
 
     @pytest.mark.unit
     def test_registry_without_mcp(self):
-        """Registry should work fine without mcp_manager."""
+        """Registry should work fine without mcp_manager.
+
+        internal_filter=[] suppresses the always-on platform internal tools
+        (knowledge_search, chat-upload) so the registry is genuinely empty
+        when no MCP manager is supplied.
+        """
         from services.agent_tools import AgentToolRegistry
 
-        registry = AgentToolRegistry(mcp_manager=None, _init_only=True)
+        registry = AgentToolRegistry(
+            mcp_manager=None, internal_filter=[], _init_only=True
+        )
         assert len(registry.get_tool_names()) == 0
         assert registry.is_valid_tool("mcp.anything") is False
 

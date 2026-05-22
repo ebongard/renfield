@@ -354,6 +354,9 @@ class TestRAGService:
         with patch('services.rag_service.settings') as mock_settings:
             mock_settings.ollama_url = "http://localhost:11434"
             mock_settings.ollama_embed_model = "nomic-embed-text"
+            # get_embedding wraps the call in asyncio.wait_for — the timeout
+            # must be a real number, not a bare MagicMock.
+            mock_settings.rag_embedding_timeout = 30.0
 
             service = RAGService(db_session)
             # Set the mock client directly
@@ -541,9 +544,14 @@ class TestActionExecutor:
         })
 
         assert result["success"] is True
+        # ActionExecutor now forwards user_permissions / user_id /
+        # progress_sink as dedicated kwargs to execute_tool.
         mock_mcp.execute_tool.assert_called_once_with(
             "mcp.homeassistant.turn_on",
-            {"entity_id": "light.test"}
+            {"entity_id": "light.test"},
+            user_permissions=None,
+            user_id=None,
+            progress_sink=None,
         )
 
     @pytest.mark.unit

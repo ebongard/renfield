@@ -33,7 +33,13 @@ from pathlib import Path
 
 import pytest
 
-BACKEND_ROOT = Path(__file__).resolve().parent.parent.parent / "src" / "backend"
+# Resolve the backend source root from an importable package: in the
+# container the tests are mounted at /tests while the backend source is at
+# /app (no src/backend prefix), so the parent-walk + src/backend join
+# resolves to a nonexistent /src/backend.
+import utils.config as _config_module
+
+BACKEND_ROOT = Path(_config_module.__file__).resolve().parent.parent
 
 # Paths relative to src/backend/ that are allowed to import from ha_glue.
 #

@@ -176,15 +176,13 @@ class TestVerifyOffer:
     def test_expired_offer_rejected(self, tmp_identity, mock_user):
         svc = self._make_svc()
         offer = svc.create_offer(current_user=mock_user)
-        # Tamper expires_at into the past and re-sign (attacker trying to
-        # forge validity). Since they don't have our key, that path fails
-        # at signature verify. Verify rejection even BEFORE the signature
-        # check by using a legitimate offer and mutating after signing.
+        # Mutate expires_at into the past. `_verify_offer` checks expiry
+        # before the signature, so a past-expiry offer is rejected with
+        # "Offer expired" — the correct primary rejection for this input.
         past = PairingOffer(
             **{**offer.model_dump(), "expires_at": int(time.time()) - 60},
         )
-        with pytest.raises(PairingError, match="signature failed"):
-            # Signature check catches the mutation
+        with pytest.raises(PairingError, match="expired"):
             svc._verify_offer(past)
 
     @pytest.mark.unit
