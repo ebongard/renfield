@@ -152,7 +152,9 @@ class TestKGRetrievalSurface:
             "get_relevant_context",
             "_extract_query_entities",
             "_get_embedding",
-            "_get_ollama_client",
+            # LLM client accessor was renamed _get_ollama_client ->
+            # _get_chat_client when the client moved to utils.llm_client.
+            "_get_chat_client",
         }
         actual = {name for name in dir(KGRetrieval) if not name.startswith("__")}
         missing = required - actual

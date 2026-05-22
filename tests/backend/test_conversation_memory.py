@@ -129,9 +129,10 @@ class TestConversationMemoryModel:
         assert MEMORY_CATEGORY_FACT == "fact"
         assert MEMORY_CATEGORY_CONTEXT == "context"
         assert MEMORY_CATEGORY_INSTRUCTION == "instruction"
-        assert len(MEMORY_CATEGORIES) == 4
+        # 5 categories: the original 4 plus "procedural".
+        assert len(MEMORY_CATEGORIES) == 5
         assert all(cat in MEMORY_CATEGORIES for cat in [
-            "preference", "fact", "context", "instruction"
+            "preference", "fact", "context", "instruction", "procedural"
         ])
 
 
@@ -758,7 +759,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=None):
             result = await memory_service.extract_and_save(
                 user_message="Ich bin Max und mag Jazz",
@@ -780,7 +781,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client):
             result = await memory_service.extract_and_save(
                 user_message="Schalte das Licht ein",
                 assistant_response="Licht ist an.",
@@ -795,7 +796,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client):
             result = await memory_service.extract_and_save(
                 user_message="Hallo",
                 assistant_response="Hallo!",
@@ -813,7 +814,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=None):
             result = await memory_service.extract_and_save(
                 user_message="Ich heisse Max und mag Katzen",
@@ -829,7 +830,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(side_effect=Exception("Connection refused"))
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client):
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client):
             result = await memory_service.extract_and_save(
                 user_message="Hallo",
                 assistant_response="Hallo!",
@@ -856,7 +857,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=[0.1] * 768), \
              patch.object(memory_service, '_find_duplicate', return_value=existing):
             result = await memory_service.extract_and_save(
@@ -877,7 +878,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=None):
             result = await memory_service.extract_and_save(
                 user_message="Ich trinke gerne Tee",
@@ -896,7 +897,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=None):
             result = await memory_service.extract_and_save(
                 user_message="Test",
@@ -916,7 +917,7 @@ class TestMemoryExtraction:
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
 
-        with patch.object(memory_service, '_get_ollama_client', return_value=mock_client), \
+        with patch.object(memory_service, '_get_chat_client', return_value=mock_client), \
              patch.object(memory_service, '_get_embedding', return_value=None):
             result = await memory_service.extract_and_save(
                 user_message="Test",

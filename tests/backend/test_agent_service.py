@@ -42,10 +42,9 @@ def _patch_get_agent_client(monkeypatch):
         "services.agent_service.get_agent_client",
         lambda *a, **kw: (_shared_agent_client, "http://mock:11434"),
     )
-    monkeypatch.setattr(
-        "services.agent_service.client_supports_native_tools",
-        lambda c: False,
-    )
+    # Native-FC detection is now AgentService._should_use_native_fc(), which
+    # reads ``agent_client.supports_native_tools``. The shared mock above
+    # already pins that to False, so the ReAct path is exercised by default.
 
 
 # ============================================================================

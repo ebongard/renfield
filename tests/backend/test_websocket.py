@@ -239,7 +239,7 @@ class TestWebSocketDeviceRegistration:
     @pytest.mark.database
     async def test_device_registration_flow(self, mock_websocket, db_session):
         """Test: Vollständiger Registration Flow"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
 
@@ -259,7 +259,7 @@ class TestWebSocketDeviceRegistration:
     @pytest.mark.database
     async def test_device_registration_creates_room(self, db_session):
         """Test: Registration erstellt Room bei Bedarf"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
 
@@ -344,7 +344,7 @@ class TestWebSocketSessionManagement:
     @pytest.mark.database
     async def test_session_cleanup_on_disconnect(self, db_session):
         """Test: Session Cleanup bei Disconnect"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         room_service = RoomService(db_session)
 

@@ -12,20 +12,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Ensure 'ollama' module is available even when the package isn't installed.
-# create_llm_client() does `import ollama` internally, so we provide a stub.
+# Stub 'ollama' / 'openai' only if genuinely absent. create_llm_client()
+# does `import ollama` and OpenAICompatibleClient instantiates
+# openai.AsyncOpenAI — but in the real test container both ARE installed,
+# and unconditionally stubbing them poisons every later test that imports
+# them. Stub-if-missing keeps this file runnable standalone too.
 if "ollama" not in sys.modules:
-    _ollama_stub = MagicMock()
-    _ollama_stub.AsyncClient = MagicMock()
-    sys.modules["ollama"] = _ollama_stub
+    try:
+        import ollama  # noqa: F401
+    except Exception:  # noqa: BLE001
+        _ollama_stub = MagicMock()
+        _ollama_stub.AsyncClient = MagicMock()
+        sys.modules["ollama"] = _ollama_stub
 
-# Same for openai — OpenAICompatibleClient instantiates openai.AsyncOpenAI in
-# __init__. The stub gets replaced with the real package in production images;
-# the tests below patch openai.AsyncOpenAI per-test to control return values.
 if "openai" not in sys.modules:
-    _openai_stub = MagicMock()
-    _openai_stub.AsyncOpenAI = MagicMock()
-    sys.modules["openai"] = _openai_stub
+    try:
+        import openai  # noqa: F401
+    except Exception:  # noqa: BLE001
+        _openai_stub = MagicMock()
+        _openai_stub.AsyncOpenAI = MagicMock()
+        sys.modules["openai"] = _openai_stub
 
 from utils.llm_client import (
     LLMClient,

@@ -13,8 +13,16 @@ _missing_stubs = [
     "openwakeword", "openwakeword.model",
     "zeroconf", "zeroconf.asyncio",
 ]
+import importlib as _importlib
 for _mod in _missing_stubs:
-    if _mod not in sys.modules:
+    # Stub ONLY when genuinely unimportable — unconditional stubbing
+    # poisons sys.modules for the rest of the session, breaking later
+    # tests that transitively import these (real, installed) packages.
+    if _mod in sys.modules:
+        continue
+    try:
+        _importlib.import_module(_mod)
+    except Exception:  # noqa: BLE001
         sys.modules[_mod] = MagicMock()
 
 import struct

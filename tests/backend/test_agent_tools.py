@@ -10,6 +10,20 @@ import pytest
 
 from services.agent_tools import AgentToolRegistry, ToolDefinition
 
+# The registry always registers the platform-owned internal tools in
+# __init__ via _register_internal_tools(). There are three of them:
+#   internal.knowledge_search
+#   internal.forward_attachment_to_paperless
+#   internal.paperless_commit_upload
+# Tests that count tools or assert an "empty" registry must account for
+# these baseline entries.
+INTERNAL_TOOL_NAMES = {
+    "internal.knowledge_search",
+    "internal.forward_attachment_to_paperless",
+    "internal.paperless_commit_upload",
+}
+NUM_INTERNAL_TOOLS = len(INTERNAL_TOOL_NAMES)
+
 
 class TestToolDefinition:
     """Test ToolDefinition dataclass."""
@@ -190,16 +204,17 @@ class TestAgentToolRegistryMCPTools:
 
         registry = AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
         names = registry.get_tool_names()
-        assert len(names) == 3
+        # 3 MCP tools + the 3 baseline internal tools.
+        assert len(names) == 3 + NUM_INTERNAL_TOOLS
         assert "mcp.homeassistant.turn_on" in names
         assert "mcp.weather.get_forecast" in names
         assert "mcp.n8n.list_workflows" in names
 
     @pytest.mark.unit
     def test_empty_registry_no_mcp(self):
-        """Without MCP or plugins, registry should be empty."""
+        """Without MCP or plugins, registry holds only the internal tools."""
         registry = AgentToolRegistry(_init_only=True)
-        assert len(registry.get_tool_names()) == 0
+        assert set(registry.get_tool_names()) == INTERNAL_TOOL_NAMES
 
     @pytest.mark.unit
     def test_get_tool_returns_none_for_unknown(self):
@@ -293,9 +308,18 @@ class TestAgentToolRegistryPrompt:
 
     @pytest.mark.unit
     def test_empty_registry_prompt(self):
+        """An explicitly empty tool set produces the no-tools sentinel."""
+        registry = AgentToolRegistry(_init_only=True)
+        prompt = registry.build_tools_prompt(tools={})
+        assert "KEINE TOOLS" in prompt
+
+    @pytest.mark.unit
+    def test_internal_tools_registry_prompt(self):
+        """A registry with no MCP server still lists the baseline internal tools."""
         registry = AgentToolRegistry(_init_only=True)
         prompt = registry.build_tools_prompt()
-        assert "KEINE TOOLS" in prompt
+        assert "VERFÜGBARE TOOLS:" in prompt
+        assert "internal.knowledge_search" in prompt
 
     @pytest.mark.unit
     def test_prompt_contains_mcp_tool_names(self):
@@ -351,127 +375,12 @@ class TestAgentToolRegistryPrompt:
         assert "entity_id" in prompt
 
 
-def _build_multi_server_registry():
-    """Helper: Create a registry with tools from multiple MCP servers."""
-    mock_mcp = MagicMock()
-    tools = []
-    tool_defs = [
-        ("mcp.paperless.search_documents", "Search documents in Paperless-NGX"),
-        ("mcp.paperless.download_document", "Download a document from Paperless-NGX"),
-        ("mcp.email.send_email", "Send an email"),
-        ("mcp.email.list_emails", "List emails from inbox"),
-        ("mcp.email.read_email", "Read an email"),
-        ("mcp.weather.weather_forecast", "Get weather forecast"),
-        ("mcp.weather.air_quality", "Get air quality"),
-        ("mcp.homeassistant.turn_on", "Turn on a device"),
-        ("mcp.homeassistant.turn_off", "Turn off a device"),
-        ("mcp.homeassistant.get_states", "Get entity states"),
-        ("mcp.n8n.list_workflows", "List n8n workflows"),
-        ("mcp.n8n.execute_workflow", "Execute an n8n workflow"),
-        ("mcp.jellyfin.search_media", "Search media in Jellyfin"),
-        ("mcp.jellyfin.get_libraries", "Get Jellyfin libraries"),
-        ("mcp.search.web_search", "Search the web"),
-        ("mcp.news.search_articles", "Search news articles"),
-    ]
-    for name, desc in tool_defs:
-        mock_tool = MagicMock()
-        mock_tool.namespaced_name = name
-        mock_tool.description = desc
-        mock_tool.input_schema = {"properties": {"q": {"type": "string", "description": "Query"}}, "required": []}
-        tools.append(mock_tool)
-    mock_mcp.get_all_tools.return_value = tools
-    return AgentToolRegistry(mcp_manager=mock_mcp, _init_only=True)
-
-
-class TestSelectRelevantTools:
-    """Test keyword-based tool relevance filtering."""
-
-    @pytest.mark.unit
-    def test_paperless_and_email_for_invoice_query(self):
-        """German invoice+email query should select paperless and email tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools(
-            "Suche mir die letzten beiden Rechnungen von IONOS heraus und schicke sie an test@example.com"
-        )
-        names = set(selected.keys())
-        assert "mcp.paperless.search_documents" in names
-        assert "mcp.paperless.download_document" in names
-        assert "mcp.email.send_email" in names
-        # Should NOT include weather, HA, n8n, jellyfin
-        assert not any(n.startswith("mcp.weather") for n in names)
-        assert not any(n.startswith("mcp.homeassistant") for n in names)
-        assert not any(n.startswith("mcp.n8n") for n in names)
-        assert not any(n.startswith("mcp.jellyfin") for n in names)
-
-    @pytest.mark.unit
-    def test_weather_query_selects_weather_tools(self):
-        """Weather query should select only weather tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools("Wie ist das Wetter morgen?")
-        names = set(selected.keys())
-        assert any(n.startswith("mcp.weather") for n in names)
-        assert not any(n.startswith("mcp.paperless") for n in names)
-
-    @pytest.mark.unit
-    def test_smart_home_query_selects_ha_tools(self):
-        """Smart home query should select HA tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools("Schalte das Licht im Wohnzimmer ein")
-        names = set(selected.keys())
-        assert any(n.startswith("mcp.homeassistant") for n in names)
-
-    @pytest.mark.unit
-    def test_no_keywords_returns_all_tools(self):
-        """Query with no matching keywords should fall back to all tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools("Erzähl mir einen Witz")
-        assert len(selected) == len(registry._tools)
-
-    @pytest.mark.unit
-    def test_empty_registry_returns_empty(self):
-        """Empty registry should return empty dict."""
-        registry = AgentToolRegistry(_init_only=True)
-        selected = registry.select_relevant_tools("Test query")
-        assert selected == {}
-
-    @pytest.mark.unit
-    def test_filtered_tools_prompt_is_smaller(self):
-        """Filtered tools prompt should be significantly smaller than full prompt."""
-        registry = _build_multi_server_registry()
-        full_prompt = registry.build_tools_prompt()
-        selected = registry.select_relevant_tools(
-            "Suche Rechnungen und schicke sie per Email"
-        )
-        filtered_prompt = registry.build_tools_prompt(tools=selected)
-        assert len(filtered_prompt) < len(full_prompt)
-
-    @pytest.mark.unit
-    def test_search_keyword_includes_paperless(self):
-        """'suche' keyword should include paperless tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools("Suche nach Dokumenten")
-        names = set(selected.keys())
-        assert any(n.startswith("mcp.paperless") for n in names)
-
-    @pytest.mark.unit
-    def test_web_keyword_includes_search(self):
-        """'web' keyword should include web search tools."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools("Suche im Web nach Informationen")
-        names = set(selected.keys())
-        assert any(n.startswith("mcp.search") for n in names)
-
-    @pytest.mark.unit
-    def test_multi_keyword_combines_servers(self):
-        """Query with multiple keywords should combine server tool groups."""
-        registry = _build_multi_server_registry()
-        selected = registry.select_relevant_tools(
-            "Suche die Rechnung und schicke sie per Mail, dann schalte das Licht aus"
-        )
-        names = set(selected.keys())
-        assert any(n.startswith("mcp.paperless") for n in names)
-        assert any(n.startswith("mcp.email") for n in names)
-        assert any(n.startswith("mcp.homeassistant") for n in names)
+# NOTE: The keyword-based ``select_relevant_tools()`` method and its tests
+# (formerly ``TestSelectRelevantTools``) were removed. Tool-scope filtering
+# is now performed at construction time via the ``server_filter`` /
+# ``internal_filter`` parameters — see ``TestAgentToolRegistryConstruction``
+# and ``TestAgentToolRegistryAsyncCreate`` above. There is no longer a
+# post-construction relevance filter to test.
 
 
 # ============================================================================

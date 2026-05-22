@@ -21,7 +21,7 @@ from httpx import AsyncClient
 @pytest.fixture
 def mock_frigate_client():
     """Mock Frigate Client für Route-Tests"""
-    with patch('api.routes.camera.frigate') as mock:
+    with patch('ha_glue.api.routes.camera.frigate') as mock:
         mock.get_events = AsyncMock(return_value=[
             {
                 "id": "event-1",
@@ -60,7 +60,7 @@ def mock_frigate_client():
 @pytest.fixture
 def mock_auth_bypass():
     """Bypass auth for testing"""
-    with patch('api.routes.camera.require_permission') as mock:
+    with patch('ha_glue.api.routes.camera.require_permission') as mock:
         mock.return_value = lambda: MagicMock(id=1, username="test")
         yield mock
 
@@ -161,7 +161,7 @@ class TestCameraList:
         mock_auth_bypass
     ):
         """Testet Fehler bei Kamera-Liste abrufen"""
-        with patch('api.routes.camera.frigate') as mock:
+        with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_cameras = AsyncMock(side_effect=Exception("Frigate not available"))
 
             response = await async_client.get("/api/camera/cameras")
@@ -197,7 +197,7 @@ class TestSnapshots:
         mock_auth_bypass
     ):
         """Testet GET /api/camera/snapshot für nicht-existentes Event"""
-        with patch('api.routes.camera.frigate') as mock:
+        with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_snapshot = AsyncMock(return_value=None)
 
             response = await async_client.get("/api/camera/snapshot/nonexistent")
@@ -255,7 +255,7 @@ class TestCameraErrorHandling:
         mock_auth_bypass
     ):
         """Testet Fehler bei Frigate-Verbindungsproblem"""
-        with patch('api.routes.camera.frigate') as mock:
+        with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_events = AsyncMock(side_effect=Exception("Connection refused"))
 
             response = await async_client.get("/api/camera/events")
@@ -269,7 +269,7 @@ class TestCameraErrorHandling:
         mock_auth_bypass
     ):
         """Testet Fehler beim Snapshot-Abruf"""
-        with patch('api.routes.camera.frigate') as mock:
+        with patch('ha_glue.api.routes.camera.frigate') as mock:
             mock.get_snapshot = AsyncMock(side_effect=Exception("Snapshot error"))
 
             response = await async_client.get("/api/camera/snapshot/event-1")

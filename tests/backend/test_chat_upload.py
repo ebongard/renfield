@@ -230,6 +230,28 @@ class TestDocumentContextInjection:
     For unit tests that don't need DB, we test WSChatMessage directly.
     """
 
+    @pytest.fixture(autouse=True)
+    def _patch_chat_handler_session(self, async_engine):
+        """Point chat_handler's AsyncSessionLocal at the test engine.
+
+        ``_fetch_document_context`` opens its own ``AsyncSessionLocal()``
+        rather than accepting an injected session — by default that binds
+        to the production Postgres engine, so rows the test wrote to the
+        in-memory SQLite test DB are invisible. Rebind the session-maker
+        to the shared test engine so the function reads what the test set
+        up. Committed rows are visible across sessions on the StaticPool
+        in-memory engine.
+        """
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS, async_sessionmaker
+
+        test_maker = async_sessionmaker(
+            async_engine, class_=_AS, expire_on_commit=False
+        )
+        with patch(
+            "api.websocket.chat_handler.AsyncSessionLocal", test_maker
+        ):
+            yield
+
     @pytest.mark.backend
     async def test_fetch_document_context_single(self, async_client, db_session: AsyncSession):
         """Single completed document produces document_context_section"""
@@ -501,7 +523,10 @@ class TestChatUploadIndex:
             mock_doc.id = 42
             mock_doc.chunk_count = 5
 
-            with patch("api.routes.chat_upload.RAGService") as MockRAG:
+            # RAGService is imported lazily inside the route handler
+            # (`from services.rag_service import RAGService`), so the patch
+            # must target the definition module, not the route module.
+            with patch("services.rag_service.RAGService") as MockRAG:
                 rag_instance = AsyncMock()
                 rag_instance.ingest_document = AsyncMock(return_value=mock_doc)
                 MockRAG.return_value = rag_instance
@@ -1383,6 +1408,23 @@ class TestWSNotificationRegistry:
 
 class TestOCRSupport:
     """Tests for PNG/JPG image upload support"""
+
+    @pytest.fixture(autouse=True)
+    def _allow_image_extensions(self, monkeypatch):
+        """Ensure png/jpg/jpeg are accepted regardless of ambient .env.
+
+        The upload route gates on ``settings.allowed_extensions_list``,
+        derived from the ``ALLOWED_EXTENSIONS`` env var. The test
+        container's .env omits the image extensions, so override the
+        underlying setting to the full code-default list.
+        """
+        from utils.config import settings as _settings
+
+        monkeypatch.setattr(
+            _settings,
+            "allowed_extensions",
+            "pdf,docx,doc,txt,md,html,pptx,xlsx,png,jpg,jpeg",
+        )
 
     @pytest.mark.backend
     async def test_upload_png_accepted(self, async_client: AsyncClient):

@@ -12,11 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Ensure 'ollama' module is available even when the package isn't installed.
+# Stub 'ollama' only if genuinely absent — in the real test container it
+# IS installed, and stubbing it poisons later tests that import it.
 if "ollama" not in sys.modules:
-    _ollama_stub = MagicMock()
-    _ollama_stub.AsyncClient = MagicMock()
-    sys.modules["ollama"] = _ollama_stub
+    try:
+        import ollama  # noqa: F401
+    except Exception:  # noqa: BLE001
+        _ollama_stub = MagicMock()
+        _ollama_stub.AsyncClient = MagicMock()
+        sys.modules["ollama"] = _ollama_stub
 
 from services.agent_router import _parse_roles
 from services.agent_service import AgentService

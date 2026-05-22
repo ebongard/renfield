@@ -23,7 +23,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_satellite_info_has_version_field(self):
         """SatelliteInfo should have version and update fields"""
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, UpdateStatus
 
         caps = SatelliteCapabilities()
         mock_ws = MagicMock()
@@ -46,7 +46,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.asyncio
     async def test_register_with_version(self):
         """Register should store version"""
-        from services.satellite_manager import SatelliteManager
+        from ha_glue.services.satellite_manager import SatelliteManager
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -68,7 +68,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_update_heartbeat_with_version(self):
         """Heartbeat should update version"""
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -91,7 +91,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_set_update_status(self):
         """set_update_status should update all update fields"""
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -120,7 +120,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_clear_update_status(self):
         """clear_update_status should reset all update fields"""
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -145,7 +145,7 @@ class TestSatelliteManagerVersionTracking:
     @pytest.mark.unit
     def test_get_all_satellites_includes_version(self):
         """get_all_satellites should include version and update info"""
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo, SatelliteManager, UpdateStatus
 
         manager = SatelliteManager()
         mock_ws = MagicMock()
@@ -181,9 +181,9 @@ class TestSatelliteUpdateService:
     @pytest.mark.unit
     def test_get_latest_version(self):
         """get_latest_version should return config value"""
-        from services.satellite_update_service import SatelliteUpdateService
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
             assert service.get_latest_version() == "2.0.0"
@@ -191,9 +191,9 @@ class TestSatelliteUpdateService:
     @pytest.mark.unit
     def test_is_update_available_newer(self):
         """is_update_available should return True when newer version exists"""
-        from services.satellite_update_service import SatelliteUpdateService
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
             mock_settings.satellite_latest_version = "2.0.0"
             service = SatelliteUpdateService()
 
@@ -203,9 +203,9 @@ class TestSatelliteUpdateService:
     @pytest.mark.unit
     def test_is_update_available_same(self):
         """is_update_available should return False when same version"""
-        from services.satellite_update_service import SatelliteUpdateService
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
@@ -214,9 +214,9 @@ class TestSatelliteUpdateService:
     @pytest.mark.unit
     def test_is_update_available_newer_current(self):
         """is_update_available should return False when current is newer"""
-        from services.satellite_update_service import SatelliteUpdateService
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
@@ -225,9 +225,9 @@ class TestSatelliteUpdateService:
     @pytest.mark.unit
     def test_is_update_available_unknown(self):
         """is_update_available should return False for unknown version"""
-        from services.satellite_update_service import SatelliteUpdateService
+        from ha_glue.services.satellite_update_service import SatelliteUpdateService
 
-        with patch('services.satellite_update_service.settings') as mock_settings:
+        with patch('ha_glue.services.satellite_update_service.settings') as mock_settings:
             mock_settings.satellite_latest_version = "1.0.0"
             service = SatelliteUpdateService()
 
@@ -289,7 +289,7 @@ class TestVersionComparison:
     @pytest.mark.unit
     def test_version_comparison_in_api(self):
         """_is_update_available should correctly compare versions"""
-        from api.routes.satellites import _is_update_available
+        from ha_glue.api.routes.satellites import _is_update_available
 
         # Newer version available
         assert _is_update_available("1.0.0", "2.0.0") is True

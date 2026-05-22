@@ -23,25 +23,29 @@ class TestOllamaService:
 
     @pytest.fixture
     def mock_ollama_client(self):
-        """Mock Ollama Client"""
-        with patch('services.ollama_service.ollama') as mock:
-            mock_client = MagicMock()
+        """Mock Ollama Client.
 
-            # Mock for list models
-            mock_model = MagicMock()
-            mock_model.model = "llama3.2:3b"
-            mock_list = MagicMock()
-            mock_list.models = [mock_model]
-            mock_client.list = AsyncMock(return_value=mock_list)
+        ollama_service no longer imports the ``ollama`` package directly —
+        it builds clients via ``utils.llm_client``. The tests below assign
+        this mock straight onto ``service.client``, so we just hand back a
+        configured MagicMock instead of patching a now-absent symbol.
+        """
+        mock_client = MagicMock()
 
-            # Mock for chat
-            mock_response = MagicMock()
-            mock_response.message = MagicMock()
-            mock_response.message.content = "Test response"
-            mock_client.chat = AsyncMock(return_value=mock_response)
+        # Mock for list models
+        mock_model = MagicMock()
+        mock_model.model = "llama3.2:3b"
+        mock_list = MagicMock()
+        mock_list.models = [mock_model]
+        mock_client.list = AsyncMock(return_value=mock_list)
 
-            mock.AsyncClient = MagicMock(return_value=mock_client)
-            yield mock_client
+        # Mock for chat
+        mock_response = MagicMock()
+        mock_response.message = MagicMock()
+        mock_response.message.content = "Test response"
+        mock_client.chat = AsyncMock(return_value=mock_response)
+
+        return mock_client
 
     @pytest.mark.unit
     async def test_chat_simple(self, mock_ollama_client):
@@ -118,11 +122,13 @@ class TestOllamaServiceRankedIntents:
 
     @pytest.fixture
     def mock_ollama_client(self):
-        """Mock Ollama Client"""
-        with patch('services.ollama_service.ollama') as mock:
-            mock_client = MagicMock()
-            mock.AsyncClient = MagicMock(return_value=mock_client)
-            yield mock_client
+        """Mock Ollama Client.
+
+        See TestOllamaService.mock_ollama_client — ollama_service builds
+        its client via utils.llm_client; the test assigns this mock onto
+        ``service.client`` directly.
+        """
+        return MagicMock()
 
     def _make_service(self, mock_ollama_client):
         """Create OllamaService with mocked settings."""
@@ -599,7 +605,7 @@ class TestDeviceManager:
     @pytest.mark.unit
     def test_device_manager_init(self):
         """Testet Initialisierung"""
-        from services.device_manager import DeviceManager
+        from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
 
@@ -609,7 +615,7 @@ class TestDeviceManager:
     @pytest.mark.unit
     async def test_register_device(self):
         """Testet Geräte-Registrierung"""
-        from services.device_manager import DeviceManager
+        from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
         device_id = "test-device-123"
@@ -633,7 +639,7 @@ class TestDeviceManager:
     @pytest.mark.unit
     async def test_unregister_device(self):
         """Testet Geräte-Abmeldung"""
-        from services.device_manager import DeviceManager
+        from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
         device_id = "test-device-456"
@@ -657,7 +663,7 @@ class TestDeviceManager:
     @pytest.mark.unit
     async def test_get_devices_by_room(self):
         """Testet Geräte nach Raum filtern"""
-        from services.device_manager import DeviceManager
+        from ha_glue.services.device_manager import DeviceManager
 
         manager = DeviceManager()
 
@@ -689,7 +695,7 @@ class TestRoomServiceUnit:
     @pytest.mark.database
     async def test_create_room(self, db_session):
         """Testet Raum-Erstellung"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         # Create a fresh session to avoid transaction issues
         service = RoomService(db_session)
@@ -710,7 +716,7 @@ class TestRoomServiceUnit:
     @pytest.mark.database
     async def test_get_room_by_alias(self, db_session, test_room):
         """Testet Raum-Abfrage nach Alias"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         # Flush to ensure test_room is in the database
         await db_session.flush()
@@ -725,7 +731,7 @@ class TestRoomServiceUnit:
     @pytest.mark.database
     async def test_get_all_rooms(self, db_session, test_room):
         """Testet Raum-Liste"""
-        from services.room_service import RoomService
+        from ha_glue.services.room_service import RoomService
 
         # Flush to ensure test_room is in the database
         await db_session.flush()

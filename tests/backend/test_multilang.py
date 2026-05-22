@@ -367,7 +367,7 @@ class TestSatelliteLanguage:
         """Test SatelliteInfo dataclass has language field"""
         from unittest.mock import MagicMock
 
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo
 
         mock_websocket = MagicMock()
         caps = SatelliteCapabilities()
@@ -387,7 +387,7 @@ class TestSatelliteLanguage:
         """Test SatelliteInfo defaults to German"""
         from unittest.mock import MagicMock
 
-        from services.satellite_manager import SatelliteCapabilities, SatelliteInfo
+        from ha_glue.services.satellite_manager import SatelliteCapabilities, SatelliteInfo
 
         mock_websocket = MagicMock()
         caps = SatelliteCapabilities()
@@ -406,7 +406,7 @@ class TestSatelliteLanguage:
         """Test satellite registration stores language"""
         from unittest.mock import AsyncMock, MagicMock
 
-        from services.satellite_manager import SatelliteManager
+        from ha_glue.services.satellite_manager import SatelliteManager
 
         manager = SatelliteManager()
         mock_websocket = MagicMock()

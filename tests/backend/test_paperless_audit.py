@@ -1437,7 +1437,7 @@ class TestApiRouteHelpers:
     @pytest.mark.unit
     def test_get_service_raises_503(self):
         """_get_service should raise 503 when service not in app state."""
-        from api.routes.paperless_audit import _get_service
+        from ha_glue.api.routes.paperless_audit import _get_service
         from fastapi import HTTPException
 
         mock_request = MagicMock()
@@ -1450,7 +1450,7 @@ class TestApiRouteHelpers:
     @pytest.mark.unit
     def test_get_service_returns_service(self):
         """_get_service should return the service when available."""
-        from api.routes.paperless_audit import _get_service
+        from ha_glue.api.routes.paperless_audit import _get_service
 
         mock_service = MagicMock()
         mock_request = MagicMock()
@@ -1462,7 +1462,7 @@ class TestApiRouteHelpers:
     @pytest.mark.unit
     def test_audit_start_request_defaults(self):
         """AuditStartRequest should have correct defaults."""
-        from api.routes.paperless_audit import AuditStartRequest
+        from ha_glue.api.routes.paperless_audit import AuditStartRequest
 
         req = AuditStartRequest()
         assert req.mode == "new_only"
@@ -1473,7 +1473,7 @@ class TestApiRouteHelpers:
     @pytest.mark.unit
     def test_audit_start_request_custom(self):
         """AuditStartRequest should accept custom values."""
-        from api.routes.paperless_audit import AuditStartRequest
+        from ha_glue.api.routes.paperless_audit import AuditStartRequest
 
         req = AuditStartRequest(
             mode="full",

@@ -9,24 +9,46 @@ Tests cover:
 - is_plugin_enabled helper
 """
 
+import importlib
 import sys
 from unittest.mock import MagicMock, patch
 
-_missing_stubs = [
+# These heavy/optional dependencies are stubbed ONLY when genuinely not
+# importable in the current environment. The previous unconditional
+# `sys.modules[mod] = MagicMock()` poisoned the whole session: in the real
+# backend test container these packages ARE installed, and replacing them
+# with MagicMocks broke every later test that transitively imported them
+# (e.g. route modules importing asyncpg) — most visibly causing the
+# ha_glue route mounts in conftest to silently fail, 404-ing every
+# /api/rooms, /api/camera, /api/homeassistant test. Stub-if-missing keeps
+# this file runnable standalone without polluting a real environment.
+_optional_stubs = [
     "asyncpg", "whisper", "piper", "piper.voice",
     "speechbrain", "speechbrain.inference", "speechbrain.inference.speaker",
     "openwakeword", "openwakeword.model",
     "slowapi", "slowapi.errors", "slowapi.middleware", "slowapi.util",
 ]
-for _mod in _missing_stubs:
-    if _mod not in sys.modules:
+_stubbed: list[str] = []
+for _mod in _optional_stubs:
+    if _mod in sys.modules:
+        continue
+    try:
+        importlib.import_module(_mod)
+    except Exception:  # noqa: BLE001 — genuinely absent: stub it
         sys.modules[_mod] = MagicMock()
+        _stubbed.append(_mod)
 
-# slowapi stubs need specific attributes
-sys.modules["slowapi"].Limiter = MagicMock
-sys.modules["slowapi.errors"].RateLimitExceeded = type("RateLimitExceeded", (Exception,), {})
-sys.modules["slowapi.middleware"].SlowAPIMiddleware = MagicMock
-sys.modules["slowapi.util"].get_remote_address = MagicMock(return_value="127.0.0.1")
+# slowapi stubs need specific attributes — only apply when slowapi was
+# actually stubbed (absent), never overwrite a real install.
+if "slowapi" in _stubbed:
+    sys.modules["slowapi"].Limiter = MagicMock
+    sys.modules["slowapi.errors"].RateLimitExceeded = type(
+        "RateLimitExceeded", (Exception,), {}
+    )
+    sys.modules["slowapi.middleware"].SlowAPIMiddleware = MagicMock
+    sys.modules["slowapi.util"].get_remote_address = MagicMock(
+        return_value="127.0.0.1"
+    )
 
 import pytest
 from fastapi import FastAPI, Request

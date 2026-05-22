@@ -20,7 +20,7 @@ from httpx import AsyncClient
 @pytest.fixture
 def mock_ha_client_for_routes():
     """Mock HA Client für Route-Tests"""
-    with patch('api.routes.homeassistant.ha_client') as mock:
+    with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
         mock.get_states = AsyncMock(return_value=[
             {"entity_id": "light.wohnzimmer", "state": "on"},
             {"entity_id": "switch.fernseher", "state": "off"}
@@ -48,7 +48,7 @@ def mock_ha_client_for_routes():
 @pytest.fixture
 def mock_auth_bypass():
     """Bypass auth for testing"""
-    with patch('api.routes.homeassistant.require_permission') as mock:
+    with patch('ha_glue.api.routes.homeassistant.require_permission') as mock:
         mock.return_value = lambda: MagicMock(id=1, username="test")
         yield mock
 
@@ -98,7 +98,7 @@ class TestStateQueries:
         mock_auth_bypass
     ):
         """Testet GET für nicht-existente Entity"""
-        with patch('api.routes.homeassistant.ha_client') as mock:
+        with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.get_state = AsyncMock(return_value=None)
 
             response = await async_client.get("/api/homeassistant/state/nonexistent.entity")
@@ -191,7 +191,7 @@ class TestDeviceControl:
         mock_auth_bypass
     ):
         """Testet Fehler bei turn_on"""
-        with patch('api.routes.homeassistant.ha_client') as mock:
+        with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.turn_on = AsyncMock(return_value=False)
 
             response = await async_client.post("/api/homeassistant/turn_on/light.wohnzimmer")
@@ -236,7 +236,7 @@ class TestServiceCalls:
         mock_auth_bypass
     ):
         """Testet Fehler bei Service-Aufruf"""
-        with patch('api.routes.homeassistant.ha_client') as mock:
+        with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.call_service = AsyncMock(return_value=False)
 
             response = await async_client.post(
@@ -302,7 +302,7 @@ class TestErrorHandling:
         mock_auth_bypass
     ):
         """Testet Exception-Handling bei HA Client Fehler"""
-        with patch('api.routes.homeassistant.ha_client') as mock:
+        with patch('ha_glue.api.routes.homeassistant.ha_client') as mock:
             mock.get_states = AsyncMock(side_effect=Exception("Connection failed"))
 
             response = await async_client.get("/api/homeassistant/states")
