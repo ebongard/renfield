@@ -65,6 +65,13 @@ ALLOWED_IMPORTERS = frozenset({
     "alembic/env.py",
     # (2) Lazy compat shim
     "models/database.py",
+    # (2) Lazy compat shim — whisper_prompt_builder._build_default() does a
+    # function-body `from ha_glue.models.database import Room` to enrich the
+    # Whisper prompt with room names. The import is deferred (never reached
+    # on a platform-only deploy without ha_glue), so it satisfies the same
+    # lazy-pattern rule as the compat shim above. Surfaced once the boundary
+    # test's BACKEND_ROOT was fixed to resolve the real source tree.
+    "services/whisper_prompt_builder.py",
 })
 
 
