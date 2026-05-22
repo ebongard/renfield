@@ -87,7 +87,9 @@ class TestKnowledgeSearch:
         assert result["data"]["results_count"] == 2
         assert "rechnung_2022_03.pdf" in result["data"]["context"]
         assert "nebenkosten_2022.pdf" in result["data"]["context"]
-        mock_rag.search.assert_called_once_with(query="Rechnungen 2022 Am Stirkenbend", top_k=None)
+        mock_rag.search.assert_called_once_with(
+            query="Rechnungen 2022 Am Stirkenbend", top_k=None, user_id=None
+        )
 
     @pytest.mark.unit
     async def test_custom_top_k(self):
@@ -116,7 +118,7 @@ class TestKnowledgeSearch:
             _teardown_stubs(stubs)
 
         assert result["success"] is True
-        mock_rag.search.assert_called_once_with(query="test", top_k=30)
+        mock_rag.search.assert_called_once_with(query="test", top_k=30, user_id=None)
 
     @pytest.mark.unit
     async def test_no_results(self):

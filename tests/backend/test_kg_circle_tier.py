@@ -82,9 +82,10 @@ class TestUpdateEntityCircleTierDispatch:
              patch.object(svc.db, "refresh", new=AsyncMock()):
             result = await svc.update_entity_circle_tier(entity_id=1, circle_tier=2)
         upd.assert_awaited_once()
-        # Policy carries the new tier int
-        assert upd.await_args.args[1] == "abc-123"
-        assert upd.await_args.args[2] == {"tier": 2}
+        # `new=AsyncMock()` replaces the unbound method with a plain mock,
+        # so it does NOT receive `self` — args are (atom_id, policy).
+        assert upd.await_args.args[0] == "abc-123"
+        assert upd.await_args.args[1] == {"tier": 2}
         assert result is ent
 
     @pytest.mark.asyncio

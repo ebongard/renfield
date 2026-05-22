@@ -368,7 +368,7 @@ class TestExtractAndSave:
         mock_client.embeddings = AsyncMock(
             return_value=MagicMock(embedding=[0.1] * 768)
         )
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
         entities, relations = await kg_service.extract_and_save(
@@ -391,7 +391,7 @@ class TestExtractAndSave:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         entities, relations = await kg_service.extract_and_save(
             "Schalte das Licht ein",
@@ -406,7 +406,7 @@ class TestExtractAndSave:
         """LLM call failure returns empty lists gracefully."""
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(side_effect=Exception("LLM down"))
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         entities, relations = await kg_service.extract_and_save(
             "Test message", "Test response",
@@ -425,18 +425,41 @@ class TestGetRelevantContext:
 
     @pytest.mark.unit
     async def test_get_relevant_context_returns_none_when_no_embedding(self, kg_service, db_session):
-        """Returns None when embedding is None."""
-        result = await kg_service.get_relevant_context("Wo wohnt Edi?", user_id=None)
+        """Returns None when embedding is None.
 
-        # _get_embedding returns None (mocked), so no pgvector query is attempted
+        get_relevant_context delegates to a fresh ``KGRetrieval`` instance,
+        so the kg_service fixture mocks do not reach it — patch
+        ``KGRetrieval`` directly. With ``_get_embedding`` returning None the
+        retrieval loop skips the pgvector ``<=>`` query (unparseable by the
+        SQLite test engine) and returns None.
+        """
+        with patch(
+            "services.kg_retrieval.KGRetrieval._extract_query_entities",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.kg_retrieval.KGRetrieval._get_embedding",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await kg_service.get_relevant_context("Wo wohnt Edi?", user_id=None)
+
         assert result is None
 
     @pytest.mark.unit
     async def test_get_relevant_context_embedding_failure(self, kg_service, db_session):
-        """Returns None when embedding generation fails."""
-        kg_service._get_embedding = AsyncMock(side_effect=Exception("No model"))
+        """Returns None when embedding generation fails.
 
-        result = await kg_service.get_relevant_context("Test", user_id=None)
+        Patches on ``KGRetrieval`` — get_relevant_context delegates there.
+        A raising ``_get_embedding`` is caught per search-text and the loop
+        skips the pgvector query, so the call resolves to None.
+        """
+        with patch(
+            "services.kg_retrieval.KGRetrieval._extract_query_entities",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.kg_retrieval.KGRetrieval._get_embedding",
+            new=AsyncMock(side_effect=Exception("No model")),
+        ):
+            result = await kg_service.get_relevant_context("Test", user_id=None)
 
         assert result is None
 
@@ -727,7 +750,7 @@ class TestExtractFromText:
         mock_client.embeddings = AsyncMock(
             return_value=MagicMock(embedding=[0.1] * 768)
         )
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
         entities, relations = await kg_service.extract_from_text(
@@ -750,7 +773,7 @@ class TestExtractFromText:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         entities, relations = await kg_service.extract_from_text(
             "This is a table of contents with page numbers.",
@@ -764,7 +787,7 @@ class TestExtractFromText:
         """LLM failure returns empty lists gracefully."""
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(side_effect=Exception("LLM down"))
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         entities, relations = await kg_service.extract_from_text("Some text")
 
@@ -1182,7 +1205,7 @@ class TestEntityValidationInExtraction:
         mock_client.embeddings = AsyncMock(
             return_value=MagicMock(embedding=[0.1] * 768)
         )
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
         entities, _relations = await kg_service.extract_and_save(
@@ -1216,7 +1239,7 @@ class TestEntityValidationInExtraction:
         mock_client.embeddings = AsyncMock(
             return_value=MagicMock(embedding=[0.1] * 768)
         )
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
         kg_service._find_similar_entity = AsyncMock(return_value=None)
 
         entities, _relations = await kg_service.extract_from_text(
@@ -1246,7 +1269,7 @@ class TestQueryEntityExtraction:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         result = await kg_service._extract_query_entities(
             "Was weiss ich über Anna von Beispiel aus Krefeld?"
@@ -1262,7 +1285,7 @@ class TestQueryEntityExtraction:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         result = await kg_service._extract_query_entities("Wie wird das Wetter?")
 
@@ -1273,7 +1296,7 @@ class TestQueryEntityExtraction:
         """LLM failure returns empty list gracefully."""
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(side_effect=Exception("LLM down"))
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         result = await kg_service._extract_query_entities("Test query")
 
@@ -1287,7 +1310,7 @@ class TestQueryEntityExtraction:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         result = await kg_service._extract_query_entities("Wer ist Anton?")
 
@@ -1301,7 +1324,7 @@ class TestQueryEntityExtraction:
 
         mock_client = AsyncMock()
         mock_client.chat = AsyncMock(return_value=llm_response)
-        kg_service._ollama_client = mock_client
+        kg_service._chat_client = mock_client
 
         result = await kg_service._extract_query_entities("Test")
 
@@ -1309,23 +1332,29 @@ class TestQueryEntityExtraction:
 
     @pytest.mark.unit
     async def test_get_relevant_context_uses_extracted_entities(self, kg_service, db_session):
-        """get_relevant_context embeds extracted entity names, not the full query."""
-        kg_service._extract_query_entities = AsyncMock(return_value=["Anton"])
-        # _get_embedding returns None (mocked in fixture) → no pgvector query
-        # We just verify _get_embedding is called with "Anton" not the full query
+        """get_relevant_context embeds extracted entity names, not the full query.
 
+        get_relevant_context delegates to a fresh ``KGRetrieval`` instance —
+        patch the embed/extract helpers on ``KGRetrieval``, not on the
+        kg_service fixture. ``_get_embedding`` returns None so the pgvector
+        ``<=>`` query (unparseable by SQLite) is skipped.
+        """
         embed_calls = []
-        original_get_embedding = kg_service._get_embedding
 
-        async def tracking_embed(text_input):
+        async def tracking_embed(self, text_input):
             embed_calls.append(text_input)
-            return await original_get_embedding(text_input)
+            return None
 
-        kg_service._get_embedding = tracking_embed
-
-        await kg_service.get_relevant_context(
-            "Was weiss ich über Anton?", user_id=None,
-        )
+        with patch(
+            "services.kg_retrieval.KGRetrieval._extract_query_entities",
+            new=AsyncMock(return_value=["Anton"]),
+        ), patch(
+            "services.kg_retrieval.KGRetrieval._get_embedding",
+            new=tracking_embed,
+        ):
+            await kg_service.get_relevant_context(
+                "Was weiss ich über Anton?", user_id=None,
+            )
 
         # Should have embedded "Anton", not the full query
         assert embed_calls == ["Anton"]
@@ -1333,20 +1362,22 @@ class TestQueryEntityExtraction:
     @pytest.mark.unit
     async def test_get_relevant_context_falls_back_to_full_query(self, kg_service, db_session):
         """Falls back to full query when no entities extracted."""
-        kg_service._extract_query_entities = AsyncMock(return_value=[])
-
         embed_calls = []
-        original_get_embedding = kg_service._get_embedding
 
-        async def tracking_embed(text_input):
+        async def tracking_embed(self, text_input):
             embed_calls.append(text_input)
-            return await original_get_embedding(text_input)
+            return None
 
-        kg_service._get_embedding = tracking_embed
-
-        await kg_service.get_relevant_context(
-            "Wie wird das Wetter?", user_id=None,
-        )
+        with patch(
+            "services.kg_retrieval.KGRetrieval._extract_query_entities",
+            new=AsyncMock(return_value=[]),
+        ), patch(
+            "services.kg_retrieval.KGRetrieval._get_embedding",
+            new=tracking_embed,
+        ):
+            await kg_service.get_relevant_context(
+                "Wie wird das Wetter?", user_id=None,
+            )
 
         # Should have embedded the full query as fallback
         assert embed_calls == ["Wie wird das Wetter?"]
