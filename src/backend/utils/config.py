@@ -350,6 +350,21 @@ class Settings(BaseSettings):
     memory_relevance_filter_enabled: bool = True                                  # Skip transactional queries
     memory_retrieval_budget_chars: int = Field(default=2000, ge=500, le=10000)   # Max chars for memory prompt block
 
+    # Procedural Skills (self-learning Phase 1)
+    # The agent learns multi-step tool-call recipes from complex turns and
+    # reuses them on similar future requests. See docs/SELF_LEARNING.md.
+    skills_enabled: bool = False                                            # Opt-in for the whole feature
+    skill_extract_enabled: bool = True                                       # Auto-extract from agent turns
+    skill_extract_min_tool_calls: int = Field(default=3, ge=1, le=20)        # Threshold for "complex" turn
+    skill_extract_model: str = ""                                            # Empty = use ollama_chat_model
+    skill_inject_enabled: bool = True                                        # Inject matching skills into agent prompt
+    skill_inject_top_k: int = Field(default=3, ge=1, le=10)                  # Max skills injected per turn
+    skill_inject_similarity_threshold: float = Field(default=0.75, ge=0.0, le=1.0)  # Min cosine sim
+    skill_seed_load_on_boot: bool = True                                     # Load src/backend/seed_skills/*.md at boot
+    skill_seed_directory: str = "seed_skills"                                # Relative to backend root
+    skill_auto_demote_threshold: int = Field(default=5, ge=1, le=100)        # Failures before auto-deactivate
+    skill_auto_demote_success_rate: float = Field(default=0.10, ge=0.0, le=1.0)  # Success rate below this triggers demote
+
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
     kg_extraction_model: str = ""                                                # Empty = use default model

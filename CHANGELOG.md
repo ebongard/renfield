@@ -6,6 +6,15 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 
 ---
 
+## [Unreleased]
+
+### Hinzugefuegt
+
+- **Self-Learning Phase 1 — prozedurale Skills** (`SKILLS_ENABLED=true`). Der Agent destilliert nach komplexen Turns (>= `SKILL_EXTRACT_MIN_TOOL_CALLS` erfolgreiche Tool-Calls, mehrere unterschiedliche Tools, sauberer final_answer) automatisch eine wiederverwendbare Schritt-fuer-Schritt-Prozedur und legt sie als neuen Atom-Subtype `procedural_skill` ab. Bei aehnlichen Folge-Anfragen werden die Top-K passenden Skills per Embedding-Similarity in den Agent-Prompt injiziert (parallel zur bestehenden `IntentFeedbackService`-Few-Shot-Injection). Auto-Demote bei wiederholten Fehlschlaegen, geschuetzt durch `pinned`-Flag.
+- **Bundled Seed-Skills** in `src/backend/seed_skills/*.md` (5 Default-Prozeduren: DLNA-Album-Playback, Paperless-Mail-Versand, Licht-Steuerung, Wetter-Abfrage, KB-Suche). Boot-Loader schreibt sie idempotent als `source=seed`, `circle_tier=public` in die DB.
+- **`/api/skills`-Route** — CRUD + Pin/Unpin + Tier-Aenderung (cascade via `AtomService.update_tier`).
+- Neue Settings: `SKILLS_ENABLED`, `SKILL_EXTRACT_*`, `SKILL_INJECT_*`, `SKILL_AUTO_DEMOTE_*`, `SKILL_SEED_LOAD_ON_BOOT`.
+
 ## [v2.8.1] — 2026-05-22
 
 ### Geändert

@@ -395,6 +395,7 @@ def _table_for_atom_type(atom_type: str) -> str:
         "kg_node": "kg_entities",
         "kg_edge": "kg_relations",
         "conversation_memory": "conversation_memories",
+        "procedural_skill": "procedural_skills",
     }
     if atom_type not in table_map:
         raise ValueError(f"Unknown atom_type: {atom_type}")
@@ -405,12 +406,16 @@ def _source_id_for(atom: Atom) -> str:
     """Extract the source row's primary key as a string."""
     payload = atom.payload or {}
     # Prefer explicit document_id / chunk_id / entity_id / relation_id /
-    # memory_id keys (ordered most-specific first).
-    for key in ("document_id", "chunk_id", "entity_id", "relation_id", "memory_id"):
+    # memory_id / skill_id keys (ordered most-specific first).
+    for key in (
+        "document_id", "chunk_id", "entity_id", "relation_id",
+        "memory_id", "skill_id",
+    ):
         if key in payload:
             return str(payload[key])
     # Fall back to the atom's stored source_id placeholder if set elsewhere
     raise ValueError(
         f"Cannot determine source_id for atom {atom.atom_type}: "
-        f"payload missing document_id/chunk_id/entity_id/relation_id/memory_id"
+        f"payload missing document_id/chunk_id/entity_id/relation_id/"
+        f"memory_id/skill_id"
     )

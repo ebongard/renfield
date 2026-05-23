@@ -982,6 +982,78 @@ class EpisodicMemory(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+class ProceduralSkill(Base):
+    """
+    Procedural skill — agent-learned how-to recipe for a class of tasks.
+
+    Self-learning Phase 1: the agent extracts a Skill after a complex turn
+    (≥ ``settings.skill_extract_min_tool_calls`` successful tool calls).
+    On a future similar request, the SkillService retrieves the top-K
+    similar skills by embedding cosine and injects them into the agent
+    prompt as procedural memory (parallel to how memory_context and
+    tool_corrections are injected today).
+
+    Lifecycle:
+      - source="auto_extracted": created by SkillExtractor after a turn.
+      - source="seed":           loaded from src/backend/seed_skills/*.md
+                                  at boot. user_id=NULL, circle_tier=4 (public).
+                                  Bypasses the atom registry (no per-user owner).
+      - source="user_created":   authored via /api/skills.
+      - success_count / failure_count: bumped by the agent loop based on
+        the outcome of a turn that used the skill. Used by the curator
+        (Phase 4) to merge / archive / demote.
+
+    Circles:
+      atom_id is nullable. Auto-extracted and user-created skills register
+      with AtomService.upsert_atom (atom_type=procedural_skill) and get a
+      real atom_id + per-user policy. Seeds bypass the atom registry —
+      circle_tier=4 means "visible to everyone", retrieval treats the NULL
+      user_id as "system-owned, no access check needed".
+    """
+    __tablename__ = "procedural_skills"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+
+    title = Column(String(255), nullable=False)
+    body_md = Column(Text, nullable=False)
+    trigger_examples = Column(JSON, nullable=False, default=list)
+    tool_sequence = Column(JSON, nullable=False, default=list)
+
+    source = Column(String(20), nullable=False, default=SKILL_SOURCE_AUTO_EXTRACTED)
+    learned_from_conversation_id = Column(
+        Integer, ForeignKey("conversations.id"), nullable=True
+    )
+    version = Column(Integer, nullable=False, default=1)
+
+    success_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(DateTime, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    pinned = Column(Boolean, nullable=False, default=False)
+
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION) if PGVECTOR_AVAILABLE else Text,
+        nullable=True,
+    )
+
+    atom_id = Column(
+        String(36),
+        ForeignKey("atoms.atom_id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    circle_tier = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+    learned_from = relationship(
+        "Conversation", foreign_keys=[learned_from_conversation_id]
+    )
+
+
 # Memory History — Audit trail for memory modifications
 MEMORY_ACTION_CREATED = "created"
 MEMORY_ACTION_UPDATED = "updated"
@@ -1200,6 +1272,12 @@ ATOM_TYPE_KB_DOCUMENT = "kb_document"
 ATOM_TYPE_KG_NODE = "kg_node"
 ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
+ATOM_TYPE_PROCEDURAL_SKILL = "procedural_skill"
+
+# ProceduralSkill.source discriminators.
+SKILL_SOURCE_AUTO_EXTRACTED = "auto_extracted"  # agent learned from a complex turn
+SKILL_SOURCE_SEED = "seed"                       # loaded from src/backend/seed_skills/*.md
+SKILL_SOURCE_USER_CREATED = "user_created"       # manually authored via API/UI
 
 # Atom explicit grant permission levels — mirrors the legacy KB_PERM_*
 # values for migration parity.

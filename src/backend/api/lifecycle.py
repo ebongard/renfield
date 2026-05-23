@@ -631,6 +631,19 @@ async def lifespan(app: "FastAPI"):
     _schedule_federation_audit_cleanup()
     _schedule_paperless_sweepers(app)
 
+    # Self-learning Phase 1: load bundled seed skills into the database.
+    # Idempotent — seeds with a matching title are skipped, so re-running
+    # on every boot is safe. Gated on skills_enabled + skill_seed_load_on_boot.
+    if settings.skills_enabled and settings.skill_seed_load_on_boot:
+        try:
+            from services.skill_seed_loader import load_all_seeds
+            async with AsyncSessionLocal() as db_session:
+                loaded = await load_all_seeds(db_session)
+                if loaded:
+                    logger.info(f"🌱 Skill seeds loaded: {loaded}")
+        except Exception as e:
+            logger.warning(f"⚠️  Skill seed loading failed: {e}")
+
     # Presence / paperless audit / media follow / conversation handoff /
     # Zeroconf satellite discovery are bootstrapped by ha_glue via its
     # startup hook handler (fired below by `run_hooks("startup", ...)`).

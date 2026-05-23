@@ -500,6 +500,40 @@ Wenn `MEMORY_CONTRADICTION_RESOLUTION=true` (und `MEMORY_EXTRACTION_ENABLED=true
 
 ---
 
+### Procedural Skills (Self-Learning Phase 1)
+
+```bash
+# Master-Schalter — ohne dies passiert nichts
+SKILLS_ENABLED=false
+
+# Auto-Extraktion nach Agent-Turns
+SKILL_EXTRACT_ENABLED=true               # LLM-Skill-Extraktion nach komplexen Turns
+SKILL_EXTRACT_MIN_TOOL_CALLS=3           # Schwellwert "komplexer Turn"
+SKILL_EXTRACT_MODEL=                      # Leer = ollama_chat_model
+
+# Prompt-Injection — gelernte Skills in den Agent-Prompt einfuegen
+SKILL_INJECT_ENABLED=true
+SKILL_INJECT_TOP_K=3                      # Max injizierte Skills pro Turn
+SKILL_INJECT_SIMILARITY_THRESHOLD=0.75   # Min cosine similarity
+
+# Auto-Demote — wiederholt fehlgeschlagene Skills deaktivieren
+SKILL_AUTO_DEMOTE_THRESHOLD=5            # Failures bis zum Check
+SKILL_AUTO_DEMOTE_SUCCESS_RATE=0.10      # success_rate < dieser Wert -> deaktivieren
+
+# Seed-Skills aus src/backend/seed_skills/*.md beim Boot laden
+SKILL_SEED_LOAD_ON_BOOT=true
+SKILL_SEED_DIRECTORY=seed_skills          # Relativ zu src/backend/
+```
+
+**Verhalten:**
+Wenn `SKILLS_ENABLED=true`, laeuft nach jedem Agent-Turn ein Background-Task: er prueft die Trace-Heuristik (>= `SKILL_EXTRACT_MIN_TOOL_CALLS` erfolgreiche Tool-Calls, mehrere unterschiedliche Tools, sauberer final_answer) und schickt erfolgreiche Traces an den `SkillExtractor`-LLM-Call. Liefert dieser ein JSON-Objekt mit `{title, body_md, trigger_examples, tool_sequence}`, wird die Skill in `procedural_skills` (Atom-Typ `procedural_skill`, Owner-Tier `self`) gespeichert.
+
+Bei zukuenftigen Anfragen sucht der Agent vor dem LLM-Call mit dem User-Message-Embedding nach den Top-K aktiven Skills (eigene + public seeds) und injiziert sie als `{learned_skills}`-Block in den Prompt — analog zur bestehenden `{tool_corrections}`-Injection. Bei jedem Turn der eine Skill nutzt, wird `success_count` oder `failure_count` aktualisiert; Skills mit ueberwiegend Fehlschlaegen werden automatisch deaktiviert (ausser `pinned=true`).
+
+Owner-Sichtbarkeit ueber `/api/skills` (CRUD + pin/unpin + Tier-Aenderung).
+
+---
+
 ### Satellite System
 
 ```bash

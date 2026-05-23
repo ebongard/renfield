@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {learned_skills}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -18,6 +18,8 @@ de:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -131,6 +133,8 @@ de:
 
     {tool_corrections}
 
+    {learned_skills}
+
     {history_prompt}
 
     {conv_context}
@@ -179,6 +183,8 @@ de:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -236,6 +242,8 @@ de:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -310,6 +318,8 @@ de:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -413,6 +423,8 @@ de:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -576,7 +588,7 @@ de:
 
 en:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {learned_skills}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -590,6 +602,8 @@ en:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -697,6 +711,8 @@ en:
 
     {tool_corrections}
 
+    {learned_skills}
+
     {history_prompt}
 
     {conv_context}
@@ -742,6 +758,8 @@ en:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -796,6 +814,8 @@ en:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -867,6 +887,8 @@ en:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 
@@ -967,6 +989,8 @@ en:
     {tools_prompt}
 
     {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 

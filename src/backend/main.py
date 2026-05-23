@@ -34,6 +34,7 @@ from api.routes import (
     notifications,
     preferences,
     roles,
+    skills,
     speakers,
     tasks,
     users,
@@ -176,6 +177,7 @@ app.include_router(preferences.router, prefix="/api/preferences", tags=["Prefere
 app.include_router(mcp_routes.router, prefix="/api/mcp", tags=["MCP"])
 app.include_router(intents.router, prefix="/api/intents", tags=["Intents"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(skills.router, prefix="/api/skills", tags=["Skills"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
 app.include_router(kg_routes.router, prefix="/api/knowledge-graph", tags=["Knowledge Graph"])
 app.include_router(atoms.router, prefix="/api/atoms", tags=["Circles - Atoms"])

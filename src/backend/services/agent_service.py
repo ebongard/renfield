@@ -148,6 +148,13 @@ class AgentContext:
     # Adaptive tool result budget (set by _enforce_token_budget, 0=unlimited)
     tool_result_budget_chars: int = 0
 
+    # Self-learning Phase 1: IDs of procedural skills that were injected
+    # into THIS turn's prompt. The post-turn task (see AgentService.run's
+    # finally block) calls SkillService.record_outcome(skill_id, success)
+    # for each, where success = "the turn ended with a final_answer and no
+    # tool errors in the trace".
+    injected_skill_ids: list[int] = field(default_factory=list)
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -1030,6 +1037,31 @@ class AgentService:
         except Exception as e:
             logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
 
+        # Load procedural skills (self-learning Phase 1). Same pattern as
+        # tool_corrections above — open a fresh session, find_similar, format.
+        # Skip cleanly on any error so the agent prompt still gets built.
+        learned_skills = ""
+        if settings.skills_enabled and settings.skill_inject_enabled:
+            try:
+                from services.database import AsyncSessionLocal
+                from services.skill_service import SkillService
+                async with AsyncSessionLocal() as skill_db:
+                    skill_svc = SkillService(skill_db)
+                    matches = await skill_svc.find_similar(
+                        message, asker_id=user_id
+                    )
+                    if matches:
+                        learned_skills = skill_svc.format_for_prompt(matches, lang=lang)
+                        # Stash IDs on the context so the agent loop can bump
+                        # success/failure counts after the turn finishes.
+                        context.injected_skill_ids = [m["id"] for m in matches]
+                        logger.info(
+                            f"🧠 {len(matches)} procedural skill(s) injected "
+                            f"into agent prompt"
+                        )
+            except Exception as e:
+                logger.warning(f"⚠️ Skill injection lookup failed: {e}")
+
         # Build prompt from externalized template (role-specific or default)
         prompt = prompt_manager.get(
             "agent", self._prompt_key, lang=lang,
@@ -1041,6 +1073,7 @@ class AgentService:
             personality_context=personality_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
+            learned_skills=learned_skills,
             history_prompt=history_prompt,
             step_directive=step_directive
         )
@@ -1058,6 +1091,7 @@ class AgentService:
                 personality_context=personality_context,
                 tools_prompt=tools_prompt,
                 tool_corrections=tool_corrections,
+                learned_skills=learned_skills,
                 history_prompt=history_prompt,
                 step_directive=step_directive
             )
@@ -1127,6 +1161,25 @@ class AgentService:
             # exit path including timeouts, circuit-breaker trips, and
             # infinite-loop aborts.
             token_usage_info.set(context.get_token_usage())
+
+            # Self-learning Phase 1: post-turn skill bookkeeping.
+            # Scheduled as a fire-and-forget background task so the response
+            # path returns to the caller without waiting for the LLM extract
+            # call. Both branches no-op cleanly when context.steps is empty
+            # (e.g., very early failure) so we don't have to gate on
+            # success/failure here.
+            if settings.skills_enabled and user_id is not None:
+                try:
+                    import asyncio as _asyncio
+                    _asyncio.create_task(_post_turn_skill_bookkeeping(
+                        steps=list(context.steps),
+                        injected_skill_ids=list(context.injected_skill_ids),
+                        user_id=user_id,
+                        user_message=message,
+                        lang=lang or "de",
+                    ))
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"⚠️ Failed to schedule post-turn skill task: {e}")
 
     async def _run_impl(
         self,
@@ -1973,3 +2026,78 @@ def step_to_ws_message(step: AgentStep) -> dict:
             "step": step.step_number,
             "content": step.content,
         }
+
+
+# ============================================================================
+# Self-learning Phase 1 — post-turn skill bookkeeping (fire-and-forget)
+# ============================================================================
+
+async def _post_turn_skill_bookkeeping(
+    *,
+    steps: list,
+    injected_skill_ids: list[int],
+    user_id: int,
+    user_message: str,
+    lang: str,
+) -> None:
+    """Runs after the agent turn completes. Two responsibilities:
+
+    1. Record outcome on any skills that were injected into this turn's
+       prompt (so the agent can demote skills that stop helping).
+    2. If the turn was complex AND successful, ask the SkillExtractor to
+       distill a new procedural skill from the trace.
+
+    Errors are logged and swallowed — this is a side task, never a
+    blocker for the response path.
+    """
+    # Defer-imported to keep the module's top-level import cost unchanged
+    # for the hot path; this function only runs when skills_enabled=True.
+    from services.database import AsyncSessionLocal
+    from services.skill_extractor import SkillExtractor
+    from services.skill_service import SkillService
+
+    # Outcome heuristic: turn was successful if a final_answer step exists
+    # AND no error step appeared. Tool failures alone don't count — they
+    # may be recoverable mid-turn (the agent retried and succeeded).
+    has_final = any(getattr(s, "step_type", "") == "final_answer" for s in steps)
+    has_error = any(getattr(s, "step_type", "") == "error" for s in steps)
+    turn_success = has_final and not has_error
+
+    try:
+        async with AsyncSessionLocal() as db:
+            svc = SkillService(db)
+            for sid in injected_skill_ids:
+                try:
+                    await svc.record_outcome(sid, turn_success)
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️ Skill outcome session failed: {e}")
+
+    # Only consider extracting a NEW skill from a successful turn.
+    if not (turn_success and settings.skill_extract_enabled):
+        return
+
+    try:
+        extractor = SkillExtractor()
+        draft = await extractor.extract(
+            user_message=user_message, steps=steps, lang=lang,
+        )
+        if draft is None:
+            return
+
+        async with AsyncSessionLocal() as db:
+            svc = SkillService(db)
+            await svc.create_auto_extracted(
+                user_id=user_id,
+                title=draft.title,
+                body_md=draft.body_md,
+                trigger_examples=draft.trigger_examples,
+                tool_sequence=draft.tool_sequence,
+                # Auto-extracted skills land in the owner's self-tier by
+                # default. Promotion to household/public is a manual
+                # owner action via /api/skills/{id}.
+                circle_tier=0,
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
