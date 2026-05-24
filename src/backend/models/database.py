@@ -1125,6 +1125,51 @@ class AgentTrajectory(Base):
     extracted_skill = relationship("ProceduralSkill", foreign_keys=[extracted_skill_id])
 
 
+class ToolOutcomeStat(Base):
+    """
+    Rolling success/failure counters per (user, tool) pair.
+
+    Self-learning Phase 3: every ``tool_result`` step in the agent loop
+    bumps either ``success_count`` or ``failure_count`` on the row keyed
+    by (user_id, tool_name). At prompt-build time the agent reads the
+    stats for the current asker and injects a ``{tool_health_warnings}``
+    block when a tool's success rate has dropped below
+    ``settings.tool_health_warn_success_rate`` AND it has been used at
+    least ``settings.tool_health_warn_min_uses`` times — keeps the LLM
+    from confidently picking a tool that's been broken in production.
+
+    Stats are PER-USER (not global) so a permission-gated tool that's
+    perfectly fine for Alice but always errors for Bob (who lacks the
+    grant) doesn't pollute Alice's prompt.
+
+    The ``last_failure_summary`` text helps the LLM disambiguate
+    "this tool's broken for me right now" vs "this tool returns weird
+    data shapes for this kind of query" without re-reading the full
+    trace — one-sentence summary captured from the latest fail.
+    """
+    __tablename__ = "tool_outcome_stats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
+    tool_name = Column(String(128), nullable=False, index=True)
+
+    success_count = Column(Integer, nullable=False, default=0)
+    failure_count = Column(Integer, nullable=False, default=0)
+    last_used_at = Column(DateTime, nullable=True)
+    last_failure_at = Column(DateTime, nullable=True)
+    last_failure_summary = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow)
+    updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "tool_name", name="uq_tool_outcome_user_tool"),
+        Index("idx_tool_outcome_user_tool", "user_id", "tool_name"),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+
+
 # Memory History — Audit trail for memory modifications
 MEMORY_ACTION_CREATED = "created"
 MEMORY_ACTION_UPDATED = "updated"

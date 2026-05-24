@@ -1037,6 +1037,40 @@ class AgentService:
         except Exception as e:
             logger.warning(f"⚠️ Agent tool correction lookup failed: {e}")
 
+        # Load tool-health warnings (self-learning Phase 3). Per-user
+        # rolling outcome counters; warns the LLM about tools currently
+        # failing for this asker. Cheap: a single indexed SELECT.
+        tool_health_warnings = ""
+        if (settings.tool_health_tracking_enabled
+                and settings.tool_health_warn_enabled
+                and user_id is not None):
+            try:
+                from services.database import AsyncSessionLocal
+                from services.tool_outcome_service import ToolOutcomeService
+                # _preselected_tools is a {name: tool_obj} dict or None.
+                # Iterating gives names directly; None means "no preselect,
+                # all tools eligible" — pass [] to skip the filter, which
+                # the service treats as "warn across every tool the user
+                # has stats for" (matches the broader prompt context).
+                candidate_names: list[str] = []
+                if isinstance(self._preselected_tools, dict):
+                    candidate_names = list(self._preselected_tools.keys())
+                async with AsyncSessionLocal() as th_db:
+                    th_svc = ToolOutcomeService(th_db)
+                    th_warnings = await th_svc.get_health_warnings(
+                        user_id=user_id, candidate_tools=candidate_names or None,
+                    )
+                    if th_warnings:
+                        tool_health_warnings = th_svc.format_for_prompt(
+                            th_warnings, lang=lang,
+                        )
+                        logger.info(
+                            f"🔧 {len(th_warnings)} tool-health warning(s) "
+                            f"injected into agent prompt"
+                        )
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"⚠️ Tool-health warning lookup failed: {e}")
+
         # Load procedural skills (self-learning Phase 1). Same pattern as
         # tool_corrections above — open a fresh session, find_similar, format.
         # Skip cleanly on any error so the agent prompt still gets built.
@@ -1082,6 +1116,7 @@ class AgentService:
             personality_context=personality_context,
             tools_prompt=tools_prompt,
             tool_corrections=tool_corrections,
+            tool_health_warnings=tool_health_warnings,
             learned_skills=learned_skills,
             history_prompt=history_prompt,
             step_directive=step_directive
@@ -2088,6 +2123,7 @@ async def _post_turn_skill_bookkeeping(
     from services.database import AsyncSessionLocal
     from services.skill_extractor import SkillExtractor
     from services.skill_service import SkillService
+    from services.tool_outcome_service import ToolOutcomeService
     from services.trajectory_service import TrajectoryService
 
     # Outcome heuristic: turn was successful if a final_answer step exists
@@ -2107,6 +2143,17 @@ async def _post_turn_skill_bookkeeping(
                     logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
     except Exception as e:  # noqa: BLE001
         logger.warning(f"⚠️ Skill outcome session failed: {e}")
+
+    # Tool-outcome tracking (Phase 3). Best-effort per-tool counters keyed
+    # by (user_id, tool_name). The service no-ops cleanly if its feature
+    # flag is off, so we always invoke it from this single fork rather
+    # than gate here.
+    try:
+        async with AsyncSessionLocal() as db:
+            t_outcome = ToolOutcomeService(db)
+            await t_outcome.record_from_steps(user_id=user_id, steps=steps)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"⚠️ Tool-outcome recording failed: {e}")
 
     # Skill auto-extraction: gated on turn_success + owner present.
     extracted_skill_id: int | None = None

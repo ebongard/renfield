@@ -15,7 +15,9 @@ Alle markanten Änderungen an Renfield, seit Release `v1.2.0`. Format lehnt sich
 - **`/api/skills`-Route** — CRUD + Pin/Unpin + Tier-Aenderung (cascade via `AtomService.update_tier`).
 - **Self-Learning Phase 2 — Trajectory Capture** (`TRAJECTORY_CAPTURE_ENABLED=true`). Persistiert die vollstaendige Trace jedes Agent-Turns (User-Message, Tool-Calls, Tool-Results, final_answer, Outcome) als JSONL-exportierbare Trainingsdaten fuer zukuenftiges LoRA-Fine-Tuning. Outcome-Klassifikation (success/tool_fail/abort) wird heuristisch aus der Trace abgeleitet. Auto-Flagging fuer Turns die eine neue Skill extrahiert haben (Gold-Beispiele werden nie auto-geloescht). Admin-only Export-Endpunkt mit Streaming-Response.
 - **`/api/trajectories`-Route** — Listing + JSONL-Export + Flag-toggle + Stats (alle admin-only).
-- Neue Settings: `SKILLS_ENABLED`, `SKILL_EXTRACT_*`, `SKILL_INJECT_*`, `SKILL_AUTO_DEMOTE_*`, `SKILL_SEED_LOAD_ON_BOOT`, `TRAJECTORY_CAPTURE_*`, `TRAJECTORY_RETENTION_DAYS`, `TRAJECTORY_CLEANUP_INTERVAL`, `TRAJECTORY_MAX_PER_USER`.
+- **Self-Learning Phase 3 — Tool Health Tracking** (`TOOL_HEALTH_TRACKING_ENABLED=true`). Pro (User, Tool) rollende Success/Failure-Counter; wenn ein Tool unter `TOOL_HEALTH_WARN_MIN_USES` Aufrufe haeufiger fehlschlaegt als `TOOL_HEALTH_WARN_SUCCESS_RATE` erlaubt, wird eine kompakte Warnung in den Agent-Prompt injiziert (neuer `{tool_health_warnings}`-Slot in allen agent_prompt-Varianten inkl. smart_home). Letzte Fehlermeldung wird mitgesichert. Counter sind pro User — nicht global — sodass benutzerspezifische Permission-/Grant-Asymmetrien sich nicht in andere User durchschlagen.
+- **`/api/tool-health`-Route** — Stats-Listing + Warning-Preview (alle admin-only).
+- Neue Settings: `SKILLS_ENABLED`, `SKILL_EXTRACT_*`, `SKILL_INJECT_*`, `SKILL_AUTO_DEMOTE_*`, `SKILL_SEED_LOAD_ON_BOOT`, `TRAJECTORY_CAPTURE_*`, `TRAJECTORY_RETENTION_DAYS`, `TRAJECTORY_CLEANUP_INTERVAL`, `TRAJECTORY_MAX_PER_USER`, `TOOL_HEALTH_TRACKING_ENABLED`, `TOOL_HEALTH_WARN_*`.
 
 ## [v2.8.1] — 2026-05-22
 

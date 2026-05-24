@@ -375,6 +375,17 @@ class Settings(BaseSettings):
     trajectory_max_per_user: int = Field(default=10000, ge=100, le=100000)   # Soft cap, oldest dropped first
     trajectory_redact_pii: bool = False                                       # Phase 4: scrub PII into redacted_payload
 
+    # Tool outcome tracking (self-learning Phase 3)
+    # Counts every tool_result step in the agent loop; surfaces warnings
+    # in the agent prompt when a tool's per-user success rate drops below
+    # the floor. Implicitly requires skills_enabled (rides on the same
+    # post-turn fire-and-forget task).
+    tool_health_tracking_enabled: bool = False                                # Master switch
+    tool_health_warn_enabled: bool = True                                     # Inject warnings into agent prompt
+    tool_health_warn_min_uses: int = Field(default=5, ge=1, le=100)           # Min total calls before warning
+    tool_health_warn_success_rate: float = Field(default=0.5, ge=0.0, le=1.0) # Warn if below
+    tool_health_warn_top_k: int = Field(default=3, ge=1, le=10)               # Max warnings per prompt
+
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
     kg_extraction_model: str = ""                                                # Empty = use default model

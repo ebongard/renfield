@@ -568,6 +568,32 @@ Admin-only Export-Endpunkt: `GET /api/trajectories/export.jsonl` streamt das ges
 
 ---
 
+### Tool Health Tracking (Self-Learning Phase 3)
+
+```bash
+# Master-Schalter — wenn aus, kein Counter-Update, keine Warnings
+TOOL_HEALTH_TRACKING_ENABLED=false
+
+# Prompt-Injection
+TOOL_HEALTH_WARN_ENABLED=true                # {tool_health_warnings}-Block einfuegen
+TOOL_HEALTH_WARN_MIN_USES=5                  # Min Tool-Calls vor Warnung
+TOOL_HEALTH_WARN_SUCCESS_RATE=0.5            # Warnung wenn rate < dieser Wert
+TOOL_HEALTH_WARN_TOP_K=3                     # Max gleichzeitige Warnungen
+```
+
+**Verhalten:**
+Jeder `tool_result` Schritt im Agent-Loop bumpst pro (user_id, tool_name) entweder `success_count` oder `failure_count` in `tool_outcome_stats`. Die letzte Fehlermeldung wird mitgesichert (`last_failure_summary`, max 500 Zeichen).
+
+Beim Prompt-Build wird fuer den aktuellen User die Liste der Tools geladen, die ueber `TOOL_HEALTH_WARN_MIN_USES` Aufrufe haben UND deren Success-Rate unter `TOOL_HEALTH_WARN_SUCCESS_RATE` liegt. Die Top-K (sortiert nach Fehlern absteigend) werden als `{tool_health_warnings}`-Block in den Agent-Prompt injiziert — analog zu `{tool_corrections}` und `{learned_skills}`.
+
+Counter sind **pro User**, nicht global — ein Tool das fuer Alice gut funktioniert aber bei Bob immer scheitert (Permission-Gate fehlt) verschmutzt nicht Alices Prompt.
+
+Admin-only Endpunkte:
+- `GET /api/tool-health` — Listing der jüngsten (user, tool) Stats
+- `GET /api/tool-health/warnings/{user_id}` — Vorschau auf den Warnungs-Block den der User aktuell sehen wuerde
+
+---
+
 ### Satellite System
 
 ```bash
