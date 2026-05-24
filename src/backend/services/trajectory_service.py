@@ -72,11 +72,18 @@ def _allowed_outcomes() -> set[str]:
 
 
 def outcome_from_steps(steps: list) -> str:
-    """Derive the trajectory outcome label from an AgentContext.steps list."""
+    """Derive the trajectory outcome label from an AgentContext.steps list.
+
+    Conservative on the success classification: only count a tool_result
+    as successful when `.success` is EXPLICITLY True. Missing or None
+    (executor races, partially-evaluated results, tools that don't set
+    the field at all) count as failures so we don't silently train the
+    fine-tuning corpus on mislabeled positives.
+    """
     has_final = any(getattr(s, "step_type", "") == "final_answer" for s in steps)
     has_error = any(getattr(s, "step_type", "") == "error" for s in steps)
     tool_results = [s for s in steps if getattr(s, "step_type", "") == "tool_result"]
-    any_tool_fail = any(getattr(s, "success", True) is False for s in tool_results)
+    any_tool_fail = any(getattr(s, "success", None) is not True for s in tool_results)
 
     if not has_final:
         return TRAJECTORY_OUTCOME_ABORT
@@ -184,18 +191,28 @@ class TrajectoryService:
         await self.db.refresh(row)
 
         # Soft-cap per-user: drop oldest non-flagged when the user crosses
-        # the cap. Async fire-and-forget would be cleaner but we're already
-        # in a background task; one extra round-trip is fine.
-        if user_id is not None and settings.trajectory_max_per_user > 0:
+        # the cap. Anonymous turns (user_id IS NULL) share one bucket —
+        # otherwise single-user/AUTH_ENABLED=false deployments would grow
+        # the trajectory table unbounded between the daily cleanup ticks.
+        if settings.trajectory_max_per_user > 0:
             await self._enforce_per_user_cap(user_id)
 
         return row
 
-    async def _enforce_per_user_cap(self, user_id: int) -> None:
+    async def _enforce_per_user_cap(self, user_id: int | None) -> None:
         cap = settings.trajectory_max_per_user
+        # Apply the filter symmetrically for the count and the victim
+        # SELECT — `.is_(None)` for NULL user_id, equality for everyone
+        # else. SQLAlchemy's bound `col == None_var` produces SQL `col =
+        # NULL` which is UNKNOWN and matches no rows; we have to use the
+        # IS NULL predicate explicitly.
+        if user_id is None:
+            user_filter = AgentTrajectory.user_id.is_(None)
+        else:
+            user_filter = AgentTrajectory.user_id == user_id
+
         count = (await self.db.execute(
-            select(func.count(AgentTrajectory.id))
-            .where(AgentTrajectory.user_id == user_id)
+            select(func.count(AgentTrajectory.id)).where(user_filter)
         )).scalar() or 0
         if count <= cap:
             return
@@ -206,7 +223,7 @@ class TrajectoryService:
         victims = (await self.db.execute(
             select(AgentTrajectory.id)
             .where(
-                AgentTrajectory.user_id == user_id,
+                user_filter,
                 AgentTrajectory.flagged_for_retention.is_(False),
             )
             .order_by(AgentTrajectory.created_at.asc())
@@ -280,6 +297,9 @@ class TrajectoryService:
             if not batch:
                 return
 
+            # Snapshot the data we need OUT of the ORM rows before
+            # expunging — yield-as-plain-dicts means the consumer never
+            # touches the ORM after we release these rows.
             for row in batch:
                 payload = row.redacted_payload if require_redacted else row.raw_payload
                 yield {
@@ -296,6 +316,13 @@ class TrajectoryService:
                     "trace": payload,
                 }
             last_id = batch[-1].id
+
+            # Bound the identity-map size — without this a 50k-row export
+            # accumulates 50k ORM instances (each carrying a multi-KB JSON
+            # payload) in memory, defeating the streaming design. Expunge
+            # drops them from the identity map after we've handed off the
+            # plain dicts.
+            self.db.expunge_all()
 
     # ============================================================ cleanup
     async def purge_expired(self) -> int:

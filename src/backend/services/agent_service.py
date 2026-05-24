@@ -1047,18 +1047,28 @@ class AgentService:
             try:
                 from services.database import AsyncSessionLocal
                 from services.tool_outcome_service import ToolOutcomeService
-                # _preselected_tools is a {name: tool_obj} dict or None.
-                # Iterating gives names directly; None means "no preselect,
-                # all tools eligible" — pass [] to skip the filter, which
-                # the service treats as "warn across every tool the user
-                # has stats for" (matches the broader prompt context).
-                candidate_names: list[str] = []
+                # _preselected_tools is a {name: tool_obj} dict (possibly
+                # empty when preselection ran but matched zero candidates)
+                # or None (no preselection). We have to distinguish:
+                #   - dict, non-empty → filter to those names
+                #   - dict, empty     → filter to []  (no warnings at all
+                #                        — there are no candidates this
+                #                        turn so warning about ANY tool is
+                #                        pure noise that wastes prompt
+                #                        tokens and confuses the LLM)
+                #   - None            → no filter (warn across all stats)
+                # The previous code used `candidate_names or None` which
+                # collapsed the empty-dict case into "no filter" — wrong.
                 if isinstance(self._preselected_tools, dict):
-                    candidate_names = list(self._preselected_tools.keys())
+                    candidate_arg: list[str] | None = list(
+                        self._preselected_tools.keys()
+                    )
+                else:
+                    candidate_arg = None
                 async with AsyncSessionLocal() as th_db:
                     th_svc = ToolOutcomeService(th_db)
                     th_warnings = await th_svc.get_health_warnings(
-                        user_id=user_id, candidate_tools=candidate_names or None,
+                        user_id=user_id, candidate_tools=candidate_arg,
                     )
                     if th_warnings:
                         tool_health_warnings = th_svc.format_for_prompt(
@@ -1206,21 +1216,46 @@ class AgentService:
             # infinite-loop aborts.
             token_usage_info.set(context.get_token_usage())
 
-            # Self-learning Phase 1: post-turn skill bookkeeping.
-            # Scheduled as a fire-and-forget background task so the response
-            # path returns to the caller without waiting for the LLM extract
-            # call. The task is added to _skill_background_tasks to keep a
-            # strong reference — bare create_task() returns a Task that the
-            # event loop only weak-refs, which CPython is free to GC before
-            # the multi-second SkillExtractor LLM call completes. The
+            # Self-learning post-turn bookkeeping. Scheduled as a
+            # fire-and-forget background task so the response path returns
+            # without waiting for the LLM extract call. The task is added
+            # to _skill_background_tasks to keep a strong reference —
+            # bare create_task() returns a Task that the event loop only
+            # weak-refs, which CPython is free to GC before the
+            # multi-second SkillExtractor LLM call completes. The
             # add_done_callback discards the ref once the task finishes.
             #
+            # Spawn whenever ANY of the self-learning sub-features is on
+            # (skills, trajectory, tool-health). The helper itself gates
+            # the four sub-branches independently — without this, an
+            # operator who enables only TRAJECTORY_CAPTURE_ENABLED but
+            # leaves SKILLS_ENABLED=false would silently produce zero
+            # writes (the post-turn task never ran).
+            #
             # When user_id is None (anonymous/single-user-no-id path) we
-            # STILL run the record_outcome side of the task for any seed
-            # skills that were injected — only the LLM-extract branch
-            # requires a real owner. The helper itself gates the extraction
-            # internally; here we only gate on skills_enabled.
-            if settings.skills_enabled:
+            # STILL spawn the task for any seed skills that were injected
+            # — only the per-user write branches (tool-outcome, skill
+            # auto-extraction) require a real owner; the helper gates
+            # those internally.
+            should_dispatch = (
+                settings.skills_enabled
+                or settings.trajectory_capture_enabled
+                or settings.tool_health_tracking_enabled
+            )
+            if should_dispatch:
+                # Snapshot the candidate tool list so the trajectory row
+                # captures what the agent actually had access to this turn.
+                # Falls back to the full registry when no preselection ran.
+                tools_available_snapshot: list[str] = []
+                try:
+                    if isinstance(self._preselected_tools, dict):
+                        tools_available_snapshot = list(self._preselected_tools.keys())
+                    else:
+                        tools_available_snapshot = list(
+                            self.tool_registry.get_tool_names()
+                        )
+                except Exception:  # noqa: BLE001 — never block the post-turn task
+                    tools_available_snapshot = []
                 try:
                     _spawn_skill_task(_post_turn_skill_bookkeeping(
                         steps=list(context.steps),
@@ -1228,6 +1263,7 @@ class AgentService:
                         user_id=user_id,
                         user_message=message,
                         lang=lang or "de",
+                        tools_available=tools_available_snapshot,
                     ))
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"⚠️ Failed to schedule post-turn skill task: {e}")
@@ -2105,21 +2141,29 @@ async def _post_turn_skill_bookkeeping(
     user_id: int | None,
     user_message: str,
     lang: str,
+    tools_available: list[str] | None = None,
 ) -> None:
-    """Runs after the agent turn completes. Three responsibilities:
+    """Runs after the agent turn completes. Four responsibilities, each
+    gated on its OWN feature flag (NOT on the parent skills_enabled):
 
     1. Record outcome on any skills that were injected into this turn's
-       prompt (so the agent can demote skills that stop helping).
-    2. If the turn was complex AND successful AND has an owner, ask the
-       SkillExtractor to distill a new procedural skill from the trace.
-    3. If trajectory capture is enabled, persist the full turn trace as
-       training data for the JSONL export pipeline. Phase-2 surface.
+       prompt (gated on skills_enabled — only relevant when skills are
+       on, since injected_skill_ids comes from the skill-inject path).
+    2. Record per-tool outcomes (gated on tool_health_tracking_enabled).
+    3. If the turn was complex AND successful AND has an owner, ask the
+       SkillExtractor to distill a new procedural skill (gated on
+       skills_enabled + skill_extract_enabled + user_id).
+    4. Persist the full turn trace (gated on trajectory_capture_enabled).
+
+    The independent gating means each sub-feature can be opted into
+    without enabling the others — the env-var docs presented them as
+    independent master switches and this matches that.
 
     Errors are logged and swallowed — this is a side task, never a
     blocker for the response path.
     """
     # Defer-imported to keep the module's top-level import cost unchanged
-    # for the hot path; this function only runs when skills_enabled=True.
+    # for the hot path.
     from services.database import AsyncSessionLocal
     from services.skill_extractor import SkillExtractor
     from services.skill_service import SkillService
@@ -2133,31 +2177,39 @@ async def _post_turn_skill_bookkeeping(
     has_error = any(getattr(s, "step_type", "") == "error" for s in steps)
     turn_success = has_final and not has_error
 
-    try:
-        async with AsyncSessionLocal() as db:
-            svc = SkillService(db)
-            for sid in injected_skill_ids:
-                try:
-                    await svc.record_outcome(sid, turn_success)
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"⚠️ Skill outcome session failed: {e}")
+    # Skill outcome bookkeeping — only meaningful when skills are on.
+    if settings.skills_enabled and injected_skill_ids:
+        try:
+            async with AsyncSessionLocal() as db:
+                svc = SkillService(db)
+                for sid in injected_skill_ids:
+                    try:
+                        await svc.record_outcome(sid, turn_success)
+                    except Exception as e:  # noqa: BLE001
+                        logger.warning(f"⚠️ Skill outcome recording failed (id={sid}): {e}")
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"⚠️ Skill outcome session failed: {e}")
 
-    # Tool-outcome tracking (Phase 3). Best-effort per-tool counters keyed
-    # by (user_id, tool_name). The service no-ops cleanly if its feature
-    # flag is off, so we always invoke it from this single fork rather
-    # than gate here.
-    try:
-        async with AsyncSessionLocal() as db:
-            t_outcome = ToolOutcomeService(db)
-            await t_outcome.record_from_steps(user_id=user_id, steps=steps)
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"⚠️ Tool-outcome recording failed: {e}")
+    # Tool-outcome tracking — independently gated. Best-effort per-tool
+    # counters keyed by (user_id, tool_name). The service's own user_id
+    # is None guard kicks in for anonymous turns; the feature flag check
+    # here is the master switch.
+    if settings.tool_health_tracking_enabled:
+        try:
+            async with AsyncSessionLocal() as db:
+                t_outcome = ToolOutcomeService(db)
+                await t_outcome.record_from_steps(user_id=user_id, steps=steps)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"⚠️ Tool-outcome recording failed: {e}")
 
-    # Skill auto-extraction: gated on turn_success + owner present.
+    # Skill auto-extraction: gated on skills_enabled + skill_extract_enabled
+    # + turn_success + owner present (extraction must have an owner to
+    # attribute the new skill to).
     extracted_skill_id: int | None = None
-    if turn_success and settings.skill_extract_enabled and user_id is not None:
+    if (settings.skills_enabled
+            and turn_success
+            and settings.skill_extract_enabled
+            and user_id is not None):
         try:
             extractor = SkillExtractor()
             draft = await extractor.extract(
@@ -2181,8 +2233,7 @@ async def _post_turn_skill_bookkeeping(
         except Exception as e:  # noqa: BLE001
             logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
 
-    # Trajectory capture (Phase 2). Always considered (regardless of skill
-    # outcome / user_id), gated only on the feature flag inside the service.
+    # Trajectory capture. Independently gated on trajectory_capture_enabled.
     if settings.trajectory_capture_enabled:
         try:
             async with AsyncSessionLocal() as db:
@@ -2193,6 +2244,13 @@ async def _post_turn_skill_bookkeeping(
                     user_message=user_message,
                     steps=steps,
                     lang=lang,
+                    # Snapshot of tool names the agent had access to this
+                    # turn. The producer (run.finally) captures the dict
+                    # keys; without this, every exported trajectory carries
+                    # an empty tools_available field — the LoRA pipeline
+                    # then trains against "agent called unavailable tool"
+                    # patterns instead of the real catalog.
+                    tools_available=list(tools_available or []),
                     used_skill_ids=injected_skill_ids,
                     extracted_skill_id=extracted_skill_id,
                 )

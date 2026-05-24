@@ -339,16 +339,26 @@ def _schedule_skill_curator():
                 await asyncio.sleep(settings.skill_curator_interval)
                 from services.skill_curator_service import SkillCuratorService
 
-                async with AsyncSessionLocal() as db_session:
-                    svc = SkillCuratorService(db_session)
-                    user_ids = await svc.list_active_user_ids()
-                    for uid in user_ids:
-                        try:
-                            await svc.run_for_user(uid)
-                        except Exception as e:
-                            logger.warning(
-                                f"Skill curator failed for user {uid}: {e}"
-                            )
+                # First session — only used to enumerate user ids. Closed
+                # before we iterate so it doesn't hold the connection.
+                async with AsyncSessionLocal() as enum_session:
+                    user_ids = await SkillCuratorService(
+                        enum_session
+                    ).list_active_user_ids()
+
+                # Per-user session so failures, identity-map state, and
+                # implicit transaction aborts don't leak between users.
+                # The "shared session across N users" pattern would let a
+                # user-A error contaminate user-B's read (stale ORM cache
+                # + post-rollback state).
+                for uid in user_ids:
+                    try:
+                        async with AsyncSessionLocal() as per_user_db:
+                            await SkillCuratorService(per_user_db).run_for_user(uid)
+                    except Exception as e:
+                        logger.warning(
+                            f"Skill curator failed for user {uid}: {e}"
+                        )
             except asyncio.CancelledError:
                 break
             except Exception as e:

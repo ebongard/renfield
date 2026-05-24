@@ -231,7 +231,16 @@ async def update_skill(
         skill.pinned = body.pinned
         changed = True
     if body.is_active is not None:
+        # Reactivating a curator-archived skill must also clear its
+        # merged_into_id pointer — otherwise the row stays marked as
+        # "merged into X" while being active, and the next curator pass
+        # may pair it against X again (transitive audit loop, double
+        # counter-bumps, version churn). Pinned-flip semantics are
+        # independent of merged_into_id so we don't touch it there.
+        was_inactive = skill.is_active is False
         skill.is_active = body.is_active
+        if body.is_active is True and was_inactive and skill.merged_into_id is not None:
+            skill.merged_into_id = None
         changed = True
 
     if changed:

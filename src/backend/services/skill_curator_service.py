@@ -192,31 +192,87 @@ class SkillCuratorService:
             return a.id, b.id
         return b.id, a.id
 
+    # Trigger-count cap on a merged skill — matches the create-schema
+    # cap so a re-validation via SkillCreateRequest never 422s.
+    _TRIGGER_CAP = 10
+
     async def merge_pair(self, loser_id: int, winner_id: int) -> None:
         """Combine triggers, archive the loser, bump the winner's version.
 
-        Both rows must already exist (pre-loaded by find_duplicate_pairs).
-        Atomic in a single commit.
+        Concurrency safety: a second curator pass (scheduler + manual
+        /curator/run can overlap) could otherwise re-merge the same pair
+        and double-add the loser's outcome counters. We use
+        SELECT ... FOR UPDATE on both rows so the second writer blocks
+        until the first commits, then re-checks loser.is_active and
+        winner.merged_into_id and skips the row if either has already
+        been mutated by the first pass.
+
+        Embedding is computed BEFORE any row lock so a slow or hung
+        Ollama endpoint doesn't hold procedural_skills locks for the
+        duration of the embed call. Brief race window: a concurrent
+        PATCH that arrives between the embed and the lock-acquire could
+        change the winner's body_md; the curator's embedding then doesn't
+        reflect the PATCH. The PATCH path always re-embeds itself when
+        the body changes, so the staleness is corrected on the next
+        write either way.
         """
-        loser = (await self.db.execute(
+        # Load both rows without locking just to read title/body for the
+        # embedding input. These reads are independent of the mutation
+        # transaction.
+        loser_preview = (await self.db.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == loser_id)
         )).scalar_one_or_none()
-        winner = (await self.db.execute(
+        winner_preview = (await self.db.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == winner_id)
         )).scalar_one_or_none()
-        if loser is None or winner is None:
+        if loser_preview is None or winner_preview is None:
             return
 
-        # Combine triggers (dedup), cap at 10 to match the create schema.
-        combined = list(winner.trigger_examples or [])
-        seen = {t.strip().lower() for t in combined if t}
-        for t in loser.trigger_examples or []:
-            key = (t or "").strip().lower()
-            if key and key not in seen:
-                combined.append(t)
-                seen.add(key)
-                if len(combined) >= 10:
-                    break
+        # Pre-compute the merged trigger set + embedding OUTSIDE any row lock.
+        combined = self._combine_triggers(
+            winner_preview.trigger_examples or [],
+            loser_preview.trigger_examples or [],
+        )
+        svc = SkillService(self.db)
+        new_emb = await svc.compute_embedding_for(
+            winner_preview.title, combined, winner_preview.body_md,
+        )
+
+        # Now re-load both rows WITH row locks and apply the mutation.
+        # If a concurrent writer already merged this pair, bail.
+        loser = (await self.db.execute(
+            select(ProceduralSkill)
+            .where(ProceduralSkill.id == loser_id)
+            .with_for_update()
+        )).scalar_one_or_none()
+        winner = (await self.db.execute(
+            select(ProceduralSkill)
+            .where(ProceduralSkill.id == winner_id)
+            .with_for_update()
+        )).scalar_one_or_none()
+        if loser is None or winner is None:
+            await self.db.rollback()
+            return
+
+        # Concurrent-curator guard: if the loser was archived between
+        # the pre-load and the lock acquire, another pass already merged
+        # it — skip cleanly. Same idea for the winner having been merged
+        # into a third row.
+        if not loser.is_active or loser.merged_into_id is not None:
+            await self.db.rollback()
+            return
+        if not winner.is_active or winner.merged_into_id is not None:
+            await self.db.rollback()
+            return
+
+        # Re-derive combined triggers in case the winner's trigger list
+        # changed since the pre-load (defensive — keeps the eventual
+        # state consistent with what we observed at lock time, not the
+        # stale pre-load snapshot).
+        combined = self._combine_triggers(
+            winner.trigger_examples or [],
+            loser.trigger_examples or [],
+        )
 
         # Carry over the loser's outcome counts. This biases the winner
         # toward "skill at this concept has X total invocations" — a
@@ -225,12 +281,6 @@ class SkillCuratorService:
         winner.success_count += loser.success_count
         winner.failure_count += loser.failure_count
         winner.version += 1
-
-        # Re-embed the winner since its trigger set just expanded.
-        svc = SkillService(self.db)
-        new_emb = await svc.compute_embedding_for(
-            winner.title, combined, winner.body_md,
-        )
         if new_emb is not None:
             winner.embedding = new_emb
 
@@ -249,6 +299,35 @@ class SkillCuratorService:
             f"🧹 Curator merge: skill #{loser.id} -> #{winner.id} "
             f"(combined {len(combined)} triggers; loser {loser.title!r})"
         )
+
+    @classmethod
+    def _combine_triggers(
+        cls, winner_triggers: list[str], loser_triggers: list[str],
+    ) -> list[str]:
+        """Merge two trigger lists, dedup case-insensitively, cap at
+        _TRIGGER_CAP entries.
+
+        Cap-application is FIRST on the winner's existing list (so a
+        legacy row that already exceeded the cap gets trimmed back to
+        the cap before we even look at the loser's contribution) THEN
+        on the merged total. Without that pre-trim, a winner already
+        at len=12 would only append one loser trigger before the
+        `>= 10` check fires, producing a final len=13 — violating the
+        documented cap.
+        """
+        out: list[str] = []
+        seen: set[str] = set()
+        for t in (winner_triggers or []) + (loser_triggers or []):
+            if not t:
+                continue
+            key = t.strip().lower()
+            if not key or key in seen:
+                continue
+            out.append(t)
+            seen.add(key)
+            if len(out) >= cls._TRIGGER_CAP:
+                break
+        return out
 
     # ============================================================ stale
     async def archive_stale(self, user_id: int) -> int:

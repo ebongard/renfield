@@ -117,7 +117,6 @@ async def export_jsonl(
     since_days: int | None = Query(default=None, ge=1, le=3650),
     flagged_only: bool = False,
     require_redacted: bool = False,
-    db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Stream the corpus as line-delimited JSON. Each line is one turn.
@@ -126,6 +125,15 @@ async def export_jsonl(
     NULL — gate for downstream consumers that won't accept raw payloads
     (Phase-4-ready; v1 always has NULL redacted so this returns nothing
     today, which is intentional).
+
+    No ``Depends(get_db)``: the request-scoped session would be closed
+    by FastAPI as soon as this handler returns the StreamingResponse
+    object, but the generator inside continues to run while the body
+    streams. The pre-fix pattern produced 'session is closed' errors
+    on long exports — and worse, the closed session could be checked
+    back out by another request and leak rows across the pool. We open
+    a dedicated session INSIDE the generator and expunge between
+    batches so the identity map stays bounded for a 50k-row dump.
     """
     if not settings.trajectory_capture_enabled:
         raise HTTPException(
@@ -137,16 +145,17 @@ async def export_jsonl(
     if since_days is not None:
         since = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=since_days)
 
-    svc = TrajectoryService(db)
-
     async def _gen():
-        async for obj in svc.export_jsonl(
-            outcome=outcome,
-            since=since,
-            flagged_only=flagged_only,
-            require_redacted=require_redacted,
-        ):
-            yield json.dumps(obj, ensure_ascii=False) + "\n"
+        from services.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as stream_db:
+            svc = TrajectoryService(stream_db)
+            async for obj in svc.export_jsonl(
+                outcome=outcome,
+                since=since,
+                flagged_only=flagged_only,
+                require_redacted=require_redacted,
+            ):
+                yield json.dumps(obj, ensure_ascii=False) + "\n"
 
     return StreamingResponse(
         _gen(),

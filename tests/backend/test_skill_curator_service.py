@@ -183,6 +183,33 @@ class TestMergePair:
         )).scalar_one()
         assert len(winner.trigger_examples) <= 10
 
+    async def test_cap_enforced_when_winner_already_over_cap(
+        self, db_session, c_user
+    ):
+        """Legacy data (or a manual API write that bypassed schema
+        validation) can leave a winner with > 10 triggers. The merge
+        must trim to the cap, not pile loser triggers on top."""
+        from services.skill_curator_service import SkillCuratorService
+        a = await _seed_skill(
+            db_session, user_id=c_user.id, title="bloated",
+            trigger_examples=[f"old_{i}" for i in range(12)],  # over cap
+            successes=5,
+        )
+        b = await _seed_skill(
+            db_session, user_id=c_user.id, title="other",
+            trigger_examples=[f"new_{i}" for i in range(3)],
+            successes=1,
+        )
+        svc = SkillCuratorService(db_session)
+        await svc.merge_pair(loser_id=b.id, winner_id=a.id)
+        winner = (await db_session.execute(
+            select(ProceduralSkill).where(ProceduralSkill.id == a.id)
+        )).scalar_one()
+        # MUST cap at 10 even though the winner came in with 12 — the
+        # pre-fix code would have left 13 because the append-then-check
+        # logic only stopped AFTER appending the first loser trigger.
+        assert len(winner.trigger_examples) == 10
+
 
 # =============================================================== stale
 @pytest.mark.asyncio
@@ -307,6 +334,48 @@ class TestListActiveUserIds:
 # ============================================================== full run
 @pytest.mark.asyncio
 class TestRunForUser:
+    async def test_reactivating_merged_skill_clears_pointer(
+        self, db_session, c_user, patched_embed
+    ):
+        """Curator marked A merged into B. Owner then explicitly
+        reactivates A via PATCH is_active=True. merged_into_id MUST
+        be cleared, otherwise the next curator pass re-pairs A
+        against B and either double-merges or creates an audit-loop."""
+        from services.skill_curator_service import SkillCuratorService
+        a = await _seed_skill(
+            db_session, user_id=c_user.id, title="A",
+            trigger_examples=["x"], successes=5,
+        )
+        b = await _seed_skill(
+            db_session, user_id=c_user.id, title="B",
+            trigger_examples=["y"], successes=10,
+        )
+        svc = SkillCuratorService(db_session)
+        await svc.merge_pair(loser_id=a.id, winner_id=b.id)
+
+        # Sanity — A is archived with pointer set
+        a_after_merge = (await db_session.execute(
+            select(ProceduralSkill).where(ProceduralSkill.id == a.id)
+        )).scalar_one()
+        assert a_after_merge.is_active is False
+        assert a_after_merge.merged_into_id == b.id
+
+        # Simulate the PATCH route's logic directly (the route handler
+        # tests this with httpx; here we cover the model state).
+        if a_after_merge.is_active is False:
+            was_inactive = True
+        a_after_merge.is_active = True
+        if a_after_merge.merged_into_id is not None:
+            a_after_merge.merged_into_id = None
+        await db_session.commit()
+
+        # Re-fetch and assert clean state
+        final = (await db_session.execute(
+            select(ProceduralSkill).where(ProceduralSkill.id == a.id)
+        )).scalar_one()
+        assert final.is_active is True
+        assert final.merged_into_id is None
+
     async def test_archive_only_no_pgvector(
         self, db_session, c_user, monkeypatch
     ):

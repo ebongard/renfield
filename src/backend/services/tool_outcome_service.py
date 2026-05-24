@@ -52,6 +52,17 @@ class ToolOutcomeService:
     ) -> None:
         """Increment the counter for (user_id, tool_name).
 
+        Per-user accounting requires an identifiable user; calls with
+        ``user_id is None`` are a no-op rather than inserting an
+        unbounded set of NULL-keyed rows. PostgreSQL's UNIQUE constraint
+        treats NULL values as distinct, so a NULL-keyed ON CONFLICT
+        clause would never match — every anonymous call would create a
+        fresh row instead of upserting. Single-user/AUTH_ENABLED=false
+        deployments resolve a default admin user at the route layer
+        (see services.auth_service.get_user_or_default); paths that
+        reach this method without a user_id are legitimately anonymous
+        and have no business polluting the per-user counter table.
+
         Uses an UPSERT pattern to avoid races between two parallel
         record() calls for the same (user, tool) pair. On postgres this
         is ``INSERT ... ON CONFLICT (user_id, tool_name) DO UPDATE``;
@@ -61,6 +72,9 @@ class ToolOutcomeService:
         if not tool_name:
             return
         if not settings.tool_health_tracking_enabled:
+            return
+        # See docstring — anonymous calls are a deliberate no-op.
+        if user_id is None:
             return
 
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -130,36 +144,86 @@ class ToolOutcomeService:
         steps: list,
     ) -> None:
         """Convenience wrapper that iterates an AgentContext.steps list
-        and records every tool_result step. Used by
+        and records every tool outcome. Used by
         _post_turn_skill_bookkeeping.
 
         Errors per tool are isolated — a single failing record doesn't
         abort the rest. Net effect: best-effort accounting.
+
+        Pairing strategy: a tool_call's outcome is the NEXT step's
+        success/failure if and only if that next step is a tool_result.
+        Two tool_call steps in a row (mid-dispatch crash, executor error
+        that emitted an `error` step between them) are each accounted
+        as failures — the first call doesn't silently disappear into
+        the second call's overwrite of `last_tool`. Same idea for a
+        tool_call followed by `error` or `final_answer` without an
+        intervening tool_result.
         """
-        # Pair tool_call → tool_result by index — the agent always yields
-        # them adjacently, so this is reliable.
-        last_tool: str | None = None
-        for s in steps:
+        pending: tuple[str, int] | None = None  # (tool_name, step_index)
+        n = len(steps)
+        for i, s in enumerate(steps):
             stype = getattr(s, "step_type", "")
             if stype == "tool_call":
-                last_tool = getattr(s, "tool", None)
-            elif stype == "tool_result" and last_tool:
+                tool = getattr(s, "tool", None)
+                if pending is not None:
+                    # Previous call never got a tool_result. Treat as a
+                    # failure with the next step's content as the summary
+                    # if it was an error, else a generic note.
+                    prev_tool, _ = pending
+                    summary = self._summary_for_orphan(steps, i)
+                    await self._safe_record(
+                        user_id=user_id, tool_name=prev_tool,
+                        success=False, failure_summary=summary,
+                    )
+                pending = (tool, i) if tool else None
+            elif stype == "tool_result":
+                if pending is None:
+                    # Orphan result with no preceding call — nothing to
+                    # attribute. The pre-fix had the same behavior.
+                    continue
+                tool, _ = pending
+                pending = None
                 success = bool(getattr(s, "success", False))
                 summary = None
                 if not success:
                     summary = (getattr(s, "content", "") or "")[:500]
-                try:
-                    await self.record(
-                        user_id=user_id,
-                        tool_name=last_tool,
-                        success=success,
-                        failure_summary=summary,
-                    )
-                except Exception as e:  # noqa: BLE001
-                    logger.warning(
-                        f"⚠️ ToolOutcomeService.record failed for {last_tool!r}: {e}"
-                    )
-                last_tool = None  # consumed
+                await self._safe_record(
+                    user_id=user_id, tool_name=tool,
+                    success=success, failure_summary=summary,
+                )
+
+        # Loop ended with an unresolved pending call → treat as failure.
+        if pending is not None:
+            tool, idx = pending
+            summary = self._summary_for_orphan(steps, n)
+            await self._safe_record(
+                user_id=user_id, tool_name=tool,
+                success=False, failure_summary=summary,
+            )
+
+    async def _safe_record(
+        self, *, user_id, tool_name, success, failure_summary,
+    ) -> None:
+        try:
+            await self.record(
+                user_id=user_id, tool_name=tool_name,
+                success=success, failure_summary=failure_summary,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                f"⚠️ ToolOutcomeService.record failed for {tool_name!r}: {e}"
+            )
+
+    @staticmethod
+    def _summary_for_orphan(steps: list, next_idx: int) -> str:
+        """Best-effort summary for a tool_call that never got a
+        tool_result — pull from the next step if it carries a payload."""
+        if 0 <= next_idx < len(steps):
+            s = steps[next_idx]
+            content = (getattr(s, "content", "") or "")
+            if content:
+                return content[:500]
+        return "tool_call had no matching tool_result"
 
     # ============================================================ reads
     async def get_health_warnings(
@@ -186,6 +250,19 @@ class ToolOutcomeService:
         if not settings.tool_health_warn_enabled:
             return []
         if not settings.tool_health_tracking_enabled:
+            return []
+        # Per record(): per-user accounting requires an identifiable user.
+        # Anonymous reads also short-circuit — symmetric with the write
+        # path so the stats are never half-readable.
+        if user_id is None:
+            return []
+
+        # candidate_tools semantics:
+        #   None  → no filter (consider every tool the user has stats on)
+        #   []    → explicit empty filter — caller knows there are zero
+        #           candidates this turn, so return zero warnings
+        #   [...] → restrict to the listed tool names
+        if candidate_tools is not None and len(candidate_tools) == 0:
             return []
 
         stmt = select(ToolOutcomeStat).where(

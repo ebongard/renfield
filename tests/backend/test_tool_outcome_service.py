@@ -123,6 +123,68 @@ class TestRecord:
         rows = (await db_session.execute(select(ToolOutcomeStat))).scalars().all()
         assert rows == []
 
+    async def test_anonymous_user_skipped(self, db_session):
+        """Postgres UNIQUE(user_id, tool_name) treats NULL as distinct,
+        so a NULL-user upsert would silently insert a new row instead of
+        incrementing. The service explicitly no-ops on user_id=None to
+        avoid polluting the per-user counter table."""
+        from services.tool_outcome_service import ToolOutcomeService
+        svc = ToolOutcomeService(db_session)
+        await svc.record(user_id=None, tool_name="mcp.x", success=True)
+        await svc.record(user_id=None, tool_name="mcp.x", success=False)
+        rows = (await db_session.execute(select(ToolOutcomeStat))).scalars().all()
+        assert rows == []
+
+
+# ============================================== record_from_steps pairing
+@pytest.mark.asyncio
+class TestRecordFromStepsPairing:
+    async def test_back_to_back_tool_calls_account_first_as_failure(
+        self, db_session, th_user
+    ):
+        """A tool_call followed by another tool_call (mid-dispatch crash,
+        executor error inserted as an error step before the result) used
+        to lose the first call's accounting because last_tool was just
+        overwritten. The fix records the orphan as a failure."""
+        from services.tool_outcome_service import ToolOutcomeService
+        steps = [
+            _FakeStep("tool_call", tool="mcp.a"),
+            _FakeStep("error", content="dispatch crashed"),
+            _FakeStep("tool_call", tool="mcp.b"),
+            _FakeStep("tool_result", success=True),
+            _FakeStep("final_answer", content="done"),
+        ]
+        svc = ToolOutcomeService(db_session)
+        await svc.record_from_steps(user_id=th_user.id, steps=steps)
+        rows = {r.tool_name: r for r in (await db_session.execute(
+            select(ToolOutcomeStat)
+        )).scalars().all()}
+        # mcp.a was orphaned → recorded as failure
+        assert "mcp.a" in rows
+        assert rows["mcp.a"].failure_count == 1
+        assert rows["mcp.a"].success_count == 0
+        # mcp.b succeeded normally
+        assert "mcp.b" in rows
+        assert rows["mcp.b"].success_count == 1
+
+    async def test_trailing_tool_call_without_result_recorded_as_failure(
+        self, db_session, th_user
+    ):
+        """A tool_call at the very end of the trace (turn was aborted
+        before the result step arrived) is now recorded as failure
+        instead of being silently dropped when the loop ends."""
+        from services.tool_outcome_service import ToolOutcomeService
+        steps = [
+            _FakeStep("tool_call", tool="mcp.last"),
+            # no tool_result, no final_answer — turn aborted mid-tool
+        ]
+        svc = ToolOutcomeService(db_session)
+        await svc.record_from_steps(user_id=th_user.id, steps=steps)
+        rows = (await db_session.execute(select(ToolOutcomeStat))).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].tool_name == "mcp.last"
+        assert rows[0].failure_count == 1
+
 
 # ===================================================== from_steps
 @pytest.mark.asyncio
@@ -240,6 +302,36 @@ class TestGetHealthWarnings:
         from services.tool_outcome_service import ToolOutcomeService
         svc = ToolOutcomeService(db_session)
         warnings = await svc.get_health_warnings(user_id=th_user.id)
+        assert warnings == []
+
+    async def test_anonymous_caller_returns_empty(self, db_session):
+        """Symmetric with record(): anonymous (user_id=None) reads
+        return [] rather than risk leaking other users' stats via a
+        SQL `user_id = NULL` query that would match nothing anyway."""
+        from services.tool_outcome_service import ToolOutcomeService
+        svc = ToolOutcomeService(db_session)
+        warnings = await svc.get_health_warnings(user_id=None)
+        assert warnings == []
+
+    async def test_empty_candidate_tools_returns_empty(
+        self, db_session, th_user, monkeypatch
+    ):
+        """An empty candidate_tools list explicitly means 'agent has zero
+        candidate tools this turn' — warning about anything would be
+        noise. Previously `or None` collapsed this case into 'no filter'."""
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_min_uses", 2,
+        )
+        monkeypatch.setattr(
+            "services.tool_outcome_service.settings.tool_health_warn_success_rate", 0.5,
+        )
+        await self._seed(db_session, th_user, monkeypatch, fails=8, total=10)
+
+        from services.tool_outcome_service import ToolOutcomeService
+        svc = ToolOutcomeService(db_session)
+        warnings = await svc.get_health_warnings(
+            user_id=th_user.id, candidate_tools=[],
+        )
         assert warnings == []
 
 

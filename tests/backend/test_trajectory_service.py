@@ -161,9 +161,10 @@ class TestSave:
         )
         assert row is None
 
-    async def test_extracted_skill_flags_for_retention(
+    async def test_extracted_skill_id_None_does_not_flag(
         self, db_session, t_user, monkeypatch
     ):
+        """The 'no skill extracted' control case — flag must stay False."""
         from services.trajectory_service import TrajectoryService
         monkeypatch.setattr(
             "services.trajectory_service.settings.trajectory_capture_enabled", True
@@ -176,10 +177,53 @@ class TestSave:
         row = await svc.save(
             user_id=t_user.id, conversation_id=None,
             user_message="x", steps=_success_trace(), lang="de",
-            extracted_skill_id=None,  # any non-None
+            extracted_skill_id=None,
         )
-        # extracted_skill_id=None → flag is False
         assert row.flagged_for_retention is False
+
+    async def test_extracted_skill_id_set_flags_for_retention(
+        self, db_session, t_user, monkeypatch
+    ):
+        """The Phase-2 gold-example invariant: turns that produced a new
+        skill auto-flag for indefinite retention. Without this assertion,
+        a regression flipping the `is not None` condition would still
+        pass the no-op test above.
+
+        We use a small but real ProceduralSkill row to satisfy the FK
+        (extracted_skill_id is a real foreign key to procedural_skills.id);
+        the value just needs to point at an existing row.
+        """
+        from models.database import (
+            ProceduralSkill, SKILL_SOURCE_AUTO_EXTRACTED,
+        )
+        from services.trajectory_service import TrajectoryService
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_capture_enabled", True
+        )
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_capture_outcomes",
+            "success",
+        )
+
+        # Seed a skill so the FK satisfies
+        skill = ProceduralSkill(
+            user_id=t_user.id, title="gold", body_md="x",
+            trigger_examples=["t"], tool_sequence=[],
+            source=SKILL_SOURCE_AUTO_EXTRACTED,
+            circle_tier=0,
+        )
+        db_session.add(skill)
+        await db_session.commit()
+        await db_session.refresh(skill)
+
+        svc = TrajectoryService(db_session)
+        row = await svc.save(
+            user_id=t_user.id, conversation_id=None,
+            user_message="x", steps=_success_trace(), lang="de",
+            extracted_skill_id=skill.id,
+        )
+        assert row.flagged_for_retention is True
+        assert row.extracted_skill_id == skill.id
 
 
 # =========================================================== export
@@ -334,4 +378,43 @@ class TestPerUserCap:
             select(AgentTrajectory)
         )).scalars().all()}
         assert r1.id not in ids
+        assert {r2.id, r3.id} == ids
+
+    async def test_anonymous_user_cap_enforced(
+        self, db_session, monkeypatch
+    ):
+        """Single-user / AUTH_ENABLED=false produces user_id=None turns.
+        Without the cap, anonymous traffic would grow agent_trajectories
+        unbounded between the daily cleanup ticks. Verifies the cap
+        applies symmetrically to the NULL-user pool."""
+        from services.trajectory_service import TrajectoryService
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_capture_enabled", True
+        )
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_capture_outcomes",
+            "success",
+        )
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_max_per_user", 2
+        )
+
+        svc = TrajectoryService(db_session)
+        r1 = await svc.save(
+            user_id=None, conversation_id=None,
+            user_message="anon1", steps=_success_trace(), lang="de",
+        )
+        r2 = await svc.save(
+            user_id=None, conversation_id=None,
+            user_message="anon2", steps=_success_trace(), lang="de",
+        )
+        r3 = await svc.save(
+            user_id=None, conversation_id=None,
+            user_message="anon3", steps=_success_trace(), lang="de",
+        )
+
+        ids = {row.id for row in (await db_session.execute(
+            select(AgentTrajectory).where(AgentTrajectory.user_id.is_(None))
+        )).scalars().all()}
+        assert r1.id not in ids  # oldest dropped
         assert {r2.id, r3.id} == ids
