@@ -594,6 +594,36 @@ Admin-only Endpunkte:
 
 ---
 
+### Skill Curator (Self-Learning Phase 4)
+
+```bash
+# Master-Schalter — wenn aus, kein Scheduler-Run, kein /curator/run-Endpunkt
+SKILL_CURATOR_ENABLED=false
+
+# Scheduler
+SKILL_CURATOR_INTERVAL=86400                  # Sekunden zwischen Laeufen (default 1d)
+
+# Duplikat-Merge
+SKILL_CURATOR_DUPLICATE_THRESHOLD=0.92        # Cosine-Sim ab wann zwei Skills als Duplikat gelten
+SKILL_CURATOR_MAX_MERGES_PER_RUN=20           # Safety-Cap pro Lauf
+
+# Stale-Archivierung
+SKILL_CURATOR_STALE_DAYS=90                   # Tage seit last_used_at nach denen "stale"
+SKILL_CURATOR_STALE_SUCCESS_RATE=0.3          # Erfolgsrate unter der archiviert wird
+SKILL_CURATOR_MIN_USES_TO_CONSIDER_STALE=3    # Untere Schwelle: nicht jede selten genutzte Skill ist gleich stale
+```
+
+**Verhalten:**
+Wenn `SKILL_CURATOR_ENABLED=true` (und `SKILLS_ENABLED=true`), startet ein Background-Scheduler der pro `SKILL_CURATOR_INTERVAL` Sekunden ueber alle Owner mit aktiven non-seed Skills iteriert und fuer jeden `SkillCuratorService.run_for_user(user_id)` ausfuehrt. Zwei Phasen:
+
+1. **Duplicate-Dedupe**: pgvector-Self-Join findet Skill-Paare desselben Users mit Cosine-Similarity >= `SKILL_CURATOR_DUPLICATE_THRESHOLD`. Pro Paar wird der "Winner" gewaehlt (hoehere Success-Rate gewinnt, tie-break auf Usage-Count und last_used_at), Trigger werden zusammengefuehrt (dedupliziert, max 10), Outcome-Counter ueberfuehrt, Winner-`version` gebumpt, Winner-Embedding neu berechnet. Der Loser wird `is_active=False` + `merged_into_id=<winner.id>` markiert (Audit-Trail bleibt).
+
+2. **Stale-Archivierung**: Skills die >= `SKILL_CURATOR_STALE_DAYS` Tage ungenutzt sind, mindestens `SKILL_CURATOR_MIN_USES_TO_CONSIDER_STALE` Aufrufe haben UND eine Success-Rate unter `SKILL_CURATOR_STALE_SUCCESS_RATE` werden soft-archiviert. `pinned=true` skips immer.
+
+Manueller Trigger: `POST /api/skills/curator/run` (admin-only). Optional `{"user_id": <id>}` im Body fuer einen einzelnen User.
+
+---
+
 ### Satellite System
 
 ```bash

@@ -1045,12 +1045,29 @@ class ProceduralSkill(Base):
     )
     circle_tier = Column(Integer, nullable=False, default=0)
 
+    # Curator audit trail (Phase 4). When the curator merges two
+    # near-duplicate skills, the loser's row is kept (audit) with
+    # is_active=False AND merged_into_id pointing at the winner. NULL on
+    # all non-archived rows and on archived-but-not-merged rows
+    # (e.g. auto-demoted by record_outcome).
+    merged_into_id = Column(
+        Integer,
+        ForeignKey("procedural_skills.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     created_at = Column(DateTime, default=_utcnow)
     updated_at = Column(DateTime, default=_utcnow, onupdate=_utcnow)
 
     user = relationship("User", foreign_keys=[user_id])
     learned_from = relationship(
         "Conversation", foreign_keys=[learned_from_conversation_id]
+    )
+    merged_into = relationship(
+        "ProceduralSkill",
+        foreign_keys=[merged_into_id],
+        remote_side="ProceduralSkill.id",
     )
 
 

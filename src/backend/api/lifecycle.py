@@ -319,6 +319,51 @@ def _schedule_trajectory_cleanup():
     )
 
 
+def _schedule_skill_curator():
+    """Periodic skill-corpus curator (self-learning Phase 4).
+
+    Iterates every user that owns at least one active non-seed skill and
+    runs ``SkillCuratorService.run_for_user(user_id)`` — dedupes near-
+    identical skills + archives stale ones. Same scheduler pattern as
+    the trajectory cleanup and memory cleanup loops.
+
+    Gated on both ``skills_enabled`` (no point running if the whole
+    subsystem is off) and ``skill_curator_enabled`` (the curator itself).
+    """
+    if not settings.skills_enabled or not settings.skill_curator_enabled:
+        return
+
+    async def curator_loop():
+        while True:
+            try:
+                await asyncio.sleep(settings.skill_curator_interval)
+                from services.skill_curator_service import SkillCuratorService
+
+                async with AsyncSessionLocal() as db_session:
+                    svc = SkillCuratorService(db_session)
+                    user_ids = await svc.list_active_user_ids()
+                    for uid in user_ids:
+                        try:
+                            await svc.run_for_user(uid)
+                        except Exception as e:
+                            logger.warning(
+                                f"Skill curator failed for user {uid}: {e}"
+                            )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Skill curator loop failed: {e}")
+
+    task = asyncio.create_task(curator_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Skill Curator gestartet "
+        f"(interval={settings.skill_curator_interval}s, "
+        f"duplicate_threshold={settings.skill_curator_duplicate_threshold}, "
+        f"stale_days={settings.skill_curator_stale_days})"
+    )
+
+
 def _schedule_paperless_sweepers(app):
     """PR 4 — hourly sweepers for the Paperless learning loop.
 
@@ -663,6 +708,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_upload_cleanup()
     _schedule_federation_audit_cleanup()
     _schedule_trajectory_cleanup()
+    _schedule_skill_curator()
     _schedule_paperless_sweepers(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.

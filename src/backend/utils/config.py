@@ -386,6 +386,18 @@ class Settings(BaseSettings):
     tool_health_warn_success_rate: float = Field(default=0.5, ge=0.0, le=1.0) # Warn if below
     tool_health_warn_top_k: int = Field(default=3, ge=1, le=10)               # Max warnings per prompt
 
+    # Skill curator (self-learning Phase 4)
+    # Periodically dedupes and archives skills the agent has accumulated.
+    # Runs as a background scheduler when enabled; can also be triggered
+    # manually via /api/skills/curator/run (admin-only).
+    skill_curator_enabled: bool = False                                       # Master switch
+    skill_curator_interval: int = Field(default=86400, ge=300, le=604800)     # Seconds between runs (default 1d)
+    skill_curator_duplicate_threshold: float = Field(default=0.92, ge=0.5, le=1.0)  # Cosine sim to consider as duplicates
+    skill_curator_stale_days: int = Field(default=90, ge=7, le=365)           # Archive after N days unused
+    skill_curator_stale_success_rate: float = Field(default=0.3, ge=0.0, le=1.0)    # Archive if rate below this AND stale
+    skill_curator_min_uses_to_consider_stale: int = Field(default=3, ge=1, le=100)  # Avoid archiving rarely-tested skills
+    skill_curator_max_merges_per_run: int = Field(default=20, ge=1, le=200)   # Safety cap
+
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
     kg_extraction_model: str = ""                                                # Empty = use default model

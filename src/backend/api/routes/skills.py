@@ -21,8 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ProceduralSkill, TIER_PUBLIC, User
+from models.permissions import Permission
 from services.atom_service import AtomService
-from services.auth_service import get_user_or_default
+from services.auth_service import get_user_or_default, require_permission
 from services.database import get_db
 from services.skill_service import SkillService
 
@@ -71,6 +72,7 @@ class SkillResponse(BaseModel):
     is_active: bool
     circle_tier: int
     atom_id: str | None
+    merged_into_id: int | None
     created_at: datetime
     updated_at: datetime
     is_owner: bool
@@ -92,6 +94,7 @@ def _to_response(s: ProceduralSkill, *, is_owner: bool) -> SkillResponse:
         is_active=s.is_active,
         circle_tier=s.circle_tier,
         atom_id=s.atom_id,
+        merged_into_id=s.merged_into_id,
         created_at=s.created_at,
         updated_at=s.updated_at,
         is_owner=is_owner,
@@ -332,3 +335,47 @@ async def change_skill_tier(
         )
     )).scalar_one()
     return _to_response(skill, is_owner=True)
+
+
+# -------------------------------------------------------- curator (Phase 4)
+class CuratorRunRequest(BaseModel):
+    """Optional ``user_id`` lets an admin run for a specific user; the
+    default is "every active user", same scope as the scheduler."""
+    user_id: int | None = None
+
+
+class CuratorReportResponse(BaseModel):
+    user_id: int | None
+    duplicates_found: int
+    merges_applied: int
+    stale_archived: int
+    notes: list[str]
+
+
+@router.post("/curator/run", response_model=list[CuratorReportResponse])
+async def run_curator(
+    body: CuratorRunRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Manual curator trigger — same logic as the scheduler, runs
+    synchronously and returns the report. Admin-only because it can
+    flip ``is_active`` on rows owned by other users."""
+    from dataclasses import asdict
+
+    from services.skill_curator_service import SkillCuratorService
+
+    svc = SkillCuratorService(db)
+    if body.user_id is not None:
+        report = await svc.run_for_user(body.user_id)
+        return [CuratorReportResponse(**asdict(report))]
+
+    user_ids = await svc.list_active_user_ids()
+    reports = []
+    for uid in user_ids:
+        try:
+            report = await svc.run_for_user(uid)
+            reports.append(CuratorReportResponse(**asdict(report)))
+        except Exception as e:
+            logger.warning(f"Curator failed for user {uid}: {e}")
+    return reports
