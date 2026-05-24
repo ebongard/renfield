@@ -1054,6 +1054,77 @@ class ProceduralSkill(Base):
     )
 
 
+# AgentTrajectory.outcome discriminators.
+TRAJECTORY_OUTCOME_SUCCESS = "success"        # final_answer + no error step
+TRAJECTORY_OUTCOME_TOOL_FAIL = "tool_fail"    # tool steps had failures but eventually answered
+TRAJECTORY_OUTCOME_ABORT = "abort"            # loop exhausted / circuit broken / timeout
+TRAJECTORY_OUTCOME_USER_CORRECTED = "user_corrected"  # post-hoc correction via /api/feedback
+
+
+class AgentTrajectory(Base):
+    """
+    Full trace of a single agent turn, captured for offline training data.
+
+    Self-learning Phase 2: rather than just learning "did this skill help?"
+    (success_count vs failure_count on ProceduralSkill), we keep the full
+    {user message, tool calls, tool results, final answer, outcome} trace
+    of every turn the agent runs. Exported as JSONL via /api/trajectories
+    for downstream LoRA fine-tuning of the local chat / agent model.
+
+    Retention is bounded by ``settings.trajectory_retention_days`` (default
+    30); the cleanup scheduler in lifecycle.py deletes older rows unless
+    ``flagged_for_retention=True`` (e.g., the turn produced an
+    auto-extracted skill — we want to keep those forever as gold examples).
+
+    Privacy: ``redacted_payload`` is left nullable in v1 because PII
+    redaction is a Phase 4 concern. Producers populate ``raw_payload`` and
+    callers MUST NOT export rows whose ``redacted_payload`` is NULL
+    once Phase 4 lands.
+
+    Schema is deliberately denormalized JSONB (one row per turn) rather
+    than a relational join over messages + steps: the trace is the unit
+    of training, and exporting JSONL is the only read path that matters.
+    """
+    __tablename__ = "agent_trajectories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True)
+
+    # The complete trace. Keys: user_message, system_role, steps[],
+    # final_answer, lang, tools_available[]. See TrajectoryService.save
+    # for the schema.
+    raw_payload = Column(JSON, nullable=False)
+    # PII-scrubbed export-ready payload. Phase 4 will populate this in a
+    # follow-up scheduled job; v1 leaves it NULL.
+    redacted_payload = Column(JSON, nullable=True)
+
+    # Quick-filter fields denormalized out of raw_payload for indexed lookups.
+    outcome = Column(String(20), nullable=False, default=TRAJECTORY_OUTCOME_SUCCESS, index=True)
+    tool_count = Column(Integer, nullable=False, default=0)
+    distinct_tool_count = Column(Integer, nullable=False, default=0)
+    token_count = Column(Integer, nullable=True)  # input+output for the turn
+
+    # Linkage to ProceduralSkill if this turn produced or used a skill.
+    extracted_skill_id = Column(
+        Integer, ForeignKey("procedural_skills.id", ondelete="SET NULL"), nullable=True
+    )
+    # IDs of injected skills (JSON list); used for offline skill-effectiveness analytics.
+    used_skill_ids = Column(JSON, nullable=True)
+
+    flagged_for_retention = Column(Boolean, nullable=False, default=False, index=True)
+    created_at = Column(DateTime, default=_utcnow, index=True)
+
+    __table_args__ = (
+        Index("idx_trajectories_user_created", "user_id", "created_at"),
+        Index("idx_trajectories_outcome_created", "outcome", "created_at"),
+    )
+
+    user = relationship("User", foreign_keys=[user_id])
+    conversation = relationship("Conversation", foreign_keys=[conversation_id])
+    extracted_skill = relationship("ProceduralSkill", foreign_keys=[extracted_skill_id])
+
+
 # Memory History — Audit trail for memory modifications
 MEMORY_ACTION_CREATED = "created"
 MEMORY_ACTION_UPDATED = "updated"

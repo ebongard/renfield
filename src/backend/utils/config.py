@@ -365,6 +365,16 @@ class Settings(BaseSettings):
     skill_auto_demote_threshold: int = Field(default=5, ge=1, le=100)        # Failures before auto-deactivate
     skill_auto_demote_success_rate: float = Field(default=0.10, ge=0.0, le=1.0)  # Success rate below this triggers demote
 
+    # Trajectory capture (self-learning Phase 2)
+    # Captures full agent-turn traces as JSONL-exportable training data
+    # for downstream LoRA fine-tuning. See docs/SELF_LEARNING.md.
+    trajectory_capture_enabled: bool = False                                  # Master switch — implicitly requires skills_enabled
+    trajectory_capture_outcomes: str = "success,tool_fail"                    # Comma-separated: outcomes to capture
+    trajectory_retention_days: int = Field(default=30, ge=1, le=3650)        # Auto-delete after N days
+    trajectory_cleanup_interval: int = Field(default=86400, ge=300, le=604800)  # Cleanup job interval (seconds)
+    trajectory_max_per_user: int = Field(default=10000, ge=100, le=100000)   # Soft cap, oldest dropped first
+    trajectory_redact_pii: bool = False                                       # Phase 4: scrub PII into redacted_payload
+
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
     kg_extraction_model: str = ""                                                # Empty = use default model

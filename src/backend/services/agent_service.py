@@ -2071,12 +2071,14 @@ async def _post_turn_skill_bookkeeping(
     user_message: str,
     lang: str,
 ) -> None:
-    """Runs after the agent turn completes. Two responsibilities:
+    """Runs after the agent turn completes. Three responsibilities:
 
     1. Record outcome on any skills that were injected into this turn's
        prompt (so the agent can demote skills that stop helping).
-    2. If the turn was complex AND successful, ask the SkillExtractor to
-       distill a new procedural skill from the trace.
+    2. If the turn was complex AND successful AND has an owner, ask the
+       SkillExtractor to distill a new procedural skill from the trace.
+    3. If trajectory capture is enabled, persist the full turn trace as
+       training data for the JSONL export pipeline. Phase-2 surface.
 
     Errors are logged and swallowed — this is a side task, never a
     blocker for the response path.
@@ -2086,6 +2088,7 @@ async def _post_turn_skill_bookkeeping(
     from services.database import AsyncSessionLocal
     from services.skill_extractor import SkillExtractor
     from services.skill_service import SkillService
+    from services.trajectory_service import TrajectoryService
 
     # Outcome heuristic: turn was successful if a final_answer step exists
     # AND no error step appeared. Tool failures alone don't count — they
@@ -2105,33 +2108,46 @@ async def _post_turn_skill_bookkeeping(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"⚠️ Skill outcome session failed: {e}")
 
-    # Only consider extracting a NEW skill from a successful turn AND
-    # only when we have an owner to attribute it to. Anonymous turns
-    # still get record_outcome bumps above (so seed skills can be
-    # auto-demoted) but cannot mint new owner-scoped skills.
-    if not (turn_success and settings.skill_extract_enabled and user_id is not None):
-        return
-
-    try:
-        extractor = SkillExtractor()
-        draft = await extractor.extract(
-            user_message=user_message, steps=steps, lang=lang,
-        )
-        if draft is None:
-            return
-
-        async with AsyncSessionLocal() as db:
-            svc = SkillService(db)
-            await svc.create_auto_extracted(
-                user_id=user_id,
-                title=draft.title,
-                body_md=draft.body_md,
-                trigger_examples=draft.trigger_examples,
-                tool_sequence=draft.tool_sequence,
-                # Auto-extracted skills land in the owner's self-tier by
-                # default. Promotion to household/public is a manual
-                # owner action via /api/skills/{id}.
-                circle_tier=0,
+    # Skill auto-extraction: gated on turn_success + owner present.
+    extracted_skill_id: int | None = None
+    if turn_success and settings.skill_extract_enabled and user_id is not None:
+        try:
+            extractor = SkillExtractor()
+            draft = await extractor.extract(
+                user_message=user_message, steps=steps, lang=lang,
             )
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
+            if draft is not None:
+                async with AsyncSessionLocal() as db:
+                    svc = SkillService(db)
+                    new_skill = await svc.create_auto_extracted(
+                        user_id=user_id,
+                        title=draft.title,
+                        body_md=draft.body_md,
+                        trigger_examples=draft.trigger_examples,
+                        tool_sequence=draft.tool_sequence,
+                        # Auto-extracted skills land in the owner's self-tier
+                        # by default. Promotion is a manual owner action via
+                        # /api/skills/{id}.
+                        circle_tier=0,
+                    )
+                    extracted_skill_id = new_skill.id
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"⚠️ Skill auto-extraction failed: {e}")
+
+    # Trajectory capture (Phase 2). Always considered (regardless of skill
+    # outcome / user_id), gated only on the feature flag inside the service.
+    if settings.trajectory_capture_enabled:
+        try:
+            async with AsyncSessionLocal() as db:
+                t_svc = TrajectoryService(db)
+                await t_svc.save(
+                    user_id=user_id,
+                    conversation_id=None,  # not threaded into agent.run today
+                    user_message=user_message,
+                    steps=steps,
+                    lang=lang,
+                    used_skill_ids=injected_skill_ids,
+                    extracted_skill_id=extracted_skill_id,
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"⚠️ Trajectory capture failed: {e}")

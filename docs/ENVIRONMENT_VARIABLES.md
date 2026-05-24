@@ -534,6 +534,40 @@ Owner-Sichtbarkeit ueber `/api/skills` (CRUD + pin/unpin + Tier-Aenderung).
 
 ---
 
+### Trajectory Capture (Self-Learning Phase 2)
+
+```bash
+# Master-Schalter — wenn aus, kein Capture, kein Export, kein Cleanup
+TRAJECTORY_CAPTURE_ENABLED=false
+
+# Welche Outcomes erfasst werden (Komma-separiert)
+TRAJECTORY_CAPTURE_OUTCOMES=success,tool_fail
+
+# Auto-Cleanup
+TRAJECTORY_RETENTION_DAYS=30                  # nicht-flagged Rows werden aelter geloescht
+TRAJECTORY_CLEANUP_INTERVAL=86400             # Sekunden zwischen Cleanup-Laeufen (default 1d)
+TRAJECTORY_MAX_PER_USER=10000                 # Soft-Cap; aelteste nicht-flagged Rows werden gedroppt
+
+# Phase-4-Vorbereitung — wenn true, exportiert /export.jsonl nur Rows
+# mit gesetztem redacted_payload. v1 schreibt nie redacted_payload, dh
+# bei =true bleibt der Export leer (kontrollierter Privacy-Gate).
+TRAJECTORY_REDACT_PII=false
+```
+
+**Verhalten:**
+Wenn `TRAJECTORY_CAPTURE_ENABLED=true` und `SKILLS_ENABLED=true`, persistiert der Post-Turn-Background-Task in `agent_service.py` nach jedem Agent-Turn die vollstaendige Trace (`user_message`, `tools_available`, `steps[]`, `final_answer`, Outcome) als JSON in `agent_trajectories`. Outcomes werden ueber `outcome_from_steps()` abgeleitet:
+- `success` — final_answer + keine Tool-Fehler
+- `tool_fail` — final_answer + mindestens ein fehlgeschlagener Tool-Call (Agent hat trotzdem geantwortet)
+- `abort` — kein final_answer (Loop-Exhaustion, Circuit-Breaker, Timeout)
+
+Nur Outcomes aus `TRAJECTORY_CAPTURE_OUTCOMES` werden erfasst.
+
+Wenn der Turn eine neue Skill extrahiert hat, wird die Trajectory automatisch mit `flagged_for_retention=True` markiert — der Cleanup-Scheduler ueberspringt sie. Gold-Beispiele fuer spaeteres Fine-Tuning.
+
+Admin-only Export-Endpunkt: `GET /api/trajectories/export.jsonl` streamt das gesamte Corpus als Line-Delimited-JSON. Filter via Query-Parametern (`outcome`, `since_days`, `flagged_only`, `require_redacted`).
+
+---
+
 ### Satellite System
 
 ```bash

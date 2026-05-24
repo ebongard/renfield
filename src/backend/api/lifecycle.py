@@ -286,6 +286,39 @@ def _schedule_federation_audit_cleanup():
     logger.info("Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)")
 
 
+def _schedule_trajectory_cleanup():
+    """Periodic prune of expired agent trajectories (self-learning Phase 2).
+
+    Same pattern as the federation audit + memory cleanup schedulers. Gated
+    on ``settings.trajectory_capture_enabled`` so the scheduler doesn't even
+    start on deployments that haven't opted into self-learning.
+    """
+    if not settings.trajectory_capture_enabled:
+        return
+
+    async def cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(settings.trajectory_cleanup_interval)
+                from services.trajectory_service import TrajectoryService
+
+                async with AsyncSessionLocal() as db_session:
+                    svc = TrajectoryService(db_session)
+                    await svc.purge_expired()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Trajectory cleanup failed: {e}")
+
+    task = asyncio.create_task(cleanup_loop())
+    _startup_tasks.append(task)
+    logger.info(
+        f"Trajectory Cleanup Scheduler gestartet "
+        f"(interval={settings.trajectory_cleanup_interval}s, "
+        f"retention={settings.trajectory_retention_days}d)"
+    )
+
+
 def _schedule_paperless_sweepers(app):
     """PR 4 — hourly sweepers for the Paperless learning loop.
 
@@ -629,6 +662,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_memory_cleanup()
     _schedule_upload_cleanup()
     _schedule_federation_audit_cleanup()
+    _schedule_trajectory_cleanup()
     _schedule_paperless_sweepers(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.
