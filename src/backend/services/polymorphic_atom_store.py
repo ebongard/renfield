@@ -85,29 +85,43 @@ class PolymorphicAtomStore:
         from services.kg_retrieval import KGRetrieval
         from services.memory_retrieval import MemoryRetrieval
         from services.rag_retrieval import RAGRetrieval
+        from services.skill_service import SkillService
 
         candidate_k = top_k * 3  # over-fetch for RRF fusion across sources
 
         rag_task = RAGRetrieval(self.db).search(query_text, top_k=candidate_k)
         kg_task = KGRetrieval(self.db).get_relevant_context(query_text, user_id=asker_id)
         memory_task = MemoryRetrieval(self.db).retrieve(query_text, user_id=asker_id, limit=candidate_k)
+        # Self-learning Phase 1: procedural skills are atoms too — give
+        # them a fourth source for the unified /brain search. Gated on
+        # skills_enabled so the existing three-source RRF behavior is
+        # unchanged for deployments that haven't opted in.
+        if settings.skills_enabled:
+            skill_task = SkillService(self.db).find_similar(
+                query_text, asker_id=asker_id, top_k=candidate_k,
+            )
+        else:
+            async def _empty():
+                return []
+            skill_task = _empty()
 
         # Per PR #402 review SHOULD-FIX #9: gather(return_exceptions=True) does NOT raise,
         # so the previous try/except wrapper around it was dead code that swallowed
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
-        rag_results, kg_context, memory_results = await asyncio.gather(
-            rag_task, kg_task, memory_task,
+        rag_results, kg_context, memory_results, skill_results = await asyncio.gather(
+            rag_task, kg_task, memory_task, skill_task,
             return_exceptions=True,
         )
 
         rag_matches = _wrap_rag_results(rag_results)
         kg_matches = _wrap_kg_context(kg_context)
         memory_matches = _wrap_memory_results(memory_results)
+        skill_matches = _wrap_skill_results(skill_results)
 
         merged = _rrf_merge(
-            [rag_matches, kg_matches, memory_matches],
+            [rag_matches, kg_matches, memory_matches, skill_matches],
             top_k=top_k,
             k=settings.rag_hybrid_rrf_k,
         )
@@ -224,6 +238,41 @@ def _wrap_kg_context(kg_context: Any) -> list[AtomMatch]:
             rank=1,
         )
     ]
+
+
+def _wrap_skill_results(skill_results: Any) -> list[AtomMatch]:
+    """Convert SkillService.find_similar output -> list[AtomMatch]."""
+    if isinstance(skill_results, Exception) or not skill_results:
+        return []
+    matches: list[AtomMatch] = []
+    now = _now()
+    for rank, s in enumerate(skill_results, start=1):
+        atom_id = f"procedural_skill:{s.get('id', 0)}"
+        body = s.get("body_md") or ""
+        matches.append(
+            AtomMatch(
+                atom=Atom(
+                    atom_id=str(atom_id),
+                    atom_type="procedural_skill",
+                    owner_user_id=0,  # not exposed by find_similar; not needed downstream
+                    policy={"tier": 0},  # tier already enforced by find_similar's WHERE
+                    created_at=now,
+                    updated_at=now,
+                    payload={
+                        "skill_id": s.get("id"),
+                        "title": s.get("title"),
+                        "content": body,
+                        "trigger_examples": s.get("trigger_examples") or [],
+                        "tool_sequence": s.get("tool_sequence") or [],
+                        "source": s.get("source"),
+                    },
+                ),
+                score=float(s.get("similarity", 0.0)),
+                snippet=body[:200],
+                rank=rank,
+            )
+        )
+    return matches
 
 
 def _wrap_memory_results(memory_results: Any) -> list[AtomMatch]:

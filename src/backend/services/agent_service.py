@@ -1052,9 +1052,18 @@ class AgentService:
                     )
                     if matches:
                         learned_skills = skill_svc.format_for_prompt(matches, lang=lang)
-                        # Stash IDs on the context so the agent loop can bump
-                        # success/failure counts after the turn finishes.
-                        context.injected_skill_ids = [m["id"] for m in matches]
+                        # Stash IDs on the context so the post-turn task can
+                        # bump success/failure counts. _build_agent_prompt
+                        # runs once per ReAct iteration — extend-dedupe so
+                        # the final list covers every skill the LLM saw
+                        # during the turn, not just the last iteration's
+                        # matches.
+                        new_ids = [m["id"] for m in matches]
+                        seen = set(context.injected_skill_ids)
+                        for sid in new_ids:
+                            if sid not in seen:
+                                context.injected_skill_ids.append(sid)
+                                seen.add(sid)
                         logger.info(
                             f"🧠 {len(matches)} procedural skill(s) injected "
                             f"into agent prompt"
@@ -1165,13 +1174,20 @@ class AgentService:
             # Self-learning Phase 1: post-turn skill bookkeeping.
             # Scheduled as a fire-and-forget background task so the response
             # path returns to the caller without waiting for the LLM extract
-            # call. Both branches no-op cleanly when context.steps is empty
-            # (e.g., very early failure) so we don't have to gate on
-            # success/failure here.
-            if settings.skills_enabled and user_id is not None:
+            # call. The task is added to _skill_background_tasks to keep a
+            # strong reference — bare create_task() returns a Task that the
+            # event loop only weak-refs, which CPython is free to GC before
+            # the multi-second SkillExtractor LLM call completes. The
+            # add_done_callback discards the ref once the task finishes.
+            #
+            # When user_id is None (anonymous/single-user-no-id path) we
+            # STILL run the record_outcome side of the task for any seed
+            # skills that were injected — only the LLM-extract branch
+            # requires a real owner. The helper itself gates the extraction
+            # internally; here we only gate on skills_enabled.
+            if settings.skills_enabled:
                 try:
-                    import asyncio as _asyncio
-                    _asyncio.create_task(_post_turn_skill_bookkeeping(
+                    _spawn_skill_task(_post_turn_skill_bookkeeping(
                         steps=list(context.steps),
                         injected_skill_ids=list(context.injected_skill_ids),
                         user_id=user_id,
@@ -2032,11 +2048,26 @@ def step_to_ws_message(step: AgentStep) -> dict:
 # Self-learning Phase 1 — post-turn skill bookkeeping (fire-and-forget)
 # ============================================================================
 
+# Strong-reference set for the fire-and-forget post-turn tasks. asyncio
+# only weak-refs tasks; without this set, Python is free to GC the task
+# before the SkillExtractor LLM call completes. Pattern lifted from
+# whisper_service._spawn_background.
+_skill_background_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_skill_task(coro) -> None:
+    """Schedule a fire-and-forget skill-related coroutine that the event
+    loop won't GC before completion."""
+    task = asyncio.create_task(coro)
+    _skill_background_tasks.add(task)
+    task.add_done_callback(_skill_background_tasks.discard)
+
+
 async def _post_turn_skill_bookkeeping(
     *,
     steps: list,
     injected_skill_ids: list[int],
-    user_id: int,
+    user_id: int | None,
     user_message: str,
     lang: str,
 ) -> None:
@@ -2074,8 +2105,11 @@ async def _post_turn_skill_bookkeeping(
     except Exception as e:  # noqa: BLE001
         logger.warning(f"⚠️ Skill outcome session failed: {e}")
 
-    # Only consider extracting a NEW skill from a successful turn.
-    if not (turn_success and settings.skill_extract_enabled):
+    # Only consider extracting a NEW skill from a successful turn AND
+    # only when we have an owner to attribute it to. Anonymous turns
+    # still get record_outcome bumps above (so seed skills can be
+    # auto-demoted) but cannot mint new owner-scoped skills.
+    if not (turn_success and settings.skill_extract_enabled and user_id is not None):
         return
 
     try:

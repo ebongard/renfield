@@ -43,12 +43,22 @@ One outcome path:
 """
 from __future__ import annotations
 
+import math
 import time
 from datetime import datetime, UTC
 
 from loguru import logger
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+
+def _is_finite(x: float) -> bool:
+    """True iff x is a real finite number — protects pgvector serialization
+    from quantized-embed-model degeneracies that emit NaN/inf components."""
+    try:
+        return math.isfinite(float(x))
+    except (TypeError, ValueError):
+        return False
 
 from models.database import (
     ATOM_TYPE_PROCEDURAL_SKILL,
@@ -60,7 +70,6 @@ from models.database import (
     TIER_SELF,
 )
 from services.atom_service import AtomService
-from services.atom_types import Atom as AtomDTO
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -114,6 +123,16 @@ class SkillService:
             parts.append(body_md.strip()[:200])
         return "\n".join(p for p in parts if p)
 
+    async def compute_embedding_for(
+        self, title: str, trigger_examples: list[str], body_md: str,
+    ) -> list[float] | None:
+        """Public wrapper used by the PATCH route to re-embed after edits.
+        Returns None if the embed model call fails (so the caller can keep
+        the old vector instead of overwriting it with NULL)."""
+        return await self._embed(
+            self._embedding_input(title, trigger_examples, body_md)
+        )
+
     # ------------------------------------------------------------------ has-any
     async def has_any_skills(self, scope_key: str = "global") -> bool:
         """Fast existence check used by the agent prompt builder to short-
@@ -143,14 +162,33 @@ class SkillService:
         tool_sequence: list[str],
         learned_from_conversation_id: int | None = None,
         circle_tier: int = TIER_SELF,
+        source: str = SKILL_SOURCE_AUTO_EXTRACTED,
     ) -> ProceduralSkill:
-        """Create a skill from an agent-turn extraction.
+        """Create a skill from an agent-turn extraction (or any in-app writer).
 
-        Registers an atoms row via AtomService so circle-tier filters and
-        explicit grants apply uniformly with all other atom types.
+        Atomicity: uses ``AtomService.create_with_source`` which pre-flushes
+        the atoms row with a placeholder source_id, then we flush the skill
+        row with the real ``atom_id`` FK in place, then patch the atom's
+        source_id to the real PK, and commit once. A failure anywhere in
+        the chain rolls back BOTH the atom and the skill rows together —
+        no orphan rows in either direction (fixes the earlier two-commit
+        race where a concurrent ``upsert_atom`` IntegrityError would
+        rollback the just-flushed skill).
+
+        ``source`` is parameterized so ``create_user_authored`` can stamp
+        the right discriminator in the single transaction — no second
+        UPDATE+commit, no stale in-memory ``.source`` returned to the
+        caller.
         """
         embedding = await self._embed(
             self._embedding_input(title, trigger_examples, body_md)
+        )
+
+        atom_svc = AtomService(self.db)
+        atom_id = await atom_svc.create_with_source(
+            atom_type=ATOM_TYPE_PROCEDURAL_SKILL,
+            owner_user_id=user_id,
+            tier=int(circle_tier),
         )
 
         skill = ProceduralSkill(
@@ -159,42 +197,24 @@ class SkillService:
             body_md=body_md,
             trigger_examples=trigger_examples or [],
             tool_sequence=tool_sequence or [],
-            source=SKILL_SOURCE_AUTO_EXTRACTED,
+            source=source,
             learned_from_conversation_id=learned_from_conversation_id,
             embedding=embedding,
             circle_tier=int(circle_tier),
+            atom_id=atom_id,
         )
         self.db.add(skill)
-        await self.db.flush()  # need skill.id for the atom source_id
+        await self.db.flush()  # mint skill.id
 
-        # Register in atoms table — same pattern AtomService.upsert_atom uses
-        # for conversation memories and KG entities. The created_at/updated_at
-        # on the DTO are required by the dataclass but ignored by upsert_atom
-        # (it writes its own timestamps to the row), so pass current time.
-        # upsert_atom also patches procedural_skills.atom_id + circle_tier
-        # itself via its generic source-row UPDATE — no follow-up needed.
-        now = datetime.now(UTC).replace(tzinfo=None)
-        atom = AtomDTO(
-            atom_id="",
-            atom_type=ATOM_TYPE_PROCEDURAL_SKILL,
-            owner_user_id=user_id,
-            policy={"tier": int(circle_tier)},
-            payload={"skill_id": skill.id},
-            created_at=now,
-            updated_at=now,
-        )
-        atom_svc = AtomService(self.db)
-        await atom_svc.upsert_atom(atom)
-
-        # Re-read so we hand the caller the post-atom-registration state
-        # (skill.atom_id is now set by upsert_atom's source-row UPDATE).
-        await self.db.refresh(skill)
+        # Patch the atom's source_id placeholder to the real PK.
+        await atom_svc.finalize_source_id(atom_id, skill.id)
+        await self.db.commit()
 
         # Bust the has-skills cache so the next prompt build sees this skill.
         SkillService._has_skills_cache.clear()
         logger.info(
-            f"🧠 Skill auto-extracted (user={user_id}, tier={circle_tier}): "
-            f"{title!r}"
+            f"🧠 Skill persisted (user={user_id}, tier={circle_tier}, "
+            f"source={source}): {title!r}"
         )
         return skill
 
@@ -208,9 +228,10 @@ class SkillService:
         tool_sequence: list[str] | None = None,
         circle_tier: int = TIER_SELF,
     ) -> ProceduralSkill:
-        """Manual create from the UI / API. Same atom registration as
-        auto-extraction, only the discriminator differs."""
-        skill = await self.create_auto_extracted(
+        """Manual create from the UI / API. Single transaction with the
+        ``user_created`` discriminator stamped from the start — no
+        post-insert UPDATE patches the source field."""
+        return await self.create_auto_extracted(
             user_id=user_id,
             title=title,
             body_md=body_md,
@@ -218,15 +239,8 @@ class SkillService:
             tool_sequence=tool_sequence or [],
             learned_from_conversation_id=None,
             circle_tier=circle_tier,
+            source=SKILL_SOURCE_USER_CREATED,
         )
-        # Patch the discriminator without re-doing the atom dance.
-        await self.db.execute(
-            update(ProceduralSkill)
-            .where(ProceduralSkill.id == skill.id)
-            .values(source=SKILL_SOURCE_USER_CREATED)
-        )
-        await self.db.commit()
-        return skill
 
     async def load_seed(
         self,
@@ -300,6 +314,17 @@ class SkillService:
         if threshold is None:
             threshold = settings.skill_inject_similarity_threshold
 
+        # Defense-in-depth: a None asker only collapses the filter to
+        # "everything visible" when auth is OFF. With auth ON, a None
+        # asker means a code-path bug (a caller forgot to thread user_id);
+        # rather than leak every user's tier-0 self-skills, return [].
+        if asker_id is None and settings.auth_enabled:
+            logger.warning(
+                "🧠 SkillService.find_similar called with asker_id=None while "
+                "AUTH_ENABLED=true — returning [] to avoid cross-user leak"
+            )
+            return []
+
         if not await self.has_any_skills():
             return []
 
@@ -307,10 +332,30 @@ class SkillService:
         if embedding is None:
             return []
 
+        # Drop any non-finite components — pgvector rejects 'nan'/'inf'
+        # text serializations with a parse error that aborts the whole
+        # query for every user. A degenerate embed model emitting a single
+        # NaN must not take procedural-memory injection down system-wide.
+        if any(not _is_finite(x) for x in embedding):
+            logger.warning(
+                "🧠 SkillService.find_similar: embedding contained non-finite "
+                "value(s); skipping query"
+            )
+            return []
+
         embedding_str = f"[{','.join(map(str, embedding))}]"
 
-        # Visibility filter — see docstring. The :asker IS NULL branch
-        # makes AUTH_ENABLED=false (no asker) collapse to "all active".
+        # Visibility — three OR-arms:
+        #   (a) skill owned by the asker (any tier — owner sees everything)
+        #   (b) public-tier system seed (user_id IS NULL, circle_tier=4)
+        #   (c) circle reach: asker is a member of the owner's tier-X
+        #       circle and skill.circle_tier >= X (parallel to the shared
+        #       circle_sql.circles_filter_clause used by RAG/KG/memory
+        #       retrieval).
+        # AUTH_ENABLED=false reaches this point only with asker_id=None,
+        # which the earlier guard already handled to mean "single-user
+        # mode, show all active" — implemented via the :asker IS NULL arm
+        # at the top of the WHERE clause.
         sql = text("""
             SELECT
                 id, title, body_md, trigger_examples, tool_sequence,
@@ -323,6 +368,13 @@ class SkillService:
                 :asker IS NULL
                 OR user_id = :asker
                 OR (user_id IS NULL AND circle_tier = 4)
+                OR EXISTS (
+                    SELECT 1 FROM circle_memberships cm
+                    WHERE cm.circle_owner_id = procedural_skills.user_id
+                      AND cm.member_user_id = :asker
+                      AND cm.dimension = 'tier'
+                      AND (cm.value::text)::int <= procedural_skills.circle_tier
+                )
               )
             ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT :limit
@@ -357,26 +409,37 @@ class SkillService:
     async def record_outcome(self, skill_id: int, success: bool) -> None:
         """Bump success_count or failure_count after a turn that used this skill.
 
+        Race-safety: loads the row with ``SELECT ... FOR UPDATE`` so two
+        concurrent record_outcome calls on the same skill serialize behind
+        the lock. The increment is read-modify-write on the ORM instance
+        (not a bulk UPDATE that bypasses the identity map), so the auto-
+        demote threshold check below sees the post-increment counters
+        rather than a stale snapshot. SQLite — used only by the test
+        harness — silently no-ops ``FOR UPDATE``; that's fine because
+        sqlite tests are single-task and never hit the race.
+
         Auto-demotes (is_active=False) when failure_count >= the configured
         threshold AND the rolling success rate drops below the floor.
         Pinned skills are never auto-demoted — they must be explicitly
         deactivated by the owner. Curator (Phase 4) may later promote
         archived skills back if usage warrants.
         """
-        col = ProceduralSkill.success_count if success else ProceduralSkill.failure_count
-        await self.db.execute(
-            update(ProceduralSkill)
-            .where(ProceduralSkill.id == skill_id)
-            .values({col: col + 1, "last_used_at": datetime.now(UTC).replace(tzinfo=None)})
-        )
-
         skill = (await self.db.execute(
-            select(ProceduralSkill).where(ProceduralSkill.id == skill_id)
+            select(ProceduralSkill)
+            .where(ProceduralSkill.id == skill_id)
+            .with_for_update()
         )).scalar_one_or_none()
         if skill is None:
             await self.db.commit()
             return
 
+        if success:
+            skill.success_count += 1
+        else:
+            skill.failure_count += 1
+        skill.last_used_at = datetime.now(UTC).replace(tzinfo=None)
+
+        demoted = False
         total = skill.success_count + skill.failure_count
         if (
             not skill.pinned
@@ -385,11 +448,19 @@ class SkillService:
             and (skill.success_count / total) < settings.skill_auto_demote_success_rate
         ):
             skill.is_active = False
+            demoted = True
             logger.warning(
                 f"🧠 Skill {skill.id} auto-demoted (success_rate "
                 f"{skill.success_count}/{total}): {skill.title!r}"
             )
+
         await self.db.commit()
+
+        # Invalidate the has-any cache so the next prompt build sees the
+        # post-demote state (the PATCH/DELETE handlers do the same — keep
+        # the asymmetry from leaking into stale prompt-building).
+        if demoted:
+            SkillService._has_skills_cache.clear()
 
     # ============================================================ format
     def format_for_prompt(self, skills: list[dict], lang: str = "de") -> str:

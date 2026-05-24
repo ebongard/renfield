@@ -137,6 +137,43 @@ class TestParseResponse:
         assert draft is not None
         assert draft.title == "Fenced"
 
+    def test_preserves_backticks_inside_body_md(self):
+        """The fence-stripping regex must not eat backticks that appear
+        INSIDE a JSON string value — body_md commonly cites tools with
+        backticks (\"call \\`mcp.x\\`\")."""
+        from services.skill_extractor import SkillExtractor
+        body = "- call `mcp.ha.turn_on`\n- check `mcp.ha.get_state`"
+        payload = (
+            "```json\n"
+            + json.dumps({
+                "title": "with backticks",
+                "body_md": body,
+                "trigger_examples": ["t"],
+                "tool_sequence": ["mcp.ha.turn_on"],
+            })
+            + "\n```"
+        )
+        draft = SkillExtractor._parse_response(payload)
+        assert draft is not None
+        assert "`mcp.ha.turn_on`" in draft.body_md
+        assert "`mcp.ha.get_state`" in draft.body_md
+
+    def test_unlabeled_fence_still_parsed(self):
+        from services.skill_extractor import SkillExtractor
+        payload = (
+            "```\n"
+            + json.dumps({
+                "title": "no-label",
+                "body_md": "- x",
+                "trigger_examples": ["t"],
+                "tool_sequence": ["mcp.x"],
+            })
+            + "\n```"
+        )
+        draft = SkillExtractor._parse_response(payload)
+        assert draft is not None
+        assert draft.title == "no-label"
+
     def test_invalid_json_returns_none(self):
         from services.skill_extractor import SkillExtractor
         assert SkillExtractor._parse_response("not json {{{") is None

@@ -114,6 +114,31 @@ class TestParseSeedFile:
         assert parsed is not None
         assert parsed["tool_sequence"] == []
 
+    def test_crlf_line_endings_normalized(self, tmp_path):
+        """A Windows-checkout seed file with CRLF endings parses cleanly
+        and the title/body contain no stray \\r characters."""
+        from services.skill_seed_loader import _parse_seed_file
+        md = tmp_path / "crlf.md"
+        # Bypass _write's dedent + plain newlines and emit literal CRLF.
+        md.write_bytes(
+            b"---\r\n"
+            b"title: CRLF Test\r\n"
+            b"triggers:\r\n"
+            b"  - hello windows\r\n"
+            b"tools:\r\n"
+            b"  - mcp.x\r\n"
+            b"---\r\n"
+            b"- step one\r\n"
+            b"- step two\r\n"
+        )
+        parsed = _parse_seed_file(md)
+        assert parsed is not None
+        assert parsed["title"] == "CRLF Test"
+        assert "\r" not in parsed["title"]
+        assert "\r" not in parsed["body_md"]
+        assert "hello windows" in parsed["trigger_examples"]
+        assert all("\r" not in t for t in parsed["trigger_examples"])
+
 
 class TestBundledSeedsValid:
     """Sanity check: every .md in src/backend/seed_skills/ parses cleanly."""

@@ -79,6 +79,10 @@ de:
 
     {tools_prompt}
 
+    {tool_corrections}
+
+    {learned_skills}
+
     {history_prompt}
 
     {conv_context}
@@ -659,6 +663,10 @@ en:
     {room_context}
 
     {tools_prompt}
+
+    {tool_corrections}
+
+    {learned_skills}
 
     {history_prompt}
 

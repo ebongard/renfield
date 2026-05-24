@@ -25,6 +25,7 @@ to persist via SkillService.create_auto_extracted.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -202,15 +203,24 @@ class SkillExtractor:
                 return (response["content"] or "").strip()
         return None
 
+    # Code-fence pattern: ```optional-label\n<body>\n``` (DOTALL on body).
+    # Anchored at both ends with optional trailing whitespace. Critically,
+    # this is a non-greedy capture of the BODY — a character-class
+    # ``strip('`')`` would eat backticks inside the body too (which
+    # ruins responses where body_md cites a tool with backticks like
+    # ``"call `mcp.ha.turn_on`"``).
+    _FENCE_RE = re.compile(
+        r"^\s*```[a-zA-Z0-9_-]*\s*\n(.*?)\n```\s*$",
+        re.DOTALL,
+    )
+
     @staticmethod
     def _parse_response(content: str) -> SkillDraft | None:
         """Tolerant JSON-or-null parser. Accepts code fences."""
         text = content.strip()
-        if text.startswith("```"):
-            # strip ```json ... ``` fences
-            text = text.strip("`")
-            if text.lower().startswith("json"):
-                text = text[4:].strip()
+        m = SkillExtractor._FENCE_RE.match(text)
+        if m is not None:
+            text = m.group(1).strip()
         if text.lower() in ("null", "none", ""):
             return None
         try:

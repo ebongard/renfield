@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ProceduralSkill, TIER_PUBLIC, User
 from services.atom_service import AtomService
-from services.auth_service import get_current_user
+from services.auth_service import get_user_or_default
 from services.database import get_db
 from services.skill_service import SkillService
 
@@ -41,8 +41,13 @@ class SkillCreateRequest(BaseModel):
 class SkillUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     body_md: str | None = None
-    trigger_examples: list[str] | None = None
-    tool_sequence: list[str] | None = None
+    # Mirrors SkillCreateRequest's min_length=1 — an empty list would
+    # silently re-embed the skill with title-only relevance and pollute
+    # find_similar matches.
+    trigger_examples: list[str] | None = Field(
+        default=None, min_length=1, max_length=10,
+    )
+    tool_sequence: list[str] | None = Field(default=None, max_length=20)
     pinned: bool | None = None
     is_active: bool | None = None
 
@@ -93,12 +98,6 @@ def _to_response(s: ProceduralSkill, *, is_owner: bool) -> SkillResponse:
     )
 
 
-def _require_user(current_user: User | None) -> User:
-    if current_user is None:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    return current_user
-
-
 async def _load_owned(
     db: AsyncSession, skill_id: int, user: User
 ) -> ProceduralSkill:
@@ -127,14 +126,14 @@ async def list_skills(
     limit: int = 100,
     offset: int = 0,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """List skills visible to the current user.
 
     Visible = owned by current_user OR public seed (user_id IS NULL,
     circle_tier=4). The latter is opt-out via ``include_seeds=false``.
     """
-    user = _require_user(current_user)
+    user = current_user
 
     stmt = select(ProceduralSkill)
     if not include_inactive:
@@ -161,9 +160,9 @@ async def list_skills(
 async def get_skill(
     skill_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
-    user = _require_user(current_user)
+    user = current_user
     skill = (await db.execute(
         select(ProceduralSkill).where(ProceduralSkill.id == skill_id)
     )).scalar_one_or_none()
@@ -182,9 +181,9 @@ async def get_skill(
 async def create_skill(
     body: SkillCreateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
-    user = _require_user(current_user)
+    user = current_user
     try:
         svc = SkillService(db)
         skill = await svc.create_user_authored(
@@ -207,9 +206,9 @@ async def update_skill(
     skill_id: int,
     body: SkillUpdateRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
-    user = _require_user(current_user)
+    user = current_user
     skill = await _load_owned(db, skill_id, user)
 
     changed = False
@@ -234,13 +233,21 @@ async def update_skill(
 
     if changed:
         skill.version += 1
-        # Re-embed if the content that drives similarity changed
+        # Re-embed if any field that drives similarity changed. Public
+        # method on the service — the route deliberately does NOT reach
+        # into _embed/_embedding_input now that reembed_skill exposes the
+        # combined operation.
         if any(v is not None for v in (body.title, body.body_md, body.trigger_examples)):
             svc = SkillService(db)
-            emb_input = svc._embedding_input(
-                skill.title, skill.trigger_examples or [], skill.body_md
+            new_emb = await svc.compute_embedding_for(
+                skill.title, skill.trigger_examples or [], skill.body_md,
             )
-            skill.embedding = await svc._embed(emb_input)
+            # Don't NUKE the existing embedding on a transient Ollama
+            # failure (new_emb is None when _embed swallowed an error).
+            # The old vector keeps the skill retrievable until the next
+            # edit / boot when embedding can be retried.
+            if new_emb is not None:
+                skill.embedding = new_emb
         await db.commit()
         SkillService._has_skills_cache.clear()
 
@@ -252,9 +259,9 @@ async def update_skill(
 async def pin_skill(
     skill_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
-    user = _require_user(current_user)
+    user = current_user
     skill = await _load_owned(db, skill_id, user)
     skill.pinned = True
     await db.commit()
@@ -265,9 +272,9 @@ async def pin_skill(
 async def unpin_skill(
     skill_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
-    user = _require_user(current_user)
+    user = current_user
     skill = await _load_owned(db, skill_id, user)
     skill.pinned = False
     await db.commit()
@@ -279,10 +286,10 @@ async def unpin_skill(
 async def delete_skill(
     skill_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Soft-delete (is_active=False). The atoms row stays for audit trail."""
-    user = _require_user(current_user)
+    user = current_user
     skill = await _load_owned(db, skill_id, user)
     skill.is_active = False
     await db.commit()
@@ -295,11 +302,11 @@ async def change_skill_tier(
     skill_id: int,
     body: SkillTierRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = Depends(get_current_user),
+    current_user: User = Depends(get_user_or_default),
 ):
     """Change circle_tier and cascade via AtomService — same path KG
     entities and memories use."""
-    user = _require_user(current_user)
+    user = current_user
     skill = await _load_owned(db, skill_id, user)
 
     if skill.atom_id is None:
@@ -312,8 +319,16 @@ async def change_skill_tier(
 
     svc = AtomService(db)
     await svc.update_tier(skill.atom_id, {"tier": int(body.circle_tier)})
-    # Re-fetch — update_tier cascaded the source-row column.
+    # Re-fetch — update_tier cascaded the source-row column. Owner already
+    # verified above by _load_owned (which enforces is_active wasn't
+    # required there because tier changes are still valid on soft-deleted
+    # skills before reactivation); the reload here just refreshes the
+    # row to read the post-cascade circle_tier. Pin the user_id check so a
+    # concurrent owner-change can't surface a row that isn't ours anymore.
     skill = (await db.execute(
-        select(ProceduralSkill).where(ProceduralSkill.id == skill_id)
+        select(ProceduralSkill).where(
+            ProceduralSkill.id == skill_id,
+            ProceduralSkill.user_id == user.id,
+        )
     )).scalar_one()
     return _to_response(skill, is_owner=True)

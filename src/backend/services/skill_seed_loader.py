@@ -50,6 +50,11 @@ def _parse_seed_file(path: Path) -> dict | None:
         logger.warning(f"⚠️ Seed skill {path.name}: read failed: {e}")
         return None
 
+    # Normalize line endings so a CRLF checkout (Windows contributor with
+    # git's autocrlf=true) doesn't make the regex see stray \r characters
+    # that pollute the body and break the title-dedup in load_seed.
+    raw = raw.replace("\r\n", "\n").replace("\r", "\n")
+
     m = _FRONT_MATTER_RE.match(raw)
     if not m:
         logger.warning(f"⚠️ Seed skill {path.name}: missing YAML-ish front-matter")
