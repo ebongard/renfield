@@ -106,6 +106,22 @@ export default function Layout({ children }: LayoutProps) {
     return false;
   });
 
+  // iPads (landscape on 11", either orientation on 12.9") report a CSS
+  // viewport ≥1024px, so they hit Tailwind's `lg:` breakpoint and used to
+  // get the desktop rail layout — but touch has no `:hover`, so the rail
+  // never expanded and the admin submenu was unreachable. Fall back to the
+  // mobile slide-overlay layout whenever the pointer is coarse / no hover.
+  const [hoverCapable, setHoverCapable] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+  });
+  useEffect(() => {
+    const mq = window.matchMedia('(hover: hover) and (pointer: fine)');
+    const handler = (e: MediaQueryListEvent) => setHoverCapable(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
   const location = useLocation();
   const navigate = useNavigate();
   const sidebarRef = useRef<HTMLElement | null>(null);
@@ -156,6 +172,21 @@ export default function Layout({ children }: LayoutProps) {
 
   const visibleMainNav = filterNavItems(mainNavigation);
   const visibleAdminNav = filterNavItems(adminNavigation);
+
+  // Tailwind class fragments gated on hover-capable pointers. Empty on
+  // touch devices so every `lg:*` rail/hover style drops out and pure
+  // mobile slide-overlay behaviour wins regardless of viewport width.
+  const railHide = hoverCapable ? 'lg:hidden' : '';
+  const railPad = hoverCapable ? (IS_PRO_EDITION ? 'lg:pl-72' : 'lg:pl-16') : '';
+  const railWidth = hoverCapable ? (IS_PRO_EDITION ? 'lg:w-72' : 'lg:w-16 lg:hover:w-72') : '';
+  const railTranslate = hoverCapable ? 'lg:translate-x-0' : '';
+  const railFade = hoverCapable ? 'lg:opacity-0 lg:group-hover/sidebar:opacity-100' : '';
+  const railOnlyMenuBtn = hoverCapable ? 'hidden lg:flex lg:group-hover/sidebar:hidden' : 'hidden';
+  const adminSubmenuCls = hoverCapable
+    ? (adminExpanded
+        ? 'max-h-[600px] opacity-100 lg:max-h-0 lg:opacity-0 lg:group-hover/sidebar:max-h-[600px] lg:group-hover/sidebar:opacity-100'
+        : 'max-h-0 opacity-0')
+    : (adminExpanded ? 'max-h-[600px] opacity-100' : 'max-h-0 opacity-0');
 
   // Handle logout
   const handleLogout = () => {
@@ -252,7 +283,7 @@ export default function Layout({ children }: LayoutProps) {
           <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-accent-400 rounded-r" />
         )}
         <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-        <span className={`${IS_PRO_EDITION ? '' : 'lg:opacity-0 lg:group-hover/sidebar:opacity-100'} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{item.name}</span>
+        <span className={`${IS_PRO_EDITION ? '' : railFade} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{item.name}</span>
       </Link>
     );
   };
@@ -268,13 +299,13 @@ export default function Layout({ children }: LayoutProps) {
       </a>
 
       {/* Fixed Header */}
-      <header className={`fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors ${IS_PRO_EDITION ? 'lg:pl-72' : 'lg:pl-16'}`}>
+      <header className={`fixed top-0 left-0 right-0 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 z-40 transition-colors ${railPad}`}>
         <div className="h-full px-4 flex items-center justify-between">
           {/* Left: Hamburger + Logo */}
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setSidebarOpen(true)}
-              className="w-11 h-11 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors active:scale-95 lg:hidden"
+              className={`w-11 h-11 flex items-center justify-center rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors active:scale-95 ${railHide}`}
               aria-label={t('nav.openMenu')}
               aria-expanded={sidebarOpen}
               aria-controls="sidebar"
@@ -327,7 +358,7 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Backdrop (mobile only) */}
       <div
-        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs z-40 transition-opacity duration-300 lg:hidden ${
+        className={`fixed inset-0 bg-black/50 dark:bg-black/60 backdrop-blur-xs z-40 transition-opacity duration-300 ${railHide} ${
           sidebarOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
         aria-hidden="true"
@@ -339,7 +370,7 @@ export default function Layout({ children }: LayoutProps) {
         ref={sidebarRef}
         id="sidebar"
         className={`group/sidebar fixed top-0 left-0 h-full flex flex-col bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-50 transform transition-all duration-300 ease-out
-          w-72 ${IS_PRO_EDITION ? 'lg:w-72' : 'lg:w-16 lg:hover:w-72'} lg:translate-x-0
+          w-72 ${railWidth} ${railTranslate}
           ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         `}
         aria-label={t('nav.mainNavigation')}
@@ -349,7 +380,7 @@ export default function Layout({ children }: LayoutProps) {
         {/* Sidebar Header */}
         <div className="relative flex items-center h-16 px-4 border-b border-gray-200 dark:border-gray-700">
           {/* Rail state: hamburger icon centered (desktop only, hidden on hover) */}
-          <div className="hidden lg:flex lg:group-hover/sidebar:hidden items-center justify-center absolute inset-0">
+          <div className={`${railOnlyMenuBtn} items-center justify-center absolute inset-0`}>
             <button
               onClick={() => setSidebarOpen(true)}
               className="p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors active:scale-95"
@@ -360,14 +391,14 @@ export default function Layout({ children }: LayoutProps) {
           </div>
 
           {/* Full logo + close — shown on mobile + desktop hover */}
-          <div className="flex items-center justify-between w-full lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
+          <div className={`flex items-center justify-between w-full ${railFade} transition-opacity duration-200`}>
             <Link to="/" onClick={handleNavClick} className="flex items-center overflow-hidden">
               <img src={import.meta.env.VITE_APP_LOGO_URL || "/renfield-logo-header.svg"} alt={import.meta.env.VITE_APP_NAME || "Renfield"} className="h-11 w-auto" />
             </Link>
             <button
               ref={firstFocusableRef}
               onClick={() => setSidebarOpen(false)}
-              className="p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors lg:hidden"
+              className={`p-2.5 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 focus:outline-hidden focus:ring-2 focus:ring-primary-500 transition-colors ${railHide}`}
               aria-label={t('nav.closeMenu')}
             >
               <X className="w-5 h-5" aria-hidden="true" />
@@ -400,10 +431,10 @@ export default function Layout({ children }: LayoutProps) {
               >
                 <div className="flex items-center space-x-3">
                   <Settings className="w-5 h-5 shrink-0" aria-hidden="true" />
-                  <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('nav.admin')}</span>
+                  <span className={`${railFade} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{t('nav.admin')}</span>
                 </div>
                 <ChevronDown
-                  className={`w-4 h-4 transition-transform duration-200 lg:opacity-0 lg:group-hover/sidebar:opacity-100 ${
+                  className={`w-4 h-4 transition-transform duration-200 ${railFade} ${
                     adminExpanded ? 'rotate-180' : ''
                   }`}
                   aria-hidden="true"
@@ -413,11 +444,7 @@ export default function Layout({ children }: LayoutProps) {
               {/* Admin Submenu — hidden in rail, shown on hover when expanded */}
               <div
                 id="admin-menu"
-                className={`overflow-hidden transition-all duration-200 ease-in-out ${
-                  adminExpanded
-                    ? 'max-h-[600px] opacity-100 lg:max-h-0 lg:opacity-0 lg:group-hover/sidebar:max-h-[600px] lg:group-hover/sidebar:opacity-100'
-                    : 'max-h-0 opacity-0'
-                }`}
+                className={`overflow-hidden transition-all duration-200 ease-in-out ${adminSubmenuCls}`}
               >
                 <div className="ml-3 pl-3 border-l border-gray-200 dark:border-gray-700 space-y-1 py-1">
                   {visibleAdminNav.map((item) => (
@@ -441,7 +468,7 @@ export default function Layout({ children }: LayoutProps) {
                       <div className="w-8 h-8 rounded-full bg-primary-600/30 flex items-center justify-center shrink-0">
                         <User className="w-4 h-4 text-primary-600 dark:text-primary-400" />
                       </div>
-                      <div className="flex-1 min-w-0 lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
+                      <div className={`flex-1 min-w-0 ${railFade} transition-opacity duration-200`}>
                         <p className="text-sm font-medium text-gray-900 dark:text-white truncate">{userDisplayName}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{user?.role?.name}</p>
                       </div>
@@ -454,7 +481,7 @@ export default function Layout({ children }: LayoutProps) {
                     className="w-full flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-red-100 dark:hover:bg-red-900/30 hover:text-red-600 dark:hover:text-red-400 transition-colors"
                   >
                     <LogOut className="w-5 h-5 shrink-0" aria-hidden="true" />
-                    <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.logout')}</span>
+                    <span className={`${railFade} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{t('auth.logout')}</span>
                   </button>
                 </div>
               ) : (
@@ -464,7 +491,7 @@ export default function Layout({ children }: LayoutProps) {
                   className="flex items-center space-x-3 px-3 py-3 rounded-lg text-sm font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700/50 hover:text-gray-900 dark:hover:text-white transition-colors"
                 >
                   <LogIn className="w-5 h-5 shrink-0" aria-hidden="true" />
-                  <span className="lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200 overflow-hidden whitespace-nowrap">{t('auth.login')}</span>
+                  <span className={`${railFade} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{t('auth.login')}</span>
                 </Link>
               )}
             </>
@@ -472,7 +499,7 @@ export default function Layout({ children }: LayoutProps) {
         </nav>
 
         {/* Sidebar Footer - Device Status */}
-        <div className="shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 lg:opacity-0 lg:group-hover/sidebar:opacity-100 transition-opacity duration-200">
+        <div className={`shrink-0 p-4 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 ${railFade} transition-opacity duration-200`}>
           <DeviceStatus />
         </div>
       </aside>
@@ -483,7 +510,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <main
         id="main-content"
-        className={`pt-16 min-h-screen ${IS_PRO_EDITION ? 'lg:pl-72' : 'lg:pl-16'}`}
+        className={`pt-16 min-h-screen ${railPad}`}
         tabIndex={-1}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
