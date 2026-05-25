@@ -200,12 +200,19 @@ class TrajectoryService:
         return row
 
     async def _enforce_per_user_cap(self, user_id: int | None) -> None:
+        """Drop oldest non-flagged rows when this user is over cap.
+
+        Two queries (COUNT + DELETE-with-subquery), down from three. The
+        previous SELECT-then-DELETE materialized victim IDs in Python
+        between statements; this version pushes the victim selection
+        into a subquery the DELETE consumes directly, so the row IDs
+        never round-trip. The COUNT stays out front because we need to
+        short-circuit cleanly when under cap (the DELETE-with-subquery
+        would still execute LIMIT 0, but COUNT is the cheaper gate).
+        """
         cap = settings.trajectory_max_per_user
-        # Apply the filter symmetrically for the count and the victim
-        # SELECT — `.is_(None)` for NULL user_id, equality for everyone
-        # else. SQLAlchemy's bound `col == None_var` produces SQL `col =
-        # NULL` which is UNKNOWN and matches no rows; we have to use the
-        # IS NULL predicate explicitly.
+        # SQLAlchemy's bound `col == None_var` produces SQL `col = NULL`
+        # which is UNKNOWN and matches no rows; use IS NULL explicitly.
         if user_id is None:
             user_filter = AgentTrajectory.user_id.is_(None)
         else:
@@ -217,10 +224,8 @@ class TrajectoryService:
         if count <= cap:
             return
 
-        # Drop oldest non-flagged. If the user has more flagged-for-retention
-        # rows than the cap, we still keep them (gold examples).
         excess = count - cap
-        victims = (await self.db.execute(
+        victims_sq = (
             select(AgentTrajectory.id)
             .where(
                 user_filter,
@@ -228,13 +233,13 @@ class TrajectoryService:
             )
             .order_by(AgentTrajectory.created_at.asc())
             .limit(excess)
-        )).scalars().all()
-        if not victims:
-            return
-        await self.db.execute(
-            delete(AgentTrajectory).where(AgentTrajectory.id.in_(list(victims)))
+            .scalar_subquery()
         )
-        await self.db.commit()
+        result = await self.db.execute(
+            delete(AgentTrajectory).where(AgentTrajectory.id.in_(victims_sq))
+        )
+        if result.rowcount:
+            await self.db.commit()
 
     # ============================================================== read
     async def list_for_admin(

@@ -1145,6 +1145,7 @@ class AgentService:
                 personality_context=personality_context,
                 tools_prompt=tools_prompt,
                 tool_corrections=tool_corrections,
+                tool_health_warnings=tool_health_warnings,
                 learned_skills=learned_skills,
                 history_prompt=history_prompt,
                 step_directive=step_directive

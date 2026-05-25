@@ -61,50 +61,6 @@ def _is_finite(x: float) -> bool:
         return False
 
 
-# Defense-in-depth prompt-injection scrub for LLM-derived skill text.
-# Mirrors the pattern table in ToolOutcomeService._SCRUB_PATTERNS — both
-# services inject user-influenced strings into the agent system prompt
-# and both need the same scrub. The set is intentionally narrow: known
-# chat-template tokens + role markers + the most-cited injection phrases.
-# Not a complete defense (no such thing exists); raises the bar without
-# claiming completeness.
-_SCRUB_PATTERNS: tuple[tuple[str, str], ...] = (
-    ("system:", "[sys]"),
-    ("System:", "[sys]"),
-    ("SYSTEM:", "[sys]"),
-    ("assistant:", "[asst]"),
-    ("Assistant:", "[asst]"),
-    ("ASSISTANT:", "[asst]"),
-    ("user:", "[usr]"),
-    ("User:", "[usr]"),
-    ("USER:", "[usr]"),
-    ("<|im_start|>", "[<im_start>]"),
-    ("<|im_end|>", "[<im_end>]"),
-    ("<|system|>", "[<system>]"),
-    ("<|user|>", "[<user>]"),
-    ("<|assistant|>", "[<assistant>]"),
-    ("<|begin_of_text|>", "[<bot>]"),
-    ("<|end_of_text|>", "[<eot>]"),
-    ("<|start_header_id|>", "[<hdr>]"),
-    ("<|end_header_id|>", "[</hdr>]"),
-    ("[INST]", "[[INST]]"),
-    ("[/INST]", "[[/INST]]"),
-    ("ignore previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-    ("ignore all previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-    ("disregard previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-    ("new instructions:", "[NEW_INSTRUCTIONS scrubbed]"),
-)
-
-
-def _scrub_for_prompt(raw: str) -> str:
-    if not raw:
-        return raw
-    out = raw
-    for needle, repl in _SCRUB_PATTERNS:
-        if needle in out:
-            out = out.replace(needle, repl)
-    return out
-
 from models.database import (
     ATOM_TYPE_PROCEDURAL_SKILL,
     ProceduralSkill,
@@ -117,6 +73,7 @@ from models.database import (
 from services.atom_service import AtomService
 from utils.config import settings
 from utils.llm_client import get_embed_client
+from utils.prompt_scrub import scrub_for_prompt
 
 
 class SkillService:
@@ -569,13 +526,13 @@ class SkillService:
             tools = s.get("tool_sequence") or []
             triggers = s.get("trigger_examples") or []
             body = (s.get("body_md") or "").strip()
-            title = _scrub_for_prompt(s["title"])
+            title = scrub_for_prompt(s["title"])
             out.append(f"\n### {title}")
             if triggers:
-                scrubbed_triggers = [_scrub_for_prompt(t) for t in triggers[:3]]
+                scrubbed_triggers = [scrub_for_prompt(t) for t in triggers[:3]]
                 out.append("Trigger: " + ", ".join(f'"{t}"' for t in scrubbed_triggers))
             if tools:
                 out.append(f"{tool_label}: {', '.join(tools)}")
             if body:
-                out.append(_scrub_for_prompt(body))
+                out.append(scrub_for_prompt(body))
         return "\n".join(out)

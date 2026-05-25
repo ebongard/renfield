@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ToolOutcomeStat
 from utils.config import settings
+from utils.prompt_scrub import scrub_for_prompt
 
 
 class ToolOutcomeService:
@@ -306,58 +307,6 @@ class ToolOutcomeService:
         stmt = stmt.order_by(desc(ToolOutcomeStat.last_used_at)).limit(limit)
         return list((await self.db.execute(stmt)).scalars().all())
 
-    # Prompt-injection scrub patterns. The `last_failure_summary` field
-    # is raw tool output that gets concatenated into the agent system
-    # prompt — without scrubbing, a tool error message containing
-    # "system: ignore previous rules" would land in the LLM's system
-    # role. Whitelist of common role/prompt markers + control sequences.
-    # NOT a complete defense against prompt injection (no such thing
-    # exists today) — it is a "raise the bar" measure that catches the
-    # obvious vectors without claiming to catch novel attacks.
-    _SCRUB_PATTERNS = (
-        # Role markers — any of these on a line by themselves or with
-        # whitespace tends to be interpreted as a role boundary.
-        ("system:", "[sys]"),
-        ("System:", "[sys]"),
-        ("SYSTEM:", "[sys]"),
-        ("assistant:", "[asst]"),
-        ("Assistant:", "[asst]"),
-        ("ASSISTANT:", "[asst]"),
-        ("user:", "[usr]"),
-        ("User:", "[usr]"),
-        ("USER:", "[usr]"),
-        # Chat-template tokens used by every major instruct format.
-        ("<|im_start|>", "[<im_start>]"),
-        ("<|im_end|>", "[<im_end>]"),
-        ("<|system|>", "[<system>]"),
-        ("<|user|>", "[<user>]"),
-        ("<|assistant|>", "[<assistant>]"),
-        ("<|begin_of_text|>", "[<bot>]"),
-        ("<|end_of_text|>", "[<eot>]"),
-        ("<|start_header_id|>", "[<hdr>]"),
-        ("<|end_header_id|>", "[</hdr>]"),
-        ("[INST]", "[[INST]]"),
-        ("[/INST]", "[[/INST]]"),
-        # Instruction-override phrases that show up in injection PoCs.
-        ("ignore previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-        ("ignore all previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-        ("disregard previous instructions", "[IGNORE_PREVIOUS scrubbed]"),
-        ("new instructions:", "[NEW_INSTRUCTIONS scrubbed]"),
-    )
-
-    @classmethod
-    def _scrub_for_prompt(cls, raw: str) -> str:
-        """Scrub user-influenced text before concatenating into the
-        agent system prompt. See _SCRUB_PATTERNS for the rationale —
-        this is whitelist-by-replacement, not a silver bullet."""
-        if not raw:
-            return raw
-        out = raw
-        for needle, repl in cls._SCRUB_PATTERNS:
-            if needle in out:
-                out = out.replace(needle, repl)
-        return out
-
     # ======================================================= formatting
     @staticmethod
     def format_for_prompt(warnings: list[dict], lang: str = "de") -> str:
@@ -393,7 +342,7 @@ class ToolOutcomeService:
         lines = [header]
         for w in warnings:
             raw_summary = (w.get("last_failure_summary") or "").replace("\n", " ")[:120]
-            summary = ToolOutcomeService._scrub_for_prompt(raw_summary) or "(no detail)"
+            summary = scrub_for_prompt(raw_summary) or "(no detail)"
             lines.append(line_tpl.format(
                 tool=w["tool_name"],
                 fails=w["failure_count"],

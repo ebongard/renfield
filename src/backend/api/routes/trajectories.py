@@ -19,7 +19,7 @@ from datetime import datetime, timedelta, UTC
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -113,11 +113,12 @@ async def list_trajectories(
 # --------------------------------------------------------------- export
 @router.get("/export.jsonl")
 async def export_jsonl(
+    request: Request,
     outcome: str | None = None,
     since_days: int | None = Query(default=None, ge=1, le=3650),
     flagged_only: bool = False,
     require_redacted: bool = True,
-    _: User = Depends(require_permission(Permission.ADMIN)),
+    admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Stream the corpus as line-delimited JSON. Each line is one turn.
 
@@ -131,9 +132,11 @@ async def export_jsonl(
     rather than silently dripping zero rows.
 
     Override with ``require_redacted=false`` only with explicit operator
-    intent (and audit-log presence): the trace payload includes anything
-    a user typed plus tool outputs that may carry secrets pulled from
-    integrations.
+    intent. Doing so emits a WARNING-level structured log line (admin
+    user id + remote address + filter args) so the export is auditable
+    via the standard log-aggregation pipeline. The trace payload
+    includes anything a user typed plus tool outputs that may carry
+    secrets pulled from integrations.
 
     No ``Depends(get_db)``: the request-scoped session would be closed
     by FastAPI as soon as this handler returns the StreamingResponse
@@ -148,6 +151,19 @@ async def export_jsonl(
         raise HTTPException(
             status_code=409,
             detail="trajectory_capture_enabled=false — nothing to export",
+        )
+
+    # Audit trail for the verbatim-export path. Structured warning so log
+    # shippers (loguru → JSON sink in production) capture admin id +
+    # remote address + filter args. Emitted BEFORE streaming starts so
+    # the audit lands even if the client disconnects mid-stream.
+    if not require_redacted:
+        client_host = request.client.host if request.client else "unknown"
+        logger.warning(
+            "🔓 Trajectory export with require_redacted=false: "
+            f"admin_user_id={admin.id} admin_username={admin.username!r} "
+            f"remote={client_host} outcome={outcome!r} "
+            f"since_days={since_days} flagged_only={flagged_only}"
         )
 
     # Pre-flight gate: if the caller asked for redacted output but no

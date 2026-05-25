@@ -345,46 +345,57 @@ class SkillCuratorService:
         Pinned skills are never archived. Skills with too few usages
         are also exempt — they may simply not have been tested yet,
         not "stale".
+
+        Filter is pushed into SQL (single UPDATE) so a user with
+        hundreds of skills doesn't pay full-row materialization +
+        Python-side iteration. The success-rate predicate uses
+        ``success_count::float / total`` with a CASE guard to avoid the
+        zero-division branch — total is also gated by min_uses (>=1) so
+        the divide-by-zero case is structurally impossible, but the
+        CASE keeps the SQL portable to test-harness sqlite which
+        evaluates the predicate even when min_uses guards short-circuit.
         """
         cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
             days=settings.skill_curator_stale_days
         )
         min_uses = settings.skill_curator_min_uses_to_consider_stale
         max_rate = settings.skill_curator_stale_success_rate
+        now = datetime.now(UTC).replace(tzinfo=None)
 
-        candidates = (await self.db.execute(
-            select(ProceduralSkill).where(
+        from sqlalchemy import case, func as _f
+
+        total_expr = ProceduralSkill.success_count + ProceduralSkill.failure_count
+        rate_expr = case(
+            (total_expr > 0,
+             ProceduralSkill.success_count * 1.0 / total_expr),
+            else_=0.0,
+        )
+        last_expr = _f.coalesce(
+            ProceduralSkill.last_used_at, ProceduralSkill.created_at,
+        )
+
+        stmt = (
+            update(ProceduralSkill)
+            .where(
                 ProceduralSkill.user_id == user_id,
                 ProceduralSkill.is_active.is_(True),
                 ProceduralSkill.pinned.is_(False),
-                # last_used_at IS NULL means never used — also stale.
-                # (last_used_at < cutoff) OR (last_used_at IS NULL AND created_at < cutoff)
+                total_expr >= min_uses,
+                rate_expr < max_rate,
+                last_expr < cutoff,
             )
-        )).scalars().all()
-
-        archived = 0
-        for s in candidates:
-            total = s.success_count + s.failure_count
-            if total < min_uses:
-                continue
-            rate = s.success_count / total if total else 0.0
-            if rate >= max_rate:
-                continue
-            last = s.last_used_at or s.created_at
-            if last is None or last >= cutoff:
-                continue
-
-            s.is_active = False
-            s.updated_at = datetime.now(UTC).replace(tzinfo=None)
-            archived += 1
-            logger.info(
-                f"🧹 Curator archive: skill #{s.id} {s.title!r} "
-                f"(rate {s.success_count}/{total}, last_used {last.isoformat()})"
-            )
+            .values(is_active=False, updated_at=now)
+        )
+        result = await self.db.execute(stmt)
+        archived = int(result.rowcount or 0)
 
         if archived > 0:
             await self.db.commit()
             SkillService._has_skills_cache.clear()
+            logger.info(
+                f"🧹 Curator archive: {archived} skill(s) "
+                f"user={user_id} (stale_days={settings.skill_curator_stale_days})"
+            )
         return archived
 
     # ============================================================ helper
