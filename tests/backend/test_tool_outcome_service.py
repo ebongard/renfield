@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ToolOutcomeStat, User
+from models.database import Role, ToolOutcomeStat, User
 
 
 @dataclass
@@ -25,9 +25,18 @@ class _FakeStep:
     step_number: int = 0
 
 
+async def _make_role(db_session: AsyncSession, name: str) -> Role:
+    role = Role(name=name)
+    db_session.add(role)
+    await db_session.commit()
+    await db_session.refresh(role)
+    return role
+
+
 @pytest.fixture
 async def th_user(db_session: AsyncSession) -> User:
-    user = User(username="th_tester", hashed_password="x")
+    role = await _make_role(db_session, "tool_health_test_role")
+    user = User(username="th_tester", password_hash="x", role_id=role.id)
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
@@ -89,7 +98,8 @@ class TestRecord:
     async def test_per_user_isolation(self, db_session, th_user):
         from services.tool_outcome_service import ToolOutcomeService
         # Add a second user
-        other = User(username="other_th", hashed_password="x")
+        other_role = await _make_role(db_session, "tool_health_test_role_other")
+        other = User(username="other_th", password_hash="x", role_id=other_role.id)
         db_session.add(other)
         await db_session.commit()
         await db_session.refresh(other)

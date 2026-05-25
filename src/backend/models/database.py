@@ -982,6 +982,18 @@ class EpisodicMemory(Base):
     user = relationship("User", foreign_keys=[user_id])
 
 
+# ProceduralSkill / Atom-type discriminators — defined here (in front of
+# the ORM classes that reference them as Column defaults) instead of at
+# the file's tail-end constant block. Column(default=X) evaluates X at
+# class-construction time, so the constants must exist before the class
+# body runs. The tier integers + ATOM_TYPE_* + SKILL_SOURCE_* tables at
+# the bottom of this file are the canonical exports — these forward-
+# declarations are kept in sync with them and re-asserted below.
+SKILL_SOURCE_AUTO_EXTRACTED = "auto_extracted"
+SKILL_SOURCE_SEED = "seed"
+SKILL_SOURCE_USER_CREATED = "user_created"
+
+
 class ProceduralSkill(Base):
     """
     Procedural skill — agent-learned how-to recipe for a class of tasks.
@@ -1407,10 +1419,13 @@ ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
 ATOM_TYPE_PROCEDURAL_SKILL = "procedural_skill"
 
-# ProceduralSkill.source discriminators.
-SKILL_SOURCE_AUTO_EXTRACTED = "auto_extracted"  # agent learned from a complex turn
-SKILL_SOURCE_SEED = "seed"                       # loaded from src/backend/seed_skills/*.md
-SKILL_SOURCE_USER_CREATED = "user_created"       # manually authored via API/UI
+# ProceduralSkill.source discriminators are declared up-file (in front of
+# the ORM class body that references them as Column defaults). Asserting
+# the canonical values here so a future drift between the two declaration
+# sites fails at import time instead of silently desyncing.
+assert SKILL_SOURCE_AUTO_EXTRACTED == "auto_extracted"
+assert SKILL_SOURCE_SEED == "seed"
+assert SKILL_SOURCE_USER_CREATED == "user_created"
 
 # Atom explicit grant permission levels — mirrors the legacy KB_PERM_*
 # values for migration parity.

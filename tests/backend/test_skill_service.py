@@ -22,10 +22,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    EMBEDDING_DIMENSION,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
     SKILL_SOURCE_USER_CREATED,
     ProceduralSkill,
+    Role,
     User,
 )
 
@@ -33,18 +35,29 @@ from models.database import (
 # -------------------------------------------------------------- fixtures
 @pytest.fixture
 def patched_embed():
-    """Patch SkillService._embed to return a deterministic short vector
-    so DB writes don't try to call Ollama."""
+    """Patch SkillService._embed to return a deterministic vector at the
+    pgvector-declared dimension. pgvector's SQLAlchemy type processor
+    validates dimensions client-side BEFORE the SQL runs (even when the
+    backend is sqlite), so an 8-element shortcut vector trips
+    ``expected N dimensions, not 8``."""
     with patch(
         "services.skill_service.SkillService._embed",
-        return_value=[0.1] * 8,  # tiny vector; sqlite stores as Text
+        return_value=[0.1] * EMBEDDING_DIMENSION,
     ) as p:
         yield p
 
 
 @pytest.fixture
 async def test_user(db_session: AsyncSession) -> User:
-    user = User(username="skill_tester", hashed_password="x")
+    # users.role_id is NOT NULL — create a minimal Role first. Per-fixture
+    # role name keeps the unique constraint happy when this file's tests
+    # run in the same suite as another fixture creating its own role.
+    role = Role(name="skill_test_role")
+    db_session.add(role)
+    await db_session.commit()
+    await db_session.refresh(role)
+
+    user = User(username="skill_tester", password_hash="x", role_id=role.id)
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)

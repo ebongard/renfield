@@ -21,7 +21,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    EMBEDDING_DIMENSION,
     ProceduralSkill,
+    Role,
     SKILL_SOURCE_AUTO_EXTRACTED,
     SKILL_SOURCE_SEED,
     User,
@@ -30,16 +32,27 @@ from models.database import (
 
 @pytest.fixture
 def patched_embed():
+    """Pgvector's SQLAlchemy type processor enforces vector dimension
+    client-side; use the configured dimension instead of a short stub."""
     with patch(
         "services.skill_service.SkillService._embed",
-        return_value=[0.1] * 8,
+        return_value=[0.1] * EMBEDDING_DIMENSION,
     ) as p:
         yield p
 
 
+async def _make_role(db_session: AsyncSession, name: str) -> Role:
+    role = Role(name=name)
+    db_session.add(role)
+    await db_session.commit()
+    await db_session.refresh(role)
+    return role
+
+
 @pytest.fixture
 async def c_user(db_session: AsyncSession) -> User:
-    user = User(username="curator_tester", hashed_password="x")
+    role = await _make_role(db_session, "curator_test_role")
+    user = User(username="curator_tester", password_hash="x", role_id=role.id)
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
@@ -68,7 +81,7 @@ async def _seed_skill(
         last_used_at=last_used_at,
         is_active=is_active,
         pinned=pinned,
-        embedding=[0.1] * 8,
+        embedding=[0.1] * EMBEDDING_DIMENSION,
         circle_tier=0,
     )
     db.add(skill)
@@ -313,7 +326,10 @@ class TestArchiveStale:
 class TestListActiveUserIds:
     async def test_returns_distinct_owners(self, db_session, c_user):
         from services.skill_curator_service import SkillCuratorService
-        other = User(username="curator_other", hashed_password="x")
+        other_role = await _make_role(db_session, "curator_test_role_other")
+        other = User(
+            username="curator_other", password_hash="x", role_id=other_role.id,
+        )
         db_session.add(other)
         await db_session.commit()
         await db_session.refresh(other)

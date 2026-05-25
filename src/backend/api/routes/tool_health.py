@@ -14,15 +14,17 @@ Routes (prefix added by main.py):
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import User
 from models.permissions import Permission
+from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
 from services.database import get_db
 from services.tool_outcome_service import ToolOutcomeService
+from utils.config import settings
 
 router = APIRouter()
 
@@ -49,9 +51,11 @@ class WarningResponse(BaseModel):
 
 
 @router.get("", response_model=list[ToolOutcomeStatResponse])
+@limiter.limit(settings.api_rate_limit_admin)
 async def list_tool_stats(
+    request: Request,
     user_id: int | None = None,
-    limit: int = 200,
+    limit: int = Query(default=200, ge=1, le=500),
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.ADMIN)),
 ):
@@ -75,7 +79,9 @@ async def list_tool_stats(
 
 
 @router.get("/warnings/{user_id}", response_model=list[WarningResponse])
+@limiter.limit(settings.api_rate_limit_admin)
 async def preview_warnings_for_user(
+    request: Request,
     user_id: int,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.ADMIN)),

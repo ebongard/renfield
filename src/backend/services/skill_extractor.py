@@ -44,6 +44,21 @@ class SkillDraft:
     tool_sequence: list[str]
 
 
+# Length caps for fields that ride into the system prompt. Mirrors the
+# Pydantic limits in api/routes/skills.py so a draft that bypasses the
+# route boundary (post-turn auto-extract path) still respects the same
+# prompt-bloat ceiling. Tool-name pattern matches the live tool registry
+# namespace (`mcp.<server>.<tool>` or `internal.<tool>`) so a poisoned
+# extractor response containing role-marker text in a fake tool name is
+# dropped at parse time rather than persisted and later scrubbed.
+_DRAFT_TITLE_MAX_CHARS = 255
+_DRAFT_BODY_MD_MAX_CHARS = 8000
+_DRAFT_TRIGGER_MAX_CHARS = 200
+_DRAFT_TRIGGER_CAP = 5
+_DRAFT_TOOL_CAP = 10
+_TOOL_NAME_RE = re.compile(r"^(mcp\.[a-z0-9_]+|internal)\.[a-z0-9_]+$")
+
+
 _SYSTEM_DE = """Du bist ein Skill-Extractor fuer einen lernenden Agenten.
 Eingabe: die User-Anfrage und die Tool-Trace einer erfolgreichen Agent-Antwort.
 Aufgabe: pruefe ob die Antwort einer wiederverwendbaren PROZEDUR folgt (eine
@@ -241,15 +256,27 @@ class SkillExtractor:
             logger.debug(f"🧠 Skill extractor: incomplete draft, skipping: {obj}")
             return None
 
-        # Coerce strings; cap counts to keep prompts small.
-        triggers = [str(t).strip() for t in triggers if t][:5]
-        tools = [str(t).strip() for t in tools if t][:10]
+        # Coerce strings; cap counts AND individual string lengths so a
+        # misbehaving LLM emitting a multi-KB "trigger" doesn't bloat the
+        # row + future prompt-build. Drop tool names that don't match the
+        # live tool registry namespace pattern — that's where a poisoned
+        # extractor response (LLM steered into emitting a "tool name"
+        # carrying role-marker text) gets caught before persistence.
+        triggers = [
+            str(t).strip()[:_DRAFT_TRIGGER_MAX_CHARS]
+            for t in triggers if t
+        ][:_DRAFT_TRIGGER_CAP]
+        tools = [
+            str(t).strip()
+            for t in tools if t
+        ][:_DRAFT_TOOL_CAP]
+        tools = [t for t in tools if _TOOL_NAME_RE.match(t)]
         if not triggers or not tools:
             return None
 
         return SkillDraft(
-            title=title[:255],
-            body_md=body_md,
+            title=title[:_DRAFT_TITLE_MAX_CHARS],
+            body_md=body_md[:_DRAFT_BODY_MD_MAX_CHARS],
             trigger_examples=triggers,
             tool_sequence=tools,
         )

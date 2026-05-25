@@ -17,7 +17,7 @@ Routes (prefix `/api/trajectories` added by main.py):
 
 from datetime import datetime, timedelta, UTC
 import json
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -28,12 +28,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import AgentTrajectory, User
 from models.permissions import Permission
+from services.api_rate_limiter import limiter
 from services.auth_service import require_permission
 from services.database import get_db
 from services.trajectory_service import TrajectoryService
 from utils.config import settings
 
 router = APIRouter()
+
+# Match the discriminator constants in services.trajectory_service so a
+# typo at the route layer fails fast at 422 instead of silently returning
+# zero rows (the previous behavior with free-form str validation).
+OutcomeLiteral = Literal["success", "tool_fail", "abort"]
 
 
 # --------------------------------------------------------------- schemas
@@ -82,9 +88,11 @@ def _to_summary(row: AgentTrajectory) -> TrajectoryResponse:
 
 # ----------------------------------------------------------------- list
 @router.get("", response_model=list[TrajectoryResponse])
+@limiter.limit(settings.api_rate_limit_admin)
 async def list_trajectories(
+    request: Request,
     user_id: int | None = None,
-    outcome: str | None = None,
+    outcome: OutcomeLiteral | None = None,
     flagged_only: bool = False,
     since_days: int | None = Query(default=None, ge=1, le=3650),
     limit: int = Query(default=100, ge=1, le=500),
@@ -112,9 +120,10 @@ async def list_trajectories(
 
 # --------------------------------------------------------------- export
 @router.get("/export.jsonl")
+@limiter.limit(settings.api_rate_limit_admin)
 async def export_jsonl(
     request: Request,
-    outcome: str | None = None,
+    outcome: OutcomeLiteral | None = None,
     since_days: int | None = Query(default=None, ge=1, le=3650),
     flagged_only: bool = False,
     require_redacted: bool = True,
@@ -213,7 +222,9 @@ async def export_jsonl(
 
 # ------------------------------------------------------------------ flag
 @router.post("/{trajectory_id}/flag", response_model=TrajectoryResponse)
+@limiter.limit(settings.api_rate_limit_admin)
 async def flag_trajectory(
+    request: Request,
     trajectory_id: int,
     body: FlagRequest,
     db: AsyncSession = Depends(get_db),
@@ -232,7 +243,9 @@ async def flag_trajectory(
 
 # ----------------------------------------------------------------- stats
 @router.get("/stats", response_model=StatsResponse)
+@limiter.limit(settings.api_rate_limit_admin)
 async def trajectory_stats(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_permission(Permission.ADMIN)),
 ):

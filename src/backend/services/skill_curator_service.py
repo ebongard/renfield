@@ -41,10 +41,10 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, UTC
 
 from loguru import logger
-from sqlalchemy import select, text, update
+from sqlalchemy import case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ProceduralSkill, SKILL_SOURCE_SEED
+from models.database import EMBEDDING_DIMENSION, ProceduralSkill, SKILL_SOURCE_SEED
 from services.skill_service import SkillService
 from utils.config import settings
 
@@ -142,10 +142,19 @@ class SkillCuratorService:
         # pair already merged this pass). Without the LIMIT, an N-skill
         # user gets an unbounded O(N²) sort even though
         # max_merges_per_run (default 20) caps what we'll act on.
+        #
+        # halfvec cast on BOTH sides of the cosine op is mandatory — the
+        # HNSW index in pc20260523 was built with `halfvec_cosine_ops`
+        # (regular `vector` type caps at 2000 dims, production runs
+        # 2560-dim qwen3-embedding:4b). Without the cast on both columns
+        # the planner can't use the index and falls back to a seq-scan +
+        # per-pair cosine on the raw 2560-dim vectors. Same pattern used
+        # in skill_service.find_similar.
         fetch_cap = max(settings.skill_curator_max_merges_per_run * 2, 2)
-        sql = text("""
+        dim = EMBEDDING_DIMENSION
+        sql = text(f"""
             SELECT a.id AS id_a, b.id AS id_b,
-                   1 - (a.embedding <=> b.embedding) AS similarity
+                   1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim})) AS similarity
             FROM procedural_skills a
             JOIN procedural_skills b
               ON a.id < b.id
@@ -157,7 +166,7 @@ class SkillCuratorService:
               AND b.is_active = TRUE
               AND a.source <> :seed
               AND b.source <> :seed
-              AND (1 - (a.embedding <=> b.embedding)) >= :threshold
+              AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim}))) >= :threshold
             ORDER BY similarity DESC
             LIMIT :fetch_cap
         """)
@@ -168,25 +177,54 @@ class SkillCuratorService:
             "fetch_cap": fetch_cap,
         })).fetchall()
 
+        if not rows:
+            return []
+
+        # Bulk-load every skill referenced by any pair in ONE round-trip,
+        # then dispatch _pick_winner from the in-memory dict. Previous
+        # implementation issued a separate SELECT inside _pick_winner per
+        # pair (N+1 against the same table the self-join already scanned),
+        # so a curator pass that found 40 pairs paid 40 sequential
+        # round-trips before the merge work even started.
+        ref_ids: set[int] = set()
+        for r in rows:
+            ref_ids.add(int(r.id_a))
+            ref_ids.add(int(r.id_b))
+        loaded = (await self.db.execute(
+            select(ProceduralSkill).where(ProceduralSkill.id.in_(ref_ids))
+        )).scalars().all()
+        by_id: dict[int, ProceduralSkill] = {s.id: s for s in loaded}
+
         # Choose winner per pair via the same metric used elsewhere:
         # higher success rate wins; tie-break on more-recent usage.
         out: list[DuplicatePair] = []
         for r in rows:
-            winner_id, loser_id = await self._pick_winner(int(r.id_a), int(r.id_b))
+            winner_id, loser_id = self._pick_winner_from_cache(
+                int(r.id_a), int(r.id_b), by_id,
+            )
             out.append(DuplicatePair(
                 loser_id=loser_id, winner_id=winner_id,
                 similarity=float(r.similarity),
             ))
         return out
 
-    async def _pick_winner(self, id_a: int, id_b: int) -> tuple[int, int]:
-        """Return (winner, loser). Higher success rate wins; ties broken
-        by total usage; further ties broken by last_used_at."""
-        skills = (await self.db.execute(
-            select(ProceduralSkill).where(ProceduralSkill.id.in_([id_a, id_b]))
-        )).scalars().all()
-        if len(skills) != 2:
-            # Shouldn't happen — caller already pulled them from the join
+    @classmethod
+    def _pick_winner_from_cache(
+        cls,
+        id_a: int,
+        id_b: int,
+        by_id: dict[int, ProceduralSkill],
+    ) -> tuple[int, int]:
+        """Return (winner, loser) using already-loaded skill rows.
+
+        Higher success rate wins; ties broken by total usage; further
+        ties broken by last_used_at. If either id is missing from the
+        dict (shouldn't happen — caller bulk-loaded both), preserve the
+        (a, b) input order so the caller is no worse off than before.
+        """
+        a = by_id.get(id_a)
+        b = by_id.get(id_b)
+        if a is None or b is None:
             return id_a, id_b
 
         def _rank_key(s: ProceduralSkill) -> tuple[float, int, datetime]:
@@ -195,7 +233,6 @@ class SkillCuratorService:
             last_used = s.last_used_at or s.created_at or datetime.min
             return (rate, total, last_used)
 
-        a, b = skills
         if _rank_key(a) >= _rank_key(b):
             return a.id, b.id
         return b.id, a.id
@@ -273,14 +310,16 @@ class SkillCuratorService:
             await self.db.rollback()
             return
 
-        # Re-derive combined triggers in case the winner's trigger list
-        # changed since the pre-load (defensive — keeps the eventual
-        # state consistent with what we observed at lock time, not the
-        # stale pre-load snapshot).
-        combined = self._combine_triggers(
-            winner.trigger_examples or [],
-            loser.trigger_examples or [],
-        )
+        # Use the pre-lock `combined` triggers + `new_emb` together —
+        # both were derived from the same pre-lock snapshot, so the
+        # embedding is consistent with the trigger list we're about to
+        # persist. The previous code re-derived `combined` post-lock
+        # (defensive against a PATCH landing in the brief window between
+        # pre-load and lock-acquire) but kept the pre-lock embedding,
+        # producing a row whose triggers didn't match the vector indexed
+        # for it. Concurrent PATCH races on the winner are rare and will
+        # be corrected on the next PATCH (which always re-embeds) or
+        # next curator pass.
 
         # Carry over the loser's outcome counts. This biases the winner
         # toward "skill at this concept has X total invocations" — a
@@ -301,7 +340,7 @@ class SkillCuratorService:
 
         # Bust the has-any cache (record_outcome / route handlers do the
         # same on any active-state flip).
-        SkillService._has_skills_cache.clear()
+        SkillService.invalidate_has_skills_cache()
 
         logger.info(
             f"🧹 Curator merge: skill #{loser.id} -> #{winner.id} "
@@ -362,15 +401,13 @@ class SkillCuratorService:
         max_rate = settings.skill_curator_stale_success_rate
         now = datetime.now(UTC).replace(tzinfo=None)
 
-        from sqlalchemy import case, func as _f
-
         total_expr = ProceduralSkill.success_count + ProceduralSkill.failure_count
         rate_expr = case(
             (total_expr > 0,
              ProceduralSkill.success_count * 1.0 / total_expr),
             else_=0.0,
         )
-        last_expr = _f.coalesce(
+        last_expr = func.coalesce(
             ProceduralSkill.last_used_at, ProceduralSkill.created_at,
         )
 
@@ -391,7 +428,7 @@ class SkillCuratorService:
 
         if archived > 0:
             await self.db.commit()
-            SkillService._has_skills_cache.clear()
+            SkillService.invalidate_has_skills_cache()
             logger.info(
                 f"🧹 Curator archive: {archived} skill(s) "
                 f"user={user_id} (stale_days={settings.skill_curator_stale_days})"

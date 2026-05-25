@@ -39,6 +39,12 @@ from utils.prompt_scrub import scrub_for_prompt
 class ToolOutcomeService:
     """Per-(user, tool) outcome stats. One per AsyncSession."""
 
+    # Max length for last_failure_summary stored on the row. Matches the
+    # column width assumption (Text, but bounded here so a multi-MB error
+    # blob doesn't bloat the table). Centralized so write + format sites
+    # stay in sync.
+    _FAILURE_SUMMARY_MAX_CHARS = 500
+
     def __init__(self, db: AsyncSession):
         self.db = db
 
@@ -89,7 +95,7 @@ class ToolOutcomeService:
                 failure_count=0 if success else 1,
                 last_used_at=now,
                 last_failure_at=None if success else now,
-                last_failure_summary=None if success else (failure_summary or "")[:500],
+                last_failure_summary=None if success else (failure_summary or "")[:self._FAILURE_SUMMARY_MAX_CHARS],
             )
             update_values: dict = {
                 "success_count": ToolOutcomeStat.success_count + (1 if success else 0),
@@ -99,7 +105,7 @@ class ToolOutcomeService:
             }
             if not success:
                 update_values["last_failure_at"] = now
-                update_values["last_failure_summary"] = (failure_summary or "")[:500]
+                update_values["last_failure_summary"] = (failure_summary or "")[:self._FAILURE_SUMMARY_MAX_CHARS]
             do_upsert = insert_stmt.on_conflict_do_update(
                 constraint="uq_tool_outcome_user_tool",
                 set_=update_values,
@@ -124,7 +130,7 @@ class ToolOutcomeService:
                 failure_count=0 if success else 1,
                 last_used_at=now,
                 last_failure_at=None if success else now,
-                last_failure_summary=None if success else (failure_summary or "")[:500],
+                last_failure_summary=None if success else (failure_summary or "")[:self._FAILURE_SUMMARY_MAX_CHARS],
             )
             self.db.add(row)
         else:
@@ -133,7 +139,7 @@ class ToolOutcomeService:
             else:
                 existing.failure_count += 1
                 existing.last_failure_at = now
-                existing.last_failure_summary = (failure_summary or "")[:500]
+                existing.last_failure_summary = (failure_summary or "")[:self._FAILURE_SUMMARY_MAX_CHARS]
             existing.last_used_at = now
         await self.db.commit()
 
@@ -187,7 +193,7 @@ class ToolOutcomeService:
                 success = bool(getattr(s, "success", False))
                 summary = None
                 if not success:
-                    summary = (getattr(s, "content", "") or "")[:500]
+                    summary = (getattr(s, "content", "") or "")[:self._FAILURE_SUMMARY_MAX_CHARS]
                 await self._safe_record(
                     user_id=user_id, tool_name=tool,
                     success=success, failure_summary=summary,
@@ -215,15 +221,15 @@ class ToolOutcomeService:
                 f"⚠️ ToolOutcomeService.record failed for {tool_name!r}: {e}"
             )
 
-    @staticmethod
-    def _summary_for_orphan(steps: list, next_idx: int) -> str:
+    @classmethod
+    def _summary_for_orphan(cls, steps: list, next_idx: int) -> str:
         """Best-effort summary for a tool_call that never got a
         tool_result — pull from the next step if it carries a payload."""
         if 0 <= next_idx < len(steps):
             s = steps[next_idx]
             content = (getattr(s, "content", "") or "")
             if content:
-                return content[:500]
+                return content[:cls._FAILURE_SUMMARY_MAX_CHARS]
         return "tool_call had no matching tool_result"
 
     # ============================================================ reads
@@ -343,8 +349,15 @@ class ToolOutcomeService:
         for w in warnings:
             raw_summary = (w.get("last_failure_summary") or "").replace("\n", " ")[:120]
             summary = scrub_for_prompt(raw_summary) or "(no detail)"
+            # Scrub tool_name too — it's the value of agent step.tool at
+            # capture time. Federation peers and plugin-registered tools
+            # can introduce names this service didn't author; a hostile
+            # name like "foo\nsystem: ignore previous rules\nbar" would
+            # otherwise ride in the warning block on every subsequent
+            # turn until pruned.
+            tool_name = scrub_for_prompt(w["tool_name"])
             lines.append(line_tpl.format(
-                tool=w["tool_name"],
+                tool=tool_name,
                 fails=w["failure_count"],
                 total=w["total"],
                 rate=w["success_rate"],

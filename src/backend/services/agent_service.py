@@ -155,6 +155,21 @@ class AgentContext:
     # tool errors in the trace".
     injected_skill_ids: list[int] = field(default_factory=list)
 
+    # Per-turn caches for the self-learning prompt blocks. _build_agent_prompt
+    # runs once per ReAct iteration AND up to 5 times more during
+    # _enforce_token_budget reduction passes, so naively recomputing the skill
+    # find_similar + tool-health warnings inside it issues 8-15 Ollama
+    # embedding round-trips + DB queries per turn for the SAME user message.
+    # We cache the rendered block + the matched-skill-id list on first
+    # compute and reuse it for the rest of the turn. The user message,
+    # asker_id, and (post-preselect) candidate-tool set are invariant after
+    # _run_impl enters the ReAct loop, so the cache is correct for the turn.
+    # Sentinel meaning: None = not yet computed; "" = computed and produced
+    # an empty block (no skills matched / no warnings). Both shapes are
+    # checked via `is not None` so the empty-block case still hits the cache.
+    _learned_skills_cache: str | None = None
+    _tool_health_cache: str | None = None
+
     # Token tracking
     total_input_tokens: int = 0
     total_output_tokens: int = 0
@@ -958,6 +973,7 @@ class AgentService:
         personality_context: str = "",
         context_vars_text: str = "",
         summary_text: str = "",
+        user_id: int | None = None,
     ) -> str:
         """Build the prompt for the Agent LLM call."""
         tools_prompt = self.tool_registry.build_tools_prompt(
@@ -1039,81 +1055,91 @@ class AgentService:
 
         # Load tool-health warnings (self-learning Phase 3). Per-user
         # rolling outcome counters; warns the LLM about tools currently
-        # failing for this asker. Cheap: a single indexed SELECT.
-        tool_health_warnings = ""
-        if (settings.tool_health_tracking_enabled
-                and settings.tool_health_warn_enabled
-                and user_id is not None):
-            try:
-                from services.database import AsyncSessionLocal
-                from services.tool_outcome_service import ToolOutcomeService
-                # _preselected_tools is a {name: tool_obj} dict (possibly
-                # empty when preselection ran but matched zero candidates)
-                # or None (no preselection). We have to distinguish:
-                #   - dict, non-empty → filter to those names
-                #   - dict, empty     → filter to []  (no warnings at all
-                #                        — there are no candidates this
-                #                        turn so warning about ANY tool is
-                #                        pure noise that wastes prompt
-                #                        tokens and confuses the LLM)
-                #   - None            → no filter (warn across all stats)
-                # The previous code used `candidate_names or None` which
-                # collapsed the empty-dict case into "no filter" — wrong.
-                if isinstance(self._preselected_tools, dict):
-                    candidate_arg: list[str] | None = list(
-                        self._preselected_tools.keys()
-                    )
-                else:
-                    candidate_arg = None
-                async with AsyncSessionLocal() as th_db:
-                    th_svc = ToolOutcomeService(th_db)
-                    th_warnings = await th_svc.get_health_warnings(
-                        user_id=user_id, candidate_tools=candidate_arg,
-                    )
-                    if th_warnings:
-                        tool_health_warnings = th_svc.format_for_prompt(
-                            th_warnings, lang=lang,
+        # failing for this asker. Cheap: a single indexed SELECT — but
+        # cached on AgentContext for the turn because _build_agent_prompt
+        # is called once per ReAct iteration AND up to 5 times more in
+        # _enforce_token_budget reduction passes; without the cache the
+        # same DB query runs 8-15x per user message.
+        if context._tool_health_cache is not None:
+            tool_health_warnings = context._tool_health_cache
+        else:
+            tool_health_warnings = ""
+            if (settings.tool_health_tracking_enabled
+                    and settings.tool_health_warn_enabled
+                    and user_id is not None):
+                try:
+                    from services.database import AsyncSessionLocal
+                    from services.tool_outcome_service import ToolOutcomeService
+                    # _preselected_tools is a {name: tool_obj} dict (possibly
+                    # empty when preselection ran but matched zero candidates)
+                    # or None (no preselection). Distinguish:
+                    #   - dict, non-empty → filter to those names
+                    #   - dict, empty     → filter to [] (no warnings at all;
+                    #                        warning about a non-candidate is
+                    #                        pure prompt-token noise)
+                    #   - None            → no filter (warn across all stats)
+                    if isinstance(self._preselected_tools, dict):
+                        candidate_arg: list[str] | None = list(
+                            self._preselected_tools.keys()
                         )
-                        logger.info(
-                            f"🔧 {len(th_warnings)} tool-health warning(s) "
-                            f"injected into agent prompt"
+                    else:
+                        candidate_arg = None
+                    async with AsyncSessionLocal() as th_db:
+                        th_svc = ToolOutcomeService(th_db)
+                        th_warnings = await th_svc.get_health_warnings(
+                            user_id=user_id, candidate_tools=candidate_arg,
                         )
-            except Exception as e:  # noqa: BLE001
-                logger.warning(f"⚠️ Tool-health warning lookup failed: {e}")
+                        if th_warnings:
+                            tool_health_warnings = th_svc.format_for_prompt(
+                                th_warnings, lang=lang,
+                            )
+                            logger.info(
+                                f"🔧 {len(th_warnings)} tool-health warning(s) "
+                                f"injected into agent prompt"
+                            )
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"⚠️ Tool-health warning lookup failed: {e}")
+            context._tool_health_cache = tool_health_warnings
 
-        # Load procedural skills (self-learning Phase 1). Same pattern as
-        # tool_corrections above — open a fresh session, find_similar, format.
-        # Skip cleanly on any error so the agent prompt still gets built.
-        learned_skills = ""
-        if settings.skills_enabled and settings.skill_inject_enabled:
-            try:
-                from services.database import AsyncSessionLocal
-                from services.skill_service import SkillService
-                async with AsyncSessionLocal() as skill_db:
-                    skill_svc = SkillService(skill_db)
-                    matches = await skill_svc.find_similar(
-                        message, asker_id=user_id
-                    )
-                    if matches:
-                        learned_skills = skill_svc.format_for_prompt(matches, lang=lang)
-                        # Stash IDs on the context so the post-turn task can
-                        # bump success/failure counts. _build_agent_prompt
-                        # runs once per ReAct iteration — extend-dedupe so
-                        # the final list covers every skill the LLM saw
-                        # during the turn, not just the last iteration's
-                        # matches.
-                        new_ids = [m["id"] for m in matches]
-                        seen = set(context.injected_skill_ids)
-                        for sid in new_ids:
-                            if sid not in seen:
-                                context.injected_skill_ids.append(sid)
-                                seen.add(sid)
-                        logger.info(
-                            f"🧠 {len(matches)} procedural skill(s) injected "
-                            f"into agent prompt"
+        # Load procedural skills (self-learning Phase 1). Cached on
+        # AgentContext for the turn — see _tool_health_cache rationale.
+        # find_similar issues an Ollama embedding call (50-200ms) plus a
+        # pgvector cosine SELECT; without the cache that fires 8-15x for
+        # the SAME invariant (message, user_id) across budget-reduction
+        # passes and ReAct iterations.
+        if context._learned_skills_cache is not None:
+            learned_skills = context._learned_skills_cache
+        else:
+            learned_skills = ""
+            if settings.skills_enabled and settings.skill_inject_enabled:
+                try:
+                    from services.database import AsyncSessionLocal
+                    from services.skill_service import SkillService
+                    async with AsyncSessionLocal() as skill_db:
+                        skill_svc = SkillService(skill_db)
+                        matches = await skill_svc.find_similar(
+                            message, asker_id=user_id
                         )
-            except Exception as e:
-                logger.warning(f"⚠️ Skill injection lookup failed: {e}")
+                        if matches:
+                            learned_skills = skill_svc.format_for_prompt(matches, lang=lang)
+                            # Stash IDs on the context so the post-turn task
+                            # can bump success/failure counts. extend-dedupe
+                            # against any prior turn-state (defensive — the
+                            # cache means we only land here once now, but a
+                            # caller bypassing the cache stays correct).
+                            new_ids = [m["id"] for m in matches]
+                            seen = set(context.injected_skill_ids)
+                            for sid in new_ids:
+                                if sid not in seen:
+                                    context.injected_skill_ids.append(sid)
+                                    seen.add(sid)
+                            logger.info(
+                                f"🧠 {len(matches)} procedural skill(s) injected "
+                                f"into agent prompt"
+                            )
+                except Exception as e:
+                    logger.warning(f"⚠️ Skill injection lookup failed: {e}")
+            context._learned_skills_cache = learned_skills
 
         # Build prompt from externalized template (role-specific or default)
         prompt = prompt_manager.get(
@@ -1368,13 +1394,18 @@ class AgentService:
                 yield summary_step
                 return
 
-            # Build prompt and enforce token budget
-            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text)
+            # Build prompt and enforce token budget. user_id threads through
+            # to _build_agent_prompt for the self-learning prompt blocks
+            # (tool-health warnings, procedural skill injection) and to
+            # _enforce_token_budget which re-invokes _build_agent_prompt up
+            # to 5 times during reduction passes.
+            prompt = await self._build_agent_prompt(message, context, conversation_history, room_context=room_context, lang=lang, memory_context=memory_context, document_context=document_context, personality_context=personality_context, context_vars_text=context_vars_text, summary_text=summary_text, user_id=user_id)
             prompt, memory_context, document_context, conversation_history = await self._enforce_token_budget(
                 prompt, context, message, conversation_history,
                 memory_context=memory_context, document_context=document_context, lang=lang,
                 room_context=room_context, personality_context=personality_context,
                 context_vars_text=context_vars_text, summary_text=summary_text,
+                user_id=user_id,
             )
             logger.info(f"🤖 Agent step {step_num} prompt ({len(prompt)} chars, {total_tools} tools)")
 

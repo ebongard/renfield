@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
     AgentTrajectory,
+    Role,
     TRAJECTORY_OUTCOME_ABORT,
     TRAJECTORY_OUTCOME_SUCCESS,
     TRAJECTORY_OUTCOME_TOOL_FAIL,
@@ -38,7 +39,14 @@ class _FakeStep:
 
 @pytest.fixture
 async def t_user(db_session: AsyncSession) -> User:
-    user = User(username="traj_tester", hashed_password="x")
+    role = Role(name="trajectory_test_role")
+    db_session.add(role)
+    await db_session.commit()
+    await db_session.refresh(role)
+
+    user = User(
+        username="traj_tester", password_hash="x", role_id=role.id,
+    )
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)

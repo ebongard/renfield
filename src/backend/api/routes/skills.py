@@ -12,43 +12,67 @@ Surface (`/api/skills` prefix added by main.py):
   PATCH   /{id}/tier     — change circle_tier (cascades through AtomService)
 """
 
+from dataclasses import asdict
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import ProceduralSkill, TIER_PUBLIC, User
 from models.permissions import Permission
+from services.api_rate_limiter import limiter
 from services.atom_service import AtomService
 from services.auth_service import get_user_or_default, require_permission
 from services.database import get_db
+from services.skill_curator_service import SkillCuratorService
 from services.skill_service import SkillService
+from utils.config import settings
 
 router = APIRouter()
+
+
+# Schema constants — kept centralized so the curator's matching cap stays
+# in sync with the API max. See SkillCuratorService._TRIGGER_CAP.
+_MAX_TRIGGER_EXAMPLES = 10
+_MAX_TRIGGER_EXAMPLE_CHARS = 200
+_MAX_BODY_MD_CHARS = 8000
+_MAX_TOOL_SEQUENCE = 20
+_MAX_TOOL_NAME_CHARS = 128
 
 
 # ---------------------------------------------------------------- schemas
 class SkillCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
-    body_md: str = Field(..., min_length=1)
-    trigger_examples: list[str] = Field(..., min_length=1, max_length=10)
-    tool_sequence: list[str] = Field(default_factory=list, max_length=20)
+    # body_md is bounded so a single owner can't author a multi-MB body
+    # that then gets embedded (Ollama call) + injected into the system
+    # prompt on every matching turn (prompt-bloat DoS, plus amplified
+    # scrub_for_prompt cost). 8000 chars is generous for a procedural
+    # recipe; the seed skills in seed_skills/*.md sit well under 2000.
+    body_md: str = Field(..., min_length=1, max_length=_MAX_BODY_MD_CHARS)
+    trigger_examples: list[str] = Field(
+        ..., min_length=1, max_length=_MAX_TRIGGER_EXAMPLES,
+    )
+    tool_sequence: list[str] = Field(
+        default_factory=list, max_length=_MAX_TOOL_SEQUENCE,
+    )
     circle_tier: int = Field(default=0, ge=0, le=4)
 
 
 class SkillUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
-    body_md: str | None = None
+    body_md: str | None = Field(default=None, max_length=_MAX_BODY_MD_CHARS)
     # Mirrors SkillCreateRequest's min_length=1 — an empty list would
     # silently re-embed the skill with title-only relevance and pollute
     # find_similar matches.
     trigger_examples: list[str] | None = Field(
-        default=None, min_length=1, max_length=10,
+        default=None, min_length=1, max_length=_MAX_TRIGGER_EXAMPLES,
     )
-    tool_sequence: list[str] | None = Field(default=None, max_length=20)
+    tool_sequence: list[str] | None = Field(
+        default=None, max_length=_MAX_TOOL_SEQUENCE,
+    )
     pinned: bool | None = None
     is_active: bool | None = None
 
@@ -123,11 +147,13 @@ async def _load_owned(
 
 # ----------------------------------------------------------------- list
 @router.get("", response_model=list[SkillResponse])
+@limiter.limit(settings.api_rate_limit_chat)
 async def list_skills(
+    request: Request,
     include_seeds: bool = True,
     include_inactive: bool = False,
-    limit: int = 100,
-    offset: int = 0,
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
@@ -143,7 +169,6 @@ async def list_skills(
         stmt = stmt.where(ProceduralSkill.is_active.is_(True))
 
     if include_seeds:
-        from sqlalchemy import or_
         stmt = stmt.where(
             or_(
                 ProceduralSkill.user_id == user.id,
@@ -160,7 +185,9 @@ async def list_skills(
 
 # ----------------------------------------------------------------- read
 @router.get("/{skill_id}", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def get_skill(
+    request: Request,
     skill_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -181,7 +208,9 @@ async def get_skill(
 
 # --------------------------------------------------------------- create
 @router.post("", response_model=SkillResponse, status_code=201)
+@limiter.limit(settings.api_rate_limit_chat)
 async def create_skill(
+    request: Request,
     body: SkillCreateRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -199,13 +228,19 @@ async def create_skill(
         )
         return _to_response(skill, is_owner=True)
     except Exception as e:
-        logger.error(f"❌ Skill create failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log full exception server-side; return a generic message to
+        # the client so internal details (SQL errors, Ollama timeouts,
+        # embedding-service stack hints) don't surface in the HTTP
+        # response body. Same pattern as atoms.py:184.
+        logger.error(f"❌ Skill create failed for user={user.id}: {e}")
+        raise HTTPException(status_code=500, detail="Skill create failed")
 
 
 # --------------------------------------------------------------- update
 @router.patch("/{skill_id}", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def update_skill(
+    request: Request,
     skill_id: int,
     body: SkillUpdateRequest,
     db: AsyncSession = Depends(get_db),
@@ -261,14 +296,16 @@ async def update_skill(
             if new_emb is not None:
                 skill.embedding = new_emb
         await db.commit()
-        SkillService._has_skills_cache.clear()
+        SkillService.invalidate_has_skills_cache()
 
     return _to_response(skill, is_owner=True)
 
 
 # ----------------------------------------------------------------- pin
 @router.post("/{skill_id}/pin", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def pin_skill(
+    request: Request,
     skill_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -281,7 +318,9 @@ async def pin_skill(
 
 
 @router.post("/{skill_id}/unpin", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def unpin_skill(
+    request: Request,
     skill_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -295,7 +334,9 @@ async def unpin_skill(
 
 # --------------------------------------------------------------- delete
 @router.delete("/{skill_id}", status_code=204)
+@limiter.limit(settings.api_rate_limit_chat)
 async def delete_skill(
+    request: Request,
     skill_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
@@ -305,12 +346,14 @@ async def delete_skill(
     skill = await _load_owned(db, skill_id, user)
     skill.is_active = False
     await db.commit()
-    SkillService._has_skills_cache.clear()
+    SkillService.invalidate_has_skills_cache()
 
 
 # ----------------------------------------------------------------- tier
 @router.patch("/{skill_id}/tier", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
 async def change_skill_tier(
+    request: Request,
     skill_id: int,
     body: SkillTierRequest,
     db: AsyncSession = Depends(get_db),
@@ -331,12 +374,11 @@ async def change_skill_tier(
 
     svc = AtomService(db)
     await svc.update_tier(skill.atom_id, {"tier": int(body.circle_tier)})
-    # Re-fetch — update_tier cascaded the source-row column. Owner already
-    # verified above by _load_owned (which enforces is_active wasn't
-    # required there because tier changes are still valid on soft-deleted
-    # skills before reactivation); the reload here just refreshes the
-    # row to read the post-cascade circle_tier. Pin the user_id check so a
-    # concurrent owner-change can't surface a row that isn't ours anymore.
+    # Re-fetch — update_tier cascaded the source-row column, so we need
+    # a fresh read to see the post-cascade circle_tier. Pin the user_id
+    # check so a concurrent owner-change can't surface a row that isn't
+    # ours anymore (defense-in-depth; _load_owned already verified ownership
+    # at the top of this handler).
     skill = (await db.execute(
         select(ProceduralSkill).where(
             ProceduralSkill.id == skill_id,
@@ -362,19 +404,26 @@ class CuratorReportResponse(BaseModel):
 
 
 @router.post("/curator/run", response_model=list[CuratorReportResponse])
+@limiter.limit(settings.api_rate_limit_admin)
 async def run_curator(
+    request: Request,
     body: CuratorRunRequest,
     db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission(Permission.ADMIN)),
+    admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Manual curator trigger — same logic as the scheduler, runs
     synchronously and returns the report. Admin-only because it can
-    flip ``is_active`` on rows owned by other users."""
-    from dataclasses import asdict
+    flip ``is_active`` on rows owned by other users.
 
-    from services.skill_curator_service import SkillCuratorService
-
+    Emits a structured audit log per call so manual admin-driven curator
+    runs are distinguishable from the scheduler's autonomous passes in
+    log-aggregation.
+    """
     svc = SkillCuratorService(db)
+    logger.info(
+        f"🧹 Curator manual run: admin_id={admin.id} admin_username={admin.username!r} "
+        f"target_user_id={body.user_id!r}"
+    )
     if body.user_id is not None:
         report = await svc.run_for_user(body.user_id)
         return [CuratorReportResponse(**asdict(report))]
