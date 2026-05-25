@@ -52,6 +52,14 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 - **i18n follow-up (out of E12 scope):** `src/frontend/src/components/RoomOutputSettings.tsx` has ~10 hardcoded German strings (modal labels, button titles, type-selector text). Was not in the original audit; surfaced during the E12 sweep. Not blocking; pick up alongside the next room-management UI revision.
 - **Backend/config:** ~~E1-E3 speaker-loading + eager-load cleanup + FK indexes~~ (verified: per-speaker embedding cap enforced on write; KB listing uses count subquery; all 4 FK columns carry `index=True`) · ~~E4-E9~~ · ~~E10 frontend localhost fallbacks~~ · ~~E16 legacy config field removal~~ · ~~E17 Redis URL parameterization~~ · ~~E18 Frigate MQTT defaults~~
 
+### Self-Learning Admin Console — follow-ups (out of v2.10 PR scope)
+The main PR ships Skills Inbox + Tool-Health + Trajectories + Curator Runbook with the `status` enum and draft-pool gating. These items were explicitly deferred from that scope per the 2026-05-26 `/plan-eng-review` of the admin console PR.
+
+- **Tool-Health charts.** v2.10 PR ships table-only (per-user, per-tool success/failure with rolling failure summary). Add trend lines (success-rate over time, failure-cluster heatmap) once we have ≥30 days of `tool_outcome_stats` data to chart. Backend already records `last_failure_at` + counters; needs a time-series view.
+- **Trajectory v1/v2 diff view.** `memory_v2_shadow_log` already captures v1-vs-v2 dispatcher outcomes for the same turn — separate substrate from `agent_trajectories`. Build a side-by-side diff page (`/admin/memory-v2-shadow`) gated until the Phase B flip lands (`memory_extraction_v2_authoritative=True`). Not in the admin-console PR because it's a different subsystem.
+- **Bulk approve / multi-select in Skills Inbox.** v2.10 ships single-row approve/reject only. Add multi-select + bulk-approve once we have evidence (≥2 weeks burn-in) that the queue actually accumulates fast enough to justify the UI complexity. Outside voice in the eng review specifically flagged this as a "wait for data" decision.
+- **Playwright `--host-resolver-rules` config for CI.** During v2.9.1 post-deploy smoke we hit a Chromium-via-Playwright DNS quirk: Chromium's net stack didn't honor the system resolver for `renfield.local` on XHR/WebSocket calls even though `/etc/hosts` had the entry. Local workaround (`/etc/hosts` already present) lets dev browser sessions work, but the v2.10 PR's E2E Playwright suite needs an explicit config-file approach (`--config <path>` with `browser.launchOptions.args = ["--host-resolver-rules=MAP renfield.local 192.168.1.230"]`) for any CI / clean-machine runner. Investigation needed: confirm the actual JSON schema Playwright MCP accepts (my first guess `browser.launchOptions.args` didn't take effect; either schema was wrong or MCP didn't reload).
+
 ### Run `/design-consultation` to formalize DESIGN.md (BEFORE next major frontend surface)
 
 **WHAT:** Run the `/design-consultation` skill to formalize Renfield's existing implicit design system into a DESIGN.md file. Captures the palette (crimson primary + turquoise accent + cream neutral), typography (Cormorant Variable display + DM Sans Variable body), component vocabulary (cards, inputs, buttons, animations), and design philosophy.
@@ -114,6 +122,27 @@ If ui_sweep noise shows up in real use, mark original sweep row `superseded=true
 ---
 
 ## P3 — Conditional / on signal
+
+### Self-Learning — gated on burn-in data
+Both items below were surfaced by outside voice during the 2026-05-26 `/plan-eng-review` of the admin console PR. Build only when the gate fires.
+
+- **Remove `would_have_injected` shadow log.**
+  - **WHAT:** v2.10 ships a shadow query inside `SkillService.find_similar()` that runs the candidate query WITHOUT the `status='approved'` filter and logs the count of candidates that the draft-pool gate filtered out (the recall hit).
+  - **WHY:** The gate has zero burn-in evidence — we don't know if the LLM extractor's precision is 90% (gate is a UX tax nobody clears) or 30% (gate is essential). The shadow log makes the precision/recall tradeoff measurable.
+  - **PROS:** Drop the dual-query overhead once we have ≥2 weeks of data and a verdict. Simplifies `find_similar` back to one query.
+  - **CONS:** None — purely instrumentation removal.
+  - **CONTEXT:** Without removal, every find_similar call runs an extra cosine query forever. Negligible per-call cost but adds up.
+  - **DEPENDS ON:** ≥2 weeks of post-v2.10 traffic. If precision turns out to be 95%+ and the queue stays empty, the answer might be "remove the gate entirely, not just the shadow log."
+  - **TRIGGER:** Owner reviews `would_have_injected` metric ≥14 days after v2.10 deploy and decides on gate's fate.
+
+- **Household cascade-vote approval for shared skills.**
+  - **WHAT:** Today the v2.10 PR ships owner-private approval — only the skill's `user_id` (or admin) can approve a draft. But Circles makes retrieval cross-user: A's household-tier skill is retrievable by B via circle reach. There's no mechanism for B to approve A's draft that B would benefit from.
+  - **WHY:** If household-tier auto-extracted skills become common, the approval bottleneck on the original owner could starve the whole household.
+  - **PROS:** Distributes the curation load. Captures the "this also helps me" signal from circle peers.
+  - **CONS:** Voting mechanism = real UI scope (vote UI, vote tallying, quorum rules). Premature without evidence household-tier skills are a real frequency.
+  - **CONTEXT:** Outside voice in eng review specifically called this out as an unspecified case. Captured here so it isn't lost.
+  - **DEPENDS ON:** Evidence that household-tier auto-extracted skills happen with non-trivial frequency post-v2.10 — measurable via `procedural_skills.circle_tier=2 AND source='auto_extracted'` count.
+  - **TRIGGER:** ≥10 household-tier auto-extracted skills observed across the user-base, OR explicit user feedback "I can't get to my partner's drafts."
 
 ### Paperless PR 5 — Interactive confirm card
 In-chat card with per-field controls, tag chips, storage-path tree; structured-payload callback instead of free-text.
