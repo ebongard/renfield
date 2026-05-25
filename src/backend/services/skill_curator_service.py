@@ -137,6 +137,12 @@ class SkillCuratorService:
         if dialect != "postgresql":
             return []
 
+        # Over-fetch 2x the merge cap so run_for_user has headroom for
+        # transitive-cluster skips (where one pair shares a side with a
+        # pair already merged this pass). Without the LIMIT, an N-skill
+        # user gets an unbounded O(N²) sort even though
+        # max_merges_per_run (default 20) caps what we'll act on.
+        fetch_cap = max(settings.skill_curator_max_merges_per_run * 2, 2)
         sql = text("""
             SELECT a.id AS id_a, b.id AS id_b,
                    1 - (a.embedding <=> b.embedding) AS similarity
@@ -153,11 +159,13 @@ class SkillCuratorService:
               AND b.source <> :seed
               AND (1 - (a.embedding <=> b.embedding)) >= :threshold
             ORDER BY similarity DESC
+            LIMIT :fetch_cap
         """)
         rows = (await self.db.execute(sql, {
             "user_id": user_id,
             "seed": SKILL_SOURCE_SEED,
             "threshold": threshold,
+            "fetch_cap": fetch_cap,
         })).fetchall()
 
         # Choose winner per pair via the same metric used elsewhere:

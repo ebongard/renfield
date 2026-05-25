@@ -1390,6 +1390,7 @@ async def websocket_endpoint(
                         context_vars_text=_context_vars_text,
                         summary_text=_summary_text,
                         progress_sink=_federation_progress_sink,
+                        session_id=msg_session_id,
                     ):
                         ws_msg = step_to_ws_message(step)
                         await websocket.send_json(ws_msg)

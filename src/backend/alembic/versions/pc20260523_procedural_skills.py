@@ -145,12 +145,17 @@ def upgrade() -> None:
         op.execute(
             f"ALTER TABLE procedural_skills ADD COLUMN embedding vector({embed_dim})"
         )
-        # HNSW index for fast cosine retrieval — same params as
-        # conversation_memories and episodic_memories.
+        # HNSW index via halfvec cast — same trick as cce1984705df /
+        # episodic / paperless_examples / kb_performance_indexes. Regular
+        # `vector` type has a 2000-dim hard limit for HNSW in pgvector
+        # 0.8.x; production runs 2560-dim (qwen3-embedding:4b), so the
+        # cast through halfvec is mandatory. See
+        # memory/reference_pgvector_index_limits.md for the project rule.
         op.execute(
-            "CREATE INDEX idx_procedural_skills_embedding "
-            "ON procedural_skills USING hnsw (embedding vector_cosine_ops) "
-            "WITH (m = 16, ef_construction = 64)"
+            f"CREATE INDEX idx_procedural_skills_embedding "
+            f"ON procedural_skills "
+            f"USING hnsw ((embedding::halfvec({embed_dim})) halfvec_cosine_ops) "
+            f"WITH (m = 16, ef_construction = 64)"
         )
 
     # Frequent-access composite indexes.

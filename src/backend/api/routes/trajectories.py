@@ -116,15 +116,24 @@ async def export_jsonl(
     outcome: str | None = None,
     since_days: int | None = Query(default=None, ge=1, le=3650),
     flagged_only: bool = False,
-    require_redacted: bool = False,
+    require_redacted: bool = True,
     _: User = Depends(require_permission(Permission.ADMIN)),
 ):
     """Stream the corpus as line-delimited JSON. Each line is one turn.
 
-    ``require_redacted=true`` skips rows whose ``redacted_payload`` is
-    NULL — gate for downstream consumers that won't accept raw payloads
-    (Phase-4-ready; v1 always has NULL redacted so this returns nothing
-    today, which is intentional).
+    ``require_redacted=true`` (the default) skips rows whose
+    ``redacted_payload`` is NULL. The raw payload contains verbatim user
+    messages — chat history including any PII / secrets the user pasted
+    in — so the API does NOT default to leaking it even to an admin.
+    Until the PII scrubber lands (deferred follow-up) the unredacted
+    column is the only one populated, so the default-True export returns
+    an empty stream + the route returns 409 on the pre-check below
+    rather than silently dripping zero rows.
+
+    Override with ``require_redacted=false`` only with explicit operator
+    intent (and audit-log presence): the trace payload includes anything
+    a user typed plus tool outputs that may carry secrets pulled from
+    integrations.
 
     No ``Depends(get_db)``: the request-scoped session would be closed
     by FastAPI as soon as this handler returns the StreamingResponse
@@ -140,6 +149,28 @@ async def export_jsonl(
             status_code=409,
             detail="trajectory_capture_enabled=false — nothing to export",
         )
+
+    # Pre-flight gate: if the caller asked for redacted output but no
+    # rows have been redacted yet, fail fast with 409 + actionable
+    # message rather than streaming an empty body that looks like
+    # "nothing was captured" (a known foot-gun before PII scrubber lands).
+    if require_redacted:
+        from services.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as preflight_db:
+            redacted_count = (await preflight_db.execute(
+                select(func.count(AgentTrajectory.id)).where(
+                    AgentTrajectory.redacted_payload.isnot(None)
+                )
+            )).scalar() or 0
+            if redacted_count == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        "No redacted trajectories available — PII scrubber "
+                        "has not been run. Pass require_redacted=false to "
+                        "export raw payloads (admin sees verbatim user chat)."
+                    ),
+                )
 
     since = None
     if since_days is not None:

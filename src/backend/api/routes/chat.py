@@ -120,6 +120,7 @@ async def send_message(
                     message=chat_request.message,
                     ollama=ollama,
                     executor=executor,
+                    session_id=session_id,
                 ):
                     if step.step_type == "final_answer":
                         response_text = step.content

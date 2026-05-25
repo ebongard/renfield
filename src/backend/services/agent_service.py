@@ -1168,6 +1168,7 @@ class AgentService:
         context_vars_text: str = "",
         summary_text: str = "",
         progress_sink=None,
+        session_id: str | None = None,
     ) -> AsyncGenerator[AgentStep, None]:
         """Thin wrapper around _run_impl.
 
@@ -1264,6 +1265,7 @@ class AgentService:
                         user_message=message,
                         lang=lang or "de",
                         tools_available=tools_available_snapshot,
+                        session_id=session_id,
                     ))
                 except Exception as e:  # noqa: BLE001
                     logger.warning(f"⚠️ Failed to schedule post-turn skill task: {e}")
@@ -2142,6 +2144,7 @@ async def _post_turn_skill_bookkeeping(
     user_message: str,
     lang: str,
     tools_available: list[str] | None = None,
+    session_id: str | None = None,
 ) -> None:
     """Runs after the agent turn completes. Four responsibilities, each
     gated on its OWN feature flag (NOT on the parent skills_enabled):
@@ -2235,12 +2238,33 @@ async def _post_turn_skill_bookkeeping(
 
     # Trajectory capture. Independently gated on trajectory_capture_enabled.
     if settings.trajectory_capture_enabled:
+        # Resolve session_id (string) → Conversation.id (int PK) so the
+        # exported trajectory rows can join back to the conversation/
+        # messages tables. Without this every row carries NULL
+        # conversation_id and downstream analysis can't tie a turn back
+        # to its conversation. One SELECT per turn, indexed lookup.
+        conv_id: int | None = None
+        if session_id:
+            try:
+                from models.database import Conversation
+                from sqlalchemy import select as _select
+                async with AsyncSessionLocal() as conv_db:
+                    conv_id = (await conv_db.execute(
+                        _select(Conversation.id).where(
+                            Conversation.session_id == session_id
+                        )
+                    )).scalar_one_or_none()
+            except Exception as e:  # noqa: BLE001
+                logger.warning(
+                    f"⚠️ Trajectory conv_id resolve failed for "
+                    f"session={session_id!r}: {e}"
+                )
         try:
             async with AsyncSessionLocal() as db:
                 t_svc = TrajectoryService(db)
                 await t_svc.save(
                     user_id=user_id,
-                    conversation_id=None,  # not threaded into agent.run today
+                    conversation_id=conv_id,
                     user_message=user_message,
                     steps=steps,
                     lang=lang,
