@@ -373,6 +373,11 @@ class Settings(BaseSettings):
     trajectory_retention_days: int = Field(default=30, ge=1, le=3650)        # Auto-delete after N days
     trajectory_cleanup_interval: int = Field(default=86400, ge=300, le=604800)  # Cleanup job interval (seconds)
     trajectory_max_per_user: int = Field(default=10000, ge=100, le=100000)   # Soft cap, oldest dropped first
+    # COUNT-then-DELETE on every save() costs N round-trips for N inserts;
+    # only the last few near the cap actually matter. Run the cap check on
+    # every Nth save (probabilistic) — drift up to N rows over the cap is
+    # harmless because the cleanup scheduler also prunes by retention.
+    trajectory_cap_check_every: int = Field(default=50, ge=1, le=1000)
     trajectory_redact_pii: bool = False                                       # Phase 4: scrub PII into redacted_payload
 
     # Tool outcome tracking (self-learning Phase 3)

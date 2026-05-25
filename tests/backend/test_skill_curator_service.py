@@ -95,6 +95,15 @@ async def _seed_skill(
 # ============================================================ winner pick
 @pytest.mark.asyncio
 class TestPickWinner:
+    """Tests the rank-key logic via the bulk-load helper.
+
+    Curator originally exposed `_pick_winner(id_a, id_b)` which issued a
+    SELECT per call (N+1). The refactor swapped that for
+    `_pick_winner_from_cache(id_a, id_b, by_id)` driven by a single
+    bulk SELECT in `find_duplicate_pairs`. Tests construct the by_id
+    dict directly so we still cover the rank-key tie-break path.
+    """
+
     async def test_higher_success_rate_wins(self, db_session, c_user):
         from services.skill_curator_service import SkillCuratorService
         worse = await _seed_skill(
@@ -105,8 +114,10 @@ class TestPickWinner:
             db_session, user_id=c_user.id, title="Better",
             successes=9, failures=1,
         )
-        svc = SkillCuratorService(db_session)
-        winner, loser = await svc._pick_winner(worse.id, better.id)
+        by_id = {worse.id: worse, better.id: better}
+        winner, loser = SkillCuratorService._pick_winner_from_cache(
+            worse.id, better.id, by_id,
+        )
         assert winner == better.id
         assert loser == worse.id
 
@@ -121,8 +132,10 @@ class TestPickWinner:
             db_session, user_id=c_user.id, title="Dense",
             successes=10, failures=0,
         )
-        svc = SkillCuratorService(db_session)
-        winner, _ = await svc._pick_winner(sparse.id, dense.id)
+        by_id = {sparse.id: sparse, dense.id: dense}
+        winner, _ = SkillCuratorService._pick_winner_from_cache(
+            sparse.id, dense.id, by_id,
+        )
         assert winner == dense.id
 
 

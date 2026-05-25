@@ -1141,6 +1141,16 @@ class AgentService:
                     logger.warning(f"⚠️ Skill injection lookup failed: {e}")
             context._learned_skills_cache = learned_skills
 
+        # Pre-render the three self-learning blocks into one placeholder
+        # — the YAML templates used to repeat the {tool_corrections} +
+        # {tool_health_warnings} + {learned_skills} triplet in every
+        # variant (14 sites). Joining only the non-empty blocks keeps
+        # empty sub-features from leaving stray blank lines in the
+        # rendered prompt.
+        self_learning_blocks = "\n\n".join(
+            b for b in (tool_corrections, tool_health_warnings, learned_skills) if b
+        )
+
         # Build prompt from externalized template (role-specific or default)
         prompt = prompt_manager.get(
             "agent", self._prompt_key, lang=lang,
@@ -1151,9 +1161,7 @@ class AgentService:
             document_context=document_context,
             personality_context=personality_context,
             tools_prompt=tools_prompt,
-            tool_corrections=tool_corrections,
-            tool_health_warnings=tool_health_warnings,
-            learned_skills=learned_skills,
+            self_learning_blocks=self_learning_blocks,
             history_prompt=history_prompt,
             step_directive=step_directive
         )
@@ -1170,9 +1178,7 @@ class AgentService:
                 document_context=document_context,
                 personality_context=personality_context,
                 tools_prompt=tools_prompt,
-                tool_corrections=tool_corrections,
-                tool_health_warnings=tool_health_warnings,
-                learned_skills=learned_skills,
+                self_learning_blocks=self_learning_blocks,
                 history_prompt=history_prompt,
                 step_directive=step_directive
             )

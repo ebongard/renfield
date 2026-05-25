@@ -58,6 +58,17 @@ _DRAFT_TRIGGER_CAP = 5
 _DRAFT_TOOL_CAP = 10
 _TOOL_NAME_RE = re.compile(r"^(mcp\.[a-z0-9_]+|internal)\.[a-z0-9_]+$")
 
+# Per-step caps for the LLM-facing trace string. Keep this reviewable as
+# a single budget — the prompt that gets sent to the extractor is bounded
+# by the SUM of these caps × #steps. If we ever bump num_predict on the
+# extractor LLM call, this is the table to revisit.
+_TRACE_CAPS = {
+    "params": 200,
+    "tool_result": 120,
+    "error": 120,
+    "final_answer": 200,
+}
+
 
 _SYSTEM_DE = """Du bist ein Skill-Extractor fuer einen lernenden Agenten.
 Eingabe: die User-Anfrage und die Tool-Trace einer erfolgreichen Agent-Antwort.
@@ -185,16 +196,16 @@ class SkillExtractor:
             if s.step_type == "tool_call":
                 params = s.parameters or {}
                 # Truncate to keep prompt small — the LLM doesn't need full params.
-                params_str = json.dumps(params, ensure_ascii=False)[:200]
+                params_str = json.dumps(params, ensure_ascii=False)[:_TRACE_CAPS["params"]]
                 lines.append(f"- CALL {s.tool}({params_str})")
             elif s.step_type == "tool_result":
                 outcome = "ok" if s.success else "fail"
-                content = (s.content or "")[:120].replace("\n", " ")
+                content = (s.content or "")[:_TRACE_CAPS["tool_result"]].replace("\n", " ")
                 lines.append(f"  -> {outcome}: {content}")
             elif s.step_type == "final_answer":
-                lines.append(f"- ANSWER: {(s.content or '')[:200]}")
+                lines.append(f"- ANSWER: {(s.content or '')[:_TRACE_CAPS['final_answer']]}")
             elif s.step_type == "error":
-                lines.append(f"- ERROR: {(s.content or '')[:120]}")
+                lines.append(f"- ERROR: {(s.content or '')[:_TRACE_CAPS['error']]}")
         return "\n".join(lines)
 
     @staticmethod

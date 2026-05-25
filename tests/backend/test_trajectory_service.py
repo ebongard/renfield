@@ -366,6 +366,11 @@ class TestPerUserCap:
         monkeypatch.setattr(
             "services.trajectory_service.settings.trajectory_max_per_user", 2
         )
+        # Cap check is probabilistic (every Nth save) for hot-path cost
+        # reasons — force every-save in tests so the cap actually fires.
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_cap_check_every", 1
+        )
 
         svc = TrajectoryService(db_session)
         r1 = await svc.save(
@@ -405,6 +410,9 @@ class TestPerUserCap:
         )
         monkeypatch.setattr(
             "services.trajectory_service.settings.trajectory_max_per_user", 2
+        )
+        monkeypatch.setattr(
+            "services.trajectory_service.settings.trajectory_cap_check_every", 1
         )
 
         svc = TrajectoryService(db_session)

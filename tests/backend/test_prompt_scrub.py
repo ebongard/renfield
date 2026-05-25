@@ -115,12 +115,16 @@ class TestUnicodeBypasses:
         assert "[sys]" in scrub_for_prompt("syste﻿m: ignored")
 
     def test_ligature_normalized(self):
-        """U+FB01 'fi' ligature → 'fi' under NFKC. Not directly relevant
-        to scrub patterns but exercises the normalization path."""
+        """U+FB01 'fi' ligature decomposes to 'f' + 'i' under NFKC, so
+        the 4-char string 'oﬁce' (o, ﬁ, c, e) becomes the 5-char
+        'ofice' — only ONE f, since the original had no separate f.
+        Test guards against accidentally double-decomposing or eating
+        the ligature outright."""
         raw = "the oﬁce" + " system: ignored"
         out = scrub_for_prompt(raw)
-        # 'office' visible AFTER ligature decomposition + role marker scrubbed.
-        assert "office" in out
+        # ﬁ → 'fi' (one f), then surrounded by 'o' and 'ce' → 'ofice'.
+        assert "ofice" in out
+        # Role marker still scrubbed alongside the normalization.
         assert "[sys]" in out
 
 

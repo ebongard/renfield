@@ -136,14 +136,24 @@ class TestExportPreflight:
 # route rejects before any data is read.
 # ---------------------------------------------------------------------
 @pytest.fixture
-def regular_user_override(app_with_test_db):
+def regular_user_override(app_with_test_db, monkeypatch):
+    """Pin get_current_user to a non-admin user AND enable auth so
+    require_permission actually runs its permission check (without
+    auth_enabled=True it short-circuits and returns the user as-is)."""
     from services.auth_service import get_current_user
 
     class _FakeRegular:
         id = 7
         username = "regular_tester"
-        # No `permissions` attribute → require_permission(ADMIN) denies.
 
+        def has_permission(self, perm: str) -> bool:
+            return False  # never admin
+
+    # require_permission early-returns when settings.auth_enabled is False.
+    # Default in tests is False; flip it on so the permission check runs.
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
     app_with_test_db.dependency_overrides[get_current_user] = lambda: _FakeRegular()
     try:
         yield _FakeRegular
@@ -164,8 +174,11 @@ class TestUnauthorizedAccess:
         assert resp.status_code in (401, 403)
 
     async def test_export_blocked(
-        self, async_client: AsyncClient, regular_user_override,
+        self, async_client: AsyncClient, regular_user_override, monkeypatch,
     ):
+        monkeypatch.setattr(
+            "api.routes.trajectories.settings.trajectory_capture_enabled", True,
+        )
         resp = await async_client.get(
             "/api/trajectories/export.jsonl?require_redacted=false"
         )

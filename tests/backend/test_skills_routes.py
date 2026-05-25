@@ -58,6 +58,18 @@ async def _make_role(db_session: AsyncSession, name: str) -> Role:
     return role
 
 
+async def _load_with_role(db_session: AsyncSession, user_id: int) -> User:
+    """Re-select the user with the role eagerly loaded. Without this,
+    ``require_permission`` trips MissingGreenlet when it traverses
+    ``user.role.has_permission(...)`` in the route's request session."""
+    from sqlalchemy.orm import selectinload
+    from sqlalchemy import select as _select
+    row = (await db_session.execute(
+        _select(User).where(User.id == user_id).options(selectinload(User.role))
+    )).scalar_one()
+    return row
+
+
 @pytest.fixture
 async def owner_user(db_session: AsyncSession) -> User:
     role = await _make_role(db_session, "skills_owner_role")
@@ -68,7 +80,7 @@ async def owner_user(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
-    return user
+    return await _load_with_role(db_session, user.id)
 
 
 @pytest.fixture
@@ -81,7 +93,7 @@ async def other_user(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
-    return user
+    return await _load_with_role(db_session, user.id)
 
 
 @pytest.fixture
@@ -97,13 +109,19 @@ async def admin_user(db_session: AsyncSession) -> User:
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
-    return user
+    return await _load_with_role(db_session, user.id)
 
 
 @pytest.fixture
-def auth_as_owner(app_with_test_db, owner_user):
-    """Override get_user_or_default + get_current_user to return owner."""
+def auth_as_owner(app_with_test_db, owner_user, monkeypatch):
+    """Override get_user_or_default + get_current_user to return owner.
+    Owner-level routes don't need auth_enabled=True (no permission
+    check), but the curator/run route does — pin it true so the
+    cross-fixture assertions (non-admin blocked) work."""
     from services.auth_service import get_current_user, get_user_or_default
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
     app_with_test_db.dependency_overrides[get_user_or_default] = lambda: owner_user
     app_with_test_db.dependency_overrides[get_current_user] = lambda: owner_user
     try:
@@ -114,8 +132,11 @@ def auth_as_owner(app_with_test_db, owner_user):
 
 
 @pytest.fixture
-def auth_as_other(app_with_test_db, other_user):
+def auth_as_other(app_with_test_db, other_user, monkeypatch):
     from services.auth_service import get_current_user, get_user_or_default
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
     app_with_test_db.dependency_overrides[get_user_or_default] = lambda: other_user
     app_with_test_db.dependency_overrides[get_current_user] = lambda: other_user
     try:
@@ -126,8 +147,11 @@ def auth_as_other(app_with_test_db, other_user):
 
 
 @pytest.fixture
-def auth_as_admin(app_with_test_db, admin_user):
+def auth_as_admin(app_with_test_db, admin_user, monkeypatch):
     from services.auth_service import get_current_user, get_user_or_default
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
     app_with_test_db.dependency_overrides[get_user_or_default] = lambda: admin_user
     app_with_test_db.dependency_overrides[get_current_user] = lambda: admin_user
     try:
@@ -467,10 +491,17 @@ class TestDeleteSkill:
 # ============================================================ TIER
 @pytest.mark.asyncio
 class TestChangeTier:
+    @pytest.mark.postgres
     async def test_tier_change_owner_ok(
         self, async_client: AsyncClient, auth_as_owner,
         db_session: AsyncSession, patched_embed,
     ):
+        # AtomService.update_tier uses Postgres-specific syntax (`::`
+        # cast in the cascade-update raw SQL) that aiosqlite rejects.
+        # Skip cleanly when the harness is on sqlite.
+        if (db_session.bind is None
+                or db_session.bind.dialect.name != "postgresql"):
+            pytest.skip("Tier-change cascade requires postgres syntax")
         svc = SkillService(db_session)
         skill = await svc.create_user_authored(
             user_id=auth_as_owner.id, title="T", body_md="b",

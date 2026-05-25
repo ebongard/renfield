@@ -8,6 +8,7 @@ This module handles:
 """
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -23,6 +24,46 @@ if TYPE_CHECKING:
 
 # Track background tasks for graceful shutdown
 _startup_tasks: list[asyncio.Task] = []
+
+
+def _spawn_periodic_task(
+    *,
+    name: str,
+    interval: int,
+    work: Callable[[], Awaitable[None]],
+    started_msg: str,
+) -> None:
+    """Spawn a fire-and-forget background task that runs ``work`` every
+    ``interval`` seconds.
+
+    Contract:
+      - ``work`` is a no-arg async callable invoked once per tick.
+      - ``CancelledError`` terminates the loop cleanly on shutdown.
+      - Any other exception is logged at WARNING and the loop continues
+        — transient DB hiccups must not kill the scheduler permanently.
+      - The created task is appended to ``_startup_tasks`` so the
+        graceful-shutdown path can cancel it.
+      - ``started_msg`` is logged at INFO on spawn so log aggregation
+        sees the same "X scheduler started" line as before this helper
+        existed.
+
+    Gates (``settings.X_enabled``) are the caller's responsibility — they
+    decide whether the scheduler runs AT ALL, distinct from the loop
+    body which decides what work happens per tick.
+    """
+    async def _loop() -> None:
+        while True:
+            try:
+                await asyncio.sleep(interval)
+                await work()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"{name} failed: {e}")
+
+    task = asyncio.create_task(_loop())
+    _startup_tasks.append(task)
+    logger.info(started_msg)
 
 
 async def _init_database():
@@ -98,23 +139,18 @@ def _schedule_notification_cleanup():
     if not settings.proactive_enabled:
         return
 
-    async def cleanup_loop():
-        """Cleanup expired notifications every hour."""
-        while True:
-            try:
-                await asyncio.sleep(3600)  # 1 hour
-                from services.notification_service import NotificationService
-                async with AsyncSessionLocal() as db_session:
-                    service = NotificationService(db_session)
-                    await service.cleanup_expired()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"⚠️  Notification cleanup failed: {e}")
+    async def _tick():
+        from services.notification_service import NotificationService
+        async with AsyncSessionLocal() as db_session:
+            service = NotificationService(db_session)
+            await service.cleanup_expired()
 
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info("✅ Notification Cleanup Scheduler gestartet (stündlich)")
+    _spawn_periodic_task(
+        name="Notification cleanup",
+        interval=3600,
+        work=_tick,
+        started_msg="✅ Notification Cleanup Scheduler gestartet (stündlich)",
+    )
 
 
 def _schedule_reminder_checker():
@@ -122,53 +158,44 @@ def _schedule_reminder_checker():
     if not settings.proactive_reminders_enabled:
         return
 
-    async def reminder_loop():
-        """Check for due reminders periodically."""
-        while True:
-            try:
-                await asyncio.sleep(settings.proactive_reminder_check_interval)
-                from services.reminder_service import check_due_reminders
+    async def _tick():
+        from services.reminder_service import check_due_reminders
+        await check_due_reminders()
 
-                await check_due_reminders()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"⚠️  Reminder check failed: {e}")
-
-    task = asyncio.create_task(reminder_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"✅ Reminder Checker gestartet "
-        f"(interval={settings.proactive_reminder_check_interval}s)"
+    _spawn_periodic_task(
+        name="Reminder check",
+        interval=settings.proactive_reminder_check_interval,
+        work=_tick,
+        started_msg=(
+            f"✅ Reminder Checker gestartet "
+            f"(interval={settings.proactive_reminder_check_interval}s)"
+        ),
     )
 
 
 def _schedule_speaker_vocab_rebuild():
-    """Periodically rebuild the per-user STT vocabulary table (Phase B-3 follow-up)."""
+    """Periodically rebuild the per-user STT vocabulary table (Phase B-3 follow-up).
+
+    Sleep-first cadence — a freshly-restarted pod doesn't hammer the DB on
+    every boot. First rebuild happens after one interval; cold-start
+    callers see the platform default until then.
+    """
     if not settings.speaker_vocab_capture_enabled:
         return
 
+    async def _tick():
+        from services.speaker_vocabulary_service import rebuild_vocabulary
+        async with AsyncSessionLocal() as session:
+            stats = await rebuild_vocabulary(db_session=session)
+        logger.info(f"📚 Speaker vocab rebuilt: {stats}")
+
     interval = settings.speaker_vocab_rebuild_interval_seconds
-
-    async def vocab_rebuild_loop():
-        # Sleep first so a freshly-restarted pod doesn't hammer the DB on every
-        # boot. The first rebuild happens after one interval; cold-start callers
-        # see the platform default until then.
-        while True:
-            try:
-                await asyncio.sleep(interval)
-                from services.speaker_vocabulary_service import rebuild_vocabulary
-                async with AsyncSessionLocal() as session:
-                    stats = await rebuild_vocabulary(db_session=session)
-                logger.info(f"📚 Speaker vocab rebuilt: {stats}")
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"⚠️  Speaker vocab rebuild failed: {e}")
-
-    task = asyncio.create_task(vocab_rebuild_loop())
-    _startup_tasks.append(task)
-    logger.info(f"✅ Speaker vocab rebuild scheduled (interval={interval}s)")
+    _spawn_periodic_task(
+        name="Speaker vocab rebuild",
+        interval=interval,
+        work=_tick,
+        started_msg=f"✅ Speaker vocab rebuild scheduled (interval={interval}s)",
+    )
 
 
 def _schedule_memory_cleanup():
@@ -176,56 +203,48 @@ def _schedule_memory_cleanup():
     if not settings.memory_enabled:
         return
 
-    async def cleanup_loop():
-        while True:
-            try:
-                await asyncio.sleep(settings.memory_cleanup_interval)
-                from services.conversation_memory_service import ConversationMemoryService
+    async def _tick():
+        from services.conversation_memory_service import ConversationMemoryService
 
-                async with AsyncSessionLocal() as db_session:
-                    service = ConversationMemoryService(db_session)
-                    counts = await service.cleanup()
-                    total = sum(counts.values())
-                    if total > 0:
-                        from utils.metrics import record_memory_cleanup
+        async with AsyncSessionLocal() as db_session:
+            service = ConversationMemoryService(db_session)
+            counts = await service.cleanup()
+            total = sum(counts.values())
+            if total > 0:
+                from utils.metrics import record_memory_cleanup
+                record_memory_cleanup(counts)
 
-                        record_memory_cleanup(counts)
+        if settings.memory_episodic_enabled:
+            from services.episodic_memory_service import EpisodicMemoryService
+            from sqlalchemy import select, func
+            from models.database import EpisodicMemory
 
-                # Episodic memory: cleanup + summarization
-                if settings.memory_episodic_enabled:
-                    from services.episodic_memory_service import EpisodicMemoryService
-                    from sqlalchemy import select, func
-                    from models.database import EpisodicMemory
+            async with AsyncSessionLocal() as db_session:
+                ep_svc = EpisodicMemoryService(db_session)
+                ep_counts = await ep_svc.cleanup()
+                if sum(ep_counts.values()) > 0:
+                    logger.info(f"Episodic cleanup: {ep_counts}")
 
-                    async with AsyncSessionLocal() as db_session:
-                        ep_svc = EpisodicMemoryService(db_session)
-                        ep_counts = await ep_svc.cleanup()
-                        ep_total = sum(ep_counts.values())
-                        if ep_total > 0:
-                            logger.info(f"Episodic cleanup: {ep_counts}")
+                result = await db_session.execute(
+                    select(EpisodicMemory.user_id)
+                    .where(EpisodicMemory.is_active == True)  # noqa: E712
+                    .group_by(EpisodicMemory.user_id)
+                    .having(func.count(EpisodicMemory.id) > settings.memory_episodic_summarize_threshold)
+                )
+                user_ids = [row[0] for row in result.fetchall() if row[0] is not None]
+                for uid in user_ids:
+                    summarized = await ep_svc.summarize_old(uid)
+                    if summarized > 0:
+                        logger.info(f"Episodic summarization: {summarized} episodes for user {uid}")
 
-                        # Summarize old episodes for users above threshold
-                        result = await db_session.execute(
-                            select(EpisodicMemory.user_id)
-                            .where(EpisodicMemory.is_active == True)  # noqa: E712
-                            .group_by(EpisodicMemory.user_id)
-                            .having(func.count(EpisodicMemory.id) > settings.memory_episodic_summarize_threshold)
-                        )
-                        user_ids = [row[0] for row in result.fetchall() if row[0] is not None]
-                        for uid in user_ids:
-                            summarized = await ep_svc.summarize_old(uid)
-                            if summarized > 0:
-                                logger.info(f"Episodic summarization: {summarized} episodes for user {uid}")
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Memory cleanup failed: {e}")
-
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"Memory Cleanup Scheduler gestartet "
-        f"(interval={settings.memory_cleanup_interval}s)"
+    _spawn_periodic_task(
+        name="Memory cleanup",
+        interval=settings.memory_cleanup_interval,
+        work=_tick,
+        started_msg=(
+            f"Memory Cleanup Scheduler gestartet "
+            f"(interval={settings.memory_cleanup_interval}s)"
+        ),
     )
 
 
@@ -234,31 +253,27 @@ def _schedule_upload_cleanup():
     if not settings.chat_upload_cleanup_enabled:
         return
 
-    async def cleanup_loop():
-        while True:
-            try:
-                await asyncio.sleep(3600)  # 1 hour
-                from api.routes.chat_upload import _cleanup_uploads
+    async def _tick():
+        from api.routes.chat_upload import _cleanup_uploads
 
-                async with AsyncSessionLocal() as db_session:
-                    deleted_count, deleted_files = await _cleanup_uploads(
-                        db_session, settings.chat_upload_retention_days
-                    )
-                    if deleted_count > 0:
-                        logger.info(
-                            f"Upload cleanup: {deleted_count} uploads deleted "
-                            f"({deleted_files} files, retention={settings.chat_upload_retention_days}d)"
-                        )
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Upload cleanup failed: {e}")
+        async with AsyncSessionLocal() as db_session:
+            deleted_count, deleted_files = await _cleanup_uploads(
+                db_session, settings.chat_upload_retention_days
+            )
+            if deleted_count > 0:
+                logger.info(
+                    f"Upload cleanup: {deleted_count} uploads deleted "
+                    f"({deleted_files} files, retention={settings.chat_upload_retention_days}d)"
+                )
 
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"Upload Cleanup Scheduler gestartet "
-        f"(retention={settings.chat_upload_retention_days}d, stündlich)"
+    _spawn_periodic_task(
+        name="Upload cleanup",
+        interval=3600,
+        work=_tick,
+        started_msg=(
+            f"Upload Cleanup Scheduler gestartet "
+            f"(retention={settings.chat_upload_retention_days}d, stündlich)"
+        ),
     )
 
 
@@ -266,56 +281,45 @@ def _schedule_federation_audit_cleanup():
     """F4d — periodic retention prune of the federation query audit log.
 
     Pivots on `initiated_at`; hourly cadence matches the upload cleanup
-    pattern. Swallows exceptions the same way so the poller keeps
-    running across transient DB hiccups.
+    pattern.
     """
-    async def cleanup_loop():
-        while True:
-            try:
-                await asyncio.sleep(3600)  # 1 hour
-                from services.federation_audit import prune_old_audit_rows
+    async def _tick():
+        from services.federation_audit import prune_old_audit_rows
+        await prune_old_audit_rows()
 
-                await prune_old_audit_rows()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Federation audit cleanup failed: {e}")
-
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info("Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)")
+    _spawn_periodic_task(
+        name="Federation audit cleanup",
+        interval=3600,
+        work=_tick,
+        started_msg="Federation Audit Cleanup Scheduler gestartet (stündlich, retention=90d)",
+    )
 
 
 def _schedule_trajectory_cleanup():
     """Periodic prune of expired agent trajectories (self-learning Phase 2).
 
-    Same pattern as the federation audit + memory cleanup schedulers. Gated
-    on ``settings.trajectory_capture_enabled`` so the scheduler doesn't even
-    start on deployments that haven't opted into self-learning.
+    Gated on ``settings.trajectory_capture_enabled`` so the scheduler
+    doesn't even start on deployments that haven't opted into
+    self-learning.
     """
     if not settings.trajectory_capture_enabled:
         return
 
-    async def cleanup_loop():
-        while True:
-            try:
-                await asyncio.sleep(settings.trajectory_cleanup_interval)
-                from services.trajectory_service import TrajectoryService
+    async def _tick():
+        from services.trajectory_service import TrajectoryService
+        async with AsyncSessionLocal() as db_session:
+            svc = TrajectoryService(db_session)
+            await svc.purge_expired()
 
-                async with AsyncSessionLocal() as db_session:
-                    svc = TrajectoryService(db_session)
-                    await svc.purge_expired()
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Trajectory cleanup failed: {e}")
-
-    task = asyncio.create_task(cleanup_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"Trajectory Cleanup Scheduler gestartet "
-        f"(interval={settings.trajectory_cleanup_interval}s, "
-        f"retention={settings.trajectory_retention_days}d)"
+    _spawn_periodic_task(
+        name="Trajectory cleanup",
+        interval=settings.trajectory_cleanup_interval,
+        work=_tick,
+        started_msg=(
+            f"Trajectory Cleanup Scheduler gestartet "
+            f"(interval={settings.trajectory_cleanup_interval}s, "
+            f"retention={settings.trajectory_retention_days}d)"
+        ),
     )
 
 
@@ -324,8 +328,7 @@ def _schedule_skill_curator():
 
     Iterates every user that owns at least one active non-seed skill and
     runs ``SkillCuratorService.run_for_user(user_id)`` — dedupes near-
-    identical skills + archives stale ones. Same scheduler pattern as
-    the trajectory cleanup and memory cleanup loops.
+    identical skills + archives stale ones.
 
     Gated on both ``skills_enabled`` (no point running if the whole
     subsystem is off) and ``skill_curator_enabled`` (the curator itself).
@@ -333,44 +336,37 @@ def _schedule_skill_curator():
     if not settings.skills_enabled or not settings.skill_curator_enabled:
         return
 
-    async def curator_loop():
-        while True:
+    async def _tick():
+        from services.skill_curator_service import SkillCuratorService
+
+        # First session — only used to enumerate user ids. Closed
+        # before we iterate so it doesn't hold the connection.
+        async with AsyncSessionLocal() as enum_session:
+            user_ids = await SkillCuratorService(
+                enum_session
+            ).list_active_user_ids()
+
+        # Per-user session so failures, identity-map state, and
+        # implicit transaction aborts don't leak between users. The
+        # shared-session pattern would let a user-A error contaminate
+        # user-B's read (stale ORM cache + post-rollback state).
+        for uid in user_ids:
             try:
-                await asyncio.sleep(settings.skill_curator_interval)
-                from services.skill_curator_service import SkillCuratorService
+                async with AsyncSessionLocal() as per_user_db:
+                    await SkillCuratorService(per_user_db).run_for_user(uid)
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"Skill curator failed for user {uid}: {e}")
 
-                # First session — only used to enumerate user ids. Closed
-                # before we iterate so it doesn't hold the connection.
-                async with AsyncSessionLocal() as enum_session:
-                    user_ids = await SkillCuratorService(
-                        enum_session
-                    ).list_active_user_ids()
-
-                # Per-user session so failures, identity-map state, and
-                # implicit transaction aborts don't leak between users.
-                # The "shared session across N users" pattern would let a
-                # user-A error contaminate user-B's read (stale ORM cache
-                # + post-rollback state).
-                for uid in user_ids:
-                    try:
-                        async with AsyncSessionLocal() as per_user_db:
-                            await SkillCuratorService(per_user_db).run_for_user(uid)
-                    except Exception as e:
-                        logger.warning(
-                            f"Skill curator failed for user {uid}: {e}"
-                        )
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.warning(f"Skill curator loop failed: {e}")
-
-    task = asyncio.create_task(curator_loop())
-    _startup_tasks.append(task)
-    logger.info(
-        f"Skill Curator gestartet "
-        f"(interval={settings.skill_curator_interval}s, "
-        f"duplicate_threshold={settings.skill_curator_duplicate_threshold}, "
-        f"stale_days={settings.skill_curator_stale_days})"
+    _spawn_periodic_task(
+        name="Skill curator",
+        interval=settings.skill_curator_interval,
+        work=_tick,
+        started_msg=(
+            f"Skill Curator gestartet "
+            f"(interval={settings.skill_curator_interval}s, "
+            f"duplicate_threshold={settings.skill_curator_duplicate_threshold}, "
+            f"stale_days={settings.skill_curator_stale_days})"
+        ),
     )
 
 

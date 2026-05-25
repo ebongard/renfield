@@ -123,6 +123,34 @@ from models.database import (
 )
 
 # ============================================================================
+# Rate-limit isolation
+# ============================================================================
+
+# slowapi keeps an in-memory counter keyed by client IP across the test
+# session. A long suite that includes many @limiter.limit(...)-decorated
+# routes (skills/, tool-health/, trajectories/, ...) accumulates past the
+# admin/chat limits and starts returning 429 in tests that were previously
+# under-budget. Reset between each test so per-test assertions stay
+# deterministic regardless of execution order.
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    try:
+        from services.api_rate_limiter import limiter
+    except ImportError:
+        yield
+        return
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+    yield
+    try:
+        limiter.reset()
+    except Exception:
+        pass
+
+
+# ============================================================================
 # Database Fixtures
 # ============================================================================
 

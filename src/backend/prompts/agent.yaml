@@ -4,7 +4,7 @@
 
 de:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {tool_health_warnings}, {learned_skills}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
   agent_prompt: |
     Du bist ein Agent, der komplexe Aufgaben Schritt für Schritt löst.
 
@@ -17,11 +17,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -81,11 +77,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -139,11 +131,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -192,11 +180,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -253,11 +237,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -331,11 +311,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -438,11 +414,7 @@ de:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -606,7 +578,7 @@ de:
 
 en:
   # Main agent prompt template
-  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {tool_corrections}, {tool_health_warnings}, {learned_skills}, {history_prompt}, {step_directive}
+  # Available variables: {message}, {conv_context}, {memory_context}, {document_context}, {personality_context}, {tools_prompt}, {self_learning_blocks}, {history_prompt}, {step_directive}
   agent_prompt: |
     You are an agent that solves complex tasks step by step.
 
@@ -619,11 +591,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -680,11 +648,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -735,11 +699,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -785,11 +745,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -843,11 +799,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -918,11 +870,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 
@@ -1022,11 +970,7 @@ en:
 
     {tools_prompt}
 
-    {tool_corrections}
-
-    {tool_health_warnings}
-
-    {learned_skills}
+    {self_learning_blocks}
 
     {history_prompt}
 

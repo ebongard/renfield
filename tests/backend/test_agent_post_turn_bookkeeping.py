@@ -20,7 +20,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from models.database import (
     AgentTrajectory,
@@ -42,6 +42,22 @@ def _clear_skill_cache():
     SkillService.invalidate_has_skills_cache()
     yield
     SkillService.invalidate_has_skills_cache()
+
+
+@pytest.fixture(autouse=True)
+def _patch_async_session_local(async_engine, monkeypatch):
+    """The post-turn task opens its OWN AsyncSessionLocal sessions for
+    every sub-feature (skill outcome, tool outcome, trajectory save,
+    conversation-id lookup). The get_db dependency override only reaches
+    route handlers — point AsyncSessionLocal at the test engine so
+    background writes land in the same in-memory DB that db_session
+    reads from."""
+    test_sessionmaker = async_sessionmaker(
+        async_engine, class_=AsyncSession, expire_on_commit=False
+    )
+    monkeypatch.setattr(
+        "services.database.AsyncSessionLocal", test_sessionmaker, raising=False,
+    )
 
 
 @pytest.fixture

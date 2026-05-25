@@ -53,22 +53,51 @@ async def admin_user(db_session: AsyncSession) -> User:
     return user
 
 
+class _FakeUser:
+    """Mock user that avoids ORM lazy-load.
+
+    Using a real `User` row from db_session trips
+    `sqlalchemy.exc.MissingGreenlet` when `require_permission` traverses
+    `user.role.has_permission(...)` — the route handler runs in a
+    different session than the fixture created the user in. The fake
+    bypasses the relationship entirely by exposing `has_permission` as
+    a direct method."""
+
+    def __init__(self, uid: int, name: str, is_admin: bool):
+        self.id = uid
+        self.username = name
+        self._is_admin = is_admin
+
+    def has_permission(self, perm: str) -> bool:
+        return self._is_admin and perm == "admin"
+
+
 @pytest.fixture
-def auth_as_regular(app_with_test_db, regular_user):
+def auth_as_regular(app_with_test_db, monkeypatch):
+    """Pin auth + enable enforcement. Without auth_enabled=True
+    `require_permission` short-circuits to "allow"."""
     from services.auth_service import get_current_user
-    app_with_test_db.dependency_overrides[get_current_user] = lambda: regular_user
+    fake = _FakeUser(uid=7, name="th_regular", is_admin=False)
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
+    app_with_test_db.dependency_overrides[get_current_user] = lambda: fake
     try:
-        yield regular_user
+        yield fake
     finally:
         app_with_test_db.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture
-def auth_as_admin(app_with_test_db, admin_user):
+def auth_as_admin(app_with_test_db, monkeypatch):
     from services.auth_service import get_current_user
-    app_with_test_db.dependency_overrides[get_current_user] = lambda: admin_user
+    fake = _FakeUser(uid=42, name="th_admin", is_admin=True)
+    monkeypatch.setattr(
+        "services.auth_service.settings.auth_enabled", True,
+    )
+    app_with_test_db.dependency_overrides[get_current_user] = lambda: fake
     try:
-        yield admin_user
+        yield fake
     finally:
         app_with_test_db.dependency_overrides.pop(get_current_user, None)
 

@@ -72,6 +72,7 @@ markers = [
     "frontend: Frontend-specific tests",
     "satellite: Satellite-specific tests",
     "eval: Evaluation tests (require running Ollama, slow)",
+    "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",
 ]
 
 # =============================================================================

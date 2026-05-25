@@ -54,6 +54,12 @@ _OUTCOME_CHOICES = {
     TRAJECTORY_OUTCOME_ABORT,
 }
 
+# Per-step content cap. A 4kB ceiling keeps a single attachment-heavy
+# trace from bloating a row to multi-MB while leaving room for the LLM
+# to see real tool output in the export. Centralized so the storage
+# policy is reviewable as a unit alongside trajectory_max_per_user etc.
+_STEP_CONTENT_MAX_CHARS = 4000
+
 
 def _allowed_outcomes() -> set[str]:
     """Parse settings.trajectory_capture_outcomes once per call.
@@ -111,8 +117,8 @@ def serialize_steps(steps: list) -> list[dict]:
             "success": getattr(s, "success", None),
         }
         content = getattr(s, "content", "") or ""
-        if len(content) > 4000:
-            content = content[:4000] + "…[truncated]"
+        if len(content) > _STEP_CONTENT_MAX_CHARS:
+            content = content[:_STEP_CONTENT_MAX_CHARS] + "…[truncated]"
         step_dict["content"] = content
         out.append(step_dict)
     return out
@@ -194,7 +200,17 @@ class TrajectoryService:
         # the cap. Anonymous turns (user_id IS NULL) share one bucket —
         # otherwise single-user/AUTH_ENABLED=false deployments would grow
         # the trajectory table unbounded between the daily cleanup ticks.
-        if settings.trajectory_max_per_user > 0:
+        #
+        # Probabilistic: COUNT-then-DELETE every save would cost N round-
+        # trips for N inserts even though only the last few near the cap
+        # actually matter. We run the check on every Nth insert (keyed by
+        # row.id, deterministic so test-harness behavior is predictable);
+        # drift up to N rows over the cap is harmless because the cleanup
+        # scheduler also prunes by retention.
+        if (
+            settings.trajectory_max_per_user > 0
+            and row.id % settings.trajectory_cap_check_every == 0
+        ):
             await self._enforce_per_user_cap(user_id)
 
         return row
