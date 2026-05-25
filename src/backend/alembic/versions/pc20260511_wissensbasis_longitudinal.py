@@ -130,13 +130,15 @@ def upgrade() -> None:
     if not _has_idx(inspector, "wb_field_provenance", "idx_wb_fp_atom_id"):
         op.create_index("idx_wb_fp_atom_id", "wb_field_provenance", ["atom_id"])
 
-    # Partial index for freshness/staleness queries (postgres only — sqlite
-    # ignores the WHERE clause but creates a full index, harmless for tests).
-    if dialect == "postgresql" and not _has_idx(inspector, "wb_field_provenance", "idx_wb_fp_recent"):
-        op.execute(
-            "CREATE INDEX idx_wb_fp_recent ON wb_field_provenance (fetched_at) "
-            "WHERE fetched_at > NOW() - INTERVAL '90 days'"
-        )
+    # Index for freshness/staleness queries on fetched_at. Originally written
+    # as a partial index with `WHERE fetched_at > NOW() - INTERVAL '90 days'`,
+    # but postgres rejects that — partial-index predicates must be IMMUTABLE
+    # and NOW() is STABLE. The rolling-window intent was also moot: NOW() is
+    # evaluated once at CREATE INDEX time, so the cutoff would have been a
+    # static deploy-time snapshot, not a rolling window. A full B-tree on
+    # fetched_at serves the same freshness queries and the table ships empty.
+    if not _has_idx(inspector, "wb_field_provenance", "idx_wb_fp_recent"):
+        op.create_index("idx_wb_fp_recent", "wb_field_provenance", ["fetched_at"])
 
     # =========================================================================
     # wb_field_provenance_archive — destination for legal_hold rows that
