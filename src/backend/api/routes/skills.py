@@ -26,7 +26,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
@@ -63,13 +63,20 @@ _MAX_TOOL_NAME_CHARS = 128
 
 
 def _user_is_admin(user: User | None) -> bool:
-    """Best-effort admin probe that works for both real and default users."""
+    """Has the caller got the ADMIN permission?
+
+    Uses ``User.has_permission`` (delegates to the eagerly-loaded role).
+    The auth dependencies ``get_user_or_default`` / ``get_current_user``
+    both `selectinload(User.role)` so the lazy traversal here is safe.
+    Defaults to False on a None caller (auth-disabled single-user mode
+    where the inbox isn't surfaced anyway).
+    """
     if user is None:
         return False
-    if getattr(user, "is_superuser", False):
-        return True
-    roles = getattr(user, "roles", None) or []
-    return any(getattr(r, "name", r) == "admin" for r in roles)
+    try:
+        return bool(user.has_permission("admin"))
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------- schemas
@@ -265,13 +272,16 @@ async def get_draft_count(
     still gets a hint when something they should review is queued.
     """
     user = current_user
-    stmt = select(ProceduralSkill).where(
+    # COUNT(*) scalar — the NavBadge polls this every 60 s per active
+    # user; materializing every draft row into ORM objects just to len()
+    # would scale linearly with the inbox depth.
+    stmt = select(func.count(ProceduralSkill.id)).where(
         ProceduralSkill.status == SKILL_STATUS_DRAFT
     )
     if not _user_is_admin(user):
         stmt = stmt.where(ProceduralSkill.user_id == user.id)
-    rows = (await db.execute(stmt)).scalars().all()
-    return DraftCountResponse(count=len(rows))
+    count = (await db.execute(stmt)).scalar() or 0
+    return DraftCountResponse(count=int(count))
 
 
 # ----------------------------------------------------------------- read
@@ -390,10 +400,6 @@ async def update_skill(
 
 
 # -------------------------------------------------------- approve/reject
-class _NoBody(BaseModel):
-    pass
-
-
 @router.post("/{skill_id}/approve", response_model=SkillResponse)
 @limiter.limit(settings.api_rate_limit_chat)
 async def approve_skill(
