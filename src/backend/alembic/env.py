@@ -217,6 +217,19 @@ def do_run_migrations(connection: Connection) -> None:
         "END $$;"
     )
 
+    # Close the SQLAlchemy autobegin that the bootstrap exec_driver_sql
+    # calls above just triggered. Without this commit, the connection is
+    # IN a transaction when context.configure() runs, which makes alembic
+    # set `_in_external_transaction=True` — turning
+    # `transaction_per_migration=True` into a silent no-op. The first
+    # migration that uses `autocommit_block()` then asserts
+    # `self._transaction is not None` and the entire chain fails.
+    # Surfaced 2026-05-27 when pc20260526b + pc20260528 ran in the
+    # alembic-upgrade Job: the env.py change shipped in PR #625 didn't
+    # take effect until this commit was added. Required for any future
+    # migration that uses `op.get_context().autocommit_block()`.
+    connection.commit()
+
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
