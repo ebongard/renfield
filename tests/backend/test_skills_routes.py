@@ -535,17 +535,21 @@ class TestCuratorRun:
     async def test_admin_can_trigger(
         self, async_client: AsyncClient, auth_as_admin, patched_embed,
     ):
-        """Happy path: admin can fire the curator run. With no skills in
-        DB the report has duplicates_found=0 + stale_archived=0."""
+        """Happy path: admin fires the curator run; v2.10 returns the
+        completed SkillCuratorRun audit row (single object, not a list)."""
         resp = await async_client.post(
             "/api/skills/curator/run",
             json={"user_id": auth_as_admin.id},
         )
-        # Either 200 with empty report list (the per-user code path) or
-        # a list with one zero'd report. Both are valid here.
         assert resp.status_code == 200
         body = resp.json()
-        assert isinstance(body, list)
+        assert isinstance(body, dict)
+        assert body["run_type"] == "manual"
+        assert body["triggered_by_user_id"] == auth_as_admin.id
+        assert body["status"] in ("success", "partial", "failed")
+        # Empty DB → nothing to merge or archive.
+        assert body["duplicate_pairs_merged"] == 0
+        assert body["stale_skills_archived"] == 0
 
     async def test_non_admin_blocked(
         self, async_client: AsyncClient, auth_as_owner,

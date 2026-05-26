@@ -326,6 +326,12 @@ class SkillService:
             trigger_examples=trigger_examples or [],
             tool_sequence=tool_sequence or [],
             source=SKILL_SOURCE_SEED,
+            # System-shipped seeds bypass the draft-gate — they're
+            # repo-managed (seed_skills/*.md), not LLM-emitted, so the
+            # human-review threat model doesn't apply. Without this the
+            # column default 'draft' would keep every seed out of
+            # retrieval until an admin clicked Approve.
+            status=SKILL_STATUS_APPROVED,
             embedding=embedding,
             atom_id=None,
             circle_tier=TIER_PUBLIC,
