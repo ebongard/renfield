@@ -83,6 +83,7 @@ class PolymorphicAtomStore:
         source (legacy behavior preserved).
         """
         from services.kg_retrieval import KGRetrieval
+        from services.lexical_retrieval import LexicalRetrieval
         from services.memory_retrieval import MemoryRetrieval
         from services.rag_retrieval import RAGRetrieval
         from services.skill_service import SkillService
@@ -92,6 +93,22 @@ class PolymorphicAtomStore:
         rag_task = RAGRetrieval(self.db).search(query_text, top_k=candidate_k)
         kg_task = KGRetrieval(self.db).get_relevant_context(query_text, user_id=asker_id)
         memory_task = MemoryRetrieval(self.db).retrieve(query_text, user_id=asker_id, limit=candidate_k)
+        # Lexical retrievers — keyword / name fallback for queries the
+        # vector path mis-ranks (single tokens like "Jutta", short
+        # German questions whose embedding sits below
+        # memory_retrieval_threshold). Returns RAG-shape and memory-shape
+        # dicts so the existing _wrap_rag_results / _wrap_memory_results
+        # helpers consume them unchanged. Duplicate atom_ids across
+        # vector + lexical lists get an RRF boost from both contributions
+        # — exactly the "this is both semantic AND keyword match"
+        # behaviour we want.
+        lex = LexicalRetrieval(self.db)
+        lexical_chunks_task = lex.search_chunks_lexical(
+            query_text, asker_id=asker_id, top_k=candidate_k,
+        )
+        lexical_memories_task = lex.search_memories_lexical(
+            query_text, asker_id=asker_id, top_k=candidate_k,
+        )
         # Self-learning Phase 1: procedural skills are atoms too — give
         # them a fourth source for the unified /brain search. Gated on
         # skills_enabled so the existing three-source RRF behavior is
@@ -110,18 +127,28 @@ class PolymorphicAtomStore:
         # programmer errors (e.g., import failure on the lazy-imported retrieval modules).
         # Removing the wrapper — exceptions in retrieval modules are converted to []
         # by the _wrap_* helpers, and any actual programmer error now bubbles to FastAPI.
-        rag_results, kg_context, memory_results, skill_results = await asyncio.gather(
-            rag_task, kg_task, memory_task, skill_task,
+        (
+            rag_results, kg_context, memory_results,
+            lexical_chunks, lexical_memories, skill_results,
+        ) = await asyncio.gather(
+            rag_task, kg_task, memory_task,
+            lexical_chunks_task, lexical_memories_task, skill_task,
             return_exceptions=True,
         )
 
         rag_matches = _wrap_rag_results(rag_results)
         kg_matches = _wrap_kg_context(kg_context)
         memory_matches = _wrap_memory_results(memory_results)
+        lexical_chunk_matches = _wrap_rag_results(lexical_chunks)
+        lexical_memory_matches = _wrap_memory_results(lexical_memories)
         skill_matches = _wrap_skill_results(skill_results)
 
         merged = _rrf_merge(
-            [rag_matches, kg_matches, memory_matches, skill_matches],
+            [
+                rag_matches, kg_matches, memory_matches,
+                lexical_chunk_matches, lexical_memory_matches,
+                skill_matches,
+            ],
             top_k=top_k,
             k=settings.rag_hybrid_rrf_k,
         )

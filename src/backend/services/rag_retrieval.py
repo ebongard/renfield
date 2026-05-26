@@ -227,10 +227,23 @@ class RAGRetrieval:
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
 
+        from utils.content_quality import is_low_quality_text
+
         results = []
         for row in rows:
             similarity = float(row.similarity) if row.similarity else 0
             if threshold and similarity < threshold:
+                continue
+            # Drop Paperless OCR-garbage chunks before they enter RRF
+            # downstream. The garbage rows match every query at a flat
+            # low score and snag rank=1 in the merge, drowning real
+            # answers. See utils.content_quality + the brain-search
+            # debug session that surfaced the Jutta queries.
+            if is_low_quality_text(row.content):
+                logger.debug(
+                    f"🗑️ Dropping low-quality chunk id={row.id} "
+                    f"doc={row.document_id} (OCR-garbage filter)"
+                )
                 continue
             results.append({
                 "chunk": {

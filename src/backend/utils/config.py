@@ -305,7 +305,15 @@ class Settings(BaseSettings):
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in
     memory_retrieval_limit: int = Field(default=3, ge=1, le=10)              # Max memories per query
-    memory_retrieval_threshold: float = Field(default=0.7, ge=0.0, le=1.0)  # Cosine-similarity threshold
+    # Cosine threshold for the chat-injection path. Dropped from 0.7 to
+    # 0.5 (2026-05-26) — the 0.7 gate was tuned for short paraphrase
+    # matches but suppressed natural German question queries against
+    # third-person fact memories (e.g. "Was mag Jutta gerne essen?"
+    # against "Jutta mag Maracujas und Ananas" embeds at ~0.55). The
+    # /brain page returned 0 hits even though the memory was a direct
+    # answer. 0.5 is calibrated for qwen3-embedding:4b's distribution;
+    # tune downward if cross-language false negatives still appear.
+    memory_retrieval_threshold: float = Field(default=0.5, ge=0.0, le=1.0)  # Cosine-similarity threshold
     memory_max_per_user: int = Field(default=500, ge=10, le=5000)           # Max active memories
     memory_context_decay_days: int = Field(default=30, ge=1, le=365)        # Days until context category expires
     memory_dedup_threshold: float = Field(default=0.9, ge=0.5, le=1.0)     # Deduplication threshold
