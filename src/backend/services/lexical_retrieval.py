@@ -170,16 +170,24 @@ class LexicalRetrieval:
         asker_id: int | None,
         top_k: int,
     ) -> list[dict[str, Any]]:
-        """ILIKE OR-match across ``conversation_memories.content``.
+        """FTS search over ``conversation_memories.search_vector``.
+
+        Postgres path: ``websearch_to_tsquery`` + ``ts_rank``. Rare
+        proper nouns ("Jutta") rank higher than frequent function-words
+        ("gerne") automatically via IDF — exactly what natural-language
+        queries need. Result: "Was mag Jutta gerne essen?" surfaces the
+        Maracujas memory (Jutta-rank dominates).
+
+        Sqlite test path: no tsvector available. Falls back to
+        token-OR LIKE with a per-row match-count ranking that
+        approximates IDF (rows matching more distinct tokens rank
+        higher). Different semantics than the Postgres path; the
+        test that matters for shape-parity (returns memory-shape
+        dicts) holds.
 
         Returns results in the same shape as
         ``MemoryRetrieval.retrieve`` so ``_wrap_memory_results`` in
-        polymorphic_atom_store can consume the output directly.
-
-        Each token must appear (case-insensitive) for the row to match.
-        That's a tighter recall than tsvector's OR but matches user
-        intent for name queries: typing "Jutta Geburtstag" should
-        prefer rows that mention BOTH.
+        polymorphic_atom_store consumes the output directly.
         """
         tokens = _significant_tokens(query)
         if not tokens or asker_id is None:
@@ -190,46 +198,68 @@ class LexicalRetrieval:
             and self.db.bind.dialect.name == "postgresql"
         )
 
-        # ILIKE is Postgres-only — sqlite test harness needs plain LIKE
-        # (sqlite's LIKE is case-insensitive by default for ASCII).
-        like_op = "ILIKE" if is_postgres else "LIKE"
-        clauses = []
-        params: dict[str, Any] = {"limit": top_k}
-        for i, token in enumerate(tokens):
-            param_name = f"tok_{i}"
-            clauses.append(f"m.content {like_op} :{param_name}")
-            params[param_name] = f"%{token}%"
-        token_filter = " AND ".join(clauses)
-
         if is_postgres:
+            fts_config = settings.rag_hybrid_fts_config
+            # websearch_to_tsquery accepts user input verbatim and
+            # never raises on malformed input (unlike to_tsquery).
+            # Default semantic is OR between bare tokens, which is
+            # what we want for natural-language queries.
+            or_query = " OR ".join(tokens)
             circles_clause, circles_params = conversation_memories_circles_filter(asker_id)
-            params.update(circles_params)
+            params: dict[str, Any] = {
+                "or_query": or_query,
+                "fts_config": fts_config,
+                "limit": top_k,
+                **circles_params,
+            }
             sql = text(f"""
                 SELECT
                     m.id, m.atom_id, m.user_id, m.content,
                     m.category, m.importance, m.confidence,
-                    m.circle_tier, m.created_at, m.last_accessed_at
+                    m.circle_tier, m.created_at, m.last_accessed_at,
+                    ts_rank(
+                        m.search_vector,
+                        websearch_to_tsquery(:fts_config, :or_query)
+                    ) AS rank
                 FROM conversation_memories m
                 WHERE m.is_active = TRUE
-                  AND {token_filter}
+                  AND m.search_vector IS NOT NULL
+                  AND m.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
                   AND {circles_clause}
-                ORDER BY m.importance DESC, m.created_at DESC
+                ORDER BY rank DESC, m.importance DESC, m.created_at DESC
                 LIMIT :limit
             """)
         else:
-            # Sqlite test path: no circle_sql tier_clause helpers, no
-            # is_active assumption (some fixtures omit it). Owner-only
-            # filter is enough for unit-test parity.
-            params["asker_id"] = asker_id
+            # Sqlite test path. No tsvector → use a token-OR LIKE
+            # with a per-row match-count proxy for IDF ranking
+            # (rows matching more distinct tokens rank higher).
+            #
+            # We compute the count via a CASE-sum so each token is
+            # bound once. Sqlite's LIKE is case-insensitive for ASCII
+            # by default — same case-folding behavior as ILIKE for the
+            # German-ASCII subset our tests use.
+            params = {"limit": top_k, "asker_id": asker_id}
+            match_terms = []
+            count_terms = []
+            for i, token in enumerate(tokens):
+                p = f"tok_{i}"
+                match_terms.append(f"m.content LIKE :{p}")
+                count_terms.append(
+                    f"CASE WHEN m.content LIKE :{p} THEN 1 ELSE 0 END"
+                )
+                params[p] = f"%{token}%"
+            or_clause = " OR ".join(match_terms)
+            count_expr = " + ".join(count_terms)
             sql = text(f"""
                 SELECT
                     m.id, m.atom_id, m.user_id, m.content,
                     m.category, m.importance, m.confidence,
-                    m.circle_tier, m.created_at, m.last_accessed_at
+                    m.circle_tier, m.created_at, m.last_accessed_at,
+                    ({count_expr}) AS rank
                 FROM conversation_memories m
                 WHERE m.user_id = :asker_id
-                  AND {token_filter}
-                ORDER BY m.importance DESC, m.created_at DESC
+                  AND ({or_clause})
+                ORDER BY rank DESC, m.importance DESC, m.created_at DESC
                 LIMIT :limit
             """)
 
@@ -250,9 +280,10 @@ class LexicalRetrieval:
                 "confidence": float(row.confidence) if row.confidence is not None else 1.0,
                 "circle_tier": row.circle_tier or 0,
                 "created_at": row.created_at,
-                # similarity unused but kept for shape parity with
-                # MemoryRetrieval.retrieve.
-                "similarity": 1.0,
+                # `similarity` retained for shape parity with
+                # MemoryRetrieval.retrieve; we surface the rank
+                # so downstream RRF can use it as a tie-breaker.
+                "similarity": float(row.rank) if row.rank is not None else 0.0,
             }
             for row in rows
         ]

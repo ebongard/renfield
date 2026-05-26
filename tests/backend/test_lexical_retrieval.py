@@ -74,16 +74,76 @@ class TestSearchMemoriesLexical:
         assert "Jutta mag Maracujas und Ananas" in contents
         assert "Anna kocht gerne Pasta am Wochenende" not in contents
 
-    async def test_requires_all_tokens(self, db_session: AsyncSession):
-        """Memory-side lexical uses AND across tokens — typing both
-        narrows correctly."""
-        await _seed_memory(db_session, user_id=1, content="Jutta mag Maracujas und Ananas")
-        await _seed_memory(db_session, user_id=1, content="Der Geburtstag des Kindes ist morgen")
+    async def test_multi_match_outranks_single_match(self, db_session: AsyncSession):
+        """v2.10.4: switched from AND to OR-with-match-count rank.
+        A row matching both query tokens ranks above a row matching
+        only one — same intent as the old AND-narrowing but recall
+        survives natural-language queries that include function
+        words alongside the discriminator."""
+        await _seed_memory(
+            db_session, user_id=1,
+            content="Jutta hat am 14.02.1969 Geburtstag",  # both tokens
+            importance=0.5,
+        )
+        await _seed_memory(
+            db_session, user_id=1,
+            content="Jutta mag Maracujas und Ananas",  # one token
+            importance=0.5,
+        )
+        await _seed_memory(
+            db_session, user_id=1,
+            content="Der Geburtstag des Kindes ist morgen",  # one token (other)
+            importance=0.5,
+        )
         retr = LexicalRetrieval(db_session)
         hits = await retr.search_memories_lexical(
             "Jutta Geburtstag", asker_id=1, top_k=10,
         )
-        assert hits == []  # no row mentions both
+        assert len(hits) == 3
+        # Row containing BOTH tokens ranks first.
+        assert "Jutta hat am 14.02.1969 Geburtstag" in hits[0]["content"]
+
+    async def test_natural_language_query_finds_discriminator(
+        self, db_session: AsyncSession
+    ):
+        """Regression for the v2.10.3 bug: 'Was mag Jutta gerne essen?'
+        returned 0 because AND-across-tokens required ALL of {Jutta,
+        gerne, essen} to appear in the same memory. The Maracujas
+        memory has none of {gerne, essen} but is the right answer."""
+        await _seed_memory(
+            db_session, user_id=1,
+            content="Jutta mag Maracujas und Ananas",
+            importance=0.8,
+        )
+        await _seed_memory(
+            db_session, user_id=1,
+            content="Anna kocht gerne Pasta am Wochenende",  # has 'gerne' only
+            importance=0.5,
+        )
+        retr = LexicalRetrieval(db_session)
+        hits = await retr.search_memories_lexical(
+            "Was mag Jutta gerne essen", asker_id=1, top_k=10,
+        )
+        # Both memories surface (one matches 'Jutta', the other matches
+        # 'gerne'). Jutta-memory should rank first because (a) Jutta is
+        # the only discriminator the user likely cares about and (b)
+        # importance is higher.
+        assert len(hits) >= 1
+        assert any("Jutta mag Maracujas" in h["content"] for h in hits)
+        # The Jutta-relevant memory ranks above the gerne-only memory.
+        jutta_rank = next(
+            (i for i, h in enumerate(hits)
+             if "Jutta mag Maracujas" in h["content"]),
+            -1,
+        )
+        anna_rank = next(
+            (i for i, h in enumerate(hits)
+             if "Anna kocht" in h["content"]),
+            -1,
+        )
+        if anna_rank >= 0:
+            # If both surface, Jutta wins the rank.
+            assert jutta_rank < anna_rank
 
     async def test_returns_memory_shape(self, db_session: AsyncSession):
         await _seed_memory(

@@ -930,6 +930,14 @@ class ConversationMemory(Base):
     atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
+    # Full-text search vector (Postgres GENERATED column from pc20260528).
+    # READ-ONLY from the app side — Postgres maintains it via
+    # to_tsvector('german', coalesce(content, '')). Surfaced here so
+    # SELECT queries can name the column; never set by ORM writers.
+    # Lexical retriever at services/lexical_retrieval.py uses
+    # `search_vector @@ websearch_to_tsquery(...)` with ts_rank ordering.
+    search_vector = Column(TSVECTOR, nullable=True)
+
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)
 

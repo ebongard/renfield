@@ -162,6 +162,16 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # Per-migration transaction: each migration gets its own
+        # transaction boundary instead of wrapping every migration in
+        # one outer txn. Required for any migration that needs
+        # `op.get_context().autocommit_block()` for non-transactional
+        # DDL like `CREATE INDEX CONCURRENTLY`. Without this, the
+        # autocommit_block raises `AssertionError: self._transaction is
+        # not None` because there's no per-migration transaction to
+        # commit + reopen. Surfaced 2026-05-26 when pc20260526b
+        # (GIN-index migration) failed to apply on prod.
+        transaction_per_migration=True,
     )
 
     with context.begin_transaction():
@@ -207,7 +217,14 @@ def do_run_migrations(connection: Connection) -> None:
         "END $$;"
     )
 
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        # See offline-mode block above for the rationale. Both paths
+        # must agree on the transaction model or migrations behave
+        # differently depending on how alembic is invoked.
+        transaction_per_migration=True,
+    )
 
     with context.begin_transaction():
         context.run_migrations()
