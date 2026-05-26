@@ -329,11 +329,13 @@ class Settings(BaseSettings):
     memory_extraction_v2_shadow: bool = False                                # Phase A: run v2 in shadow mode alongside v1
     memory_extraction_v2_authoritative: bool = False                         # Phase B: v2 is primary; v1 becomes legacy fallback
     # Lane D — separate retrieval threshold for the v2 extract pipeline.
-    # Chat retrieval uses `memory_retrieval_threshold=0.7` for high
-    # precision (don't surface tangential memories to the user). Extract
-    # is a different surface: high recall is what matters, and the LLM
-    # plus the drift check together replace the score gate. Defaulting
-    # to 0.0 means the LLM sees top-K candidates regardless of similarity.
+    # Chat retrieval uses ``memory_retrieval_threshold`` (currently 0.5
+    # after the 2026-05-26 brain-quality tune, dropped from 0.7 because
+    # natural German question queries embed below 0.7 against fact
+    # memories). Extract is a different surface: high recall is what
+    # matters, and the LLM plus the drift check together replace the
+    # score gate. Defaulting to 0.0 means the LLM sees top-K candidates
+    # regardless of similarity.
     #
     # Empirical basis: the 0.7 default produced cross_session_update
     # detection of 0.143; setting this to 0.0 raised it to 0.929 with no

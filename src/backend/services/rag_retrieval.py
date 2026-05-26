@@ -323,9 +323,14 @@ class RAGRetrieval:
         if knowledge_base_id:
             params["kb_id"] = knowledge_base_id
 
+        from utils.content_quality import is_low_quality_text
+
         result = await self.db.execute(sql, params)
         rows = result.fetchall()
 
+        # Mirror the OCR-garbage filter in _search_dense — BM25 results
+        # flow into the same RRF and can otherwise still surface failed
+        # Paperless OCR chunks. Same fix at the symmetric retrieval path.
         return [
             {
                 "chunk": {
@@ -348,6 +353,7 @@ class RAGRetrieval:
                 "similarity": round(float(row.rank), 6),
             }
             for row in rows
+            if not is_low_quality_text(row.content)
         ]
 
     # ==========================================================================
