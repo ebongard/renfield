@@ -220,34 +220,11 @@ async def export_jsonl(
     )
 
 
-# ------------------------------------------------------------------ get
-class TrajectoryDetailResponse(TrajectoryResponse):
-    raw_payload: dict[str, Any]
-    redacted_payload: dict[str, Any] | None
-
-
-@router.get("/{trajectory_id}", response_model=TrajectoryDetailResponse)
-@limiter.limit(settings.api_rate_limit_admin)
-async def get_trajectory(
-    request: Request,
-    trajectory_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(require_permission(Permission.ADMIN)),
-):
-    """Single-row detail for the AdminTrajectoriesPage StepTimeline. Returns
-    the full raw_payload (and redacted_payload when available) so the
-    front-end can render the per-step tool call / result trace."""
-    row = (await db.execute(
-        select(AgentTrajectory).where(AgentTrajectory.id == trajectory_id)
-    )).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="Trajectory not found")
-    base = _to_summary(row)
-    return TrajectoryDetailResponse(
-        **base.model_dump(),
-        raw_payload=row.raw_payload or {},
-        redacted_payload=row.redacted_payload,
-    )
+# Single-row TrajectoryDetailResponse + GET /{trajectory_id} live at the
+# BOTTOM of this module — FastAPI matches in declaration order, so the
+# `/{trajectory_id}` route MUST come after every static-path route
+# (`/stats`, `/export.jsonl`) and after `/{trajectory_id}/flag`. Putting
+# it earlier would coerce `/stats` to `int("stats")` and 422.
 
 
 # ------------------------------------------------------------------ flag
@@ -308,4 +285,37 @@ async def trajectory_stats(
         flagged_total=flagged,
         capture_enabled=settings.trajectory_capture_enabled,
         retention_days=settings.trajectory_retention_days,
+    )
+
+
+# -------------------------------------------------------- get (single row)
+# MUST stay at the bottom — see the warning at the top of the flag/stats
+# region. FastAPI matches in declaration order; `/{trajectory_id}` would
+# otherwise eat `/stats` and `/export.jsonl`.
+class TrajectoryDetailResponse(TrajectoryResponse):
+    raw_payload: dict[str, Any]
+    redacted_payload: dict[str, Any] | None
+
+
+@router.get("/{trajectory_id}", response_model=TrajectoryDetailResponse)
+@limiter.limit(settings.api_rate_limit_admin)
+async def get_trajectory(
+    request: Request,
+    trajectory_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Single-row detail for the AdminTrajectoriesPage StepTimeline. Returns
+    the full raw_payload (and redacted_payload when available) so the
+    front-end can render the per-step tool call / result trace."""
+    row = (await db.execute(
+        select(AgentTrajectory).where(AgentTrajectory.id == trajectory_id)
+    )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Trajectory not found")
+    base = _to_summary(row)
+    return TrajectoryDetailResponse(
+        **base.model_dump(),
+        raw_payload=row.raw_payload or {},
+        redacted_payload=row.redacted_payload,
     )

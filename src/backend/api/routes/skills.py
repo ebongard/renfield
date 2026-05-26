@@ -65,12 +65,19 @@ _MAX_TOOL_NAME_CHARS = 128
 def _user_is_admin(user: User | None) -> bool:
     """Has the caller got the ADMIN permission?
 
-    Uses ``User.has_permission`` (delegates to the eagerly-loaded role).
-    The auth dependencies ``get_user_or_default`` / ``get_current_user``
-    both `selectinload(User.role)` so the lazy traversal here is safe.
-    Defaults to False on a None caller (auth-disabled single-user mode
-    where the inbox isn't surfaced anyway).
+    Mirrors the contract of ``services.auth_service.require_permission``:
+    when ``auth_enabled`` is False the whole permission system is bypassed
+    and the (single-user-mode) default user is treated as admin. Without
+    this branch the Skills Inbox + admin-view list filter + global
+    draft-count return 403 in every home deployment that hasn't opted
+    into auth.
+
+    Auth-enabled path: ``User.has_permission`` delegates to the eagerly-
+    loaded role. ``get_user_or_default`` / ``get_current_user`` both
+    ``selectinload(User.role)`` so the lazy traversal here is safe.
     """
+    if not settings.auth_enabled:
+        return True
     if user is None:
         return False
     try:
