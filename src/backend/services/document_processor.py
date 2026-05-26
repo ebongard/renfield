@@ -213,6 +213,16 @@ class DocumentProcessor:
             # a distinctive error_message so the maintenance UI can
             # surface it. Prevents the convergence loop the adversarial
             # review flagged.
+            #
+            # Note on trigger chaining: when the doc-level _is_text_garbled
+            # path above (lines 173-188) already re-converted the doc, the
+            # NEW chunks may still trip this per-chunk trigger. That re-
+            # converts a second time with the same OCR engine — wasted
+            # GPU but bounded by the already-forced short-circuit (the
+            # second pass below sets force_ocr semantics implicitly via
+            # `_convert_document_ocr`). Worst case: 2 OCR retries on the
+            # same doc before failing. Acceptable cost for the recovery
+            # invariant.
             total_emitted = len(chunks) + dropped
             drop_rate = (dropped / total_emitted) if total_emitted else 0.0
             if drop_rate > settings.rag_chunk_quality_drop_threshold:
@@ -236,26 +246,42 @@ class DocumentProcessor:
                 ocr_result = await loop.run_in_executor(
                     None, self._convert_document_ocr, file_path
                 )
-                if ocr_result is not None:
-                    doc = ocr_result.document
-                    chunk_result = await loop.run_in_executor(
-                        None, self._create_chunks, doc
+                if ocr_result is None:
+                    # The retry converter itself raised — distinct from
+                    # "retry produced still-bad chunks". Surfacing the
+                    # difference matters for triage: this branch means
+                    # the OCR engine choked on the file (corrupt PDF,
+                    # OOM, unsupported variant), not that our quality
+                    # heuristic is too strict.
+                    logger.error(
+                        f"OCR retry conversion FAILED (None result) for "
+                        f"{path.name} — ingesting nothing, marking failed"
                     )
-                    chunks = chunk_result["chunks"]
-                    dropped = int(chunk_result.get("dropped_low_quality", 0))
-                    total_emitted = len(chunks) + dropped
-                    drop_rate = (dropped / total_emitted) if total_emitted else 0.0
-                    if drop_rate > settings.rag_chunk_quality_drop_threshold:
-                        logger.error(
-                            f"OCR-quality still bad after retry: {path.name} "
-                            f"(drop_rate={drop_rate:.0%})"
-                        )
-                        return {
-                            "metadata": metadata,
-                            "chunks": chunks,
-                            "status": "failed",
-                            "error": "ocr_quality_low",
-                        }
+                    return {
+                        "metadata": metadata,
+                        "chunks": [],
+                        "status": "failed",
+                        "error": "ocr_retry_conversion_failed",
+                    }
+                doc = ocr_result.document
+                chunk_result = await loop.run_in_executor(
+                    None, self._create_chunks, doc
+                )
+                chunks = chunk_result["chunks"]
+                dropped = int(chunk_result.get("dropped_low_quality", 0))
+                total_emitted = len(chunks) + dropped
+                drop_rate = (dropped / total_emitted) if total_emitted else 0.0
+                if drop_rate > settings.rag_chunk_quality_drop_threshold:
+                    logger.error(
+                        f"OCR-quality still bad after retry: {path.name} "
+                        f"(drop_rate={drop_rate:.0%})"
+                    )
+                    return {
+                        "metadata": metadata,
+                        "chunks": chunks,
+                        "status": "failed",
+                        "error": "ocr_quality_low",
+                    }
 
             logger.info(
                 f"Dokument verarbeitet: {len(chunks)} Chunks erstellt "

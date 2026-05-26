@@ -584,11 +584,22 @@ class RAGService:
         await self.db.flush()
 
         # Phase 3: embed every child concurrently, capturing the now-set parent.id.
-        # `group` is already non-blank-filtered in phase 1, so no blank
-        # guard needed here — None returns from `_embed_child` only on real
-        # embedding failures, not on text-shape rejection.
+        # `group` is already non-blank AND non-low-quality filtered in phase 1
+        # (the group-building loop drops both). The per-child filter below is
+        # belt-and-suspenders symmetry with _ingest_flat's _embed_chunk —
+        # protects against a future refactor that bypasses the phase-1 loop
+        # (e.g., callers that hand-construct parent_groups without the
+        # filter). Mirrors the flat-path placement so both branches reject
+        # garbage at the same call site.
         async def _embed_child(chunk_data: dict, parent_id: int) -> DocumentChunk | None:
             text_content = chunk_data["text"]
+            if is_low_quality_text(text_content):
+                logger.warning(
+                    f"🗑️ OCR-quality drop at _embed_child (defense-in-depth): "
+                    f"doc={doc_id} chunk_idx={chunk_data.get('chunk_index')} "
+                    f"preview={text_content.strip().replace(chr(10), ' ')[:80]!r}"
+                )
+                return None
             embed_text = chunk_data.get("text_for_embedding", text_content)
             async with sem:
                 try:

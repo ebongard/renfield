@@ -265,3 +265,51 @@ class TestProcessDocumentReOCRTrigger:
         assert result["status"] == "completed"
         assert len(result["chunks"]) == 3  # 1 dropped
         processor._convert_document_ocr.assert_not_called()
+
+    async def test_retry_converter_failure_marks_doc_failed(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """When the per-chunk-rate trigger fires and _convert_document_ocr
+        returns None (the documented failure return), the function MUST
+        return status='failed' with a distinct error_message — NOT fall
+        through to the success path with the original bad chunks.
+
+        Distinct from test_second_pass_still_bad_marks_failed: that one
+        covers \"retry succeeded but produced still-bad chunks\". This one
+        covers \"retry converter itself failed\". Different error_message
+        because the operator-side remediation differs (engine swap vs.
+        threshold tune)."""
+        f = tmp_path / "doc.pdf"
+        f.write_bytes(b"%PDF-1.4")
+
+        # First call returns clean obj for the initial conversion;
+        # second call (the retry) returns None to simulate converter
+        # failure.
+        result_doc = MagicMock()
+        result_doc.document = MagicMock()
+        result_doc.document.export_to_text = MagicMock(return_value="x" * 100)
+        result_obj = MagicMock(document=result_doc.document)
+
+        processor._chunker.chunk.return_value = iter(
+            [_mock_chunk(t, i) for i, t in enumerate(
+                [GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK]
+            )]
+        )
+        processor._convert_document = MagicMock(return_value=result_obj)
+        processor._convert_document_ocr = MagicMock(return_value=None)  # the bug surface
+        processor._extract_metadata = MagicMock(
+            return_value={"title": "t", "file_type": "pdf"}
+        )
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "failed"
+        assert result["error"] == "ocr_retry_conversion_failed"
+        # Chunks should NOT be the original garbage — empty list per
+        # the failure shape (we threw them out, not ingested).
+        assert result["chunks"] == []
+        # Sanity: the converter was called exactly once for retry.
+        assert processor._convert_document_ocr.call_count == 1
