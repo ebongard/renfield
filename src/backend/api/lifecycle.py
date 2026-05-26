@@ -370,6 +370,56 @@ def _schedule_skill_curator():
     )
 
 
+def _schedule_skill_shadow_log_cleanup():
+    """Prune `skill_would_have_injected_log` rows older than the
+    configured retention.
+
+    The shadow log records every find_similar candidate the draft-gate
+    suppressed (v2.10 rollout instrumentation). It grows on every
+    matching query — a busy household can rack up tens of thousands
+    of rows / week. Without this sweep the table is unbounded until
+    ``skill_shadow_log_enabled`` is flipped off.
+
+    Gated on ``skills_enabled`` and ``skill_shadow_log_enabled`` so the
+    scheduler doesn't even start when the shadow log is off.
+    """
+    if not settings.skills_enabled or not settings.skill_shadow_log_enabled:
+        return
+
+    async def _tick():
+        from datetime import datetime, timedelta, UTC
+        from sqlalchemy import delete
+        from models.database import SkillWouldHaveInjectedLog
+
+        cutoff = datetime.now(UTC).replace(tzinfo=None) - timedelta(
+            days=settings.skill_shadow_log_retention_days
+        )
+        async with AsyncSessionLocal() as db_session:
+            result = await db_session.execute(
+                delete(SkillWouldHaveInjectedLog).where(
+                    SkillWouldHaveInjectedLog.created_at < cutoff
+                )
+            )
+            deleted = int(result.rowcount or 0)
+            if deleted:
+                await db_session.commit()
+                logger.info(
+                    f"🧹 Skill shadow log: pruned {deleted} row(s) "
+                    f"older than {settings.skill_shadow_log_retention_days}d"
+                )
+
+    _spawn_periodic_task(
+        name="Skill shadow-log cleanup",
+        interval=settings.skill_shadow_log_cleanup_interval,
+        work=_tick,
+        started_msg=(
+            f"Skill Shadow-Log Cleanup gestartet "
+            f"(interval={settings.skill_shadow_log_cleanup_interval}s, "
+            f"retention={settings.skill_shadow_log_retention_days}d)"
+        ),
+    )
+
+
 def _schedule_paperless_sweepers(app):
     """PR 4 — hourly sweepers for the Paperless learning loop.
 
@@ -715,6 +765,7 @@ async def lifespan(app: "FastAPI"):
     _schedule_federation_audit_cleanup()
     _schedule_trajectory_cleanup()
     _schedule_skill_curator()
+    _schedule_skill_shadow_log_cleanup()
     _schedule_paperless_sweepers(app)
 
     # Self-learning Phase 1: load bundled seed skills into the database.

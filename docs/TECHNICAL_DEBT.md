@@ -2,7 +2,7 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-05-26
+**Letzte Aktualisierung:** 2026-05-26 (Frontend-Sweep: TypeScript-Migration als abgeschlossen markiert, alle Major-Dep-Updates als erledigt, Komponentengrößen mit aktuellen Zahlen)
 
 ---
 
@@ -11,10 +11,10 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
 | Backend | 0 | 3 | 4 | 9 | 10 |
-| Frontend | 0 | 1 | 3 | 7 | 5 |
+| Frontend | 0 | 0 | 2 | 4 | 7 |
 | Satellite | 0 | 3 | 2 | 5 | 5 |
 | Infrastruktur | 0 | 3 | 2 | 6 | 6 |
-| **Gesamt** | **0** | **10** | **11** | **27** | **26** |
+| **Gesamt** | **0** | **9** | **10** | **24** | **28** |
 
 ---
 
@@ -280,43 +280,30 @@ pages/ChatPage/
 
 ---
 
-#### 3. TypeScript Migration (teilweise abgeschlossen)
+#### ~~3. TypeScript Migration~~ ✅ Abgeschlossen
 
-**Status:** ✅ Grundgerüst migriert (2026-01-26)
+**Status:** Vollständig migriert (Verifiziert 2026-05-26)
 
-**Migrierte Dateien:**
-- `tsconfig.json`, `tsconfig.node.json` - TypeScript Konfiguration
-- `vite.config.ts` - Vite Config mit Path Aliases
-- `src/types/` - Type Definitionen (device, chat, api)
-- `src/hooks/*.ts` - Alle Hooks (useDeviceConnection, useChatSessions, useWakeWord, useCapabilities)
-- `src/context/*.tsx` - Alle Contexts (Auth, Device, Theme)
-- `src/utils/*.ts` - Utilities (axios, debug)
-- `src/config/wakeword.ts` - Wake Word Konfiguration
+W10-Migration komplett: `src/frontend/src/` ist 100% TypeScript — **59 `.ts` + 86 `.tsx`, 0 `.jsx`/`.js`**. Strict mode aktiv (`strict: true`, kein `allowJs`), `npm run typecheck` ist Pflicht-Gate. Test-Suite (`tests/frontend/react/`) mitmigriert. PR-Kette: #487 + Folge-PRs (#519/#520/#521/#522).
 
-**Noch zu migrieren:**
-- `src/pages/*.jsx` - Seiten-Komponenten
-- `src/components/*.jsx` - UI-Komponenten
-- `src/main.jsx`, `src/App.jsx` - Entry Points
-
-**Konfiguration:** Permissive Settings (`strict: false`, `allowJs: true`) für schrittweise Migration.
+Verbleibender Hinweis: Faked `.tsx`-Shims (`as FC<any>`, `// @ts-nocheck`) sind verboten — siehe `memory/feedback_no_shortcuts_typescript.md`. Ehrliches `.jsx` wäre besser als ein gefakter `.tsx`.
 
 ---
 
-#### 4. Outdated Dependencies (teilweise behoben)
+#### ~~4. Outdated Dependencies (alle Majors)~~ ✅ Abgeschlossen
 
-| Package | Current | Latest | Breaking | Status |
-|---------|---------|--------|----------|--------|
-| react | 18.3.1 | 19.x | ⚠️ Major | ⏳ |
-| react-router-dom | 6.30.3 | 7.x | ⚠️ Major | ⏳ |
-| tailwindcss | 3.4.19 | 4.x | ⚠️ Major | ⏳ |
-| vite | 5.4.21 | 7.x | ⚠️ Major | ⏳ |
-| @headlessui/react | 1.7.19 | 2.x | ⚠️ Major | ⏳ |
-| lucide-react | 0.307.0 | 0.563.0 | ✅ Minor | ✅ |
+**Status:** Alle Major-Versionen aktualisiert (Verifiziert 2026-05-26)
 
-**Änderungen (2026-01-25):**
-- lucide-react 0.307.0 → 0.563.0 aktualisiert
+| Package | Damals | Heute | Notes |
+|---------|--------|-------|-------|
+| react | 18.3.1 | **19.2.3** | ✅ Major |
+| react-router | 6.30.3 (dom) | **7.13.0** | ✅ Major + Package umgezogen auf `react-router` |
+| tailwindcss | 3.4.19 | **4.1.18** | ✅ Major |
+| vite | 5.4.21 | **7.3.1** | ✅ Major |
+| @headlessui/react | 1.7.19 | — | ✅ Entfernt (durch eigene Komponenten ersetzt) |
+| lucide-react | 0.307.0 | 0.563.0 | ✅ |
 
-**Empfehlung:** Major-Updates einzeln planen und testen.
+Frontend hängt jetzt am aktuellen React-Major; nächste Wartungsrunde betrifft nur noch Minor-/Patch-Bumps.
 
 ---
 
@@ -332,15 +319,19 @@ Kommentar wurde erweitert um die Begründung zu dokumentieren.
 
 ### 🟢 Niedrig
 
-#### 6. Große Komponenten
+#### 6. Große Komponenten (überwacht — alle in TypeScript)
 
-- `SpeakersPage.jsx` (1027 Zeilen)
-- `RoomsPage.jsx` (762 Zeilen)
-- `useDeviceConnection.js` (616 Zeilen)
+Stand 2026-05-26 (nach W10-Migration, Endungen jetzt `.tsx`/`.ts`):
+
+- `pages/SpeakersPage.tsx` (929 Zeilen — leicht geschrumpft seit dem Audit)
+- `pages/RoomsPage.tsx` (721 Zeilen — leicht geschrumpft)
+- `hooks/useDeviceConnection.ts` (637 Zeilen — leicht **gewachsen**; nächste Wartungsrunde aufteilen)
+
+**Empfehlung:** Sub-Hook-Extraktion bei `useDeviceConnection.ts` priorisieren (Reconnect-Logik, Health-Probe, Capability-Sync sind drei unabhängige Verantwortlichkeiten in einer Datei).
 
 #### 7. Fehlende Error Boundaries
 
-Nur eine zentrale ErrorBoundary, keine Feature-spezifischen.
+Nur eine zentrale ErrorBoundary (in `App.tsx`); keine Feature-spezifischen. Eine fehlgeschlagene Komponente — z.B. ein Payload-Parse-Bug auf `/admin/curator` — nimmt das gesamte SPA mit, statt nur den betroffenen Bereich. Vorschlag: pro Top-Level-Route eine eigene Boundary (Render-Fallback `<RouteErrorFallback />` + automatischer Logout-Reset-Pfad).
 
 #### ~~8. Keine Unit Tests für Hooks~~ ✅ Behoben
 

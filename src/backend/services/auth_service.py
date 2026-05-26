@@ -320,15 +320,23 @@ async def get_user_or_default(
     if current_user is not None:
         return current_user
 
-    # Auth-disabled: resolve to the admin user.
+    # Auth-disabled: resolve to the admin user. Eager-load `role` here
+    # — without it, downstream helpers that traverse `user.role.*`
+    # (`user.has_permission(...)`, `user.get_permissions()`) trip
+    # MissingGreenlet inside the async handler and silently return
+    # the wrong answer when wrapped in try/except. Class of bug: the
+    # `_user_is_admin` helper in api/routes/skills.py returned False
+    # in auth-disabled deploys until #617 worked around it.
     admin = (await db.execute(
-        select(User).where(User.username == "admin").limit(1)
+        select(User).where(User.username == "admin")
+        .options(selectinload(User.role))
+        .limit(1)
     )).scalar_one_or_none()
     if admin is not None:
         return admin
     # Admin was deleted/renamed — fall back to the first user by id.
     first = (await db.execute(
-        select(User).order_by(User.id).limit(1)
+        select(User).options(selectinload(User.role)).order_by(User.id).limit(1)
     )).scalar_one_or_none()
     if first is not None:
         return first

@@ -410,6 +410,8 @@ class Settings(BaseSettings):
     # window — the table can grow significantly under load.
     skill_shadow_log_enabled: bool = True
     skill_shadow_log_top_k: int = Field(default=10, ge=1, le=50)              # Cap shadow rows per query
+    skill_shadow_log_retention_days: int = Field(default=30, ge=1, le=365)    # Auto-delete shadow rows older than N days
+    skill_shadow_log_cleanup_interval: int = Field(default=86400, ge=300, le=604800)  # Cleanup tick (seconds)
 
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
