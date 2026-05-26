@@ -60,6 +60,38 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
+
+# Pre-migration bootstrap SQL — ensure `alembic_version.version_num` is wide
+# enough for Renfield's human-readable revision-ID convention (some IDs run to
+# ~40 chars; alembic's default column width is VARCHAR(32) which would fail
+# with StringDataRightTruncationError on the first UPDATE).
+#
+# Two idempotent statements cover both fresh installs and pre-bootstrap legacy
+# DBs:
+#   1. CREATE TABLE IF NOT EXISTS with VARCHAR(64).
+#   2. Conditional ALTER widening any pre-existing 32-char column.
+#
+# Online-mode-only: do_run_migrations() runs these against the live connection
+# before context.configure(). Offline mode does NOT use them — see the comment
+# in run_migrations_offline() for why the asymmetry cannot be closed without
+# forking alembic.
+_BOOTSTRAP_SQL: tuple[str, ...] = (
+    "CREATE TABLE IF NOT EXISTS alembic_version ("
+    "  version_num VARCHAR(64) NOT NULL,"
+    "  CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
+    ")",
+    "DO $$ BEGIN "
+    "  IF (SELECT character_maximum_length "
+    "      FROM information_schema.columns "
+    "      WHERE table_name='alembic_version' "
+    "        AND column_name='version_num') < 64 "
+    "  THEN "
+    "    ALTER TABLE alembic_version "
+    "    ALTER COLUMN version_num TYPE VARCHAR(64); "
+    "  END IF; "
+    "END $$;",
+)
+
 # Import platform models (the 22-class Base.metadata after W1.2).
 from models.database import Base
 from utils.config import settings
@@ -174,50 +206,33 @@ def run_migrations_offline() -> None:
         transaction_per_migration=True,
     )
 
+    # Offline-mode bootstrap asymmetry (PR #626 F1 — known limitation):
+    # we deliberately do NOT emit _BOOTSTRAP_SQL here. Alembic in
+    # offline mode unconditionally emits its own
+    # `CREATE TABLE alembic_version (version_num VARCHAR(32) ...)`
+    # at the top of run_migrations() — it cannot introspect to know the
+    # table already exists. If we emitted our `CREATE TABLE IF NOT
+    # EXISTS ... VARCHAR(64)` first, alembic's subsequent unconditional
+    # CREATE would fail with "relation already exists" when the
+    # operator runs the script. Emitting only the ALTER doesn't help
+    # either: alembic's CREATE still bakes the wrong VARCHAR(32) into
+    # the output, and our ALTER would have to run AFTER all migrations
+    # finish (by which point migration INSERTs of long version_num
+    # values would already have failed). The only clean fix is to
+    # override alembic's version-table emission, which requires
+    # forking. `alembic upgrade head --sql` is not used in this
+    # project's deploy flow (online mode is the only supported path);
+    # documented limitation, not a runtime hazard.
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    # Pre-migration bootstrap: ensure `alembic_version.version_num` is wide
-    # enough for our revision ID convention. Renfield uses human-readable
-    # IDs like `pc20260424_paperless_metadata_tables` which run up to ~40
-    # chars — Alembic's default column width is VARCHAR(32), so the first
-    # UPDATE would fail with `StringDataRightTruncationError` on a fresh
-    # DB and on any existing DB that still has the old 32-char column.
-    #
-    # Two idempotent operations handle both cases:
-    #   1. CREATE TABLE IF NOT EXISTS with VARCHAR(64) — covers fresh
-    #      installs. If the table already exists, this is a no-op and the
-    #      pre-existing column width is preserved.
-    #   2. Conditional ALTER to widen — covers existing installs that
-    #      were provisioned before this bootstrap existed (e.g. the prod
-    #      DB before PR 2a). Checks information_schema to stay idempotent.
-    #
-    # Both run in the same connection that Alembic will then configure.
-    # The explicit `connection.commit()` below is REQUIRED to close
-    # SQLAlchemy 2.0's autobegun transaction before `context.configure()`
-    # snapshots `_in_external_transaction` — see the long comment on
-    # that commit for the failure mode it prevents. Do NOT remove the
-    # commit thinking it's redundant.
-    connection.exec_driver_sql(
-        "CREATE TABLE IF NOT EXISTS alembic_version ("
-        "  version_num VARCHAR(64) NOT NULL,"
-        "  CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num)"
-        ")"
-    )
-    connection.exec_driver_sql(
-        "DO $$ BEGIN "
-        "  IF (SELECT character_maximum_length "
-        "      FROM information_schema.columns "
-        "      WHERE table_name='alembic_version' "
-        "        AND column_name='version_num') < 64 "
-        "  THEN "
-        "    ALTER TABLE alembic_version "
-        "    ALTER COLUMN version_num TYPE VARCHAR(64); "
-        "  END IF; "
-        "END $$;"
-    )
+    # Pre-migration bootstrap. See _BOOTSTRAP_SQL at module top for the
+    # full rationale; this online path runs the same statements via the
+    # raw connection (offline path emits them via context.execute()).
+    for _stmt in _BOOTSTRAP_SQL:
+        connection.exec_driver_sql(_stmt)
 
     # Close the SQLAlchemy autobegin that the bootstrap exec_driver_sql
     # calls above just triggered. Without this commit, the connection is
@@ -230,6 +245,15 @@ def do_run_migrations(connection: Connection) -> None:
     # alembic-upgrade Job: the env.py change shipped in PR #625 didn't
     # take effect until this commit was added. Required for any future
     # migration that uses `op.get_context().autocommit_block()`.
+    #
+    # FUTURE-AUTHOR WARNING (PR #626 F5): if you later wrap
+    # do_run_migrations() in an explicit caller-managed transaction
+    # (e.g., switch the async wrapper to `async with connectable.begin()`
+    # instead of `async with connectable.connect()`), this commit() would
+    # close that OUTER user-managed transaction prematurely — leaving
+    # any subsequent failures uncommittable as a unit. In that scenario
+    # MOVE or REMOVE this commit and rethink the bootstrap (e.g., run
+    # bootstrap in its own short-lived connection before the long one).
     connection.commit()
 
     context.configure(
