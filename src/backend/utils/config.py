@@ -301,6 +301,15 @@ class Settings(BaseSettings):
     rag_force_ocr: bool = False               # Always force full-page OCR (ignores embedded text)
     rag_ocr_auto_detect: bool = True          # Auto-detect garbled embedded text and re-run with OCR
     rag_ocr_space_threshold: float = 0.03    # Space ratio below this triggers auto OCR (default 3%)
+    # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
+    # When the chunker drops more than this fraction of chunks as
+    # low-quality (utils.content_quality.is_low_quality_text), the
+    # document is re-converted with force_full_page_ocr. If the re-run
+    # ALSO trips, status='failed' with error_message='ocr_quality_low'.
+    # Documents called with force_ocr=True that still trip get the
+    # distinct error_message='ocr_quality_low_after_forced_ocr' so the
+    # maintenance UI can distinguish "tried our best" from "first attempt".
+    rag_chunk_quality_drop_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
 
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in

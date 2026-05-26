@@ -218,7 +218,9 @@ class TestMetadataExtraction:
 class TestChunkCreation:
 
     def test_create_chunks_returns_list(self, processor):
-        """Chunks are returned as a list of dicts."""
+        """v2.10.4: _create_chunks now returns
+        ``{"chunks": [...], "dropped_low_quality": int}``. Chunks list
+        shape unchanged."""
         mock_chunk = MagicMock()
         mock_chunk.text = "Sample text content"
         mock_chunk.meta = MagicMock()
@@ -228,8 +230,10 @@ class TestChunkCreation:
         processor._chunker = MagicMock()
         processor._chunker.chunk.return_value = [mock_chunk]
 
-        chunks = processor._create_chunks(MagicMock())
+        result = processor._create_chunks(MagicMock())
 
+        assert result["dropped_low_quality"] == 0
+        chunks = result["chunks"]
         assert len(chunks) == 1
         assert chunks[0]["text"] == "Sample text content"
         assert chunks[0]["chunk_index"] == 0
@@ -244,8 +248,9 @@ class TestChunkCreation:
         processor._chunker = MagicMock()
         processor._chunker.chunk.return_value = [mock_chunk]
 
-        chunks = processor._create_chunks(MagicMock())
+        result = processor._create_chunks(MagicMock())
 
+        chunks = result["chunks"]
         assert chunks[0]["metadata"]["headings"] == ["Introduction", "Background"]
 
     def test_create_chunks_fallback_on_error(self, processor):
@@ -259,8 +264,9 @@ class TestChunkCreation:
         with patch("services.document_processor.settings") as mock_s:
             mock_s.rag_chunk_size = 512
             mock_s.rag_chunk_overlap = 50
-            chunks = processor._create_chunks(mock_doc)
+            result = processor._create_chunks(mock_doc)
 
+        chunks = result["chunks"]
         assert len(chunks) >= 1
         assert chunks[0]["text"] == "Hello world. This is a test."
 
@@ -446,7 +452,7 @@ class TestForceOcrPath:
         mock_result.document.export_to_text.return_value = "Test text content"
         processor._convert_document_ocr = MagicMock(return_value=mock_result)
         processor._convert_document = MagicMock(return_value=mock_result)
-        processor._create_chunks = MagicMock(return_value=[])
+        processor._create_chunks = MagicMock(return_value={"chunks": [], "dropped_low_quality": 0})
         processor._extract_metadata = MagicMock(return_value={})
 
         with patch("services.document_processor.settings") as mock_settings:
@@ -476,7 +482,7 @@ class TestForceOcrPath:
         mock_result.document.export_to_text.return_value = "Normal text with spaces here."
         processor._convert_document_ocr = MagicMock(return_value=mock_result)
         processor._convert_document = MagicMock(return_value=mock_result)
-        processor._create_chunks = MagicMock(return_value=[])
+        processor._create_chunks = MagicMock(return_value={"chunks": [], "dropped_low_quality": 0})
         processor._extract_metadata = MagicMock(return_value={})
 
         with patch("services.document_processor.settings") as mock_settings:
@@ -505,7 +511,7 @@ class TestForceOcrPath:
         mock_result.document = MagicMock()
         processor._convert_document_ocr = MagicMock(return_value=mock_result)
         processor._convert_document = MagicMock(return_value=mock_result)
-        processor._create_chunks = MagicMock(return_value=[])
+        processor._create_chunks = MagicMock(return_value={"chunks": [], "dropped_low_quality": 0})
         processor._extract_metadata = MagicMock(return_value={})
 
         with patch("services.document_processor.settings") as mock_settings:

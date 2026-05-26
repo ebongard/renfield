@@ -40,6 +40,24 @@ _MIN_LEN_FOR_QUALITY_CHECK = 40
 # single-character runs / glyphs / punctuation. Calibrated empirically
 # against the production corpus: real text (German + technical English)
 # clears 0.4 by a wide margin; OCR garbage from Paperless lands 0.0-0.2.
+#
+# THRESHOLD-VERSIONING NOTE (v2.10.4): this constant is shared between
+# two call sites:
+#
+#   1. Retrieval-time filtering — `services/rag_retrieval.py` drops
+#      garbage chunks from query results. Best-effort; lowering the
+#      threshold here later surfaces previously-filtered chunks
+#      retroactively at zero cost.
+#   2. Ingestion-time gating — `services/document_processor.py` AND
+#      `services/rag_service.py` (defense in depth). DESTRUCTIVE: a
+#      chunk dropped here never enters the table. Raising the threshold
+#      later does NOT retroactively scan or remove chunks already in
+#      the corpus — the corpus reflects whatever threshold was in
+#      effect at ingest time of each document.
+#
+# Recovery from a bad calibration: re-ingest affected docs via the
+# (deferred) bin/purge_low_quality_chunks.py once it lands. Until then,
+# change cautiously and note the date in CHANGELOG.
 _MIN_WORDLIKE_RATIO = 0.30
 
 

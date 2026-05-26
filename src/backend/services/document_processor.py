@@ -192,13 +192,75 @@ class DocumentProcessor:
             logger.info(f"Metadaten extrahiert: {metadata.get('title', path.name)}")
 
             # Chunks erstellen
-            chunks = await loop.run_in_executor(
+            chunk_result = await loop.run_in_executor(
                 None,
                 self._create_chunks,
                 doc
             )
+            chunks = chunk_result["chunks"]
+            dropped = int(chunk_result.get("dropped_low_quality", 0))
 
-            logger.info(f"Dokument verarbeitet: {len(chunks)} Chunks erstellt")
+            # Per-chunk-rate trigger (sibling of doc-level _is_text_garbled):
+            # if more than rag_chunk_quality_drop_threshold of the emitted
+            # chunks failed the quality gate, the OCR run was probably bad
+            # at the chunk level even if it cleared the doc-level
+            # space-ratio check. Re-convert with force_full_page_ocr.
+            #
+            # Already-forced short-circuit: if this call was ALREADY
+            # invoked with force_ocr=True (or settings.rag_force_ocr) and
+            # the result still trips the per-chunk gate, retrying with
+            # the same setting will give the same result — fail fast with
+            # a distinctive error_message so the maintenance UI can
+            # surface it. Prevents the convergence loop the adversarial
+            # review flagged.
+            total_emitted = len(chunks) + dropped
+            drop_rate = (dropped / total_emitted) if total_emitted else 0.0
+            if drop_rate > settings.rag_chunk_quality_drop_threshold:
+                if use_ocr:
+                    logger.error(
+                        f"OCR-quality still bad after forced full-page OCR: "
+                        f"{path.name} (drop_rate={drop_rate:.0%}, "
+                        f"dropped={dropped}/{total_emitted})"
+                    )
+                    return {
+                        "metadata": metadata,
+                        "chunks": chunks,
+                        "status": "failed",
+                        "error": "ocr_quality_low_after_forced_ocr",
+                    }
+                logger.info(
+                    f"Per-chunk quality trigger ({dropped}/{total_emitted} = "
+                    f"{drop_rate:.0%} > {settings.rag_chunk_quality_drop_threshold:.0%}) "
+                    f"— re-konvertiere {path.name} mit force_full_page_ocr"
+                )
+                ocr_result = await loop.run_in_executor(
+                    None, self._convert_document_ocr, file_path
+                )
+                if ocr_result is not None:
+                    doc = ocr_result.document
+                    chunk_result = await loop.run_in_executor(
+                        None, self._create_chunks, doc
+                    )
+                    chunks = chunk_result["chunks"]
+                    dropped = int(chunk_result.get("dropped_low_quality", 0))
+                    total_emitted = len(chunks) + dropped
+                    drop_rate = (dropped / total_emitted) if total_emitted else 0.0
+                    if drop_rate > settings.rag_chunk_quality_drop_threshold:
+                        logger.error(
+                            f"OCR-quality still bad after retry: {path.name} "
+                            f"(drop_rate={drop_rate:.0%})"
+                        )
+                        return {
+                            "metadata": metadata,
+                            "chunks": chunks,
+                            "status": "failed",
+                            "error": "ocr_quality_low",
+                        }
+
+            logger.info(
+                f"Dokument verarbeitet: {len(chunks)} Chunks erstellt "
+                + (f"({dropped} dropped as low-quality)" if dropped else "")
+            )
 
             return {
                 "metadata": metadata,
@@ -280,33 +342,68 @@ class DocumentProcessor:
 
         return metadata
 
-    def _create_chunks(self, doc) -> list[dict[str, Any]]:
-        """Erstellt Chunks mit Docling HybridChunker"""
-        chunks = []
+    def _create_chunks(self, doc) -> dict[str, Any]:
+        """Build chunks from a docling document and apply the OCR-quality gate.
+
+        Returns ``{"chunks": list[dict], "dropped_low_quality": int}``.
+        The drop count is the signal the caller (``process_document``) uses
+        to decide whether the doc as a whole tripped the per-chunk-rate
+        threshold and warrants a force-full-page-OCR retry.
+
+        Each dropped chunk emits a WARNING log with the per-chunk
+        preview so operators can grep ingestion logs to catch heuristic
+        false positives — recovery is reindex + revert. Without that
+        audit trail a legitimate short code/formula chunk silently
+        vanishes from search.
+        """
+        from utils.content_quality import is_low_quality_text
+
+        chunks: list[dict[str, Any]] = []
+        dropped = 0
 
         try:
             chunk_iter = self._chunker.chunk(doc)
 
             for idx, chunk in enumerate(chunk_iter):
-                chunk_data = {
-                    "text": chunk.text,
+                text = chunk.text or ""
+                if is_low_quality_text(text):
+                    dropped += 1
+                    preview = text.strip().replace("\n", " ")[:80]
+                    logger.warning(
+                        f"🗑️ OCR-quality drop: chunk_idx={idx} "
+                        f"preview={preview!r}"
+                    )
+                    continue
+                chunks.append({
+                    "text": text,
                     "chunk_index": idx,
                     "metadata": {
                         "headings": self._get_headings(chunk),
                         "chunk_type": self._get_chunk_type(chunk),
                         "page_number": self._get_page_number(chunk),
                     }
-                }
-                chunks.append(chunk_data)
+                })
 
         except Exception as e:
             logger.error(f"Fehler beim Chunking: {e}")
-            # Fallback: Einfaches Text-Splitting
+            # Fallback: Einfaches Text-Splitting (also gated).
             if hasattr(doc, 'export_to_text'):
                 text = doc.export_to_text()
-                chunks = self._simple_chunk(text)
+                fallback = self._simple_chunk(text)
+                kept: list[dict[str, Any]] = []
+                for c in fallback:
+                    if is_low_quality_text(c.get("text", "")):
+                        dropped += 1
+                        preview = (c.get("text") or "").strip().replace("\n", " ")[:80]
+                        logger.warning(
+                            f"🗑️ OCR-quality drop (fallback): "
+                            f"chunk_idx={c.get('chunk_index')} preview={preview!r}"
+                        )
+                        continue
+                    kept.append(c)
+                chunks = kept
 
-        return chunks
+        return {"chunks": chunks, "dropped_low_quality": dropped}
 
     def _get_headings(self, chunk) -> list[str]:
         """Extrahiert Überschriften aus Chunk-Metadaten"""

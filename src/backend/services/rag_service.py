@@ -451,10 +451,24 @@ class RAGService:
 
     async def _ingest_flat(self, doc_id: int, chunks: list[dict], sem: asyncio.Semaphore) -> list[DocumentChunk]:
         """Original flat chunking: each chunk gets an embedding."""
+        from utils.content_quality import is_low_quality_text
 
         async def _embed_chunk(chunk_data):
             text_content = chunk_data["text"]
             if not text_content or not text_content.strip():
+                return None
+            # Belt-and-suspenders filter (the primary gate is in
+            # DocumentProcessor._create_chunks). Catches a chunk that
+            # bypasses the processor — programmatic test harness, future
+            # caller, or a chunker code path that doesn't go through
+            # _create_chunks. Drops the chunk before paying the embed
+            # round-trip.
+            if is_low_quality_text(text_content):
+                logger.warning(
+                    f"🗑️ OCR-quality drop at ingest (flat): doc={doc_id} "
+                    f"chunk_idx={chunk_data.get('chunk_index')} "
+                    f"preview={text_content.strip().replace(chr(10), ' ')[:80]!r}"
+                )
                 return None
             # Use contextualized text for embedding if available
             embed_text = chunk_data.get("text_for_embedding", text_content)
@@ -509,18 +523,38 @@ class RAGService:
             if not raw_group:
                 continue
 
+            from utils.content_quality import is_low_quality_text
+
             blanks_dropped = sum(
                 1 for c in raw_group
                 if not (c.get("text") and c["text"].strip())
             )
-            group = [c for c in raw_group if c.get("text") and c["text"].strip()]
+            non_blank = [c for c in raw_group if c.get("text") and c["text"].strip()]
+            # Belt-and-suspenders filter (primary gate in
+            # DocumentProcessor._create_chunks). A child that survives
+            # here would still be dropped at the per-child _embed_child
+            # call below; doing it here means we don't even build the
+            # parent group from garbage, which keeps the parent-text
+            # concatenation clean and the child_count metadata honest.
+            quality_dropped = 0
+            group: list[dict] = []
+            for c in non_blank:
+                if is_low_quality_text(c["text"]):
+                    quality_dropped += 1
+                    logger.warning(
+                        f"🗑️ OCR-quality drop at ingest (parent-child): "
+                        f"doc={doc_id} chunk_idx={c.get('chunk_index')} "
+                        f"preview={c['text'].strip().replace(chr(10), ' ')[:80]!r}"
+                    )
+                else:
+                    group.append(c)
             if not group:
-                continue  # whole group was blank — skip entirely
+                continue  # whole group was blank or low-quality — skip entirely
 
-            if blanks_dropped:
+            if blanks_dropped or quality_dropped:
                 logger.debug(
                     f"Parent group at chunk_index={group_start} dropped "
-                    f"{blanks_dropped} blank-text children "
+                    f"{blanks_dropped} blank + {quality_dropped} low-quality children "
                     f"({len(group)} retained out of {len(raw_group)})"
                 )
 
