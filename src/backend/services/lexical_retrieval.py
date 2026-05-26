@@ -40,6 +40,7 @@ from services.circle_sql import (
     conversation_memories_circles_filter,
     document_chunks_circles_filter,
 )
+from services.fts_languages import FTS_LANGUAGES, build_tsquery_union_sql
 from utils.config import settings
 from utils.content_quality import is_low_quality_text
 
@@ -77,27 +78,32 @@ def _significant_tokens(query: str) -> list[str]:
 
 
 def _check_fts_config_at_startup() -> None:
-    """Emit a one-shot WARNING if the runtime FTS config doesn't match
-    the migration's hardcoded ``'german'``.
+    """Emit a one-shot WARNING if ``settings.rag_hybrid_fts_config`` is
+    not one of the languages indexed by the GENERATED column.
 
-    The pc20260528 migration creates ``conversation_memories.search_vector``
-    as a GENERATED column with ``to_tsvector('german', ...)``. If a
-    deployment ever sets ``rag_hybrid_fts_config`` to anything else,
-    the query reads one config while the column was computed with
-    another — silent 0 results, no error to point at root cause. This
-    warning makes the mismatch loud at startup.
+    The pc20260528 migration unions ``to_tsvector`` across all
+    ``FTS_LANGUAGES`` (DE / EN / FR / IT / ES / NL) on the indexing
+    side, and the memory retriever unions ``websearch_to_tsquery``
+    across the same set on the query side. So a deployment that picks
+    one of those configs for chunk-side queries (``rag_hybrid_fts_config``,
+    used by ``search_chunks_lexical`` against the older
+    ``document_chunks.search_vector`` column whose contract is
+    single-config) is fine. Setting it to an unindexed language is
+    almost certainly a config typo — warn loudly at startup.
 
-    The recovery path is a follow-up migration that drops and re-adds
-    the generated column with the new expression.
+    Adding a 7th language: update ``FTS_LANGUAGES`` AND write a
+    follow-up migration that rebuilds the generated column. This
+    warning catches the case where someone updates the config without
+    the migration.
     """
     cfg = settings.rag_hybrid_fts_config
-    if cfg != "german":
+    if cfg not in FTS_LANGUAGES:
         logger.warning(
-            f"🔍 FTS config mismatch: rag_hybrid_fts_config={cfg!r} but "
-            f"conversation_memories.search_vector is GENERATED with "
-            f"'german'. Lexical memory queries will silently return 0 "
-            f"results until the generated column is rebuilt with the "
-            f"matching config. See pc20260528 migration."
+            f"🔍 FTS config mismatch: rag_hybrid_fts_config={cfg!r} is "
+            f"not in FTS_LANGUAGES={FTS_LANGUAGES}. Chunk-side lexical "
+            f"queries (search_chunks_lexical) will run against an "
+            f"unindexed config and return 0 results. See "
+            f"services/fts_languages.py and pc20260528 migration."
         )
 
 
@@ -208,11 +214,15 @@ class LexicalRetrieval:
     ) -> list[dict[str, Any]]:
         """FTS search over ``conversation_memories.search_vector``.
 
-        Postgres path: ``websearch_to_tsquery`` + ``ts_rank``. Rare
-        proper nouns ("Jutta") rank higher than frequent function-words
-        ("gerne") automatically via IDF — exactly what natural-language
-        queries need. Result: "Was mag Jutta gerne essen?" surfaces the
-        Maracujas memory (Jutta-rank dominates).
+        Postgres path: ``websearch_to_tsquery`` + ``ts_rank``, unioned
+        across all ``FTS_LANGUAGES`` (DE / EN / FR / IT / ES / NL) on
+        both sides. The GENERATED ``search_vector`` is itself a union
+        of ``to_tsvector`` across the same 6 configs, so any
+        language-specific stemmer that matches a term contributes a
+        match. Rare proper nouns ("Jutta") rank higher than frequent
+        function-words ("gerne") automatically via IDF — exactly what
+        natural-language queries need. Result: "Was mag Jutta gerne
+        essen?" surfaces the Maracujas memory (Jutta-rank dominates).
 
         Sqlite test path: no tsvector available. Falls back to
         token-OR LIKE with a per-row match-count ranking that
@@ -235,16 +245,17 @@ class LexicalRetrieval:
         )
 
         if is_postgres:
-            fts_config = settings.rag_hybrid_fts_config
             # websearch_to_tsquery accepts user input verbatim and
             # never raises on malformed input (unlike to_tsquery).
             # Default semantic is OR between bare tokens, which is
-            # what we want for natural-language queries.
+            # what we want for natural-language queries. We union the
+            # tsquery across all FTS_LANGUAGES so each stemmer gets a
+            # chance to recognize the term.
             or_query = " OR ".join(tokens)
+            tsquery_union = build_tsquery_union_sql("or_query")
             circles_clause, circles_params = conversation_memories_circles_filter(asker_id)
             params: dict[str, Any] = {
                 "or_query": or_query,
-                "fts_config": fts_config,
                 "limit": top_k,
                 **circles_params,
             }
@@ -255,12 +266,12 @@ class LexicalRetrieval:
                     m.circle_tier, m.created_at, m.last_accessed_at,
                     ts_rank(
                         m.search_vector,
-                        websearch_to_tsquery(:fts_config, :or_query)
+                        {tsquery_union}
                     ) AS rank
                 FROM conversation_memories m
                 WHERE m.is_active = TRUE
                   AND m.search_vector IS NOT NULL
-                  AND m.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
+                  AND m.search_vector @@ ({tsquery_union})
                   AND {circles_clause}
                 ORDER BY rank DESC, m.importance DESC, m.created_at DESC
                 LIMIT :limit

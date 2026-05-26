@@ -11,9 +11,23 @@ automatically, so frequent function-words like "gerne" or "mag" rank
 lower than rare proper nouns like "Jutta" — exactly what a natural-
 language query needs.
 
-Design: STORED generated column. The expression ``to_tsvector('german',
-coalesce(content, ''))`` is IMMUTABLE for any literal config string, so
-Postgres accepts it as a generated column. Two consequences:
+Multilingual by design: the expression unions ``to_tsvector`` across
+DE / EN / FR / IT / ES / NL so a memory written in one language and a
+query expressed in another both stem correctly. Single source of truth
+for the language list lives in ``services/fts_languages.FTS_LANGUAGES``
+— this migration reads from there at *generation time* (when the file
+was written), the literal expression is then baked into the column for
+all future inserts.
+
+Adding a 7th language later requires a follow-up migration that
+DROPs + re-ADDs the GENERATED column with the new expression
+(Postgres does not allow ALTER on a generated column's body). The
+migration body is a copy of this one with the new FTS_LANGUAGES tuple
+substituted in.
+
+Design: STORED generated column. The ``to_tsvector('<lang>', text)``
+expression is IMMUTABLE for any literal config string, so Postgres
+accepts the union as a generated column. Two consequences:
 
   1. The column is automatically populated for every existing row when
      it's added — no separate backfill UPDATE needed.
@@ -22,11 +36,6 @@ Postgres accepts it as a generated column. Two consequences:
      ``services/conversation_memory_service.py``) does not need to set
      the column. Future write paths inherit the invariant.
 
-The hardcoded ``'german'`` matches ``settings.rag_hybrid_fts_config``'s
-project default. Deployments that need a different FTS config must
-issue a follow-up migration that drops + re-adds the generated column
-with a different expression.
-
 GIN index built CONCURRENTLY — works now that pc20260526b's
 ``autocommit_block`` foundation (env.py: ``transaction_per_migration=True``)
 is in place.
@@ -34,6 +43,8 @@ is in place.
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import TSVECTOR
+
+from services.fts_languages import build_generated_tsvector_expression
 
 
 revision = "pc20260528_cm_search_vector"
@@ -51,11 +62,14 @@ def upgrade() -> None:
         return
 
     # Generated column — Postgres computes search_vector for every row
-    # (existing AND future inserts) without app-side maintenance.
+    # (existing AND future inserts) without app-side maintenance. The
+    # expression unions to_tsvector across all FTS_LANGUAGES so queries
+    # in any supported language match content written in any other.
+    tsvector_expr = build_generated_tsvector_expression("content")
     op.execute(
         "ALTER TABLE conversation_memories "
         "ADD COLUMN IF NOT EXISTS search_vector tsvector "
-        "GENERATED ALWAYS AS (to_tsvector('german', coalesce(content, ''))) STORED"
+        f"GENERATED ALWAYS AS ({tsvector_expr}) STORED"
     )
 
     with op.get_context().autocommit_block():
