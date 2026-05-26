@@ -2,7 +2,7 @@
 
 Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im gesamten Renfield-System.
 
-**Letzte Aktualisierung:** 2026-01-26
+**Letzte Aktualisierung:** 2026-05-26
 
 ---
 
@@ -10,11 +10,11 @@ Dieses Dokument enthält eine umfassende Analyse der technischen Schulden im ges
 
 | Bereich | Kritisch | Mittel | Niedrig | Gesamt | Behoben |
 |---------|----------|--------|---------|--------|---------|
-| Backend | 0 | 1 | 4 | 7 | 10 |
+| Backend | 0 | 3 | 4 | 9 | 10 |
 | Frontend | 0 | 1 | 3 | 7 | 5 |
 | Satellite | 0 | 3 | 2 | 5 | 5 |
 | Infrastruktur | 0 | 3 | 2 | 6 | 6 |
-| **Gesamt** | **0** | **8** | **11** | **25** | **26** |
+| **Gesamt** | **0** | **10** | **11** | **27** | **26** |
 
 ---
 
@@ -154,6 +154,40 @@ services/
 - `get_default_client()` für `settings.ollama_url`
 - `get_agent_client(role_url, fallback_url)` für Agent-URL-Priorisierung
 - 13 neue Tests in `tests/backend/test_llm_client.py`
+
+---
+
+#### 12. `procedural_skills.status` — Partial Index nach Rollout
+
+**Status:** Offen — eingeführt mit v2.10 (#615), Review-Befund.
+
+**Problem:** Die Composite-Indexe `idx_procedural_skills_status_user` und `idx_procedural_skills_tier_status` (pc20260527) sind B-Trees über eine Text-Spalte mit nur vier Werten (`draft` / `approved` / `rejected` / `archived`). Sobald der Draft-Gate live ist, ist die Verteilung stark verzerrt: der weit überwiegende Anteil der Zeilen wird `approved` sein, mit einem schmalen Hot-Tail an `draft`. Plain B-Tree-Indexe haben in dieser Kardinalitätsverteilung schlechte Selektivität — der Planner fällt häufig auf einen Seq-Scan zurück.
+
+**Empfehlung:** Nach ~30 Tagen Rollout (sobald Größenordnung der Inbox bekannt ist):
+- `idx_procedural_skills_status_user` durch Partial-Index `WHERE status = 'approved'` ersetzen — dem Pfad, der `find_similar` dominiert.
+- Separater kleiner Partial-Index `WHERE status = 'draft'` für die Admin-Inbox-Abfrage.
+- `idx_procedural_skills_tier_status` analog evaluieren.
+
+**Aufwand:** ~1h. Eine `ALTER INDEX … RENAME` plus neue partial-CREATE-Statements in einer Mini-Migration; rückwärts-kompatibel.
+
+**Tracking:** Eigenes Issue eröffnen sobald Inbox-Volumen messbar ist.
+
+---
+
+#### 13. Alembic Backfill-UPDATEs ohne vorheriges Index-Drop
+
+**Status:** Offen — eingeführt mit v2.10 (#615), Review-Befund.
+
+**Problem:** `pc20260527_skill_approval_status.upgrade()` führt fünf `UPDATE`-Statements gegen `procedural_skills` aus, _bevor_ die alten Indexe (`idx_procedural_skills_active_user`, `idx_procedural_skills_tier_active`) gedroppt werden. Jeder UPDATE muss die alten Indexe pflegen, obwohl sie unmittelbar danach verworfen werden. Bei `procedural_skills` heute unkritisch (kleine Tabelle), aber als Migration-Pattern gefährlich — auf einer Multi-Millionen-Zeilen-Tabelle würde die Migration die zehn- bis hundertfache Zeit benötigen.
+
+**Empfehlung:** Konvention für künftige Backfill-Migrationen dokumentieren:
+1. Alte (zu droppende) Indexe zuerst entfernen.
+2. Backfill-UPDATEs ausführen.
+3. Neue Indexe und Constraints zuletzt anlegen.
+
+Optional: Eine kurze Notiz im neuen `CONTRIBUTING.md`-Abschnitt zu Alembic-Best-Practices, parallel zum bestehenden `memory/feedback_alembic_chain_check.md`.
+
+**Aufwand:** ~30 min für die Konvention; bestehende `pc20260527` nicht nachträglich umschreiben (irrelevant für die aktuelle Tabellengröße).
 
 ---
 
