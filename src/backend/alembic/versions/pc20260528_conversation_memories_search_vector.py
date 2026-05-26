@@ -61,14 +61,26 @@ def upgrade() -> None:
         # lexical retriever's sqlite branch uses LIKE instead.
         return
 
-    # Generated column — Postgres computes search_vector for every row
-    # (existing AND future inserts) without app-side maintenance. The
-    # expression unions to_tsvector across all FTS_LANGUAGES so queries
-    # in any supported language match content written in any other.
+    # Defensive DROP before ADD: ADD COLUMN IF NOT EXISTS is satisfied
+    # by name alone, so a pre-existing column with the WRONG shape
+    # silently survives. Two real paths into that state: (a) dev DBs
+    # bootstrapped via Base.metadata.create_all get a plain nullable
+    # TSVECTOR (see ConversationMemory.search_vector in
+    # models/database.py), (b) any prior partial deploy that shipped
+    # a different generated expression body. Both leave a non-
+    # populating column and the lexical retriever returns 0 hits with
+    # no error log. Unconditional DROP-then-ADD is cheap because
+    # search_vector is fully derived from content — Postgres
+    # repopulates it for every existing row as soon as the GENERATED
+    # column is re-added.
     tsvector_expr = build_generated_tsvector_expression("content")
     op.execute(
         "ALTER TABLE conversation_memories "
-        "ADD COLUMN IF NOT EXISTS search_vector tsvector "
+        "DROP COLUMN IF EXISTS search_vector"
+    )
+    op.execute(
+        "ALTER TABLE conversation_memories "
+        f"ADD COLUMN search_vector tsvector "
         f"GENERATED ALWAYS AS ({tsvector_expr}) STORED"
     )
 
@@ -80,10 +92,15 @@ def upgrade() -> None:
         # skips, leaving us with a perpetual seq-scan and no error to
         # point at root cause. Unconditional DROP IF EXISTS is cheap on
         # a healthy/absent index and cleans up an invalid one.
+        # CONCURRENTLY on the DROP avoids the ACCESS EXCLUSIVE table
+        # lock that a plain DROP INDEX would briefly take — important
+        # if a long-running query is using the GIN index when the
+        # migration runs.
         # Requires transaction_per_migration=True in env.py (set in the
         # same release); otherwise autocommit_block asserts.
         op.execute(
-            "DROP INDEX IF EXISTS idx_conversation_memories_search_vector_gin"
+            "DROP INDEX CONCURRENTLY IF EXISTS "
+            "idx_conversation_memories_search_vector_gin"
         )
         op.execute(
             "CREATE INDEX CONCURRENTLY "

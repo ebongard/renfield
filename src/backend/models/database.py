@@ -932,7 +932,7 @@ class ConversationMemory(Base):
 
     # Full-text search vector (Postgres GENERATED STORED column from
     # pc20260528). READ-ONLY from the app side — Postgres maintains it
-    # via `to_tsvector('german', coalesce(content, ''))`.
+    # via the multilingual union in services.fts_languages.
     #
     # Why not a SQLAlchemy `Computed(...)` clause: sqlite rejects
     # `to_tsvector` in generated columns ("non-deterministic functions
@@ -940,14 +940,16 @@ class ConversationMemory(Base):
     # dialect-conditional alternative (custom @compiles directive) is
     # more machinery than the migration-only contract requires.
     #
-    # Contract: production setups MUST run alembic migrations. Dev-DB
-    # bootstrap via `Base.metadata.create_all` produces a plain
-    # nullable TSVECTOR column initially — `alembic upgrade head` then
-    # idempotently swaps it for the proper GENERATED column via
-    # pc20260528. Pure-create_all setups with no migrations would have
-    # the column silently NULL post-insert and the lexical retriever
-    # would return 0 results; no such setup exists in this project's
-    # workflow (every dev DB goes through alembic eventually).
+    # Contract: the GENERATED column is owned by alembic, not by
+    # create_all. Dev-DB bootstrap via `Base.metadata.create_all`
+    # produces a plain nullable TSVECTOR column initially; the
+    # pc20260528 migration then DROPs that column unconditionally and
+    # re-ADDs it as GENERATED (safe because the column is fully
+    # derived from `content` — Postgres repopulates it for every row).
+    # Pure-create_all setups with no migrations would have the column
+    # silently NULL post-insert and the lexical retriever would
+    # return 0 results; the migration is the only supported path to
+    # a working lexical retriever.
     search_vector = Column(TSVECTOR, nullable=True)
 
     # Timestamps
