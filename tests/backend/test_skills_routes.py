@@ -270,7 +270,7 @@ class TestCreateSkill:
         body = resp.json()
         assert body["title"] == "Recipe"
         assert body["is_owner"] is True
-        assert body["is_active"] is True  # user-authored = approved
+        assert body["status"] == "approved"  # user-authored = approved
 
     async def test_body_md_over_max_length_422(
         self, async_client: AsyncClient, auth_as_owner,
@@ -330,7 +330,7 @@ class TestUpdateSkill:
         self, async_client: AsyncClient, auth_as_owner,
         db_session: AsyncSession, patched_embed,
     ):
-        """A curator-merged loser (is_active=False, merged_into_id=X)
+        """A curator-merged loser (status='archived', merged_into_id=X)
         that the owner reactivates MUST get its merged_into_id cleared
         — otherwise the next curator pass re-pairs it against X."""
         svc = SkillService(db_session)
@@ -342,17 +342,17 @@ class TestUpdateSkill:
             user_id=auth_as_owner.id, title="W", body_md="b",
             trigger_examples=["y"], tool_sequence=["mcp.x.y"],
         )
-        loser.is_active = False
+        loser.status = "archived"
         loser.merged_into_id = winner.id
         await db_session.commit()
 
         resp = await async_client.patch(
             f"/api/skills/{loser.id}",
-            json={"is_active": True},
+            json={"status": "approved"},
         )
         assert resp.status_code == 200, resp.text
         await db_session.refresh(loser)
-        assert loser.is_active is True
+        assert loser.status == "approved"
         assert loser.merged_into_id is None  # critical assert
 
     async def test_patch_reembeds_on_title_change(
@@ -459,7 +459,7 @@ class TestPin:
 # ============================================================ DELETE
 @pytest.mark.asyncio
 class TestDeleteSkill:
-    async def test_soft_delete_flips_is_active(
+    async def test_soft_delete_archives_skill(
         self, async_client: AsyncClient, auth_as_owner,
         db_session: AsyncSession, patched_embed,
     ):
@@ -472,7 +472,7 @@ class TestDeleteSkill:
         assert resp.status_code == 204
 
         await db_session.refresh(skill)
-        assert skill.is_active is False
+        assert skill.status == "archived"
         # NOT a hard delete — the row stays for audit trail.
 
     async def test_delete_cross_user_404(

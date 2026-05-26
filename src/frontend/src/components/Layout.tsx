@@ -33,12 +33,18 @@ import {
   History,
   GitBranch,
   Layers,
+  Sparkles,
+  Activity,
+  ClipboardList,
+  Hammer,
 } from 'lucide-react';
 import DeviceStatus from './DeviceStatus';
 import ThemeToggle from './ThemeToggle';
 import LanguageSwitcher from './LanguageSwitcher';
 import NotificationToast from './NotificationToast';
+import NavBadge from './NavBadge';
 import { useWissensbasisAvailable } from '../api/resources/wissensbasis';
+import { useDraftCountQuery } from '../api/resources/skills';
 import { useAuth } from '../context/AuthContext';
 
 interface NavItemConfig {
@@ -58,6 +64,7 @@ const mainNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.knowledge', href: '/knowledge', icon: BookOpen, permission: ['kb.own', 'kb.shared', 'kb.all'], feature: 'knowledge' },
   { nameKey: 'nav.brain', href: '/brain', icon: Brain },
   { nameKey: 'nav.brainReview', href: '/brain/review', icon: Inbox },
+  { nameKey: 'nav.brainSkills', href: '/brain/skills', icon: Sparkles },
   { nameKey: 'nav.federationAudit', href: '/brain/audit', icon: History },
   { nameKey: 'nav.memory', href: '/memory', icon: Brain },
   { nameKey: 'nav.knowledgeGraph', href: '/knowledge-graph', icon: Share2, feature: 'knowledge_graph' },
@@ -83,6 +90,11 @@ const adminNavigationConfig: NavItemConfig[] = [
   { nameKey: 'nav.maintenance', href: '/admin/maintenance', icon: Wrench, permission: ['admin'] },
   { nameKey: 'nav.settings', href: '/admin/settings', icon: Settings, permission: ['admin'] },
   { nameKey: 'nav.circles', href: '/settings/circles', icon: CircleDashed },
+  // Self-Learning admin console (v2.10).
+  { nameKey: 'nav.adminSkills', href: '/admin/skills', icon: Sparkles, permission: ['admin'] },
+  { nameKey: 'nav.adminToolHealth', href: '/admin/tool-health', icon: Activity, permission: ['admin'] },
+  { nameKey: 'nav.adminTrajectories', href: '/admin/trajectories', icon: ClipboardList, permission: ['admin'] },
+  { nameKey: 'nav.adminCurator', href: '/admin/curator', icon: Hammer, permission: ['admin'] },
 ];
 
 interface LayoutProps {
@@ -267,6 +279,12 @@ export default function Layout({ children }: LayoutProps) {
   const NavLink = ({ item, onClick }: NavLinkProps) => {
     const Icon = item.icon;
     const isActive = location.pathname === item.href;
+    // Sidebar Skills Inbox draft count. Only fetched when the user can
+    // see the entry (the badge component itself hides at 0, so even on
+    // non-admin views nothing visible escapes — but we gate the query
+    // anyway to avoid the request altogether for non-admins).
+    const draftCount = useDraftCountQuery();
+    const showBadge = item.href === '/admin/skills' && (draftCount.data ?? 0) > 0;
 
     return (
       <Link
@@ -284,6 +302,11 @@ export default function Layout({ children }: LayoutProps) {
         )}
         <Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
         <span className={`${IS_PRO_EDITION ? '' : railFade} transition-opacity duration-200 overflow-hidden whitespace-nowrap`}>{item.name}</span>
+        {showBadge && (
+          <span className={IS_PRO_EDITION ? '' : railFade}>
+            <NavBadge count={draftCount.data ?? 0} />
+          </span>
+        )}
       </Link>
     );
   };

@@ -59,7 +59,12 @@
     "openMenu": "Open menu",
     "closeMenu": "Close menu",
     "mainNavigation": "Main navigation",
-    "wissensbasis": "Wissensbasis"
+    "wissensbasis": "Wissensbasis",
+    "brainSkills": "Skills",
+    "adminSkills": "Skills Inbox",
+    "adminToolHealth": "Tool Health",
+    "adminTrajectories": "Trajectories",
+    "adminCurator": "Curator"
   },
   "auth": {
     "login": "Login",
@@ -1296,6 +1301,138 @@
     },
     "mix": {
       "couldNotLoad": "Could not load layout configuration"
+    }
+  },
+  "selfLearning": {
+    "nav": {
+      "draftCount": "{{count}} drafts in inbox"
+    },
+    "skills": {
+      "adminTitle": "Skills Inbox",
+      "adminDescription": "Review agent-learned procedures before they enter the live retrieval corpus.",
+      "brainTitle": "My Skills",
+      "brainDescription": "Approved procedures the agent uses on your behalf. Edit, pin, or remove.",
+      "brainEmpty": "No approved skills yet.",
+      "empty": "No skills in status \"{{status}}\".",
+      "totalCount": "{{count}} entries",
+      "pinned": "Pinned",
+      "toolsLabel": "Tools",
+      "successRate_one": "{{count}} call",
+      "successRate_other": "{{count}} calls",
+      "confirmDelete": "Remove this skill?",
+      "loadFailed": "Could not load skills.",
+      "approveFailed": "Approval failed.",
+      "rejectFailed": "Rejection failed.",
+      "updateFailed": "Update failed.",
+      "createFailed": "Create failed.",
+      "deleteFailed": "Delete failed.",
+      "filter": {
+        "status": "Status"
+      },
+      "status": {
+        "draft": "Draft",
+        "approved": "Approved",
+        "rejected": "Rejected",
+        "archived": "Archived"
+      },
+      "source": {
+        "auto_extracted": "Auto-extracted",
+        "seed": "Seed",
+        "user_created": "User-created"
+      },
+      "actions": {
+        "approve": "Approve",
+        "reject": "Reject",
+        "edit": "Edit",
+        "pin": "Pin",
+        "unpin": "Unpin",
+        "delete": "Delete"
+      },
+      "modal": {
+        "title": "Edit skill",
+        "titleField": "Title",
+        "body": "Procedure (Markdown)",
+        "triggers": "Triggers (one per line)",
+        "triggersPlaceholder": "Turn on the living room light\nLights on living room",
+        "tools": "Tool sequence (one per line)",
+        "toolsPlaceholder": "mcp.ha.turn_on\nmcp.ha.get_state",
+        "save": "Save",
+        "saving": "Saving...",
+        "cancel": "Cancel",
+        "close": "Close"
+      }
+    },
+    "toolHealth": {
+      "title": "Tool Health",
+      "description": "Per-(user, tool) success and failure counters from the Phase-3 outcome tracker.",
+      "empty": "No tool outcomes recorded yet.",
+      "loadFailed": "Could not load tool stats.",
+      "cols": {
+        "tool": "Tool",
+        "user": "User",
+        "success": "Success",
+        "failure": "Failure",
+        "rate": "Rate",
+        "lastUsed": "Last used",
+        "lastFailure": "Last failure"
+      }
+    },
+    "trajectories": {
+      "title": "Agent Trajectories",
+      "description": "Captured agent turns for offline fine-tuning and failure analysis.",
+      "empty": "No trajectories match the current filter.",
+      "loadFailed": "Could not load trajectories.",
+      "flagFailed": "Could not toggle flag.",
+      "outcome": "Outcome",
+      "outcomeAll": "All",
+      "sinceDays": "Since days",
+      "flaggedOnly": "Flagged only",
+      "exportJsonl": "Download JSONL",
+      "statsTotal": "Total",
+      "stats7d": "Last 7 days",
+      "statsFlagged": "Flagged",
+      "statsRetention": "Retention",
+      "selectPrompt": "Pick a trajectory to see its step trace.",
+      "userMessage": "User message",
+      "finalAnswer": "Final answer",
+      "noPayload": "No step data available.",
+      "flagToggle": "Toggle flag",
+      "outcomes": {
+        "success": "Success",
+        "tool_fail": "Tool failure",
+        "abort": "Abort",
+        "user_corrected": "User-corrected"
+      }
+    },
+    "curator": {
+      "title": "Curator Runbook",
+      "description": "History of curator runs — scheduled and manually triggered.",
+      "empty": "No curator runs recorded yet.",
+      "loadFailed": "Could not load curator runs.",
+      "runFailed": "Curator run failed.",
+      "runNow": "Run now",
+      "running": "Running...",
+      "status": {
+        "running": "Running",
+        "success": "Success",
+        "partial": "Partial",
+        "failed": "Failed"
+      },
+      "runType": {
+        "scheduled": "Scheduled",
+        "manual": "Manual"
+      },
+      "cols": {
+        "status": "Status",
+        "startedAt": "Started",
+        "duration": "Duration",
+        "type": "Type",
+        "examined": "Examined",
+        "dupFound": "Dup found",
+        "dupMerged": "Merged",
+        "staleArchived": "Stale archived",
+        "error": "Error"
+      }
     }
   }
 }

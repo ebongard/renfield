@@ -356,8 +356,8 @@ class TestAutoExtract:
         assert new_skill.title == "Play album on DLNA"
         assert new_skill.user_id == user_in_db.id
         assert new_skill.source == SKILL_SOURCE_AUTO_EXTRACTED
-        # Owner-approval gate: auto-extracted skills land inactive.
-        assert new_skill.is_active is False
+        # Owner-approval gate: auto-extracted skills land in draft state.
+        assert new_skill.status == "draft"
 
 
 # ============================================================ ERROR ISOLATION

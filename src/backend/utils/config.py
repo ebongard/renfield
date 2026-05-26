@@ -403,6 +403,14 @@ class Settings(BaseSettings):
     skill_curator_min_uses_to_consider_stale: int = Field(default=3, ge=1, le=100)  # Avoid archiving rarely-tested skills
     skill_curator_max_merges_per_run: int = Field(default=20, ge=1, le=200)   # Safety cap
 
+    # Skill draft-gate shadow log (v2.10 admin console rollout). When True,
+    # SkillService.find_similar runs a parallel "would-have-injected" query
+    # that relaxes the status='approved' filter, so we can measure how much
+    # recall the human-in-the-loop gate costs. Disable after the rollout
+    # window — the table can grow significantly under load.
+    skill_shadow_log_enabled: bool = True
+    skill_shadow_log_top_k: int = Field(default=10, ge=1, le=50)              # Cap shadow rows per query
+
     # Knowledge Graph (Entity-Relation triples from conversations)
     knowledge_graph_enabled: bool = False                                        # Opt-in
     kg_extraction_model: str = ""                                                # Empty = use default model

@@ -1,18 +1,26 @@
 """
-Skills API Routes — procedural-skill CRUD + management.
+Skills API Routes — procedural-skill CRUD + admin Skills Inbox (v2.10).
 
 Surface (`/api/skills` prefix added by main.py):
-  GET     /              — list current user's skills (+ public seeds)
-  POST    /              — manually author a skill
-  GET     /{id}          — read one skill (with owner/auth check)
-  PATCH   /{id}          — update title/body/triggers/tools/pinned/is_active
-  POST    /{id}/pin      — pin (protect from curator)
-  POST    /{id}/unpin    — unpin
-  DELETE  /{id}          — soft-delete (is_active=False)
-  PATCH   /{id}/tier     — change circle_tier (cascades through AtomService)
+  GET     /                — list visible skills (filter via ?status=, ?source=,
+                              ?admin_view=true for admin-wide inbox view)
+  GET     /draft-count     — sidebar NavBadge count (admin sees global; owner
+                              sees own; auth-disabled sees global)
+  POST    /                — manually author a skill (lands as ``approved``)
+  GET     /{id}            — read one (owner / public-seed / admin)
+  PATCH   /{id}            — update title / body / triggers / tools / pinned
+                              / status (owner only)
+  POST    /{id}/approve    — flip status draft|rejected → approved (admin)
+  POST    /{id}/reject     — flip status draft → rejected (admin)
+  POST    /{id}/pin        — pin (protect from curator stale-archive)
+  POST    /{id}/unpin      — unpin
+  DELETE  /{id}            — soft-delete (status='archived')
+  PATCH   /{id}/tier       — change circle_tier (cascades via AtomService)
+
+  POST    /curator/run     — admin: trigger curator run (writes audit row)
+  GET     /curator/runs    — admin: list recent SkillCuratorRun audit rows
 """
 
-from dataclasses import asdict
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -21,7 +29,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import ProceduralSkill, TIER_PUBLIC, User
+from models.database import (
+    CURATOR_RUN_TYPE_MANUAL,
+    ProceduralSkill,
+    SKILL_STATUS_APPROVED,
+    SKILL_STATUS_ARCHIVED,
+    SKILL_STATUS_DRAFT,
+    SKILL_STATUS_REJECTED,
+    SKILL_STATUSES,
+    SkillCuratorRun,
+    TIER_PUBLIC,
+    User,
+)
 from models.permissions import Permission
 from services.api_rate_limiter import limiter
 from services.atom_service import AtomService
@@ -43,14 +62,19 @@ _MAX_TOOL_SEQUENCE = 20
 _MAX_TOOL_NAME_CHARS = 128
 
 
+def _user_is_admin(user: User | None) -> bool:
+    """Best-effort admin probe that works for both real and default users."""
+    if user is None:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    roles = getattr(user, "roles", None) or []
+    return any(getattr(r, "name", r) == "admin" for r in roles)
+
+
 # ---------------------------------------------------------------- schemas
 class SkillCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=255)
-    # body_md is bounded so a single owner can't author a multi-MB body
-    # that then gets embedded (Ollama call) + injected into the system
-    # prompt on every matching turn (prompt-bloat DoS, plus amplified
-    # scrub_for_prompt cost). 8000 chars is generous for a procedural
-    # recipe; the seed skills in seed_skills/*.md sit well under 2000.
     body_md: str = Field(..., min_length=1, max_length=_MAX_BODY_MD_CHARS)
     trigger_examples: list[str] = Field(
         ..., min_length=1, max_length=_MAX_TRIGGER_EXAMPLES,
@@ -64,9 +88,6 @@ class SkillCreateRequest(BaseModel):
 class SkillUpdateRequest(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=255)
     body_md: str | None = Field(default=None, max_length=_MAX_BODY_MD_CHARS)
-    # Mirrors SkillCreateRequest's min_length=1 — an empty list would
-    # silently re-embed the skill with title-only relevance and pollute
-    # find_similar matches.
     trigger_examples: list[str] | None = Field(
         default=None, min_length=1, max_length=_MAX_TRIGGER_EXAMPLES,
     )
@@ -74,7 +95,9 @@ class SkillUpdateRequest(BaseModel):
         default=None, max_length=_MAX_TOOL_SEQUENCE,
     )
     pinned: bool | None = None
-    is_active: bool | None = None
+    # v2.10: status replaces the old is_active boolean. Owner-supplied
+    # value is validated against SKILL_STATUSES at apply-time.
+    status: str | None = None
 
 
 class SkillTierRequest(BaseModel):
@@ -88,15 +111,16 @@ class SkillResponse(BaseModel):
     trigger_examples: list[str]
     tool_sequence: list[str]
     source: str
+    status: str
     version: int
     success_count: int
     failure_count: int
     last_used_at: datetime | None
     pinned: bool
-    is_active: bool
     circle_tier: int
     atom_id: str | None
     merged_into_id: int | None
+    user_id: int | None
     created_at: datetime
     updated_at: datetime
     is_owner: bool
@@ -110,15 +134,16 @@ def _to_response(s: ProceduralSkill, *, is_owner: bool) -> SkillResponse:
         trigger_examples=s.trigger_examples or [],
         tool_sequence=s.tool_sequence or [],
         source=s.source,
+        status=s.status,
         version=s.version,
         success_count=s.success_count,
         failure_count=s.failure_count,
         last_used_at=s.last_used_at,
         pinned=s.pinned,
-        is_active=s.is_active,
         circle_tier=s.circle_tier,
         atom_id=s.atom_id,
         merged_into_id=s.merged_into_id,
+        user_id=s.user_id,
         created_at=s.created_at,
         updated_at=s.updated_at,
         is_owner=is_owner,
@@ -131,8 +156,8 @@ async def _load_owned(
     """Load a skill the caller is allowed to mutate.
 
     Allowed: skill.user_id == user.id. Seed skills (user_id IS NULL) are
-    read-only via this surface — they live in the repo's seed_skills/ folder
-    and are managed via git, not the API.
+    read-only via this surface — they live in the repo's seed_skills/
+    folder and are managed via git, not the API.
     """
     skill = (await db.execute(
         select(ProceduralSkill).where(ProceduralSkill.id == skill_id)
@@ -145,34 +170,72 @@ async def _load_owned(
     return skill
 
 
+async def _load_for_admin(
+    db: AsyncSession, skill_id: int
+) -> ProceduralSkill:
+    """Admin load — bypasses ownership; used by approve/reject."""
+    skill = (await db.execute(
+        select(ProceduralSkill).where(ProceduralSkill.id == skill_id)
+    )).scalar_one_or_none()
+    if skill is None:
+        raise HTTPException(status_code=404, detail="Skill not found")
+    return skill
+
+
 # ----------------------------------------------------------------- list
 @router.get("", response_model=list[SkillResponse])
 @limiter.limit(settings.api_rate_limit_chat)
 async def list_skills(
     request: Request,
     include_seeds: bool = True,
-    include_inactive: bool = False,
+    status: str | None = Query(default=None),
+    source: str | None = Query(default=None),
+    admin_view: bool = Query(default=False),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """List skills visible to the current user.
+    """List skills.
 
-    Visible = owned by current_user OR public seed (user_id IS NULL,
-    circle_tier=4). The latter is opt-out via ``include_seeds=false``.
+    Default scope: skills owned by current_user, plus public seeds when
+    ``include_seeds=true``, restricted to ``status='approved'``.
+
+    Filters:
+      - ``status=draft|approved|rejected|archived`` — narrow by lifecycle
+      - ``source=auto_extracted|user_created|seed`` — narrow by origin
+      - ``admin_view=true`` — bypass the per-user visibility filter and
+        return every skill in the table (admins only). The Skills Inbox
+        uses this in combination with ``status=draft`` to see drafts
+        across the whole household.
     """
     user = current_user
 
-    stmt = select(ProceduralSkill)
-    if not include_inactive:
-        stmt = stmt.where(ProceduralSkill.is_active.is_(True))
+    if status is not None and status not in SKILL_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status!r}")
 
-    if include_seeds:
+    if admin_view and not _user_is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin permission required")
+
+    stmt = select(ProceduralSkill)
+
+    # Status filter. Default = approved-only; the admin Skills Inbox sets
+    # ?status=draft to surface pending rows; the owner's BrainSkillsPage
+    # passes nothing and gets the user-facing default.
+    stmt = stmt.where(ProceduralSkill.status == (status or SKILL_STATUS_APPROVED))
+
+    if source is not None:
+        stmt = stmt.where(ProceduralSkill.source == source)
+
+    if admin_view:
+        # No per-user visibility filter — admin sees everything.
+        pass
+    elif include_seeds:
         stmt = stmt.where(
             or_(
                 ProceduralSkill.user_id == user.id,
-                (ProceduralSkill.user_id.is_(None)) & (ProceduralSkill.circle_tier == TIER_PUBLIC),
+                (ProceduralSkill.user_id.is_(None))
+                & (ProceduralSkill.circle_tier == TIER_PUBLIC),
             )
         )
     else:
@@ -181,6 +244,34 @@ async def list_skills(
     stmt = stmt.order_by(ProceduralSkill.updated_at.desc()).limit(limit).offset(offset)
     rows = (await db.execute(stmt)).scalars().all()
     return [_to_response(s, is_owner=(s.user_id == user.id)) for s in rows]
+
+
+# ------------------------------------------------------------ draft-count
+class DraftCountResponse(BaseModel):
+    count: int
+
+
+@router.get("/draft-count", response_model=DraftCountResponse)
+@limiter.limit(settings.api_rate_limit_chat)
+async def get_draft_count(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_user_or_default),
+):
+    """Sidebar NavBadge: count of skills waiting in the Skills Inbox.
+
+    Admins see the global count (the inbox is admin-scoped). Non-admins
+    see their own drafts only — so an owner using the BrainSkillsPage
+    still gets a hint when something they should review is queued.
+    """
+    user = current_user
+    stmt = select(ProceduralSkill).where(
+        ProceduralSkill.status == SKILL_STATUS_DRAFT
+    )
+    if not _user_is_admin(user):
+        stmt = stmt.where(ProceduralSkill.user_id == user.id)
+    rows = (await db.execute(stmt)).scalars().all()
+    return DraftCountResponse(count=len(rows))
 
 
 # ----------------------------------------------------------------- read
@@ -201,7 +292,8 @@ async def get_skill(
 
     is_seed_public = skill.user_id is None and skill.circle_tier == TIER_PUBLIC
     is_owner = skill.user_id == user.id
-    if not (is_owner or is_seed_public):
+    is_admin = _user_is_admin(user)
+    if not (is_owner or is_seed_public or is_admin):
         raise HTTPException(status_code=404, detail="Skill not found")
     return _to_response(skill, is_owner=is_owner)
 
@@ -228,10 +320,6 @@ async def create_skill(
         )
         return _to_response(skill, is_owner=True)
     except Exception as e:
-        # Log full exception server-side; return a generic message to
-        # the client so internal details (SQL errors, Ollama timeouts,
-        # embedding-service stack hints) don't surface in the HTTP
-        # response body. Same pattern as atoms.py:184.
         logger.error(f"❌ Skill create failed for user={user.id}: {e}")
         raise HTTPException(status_code=500, detail="Skill create failed")
 
@@ -265,40 +353,113 @@ async def update_skill(
     if body.pinned is not None:
         skill.pinned = body.pinned
         changed = True
-    if body.is_active is not None:
-        # Reactivating a curator-archived skill must also clear its
+    if body.status is not None:
+        if body.status not in SKILL_STATUSES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status: {body.status!r}",
+            )
+        # Reactivating an archived/merged skill must also clear its
         # merged_into_id pointer — otherwise the row stays marked as
-        # "merged into X" while being active, and the next curator pass
-        # may pair it against X again (transitive audit loop, double
-        # counter-bumps, version churn). Pinned-flip semantics are
-        # independent of merged_into_id so we don't touch it there.
-        was_inactive = skill.is_active is False
-        skill.is_active = body.is_active
-        if body.is_active is True and was_inactive and skill.merged_into_id is not None:
+        # "merged into X" while being approved, and the next curator
+        # pass may pair it against X again (transitive audit loop, double
+        # counter-bumps, version churn).
+        was_inactive = skill.status in (SKILL_STATUS_ARCHIVED, SKILL_STATUS_REJECTED)
+        skill.status = body.status
+        if (
+            body.status == SKILL_STATUS_APPROVED
+            and was_inactive
+            and skill.merged_into_id is not None
+        ):
             skill.merged_into_id = None
         changed = True
 
     if changed:
         skill.version += 1
-        # Re-embed if any field that drives similarity changed. Public
-        # method on the service — the route deliberately does NOT reach
-        # into _embed/_embedding_input now that reembed_skill exposes the
-        # combined operation.
         if any(v is not None for v in (body.title, body.body_md, body.trigger_examples)):
             svc = SkillService(db)
             new_emb = await svc.compute_embedding_for(
                 skill.title, skill.trigger_examples or [], skill.body_md,
             )
-            # Don't NUKE the existing embedding on a transient Ollama
-            # failure (new_emb is None when _embed swallowed an error).
-            # The old vector keeps the skill retrievable until the next
-            # edit / boot when embedding can be retried.
             if new_emb is not None:
                 skill.embedding = new_emb
         await db.commit()
         SkillService.invalidate_has_skills_cache()
 
     return _to_response(skill, is_owner=True)
+
+
+# -------------------------------------------------------- approve/reject
+class _NoBody(BaseModel):
+    pass
+
+
+@router.post("/{skill_id}/approve", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
+async def approve_skill(
+    request: Request,
+    skill_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Admin: flip a draft (or previously-rejected) skill to approved.
+
+    Approving a skill moves it from the Inbox into the live retrieval
+    corpus. Idempotent — approving an already-approved skill is a no-op
+    (returns the row unchanged).
+    """
+    skill = await _load_for_admin(db, skill_id)
+    if skill.status == SKILL_STATUS_APPROVED:
+        return _to_response(skill, is_owner=(skill.user_id == admin.id))
+
+    if skill.status not in (SKILL_STATUS_DRAFT, SKILL_STATUS_REJECTED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot approve from status {skill.status!r}",
+        )
+    skill.status = SKILL_STATUS_APPROVED
+    skill.version += 1
+    # Clear merged_into_id if the reviewer is re-promoting an archived row
+    # that had been merged. Not strictly possible from the draft path but
+    # cheap defense-in-depth.
+    skill.merged_into_id = None
+    await db.commit()
+    SkillService.invalidate_has_skills_cache()
+    logger.info(
+        f"🧠 Skill #{skill.id} approved by admin={admin.id} "
+        f"({skill.title!r})"
+    )
+    return _to_response(skill, is_owner=(skill.user_id == admin.id))
+
+
+@router.post("/{skill_id}/reject", response_model=SkillResponse)
+@limiter.limit(settings.api_rate_limit_chat)
+async def reject_skill(
+    request: Request,
+    skill_id: int,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Admin: flip a draft skill to rejected (excluded from retrieval,
+    kept for audit). Idempotent."""
+    skill = await _load_for_admin(db, skill_id)
+    if skill.status == SKILL_STATUS_REJECTED:
+        return _to_response(skill, is_owner=(skill.user_id == admin.id))
+
+    if skill.status != SKILL_STATUS_DRAFT:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot reject from status {skill.status!r}",
+        )
+    skill.status = SKILL_STATUS_REJECTED
+    skill.version += 1
+    await db.commit()
+    SkillService.invalidate_has_skills_cache()
+    logger.info(
+        f"🧠 Skill #{skill.id} rejected by admin={admin.id} "
+        f"({skill.title!r})"
+    )
+    return _to_response(skill, is_owner=(skill.user_id == admin.id))
 
 
 # ----------------------------------------------------------------- pin
@@ -341,10 +502,10 @@ async def delete_skill(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_user_or_default),
 ):
-    """Soft-delete (is_active=False). The atoms row stays for audit trail."""
+    """Soft-delete (status='archived'). The atoms row stays for audit trail."""
     user = current_user
     skill = await _load_owned(db, skill_id, user)
-    skill.is_active = False
+    skill.status = SKILL_STATUS_ARCHIVED
     await db.commit()
     SkillService.invalidate_has_skills_cache()
 
@@ -365,8 +526,6 @@ async def change_skill_tier(
     skill = await _load_owned(db, skill_id, user)
 
     if skill.atom_id is None:
-        # Auto-extracted/user-created skills always have an atom_id; this
-        # branch only hits if a manual DB tweak created a half-state row.
         raise HTTPException(
             status_code=409,
             detail="Skill has no atom registration; cannot change tier",
@@ -374,11 +533,6 @@ async def change_skill_tier(
 
     svc = AtomService(db)
     await svc.update_tier(skill.atom_id, {"tier": int(body.circle_tier)})
-    # Re-fetch — update_tier cascaded the source-row column, so we need
-    # a fresh read to see the post-cascade circle_tier. Pin the user_id
-    # check so a concurrent owner-change can't surface a row that isn't
-    # ours anymore (defense-in-depth; _load_owned already verified ownership
-    # at the top of this handler).
     skill = (await db.execute(
         select(ProceduralSkill).where(
             ProceduralSkill.id == skill_id,
@@ -395,15 +549,39 @@ class CuratorRunRequest(BaseModel):
     user_id: int | None = None
 
 
-class CuratorReportResponse(BaseModel):
-    user_id: int | None
-    duplicates_found: int
-    merges_applied: int
-    stale_archived: int
-    notes: list[str]
+class CuratorRunResponse(BaseModel):
+    id: int
+    started_at: datetime
+    finished_at: datetime | None
+    duration_seconds: float | None
+    run_type: str
+    triggered_by_user_id: int | None
+    status: str
+    skills_examined: int
+    duplicate_pairs_found: int
+    duplicate_pairs_merged: int
+    stale_skills_archived: int
+    error_message: str | None
 
 
-@router.post("/curator/run", response_model=list[CuratorReportResponse])
+def _curator_run_to_response(r: SkillCuratorRun) -> CuratorRunResponse:
+    return CuratorRunResponse(
+        id=r.id,
+        started_at=r.started_at,
+        finished_at=r.finished_at,
+        duration_seconds=r.duration_seconds,
+        run_type=r.run_type,
+        triggered_by_user_id=r.triggered_by_user_id,
+        status=r.status,
+        skills_examined=r.skills_examined,
+        duplicate_pairs_found=r.duplicate_pairs_found,
+        duplicate_pairs_merged=r.duplicate_pairs_merged,
+        stale_skills_archived=r.stale_skills_archived,
+        error_message=r.error_message,
+    )
+
+
+@router.post("/curator/run", response_model=CuratorRunResponse)
 @limiter.limit(settings.api_rate_limit_admin)
 async def run_curator(
     request: Request,
@@ -411,29 +589,45 @@ async def run_curator(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_permission(Permission.ADMIN)),
 ):
-    """Manual curator trigger — same logic as the scheduler, runs
-    synchronously and returns the report. Admin-only because it can
-    flip ``is_active`` on rows owned by other users.
+    """Manual curator trigger from the AdminCuratorPage "Run Now" button.
 
-    Emits a structured audit log per call so manual admin-driven curator
-    runs are distinguishable from the scheduler's autonomous passes in
-    log-aggregation.
+    Writes a SkillCuratorRun audit row (run_type='manual', triggered_by
+    = admin.id), runs the curator synchronously, and returns the
+    completed run row.
+
+    ``body.user_id`` is accepted as a scoping hint but the v2.10 audit
+    flow always runs the full pass — a per-user scope would split the
+    audit accounting and we'd need a separate run row per user. If you
+    need per-user inspection, filter the response from GET
+    /curator/runs by ``triggered_by_user_id``.
     """
     svc = SkillCuratorService(db)
     logger.info(
-        f"🧹 Curator manual run: admin_id={admin.id} admin_username={admin.username!r} "
-        f"target_user_id={body.user_id!r}"
+        f"🧹 Curator manual run requested: admin_id={admin.id} "
+        f"admin_username={admin.username!r} target_user_id={body.user_id!r}"
     )
-    if body.user_id is not None:
-        report = await svc.run_for_user(body.user_id)
-        return [CuratorReportResponse(**asdict(report))]
+    run_row = await svc.run_curator(
+        triggered_by_user_id=admin.id,
+        run_type=CURATOR_RUN_TYPE_MANUAL,
+    )
+    return _curator_run_to_response(run_row)
 
-    user_ids = await svc.list_active_user_ids()
-    reports = []
-    for uid in user_ids:
-        try:
-            report = await svc.run_for_user(uid)
-            reports.append(CuratorReportResponse(**asdict(report)))
-        except Exception as e:
-            logger.warning(f"Curator failed for user {uid}: {e}")
-    return reports
+
+@router.get("/curator/runs", response_model=list[CuratorRunResponse])
+@limiter.limit(settings.api_rate_limit_admin)
+async def list_curator_runs(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_permission(Permission.ADMIN)),
+):
+    """Admin: list recent curator audit rows for the AdminCuratorPage
+    history pane. Newest first."""
+    rows = (await db.execute(
+        select(SkillCuratorRun)
+        .order_by(SkillCuratorRun.started_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )).scalars().all()
+    return [_curator_run_to_response(r) for r in rows]

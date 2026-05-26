@@ -993,6 +993,28 @@ SKILL_SOURCE_AUTO_EXTRACTED = "auto_extracted"
 SKILL_SOURCE_SEED = "seed"
 SKILL_SOURCE_USER_CREATED = "user_created"
 
+# Skill lifecycle (v2.10 — replaces is_active/pinned booleans).
+# State machine:
+#     [draft] --approve--> [approved]      seed/user_created skills land here
+#        |                    |            directly; auto_extracted lands in
+#        | reject             | archive    [draft] for human review.
+#        v                    v
+#     [rejected] <--reopen--> [archived]   reopen returns to [draft].
+#
+# Only [approved] participates in agent retrieval. [draft] surfaces in the
+# admin Skills Inbox. [rejected] and [archived] are excluded from retrieval
+# but kept for audit + the would-have-injected shadow query.
+SKILL_STATUS_DRAFT = "draft"
+SKILL_STATUS_APPROVED = "approved"
+SKILL_STATUS_REJECTED = "rejected"
+SKILL_STATUS_ARCHIVED = "archived"
+SKILL_STATUSES = [
+    SKILL_STATUS_DRAFT,
+    SKILL_STATUS_APPROVED,
+    SKILL_STATUS_REJECTED,
+    SKILL_STATUS_ARCHIVED,
+]
+
 
 class ProceduralSkill(Base):
     """
@@ -1041,7 +1063,16 @@ class ProceduralSkill(Base):
     success_count = Column(Integer, nullable=False, default=0)
     failure_count = Column(Integer, nullable=False, default=0)
     last_used_at = Column(DateTime, nullable=True)
-    is_active = Column(Boolean, nullable=False, default=True, index=True)
+    # Lifecycle. See SKILL_STATUS_* constants + the ASCII diagram above.
+    status = Column(
+        String(20),
+        nullable=False,
+        default=SKILL_STATUS_DRAFT,
+        index=True,
+    )
+    # Owner can pin an approved skill so the curator's stale-archive job
+    # never touches it. Pin is orthogonal to status — only meaningful for
+    # status='approved' rows.
     pinned = Column(Boolean, nullable=False, default=False)
 
     embedding = Column(
@@ -1196,6 +1227,97 @@ class ToolOutcomeStat(Base):
         Index("idx_tool_outcome_user_tool", "user_id", "tool_name"),
     )
 
+    user = relationship("User", foreign_keys=[user_id])
+
+
+# SkillCuratorRun.run_type + status discriminators.
+CURATOR_RUN_TYPE_SCHEDULED = "scheduled"
+CURATOR_RUN_TYPE_MANUAL = "manual"
+CURATOR_RUN_STATUS_RUNNING = "running"
+CURATOR_RUN_STATUS_SUCCESS = "success"
+CURATOR_RUN_STATUS_PARTIAL = "partial"
+CURATOR_RUN_STATUS_FAILED = "failed"
+
+
+class SkillCuratorRun(Base):
+    """
+    Audit row for one invocation of the skill curator job.
+
+    Self-learning admin console (v2.10): the AdminCuratorPage shows a history
+    of curator runs (scheduled + manual) with the counters needed to answer
+    "is the curator actually doing anything useful right now?" The "Run Now"
+    button on that page writes a row with run_type='manual' and
+    triggered_by_user_id set; the scheduled invocation in lifecycle.py
+    writes run_type='scheduled' and leaves triggered_by_user_id NULL.
+
+    A row is created at start (status='running', finished_at NULL) and
+    updated on completion. On crash the row is left in 'running' state —
+    the admin page treats any 'running' row older than ~10 min as 'failed'
+    in the UI so a stuck row doesn't masquerade as in-progress forever.
+    """
+    __tablename__ = "skill_curator_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    started_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+    finished_at = Column(DateTime, nullable=True)
+    run_type = Column(String(20), nullable=False, default=CURATOR_RUN_TYPE_SCHEDULED)
+    triggered_by_user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    status = Column(String(20), nullable=False, default=CURATOR_RUN_STATUS_RUNNING)
+    skills_examined = Column(Integer, nullable=False, default=0)
+    duplicate_pairs_found = Column(Integer, nullable=False, default=0)
+    duplicate_pairs_merged = Column(Integer, nullable=False, default=0)
+    stale_skills_archived = Column(Integer, nullable=False, default=0)
+    duration_seconds = Column(Float, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    triggered_by = relationship("User", foreign_keys=[triggered_by_user_id])
+
+
+class SkillWouldHaveInjectedLog(Base):
+    """
+    Shadow log: rows the retrieval *would* have returned if the draft-gate
+    were not in place.
+
+    During the v2.10 rollout, SkillService.find_similar() runs a dual query:
+    the production retrieval filters to status='approved' only; a parallel
+    shadow query relaxes the filter to also include draft/rejected/archived
+    candidates. The shadow-only matches are logged here so we can measure
+    how much recall the human-in-the-loop draft-gate costs in practice.
+
+    After the rollout window (~30 days) this table can be truncated; it is
+    not part of any production read path.
+    """
+    __tablename__ = "skill_would_have_injected_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    skill_id = Column(
+        Integer,
+        ForeignKey("procedural_skills.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id = Column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    conversation_id = Column(
+        Integer,
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    similarity_score = Column(Float, nullable=False)
+    # Snapshot of skill.status at the moment of the shadow query — so a
+    # later approve/reject doesn't make the log row look like it
+    # corresponds to a different gate decision.
+    status_at_query = Column(String(20), nullable=False)
+    created_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+
+    skill = relationship("ProceduralSkill", foreign_keys=[skill_id])
     user = relationship("User", foreign_keys=[user_id])
 
 

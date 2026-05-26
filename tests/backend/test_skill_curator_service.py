@@ -62,7 +62,7 @@ async def c_user(db_session: AsyncSession) -> User:
 async def _seed_skill(
     db, *, user_id, title, trigger_examples=None, tool_sequence=None,
     successes=0, failures=0, pinned=False, last_used_at=None,
-    is_active=True, source=SKILL_SOURCE_AUTO_EXTRACTED,
+    status="approved", source=SKILL_SOURCE_AUTO_EXTRACTED,
 ):
     """Direct ORM insert — bypasses SkillService so we can control
     every field including success_count/failure_count without going
@@ -79,7 +79,7 @@ async def _seed_skill(
         success_count=successes,
         failure_count=failures,
         last_used_at=last_used_at,
-        is_active=is_active,
+        status=status,
         pinned=pinned,
         embedding=[0.1] * EMBEDDING_DIMENSION,
         circle_tier=0,
@@ -167,7 +167,7 @@ class TestMergePair:
         # Outcome counts merge into winner
         assert winner.success_count == 6
         # Loser archived + pointer set
-        assert loser.is_active is False
+        assert loser.status == "archived"
         assert loser.merged_into_id == a.id
         # Version bumped
         assert winner.version == 2
@@ -266,7 +266,7 @@ class TestArchiveStale:
         row = (await db_session.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == old_low.id)
         )).scalar_one()
-        assert row.is_active is False
+        assert row.status == "archived"
         assert row.merged_into_id is None  # not a merge, just archive
 
     async def test_skips_pinned(self, db_session, c_user, monkeypatch):
@@ -367,7 +367,7 @@ class TestRunForUser:
         self, db_session, c_user, patched_embed
     ):
         """Curator marked A merged into B. Owner then explicitly
-        reactivates A via PATCH is_active=True. merged_into_id MUST
+        reactivates A via PATCH status='approved'. merged_into_id MUST
         be cleared, otherwise the next curator pass re-pairs A
         against B and either double-merges or creates an audit-loop."""
         from services.skill_curator_service import SkillCuratorService
@@ -386,14 +386,12 @@ class TestRunForUser:
         a_after_merge = (await db_session.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == a.id)
         )).scalar_one()
-        assert a_after_merge.is_active is False
+        assert a_after_merge.status == "archived"
         assert a_after_merge.merged_into_id == b.id
 
         # Simulate the PATCH route's logic directly (the route handler
         # tests this with httpx; here we cover the model state).
-        if a_after_merge.is_active is False:
-            was_inactive = True
-        a_after_merge.is_active = True
+        a_after_merge.status = "approved"
         if a_after_merge.merged_into_id is not None:
             a_after_merge.merged_into_id = None
         await db_session.commit()
@@ -402,7 +400,7 @@ class TestRunForUser:
         final = (await db_session.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == a.id)
         )).scalar_one()
-        assert final.is_active is True
+        assert final.status == "approved"
         assert final.merged_into_id is None
 
     async def test_archive_only_no_pgvector(

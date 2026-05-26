@@ -209,7 +209,7 @@ class TestRecordOutcome:
             select(ProceduralSkill).where(ProceduralSkill.id == skill.id)
         )).scalar_one()
         # 0 successes / 2 failures → success rate 0 < 0.5, failure_count 2 >= 2 → demoted
-        assert refreshed.is_active is False
+        assert refreshed.status == "archived"
 
     async def test_pinned_skill_not_demoted(
         self, db_session, patched_embed, test_user, monkeypatch
@@ -233,13 +233,13 @@ class TestRecordOutcome:
         refreshed = (await db_session.execute(
             select(ProceduralSkill).where(ProceduralSkill.id == skill.id)
         )).scalar_one()
-        assert refreshed.is_active is True  # protected
+        assert refreshed.status == "approved"  # protected
 
     async def test_demote_clears_has_skills_cache(
         self, db_session, patched_embed, test_user, monkeypatch
     ):
         """record_outcome's demote path must invalidate the class-level
-        cache so the next prompt build sees the new is_active state."""
+        cache so the next prompt build sees the new status."""
         from services.skill_service import SkillService
         monkeypatch.setattr("services.skill_service.settings.skill_auto_demote_threshold", 2)
         monkeypatch.setattr("services.skill_service.settings.skill_auto_demote_success_rate", 0.5)
@@ -384,13 +384,14 @@ class TestHasAnySkills:
 
 # ==================================== owner-approval default (regression)
 @pytest.mark.asyncio
-class TestIsActiveDefault:
-    """Auto-extracted skills default to is_active=False so the LLM-emitted
+class TestStatusDefault:
+    """Auto-extracted skills default to status='draft' so the LLM-emitted
     body / triggers don't land in the agent system prompt without owner
-    review. User-authored skills default to is_active=True (owner authored
-    = owner approved). Regression for the 2nd-pass review fix."""
+    review. User-authored skills default to status='approved' (owner
+    authored = owner approved). v2.10 regression — status field replaced
+    the old is_active boolean."""
 
-    async def test_auto_extracted_inactive_by_default(
+    async def test_auto_extracted_draft_by_default(
         self, db_session, patched_embed, test_user
     ):
         from services.skill_service import SkillService
@@ -402,9 +403,9 @@ class TestIsActiveDefault:
             trigger_examples=["t"],
             tool_sequence=["mcp.x"],
         )
-        assert skill.is_active is False
+        assert skill.status == "draft"
 
-    async def test_user_authored_active_by_default(
+    async def test_user_authored_approved_by_default(
         self, db_session, patched_embed, test_user
     ):
         from services.skill_service import SkillService
@@ -415,14 +416,14 @@ class TestIsActiveDefault:
             body_md="- step",
             trigger_examples=["t"],
         )
-        assert skill.is_active is True
+        assert skill.status == "approved"
 
-    async def test_auto_extracted_explicit_active_override(
+    async def test_auto_extracted_explicit_status_override(
         self, db_session, patched_embed, test_user
     ):
         """Callers that ARE the owner (e.g. test fixtures, future
-        owner-via-UI bulk approval) can pass is_active=True to bypass the
-        default."""
+        owner-via-UI bulk approval) can pass status='approved' to bypass
+        the draft default."""
         from services.skill_service import SkillService
         svc = SkillService(db_session)
         skill = await svc.create_auto_extracted(
@@ -431,9 +432,9 @@ class TestIsActiveDefault:
             body_md="- step",
             trigger_examples=["t"],
             tool_sequence=["mcp.x"],
-            is_active=True,
+            status="approved",
         )
-        assert skill.is_active is True
+        assert skill.status == "approved"
 
 
 # ==================================== prompt-injection scrub (regression)

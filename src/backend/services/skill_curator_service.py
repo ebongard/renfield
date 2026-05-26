@@ -7,23 +7,32 @@ extracted twice with slightly different titles) and stale rows (skills
 that worked once and never matched again). The curator job:
 
   1. find_duplicate_pairs(user_id):
-     For every pair of active skills owned by the user, compare their
-     embeddings; pairs with cosine similarity >=
+     For every pair of *approved* skills owned by the user, compare
+     their embeddings; pairs with cosine similarity >=
      ``settings.skill_curator_duplicate_threshold`` are flagged.
-     Pgvector handles the SQL; no LLM in the hot path.
+     Pgvector handles the SQL; no LLM in the hot path. Draft/rejected
+     rows are out of scope — the curator's job is to consolidate the
+     active corpus, not to police pending review.
 
   2. merge_pair(loser, winner):
      Pick the "winner" as the skill with the higher success rate
      (ties broken by more recent last_used_at). Combine their triggers
      (deduped, capped). Bump the winner's version. Mark the loser
-     ``is_active=False, merged_into_id=winner.id`` — kept for audit.
+     ``status='archived', merged_into_id=winner.id`` — kept for audit.
 
   3. archive_stale(user_id):
-     Skills not used in ``skill_curator_stale_days`` days that have
-     at least ``skill_curator_min_uses_to_consider_stale`` total calls
-     AND a success_rate below ``skill_curator_stale_success_rate``
-     get soft-archived (is_active=False, no merged_into_id since
-     they're not duplicates). Pinned skills are exempt.
+     Approved skills not used in ``skill_curator_stale_days`` days that
+     have at least ``skill_curator_min_uses_to_consider_stale`` total
+     calls AND a success_rate below ``skill_curator_stale_success_rate``
+     get archived (status='archived', no merged_into_id since they're
+     not duplicates). Pinned skills are exempt.
+
+  4. run_curator(triggered_by_user_id, run_type):
+     Top-level orchestrator. Writes a SkillCuratorRun audit row at
+     start (status='running') and updates it on completion with the
+     aggregated counters. Used by both the lifecycle scheduler
+     (run_type='scheduled') and the AdminCuratorPage "Run Now" button
+     (run_type='manual', triggered_by_user_id set).
 
 The whole job runs per-user (a household's curator runs N times, once
 per active user). This keeps the duplicate pairs naturally scoped to
@@ -44,7 +53,20 @@ from loguru import logger
 from sqlalchemy import case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from models.database import EMBEDDING_DIMENSION, ProceduralSkill, SKILL_SOURCE_SEED
+from models.database import (
+    CURATOR_RUN_STATUS_FAILED,
+    CURATOR_RUN_STATUS_PARTIAL,
+    CURATOR_RUN_STATUS_RUNNING,
+    CURATOR_RUN_STATUS_SUCCESS,
+    CURATOR_RUN_TYPE_MANUAL,
+    CURATOR_RUN_TYPE_SCHEDULED,
+    EMBEDDING_DIMENSION,
+    ProceduralSkill,
+    SKILL_SOURCE_SEED,
+    SKILL_STATUS_APPROVED,
+    SKILL_STATUS_ARCHIVED,
+    SkillCuratorRun,
+)
 from services.skill_service import SkillService
 from utils.config import settings
 
@@ -162,8 +184,8 @@ class SkillCuratorService:
              AND a.embedding IS NOT NULL
              AND b.embedding IS NOT NULL
             WHERE a.user_id = :user_id
-              AND a.is_active = TRUE
-              AND b.is_active = TRUE
+              AND a.status = :approved
+              AND b.status = :approved
               AND a.source <> :seed
               AND b.source <> :seed
               AND (1 - (a.embedding::halfvec({dim}) <=> b.embedding::halfvec({dim}))) >= :threshold
@@ -172,6 +194,7 @@ class SkillCuratorService:
         """)
         rows = (await self.db.execute(sql, {
             "user_id": user_id,
+            "approved": SKILL_STATUS_APPROVED,
             "seed": SKILL_SOURCE_SEED,
             "threshold": threshold,
             "fetch_cap": fetch_cap,
@@ -248,7 +271,7 @@ class SkillCuratorService:
         /curator/run can overlap) could otherwise re-merge the same pair
         and double-add the loser's outcome counters. We use
         SELECT ... FOR UPDATE on both rows so the second writer blocks
-        until the first commits, then re-checks loser.is_active and
+        until the first commits, then re-checks loser.status and
         winner.merged_into_id and skips the row if either has already
         been mutated by the first pass.
 
@@ -303,10 +326,10 @@ class SkillCuratorService:
         # the pre-load and the lock acquire, another pass already merged
         # it — skip cleanly. Same idea for the winner having been merged
         # into a third row.
-        if not loser.is_active or loser.merged_into_id is not None:
+        if loser.status != SKILL_STATUS_APPROVED or loser.merged_into_id is not None:
             await self.db.rollback()
             return
-        if not winner.is_active or winner.merged_into_id is not None:
+        if winner.status != SKILL_STATUS_APPROVED or winner.merged_into_id is not None:
             await self.db.rollback()
             return
 
@@ -332,7 +355,7 @@ class SkillCuratorService:
             winner.embedding = new_emb
 
         # Archive the loser.
-        loser.is_active = False
+        loser.status = SKILL_STATUS_ARCHIVED
         loser.merged_into_id = winner.id
         loser.updated_at = datetime.now(UTC).replace(tzinfo=None)
 
@@ -415,13 +438,13 @@ class SkillCuratorService:
             update(ProceduralSkill)
             .where(
                 ProceduralSkill.user_id == user_id,
-                ProceduralSkill.is_active.is_(True),
+                ProceduralSkill.status == SKILL_STATUS_APPROVED,
                 ProceduralSkill.pinned.is_(False),
                 total_expr >= min_uses,
                 rate_expr < max_rate,
                 last_expr < cutoff,
             )
-            .values(is_active=False, updated_at=now)
+            .values(status=SKILL_STATUS_ARCHIVED, updated_at=now)
         )
         result = await self.db.execute(stmt)
         archived = int(result.rowcount or 0)
@@ -437,14 +460,115 @@ class SkillCuratorService:
 
     # ============================================================ helper
     async def list_active_user_ids(self) -> list[int]:
-        """Returns the user_ids that own at least one active non-seed
+        """Returns the user_ids that own at least one approved non-seed
         skill — the curator scheduler iterates over this list rather
         than scanning every User row."""
         rows = (await self.db.execute(
             select(ProceduralSkill.user_id).where(
                 ProceduralSkill.user_id.isnot(None),
-                ProceduralSkill.is_active.is_(True),
+                ProceduralSkill.status == SKILL_STATUS_APPROVED,
                 ProceduralSkill.source != SKILL_SOURCE_SEED,
             ).distinct()
         )).all()
         return [r[0] for r in rows if r[0] is not None]
+
+    # ====================================================== orchestrator
+    async def run_curator(
+        self,
+        *,
+        triggered_by_user_id: int | None = None,
+        run_type: str = CURATOR_RUN_TYPE_SCHEDULED,
+    ) -> SkillCuratorRun:
+        """Top-level entry point — writes a SkillCuratorRun audit row.
+
+        Runs ``run_for_user`` for every user that owns at least one
+        approved non-seed skill, aggregates the counters, and flips the
+        audit row from ``running`` to ``success``/``partial``/``failed``
+        depending on outcome.
+
+        The scheduler in lifecycle.py calls this with
+        ``run_type='scheduled'`` and ``triggered_by_user_id=None``. The
+        AdminCuratorPage "Run Now" button calls this from POST
+        /api/curator/run with ``run_type='manual'`` and the admin user id.
+
+        A row in ``running`` state older than ~10 minutes is treated as
+        ``failed`` in the admin UI — the run was almost certainly killed
+        mid-execution (pod restart, crash). We don't try to mark the row
+        ourselves because the very thing that killed us would prevent
+        the UPDATE.
+        """
+        if run_type not in (CURATOR_RUN_TYPE_SCHEDULED, CURATOR_RUN_TYPE_MANUAL):
+            raise ValueError(f"Invalid curator run_type: {run_type!r}")
+
+        started = datetime.now(UTC).replace(tzinfo=None)
+        run_row = SkillCuratorRun(
+            started_at=started,
+            run_type=run_type,
+            triggered_by_user_id=triggered_by_user_id,
+            status=CURATOR_RUN_STATUS_RUNNING,
+        )
+        self.db.add(run_row)
+        await self.db.commit()
+        await self.db.refresh(run_row)
+
+        user_ids = await self.list_active_user_ids()
+        totals = {
+            "skills_examined": 0,
+            "duplicate_pairs_found": 0,
+            "duplicate_pairs_merged": 0,
+            "stale_skills_archived": 0,
+        }
+        notes: list[str] = []
+
+        for uid in user_ids:
+            try:
+                report = await self.run_for_user(uid)
+                totals["duplicate_pairs_found"] += report.duplicates_found
+                totals["duplicate_pairs_merged"] += report.merges_applied
+                totals["stale_skills_archived"] += report.stale_archived
+                notes.extend(report.notes)
+            except Exception as e:  # noqa: BLE001
+                notes.append(f"user={uid} run_for_user failed: {e}")
+
+        # ``skills_examined`` = approved skills considered (rough count
+        # for the audit display; precision is a follow-up if we add a
+        # per-user metric).
+        examined = (await self.db.execute(
+            select(func.count(ProceduralSkill.id)).where(
+                ProceduralSkill.status == SKILL_STATUS_APPROVED,
+                ProceduralSkill.source != SKILL_SOURCE_SEED,
+            )
+        )).scalar() or 0
+        totals["skills_examined"] = int(examined)
+
+        finished = datetime.now(UTC).replace(tzinfo=None)
+        duration = (finished - started).total_seconds()
+
+        if notes and totals["duplicate_pairs_merged"] == 0 and totals["stale_skills_archived"] == 0:
+            final_status = CURATOR_RUN_STATUS_FAILED
+        elif notes:
+            final_status = CURATOR_RUN_STATUS_PARTIAL
+        else:
+            final_status = CURATOR_RUN_STATUS_SUCCESS
+
+        run_row.finished_at = finished
+        run_row.duration_seconds = round(duration, 3)
+        run_row.status = final_status
+        run_row.skills_examined = totals["skills_examined"]
+        run_row.duplicate_pairs_found = totals["duplicate_pairs_found"]
+        run_row.duplicate_pairs_merged = totals["duplicate_pairs_merged"]
+        run_row.stale_skills_archived = totals["stale_skills_archived"]
+        if notes:
+            # Keep the error_message bounded — admin UI displays the
+            # first ~500 chars. Newline-joined for legibility.
+            run_row.error_message = "\n".join(notes)[:2000]
+
+        await self.db.commit()
+
+        logger.info(
+            f"🧹 Curator run #{run_row.id} ({run_type}) finished: "
+            f"status={final_status}, merged={totals['duplicate_pairs_merged']}, "
+            f"archived={totals['stale_skills_archived']}, "
+            f"users={len(user_ids)}, duration={duration:.2f}s"
+        )
+        return run_row

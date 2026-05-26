@@ -59,7 +59,12 @@
     "openMenu": "Menü öffnen",
     "closeMenu": "Menü schließen",
     "mainNavigation": "Hauptnavigation",
-    "wissensbasis": "Wissensbasis"
+    "wissensbasis": "Wissensbasis",
+    "brainSkills": "Fähigkeiten",
+    "adminSkills": "Fähigkeiten-Inbox",
+    "adminToolHealth": "Werkzeug-Gesundheit",
+    "adminTrajectories": "Verlaufstrajektorien",
+    "adminCurator": "Kurator"
   },
   "auth": {
     "login": "Anmelden",
@@ -1296,6 +1301,138 @@
     },
     "mix": {
       "couldNotLoad": "Layout-Konfiguration konnte nicht geladen werden"
+    }
+  },
+  "selfLearning": {
+    "nav": {
+      "draftCount": "{{count}} Entwürfe in der Inbox"
+    },
+    "skills": {
+      "adminTitle": "Fähigkeiten-Inbox",
+      "adminDescription": "Prüfe vom Agenten gelernte Prozeduren, bevor sie in die Wissensbasis aufgenommen werden.",
+      "brainTitle": "Meine Fähigkeiten",
+      "brainDescription": "Genehmigte Prozeduren, die der Agent für dich nutzt. Du kannst sie anpassen, anheften oder entfernen.",
+      "brainEmpty": "Noch keine genehmigten Fähigkeiten.",
+      "empty": "Keine Fähigkeiten im Status \"{{status}}\".",
+      "totalCount": "{{count}} Einträge",
+      "pinned": "Angeheftet",
+      "toolsLabel": "Werkzeuge",
+      "successRate_one": "{{count}} Aufruf",
+      "successRate_other": "{{count}} Aufrufe",
+      "confirmDelete": "Diese Fähigkeit wirklich entfernen?",
+      "loadFailed": "Fähigkeiten konnten nicht geladen werden.",
+      "approveFailed": "Genehmigung fehlgeschlagen.",
+      "rejectFailed": "Ablehnung fehlgeschlagen.",
+      "updateFailed": "Aktualisierung fehlgeschlagen.",
+      "createFailed": "Erstellen fehlgeschlagen.",
+      "deleteFailed": "Löschen fehlgeschlagen.",
+      "filter": {
+        "status": "Status"
+      },
+      "status": {
+        "draft": "Entwurf",
+        "approved": "Genehmigt",
+        "rejected": "Abgelehnt",
+        "archived": "Archiviert"
+      },
+      "source": {
+        "auto_extracted": "Auto-extrahiert",
+        "seed": "Vorgabe",
+        "user_created": "Selbst erstellt"
+      },
+      "actions": {
+        "approve": "Genehmigen",
+        "reject": "Ablehnen",
+        "edit": "Bearbeiten",
+        "pin": "Anheften",
+        "unpin": "Lösen",
+        "delete": "Entfernen"
+      },
+      "modal": {
+        "title": "Fähigkeit bearbeiten",
+        "titleField": "Titel",
+        "body": "Anleitung (Markdown)",
+        "triggers": "Auslöser (eine pro Zeile)",
+        "triggersPlaceholder": "Mach das Licht im Wohnzimmer an\nLicht Wohnzimmer ein",
+        "tools": "Werkzeug-Sequenz (eine pro Zeile)",
+        "toolsPlaceholder": "mcp.ha.turn_on\nmcp.ha.get_state",
+        "save": "Speichern",
+        "saving": "Speichere...",
+        "cancel": "Abbrechen",
+        "close": "Schließen"
+      }
+    },
+    "toolHealth": {
+      "title": "Werkzeug-Gesundheit",
+      "description": "Erfolgs- und Fehlerquoten je Benutzer und Werkzeug aus den Phase-3-Statistiken.",
+      "empty": "Noch keine Werkzeug-Ergebnisse erfasst.",
+      "loadFailed": "Werkzeug-Statistiken konnten nicht geladen werden.",
+      "cols": {
+        "tool": "Werkzeug",
+        "user": "Benutzer",
+        "success": "Erfolg",
+        "failure": "Fehler",
+        "rate": "Quote",
+        "lastUsed": "Zuletzt benutzt",
+        "lastFailure": "Letzter Fehler"
+      }
+    },
+    "trajectories": {
+      "title": "Verlaufstrajektorien",
+      "description": "Vollständige Agentenläufe für späteres Feintuning oder Fehleranalyse.",
+      "empty": "Keine Trajektorien im aktuellen Filter.",
+      "loadFailed": "Trajektorien konnten nicht geladen werden.",
+      "flagFailed": "Markierung konnte nicht gesetzt werden.",
+      "outcome": "Ergebnis",
+      "outcomeAll": "Alle",
+      "sinceDays": "Letzte Tage",
+      "flaggedOnly": "Nur markiert",
+      "exportJsonl": "JSONL herunterladen",
+      "statsTotal": "Gesamt",
+      "stats7d": "Letzte 7 Tage",
+      "statsFlagged": "Markiert",
+      "statsRetention": "Aufbewahrung",
+      "selectPrompt": "Wähle eine Trajektorie für die Schritt-Ansicht.",
+      "userMessage": "Benutzernachricht",
+      "finalAnswer": "Antwort",
+      "noPayload": "Keine Schrittdaten verfügbar.",
+      "flagToggle": "Markierung umschalten",
+      "outcomes": {
+        "success": "Erfolg",
+        "tool_fail": "Werkzeug-Fehler",
+        "abort": "Abbruch",
+        "user_corrected": "Vom Benutzer korrigiert"
+      }
+    },
+    "curator": {
+      "title": "Kurator-Runbook",
+      "description": "Historie der Kurator-Läufe — automatisch und manuell ausgelöst.",
+      "empty": "Noch keine Kurator-Läufe aufgezeichnet.",
+      "loadFailed": "Kurator-Läufe konnten nicht geladen werden.",
+      "runFailed": "Kurator-Lauf fehlgeschlagen.",
+      "runNow": "Jetzt ausführen",
+      "running": "Läuft...",
+      "status": {
+        "running": "Läuft",
+        "success": "Erfolg",
+        "partial": "Teilweise",
+        "failed": "Fehlgeschlagen"
+      },
+      "runType": {
+        "scheduled": "Geplant",
+        "manual": "Manuell"
+      },
+      "cols": {
+        "status": "Status",
+        "startedAt": "Gestartet",
+        "duration": "Dauer",
+        "type": "Typ",
+        "examined": "Geprüft",
+        "dupFound": "Duplikate gefunden",
+        "dupMerged": "Zusammengeführt",
+        "staleArchived": "Veraltete archiviert",
+        "error": "Fehler"
+      }
     }
   }
 }

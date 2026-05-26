@@ -96,7 +96,7 @@ async def _seed_skill(
     successes: int = 0,
     failures: int = 0,
     source: str = SKILL_SOURCE_AUTO_EXTRACTED,
-    is_active: bool = True,
+    status: str = "approved",
     tier: int = TIER_SELF,
 ) -> ProceduralSkill:
     s = ProceduralSkill(
@@ -104,7 +104,7 @@ async def _seed_skill(
         trigger_examples=["t"], tool_sequence=["mcp.x.y"],
         source=source, embedding=embedding,
         success_count=successes, failure_count=failures,
-        is_active=is_active, circle_tier=tier, atom_id=None,
+        status=status, circle_tier=tier, atom_id=None,
     )
     db_session.add(s)
     await db_session.commit()
@@ -211,7 +211,7 @@ class TestFindDuplicatePairs:
         user = await _make_user(db_session, "dp5")
         await _seed_skill(
             db_session, user_id=user.id, title="A",
-            embedding=_unit_vec(13), is_active=False,
+            embedding=_unit_vec(13), status="archived",
         )
         await _seed_skill(
             db_session, user_id=user.id, title="B",

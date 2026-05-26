@@ -144,4 +144,27 @@ export const keys = {
     all: ['auth'] as const,
     me: () => ['auth', 'me'] as const,
   },
+  skills: {
+    all: ['skills'] as const,
+    list: (filters?: Record<string, unknown>) =>
+      ['skills', 'list', filters ?? {}] as const,
+    detail: (id: number) => ['skills', 'detail', id] as const,
+    draftCount: () => ['skills', 'draft-count'] as const,
+  },
+  toolHealth: {
+    all: ['toolHealth'] as const,
+    list: (userId?: number | null) => ['toolHealth', 'list', { userId }] as const,
+    warnings: (userId: number) => ['toolHealth', 'warnings', userId] as const,
+  },
+  trajectories: {
+    all: ['trajectories'] as const,
+    list: (filters?: Record<string, unknown>) =>
+      ['trajectories', 'list', filters ?? {}] as const,
+    detail: (id: number) => ['trajectories', 'detail', id] as const,
+    stats: () => ['trajectories', 'stats'] as const,
+  },
+  curator: {
+    all: ['curator'] as const,
+    runs: () => ['curator', 'runs'] as const,
+  },
 } as const;

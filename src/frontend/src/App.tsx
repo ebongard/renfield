@@ -40,6 +40,12 @@ const BrainReviewPage = lazy(() => import('./pages/BrainReviewPage'));
 const CirclesSettingsPage = lazy(() => import('./pages/CirclesSettingsPage'));
 const CirclesPeersPage = lazy(() => import('./pages/CirclesPeersPage'));
 const FederationAuditPage = lazy(() => import('./pages/FederationAuditPage'));
+// Self-learning admin console (v2.10).
+const AdminSkillsPage = lazy(() => import('./pages/AdminSkillsPage'));
+const BrainSkillsPage = lazy(() => import('./pages/BrainSkillsPage'));
+const AdminToolHealthPage = lazy(() => import('./pages/AdminToolHealthPage'));
+const AdminTrajectoriesPage = lazy(() => import('./pages/AdminTrajectoriesPage'));
+const AdminCuratorPage = lazy(() => import('./pages/AdminCuratorPage'));
 
 function AppRoutes() {
   const { isFeatureEnabled } = useAuth();
@@ -183,6 +189,31 @@ function AppRoutes() {
             <Route path="/admin/routing" element={
               <AdminRoute>
                 <RoutingDashboardPage />
+              </AdminRoute>
+            } />
+            <Route path="/brain/skills" element={
+              <ProtectedRoute>
+                <BrainSkillsPage />
+              </ProtectedRoute>
+            } />
+            <Route path="/admin/skills" element={
+              <AdminRoute>
+                <AdminSkillsPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/tool-health" element={
+              <AdminRoute>
+                <AdminToolHealthPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/trajectories" element={
+              <AdminRoute>
+                <AdminTrajectoriesPage />
+              </AdminRoute>
+            } />
+            <Route path="/admin/curator" element={
+              <AdminRoute>
+                <AdminCuratorPage />
               </AdminRoute>
             } />
           </Routes>
