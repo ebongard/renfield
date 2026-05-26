@@ -145,9 +145,13 @@ class LexicalRetrieval:
         # Multilingual FTS via FTS_LANGUAGES union (pc20260529): the
         # GENERATED search_vector column unions to_tsvector across all
         # 6 supported configs; we union websearch_to_tsquery on the
-        # query side so any stemmer can contribute a match. Same
-        # pattern as search_memories_lexical for the conversation_memories
-        # path.
+        # query side so any stemmer can contribute a match. The same
+        # bound `:or_query` parameter is parsed independently per stemmer
+        # (e.g., 'café' becomes 'café' under english but 'caf' under
+        # french) — union semantic = "match if ANY stemmer matches".
+        # Same pattern as search_memories_lexical for memories.
+        # ts_rank_cd (cover-density, used here for chunks below) is
+        # better suited to multi-sentence content than plain ts_rank.
         circles_clause, circles_params = document_chunks_circles_filter(asker_id)
         or_query = " OR ".join(tokens)
         tsquery_union = build_tsquery_union_sql("or_query")
@@ -266,6 +270,11 @@ class LexicalRetrieval:
                 "limit": top_k,
                 **circles_params,
             }
+            # ts_rank (not ts_rank_cd as on the chunk path): memories
+            # are short single-sentence rows where cover-density adds
+            # noise — plain IDF ranking matches the natural-language
+            # use case ("rare proper noun beats common function word")
+            # more cleanly. Divergence is deliberate.
             sql = text(f"""
                 SELECT
                     m.id, m.atom_id, m.user_id, m.content,

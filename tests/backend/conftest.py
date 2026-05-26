@@ -247,11 +247,13 @@ def _pg_test_dsn() -> str | None:
 # `postgres` marker raises PytestUnknownMarkWarning at collection time.
 # Registering here in conftest.py works regardless of pyproject.toml
 # discovery and is idempotent with the pyproject.toml registration for
-# laptop test runs that DO find it.
+# laptop test runs that DO find it. Keep this description BYTE-IDENTICAL
+# to the pyproject.toml entry so grep against either location returns
+# the same canonical text.
 def pytest_configure(config):
     config.addinivalue_line(
         "markers",
-        "postgres: Tests requiring real PostgreSQL (skipped on sqlite harness)",
+        "postgres: Tests requiring real PostgreSQL + pgvector (skipped on sqlite test harness)",
     )
 
 
@@ -305,11 +307,25 @@ async def pg_async_engine():
 async def pg_db_session(pg_async_engine) -> AsyncGenerator[AsyncSession, None]:
     """Per-test Postgres session, rolled back on teardown.
 
-    Uses an outer transaction + nested SAVEPOINT so each test sees a
-    clean isolation: commits inside the test become SAVEPOINT releases,
-    everything rolls back when the outer transaction unwinds. Pattern
-    documented at
+    Opens an outer ``connection.begin()`` transaction and binds the
+    session to that connection. All test-side ``flush()`` calls happen
+    inside the outer transaction; on teardown the outer transaction
+    rolls back, undoing every change (including DDL inside fixtures
+    like ``fts_columns_installed`` that DROP+ADD generated columns).
+
+    IMPORTANT: tests using this fixture must NOT call
+    ``await session.commit()`` — that would commit the OUTER
+    transaction and break the rollback isolation, leaking rows / DDL
+    across tests. Use ``await session.flush()`` instead to push
+    pending ops to the DB without committing the outer txn.
+
+    The full SQLAlchemy-recommended pattern (begin_nested + an
+    after_transaction_end listener that re-issues SAVEPOINTs after
+    every session.commit() call) is documented at
     https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#joining-a-session-into-an-external-transaction-such-as-for-test-suites
+    — adopt that pattern if a future test genuinely needs to call
+    ``session.commit()``. The current 9 FTS tests only ``flush()``,
+    so the simpler outer-txn pattern is sufficient.
     """
     async_session_maker = async_sessionmaker(
         pg_async_engine,

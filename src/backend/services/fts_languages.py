@@ -66,12 +66,21 @@ def build_tsquery_union_sql(query_param: str) -> str:
 
     Used by the lexical retriever. Pairs with the GENERATED column from
     ``build_generated_tsvector_expression`` — every stem produced by any
-    of the 6 stemmers on either side will match across the union.
+    of the 6 stemmers on either side will match across the union. The
+    same bound input is parsed independently by each stemmer; the union
+    semantic = "match if ANY stemmer matches".
 
     ``websearch_to_tsquery`` is chosen over ``to_tsquery`` because it
     never raises on malformed input (sanitizes user-typed punctuation
     instead) and OR-defaults bare tokens, which is what natural-language
     queries need.
+
+    SECURITY: ``query_param`` is f-string interpolated into the SQL
+    text. It MUST be a literal under code control (e.g. ``"or_query"``)
+    and NEVER user input. The bound value at execute-time goes through
+    the parameter binding and is safe. If a future caller passes a
+    user-controlled string here, that's a SQL-injection vector — add
+    an allow-list check or refuse.
 
     Example output for query_param='or_query':
         websearch_to_tsquery('german', :or_query) ||

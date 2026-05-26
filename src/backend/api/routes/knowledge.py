@@ -1104,6 +1104,18 @@ async def reindex_fts(
     against the existing index during the rebuild; Postgres swaps the
     new index in atomically when ready.
 
+    **Operator caveats:**
+      - The request blocks until the rebuild completes — for large
+        corpora this can take minutes. Don't run from a UI handler
+        that has a short request timeout; use the CLI or a job runner.
+      - Postgres builds a shadow index alongside the existing one
+        during the rebuild, doubling the on-disk size of this index
+        for the duration. Ensure free disk capacity.
+      - A request cancellation (client disconnect / FastAPI timeout)
+        does NOT cancel the Postgres-side build — it continues until
+        completion or its own failure. If it fails post-cancel, it may
+        leave a ``*_ccnew`` INVALID index that needs manual cleanup.
+
     Admin-only when auth is enabled.
     """
     if settings.auth_enabled:

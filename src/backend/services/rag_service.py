@@ -944,8 +944,17 @@ class RAGService:
         # async engine and put it in AUTOCOMMIT isolation. This keeps
         # the operator's parallel queries served by the existing index
         # — Postgres atomically swaps the rebuilt index in when ready.
+        #
+        # IMPORTANT: AsyncConnection.execution_options() returns a NEW
+        # proxy with the options applied — it does NOT mutate in place.
+        # We MUST rebind `conn` to the returned proxy, otherwise the
+        # subsequent execute() runs on the original connection in
+        # default isolation, asyncpg autobegins a transaction, and
+        # Postgres raises `REINDEX INDEX CONCURRENTLY cannot run inside
+        # a transaction block`. Caught by /review (PR #627) before
+        # first invocation in prod.
         async with _async_engine.connect() as conn:
-            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
             await conn.execute(text(f"REINDEX INDEX CONCURRENTLY {index_name}"))
         duration_ms = int((time.monotonic() - started) * 1000)
         logger.info(

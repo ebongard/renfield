@@ -85,7 +85,16 @@ def upgrade() -> None:
     #    existing row at column-add time (the GENERATED expression
     #    references `content`, which is already populated). The OLD
     #    column + its GIN index keep serving reads.
+    #
+    #    Defensive DROP IF EXISTS before the ADD: a previous mid-migration
+    #    kill (between step 1 and step 3) would leave `search_vector_new`
+    #    on the table; without this guard, rerunning the migration would
+    #    fail at the ADD COLUMN with "column already exists". Same
+    #    conservatism as pc20260528 (which always-drops + re-adds the
+    #    target column). The column is fully derived from `content`, so
+    #    dropping costs nothing.
     tsvector_expr = build_generated_tsvector_expression("content")
+    op.execute(f"ALTER TABLE document_chunks DROP COLUMN IF EXISTS {_NEW_COL}")
     op.execute(
         f"ALTER TABLE document_chunks "
         f"ADD COLUMN {_NEW_COL} tsvector "
@@ -118,11 +127,13 @@ def upgrade() -> None:
     )
     op.execute(f"ALTER INDEX {_NEW_INDEX} RENAME TO {_OLD_INDEX}")
 
-    # 4. Refresh planner stats. The swap changes the column identity
-    #    even though the name is the same; pg_statistic still has rows
-    #    indexed by the OLD column's attnum, which were dropped along
-    #    with the column. Without ANALYZE the planner may seq-scan for
-    #    a few minutes after deploy.
+    # 4. Refresh planner stats. The renamed column is brand-new to
+    #    pg_statistic — no scan history exists for it yet, so the
+    #    planner has no selectivity estimate and may favor seq-scan
+    #    over the GIN index for the first ~minutes after deploy
+    #    (until autovacuum's daemon catches up). ANALYZE eliminates
+    #    the cold-stats window. Cheap on the current 159-row corpus;
+    #    scales linearly with row count if the corpus grows.
     op.execute("ANALYZE document_chunks")
 
 
