@@ -62,6 +62,8 @@ docker exec -it renfield-backend alembic upgrade head
 docker exec -it renfield-backend alembic downgrade -1
 ```
 
+**Alembic transaction model:** `alembic/env.py` runs with `transaction_per_migration=True` (both online and offline paths). Each migration commits independently — a mid-chain failure leaves preceding migrations applied and `alembic_version` advanced through the last success. Required so any migration may use `op.get_context().autocommit_block()` for non-transactional DDL like `CREATE INDEX CONCURRENTLY` (the assert in `autocommit_block` fires under the legacy single-outer-transaction model). Implication: when writing a migration, design it as either fully transactional or fully recoverable (e.g., `DROP INDEX IF EXISTS` before a `CONCURRENTLY` create — see `pc20260528`).
+
 **Configuration:** `pyproject.toml` — contains ruff, pytest, and coverage config.
 
 ## Architecture

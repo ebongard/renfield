@@ -62,10 +62,46 @@ def _significant_tokens(query: str) -> list[str]:
     Strips short tokens and a small stop-word set. Returns an empty
     list when the cleaned query is too thin to be useful — caller is
     expected to short-circuit to [] in that case.
+
+    Security note: the regex below only emits word characters
+    (German alphabet + digits), so the tokens are safe to pre-join
+    with " OR " for ``websearch_to_tsquery``. No metachars (``"``,
+    ``-``, ``(``) can survive tokenization, so the websearch syntax
+    accepts the joined string verbatim. If this regex ever loosens
+    to allow punctuation, switch to ``to_tsquery`` with explicit
+    ``|`` operators and bound-per-token parameters.
     """
     raw = re.findall(r"[A-Za-zÄÖÜäöüß0-9]{2,}", query or "")
     out = [t for t in raw if len(t) >= 3 and t.lower() not in _STOP_TOKENS]
     return out
+
+
+def _check_fts_config_at_startup() -> None:
+    """Emit a one-shot WARNING if the runtime FTS config doesn't match
+    the migration's hardcoded ``'german'``.
+
+    The pc20260528 migration creates ``conversation_memories.search_vector``
+    as a GENERATED column with ``to_tsvector('german', ...)``. If a
+    deployment ever sets ``rag_hybrid_fts_config`` to anything else,
+    the query reads one config while the column was computed with
+    another — silent 0 results, no error to point at root cause. This
+    warning makes the mismatch loud at startup.
+
+    The recovery path is a follow-up migration that drops and re-adds
+    the generated column with the new expression.
+    """
+    cfg = settings.rag_hybrid_fts_config
+    if cfg != "german":
+        logger.warning(
+            f"🔍 FTS config mismatch: rag_hybrid_fts_config={cfg!r} but "
+            f"conversation_memories.search_vector is GENERATED with "
+            f"'german'. Lexical memory queries will silently return 0 "
+            f"results until the generated column is rebuilt with the "
+            f"matching config. See pc20260528 migration."
+        )
+
+
+_check_fts_config_at_startup()
 
 
 class LexicalRetrieval:

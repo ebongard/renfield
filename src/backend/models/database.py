@@ -930,12 +930,24 @@ class ConversationMemory(Base):
     atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=True, index=True)
     circle_tier = Column(Integer, nullable=False, default=0)
 
-    # Full-text search vector (Postgres GENERATED column from pc20260528).
-    # READ-ONLY from the app side — Postgres maintains it via
-    # to_tsvector('german', coalesce(content, '')). Surfaced here so
-    # SELECT queries can name the column; never set by ORM writers.
-    # Lexical retriever at services/lexical_retrieval.py uses
-    # `search_vector @@ websearch_to_tsquery(...)` with ts_rank ordering.
+    # Full-text search vector (Postgres GENERATED STORED column from
+    # pc20260528). READ-ONLY from the app side — Postgres maintains it
+    # via `to_tsvector('german', coalesce(content, ''))`.
+    #
+    # Why not a SQLAlchemy `Computed(...)` clause: sqlite rejects
+    # `to_tsvector` in generated columns ("non-deterministic functions
+    # prohibited") even though sqlite stubs the type as text. The
+    # dialect-conditional alternative (custom @compiles directive) is
+    # more machinery than the migration-only contract requires.
+    #
+    # Contract: production setups MUST run alembic migrations. Dev-DB
+    # bootstrap via `Base.metadata.create_all` produces a plain
+    # nullable TSVECTOR column initially — `alembic upgrade head` then
+    # idempotently swaps it for the proper GENERATED column via
+    # pc20260528. Pure-create_all setups with no migrations would have
+    # the column silently NULL post-insert and the lexical retriever
+    # would return 0 results; no such setup exists in this project's
+    # workflow (every dev DB goes through alembic eventually).
     search_vector = Column(TSVECTOR, nullable=True)
 
     # Timestamps

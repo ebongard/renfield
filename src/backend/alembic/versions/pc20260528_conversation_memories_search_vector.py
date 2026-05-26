@@ -58,15 +58,30 @@ def upgrade() -> None:
         "GENERATED ALWAYS AS (to_tsvector('german', coalesce(content, ''))) STORED"
     )
 
-    # CONCURRENTLY GIN index. Requires transaction_per_migration=True
-    # in env.py (set in the same release). Without that, autocommit_block
-    # asserts on a missing per-migration transaction.
     with op.get_context().autocommit_block():
+        # Defensive DROP before CREATE: a prior failed
+        # CREATE INDEX CONCURRENTLY can leave the index in an INVALID
+        # state. `CREATE INDEX ... IF NOT EXISTS` checks name+namespace
+        # only, NOT validity — so it matches the INVALID index and
+        # skips, leaving us with a perpetual seq-scan and no error to
+        # point at root cause. Unconditional DROP IF EXISTS is cheap on
+        # a healthy/absent index and cleans up an invalid one.
+        # Requires transaction_per_migration=True in env.py (set in the
+        # same release); otherwise autocommit_block asserts.
         op.execute(
-            "CREATE INDEX CONCURRENTLY IF NOT EXISTS "
+            "DROP INDEX IF EXISTS idx_conversation_memories_search_vector_gin"
+        )
+        op.execute(
+            "CREATE INDEX CONCURRENTLY "
             "idx_conversation_memories_search_vector_gin "
             "ON conversation_memories USING gin (search_vector)"
         )
+
+    # Refresh planner stats: the new GENERATED column has zero rows in
+    # pg_statistic until the next autovacuum cycle, so the GIN index
+    # may be ignored in favor of seq-scan for the first ~minutes of
+    # queries after deploy. ANALYZE eliminates the cold-stats window.
+    op.execute("ANALYZE conversation_memories")
 
 
 def downgrade() -> None:
