@@ -3,7 +3,7 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -297,8 +297,17 @@ class DocumentChunk(Base):
     section_title = Column(String(512), nullable=True)
     chunk_type = Column(String(50), default="paragraph")  # paragraph, table, code, formula, parent
 
-    # Full-text search vector (populated during ingestion via to_tsvector())
-    search_vector = Column(TSVECTOR, nullable=True)
+    # Full-text search vector. Post-pc20260529 this is a Postgres GENERATED
+    # STORED column that unions to_tsvector across all FTS_LANGUAGES
+    # (DE/EN/FR/IT/ES/NL). READ-ONLY from the app: Postgres rejects any
+    # INSERT/UPDATE that supplies a value with `cannot insert a non-DEFAULT
+    # value into column "search_vector"`. The `FetchedValue()` marker
+    # tells SQLAlchemy to leave the column out of INSERTs/UPDATEs entirely
+    # so ORM-level row creation works against the GENERATED schema.
+    # Sqlite-shimmed test runs ignore the marker (it's a Postgres-only
+    # semantic). The DDL itself lives in the alembic migration; this
+    # declaration only governs ORM behavior.
+    search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
 
     # Additional Metadata (JSON für Flexibilität)
     chunk_metadata = Column(JSON, nullable=True)  # Umbenannt von 'metadata' (SQLAlchemy reserved)
@@ -950,7 +959,15 @@ class ConversationMemory(Base):
     # silently NULL post-insert and the lexical retriever would
     # return 0 results; the migration is the only supported path to
     # a working lexical retriever.
-    search_vector = Column(TSVECTOR, nullable=True)
+    #
+    # FetchedValue() tells SQLAlchemy to exclude this column from ORM
+    # INSERT/UPDATE statements — without it, INSERTs would emit
+    # `search_vector = NULL` and Postgres would raise
+    # `cannot insert a non-DEFAULT value into column "search_vector"`
+    # because the column is GENERATED. Sqlite ignores the marker (it's
+    # Postgres-only semantic) so the existing sqlite-shimmed unit tests
+    # are unaffected.
+    search_vector = Column(TSVECTOR, FetchedValue(), nullable=True)
 
     # Timestamps
     created_at = Column(DateTime, default=_utcnow)

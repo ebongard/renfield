@@ -201,6 +201,132 @@ async def db_session(async_engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 # ============================================================================
+# Postgres test infrastructure (real server, NOT the sqlite shim)
+# ============================================================================
+#
+# The default test stack uses sqlite-in-memory with TSVECTOR/Vector shims —
+# fast, hermetic, but cannot exercise Postgres-only behavior:
+#   - GENERATED STORED columns (sqlite has them but rejects to_tsvector as
+#     non-deterministic; production schema relies on them for search_vector)
+#   - websearch_to_tsquery, ts_rank, ts_rank_cd (no sqlite equivalent)
+#   - GIN indexes, ANALYZE, CONCURRENTLY DDL
+#   - asyncpg-level autobegin semantics that bit env.py during PR #625/#626
+#
+# Tests that need any of the above mark themselves with @pytest.mark.postgres
+# and depend on `pg_db_session` (or `pg_async_engine`). The marker is
+# registered in pyproject.toml.
+#
+# Reachability is gated by the RENFIELD_TEST_PG_URL env var. Set it to a
+# DSN like `postgresql+asyncpg://user:pw@host:5432/dbname` to enable. When
+# unset, tests requiring the fixture are skipped at collection time —
+# CI / local sqlite-only runs are unaffected. On the .159 build box,
+# `docker exec renfield-backend pytest …` should set the env var via
+# the wrapper script (or run with `--env RENFIELD_TEST_PG_URL=$DATABASE_URL`)
+# pointing at the build-box postgres.
+#
+# Cleanup strategy: each test gets its own savepoint-style transaction
+# that rolls back on teardown. That works for everything the FTS tests
+# do (INSERT + SELECT). It would NOT work for tests that need to observe
+# DDL (e.g., the migration itself); those would need a fresh DB per test
+# and aren't in scope here.
+
+import os as _os
+
+
+def _pg_test_dsn() -> str | None:
+    """Return the Postgres test DSN if configured, else None.
+
+    Reads RENFIELD_TEST_PG_URL. Caller is responsible for handling None
+    (typically via pytestmark skipif at the module level).
+    """
+    return _os.environ.get("RENFIELD_TEST_PG_URL")
+
+
+# Backstop marker registration — the container's pytest invocation doesn't
+# pick up pyproject.toml (no copy is present at the right path), so the
+# `postgres` marker raises PytestUnknownMarkWarning at collection time.
+# Registering here in conftest.py works regardless of pyproject.toml
+# discovery and is idempotent with the pyproject.toml registration for
+# laptop test runs that DO find it.
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "postgres: Tests requiring real PostgreSQL (skipped on sqlite harness)",
+    )
+
+
+@pytest.fixture
+async def pg_async_engine():
+    """Real-Postgres async engine, per-test scope.
+
+    Creates the full schema via Base.metadata.create_all on each test.
+    Drops it on teardown. Skips the test if RENFIELD_TEST_PG_URL is unset.
+
+    Per-test scope (not session) because pytest-asyncio's "auto" mode
+    creates a new event loop per test function — a session-scoped async
+    engine binds to the FIRST test's loop and then asyncpg refuses
+    subsequent uses with "got Future attached to a different loop".
+    Per-test creation is ~200ms slower but eliminates the loop-binding
+    foot-gun.
+
+    Note: create_all on Postgres lays down the schema with the SAME
+    column definitions as the live alembic-managed DB for ORM-declared
+    columns. The GENERATED search_vector columns (which only exist post-
+    pc20260528 / pc20260529 in alembic) are NOT created by create_all —
+    they're explicitly ADDed by those migrations. Tests that need the
+    GENERATED columns must either run the migrations OR ADD them
+    explicitly in a fixture. See test_fts_multilingual_pg.py for the
+    explicit-ADD pattern.
+    """
+    dsn = _pg_test_dsn()
+    if dsn is None:
+        pytest.skip("RENFIELD_TEST_PG_URL not set — Postgres tests disabled")
+    # Normalize the DSN: accept postgresql:// (sync) and rewrite to
+    # postgresql+asyncpg:// for the async engine.
+    if dsn.startswith("postgresql://"):
+        dsn = dsn.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    engine = create_async_engine(dsn, echo=False, future=True)
+
+    async with engine.begin() as conn:
+        # Drop first to recover from a prior crashed test run that left
+        # half-created tables behind. Idempotent on a fresh DB.
+        await conn.run_sync(Base.metadata.drop_all)
+        await conn.run_sync(Base.metadata.create_all)
+
+    yield engine
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.drop_all)
+    await engine.dispose()
+
+
+@pytest.fixture
+async def pg_db_session(pg_async_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Per-test Postgres session, rolled back on teardown.
+
+    Uses an outer transaction + nested SAVEPOINT so each test sees a
+    clean isolation: commits inside the test become SAVEPOINT releases,
+    everything rolls back when the outer transaction unwinds. Pattern
+    documented at
+    https://docs.sqlalchemy.org/en/20/orm/session_transaction.html#joining-a-session-into-an-external-transaction-such-as-for-test-suites
+    """
+    async_session_maker = async_sessionmaker(
+        pg_async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+    async with pg_async_engine.connect() as conn:
+        outer = await conn.begin()
+        try:
+            async with async_session_maker(bind=conn) as session:
+                yield session
+        finally:
+            if outer.is_active:
+                await outer.rollback()
+
+
+# ============================================================================
 # Sample Data Fixtures
 # ============================================================================
 

@@ -1090,10 +1090,20 @@ async def reindex_fts(
     rag: RAGService = Depends(get_rag_service),
     user: User | None = Depends(get_optional_user)
 ):
-    """
-    Re-populates search_vector (tsvector) for all document chunks.
+    """Rebuild the GIN index over ``document_chunks.search_vector``.
 
-    Use after changing FTS config or to backfill after migration.
+    Post-pc20260529 the search_vector column is GENERATED (multilingual
+    union of ``to_tsvector`` across FTS_LANGUAGES) and always reflects
+    the current ``content``. No row-level repopulation is needed or
+    possible — UPDATEs to a GENERATED column raise. This endpoint exists
+    so operators retain a way to rebuild the GIN index if it ever
+    becomes bloated after a large delete/update cycle, or to recover an
+    INVALID index from an interrupted CONCURRENTLY build.
+
+    Uses ``REINDEX INDEX CONCURRENTLY`` — retrieval keeps working
+    against the existing index during the rebuild; Postgres swaps the
+    new index in atomically when ready.
+
     Admin-only when auth is enabled.
     """
     if settings.auth_enabled:

@@ -79,31 +79,33 @@ def _significant_tokens(query: str) -> list[str]:
 
 def _check_fts_config_at_startup() -> None:
     """Emit a one-shot WARNING if ``settings.rag_hybrid_fts_config`` is
-    not one of the languages indexed by the GENERATED column.
+    no longer meaningful for the current FTS architecture.
 
-    The pc20260528 migration unions ``to_tsvector`` across all
-    ``FTS_LANGUAGES`` (DE / EN / FR / IT / ES / NL) on the indexing
-    side, and the memory retriever unions ``websearch_to_tsquery``
-    across the same set on the query side. So a deployment that picks
-    one of those configs for chunk-side queries (``rag_hybrid_fts_config``,
-    used by ``search_chunks_lexical`` against the older
-    ``document_chunks.search_vector`` column whose contract is
-    single-config) is fine. Setting it to an unindexed language is
-    almost certainly a config typo — warn loudly at startup.
+    Post-pc20260529 BOTH ``document_chunks.search_vector`` and
+    ``conversation_memories.search_vector`` are GENERATED columns that
+    union ``to_tsvector`` across all ``FTS_LANGUAGES`` (DE/EN/FR/IT/ES/NL).
+    Both retrievers union ``websearch_to_tsquery`` across the same set.
+    The ``rag_hybrid_fts_config`` env setting is therefore no longer
+    consulted in any query path — it's kept as a legacy declaration of
+    "expected primary language" so config drift between deploys remains
+    visible. A value outside ``FTS_LANGUAGES`` is almost certainly a
+    typo or a stale carry-over from a deploy that pre-dated multilingual
+    FTS — warn loudly so the operator notices.
 
-    Adding a 7th language: update ``FTS_LANGUAGES`` AND write a
-    follow-up migration that rebuilds the generated column. This
-    warning catches the case where someone updates the config without
-    the migration.
+    Adding a 7th language: extend ``FTS_LANGUAGES`` AND write a
+    follow-up migration that rebuilds both generated columns. This
+    warning has no migration-coupling responsibility anymore; it's
+    purely a config-hygiene signal.
     """
     cfg = settings.rag_hybrid_fts_config
     if cfg not in FTS_LANGUAGES:
         logger.warning(
-            f"🔍 FTS config mismatch: rag_hybrid_fts_config={cfg!r} is "
-            f"not in FTS_LANGUAGES={FTS_LANGUAGES}. Chunk-side lexical "
-            f"queries (search_chunks_lexical) will run against an "
-            f"unindexed config and return 0 results. See "
-            f"services/fts_languages.py and pc20260528 migration."
+            f"🔍 rag_hybrid_fts_config={cfg!r} is not in "
+            f"FTS_LANGUAGES={FTS_LANGUAGES}. Setting is now legacy / "
+            f"informational only (FTS columns are multilingual via "
+            f"the GENERATED-column union since pc20260529). Either "
+            f"set it to one of the supported languages or remove it "
+            f"from the deployment env entirely."
         )
 
 
@@ -140,9 +142,15 @@ class LexicalRetrieval:
         if self.db.bind is None or self.db.bind.dialect.name != "postgresql":
             return []
 
-        fts_config = settings.rag_hybrid_fts_config
+        # Multilingual FTS via FTS_LANGUAGES union (pc20260529): the
+        # GENERATED search_vector column unions to_tsvector across all
+        # 6 supported configs; we union websearch_to_tsquery on the
+        # query side so any stemmer can contribute a match. Same
+        # pattern as search_memories_lexical for the conversation_memories
+        # path.
         circles_clause, circles_params = document_chunks_circles_filter(asker_id)
         or_query = " OR ".join(tokens)
+        tsquery_union = build_tsquery_union_sql("or_query")
 
         sql = text(f"""
             SELECT
@@ -151,20 +159,19 @@ class LexicalRetrieval:
                 dc.parent_chunk_id, dc.circle_tier,
                 d.filename, d.title AS doc_title,
                 d.atom_id AS doc_atom_id, d.circle_tier AS doc_circle_tier,
-                ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) AS rank
+                ts_rank_cd(dc.search_vector, {tsquery_union}) AS rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
               AND dc.search_vector IS NOT NULL
-              AND dc.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
+              AND dc.search_vector @@ ({tsquery_union})
               AND {circles_clause}
             ORDER BY rank DESC
             LIMIT :limit
         """)
         params: dict[str, Any] = {
             "or_query": or_query,
-            "fts_config": fts_config,
             "limit": top_k,
             **circles_params,
         }

@@ -446,19 +446,14 @@ RAG_CONTEXT_WINDOW_MAX=3         # Maximale Window-Größe
 **Hybrid Search:**
 Kombiniert Dense-Embeddings (pgvector Cosine Similarity) mit BM25 Full-Text Search (PostgreSQL tsvector) via Reciprocal Rank Fusion (RRF). Dense findet semantisch ähnliche Chunks, BM25 findet exakte Keyword-Matches. RRF kombiniert beide Rankings robust und score-unabhängig.
 
-**FTS Config (nur Chunk-Pfad):**
-- `simple` — Sprachunabhängig, kein Stemming (Standard)
-- `german` — Deutsch Stemming (z.B. "Häuser" → "Haus")
-- `english` — English Stemming
+**FTS Config (Legacy / informational only, ab pc20260529):**
+Seit der Multilingual-FTS-Umstellung (Migrationen `pc20260528` + `pc20260529`) konsultiert KEIN Query-Pfad mehr `RAG_HYBRID_FTS_CONFIG`. Beide FTS-Spalten — `document_chunks.search_vector` UND `conversation_memories.search_vector` — sind `GENERATED STORED`-Spalten, deren Ausdruck `to_tsvector` über alle in `services/fts_languages.FTS_LANGUAGES` definierten Configs unioniert (`german`, `english`, `french`, `italian`, `spanish`, `dutch`). Beide Retriever (`RAGRetrieval._search_bm25`, `LexicalRetrieval.search_*_lexical`) unionieren `websearch_to_tsquery` über dieselbe Menge.
 
-`RAG_HYBRID_FTS_CONFIG` steuert ausschließlich die Lexikalsuche gegen `document_chunks.search_vector` (BM25-Pfad im RAG-Hybrid). Erlaubt sind alle Configs aus `services/fts_languages.FTS_LANGUAGES` (`german`, `english`, `french`, `italian`, `spanish`, `dutch`) sowie `simple`. Ein Wert außerhalb dieser Menge löst eine Startup-Warnung aus (`services/lexical_retrieval.py::_check_fts_config_at_startup`).
+`RAG_HYBRID_FTS_CONFIG` bleibt als deklarative Angabe der "primären Sprache des Deployments" erhalten — bei einem Wert ausserhalb von `FTS_LANGUAGES` warnt der Startup-Hook (`services/lexical_retrieval.py::_check_fts_config_at_startup`), damit Config-Drift sichtbar bleibt. Empfehlung: leeren oder auf die Hauptsprache des Haushalts setzen (`german` als Default).
 
-Nach Änderung der FTS-Config: `POST /api/knowledge/reindex-fts` ausführen.
+`POST /api/knowledge/reindex-fts` triggert seit pc20260529 ein `REINDEX INDEX CONCURRENTLY` auf den GIN-Index — keine Row-Repopulation mehr nötig (Spalte ist GENERATED und immer aktuell).
 
-**Memory-Pfad (auto-multilingual):**
-Die FTS-Spalte `conversation_memories.search_vector` (Migration `pc20260528`) ist eine `GENERATED STORED`-Spalte, deren Ausdruck `to_tsvector` über alle `FTS_LANGUAGES` unioniert. Die Lexikalsuche über Memories (`services/lexical_retrieval.py::search_memories_lexical`) unioniert `websearch_to_tsquery` über dieselbe Menge. Keine Env-Variable nötig — mehrsprachige Treffer funktionieren out-of-the-box.
-
-Eine 7. Sprache hinzufügen: `services/fts_languages.FTS_LANGUAGES`-Tuple erweitern UND eine Folge-Migration schreiben, die die GENERATED-Spalte droppt und mit dem neuen Ausdruck neu anlegt (Postgres erlaubt kein `ALTER` auf einem GENERATED-Spalten-Body). Vorlage: `pc20260528`.
+Eine 7. Sprache hinzufügen: `services/fts_languages.FTS_LANGUAGES`-Tuple erweitern UND zwei Folge-Migrationen schreiben (je eine für `conversation_memories` und `document_chunks`), die die GENERATED-Spalte droppen und mit dem neuen Ausdruck neu anlegen (Postgres erlaubt kein `ALTER` auf einem GENERATED-Spalten-Body). Vorlagen: `pc20260528` (DROP+ADD) und `pc20260529` (atomic-swap).
 
 **Context Window:**
 Erweitert jeden Treffer-Chunk um benachbarte Chunks aus demselben Dokument für mehr Kontext. Bei `RAG_CONTEXT_WINDOW=1` wird ein Chunk links und rechts hinzugefügt. Deduplizierung verhindert doppelte Chunks wenn benachbarte Chunks beide Treffer sind.

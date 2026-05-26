@@ -63,7 +63,7 @@ Wenn ein Nutzer fragt *„Was weiß ich über Am Stirkenbend 20?"*, will er kein
 
 Der API-Endpunkt `/api/atoms` und die `/brain`-Frontend-Seite exponieren genau diesen Weg.
 
-**Mehrsprachigkeit im Lexical-Pfad:** `conversation_memories.search_vector` ist eine `GENERATED STORED`-Spalte, deren Ausdruck `to_tsvector`-Aufrufe über alle in `services/fts_languages.FTS_LANGUAGES` aufgeführten Configs (DE / EN / FR / IT / ES / NL) unioniert. Die Query-Seite unioniert `websearch_to_tsquery` über dieselbe Menge. So matcht ein französisches Memory eine deutsche Anfrage und umgekehrt — wichtig für mehrsprachige Haushalte. `document_chunks.search_vector` benutzt aktuell noch eine einzelne Config (`RAG_HYBRID_FTS_CONFIG`); Parität ist Follow-up.
+**Mehrsprachigkeit im Lexical-Pfad:** Sowohl `conversation_memories.search_vector` (Migration `pc20260528`) als auch `document_chunks.search_vector` (Migration `pc20260529`) sind `GENERATED STORED`-Spalten, deren Ausdruck `to_tsvector`-Aufrufe über alle in `services/fts_languages.FTS_LANGUAGES` aufgeführten Configs (DE / EN / FR / IT / ES / NL) unioniert. Die Query-Seite unioniert `websearch_to_tsquery` über dieselbe Menge. So matcht ein französisches Memory oder Dokument eine deutsche Anfrage und umgekehrt — wichtig für mehrsprachige Haushalte. Beide Spalten pflegen sich serverseitig — App-Code schreibt nicht mehr in `search_vector` (Postgres würde mit `cannot insert a non-DEFAULT value into column "search_vector"` antworten).
 
 Die spezialisierten Retrieval-Pfade bleiben daneben erhalten:
 

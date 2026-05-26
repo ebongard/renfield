@@ -267,7 +267,7 @@ Alle sechs Configs sind in jeder Standard-Postgres-Installation enthalten — ke
 
 **Funktionsweise:**
 
-Die `GENERATED STORED`-Spalte `conversation_memories.search_vector` (Migration `pc20260528`) berechnet bei jedem Insert/Update ihren Wert serverseitig als Union aller sechs `to_tsvector`-Aufrufe:
+Zwei `GENERATED STORED`-Spalten — `conversation_memories.search_vector` (Migration `pc20260528`) und `document_chunks.search_vector` (Migration `pc20260529`) — berechnen bei jedem Insert/Update ihren Wert serverseitig als Union aller sechs `to_tsvector`-Aufrufe:
 
 ```sql
 GENERATED ALWAYS AS (
@@ -285,10 +285,12 @@ Die Query-Seite unioniert analog `websearch_to_tsquery` über dieselbe Menge. Fo
 **Eine 7. Sprache hinzufügen:**
 
 1. `services/fts_languages.FTS_LANGUAGES`-Tuple um die neue Config erweitern.
-2. Folge-Migration schreiben, die die GENERATED-Spalte droppt und mit dem neuen Ausdruck neu anlegt (Postgres erlaubt kein `ALTER` auf einer GENERATED-Spalten-Expression). Vorlage: `pc20260528`.
-3. Index `idx_conversation_memories_search_vector_gin` per `REINDEX` neu aufbauen (oder von der Migration mitmachen lassen).
+2. ZWEI Folge-Migrationen schreiben, die je die GENERATED-Spalte droppen und mit dem neuen Ausdruck neu anlegen (Postgres erlaubt kein `ALTER` auf einer GENERATED-Spalten-Expression):
+   - `conversation_memories.search_vector` — Vorlage: `pc20260528` (DROP+ADD-Pattern, ok für kleine Korpora)
+   - `document_chunks.search_vector` — Vorlage: `pc20260529` (atomic-swap-Pattern, minimiert das Schreib-Lock auf grossen Korpora)
+3. GIN-Indexe `idx_conversation_memories_search_vector_gin` und `idx_document_chunks_search_vector_gin` werden von den Vorlagen-Migrationen automatisch mit CONCURRENTLY neu aufgebaut.
 
-`document_chunks.search_vector` verwendet aktuell noch eine einzelne, per `RAG_HYBRID_FTS_CONFIG` gewählte Sprach-Config — Parität mit dem Memory-Pfad ist als Follow-up geplant.
+Beide Spalten sind ab pc20260529 auto-multilingual — `RAG_HYBRID_FTS_CONFIG` wird nicht mehr im Query-Pfad konsultiert und ist nur noch deklarativ (Startup-Warnung bei Werten ausserhalb `FTS_LANGUAGES`).
 
 ### Speech-to-Text (Whisper)
 

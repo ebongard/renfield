@@ -53,6 +53,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import TIER_PUBLIC
 from services.circle_sql import document_chunks_circles_filter
+from services.fts_languages import build_tsquery_union_sql
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
@@ -278,12 +279,22 @@ class RAGRetrieval:
         knowledge_base_id: int | None = None,
         user_id: int | None = None,
     ) -> list[dict[str, Any]]:
-        fts_config = settings.rag_hybrid_fts_config
         kb_filter = "AND d.knowledge_base_id = :kb_id" if knowledge_base_id else ""
         circles_clause, circles_params = self._chunk_circles_filter(user_id)
 
-        # OR-match: any query term can match; ts_rank_cd ranks by coverage
+        # OR-match: any query term can match; ts_rank_cd ranks by coverage.
+        # Tokens are split on whitespace and rejoined with " OR " for
+        # websearch_to_tsquery (which sanitizes user input and never
+        # raises on malformed syntax).
         or_query = " OR ".join(query.split())
+
+        # Multilingual FTS via FTS_LANGUAGES union (pc20260529): the
+        # search_vector column is a GENERATED union of to_tsvector across
+        # 6 configs; we union websearch_to_tsquery across the same set so
+        # any language-specific stemmer can contribute a match. Replaces
+        # the pre-pc20260529 single-config (`rag_hybrid_fts_config`)
+        # behavior that silently lost recall on non-default languages.
+        tsquery_union = build_tsquery_union_sql("or_query")
 
         # LEFT JOIN rationale matches _search_dense — null-KB chunks reachable
         # only via public-tier or explicit-grant branches of the circles clause.
@@ -303,13 +314,13 @@ class RAGRetrieval:
                 d.title as doc_title,
                 d.atom_id as doc_atom_id,
                 d.circle_tier as doc_circle_tier,
-                ts_rank_cd(dc.search_vector, websearch_to_tsquery(:fts_config, :or_query)) as rank
+                ts_rank_cd(dc.search_vector, {tsquery_union}) as rank
             FROM document_chunks dc
             JOIN documents d ON dc.document_id = d.id
             LEFT JOIN knowledge_bases kb ON d.knowledge_base_id = kb.id
             WHERE d.status = 'completed'
             AND dc.search_vector IS NOT NULL
-            AND dc.search_vector @@ websearch_to_tsquery(:fts_config, :or_query)
+            AND dc.search_vector @@ ({tsquery_union})
             AND {circles_clause}
             {kb_filter}
             ORDER BY rank DESC
@@ -317,7 +328,7 @@ class RAGRetrieval:
         """)
 
         params: dict[str, Any] = {
-            "or_query": or_query, "fts_config": fts_config, "limit": top_k,
+            "or_query": or_query, "limit": top_k,
             **circles_params,
         }
         if knowledge_base_id:

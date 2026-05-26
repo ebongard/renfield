@@ -354,21 +354,11 @@ class RAGService:
             doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
             await self.db.commit()
 
-            # Populate search_vector for Full-Text Search (bulk update).
-            fts_config = settings.rag_hybrid_fts_config
-            await self.db.execute(
-                text(
-                    """
-                    UPDATE document_chunks
-                    SET search_vector = to_tsvector(:fts_config, content)
-                    WHERE document_id = :doc_id
-                    AND search_vector IS NULL
-                    AND content IS NOT NULL
-                    """
-                ),
-                {"doc_id": doc.id, "fts_config": fts_config},
-            )
-            await self.db.commit()
+            # search_vector is a GENERATED STORED column (pc20260529) — the
+            # 6-way to_tsvector union over FTS_LANGUAGES is computed server-
+            # side on every INSERT/UPDATE of `content`. No app-side populate
+            # call needed; UPDATEs to a GENERATED column raise
+            # `ERROR: column "search_vector" can only be updated to DEFAULT`.
             await self.db.refresh(doc)
 
             # Fire KG extraction hook (fire-and-forget).
@@ -925,28 +915,48 @@ class RAGService:
     # ==========================================================================
 
     async def reindex_fts(self) -> dict[str, Any]:
-        """
-        Re-populates search_vector for all document chunks.
+        """Rebuild the GIN index over ``document_chunks.search_vector``.
 
-        Useful after changing the FTS config (e.g. simple → german)
-        or for backfilling after migration.
+        Post-pc20260529, the column itself is a GENERATED STORED tsvector
+        and always reflects the current ``content`` — no app-side row
+        repopulation is needed or possible (UPDATEs to GENERATED columns
+        raise). This endpoint exists so operators retain a way to rebuild
+        the GIN index if it ever becomes bloated after a large delete /
+        update cycle, or to recover an INVALID index from an interrupted
+        prior CONCURRENTLY build.
+
+        Uses ``REINDEX INDEX CONCURRENTLY`` so retrieval keeps working
+        against the existing index during the rebuild — Postgres swaps
+        the new index in atomically when ready.
 
         Returns:
-            Dict with updated_count
+            Dict with index name and reindex outcome.
         """
-        fts_config = settings.rag_hybrid_fts_config
-        result = await self.db.execute(
-            text("""
-                UPDATE document_chunks
-                SET search_vector = to_tsvector(:fts_config, content)
-                WHERE content IS NOT NULL
-            """),
-            {"fts_config": fts_config}
+        import time
+
+        from services.database import engine as _async_engine
+
+        index_name = "idx_document_chunks_search_vector_gin"
+        started = time.monotonic()
+        # REINDEX CONCURRENTLY runs OUTSIDE any transaction (Postgres
+        # rule). The request-scoped self.db AsyncSession is in an
+        # autobegun txn, so we open a fresh connection from the shared
+        # async engine and put it in AUTOCOMMIT isolation. This keeps
+        # the operator's parallel queries served by the existing index
+        # — Postgres atomically swaps the rebuilt index in when ready.
+        async with _async_engine.connect() as conn:
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            await conn.execute(text(f"REINDEX INDEX CONCURRENTLY {index_name}"))
+        duration_ms = int((time.monotonic() - started) * 1000)
+        logger.info(
+            f"🔄 FTS reindex: REINDEX INDEX CONCURRENTLY {index_name} "
+            f"completed in {duration_ms} ms"
         )
-        await self.db.commit()
-        updated = result.rowcount
-        logger.info(f"🔄 FTS Reindex: updated {updated} chunks with config '{fts_config}'")
-        return {"updated_count": updated, "fts_config": fts_config}
+        return {
+            "status": "ok",
+            "index": index_name,
+            "duration_ms": duration_ms,
+        }
 
     async def reindex_document(self, document_id: int) -> Document:
         """
