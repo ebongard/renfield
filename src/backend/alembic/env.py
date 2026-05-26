@@ -194,10 +194,12 @@ def do_run_migrations(connection: Connection) -> None:
     #      were provisioned before this bootstrap existed (e.g. the prod
     #      DB before PR 2a). Checks information_schema to stay idempotent.
     #
-    # Both run in the same connection that Alembic will then configure;
-    # they're committed implicitly by the wrapping greenlet_spawn /
-    # asyncpg auto-commit semantics before `context.run_migrations()`
-    # opens its own transactions per migration.
+    # Both run in the same connection that Alembic will then configure.
+    # The explicit `connection.commit()` below is REQUIRED to close
+    # SQLAlchemy 2.0's autobegun transaction before `context.configure()`
+    # snapshots `_in_external_transaction` — see the long comment on
+    # that commit for the failure mode it prevents. Do NOT remove the
+    # commit thinking it's redundant.
     connection.exec_driver_sql(
         "CREATE TABLE IF NOT EXISTS alembic_version ("
         "  version_num VARCHAR(64) NOT NULL,"
