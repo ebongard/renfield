@@ -54,12 +54,16 @@ Wenn ein Nutzer fragt *„Was weiß ich über Am Stirkenbend 20?"*, will er kein
 
 `services/polymorphic_atom_store.py` löst das per **Reciprocal Rank Fusion (RRF)**:
 
-1. Parallele Vektorsuche gegen alle vier Quell-Tabellen mit der Query-Embedding.
-2. Jede Quell-Tabelle liefert ihr Top-*k* unter Berücksichtigung des Circle-Filters (`services/circle_sql.build_filter`).
-3. RRF berechnet einen kombinierten Rang-Score pro Atom anhand der Position in den jeweiligen Ergebnislisten.
+1. Parallele Suche gegen alle Quell-Tabellen über **zwei komplementäre Retrieval-Pfade**:
+   - **Dense** — Vektorsuche mit der Query-Embedding (semantische Nähe).
+   - **Lexical** (`services/lexical_retrieval.py`) — Postgres-FTS mit `ts_rank` (Keyword- und Eigennamen-Treffer). Schließt die Recall-Lücke bei Einzeltoken-Queries wie *„Jutta"*, deren Embedding-Ähnlichkeit zur passenden Stelle unter der Threshold liegen kann.
+2. Jeder Pfad liefert sein Top-*k* unter Berücksichtigung des Circle-Filters (`services/circle_sql.build_filter`).
+3. RRF berechnet einen kombinierten Rang-Score pro Atom anhand der Position in allen Ergebnislisten. Ein Atom, das sowohl semantisch als auch lexikalisch trifft, bekommt den Doppel-Boost — exakt das gewünschte Verhalten für „beides".
 4. Die fusionierte Top-*n*-Liste wandert zurück zum Aufrufer, angereichert mit Source-Metadaten (Dokumenttitel, Entity-Label, Memory-Kategorie).
 
 Der API-Endpunkt `/api/atoms` und die `/brain`-Frontend-Seite exponieren genau diesen Weg.
+
+**Mehrsprachigkeit im Lexical-Pfad:** `conversation_memories.search_vector` ist eine `GENERATED STORED`-Spalte, deren Ausdruck `to_tsvector`-Aufrufe über alle in `services/fts_languages.FTS_LANGUAGES` aufgeführten Configs (DE / EN / FR / IT / ES / NL) unioniert. Die Query-Seite unioniert `websearch_to_tsquery` über dieselbe Menge. So matcht ein französisches Memory eine deutsche Anfrage und umgekehrt — wichtig für mehrsprachige Haushalte. `document_chunks.search_vector` benutzt aktuell noch eine einzelne Config (`RAG_HYBRID_FTS_CONFIG`); Parität ist Follow-up.
 
 Die spezialisierten Retrieval-Pfade bleiben daneben erhalten:
 

@@ -248,6 +248,48 @@ function MyFeature() {
 
 ## Backend-Sprachunterstützung
 
+### Volltextsuche im Second Brain (Postgres FTS)
+
+Renfield-Haushalte sprechen oft mehrere Sprachen — eine Notiz auf Französisch, eine Konversation auf Deutsch, ein Dokument auf Englisch. Damit die Lexikalsuche im `/brain`-Pfad (`services/lexical_retrieval.py`) sprachübergreifend funktioniert, werden Postgres-FTS-Stammformen-Stemmer aller unterstützten Sprachen parallel angewendet.
+
+**Unterstützte Sprachen** (single source of truth in `services/fts_languages.FTS_LANGUAGES`):
+
+| Code Config | Sprache |
+|---|---|
+| `german` | Deutsch |
+| `english` | Englisch |
+| `french` | Französisch |
+| `italian` | Italienisch |
+| `spanish` | Spanisch |
+| `dutch` | Niederländisch |
+
+Alle sechs Configs sind in jeder Standard-Postgres-Installation enthalten — keine Zusatzpakete nötig.
+
+**Funktionsweise:**
+
+Die `GENERATED STORED`-Spalte `conversation_memories.search_vector` (Migration `pc20260528`) berechnet bei jedem Insert/Update ihren Wert serverseitig als Union aller sechs `to_tsvector`-Aufrufe:
+
+```sql
+GENERATED ALWAYS AS (
+  to_tsvector('german',  coalesce(content, '')) ||
+  to_tsvector('english', coalesce(content, '')) ||
+  to_tsvector('french',  coalesce(content, '')) ||
+  to_tsvector('italian', coalesce(content, '')) ||
+  to_tsvector('spanish', coalesce(content, '')) ||
+  to_tsvector('dutch',   coalesce(content, ''))
+) STORED
+```
+
+Die Query-Seite unioniert analog `websearch_to_tsquery` über dieselbe Menge. Folge: ein französisches Memory („Pierre aime le café") matcht eine deutsche Anfrage und umgekehrt, weil mindestens ein Stemmer-Paar identische Stämme produziert.
+
+**Eine 7. Sprache hinzufügen:**
+
+1. `services/fts_languages.FTS_LANGUAGES`-Tuple um die neue Config erweitern.
+2. Folge-Migration schreiben, die die GENERATED-Spalte droppt und mit dem neuen Ausdruck neu anlegt (Postgres erlaubt kein `ALTER` auf einer GENERATED-Spalten-Expression). Vorlage: `pc20260528`.
+3. Index `idx_conversation_memories_search_vector_gin` per `REINDEX` neu aufbauen (oder von der Migration mitmachen lassen).
+
+`document_chunks.search_vector` verwendet aktuell noch eine einzelne, per `RAG_HYBRID_FTS_CONFIG` gewählte Sprach-Config — Parität mit dem Memory-Pfad ist als Follow-up geplant.
+
 ### Speech-to-Text (Whisper)
 
 Whisper unterstützt über 90 Sprachen. Die Sprache kann pro Request angegeben werden:

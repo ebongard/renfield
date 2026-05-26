@@ -446,12 +446,19 @@ RAG_CONTEXT_WINDOW_MAX=3         # Maximale Window-Größe
 **Hybrid Search:**
 Kombiniert Dense-Embeddings (pgvector Cosine Similarity) mit BM25 Full-Text Search (PostgreSQL tsvector) via Reciprocal Rank Fusion (RRF). Dense findet semantisch ähnliche Chunks, BM25 findet exakte Keyword-Matches. RRF kombiniert beide Rankings robust und score-unabhängig.
 
-**FTS Config:**
+**FTS Config (nur Chunk-Pfad):**
 - `simple` — Sprachunabhängig, kein Stemming (Standard)
 - `german` — Deutsch Stemming (z.B. "Häuser" → "Haus")
 - `english` — English Stemming
 
+`RAG_HYBRID_FTS_CONFIG` steuert ausschließlich die Lexikalsuche gegen `document_chunks.search_vector` (BM25-Pfad im RAG-Hybrid). Erlaubt sind alle Configs aus `services/fts_languages.FTS_LANGUAGES` (`german`, `english`, `french`, `italian`, `spanish`, `dutch`) sowie `simple`. Ein Wert außerhalb dieser Menge löst eine Startup-Warnung aus (`services/lexical_retrieval.py::_check_fts_config_at_startup`).
+
 Nach Änderung der FTS-Config: `POST /api/knowledge/reindex-fts` ausführen.
+
+**Memory-Pfad (auto-multilingual):**
+Die FTS-Spalte `conversation_memories.search_vector` (Migration `pc20260528`) ist eine `GENERATED STORED`-Spalte, deren Ausdruck `to_tsvector` über alle `FTS_LANGUAGES` unioniert. Die Lexikalsuche über Memories (`services/lexical_retrieval.py::search_memories_lexical`) unioniert `websearch_to_tsquery` über dieselbe Menge. Keine Env-Variable nötig — mehrsprachige Treffer funktionieren out-of-the-box.
+
+Eine 7. Sprache hinzufügen: `services/fts_languages.FTS_LANGUAGES`-Tuple erweitern UND eine Folge-Migration schreiben, die die GENERATED-Spalte droppt und mit dem neuen Ausdruck neu anlegt (Postgres erlaubt kein `ALTER` auf einem GENERATED-Spalten-Body). Vorlage: `pc20260528`.
 
 **Context Window:**
 Erweitert jeden Treffer-Chunk um benachbarte Chunks aus demselben Dokument für mehr Kontext. Bei `RAG_CONTEXT_WINDOW=1` wird ein Chunk links und rechts hinzugefügt. Deduplizierung verhindert doppelte Chunks wenn benachbarte Chunks beide Treffer sind.
