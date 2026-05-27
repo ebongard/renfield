@@ -208,3 +208,35 @@ class TestPgIntegration:
             lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=3,
         )
         assert code == "skipped_below_threshold"
+
+    async def test_apply_path_acquires_row_lock_without_autobegin_error(
+        self, committing_session
+    ):
+        """Regression: the apply path opens an explicit transaction
+        (``async with session.begin()``) for the FOR UPDATE NOWAIT gate.
+        That requires the session to NOT already be in autobegin from
+        the earlier read queries. Catches the SA 2.0 ``A transaction is
+        already begun on this Session`` error that would otherwise only
+        fire on the operator's first real --apply run.
+        """
+        doc = await _make_doc_with_chunks(committing_session, bad_chunks=1)
+
+        import asyncpg
+        lock_conn = await asyncpg.connect(dsn=purge._asyncpg_dsn())
+        try:
+            with patch(
+                "services.rag_service.RAGService.reindex_document",
+                AsyncMock(return_value=None),
+            ) as mock_reindex:
+                code = await purge._process_one(
+                    lock_conn=lock_conn,
+                    doc_id=doc.id,
+                    apply=True,
+                    reason_threshold=1,
+                )
+            assert code == "purged"
+            mock_reindex.assert_awaited_once()
+            assert mock_reindex.call_args.kwargs["force_ocr"] is True
+            assert mock_reindex.call_args.kwargs["trigger"] == ProcessingTrigger.SCRIPT_PURGE
+        finally:
+            await lock_conn.close()

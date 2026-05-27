@@ -49,9 +49,15 @@ ASCII flow:
                                           increment counters
 
 Safety:
-    - Two-layer lock: advisory (script-vs-script) + FOR UPDATE NOWAIT
-      (script-vs-API). NOWAIT = if another writer holds the row, skip
-      immediately rather than blocking.
+    - Advisory lock (per-doc, dedicated asyncpg connection) protects
+      against script-vs-script races for the FULL duration of a re-OCR.
+    - FOR UPDATE NOWAIT on the documents row is a START gate only — it
+      detects an in-flight API reindex of the same doc and skips, but
+      the lock is released BEFORE ``reindex_document`` runs (it can't
+      span the reindex because reindex commits multiple times). If an
+      API user reindexes the same doc concurrently with a script run,
+      the two writers race. Mitigation: run the script in an offline
+      window with no user-driven reindexes.
     - Dry-run by DEFAULT. Pass ``--apply`` to mutate.
     - Idempotent across runs: ``has_force_ocr_succeeded`` skips any doc
       already re-OCR'd, regardless of when.
@@ -283,20 +289,31 @@ async def _process_one(
             return "skipped_locked_by_script"
 
         try:
-            # Script-vs-API gate. SELECT FOR UPDATE NOWAIT inside a real
-            # transaction. ``await session.begin()`` requires that the
-            # session not already be in autobegin state.
+            # Script-vs-API START gate. SELECT FOR UPDATE NOWAIT inside a
+            # short-lived explicit transaction tells us "no one is mutating
+            # this doc RIGHT NOW". The lock auto-releases on commit at the
+            # end of the ``async with session.begin()`` block — it does NOT
+            # span the subsequent ``reindex_document`` call. That's a
+            # deliberate trade: holding the row lock across reindex is
+            # impossible because reindex_document does its own commits, which
+            # would close the outer txn. So if an API user reindexes the same
+            # doc CONCURRENTLY with our reindex, the two writers race on the
+            # chunks. Mitigation: the corpus-cleanup script is meant for an
+            # offline window. The advisory lock (different connection) still
+            # protects against script-vs-script during the reindex.
+            #
+            # The earlier read queries (_count_low_quality_chunks,
+            # has_force_ocr_succeeded) auto-begin an implicit txn. SA 2.0
+            # rejects ``session.begin()`` while a txn is already open, so
+            # roll back the implicit one first. Safe because no writes
+            # have happened yet on this session.
+            await session.rollback()
             async with session.begin():
                 if not await _try_row_lock(session, doc_id):
                     logger.warning(
                         "doc_id=%s documents row locked → skip", doc_id
                     )
                     return "skipped_row_locked"
-                # FOR UPDATE held; doc is ours for this txn. We release
-                # both locks before reindex_document runs its own commits.
-            # End begin() — row lock released here. The advisory lock is
-            # still held (different connection), so script-vs-script
-            # protection persists across the reindex below.
 
             rag = RAGService(session)
             await rag.reindex_document(
