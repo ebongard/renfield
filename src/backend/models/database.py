@@ -288,8 +288,16 @@ class DocumentChunk(Base):
         nullable=True
     )
 
-    # Parent-Child Chunking (parent_chunk_id references larger parent chunk)
-    parent_chunk_id = Column(Integer, ForeignKey("document_chunks.id"), nullable=True, index=True)
+    # Parent-Child Chunking (parent_chunk_id references larger parent chunk).
+    # ON DELETE CASCADE added in pc20260530_dph: defends raw-SQL deletes on
+    # parent chunks. ORM-mediated deletes already cascade Python-side via
+    # the `chunks` cascade='all,delete-orphan' on Document.
+    parent_chunk_id = Column(
+        Integer,
+        ForeignKey("document_chunks.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
 
     # Chunk Metadata
     chunk_index = Column(Integer)           # Position im Dokument (0-basiert)
@@ -1966,6 +1974,70 @@ class FederationQueryLog(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     peer = relationship("PeerUser", foreign_keys=[peer_user_id])
+
+
+class DocumentProcessingHistory(Base):
+    """
+    Audit row for every ingestion attempt against a Document.
+
+    State machine:
+        (none) ──open()──> processing ──close_success()──> completed
+                                       └─close_failure()──> failed
+
+    Zombie rows: a process crash between ``open()`` and ``close_*()`` leaves
+    ``status='processing'`` indefinitely. Cleaned up by the (deferred) startup
+    sweep PR. Until that ships, ``has_force_ocr_succeeded(doc_id)`` filters
+    on ``status='completed'`` and correctly ignores zombies.
+
+    Writes are managed by ``services/document_processing_history.py`` via the
+    ``track()`` async context manager. Do NOT write rows directly from
+    application code — use the service.
+
+    See ``alembic/versions/pc20260530_document_processing_history.py`` for the
+    schema rationale, CHECK constraints, partial-unique constraint that makes
+    the migration backfill idempotent, and the partial index that accelerates
+    the script's hot query.
+    """
+    __tablename__ = "document_processing_history"
+
+    id = Column(BigInteger, primary_key=True)
+    document_id = Column(
+        Integer,
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    started_at = Column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    finished_at = Column(DateTime(timezone=True), nullable=True)
+
+    # status: pending|processing|completed|failed (enforced by CHECK constraint).
+    # Keep VARCHAR for project precedent (Document.status is also VARCHAR), but
+    # always write via the ProcessingStatus enum in the service.
+    status = Column(String(20), nullable=False)
+
+    # Always populated. Legacy backfill rows = false (initial_ingest by
+    # definition does not pass a force flag).
+    force_ocr = Column(Boolean, nullable=False)
+
+    # Nullable: legacy backfill rows + any caller that doesn't know.
+    # Values: 'easyocr' | 'docling_full_page_ocr' (set by document_processor).
+    ocr_engine = Column(String(50), nullable=True)
+
+    chunks_produced = Column(Integer, nullable=True)
+    chunks_dropped_low_quality = Column(Integer, nullable=True)
+
+    # trigger: initial_ingest|user_reindex|script_purge|startup_sweep
+    # (enforced by CHECK constraint). Write via ProcessingTrigger enum.
+    trigger = Column(String(30), nullable=False)
+
+    error_message = Column(Text, nullable=True)
+
+    # Future-extensible bag for fields we don't know we need yet (e.g.,
+    # per-engine timing, OCR confidence percentiles). JSONB on Postgres.
+    extra = Column(JSON, nullable=False, default=dict)
+
+    document = relationship("Document", foreign_keys=[document_id])
 
 
 # ==========================================================================

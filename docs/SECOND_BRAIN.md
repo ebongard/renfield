@@ -108,6 +108,8 @@ Alle drei nutzen dieselbe `circle_sql.build_filter`-Klausel, sodass Circle-Reich
 
 **KG-Extraktion** läuft sowohl bei Dokument-Ingest (als Hook) als auch bei Chat-Memory-Ingest. Derselbe LLM-Prompt, unterschiedliche Quell-Kontexte. Entity-Deduplizierung per Cosine-Similarity (Embedding-basiert) verhindert das Anlegen von `Eduard van den Bongard` und `Eduard` als zwei Entitäten.
 
+**Ingest-Audit (`document_processing_history`).** Jeder Lauf durch `RAGService.process_existing_document` schreibt eine Zeile in eine reine Audit-Tabelle: `started_at`, `finished_at`, `status` (`processing`/`completed`/`failed`), `force_ocr`, `ocr_engine` (`docling`/`docling_full_page_ocr`), `chunks_produced`, `chunks_dropped_low_quality`, `trigger` (`initial_ingest`/`user_reindex`/`script_purge`/`startup_sweep`), `error_message`. Geschrieben durch den Single-Writer `DocumentProcessingHistoryService.track()` Async-Context-Manager — die Ingest-Funktion belegt die Metriken auf einem Handle, der Manager schließt die Zeile beim Verlassen. Verwendet vom Cleanup-Skript `bin/purge_low_quality_chunks.py` (Re-OCR von Altbestand mit OCR-Garbage): `has_force_ocr_succeeded(doc_id)` filtert über einen Partial-Index Dokumente, die bereits per `force_ocr=True` neu eingelesen wurden — macht das Skript über mehrere Läufe idempotent.
+
 ---
 
 ## Tier-Defaults und Tier-Review

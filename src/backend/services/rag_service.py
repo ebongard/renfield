@@ -29,12 +29,23 @@ from models.database import (
     DocumentChunk,
     KnowledgeBase,
 )
+from services.document_processing_history import (
+    DocumentProcessingHistoryService,
+    ProcessingTrigger,
+)
 from services.document_processor import DocumentProcessor
 from utils.config import settings
 from utils.llm_client import get_embed_client
 
 if TYPE_CHECKING:  # pragma: no cover - imports only needed for type hints
     from services.progress import DocumentProgress
+
+
+class _ProcessorFailed(Exception):
+    """Internal sentinel for the Docling soft-failure path. Re-raised inside
+    ``process_existing_document``'s ``history.track()`` block so the history
+    row closes as ``failed``, then swallowed at the outer return to preserve
+    the legacy contract (handled processor failure → return None)."""
 
 
 class RAGService:
@@ -57,6 +68,7 @@ class RAGService:
         """
         self.db = db
         self.processor = DocumentProcessor()
+        self.history = DocumentProcessingHistoryService(db)
         self._ollama_client = None
         # Cached admin fallback id for atoms registration when the parent KB
         # has no explicit owner (legacy rows / pre-auth KBs). Resolved lazily.
@@ -278,6 +290,7 @@ class RAGService:
         force_ocr: bool = False,
         user_id: int | None = None,
         progress: "DocumentProgress | None" = None,
+        trigger: ProcessingTrigger = ProcessingTrigger.INITIAL_INGEST,
     ) -> None:
         """Run the ingestion pipeline on an already-persisted Document.
 
@@ -288,6 +301,11 @@ class RAGService:
         either case); re-raises for unexpected Python exceptions after
         marking the row failed, so the caller can log and the task queue
         can leave the entry un-ACKed for reclaim.
+
+        Every call writes a ``document_processing_history`` row via
+        ``self.history.track()``. ``trigger`` distinguishes initial ingest
+        from user reindex from script purge — the operator script reads
+        this column to scope its scan.
         """
         doc = await self.db.get(Document, document_id)
         if doc is None:
@@ -297,103 +315,136 @@ class RAGService:
         await self.db.commit()
 
         try:
-            # Stage 1: parsing — Docling reads the file, OCRs if needed,
-            # produces chunks and metadata.
-            if progress is not None:
-                await progress.set_stage("parsing")
-            result = await self.processor.process_document(doc.file_path, force_ocr=force_ocr)
-
-            if result["status"] == "failed":
-                doc.status = DOC_STATUS_FAILED
-                doc.error_message = result.get("error", "Unbekannter Fehler")
-                await self.db.commit()
-                logger.error(f"Dokumentverarbeitung fehlgeschlagen: {doc.error_message}")
-                return
-
-            # Metadata from the parsed doc.
-            metadata = result["metadata"]
-            doc.title = metadata.get("title")
-            doc.author = metadata.get("author")
-            doc.file_type = metadata.get("file_type")
-            doc.file_size = metadata.get("file_size")
-            doc.page_count = metadata.get("page_count")
-
-            # Stage 2: chunking + contextual-retrieval prefix generation.
-            if progress is not None:
-                await progress.set_stage("chunking")
-            chunks = result["chunks"]
-            doc_summary = f"{doc.title or doc.filename}"
-            if chunks:
-                doc_summary += f" — {chunks[0]['text'][:300]}" if chunks[0].get("text") else ""
-            chunks = await self._contextualize_chunks(chunks, doc_summary)
-
-            # Stage 3: embedding generation + DB inserts.
-            if progress is not None:
-                await progress.set_stage("embedding")
-            sem = asyncio.Semaphore(5)
-            if settings.rag_parent_child_enabled:
-                chunk_objects = await self._ingest_parent_child(doc.id, chunks, sem)
-            else:
-                chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
-
-            # Post-atoms-per-document (#pc20260423): chunks no longer carry
-            # their own atom_id. They inherit circle_tier from the parent
-            # Document — set here so retrieval's hot-path SQL filter (which
-            # reads document_chunks.circle_tier without a JOIN) stays valid
-            # even between document-level tier changes and the subsequent
-            # AtomService.update_tier cascade.
-            for chunk in chunk_objects:
-                chunk.circle_tier = int(doc.circle_tier or 0)
-
-            chunk_count = len(chunk_objects)
-            if chunk_objects:
-                self.db.add_all(chunk_objects)
-
-            doc.chunk_count = chunk_count
-            doc.status = DOC_STATUS_COMPLETED
-            doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
-            await self.db.commit()
-
-            # search_vector is a GENERATED STORED column (pc20260529) — the
-            # 6-way to_tsvector union over FTS_LANGUAGES is computed server-
-            # side on every INSERT/UPDATE of `content`. No app-side populate
-            # call needed; UPDATEs to a GENERATED column raise
-            # `ERROR: column "search_vector" can only be updated to DEFAULT`.
-            await self.db.refresh(doc)
-
-            # Fire KG extraction hook (fire-and-forget).
-            # Skip table/code/formula chunks: Docling flattens table cells into
-            # repetitive "field = value. field = value." text that confuses the
-            # LLM and produces hallucinated entities. Entity-rich information
-            # (names, addresses, organisations) is in text/paragraph chunks.
-            _KG_SKIP_TYPES = {"table", "code", "formula"}
-            kg_chunks = [
-                co.content
-                for co in chunk_objects
-                if co.content and co.chunk_type not in _KG_SKIP_TYPES
-            ]
-            if kg_chunks:
-                from utils.hooks import run_hooks
-
-                _task = asyncio.create_task(
-                    run_hooks(
-                        "post_document_ingest",
-                        chunks=kg_chunks,
-                        document_id=doc.id,
-                        user_id=user_id,
+            async with self.history.track(document_id, force_ocr, trigger) as hrow:
+                try:
+                    # Stage 1: parsing — Docling reads the file, OCRs if needed,
+                    # produces chunks and metadata.
+                    if progress is not None:
+                        await progress.set_stage("parsing")
+                    result = await self.processor.process_document(
+                        doc.file_path, force_ocr=force_ocr
                     )
-                )
-                _background_tasks.add(_task)
-                _task.add_done_callback(_background_tasks.discard)
 
-            logger.info(f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}")
+                    if result["status"] == "failed":
+                        doc.status = DOC_STATUS_FAILED
+                        doc.error_message = result.get("error", "Unbekannter Fehler")
+                        await self.db.commit()
+                        logger.error(
+                            f"Dokumentverarbeitung fehlgeschlagen: {doc.error_message}"
+                        )
+                        # Docling soft-failure: trip the context manager into
+                        # close_failure so the history row is marked failed too,
+                        # then unwind to the outer return-None path that preserves
+                        # the legacy "soft fail returns None" contract.
+                        raise _ProcessorFailed(
+                            doc.error_message or "Unbekannter Fehler"
+                        )
 
-        except Exception as e:
-            doc.status = DOC_STATUS_FAILED
-            doc.error_message = str(e)
-            await self.db.commit()
-            logger.error(f"Fehler beim Indexieren: {e}")
-            raise
+                    # Metadata from the parsed doc.
+                    metadata = result["metadata"]
+                    doc.title = metadata.get("title")
+                    doc.author = metadata.get("author")
+                    doc.file_type = metadata.get("file_type")
+                    doc.file_size = metadata.get("file_size")
+                    doc.page_count = metadata.get("page_count")
+
+                    # Stage 2: chunking + contextual-retrieval prefix generation.
+                    if progress is not None:
+                        await progress.set_stage("chunking")
+                    chunks = result["chunks"]
+                    doc_summary = f"{doc.title or doc.filename}"
+                    if chunks:
+                        doc_summary += (
+                            f" — {chunks[0]['text'][:300]}"
+                            if chunks[0].get("text")
+                            else ""
+                        )
+                    chunks = await self._contextualize_chunks(chunks, doc_summary)
+
+                    # Stage 3: embedding generation + DB inserts.
+                    if progress is not None:
+                        await progress.set_stage("embedding")
+                    sem = asyncio.Semaphore(5)
+                    if settings.rag_parent_child_enabled:
+                        chunk_objects = await self._ingest_parent_child(
+                            doc.id, chunks, sem
+                        )
+                    else:
+                        chunk_objects = await self._ingest_flat(doc.id, chunks, sem)
+
+                    # Post-atoms-per-document (#pc20260423): chunks no longer carry
+                    # their own atom_id. They inherit circle_tier from the parent
+                    # Document — set here so retrieval's hot-path SQL filter (which
+                    # reads document_chunks.circle_tier without a JOIN) stays valid
+                    # even between document-level tier changes and the subsequent
+                    # AtomService.update_tier cascade.
+                    for chunk in chunk_objects:
+                        chunk.circle_tier = int(doc.circle_tier or 0)
+
+                    chunk_count = len(chunk_objects)
+                    if chunk_objects:
+                        self.db.add_all(chunk_objects)
+
+                    doc.chunk_count = chunk_count
+                    doc.status = DOC_STATUS_COMPLETED
+                    doc.processed_at = datetime.now(UTC).replace(tzinfo=None)
+                    await self.db.commit()
+
+                    # Record metrics on the history handle. The track() context
+                    # manager UPDATEs the row to ``completed`` on clean exit.
+                    hrow.chunks_produced = chunk_count
+                    hrow.chunks_dropped = result.get("chunks_dropped_low_quality")
+                    hrow.ocr_engine = result.get("ocr_engine")
+
+                    # search_vector is a GENERATED STORED column (pc20260529) — the
+                    # 6-way to_tsvector union over FTS_LANGUAGES is computed server-
+                    # side on every INSERT/UPDATE of `content`. No app-side populate
+                    # call needed; UPDATEs to a GENERATED column raise
+                    # `ERROR: column "search_vector" can only be updated to DEFAULT`.
+                    await self.db.refresh(doc)
+
+                    # Fire KG extraction hook (fire-and-forget).
+                    # Skip table/code/formula chunks: Docling flattens table cells into
+                    # repetitive "field = value. field = value." text that confuses the
+                    # LLM and produces hallucinated entities. Entity-rich information
+                    # (names, addresses, organisations) is in text/paragraph chunks.
+                    _KG_SKIP_TYPES = {"table", "code", "formula"}
+                    kg_chunks = [
+                        co.content
+                        for co in chunk_objects
+                        if co.content and co.chunk_type not in _KG_SKIP_TYPES
+                    ]
+                    if kg_chunks:
+                        from utils.hooks import run_hooks
+
+                        _task = asyncio.create_task(
+                            run_hooks(
+                                "post_document_ingest",
+                                chunks=kg_chunks,
+                                document_id=doc.id,
+                                user_id=user_id,
+                            )
+                        )
+                        _background_tasks.add(_task)
+                        _task.add_done_callback(_background_tasks.discard)
+
+                    logger.info(
+                        f"Dokument indexiert: ID={doc.id}, Chunks={chunk_count}"
+                    )
+
+                except _ProcessorFailed:
+                    # Propagate to track() so history row is closed as failed,
+                    # then the outer except catches and returns None.
+                    raise
+                except Exception as e:
+                    doc.status = DOC_STATUS_FAILED
+                    doc.error_message = str(e)
+                    await self.db.commit()
+                    logger.error(f"Fehler beim Indexieren: {e}")
+                    raise
+        except _ProcessorFailed:
+            # Legacy contract preserved: handled Docling failure → return None.
+            return
 
     async def ingest_document(
         self,
@@ -403,6 +454,7 @@ class RAGService:
         file_hash: str | None = None,
         user_id: int | None = None,
         force_ocr: bool = False,
+        trigger: ProcessingTrigger = ProcessingTrigger.INITIAL_INGEST,
     ) -> Document:
         """Synchronous wrapper: create the Document row + process inline.
 
@@ -431,6 +483,7 @@ class RAGService:
             document_id=doc.id,
             force_ocr=force_ocr,
             user_id=user_id,
+            trigger=trigger,
         )
         await self.db.refresh(doc)
         return doc
@@ -967,25 +1020,43 @@ class RAGService:
             "duration_ms": duration_ms,
         }
 
-    async def reindex_document(self, document_id: int) -> Document:
-        """
-        Re-indexiert ein Dokument (löscht alte Chunks und erstellt neue).
+    async def reindex_document(
+        self,
+        document_id: int,
+        force_ocr: bool = False,
+        trigger: ProcessingTrigger = ProcessingTrigger.USER_REINDEX,
+        user_id: int | None = None,
+    ) -> Document:
+        """Re-process an EXISTING Document in place.
+
+        Drops the document's chunks and runs the ingestion pipeline against
+        the same Document row (no new row created — distinct from
+        ``ingest_document``, which always inserts).
+
+        ``force_ocr`` flips Docling's full-page OCR on; the cleanup script
+        calls this with ``force_ocr=True, trigger=SCRIPT_PURGE`` so the
+        history row records both the engine choice and the trigger.
+
+        ``parent_chunk_id`` self-FK was promoted to ``ON DELETE CASCADE`` in
+        pc20260530 — the bulk delete below relies on that for the
+        parent-child layout (parents go first, children cascade).
         """
         doc = await self.get_document(document_id)
         if not doc:
             raise ValueError(f"Dokument {document_id} nicht gefunden")
 
-        # Alte Chunks löschen
         stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)
         await self.db.execute(stmt)
         await self.db.commit()
 
-        # Neu indexieren
-        return await self.ingest_document(
-            doc.file_path,
-            doc.knowledge_base_id,
-            doc.filename
+        await self.process_existing_document(
+            document_id=document_id,
+            force_ocr=force_ocr,
+            user_id=user_id,
+            trigger=trigger,
         )
+        await self.db.refresh(doc)
+        return doc
 
     async def search_by_document(
         self,

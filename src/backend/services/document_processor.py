@@ -147,6 +147,13 @@ class DocumentProcessor:
             # Bestimme ob force_full_page_ocr genutzt werden soll
             use_ocr = force_ocr or settings.rag_force_ocr
 
+            # Track which OCR pathway actually produced the chunks we'll
+            # return. Updated whenever we (re-)convert below. Surfaces in
+            # the result dict as `ocr_engine`, consumed by RAGService and
+            # written to document_processing_history.ocr_engine. Unlocks
+            # the deferred OCR-engine benchmark (group history by engine).
+            ocr_engine = "docling_full_page_ocr" if use_ocr else "docling"
+
             # Dokument in Thread-Pool konvertieren (CPU-intensiv)
             loop = asyncio.get_event_loop()
 
@@ -186,6 +193,7 @@ class DocumentProcessor:
                     if ocr_result is not None:
                         result = ocr_result
                         doc = result.document
+                        ocr_engine = "docling_full_page_ocr"
 
             # Metadaten extrahieren
             metadata = self._extract_metadata(doc, file_path)
@@ -264,6 +272,7 @@ class DocumentProcessor:
                         "error": "ocr_retry_conversion_failed",
                     }
                 doc = ocr_result.document
+                ocr_engine = "docling_full_page_ocr"
                 chunk_result = await loop.run_in_executor(
                     None, self._create_chunks, doc
                 )
@@ -291,7 +300,9 @@ class DocumentProcessor:
             return {
                 "metadata": metadata,
                 "chunks": chunks,
-                "status": "completed"
+                "status": "completed",
+                "ocr_engine": ocr_engine,
+                "chunks_dropped_low_quality": dropped,
             }
 
         except Exception as e:
