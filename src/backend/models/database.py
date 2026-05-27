@@ -3,7 +3,7 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, Column, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Column, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint, text as sa_text
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -2038,6 +2038,33 @@ class DocumentProcessingHistory(Base):
     extra = Column(JSON, nullable=False, default=dict)
 
     document = relationship("Document", foreign_keys=[document_id])
+
+    # Constraints + indexes — declared here (not only in the alembic migration)
+    # so that the test fixture's ``Base.metadata.create_all`` builds a schema
+    # that matches the live alembic-managed DB. Without this, CHECK constraint
+    # tests and the partial-unique idempotence guarantee would silently pass
+    # on the test harness but fire only against the real DB.
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('pending','processing','completed','failed')",
+            name="chk_dph_status",
+        ),
+        CheckConstraint(
+            "trigger IN ('initial_ingest','user_reindex','script_purge','startup_sweep')",
+            name="chk_dph_trigger",
+        ),
+        Index(
+            "idx_dph_document_force_ocr_status",
+            "document_id", "force_ocr", "status",
+            postgresql_where=sa_text("force_ocr = true AND status = 'completed'"),
+        ),
+        Index(
+            "uq_dph_initial_ingest_per_doc",
+            "document_id",
+            unique=True,
+            postgresql_where=sa_text("trigger = 'initial_ingest'"),
+        ),
+    )
 
 
 # ==========================================================================

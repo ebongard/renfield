@@ -28,7 +28,20 @@ from services.document_processing_history import (
 
 
 # Load the script as a module (it's outside the ``src/backend`` package).
-_SCRIPT = Path(__file__).resolve().parents[2] / "bin" / "purge_low_quality_chunks.py"
+# Path resolution: env var override (used in the .159 container where bin/
+# is not mounted), else the repo's bin/ relative to this test file.
+_SCRIPT = Path(
+    os.environ.get(
+        "PURGE_SCRIPT_PATH",
+        str(Path(__file__).resolve().parents[2] / "bin" / "purge_low_quality_chunks.py"),
+    )
+)
+if not _SCRIPT.exists():
+    pytest.skip(
+        f"Cleanup script not found at {_SCRIPT}. "
+        "Set PURGE_SCRIPT_PATH if running in a container where bin/ isn't mounted.",
+        allow_module_level=True,
+    )
 spec = importlib.util.spec_from_file_location("purge_low_quality_chunks", _SCRIPT)
 purge = importlib.util.module_from_spec(spec)
 sys.modules["purge_low_quality_chunks"] = purge
@@ -101,8 +114,16 @@ pgmark = [
 
 
 @pytest.fixture
-async def committing_session(pg_async_engine) -> AsyncGenerator[AsyncSession, None]:
+async def committing_session(pg_async_engine, monkeypatch) -> AsyncGenerator[AsyncSession, None]:
+    """Per-test session bound to the TEST engine.
+
+    Also patches ``purge.AsyncSessionLocal`` to use the same engine so the
+    script's internal session-open calls (``_process_one`` opens fresh
+    sessions to scan/lock/reindex) hit the test database, not production.
+    Without this, the script silently sees an empty DB.
+    """
     maker = async_sessionmaker(pg_async_engine, class_=AsyncSession, expire_on_commit=False)
+    monkeypatch.setattr(purge, "AsyncSessionLocal", maker)
     async with maker() as session:
         yield session
     async with pg_async_engine.begin() as conn:

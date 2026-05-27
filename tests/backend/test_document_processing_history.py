@@ -102,7 +102,7 @@ async def test_close_success_updates_metrics_and_status(committing_session):
 
     await svc.close_success(hid, chunks_produced=42, chunks_dropped=3, ocr_engine="docling")
 
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hid)
     assert row.status == ProcessingStatus.COMPLETED.value
     assert row.chunks_produced == 42
@@ -117,7 +117,7 @@ async def test_close_success_accepts_none_metrics(committing_session):
     svc = DocumentProcessingHistoryService(committing_session)
     hid = await svc.open(doc.id, force_ocr=False, trigger=ProcessingTrigger.INITIAL_INGEST)
     await svc.close_success(hid, chunks_produced=None, chunks_dropped=None, ocr_engine=None)
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hid)
     assert row.status == ProcessingStatus.COMPLETED.value
     assert row.chunks_produced is None
@@ -135,7 +135,7 @@ async def test_close_failure_sets_failed_status_and_error_message(committing_ses
 
     await svc.close_failure(hid, "OCR engine crashed: docling segfault")
 
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hid)
     assert row.status == ProcessingStatus.FAILED.value
     assert row.error_message == "OCR engine crashed: docling segfault"
@@ -149,7 +149,7 @@ async def test_close_failure_accepts_long_error_text(committing_session):
     hid = await svc.open(doc.id, force_ocr=False, trigger=ProcessingTrigger.INITIAL_INGEST)
     long_err = "Traceback line\n" * 1000
     await svc.close_failure(hid, long_err)
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hid)
     assert row.error_message == long_err
 
@@ -238,7 +238,7 @@ async def test_track_writes_completed_on_clean_exit(committing_session):
         hrow.chunks_dropped = 4
         hrow.ocr_engine = "docling_full_page_ocr"
 
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hrow.hid)
     assert row.status == ProcessingStatus.COMPLETED.value
     assert row.chunks_produced == 11
@@ -255,7 +255,7 @@ async def test_track_writes_failed_on_exception_and_reraises(committing_session)
             captured_hid = hrow.hid
             raise RuntimeError("boom")
 
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, captured_hid)
     assert row.status == ProcessingStatus.FAILED.value
     assert "boom" in row.error_message
@@ -267,7 +267,7 @@ async def test_track_unset_metrics_default_to_null(committing_session):
     async with svc.track(doc.id, force_ocr=False, trigger=ProcessingTrigger.INITIAL_INGEST) as hrow:
         pass  # caller assigns nothing
 
-    await committing_session.expire_all()
+    committing_session.expire_all()
     row = await committing_session.get(DocumentProcessingHistory, hrow.hid)
     assert row.status == ProcessingStatus.COMPLETED.value
     assert row.chunks_produced is None

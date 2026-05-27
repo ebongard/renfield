@@ -50,6 +50,7 @@ from __future__ import annotations
 import logging
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from typing import AsyncIterator
 
@@ -59,6 +60,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from models.database import DocumentProcessingHistory
 
 logger = logging.getLogger(__name__)
+
+
+def _now() -> datetime:
+    """Naive UTC datetime for ``finished_at`` writes. Set Python-side rather
+    than via raw-SQL ``now()`` so sqlite-shimmed test runs work — sqlite
+    has no ``now()`` function."""
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class ProcessingStatus(str, Enum):
@@ -144,7 +152,7 @@ class DocumentProcessingHistoryService:
                 """
                 UPDATE document_processing_history
                 SET status = 'completed',
-                    finished_at = now(),
+                    finished_at = :finished_at,
                     chunks_produced = :chunks_produced,
                     chunks_dropped_low_quality = :chunks_dropped,
                     ocr_engine = :ocr_engine
@@ -153,6 +161,7 @@ class DocumentProcessingHistoryService:
             ),
             {
                 "history_id": history_id,
+                "finished_at": _now(),
                 "chunks_produced": chunks_produced,
                 "chunks_dropped": chunks_dropped,
                 "ocr_engine": ocr_engine,
@@ -170,12 +179,16 @@ class DocumentProcessingHistoryService:
                 """
                 UPDATE document_processing_history
                 SET status = 'failed',
-                    finished_at = now(),
+                    finished_at = :finished_at,
                     error_message = :error_message
                 WHERE id = :history_id
                 """
             ),
-            {"history_id": history_id, "error_message": error_message},
+            {
+                "history_id": history_id,
+                "finished_at": _now(),
+                "error_message": error_message,
+            },
         )
         await self.db.commit()
 
