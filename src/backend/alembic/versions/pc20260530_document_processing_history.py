@@ -111,6 +111,13 @@ def upgrade() -> None:
     # Backfill: one initial_ingest row per existing Document. force_ocr=false
     # because initial_ingest by definition didn't pass a force flag.
     # ON CONFLICT keeps the migration safely re-runnable after a partial fail.
+    #
+    # Note: ``uq_dph_initial_ingest_per_doc`` is a partial unique INDEX, not a
+    # named CONSTRAINT (Postgres doesn't support partial UNIQUE constraints,
+    # only partial unique INDEXES). ``ON CONFLICT ON CONSTRAINT`` requires a
+    # real constraint, so use the index-inference form ``ON CONFLICT (col)
+    # WHERE <predicate>`` — Postgres matches the partial unique index by
+    # column tuple + predicate.
     op.execute(
         """
         INSERT INTO document_processing_history
@@ -123,7 +130,10 @@ def upgrade() -> None:
             false,
             'initial_ingest'
         FROM documents
-        ON CONFLICT ON CONSTRAINT uq_dph_initial_ingest_per_doc DO NOTHING
+        WHERE NOT EXISTS (
+            SELECT 1 FROM document_processing_history h
+            WHERE h.document_id = documents.id AND h.trigger = 'initial_ingest'
+        )
         """
     )
 
