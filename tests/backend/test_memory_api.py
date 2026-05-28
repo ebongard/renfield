@@ -21,7 +21,7 @@ from services.conversation_memory_service import ConversationMemoryService
 
 
 async def _verify_memory_ownership(
-    memory_id: int, current_user: User | None, db: AsyncSession
+    memory_id: int, current_user: User, db: AsyncSession
 ) -> None:
     """Mirror of api.routes.memory._verify_memory_ownership for testing without slowapi import."""
     result = await db.execute(
@@ -31,8 +31,7 @@ async def _verify_memory_ownership(
     if not row:
         raise HTTPException(status_code=404, detail="Memory not found")
     owner_id = row[0]
-    user_id = current_user.id if current_user else None
-    if owner_id != user_id:
+    if owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Memory not found")
 
 # ==========================================================================
@@ -353,19 +352,41 @@ class TestMemoryOwnership:
             await _verify_memory_ownership(99999, test_user, db_session)
         assert exc_info.value.status_code == 404
 
+
+# ==========================================================================
+# Route: GET /api/memory — single-user fallback regression
+# ==========================================================================
+
+class TestListMemoriesRoute:
+    """Locks in the fix for the empty /memory page in AUTH_ENABLED=false mode.
+
+    Before this fix, the route used ``get_current_user`` which returns None
+    when auth is disabled, then forwarded None into ``list_for_user`` which
+    filtered ``WHERE user_id IS NULL`` and returned []. Writes had been
+    going to ``user_id = admin.id`` via ``_resolve_owner_user_id``, so the
+    UI saw nothing while the DB held rows.
+    """
+
     @pytest.mark.database
-    async def test_no_auth_accesses_null_user_memory(self, db_session):
-        """No-auth user (None) can access memories with user_id=None."""
-        memory = await _create_memory(db_session, user_id=None)
+    async def test_lists_default_user_memories_when_auth_disabled(
+        self, async_client, db_session, test_user
+    ):
+        """GET /api/memory returns the default user's rows in single-user mode."""
+        for i in range(3):
+            db_session.add(
+                ConversationMemory(
+                    content=f"Memory {i}",
+                    category="fact",
+                    user_id=test_user.id,
+                )
+            )
+        await db_session.commit()
 
-        # Should not raise
-        await _verify_memory_ownership(memory.id, None, db_session)
+        response = await async_client.get("/api/memory")
 
-    @pytest.mark.database
-    async def test_no_auth_cannot_access_user_memory(self, db_session, test_user):
-        """No-auth user (None) cannot access a user's memory."""
-        memory = await _create_memory(db_session, user_id=test_user.id)
+        assert response.status_code == 200
+        body = response.json()
+        assert body["total"] == 3
+        assert len(body["memories"]) == 3
+        assert {m["content"] for m in body["memories"]} == {"Memory 0", "Memory 1", "Memory 2"}
 
-        with pytest.raises(HTTPException) as exc_info:
-            await _verify_memory_ownership(memory.id, None, db_session)
-        assert exc_info.value.status_code == 404
