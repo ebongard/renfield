@@ -49,7 +49,7 @@ de:
     FALSCH (Halluzination — Ehemann nicht im Dialog):
       relations: [{{"subject": "Anna", "predicate": "ist_verheiratet_mit", "object": "Hans Filbinger"}}]
 
-    Dialog:
+    {speaker_clause}Dialog:
     User: {user_message}
     Assistent: {assistant_response}
 
@@ -161,7 +161,7 @@ en:
     WRONG (hallucination — husband not in dialog):
       relations: [{{"subject": "Anna", "predicate": "married_to", "object": "Hans Filbinger"}}]
 
-    Dialog:
+    {speaker_clause}Dialog:
     User: {user_message}
     Assistant: {assistant_response}
 
