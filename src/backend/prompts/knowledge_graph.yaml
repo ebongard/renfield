@@ -240,7 +240,10 @@ llm_options:
 relation_validation:
   # Rule 4 — confidence floor. Defense-in-depth only; the 2026-05-26 incident
   # relations were all emitted at confidence 1.0, so this does not catch them.
-  confidence_floor: 0.6
+  # MUST match the lower bound the extraction prompt advertises to the model
+  # ("confidence: 0.5-1.0") — a higher floor silently drops relations the LLM
+  # emitted exactly as instructed. Keep this and the prompt range in lockstep.
+  confidence_floor: 0.5
 
   # Rule 3 — predicate/object-type contract. First matching pattern wins.
   # A predicate matching NO pattern is allowed (open vocabulary is deliberate;

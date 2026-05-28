@@ -39,7 +39,7 @@ class FakeEntity:
 # Heuristics matching the production yaml (kept in sync by
 # test_yaml_heuristics_match_production below).
 HEURISTICS = {
-    "confidence_floor": 0.6,
+    "confidence_floor": 0.5,
     "type_rules": [
         (re.compile(
             r"^(heiratet|ist_verheiratet|verheiratet_mit|hat_kind|ist_kind_von|"
@@ -129,13 +129,35 @@ class TestSourceGrounding:
         assert r.ok
 
     @pytest.mark.unit
-    def test_multiword_name_one_word_missing_rejected(self):
-        # "Filbinger" present but "Hans" absent → not grounded.
+    def test_canonical_name_grounds_on_partial_mention(self):
+        # F1 fix: resolve_entity may canonicalize a spoken "Eduard" into the
+        # stored "Eduard van den Bongard". The dialog only contains "Eduard".
+        # The relation must STILL ground — one significant word anchors it.
+        # (Pre-fix this was dropped as not_grounded, silently losing the fact.)
+        eduard = FakeEntity(1, "Eduard van den Bongard", "person")
+        mango = FakeEntity(50, "Mango", "thing")
+        r = _validate(eduard, mango, "mag", 0.9, "Eduard mag Mango.")
+        assert r.ok
+
+    @pytest.mark.unit
+    def test_name_with_no_word_present_rejected(self):
+        # Neither "Hans" nor "Filbinger" appears → no significant word anchors
+        # → rejected. This is the hallucination case the rule must still catch.
         anna = FakeEntity(11, "Anna", "person")
         hans = FakeEntity(99, "Hans Filbinger", "person")
         r = _validate(anna, hans, "kennt", 0.9,
-                      "Anna kennt einen Herrn Filbinger nicht.")
-        # "Hans" is absent → reject
+                      "Anna kennt niemanden aus der Politik.")
+        assert not r.ok
+        assert r.reason == REASON_NOT_GROUNDED
+
+    @pytest.mark.unit
+    def test_short_word_does_not_falsely_ground(self):
+        # F3 fix: "Ada" (3 chars) must NOT ground against "Kanada" — prefix
+        # match, not loose substring. "ada" is a substring of "kanada" but
+        # neither prefixes the other.
+        ada = FakeEntity(1, "Ada", "person")
+        b = FakeEntity(2, "Berlin", "place")
+        r = _validate(ada, b, "wohnt_in", 0.9, "Wir waren in Kanada und Berlin.")
         assert not r.ok
         assert r.reason == REASON_NOT_GROUNDED
 
@@ -229,17 +251,19 @@ class TestPredicateObjectType:
 class TestConfidenceFloor:
     @pytest.mark.unit
     def test_below_floor_rejected(self):
+        # Floor is 0.5 (matches the prompt's advertised 0.5-1.0 range).
         a = FakeEntity(1, "Eduard", "person")
         b = FakeEntity(2, "Mango", "thing")
-        r = _validate(a, b, "mag", 0.5, "Eduard mag Mango.")
+        r = _validate(a, b, "mag", 0.49, "Eduard mag Mango.")
         assert not r.ok
         assert r.reason == REASON_LOW_CONFIDENCE
 
     @pytest.mark.unit
     def test_at_floor_passes(self):
+        # 0.5 is exactly the prompt's lower bound — must NOT be dropped.
         a = FakeEntity(1, "Eduard", "person")
         b = FakeEntity(2, "Mango", "thing")
-        r = _validate(a, b, "mag", 0.6, "Eduard mag Mango.")
+        r = _validate(a, b, "mag", 0.5, "Eduard mag Mango.")
         assert r.ok
 
     @pytest.mark.unit
@@ -356,7 +380,7 @@ class TestLoadHeuristics:
     def test_missing_config_degrades_gracefully(self):
         pm = FakePromptManager(None)
         h = load_heuristics(pm)
-        assert h["confidence_floor"] == 0.6  # default
+        assert h["confidence_floor"] == 0.5  # default
         assert h["type_rules"] == []  # fail-open: no type enforcement
 
     @pytest.mark.unit
@@ -387,7 +411,7 @@ class TestLoadHeuristics:
     def test_non_numeric_floor_falls_back(self):
         pm = FakePromptManager({"confidence_floor": "not-a-number"})
         h = load_heuristics(pm)
-        assert h["confidence_floor"] == 0.6
+        assert h["confidence_floor"] == 0.5
 
 
 # --------------------------------------------------------------------------
@@ -403,7 +427,7 @@ class TestYamlHeuristicsMatchProduction:
         h = load_heuristics(prompt_manager)
 
         # Floor present.
-        assert h["confidence_floor"] == 0.6
+        assert h["confidence_floor"] == 0.5
         # At least the two documented rules.
         assert len(h["type_rules"]) >= 2
 

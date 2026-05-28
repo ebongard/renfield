@@ -19,11 +19,16 @@ Rules (in order):
 
 1. **No self-loop.** ``subject_id == object_id`` → reject. Primary catch for
    the 3 self-loop incidents (``Anna ist_verheiratet_mit Anna`` etc.).
-2. **Source grounding.** Both entity names must appear verbatim in the source
-   text (the dialog or document chunk the relation was extracted from). Token-
-   level, lowercased, contiguous-substring match. Catches hallucinations
-   (``Hans Filbinger``, ``Kleinenbroich``) that the model invented from world
-   knowledge — neither name is in the dialog.
+2. **Source grounding.** Both entity names must be anchored in the source text
+   (the dialog or document chunk the relation was extracted from): at least one
+   significant word (len>=3) of the name prefix-matches a source token in
+   either direction (so "Anna" ↔ "Annas" both hold — German inflection). Prefix
+   not substring, so "Ada" does not match "Kanada". Grounds on the
+   discriminating token rather than every word, because ``resolve_entity`` can
+   canonicalize a spoken "Eduard" into a stored "Eduard van den Bongard" — and
+   we must not drop that real chat-learned fact. Catches the hallucination class
+   (``Hans Filbinger``, ``Kleinenbroich``) which shares no token with a dialog
+   that never mentions them.
 3. **Predicate/object-type contract.** A regex-keyed heuristic table (loaded
    from ``prompts/knowledge_graph.yaml``) maps predicate-name patterns to a
    required object entity_type. ``heiratet_*`` / ``ist_mutter_von`` → ``person``;
@@ -34,7 +39,9 @@ Rules (in order):
 4. **Confidence floor.** ``confidence < floor`` → reject. Defense-in-depth
    only: all 11 incident relations were emitted at confidence 1.0, so this
    rule did not catch any of them. It guards a different failure class
-   (genuinely low-confidence model output).
+   (genuinely low-confidence model output). The floor (0.5) is pinned to the
+   lower bound the extraction prompt advertises ("confidence: 0.5-1.0") so it
+   never drops a relation the model emitted exactly as instructed.
 
 The validator is intentionally side-effect-free and takes plain values, not a
 DB session, so it unit-tests without a database. The caller resolves entities
@@ -48,8 +55,10 @@ from typing import Any, Protocol
 
 from loguru import logger
 
-# Default confidence floor if the yaml config is missing/unreadable.
-_DEFAULT_CONFIDENCE_FLOOR = 0.6
+# Default confidence floor if the yaml config is missing/unreadable. Matches
+# the lower bound the extraction prompt advertises to the model ("0.5-1.0") —
+# a higher default would silently drop relations the LLM emitted as instructed.
+_DEFAULT_CONFIDENCE_FLOOR = 0.5
 
 # Tokeniser for source grounding: split on whitespace + common punctuation so
 # "Annas," and "(Kleinenbroich)" reduce to "annas" / "kleinenbroich".
@@ -84,32 +93,53 @@ def _tokenise(text: str) -> set[str]:
     return {t for t in _RE_TOKEN_SPLIT.split(text.lower()) if t}
 
 
-def _name_is_grounded(name: str, source_tokens: set[str], source_lower: str) -> bool:
-    """True if ``name`` appears in the source text.
+def _name_is_grounded(name: str, source_tokens: set[str]) -> bool:
+    """True if ``name`` is anchored in the source text.
 
-    A multi-word name ("Hans Filbinger", "Anna Johanna von den Bongard") is
-    grounded if EVERY whitespace-separated word of the name appears as a
-    contiguous substring of some source token. Single-word names check the
-    one word. This tolerates German inflection ("Annas" contains "anna") and
-    surrounding punctuation, while still rejecting names whose words never
-    appear at all (the hallucination case).
+    The name we receive is the *resolved* entity's canonical name, which can be
+    longer than the surface form actually spoken — ``resolve_entity`` merges a
+    dialog mention "Eduard" into an existing entity stored as "Eduard van den
+    Bongard" via embedding similarity. If we required EVERY word of the
+    canonical name to appear, that legitimate relation would be dropped because
+    "van"/"den"/"bongard" aren't in the current short exchange. KG-from-chat is
+    a must-have, so we ground on the discriminating token instead:
+
+      A name is grounded if AT LEAST ONE of its significant words (length >= 3)
+      prefix-matches a source token (either direction, so "Anna" ↔ "Annas"
+      both hold — covers German inflection). Names whose words are all short
+      (<3 chars) are considered ungroundable (not grounded).
+
+    This still rejects the hallucination class: "Hans Filbinger" and
+    "Kleinenbroich" share NO token with a dialog that never mentions them, so
+    no word anchors and the relation is dropped. The deliberate trade-off is
+    mild over-acceptance (a partly-hallucinated name like "Anna Schmidt" grounds
+    on "Anna") — the safe direction when the alternative is silently losing real
+    chat-learned facts. Self-loop + predicate-type rules and the prompt's own
+    grounding instruction are the other layers; this rule is the net, not the
+    whole defense.
     """
     name_lower = name.strip().lower()
     if not name_lower:
         return False
 
-    # Fast path: the whole name appears verbatim as a substring.
-    if name_lower in source_lower:
-        return True
-
-    # Per-word: each word of the name must be a substring of some source token.
     words = [w for w in _RE_TOKEN_SPLIT.split(name_lower) if w]
     if not words:
         return False
-    for word in words:
-        if not any(word in tok for tok in source_tokens):
-            return False
-    return True
+
+    significant = [w for w in words if len(w) >= 3]
+    if not significant:
+        # All words are 1-2 chars (initials etc.): no significant token to
+        # anchor on → not grounded.
+        return False
+
+    # At least one significant word must prefix-match a source token in either
+    # direction. Prefix (not substring) avoids "ada" matching "kanada" while
+    # still accepting "anna" vs "annas".
+    for word in significant:
+        for tok in source_tokens:
+            if tok.startswith(word) or word.startswith(tok):
+                return True
+    return False
 
 
 def load_heuristics(prompt_manager: Any) -> dict[str, Any]:
@@ -175,11 +205,10 @@ def validate_relation(
         return ValidationResult(False, REASON_SELF_LOOP)
 
     # Rule 2 — source grounding. Both names must be in the source text.
-    source_lower = source_text.lower()
     source_tokens = _tokenise(source_text)
-    if not _name_is_grounded(subject.name, source_tokens, source_lower):
+    if not _name_is_grounded(subject.name, source_tokens):
         return ValidationResult(False, REASON_NOT_GROUNDED)
-    if not _name_is_grounded(obj.name, source_tokens, source_lower):
+    if not _name_is_grounded(obj.name, source_tokens):
         return ValidationResult(False, REASON_NOT_GROUNDED)
 
     # Rule 3 — predicate/object-type contract. First matching rule wins;
