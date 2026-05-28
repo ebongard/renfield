@@ -3,10 +3,16 @@
 # entities and relations from conversation exchanges.
 
 de:
-  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt. Keine Nummern, IDs, URLs oder OCR-Artefakte als Entitaeten. Nur Entitaeten mit konkretem Eigennamen."
+  extraction_system: "Du extrahierst Entitaeten und Relationen aus Dialogen. Antworte NUR mit einem JSON-Objekt. Keine Nummern, IDs, URLs oder OCR-Artefakte als Entitaeten. Nur Entitaeten mit konkretem Eigennamen. Du erfindest niemals Fakten — du extrahierst ausschliesslich, was im Dialog steht."
 
   extraction_prompt: |
     Analysiere den folgenden Dialog und extrahiere benannte Entitaeten und ihre Beziehungen.
+
+    GRUNDREGELN — IMMER BEFOLGEN:
+    1. Sowohl Subject als auch Object jeder Relation MUESSEN woertlich im Dialog (User- ODER Assistent-Nachricht) vorkommen. Wenn auch nur einer der beiden Namen nicht im Text steht: KEINE Relation.
+    2. NIEMALS eine Relation ausgeben, bei der Subject und Object dieselbe Entitaet sind (kein Self-Loop wie "Anna ist_verheiratet_mit Anna").
+    3. NIEMALS Weltwissen ausserhalb des Dialogs nutzen, um Lücken zu fuellen. Wenn der Dialog nichts ueber den Ehepartner einer Person sagt, gibt es KEINE ist_verheiratet_mit-Relation — auch dann nicht, wenn du den Ehepartner aus Trainingsdaten zu kennen glaubst.
+    4. Pronomen sorgfaeltig aufloesen: "Du", "ich", "meine Frau", "meine Mutter" beziehen sich auf VERSCHIEDENE Personen. Fakten ueber "ich" gehoeren nicht zu "meine Mutter", auch wenn beide im selben Dialog vorkommen.
 
     Nur KONKRETE, BENANNTE Entitaeten extrahieren — mit echtem Namen oder Titel:
     - Personen (vollstaendiger Name oder Spitzname, NICHT generische Rollen)
@@ -17,8 +23,9 @@ de:
     - Konzepte: NUR persoenliche Hobbys, Studienfaecher, Berufsbezeichnungen — NICHT Dokumentfelder oder juristische Begriffe
 
     RELATIONEN extrahieren:
-    - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit")
+    - Beziehungen zwischen Entitaeten ("wohnt_in", "arbeitet_bei", "mag", "besitzt", "kennt", "ist_verheiratet_mit", "hat_kind", "ist_mutter_von", "ist_vater_von")
     - Nur Relationen die EXPLIZIT im Dialog erwaehnt werden
+    - Praedikat-Objekt-Typ muss passen: "wohnt_in" / "befindet_sich_in" / "hat_sitz_in" → Ort; "ist_verheiratet_mit" / "hat_kind" / "ist_mutter_von" → Person. Verwende KEIN Personen-Praedikat mit einem Ort als Object.
     - confidence: 0.5-1.0 (wie sicher ist die Relation)
 
     IGNORIERE (NIEMALS als Entitaet extrahieren):
@@ -32,6 +39,15 @@ de:
     - KEINE einzelnen deutschen Substantive die Dokumentfelder beschreiben: z.B. "Inkasso", "Flatrate", "Messstellenbetrieb", "Mahngebuehren", "Zahlungsbedingungen"
     - KEINE Geldbetraege oder Waehrungsangaben ("100 EUR", "0,04 Euro")
     - KEINE generischen Geschaeftsbegriffe ("Leistungserbringer", "Zahlungsdienstleister", "Vertragsnummer", "Abrechnungszeitraum")
+
+    BEISPIEL fuer korrekte Ablehnung — Dialog: "Anna ist meine Mutter."
+    RICHTIG:
+      entities: [{{"name": "Anna", "type": "person"}}]
+      relations: [{{"subject": "Anna", "predicate": "ist_mutter_von", "object": "<Sprecher-Name falls im Dialog genannt, sonst nichts>", "confidence": 0.9}}]
+    FALSCH (Self-Loop):
+      relations: [{{"subject": "Anna", "predicate": "ist_mutter_von", "object": "Anna"}}]
+    FALSCH (Halluzination — Ehemann nicht im Dialog):
+      relations: [{{"subject": "Anna", "predicate": "ist_verheiratet_mit", "object": "Hans Filbinger"}}]
 
     Dialog:
     User: {user_message}
@@ -99,10 +115,16 @@ de:
     }}
 
 en:
-  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object. No numbers, IDs, URLs, or OCR artifacts as entities. Only entities with concrete proper names."
+  extraction_system: "You extract entities and relations from dialogs. Reply ONLY with a JSON object. No numbers, IDs, URLs, or OCR artifacts as entities. Only entities with concrete proper names. You never invent facts — you only extract what is actually in the dialog."
 
   extraction_prompt: |
     Analyze the following dialog and extract named entities and their relationships.
+
+    GROUND RULES — ALWAYS FOLLOW:
+    1. Both the subject and the object of every relation MUST appear verbatim in the dialog (user OR assistant turn). If either name is not in the text: NO relation.
+    2. NEVER emit a relation where subject and object are the same entity (no self-loops like "Anna married_to Anna").
+    3. NEVER use world knowledge from outside the dialog to fill in facts. If the dialog says nothing about a person's spouse, there is NO married_to relation — even if you believe you know the spouse from training data.
+    4. Resolve pronouns carefully: "you", "I", "my wife", "my mother" refer to DIFFERENT people. Facts about "I" do not belong to "my mother", even when both appear in the same dialog.
 
     Only extract CONCRETE, NAMED entities — with real names or titles:
     - People (full names or nicknames, NOT generic roles)
@@ -113,8 +135,9 @@ en:
     - Concepts: ONLY personal hobbies, fields of study, job titles — NOT document fields or legal terms
 
     EXTRACT relations:
-    - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to")
+    - Relationships between entities ("lives_in", "works_at", "likes", "owns", "knows", "married_to", "has_child", "is_mother_of", "is_father_of")
     - Only relations EXPLICITLY mentioned in the dialog
+    - Predicate/object-type must match: "lives_in" / "located_in" / "headquartered_in" → place; "married_to" / "has_child" / "is_mother_of" → person. NEVER use a person-relation predicate with a place as the object.
     - confidence: 0.5-1.0 (how certain is the relation)
 
     IGNORE (NEVER extract as entity):
@@ -128,6 +151,15 @@ en:
     - NO single nouns describing document fields: e.g. "collection", "flatrate", "meter operation", "late fees", "payment terms"
     - NO monetary amounts or currency references ("100 EUR", "0.04 Euro")
     - NO generic business terms ("service provider", "payment processor", "contract number", "billing period")
+
+    EXAMPLE of correct rejection — dialog: "Anna is my mother."
+    CORRECT:
+      entities: [{{"name": "Anna", "type": "person"}}]
+      relations: [{{"subject": "Anna", "predicate": "is_mother_of", "object": "<speaker name if mentioned in dialog, otherwise nothing>", "confidence": 0.9}}]
+    WRONG (self-loop):
+      relations: [{{"subject": "Anna", "predicate": "is_mother_of", "object": "Anna"}}]
+    WRONG (hallucination — husband not in dialog):
+      relations: [{{"subject": "Anna", "predicate": "married_to", "object": "Hans Filbinger"}}]
 
     Dialog:
     User: {user_message}
