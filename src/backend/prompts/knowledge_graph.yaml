@@ -232,3 +232,24 @@ llm_options:
   top_p: 0.2
   num_predict: 1024
   num_ctx: 4096
+
+# Deterministic post-extraction validation (services/kg_validator.py).
+# Applied to every relation candidate before it is persisted, in BOTH the
+# chat path (extract_and_save) and the document path (extract_from_text).
+# See tasks/kg-strategy.md (P1) for the rationale.
+relation_validation:
+  # Rule 4 — confidence floor. Defense-in-depth only; the 2026-05-26 incident
+  # relations were all emitted at confidence 1.0, so this does not catch them.
+  confidence_floor: 0.6
+
+  # Rule 3 — predicate/object-type contract. First matching pattern wins.
+  # A predicate matching NO pattern is allowed (open vocabulary is deliberate;
+  # this table must not become a back-door closed enum). object_type is one of
+  # person|place|organization|thing|event|concept.
+  predicate_object_type:
+    # Kinship / marriage predicates must target a person.
+    - pattern: "^(heiratet|ist_verheiratet|verheiratet_mit|hat_kind|ist_kind_von|ist_(mutter|vater|sohn|tochter|elternteil|eltern)|hat_elternteil|ist_eltern_mit|ist_geschwister|ist_verwandt|married_to|has_child|is_(mother|father|son|daughter|parent|sibling)_of)"
+      object_type: person
+    # Location predicates must target a place.
+    - pattern: "^(wohnt_in|lebt_in|befindet_sich_in|hat_sitz_in|ansaessig_in|sitzt_in|liegt_in|lives_in|located_in|based_in|headquartered_in|resides_in)"
+      object_type: place

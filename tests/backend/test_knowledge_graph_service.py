@@ -415,6 +415,78 @@ class TestExtractAndSave:
         assert entities == []
         assert relations == []
 
+    @pytest.mark.unit
+    async def test_validator_drops_self_loop_and_hallucination(self, kg_service, db_session):
+        """The validator filters bad relations before they are persisted.
+
+        The LLM emits 3 relations against the dialog:
+          1. Eduard lives_in Berlin   — valid (grounded, type ok, conf ok)
+          2. Anna married_to Anna     — self-loop, must be dropped
+          3. Anna married_to Hans Filbinger — Hans not in dialog, must be dropped
+        Only #1 survives. All three entities are still created (entity
+        extraction is independent of relation validation).
+        """
+        llm_response = MagicMock()
+        llm_response.message.content = '''{
+            "entities": [
+                {"name": "Eduard", "type": "person"},
+                {"name": "Berlin", "type": "place"},
+                {"name": "Anna", "type": "person"},
+                {"name": "Hans Filbinger", "type": "person"}
+            ],
+            "relations": [
+                {"subject": "Eduard", "predicate": "lives_in", "object": "Berlin", "confidence": 0.9},
+                {"subject": "Anna", "predicate": "married_to", "object": "Anna", "confidence": 1.0},
+                {"subject": "Anna", "predicate": "married_to", "object": "Hans Filbinger", "confidence": 1.0}
+            ]
+        }'''
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._chat_client = mock_client
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        # Note: "Hans Filbinger" is NOT in the dialog text below.
+        entities, relations = await kg_service.extract_and_save(
+            "Eduard lives in Berlin. Anna is my mother.",
+            "Noted.",
+            user_id=None,
+        )
+
+        # All four entities created; only the one valid relation survives.
+        assert len(relations) == 1
+        assert relations[0].predicate == "lives_in"
+        preds = {r.predicate for r in relations}
+        assert "married_to" not in preds
+
+    @pytest.mark.unit
+    async def test_validator_drops_predicate_type_mismatch(self, kg_service, db_session):
+        """A kinship predicate pointing at a place is dropped."""
+        llm_response = MagicMock()
+        llm_response.message.content = '''{
+            "entities": [
+                {"name": "Anna", "type": "person"},
+                {"name": "Kleinenbroich", "type": "place"}
+            ],
+            "relations": [
+                {"subject": "Anna", "predicate": "ist_verheiratet_mit", "object": "Kleinenbroich", "confidence": 1.0}
+            ]
+        }'''
+
+        mock_client = AsyncMock()
+        mock_client.chat = AsyncMock(return_value=llm_response)
+        kg_service._chat_client = mock_client
+        kg_service._find_similar_entity = AsyncMock(return_value=None)
+
+        entities, relations = await kg_service.extract_and_save(
+            "Anna wohnt in Kleinenbroich.",  # both names grounded
+            "Notiert.",
+            user_id=None,
+        )
+
+        # Person-predicate → place object is a type mismatch → dropped.
+        assert relations == []
+
 
 # ==========================================================================
 # Context Retrieval

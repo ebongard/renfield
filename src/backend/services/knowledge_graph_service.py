@@ -17,6 +17,8 @@ from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import KG_ENTITY_TYPES, TIER_PUBLIC, KGEntity, KGRelation
+from services.kg_validator import load_heuristics as load_kg_heuristics
+from services.kg_validator import validate_relation as validate_kg_relation
 from utils.config import settings
 from utils.llm_client import get_default_client, get_embed_client
 
@@ -697,8 +699,12 @@ class KnowledgeGraphService:
         if rejected_count:
             logger.info(f"KG: Filtered out {rejected_count} invalid entities from conversation")
 
-        # Save relations
+        # Save relations (validated). Source text is the full exchange so the
+        # grounding rule can verify both entity names were actually spoken.
+        validation_source = f"{user_message}\n{assistant_response}"
+        heuristics = load_kg_heuristics(prompt_manager)
         saved_relations = []
+        rejected_relations = 0
         for rel in relations_data:
             subj_name = rel.get("subject", "").strip().lower()
             pred = rel.get("predicate", "").strip()
@@ -719,6 +725,22 @@ class KnowledgeGraphService:
             except (TypeError, ValueError):
                 conf = 0.8
 
+            verdict = validate_kg_relation(
+                subject=subject,
+                obj=obj,
+                predicate=pred,
+                confidence=conf,
+                source_text=validation_source,
+                heuristics=heuristics,
+            )
+            if not verdict.ok:
+                logger.info(
+                    f"KG: Rejected relation '{subject.name}' --{pred}--> "
+                    f"'{obj.name}' ({verdict.reason})"
+                )
+                rejected_relations += 1
+                continue
+
             relation = await self.save_relation(
                 subject_id=subject.id,
                 predicate=pred,
@@ -734,7 +756,8 @@ class KnowledgeGraphService:
         if saved_entities or saved_relations:
             logger.info(
                 f"KG: Extracted {len(saved_entities)} entities, "
-                f"{len(saved_relations)} relations (user_id={user_id})"
+                f"{len(saved_relations)} relations "
+                f"({rejected_relations} rejected by validator, user_id={user_id})"
             )
 
             # Broadcast to live KG graph viewers (fire-and-forget)
@@ -848,8 +871,11 @@ class KnowledgeGraphService:
         if rejected_count:
             logger.info(f"KG: Filtered out {rejected_count} invalid entities from document")
 
-        # Save relations
+        # Save relations (validated). Source text is the document chunk so the
+        # grounding rule can verify both entity names appear in the passage.
+        heuristics = load_kg_heuristics(prompt_manager)
         saved_relations = []
+        rejected_relations = 0
         for rel in relations_data:
             subj_name = rel.get("subject", "").strip().lower()
             pred = rel.get("predicate", "").strip()
@@ -870,6 +896,22 @@ class KnowledgeGraphService:
             except (TypeError, ValueError):
                 conf = 0.8
 
+            verdict = validate_kg_relation(
+                subject=subject,
+                obj=obj,
+                predicate=pred,
+                confidence=conf,
+                source_text=text,
+                heuristics=heuristics,
+            )
+            if not verdict.ok:
+                logger.info(
+                    f"KG: Rejected document relation '{subject.name}' --{pred}--> "
+                    f"'{obj.name}' ({verdict.reason})"
+                )
+                rejected_relations += 1
+                continue
+
             relation = await self.save_relation(
                 subject_id=subject.id,
                 predicate=pred,
@@ -886,7 +928,8 @@ class KnowledgeGraphService:
             logger.info(
                 f"KG: Extracted {len(saved_entities)} entities, "
                 f"{len(saved_relations)} relations from text "
-                f"(user_id={user_id}, source={source_ref})"
+                f"({rejected_relations} rejected by validator, "
+                f"user_id={user_id}, source={source_ref})"
             )
 
         return saved_entities, saved_relations
