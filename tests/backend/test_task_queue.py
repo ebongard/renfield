@@ -278,3 +278,86 @@ class TestClose:
         await queue.close()
 
         mock_redis.close.assert_called_once()
+
+
+# ============================================================================
+# DocumentTaskQueue.read_one — blocking long-poll semantics
+# ============================================================================
+
+
+@pytest.fixture
+def doc_queue(mock_redis):
+    """A DocumentTaskQueue bound to a mock Redis client (injected directly,
+    so no from_url patching needed)."""
+    from services.task_queue import DocumentTaskQueue
+
+    return DocumentTaskQueue(redis_client=mock_redis)
+
+
+class TestDocumentTaskQueueReadOne:
+    """``read_one`` long-polls with ``XREADGROUP BLOCK``. The window-expiry
+    path must yield ``None`` (no task) regardless of which redis-py the image
+    floated to."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_redis_timeout(self, doc_queue, mock_redis):
+        """Regression: redis-py 8.0 RAISES ``redis.exceptions.TimeoutError`` when
+        a BLOCK read's window expires with no entry (7.x returned ``[]``). The
+        worker poll loop must not crashloop on this — it must read it as "no
+        task". See services/task_queue.py read_one."""
+        from redis.exceptions import TimeoutError as RedisTimeoutError
+
+        mock_redis.xreadgroup = AsyncMock(side_effect=RedisTimeoutError("Timeout reading from redis:6379"))
+
+        result = await doc_queue.read_one(block_ms=5_000)
+
+        assert result is None
+        mock_redis.xreadgroup.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_none_on_empty_result(self, doc_queue, mock_redis):
+        """7.x-style empty-window: xreadgroup returns a falsy result → None."""
+        mock_redis.xreadgroup = AsyncMock(return_value=[])
+
+        assert await doc_queue.read_one(block_ms=1) is None
+
+    @pytest.mark.asyncio
+    async def test_returns_entry_on_data(self, doc_queue, mock_redis):
+        """A real stream entry is parsed into a StreamEntry with decoded params."""
+        mock_redis.xreadgroup = AsyncMock(
+            return_value=[("renfield:tasks:document", [("1700000000000-0", {"payload": '{"document_id": 44}'})])]
+        )
+
+        entry = await doc_queue.read_one(block_ms=1)
+
+        assert entry is not None
+        assert entry.entry_id == "1700000000000-0"
+        assert entry.params == {"document_id": 44}
+
+    def test_client_socket_timeout_exceeds_block_window(self):
+        """Root-cause guard. redis-py 8.0 defaults socket_timeout to 5s; a client
+        built without an explicit one races read_one's 5s BLOCK and crashloops the
+        worker. The default-constructed client MUST carry an explicit socket_timeout
+        STRICTLY GREATER than read_one's default block window — assert both the
+        invariant and that the client actually got the value, so a future redis-py
+        default change (or a dropped kwarg) can't silently reintroduce the bug.
+
+        Uses a real lazy from_url client (no connection opened), so it runs without
+        a live redis."""
+        import inspect
+
+        from services.task_queue import DocumentTaskQueue, _REDIS_SOCKET_TIMEOUT_S
+
+        block_default_ms = inspect.signature(
+            DocumentTaskQueue.read_one
+        ).parameters["block_ms"].default
+        assert _REDIS_SOCKET_TIMEOUT_S > block_default_ms / 1000, (
+            f"socket_timeout {_REDIS_SOCKET_TIMEOUT_S}s must exceed block window "
+            f"{block_default_ms}ms or the blocking read races the socket timeout"
+        )
+
+        q = DocumentTaskQueue()  # real from_url, lazy — no socket opened
+        assert (
+            q.redis_client.connection_pool.connection_kwargs.get("socket_timeout")
+            == _REDIS_SOCKET_TIMEOUT_S
+        )

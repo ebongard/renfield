@@ -17,8 +17,22 @@ from typing import Any
 
 import redis.asyncio as aioredis
 from loguru import logger
+from redis.exceptions import TimeoutError as RedisTimeoutError
 
 from utils.config import settings
+
+# redis-py 8.0 changed DEFAULT_SOCKET_TIMEOUT from None to 5s. A client built via
+# from_url() WITHOUT an explicit socket_timeout therefore applies a 5s read timeout
+# to EVERY command — including the blocking ``XREADGROUP ... BLOCK 5000`` in
+# DocumentTaskQueue.read_one(), whose 5s server-side block then races the 5s socket
+# timeout, loses, raises redis.exceptions.TimeoutError, and disconnects the socket on
+# essentially every idle poll (this crashlooped the document worker after the image
+# floated redis to 8.0.0). We pin an explicit socket_timeout STRICTLY GREATER than
+# read_one's block window: the empty BLOCK reply then always arrives before the read
+# times out (returns [] cleanly, connection reused), while xack/xadd/heartbeat still
+# get a sane finite timeout instead of hanging forever. MUST stay > the largest
+# block_ms read_one is ever called with (currently 5_000ms). Verified vs redis-py 8.0.0.
+_REDIS_SOCKET_TIMEOUT_S = 15
 
 
 class TaskQueue:
@@ -143,7 +157,9 @@ class DocumentTaskQueue:
         visibility_ms: int = DEFAULT_VISIBILITY_MS,
     ):
         self.redis_client = redis_client or aioredis.from_url(
-            settings.redis_url, decode_responses=True
+            settings.redis_url,
+            decode_responses=True,
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_S,
         )
         self.consumer_id = consumer_id
         self.stream_key = stream_key
@@ -186,13 +202,28 @@ class DocumentTaskQueue:
     async def read_one(self, block_ms: int = 5_000) -> StreamEntry | None:
         """Block for up to ``block_ms`` ms waiting for a task. Returns
         ``None`` if the window closed with no new entry."""
-        result = await self.redis_client.xreadgroup(
-            groupname=self.group_name,
-            consumername=self.consumer_id,
-            streams={self.stream_key: ">"},
-            count=1,
-            block=block_ms,
-        )
+        try:
+            result = await self.redis_client.xreadgroup(
+                groupname=self.group_name,
+                consumername=self.consumer_id,
+                streams={self.stream_key: ">"},
+                count=1,
+                block=block_ms,
+            )
+        except RedisTimeoutError:
+            # Defense-in-depth. The primary fix is _REDIS_SOCKET_TIMEOUT_S being
+            # set > block_ms at client construction, so a normal idle poll returns
+            # [] (handled below), NOT a timeout. Reaching here means a single read
+            # exceeded the socket timeout (~15s) — redis is genuinely pathological
+            # (overloaded / packets dropped while TCP stays up). Degrade to "no
+            # task" so the worker retries instead of crashing, but WARN so the
+            # stall is visible rather than silently masked.
+            logger.warning(
+                f"DocumentTaskQueue.read_one: redis read timed out after "
+                f">{_REDIS_SOCKET_TIMEOUT_S}s (block_ms={block_ms}); treating as no "
+                f"task. Redis may be overloaded or unreachable at the socket layer."
+            )
+            return None
         if not result:
             return None
         # XREADGROUP returns [(stream_name, [(entry_id, {field: value}), ...])]

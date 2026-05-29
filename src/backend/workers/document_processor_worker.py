@@ -39,7 +39,11 @@ from loguru import logger
 from services.database import AsyncSessionLocal
 from services.progress import DocumentProgress
 from services.rag_service import RAGService
-from services.task_queue import DocumentTaskQueue, StreamEntry
+from services.task_queue import (
+    _REDIS_SOCKET_TIMEOUT_S,
+    DocumentTaskQueue,
+    StreamEntry,
+)
 from utils.config import settings
 
 HEARTBEAT_KEY = "renfield:worker:document:heartbeat"
@@ -111,7 +115,15 @@ async def main() -> None:
     consumer = _pod_name()
     logger.info(f"document-worker starting (consumer={consumer!r})")
 
-    redis = aioredis.from_url(settings.redis_url, decode_responses=True)
+    # socket_timeout > read_one's block window — see _REDIS_SOCKET_TIMEOUT_S.
+    # This client is shared by the blocking read loop AND the heartbeat, so the
+    # explicit timeout must be set here too (passing the client in bypasses
+    # DocumentTaskQueue's own from_url default).
+    redis = aioredis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_S,
+    )
     queue = DocumentTaskQueue(redis_client=redis, consumer_id=consumer)
     await queue.ensure_group()
 
