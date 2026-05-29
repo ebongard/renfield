@@ -216,6 +216,35 @@ class DocumentProcessingHistoryService:
         )
         return bool(result.scalar())
 
+    async def has_successful_gate_reprocess(self, document_id: int) -> bool:
+        """True iff a COMPLETED ``script_purge`` history row exists for this doc
+        with ``force_ocr=false`` — i.e. the cleanup script already reprocessed it
+        in gate-decided (non-forced) mode.
+
+        Default-mode idempotence guard for ``bin/purge_low_quality_chunks.py``:
+        the first gate reprocess runs (recovering a doc an earlier *forced* run
+        may have degraded), then subsequent runs skip it so repeated runs
+        converge. Deliberately distinct from ``has_force_ocr_succeeded`` — old
+        ``force_ocr=true`` rows do NOT count, so the recovery pass still
+        reprocesses the previously force-OCR'd corpus exactly once. (``trigger``
+        is quoted — it is a Postgres reserved word.)
+        """
+        result = await self.db.execute(
+            text(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM document_processing_history
+                    WHERE document_id = :document_id
+                      AND force_ocr = false
+                      AND "trigger" = 'script_purge'
+                      AND status = 'completed'
+                )
+                """
+            ),
+            {"document_id": document_id},
+        )
+        return bool(result.scalar())
+
     async def latest(self, document_id: int) -> DocumentProcessingHistory | None:
         """Most-recent history row for a doc by ``started_at``. For admin UX
         (deferred item C)."""

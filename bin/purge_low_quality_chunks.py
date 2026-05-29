@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """
-Purge low-quality chunks — re-OCR transition tool.
+Purge low-quality chunks — reprocess transition tool.
+
+Default: reprocess low-quality docs through the normal quality gate, which OCRs
+only when the text layer is garbled/absent (and unions the raw text layer in,
+per Schicht A T-A0-2). Pass ``--force-ocr`` ONLY for a batch you know is
+genuinely scanned/garbled — forcing OCR on a good digital PDF degrades it by
+dropping positioned text-layer tokens. (Historically this script hardcoded
+force_ocr=True, which degraded text-layer PDFs; that is now opt-in.)
 
 ASCII flow:
 
@@ -20,8 +27,10 @@ ASCII flow:
                                                        │ yes
                                                        ▼
                                 ┌──────────────────────────────────────┐
-                                │ has_force_ocr_succeeded(doc)?        │ ─yes→ skip
-                                │ (history idempotence guard)          │
+                                │ already processed? (idempotence)     │ ─yes→ skip
+                                │  force mode: has_force_ocr_succeeded │
+                                │  default:    has_successful_gate_    │
+                                │              reprocess               │
                                 └──────────────────────┬───────────────┘
                                                        │ no
                                                        ▼
@@ -39,7 +48,8 @@ ASCII flow:
                                                        │ acquired
                                                        ▼
                                 ┌──────────────────────────────────────┐
-                                │ rag.reindex_document(force_ocr=True, │
+                                │ rag.reindex_document(                │
+                                │   force_ocr=args.force_ocr,          │
                                 │   trigger=SCRIPT_PURGE)              │
                                 │ → history row written by track()     │
                                 └──────────────────────┬───────────────┘
@@ -59,8 +69,15 @@ Safety:
       the two writers race. Mitigation: run the script in an offline
       window with no user-driven reindexes.
     - Dry-run by DEFAULT. Pass ``--apply`` to mutate.
-    - Idempotent across runs: ``has_force_ocr_succeeded`` skips any doc
-      already re-OCR'd, regardless of when.
+    - Gate-decides by DEFAULT. Pass ``--force-ocr`` only for genuinely
+      scanned/garbled batches (forcing OCR on a good text-layer PDF degrades it).
+    - Idempotent in BOTH modes (repeated runs converge):
+      * ``--force-ocr``: ``has_force_ocr_succeeded`` skips docs already force-OCR'd.
+      * default: ``has_successful_gate_reprocess`` skips docs already
+        gate-reprocessed (a ``force_ocr=false`` script_purge success). Old
+        ``force_ocr=true`` rows do NOT count, so a previously force-OCR'd doc is
+        still reprocessed ONCE (recovering text-layer tokens an earlier forced
+        run dropped), then skipped thereafter.
     - Per-doc fault isolation: a single failure is logged and the loop
       continues with the next doc.
 
@@ -159,6 +176,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Min # of low-quality chunks in a document to make it a candidate. "
         "Default 1 (any).",
     )
+    p.add_argument(
+        "--force-ocr",
+        action="store_true",
+        help="Force full-page OCR on reprocess (ignores the embedded text layer). "
+        "DEFAULT OFF: reprocess via the normal quality gate, which OCRs only when "
+        "the text layer is garbled/absent. Forcing OCR on a good digital PDF "
+        "DEGRADES it (drops positioned text-layer tokens — see Schicht A T-A0-2). "
+        "Use this only for a batch you KNOW is genuinely scanned/garbled.",
+    )
     return p
 
 
@@ -256,10 +282,12 @@ async def _process_one(
     *,
     apply: bool,
     reason_threshold: int,
+    force_ocr: bool,
 ) -> str:
     """Process one document; returns a result code for the run summary.
 
-    Result codes: ``skipped_already_re_ocrd``, ``skipped_below_threshold``,
+    Result codes: ``skipped_already_re_ocrd`` (force mode),
+    ``skipped_already_reprocessed`` (default mode), ``skipped_below_threshold``,
     ``skipped_locked_by_script``, ``skipped_row_locked``, ``would_purge``
     (dry-run), ``purged`` (apply), ``error``.
     """
@@ -271,11 +299,21 @@ async def _process_one(
         if low_q < reason_threshold:
             return "skipped_below_threshold"
 
-        # Idempotence: has any prior force_ocr=True succeeded for this doc?
+        # Idempotence guards (both ensure repeated runs converge):
+        #   --force-ocr mode: skip docs already force-OCR'd (don't re-force).
+        #   default mode:     skip docs already GATE-reprocessed (force_ocr=false
+        #                     script_purge success). A doc's *old* force_ocr=true
+        #                     rows do NOT count here, so the recovery pass still
+        #                     reprocesses the previously force-OCR'd corpus once;
+        #                     after that the force_ocr=false row makes it skip.
         hist = DocumentProcessingHistoryService(session)
-        if await hist.has_force_ocr_succeeded(doc_id):
-            logger.info("doc_id=%s already re-OCR'd → skip", doc_id)
-            return "skipped_already_re_ocrd"
+        if force_ocr:
+            if await hist.has_force_ocr_succeeded(doc_id):
+                logger.info("doc_id=%s already force-OCR'd → skip", doc_id)
+                return "skipped_already_re_ocrd"
+        elif await hist.has_successful_gate_reprocess(doc_id):
+            logger.info("doc_id=%s already gate-reprocessed → skip", doc_id)
+            return "skipped_already_reprocessed"
 
         if not apply:
             logger.info(
@@ -318,10 +356,14 @@ async def _process_one(
             rag = RAGService(session)
             await rag.reindex_document(
                 document_id=doc_id,
-                force_ocr=True,
+                force_ocr=force_ocr,
                 trigger=ProcessingTrigger.SCRIPT_PURGE,
             )
-            logger.info("doc_id=%s purged + re-OCR'd", doc_id)
+            logger.info(
+                "doc_id=%s purged + reprocessed (%s)",
+                doc_id,
+                "forced OCR" if force_ocr else "gate-decided",
+            )
             return "purged"
         except Exception as e:
             # Per-doc fault isolation — log and let the caller continue.
@@ -371,6 +413,7 @@ async def _run(args: argparse.Namespace) -> int:
                 doc_id,
                 apply=args.apply,
                 reason_threshold=args.reason_threshold,
+                force_ocr=args.force_ocr,
             )
             counters[code] = counters.get(code, 0) + 1
 

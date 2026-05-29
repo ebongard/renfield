@@ -1038,9 +1038,11 @@ class RAGService:
         the same Document row (no new row created — distinct from
         ``ingest_document``, which always inserts).
 
-        ``force_ocr`` flips Docling's full-page OCR on; the cleanup script
-        calls this with ``force_ocr=True, trigger=SCRIPT_PURGE`` so the
-        history row records both the engine choice and the trigger.
+        ``force_ocr`` flips Docling's full-page OCR on. The cleanup script
+        (``bin/purge_low_quality_chunks.py``) passes ``trigger=SCRIPT_PURGE``
+        and ``force_ocr=False`` by DEFAULT (gate-decides) — only ``--force-ocr``
+        passes ``True``. Forcing OCR on a good text-layer PDF degrades it
+        (Schicht A T-A0-2/T-A0-3); the history row records both engine + trigger.
 
         ``parent_chunk_id`` self-FK was promoted to ``ON DELETE CASCADE`` in
         pc20260530 — the bulk delete below relies on that for the

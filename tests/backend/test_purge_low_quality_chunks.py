@@ -61,10 +61,15 @@ class TestArgValidation:
         assert ns.limit is None
         assert ns.batch_size == 500
         assert ns.reason_threshold == 1
+        assert ns.force_ocr is False  # T-A0-3: gate-decides by default, no blanket force-OCR
 
     def test_apply_flag(self):
         ns = purge._build_parser().parse_args(["--apply"])
         assert ns.apply is True
+
+    def test_force_ocr_flag(self):
+        ns = purge._build_parser().parse_args(["--force-ocr"])
+        assert ns.force_ocr is True
 
     def test_batch_size_zero_rejected(self):
         ns = purge._build_parser().parse_args(["--batch-size", "0"])
@@ -196,6 +201,7 @@ class TestPgIntegration:
                 doc_id=doc.id,
                 apply=False,
                 reason_threshold=1,
+                force_ocr=False,
             )
 
         assert code == "would_purge"
@@ -204,13 +210,13 @@ class TestPgIntegration:
     async def test_below_threshold_skipped(self, committing_session):
         doc = await _make_doc_with_chunks(committing_session, good_chunks=2, bad_chunks=0)
         code = await purge._process_one(
-            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1,
+            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1, force_ocr=False,
         )
         assert code == "skipped_below_threshold"
 
-    async def test_already_re_ocrd_skipped(self, committing_session):
-        """has_force_ocr_succeeded must short-circuit even in dry-run mode
-        so the operator sees an honest report of what still needs work."""
+    async def test_already_force_ocrd_skipped_in_force_mode(self, committing_session):
+        """In --force-ocr mode, has_force_ocr_succeeded short-circuits so we
+        don't re-force a doc already force-OCR'd."""
         doc = await _make_doc_with_chunks(committing_session, bad_chunks=2)
         # Pre-seed the history table with a completed force_ocr row.
         svc = DocumentProcessingHistoryService(committing_session)
@@ -218,15 +224,43 @@ class TestPgIntegration:
         await svc.close_success(hid, 5, 2, "docling_full_page_ocr")
 
         code = await purge._process_one(
-            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1,
+            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1, force_ocr=True,
         )
         assert code == "skipped_already_re_ocrd"
+
+    async def test_default_mode_reprocesses_previously_force_ocrd(self, committing_session):
+        """T-A0-3: in default (gate-decided) mode, a doc with a prior successful
+        force-OCR is NOT skipped — it is reprocessed so it can recover text-layer
+        tokens an earlier forced run dropped (the doc-44 degradation class)."""
+        doc = await _make_doc_with_chunks(committing_session, bad_chunks=2)
+        svc = DocumentProcessingHistoryService(committing_session)
+        hid = await svc.open(doc.id, force_ocr=True, trigger=ProcessingTrigger.SCRIPT_PURGE)
+        await svc.close_success(hid, 5, 2, "docling_full_page_ocr")
+
+        code = await purge._process_one(
+            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1, force_ocr=False,
+        )
+        assert code == "would_purge"  # NOT skipped — old force_ocr=true row doesn't count
+
+    async def test_default_mode_skips_already_gate_reprocessed(self, committing_session):
+        """T-A0-3 convergence: once a doc has a successful gate reprocess
+        (force_ocr=false script_purge), default mode skips it so repeated runs
+        terminate instead of re-deleting + re-embedding it every run."""
+        doc = await _make_doc_with_chunks(committing_session, bad_chunks=2)
+        svc = DocumentProcessingHistoryService(committing_session)
+        hid = await svc.open(doc.id, force_ocr=False, trigger=ProcessingTrigger.SCRIPT_PURGE)
+        await svc.close_success(hid, 5, 2, "docling")
+
+        code = await purge._process_one(
+            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=1, force_ocr=False,
+        )
+        assert code == "skipped_already_reprocessed"
 
     async def test_reason_threshold_gating(self, committing_session):
         """A doc with 1 bad chunk should be skipped when --reason-threshold 3."""
         doc = await _make_doc_with_chunks(committing_session, bad_chunks=1)
         code = await purge._process_one(
-            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=3,
+            lock_conn=None, doc_id=doc.id, apply=False, reason_threshold=3, force_ocr=False,
         )
         assert code == "skipped_below_threshold"
 
@@ -254,10 +288,12 @@ class TestPgIntegration:
                     doc_id=doc.id,
                     apply=True,
                     reason_threshold=1,
+                    force_ocr=False,
                 )
             assert code == "purged"
             mock_reindex.assert_awaited_once()
-            assert mock_reindex.call_args.kwargs["force_ocr"] is True
+            # T-A0-3: default path reprocesses WITHOUT forcing OCR (gate decides).
+            assert mock_reindex.call_args.kwargs["force_ocr"] is False
             assert mock_reindex.call_args.kwargs["trigger"] == ProcessingTrigger.SCRIPT_PURGE
         finally:
             await lock_conn.close()
