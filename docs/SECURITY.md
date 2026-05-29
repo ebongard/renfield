@@ -144,6 +144,16 @@ The circuit breaker protects against cascading failures when the LLM or agent lo
 
 Implementation: `src/backend/utils/circuit_breaker.py`
 
+## Cross-Cluster LLM/Voice Ingress Allowlist
+
+When GPU services in the `renfield` namespace are exposed to **other clusters** over Traefik `*.test.local` ingresses (e.g. acting as the LLM/voice tier for a Reva prod cluster — see [KUBERNETES_DEPLOYMENT.md](KUBERNETES_DEPLOYMENT.md#cross-cluster-service-exposure-llm--voice)), those endpoints must be IP-restricted. `ollama` / `llama-server` have **no built-in auth**, so an open `*.test.local` ingress lets any LAN host drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
+
+**Control:** a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`) on each external LLM/voice ingress, `sourceRange` = the consuming cluster's node subnet.
+
+**Prerequisite:** `traefik-web-service` must use `externalTrafficPolicy: Local`. With MetalLB-L2 + the default `Cluster` policy, kube-proxy SNATs the client to a node IP before Traefik sees it, defeating any source-IP allowlist. Because Calico `natOutgoing` SNATs the consumer's pod IP to its node IP, allowlist the **node** subnet (not pod CIDRs — clusters often share the `172.16/16` pod range).
+
+> In-cluster consumers use the ClusterIP Services directly and are unaffected by this gate.
+
 ## Secrets Management
 
 Production uses Docker Compose file-based secrets (`/run/secrets/`) instead of `.env` for sensitive values. See [SECRETS_MANAGEMENT.md](SECRETS_MANAGEMENT.md) for details.

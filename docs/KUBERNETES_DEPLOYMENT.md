@@ -190,6 +190,35 @@ Satellites and browsers resolve `renfield.local` via multicast DNS. The `mdns-re
 
 For clients whose resolvers bypass mDNS (e.g., `getent hosts renfield.local` via DNS-only on some systems), the site's upstream DNS also carries the record.
 
+## Cross-cluster service exposure (LLM / voice)
+
+Some GPU-backed services in the `renfield` namespace are exposed to **other clusters** on the LAN over Traefik `*.test.local` hostnames (VIP `192.168.1.230`), not just to in-cluster pods. Today the external consumer is the **Reva** prod cluster (`192.168.99.0/24`), which uses this cluster as its router/embeddings + voice tier:
+
+| Hostname | Backend Service | Port | External consumer |
+|---|---|---|---|
+| `ollama.test.local` | `ollama` | 11434 | Reva router / embeddings |
+| `voice.test.local` | `voice-server` | 8080 | Reva voice (`VOICE_SERVER_URL`) |
+| `llama-agent.test.local` | `llama-server-agent` | 8080 | (dormant — agent normally scaled to 0) |
+
+> In-cluster Renfield (`backend`) reaches these same services via the ClusterIP Services (`voice-server:8080`, `ollama:11434`) and does **not** use these ingresses.
+
+**Security — IP allowlist.** `ollama`/`llama-server` have no built-in auth, so these ingresses are gated by a Traefik `IPAllowList` middleware (`llm-ingress-allowlist`, namespace `renfield`) restricting the source to the consuming cluster's subnet — otherwise any LAN host could drive unauthenticated, uncapped inference on the GPU (DoS / cost-abuse).
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata: { name: llm-ingress-allowlist, namespace: renfield }
+spec:
+  ipAllowList:
+    sourceRange:
+      - 192.168.99.0/24      # Reva prod cluster (append new consumer subnets here)
+```
+Attached per-ingress via `traefik.ingress.kubernetes.io/router.middlewares: renfield-llm-ingress-allowlist@kubernetescrd`.
+
+**Prerequisite:** `traefik-web-service` must run `externalTrafficPolicy: Local`. With MetalLB-L2 + the default `Cluster` policy, kube-proxy SNATs the client to a node IP before Traefik sees it, so `IPAllowList` (which matches the direct TCP remote) would gate node IPs and fail silently. The consuming cluster appears by its **node** LAN IP (Calico `natOutgoing` SNATs the pod IP), so allowlist on the node subnet, not pod IPs.
+
+Manifests live in the cluster repo (`private_k8s/renfield-llm-voice-ingress.yaml`, `private_k8s/traefik.yaml`). Cross-referenced from Reva at `docs/operations/security-hardening.md` §11.
+
 ## Deploy Sequence
 
 ```bash
