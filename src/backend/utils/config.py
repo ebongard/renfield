@@ -310,6 +310,18 @@ class Settings(BaseSettings):
     # distinct error_message='ocr_quality_low_after_forced_ocr' so the
     # maintenance UI can distinguish "tried our best" from "first attempt".
     rag_chunk_quality_drop_threshold: float = Field(default=0.30, ge=0.0, le=1.0)
+    # Text-layer UNION for field extraction (Schicht A). A raw poppler `pdftotext`
+    # pass recovers positioned text-layer tokens (e.g. right-aligned deadline dates
+    # in subsetted no-ToUnicode fonts) that the Docling/OCR stack drops; Docling OCR
+    # in turn recovers image-only values the text layer lacks. process_document unions
+    # them into result["field_text"] when the text layer passes these quality gates.
+    # A garbled/empty text layer is dropped (OCR-only). Thresholds calibrated on the
+    # Schicht A golden set (see tasks T-A0-1/T-A0-2).
+    rag_text_layer_min_chars_per_page: int = 50      # below => scan/no text layer => OCR-only
+    rag_text_layer_min_space_ratio: float = 0.05     # below => no-space mojibake => drop text layer
+    rag_text_layer_max_replacement_ratio: float = 0.02  # above => broken encoding => drop text layer
+    rag_text_layer_min_vowel_ratio: float = 0.55     # below => garbled glyphs => drop text layer
+    rag_text_layer_max_chars: int = 1_000_000        # cap raw text-layer length (OOM guard on pathological PDFs)
 
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in

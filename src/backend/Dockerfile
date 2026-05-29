@@ -99,6 +99,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libportaudio2 \
     libgomp1 \
     espeak-ng \
+    poppler-utils \
     wget \
     curl \
     ca-certificates \

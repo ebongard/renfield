@@ -5,6 +5,9 @@ Handles document parsing, chunking, and metadata extraction for RAG.
 Supports: PDF, DOCX, PPTX, XLSX, HTML, MD, TXT, and images.
 """
 import asyncio
+import re
+import shutil
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -85,6 +88,75 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"Fehler beim Initialisieren von Docling: {e}")
             raise
+
+    _VOWELS = set("aeiouäöüAEIOUÄÖÜ")
+
+    @staticmethod
+    def extract_text_layer(file_path: str) -> str:
+        """Raw PDF text-layer extraction via poppler ``pdftotext -layout``.
+
+        Recovers positioned text-layer tokens (e.g. a right-aligned deadline date
+        rendered in a subsetted no-ToUnicode font) that the Docling/OCR stack drops.
+        Verified as the ONLY extractor that recovers such tokens (pymupdf and Docling
+        both miss the MacRoman/uni=no case — see tasks/T-A0-1-RESULTS). Used to build
+        the field-extraction UNION; NOT used for RAG chunking.
+
+        Returns "" for non-PDFs, when ``pdftotext`` is unavailable, or on any error
+        (the caller then falls back to Docling/OCR output alone — no hard failure).
+        """
+        if not str(file_path).lower().endswith(".pdf"):
+            return ""
+        if shutil.which("pdftotext") is None:
+            logger.warning("pdftotext (poppler-utils) not installed — text-layer union skipped")
+            return ""
+        try:
+            proc = subprocess.run(
+                ["pdftotext", "-layout", file_path, "-"],
+                capture_output=True, timeout=60, check=False,
+            )
+            if proc.returncode != 0:
+                logger.warning(f"pdftotext exit {proc.returncode} for {Path(file_path).name}")
+                return ""
+            text = proc.stdout.decode("utf-8", errors="replace")
+            cap = settings.rag_text_layer_max_chars
+            if len(text) > cap:
+                logger.warning(f"text layer truncated to {cap} chars for {Path(file_path).name}")
+                text = text[:cap]
+            return text
+        except Exception as e:  # subprocess timeout / decode / OS error
+            logger.warning(f"text-layer extraction failed for {Path(file_path).name}: {e}")
+            return ""
+
+    @classmethod
+    def assess_text_layer_quality(cls, text: str, page_count: int = 1) -> tuple[bool, str]:
+        """Decide whether a raw text layer is trustworthy enough to UNION into
+        field_text. Multi-signal (calibrated on the Schicht A golden set, T-A0-1):
+        coverage, space ratio, replacement/control-char ratio, vowel-token ratio.
+
+        Returns ``(usable, reason)``. ``usable=False`` ⇒ drop the text layer and use
+        Docling/OCR output alone (the text layer is empty/scan or garbled).
+        Distinct from ``_is_text_garbled`` (which gates the OCR re-conversion); this
+        gates the field-extraction union and is intentionally a separate decision.
+        """
+        n = len(text)
+        if n == 0:
+            return False, "empty text layer"
+        chars_per_page = n / max(1, page_count)
+        if chars_per_page < settings.rag_text_layer_min_chars_per_page:
+            return False, f"sparse text layer ({chars_per_page:.0f} chars/page) — likely a scan"
+        space_ratio = text.count(" ") / n
+        if space_ratio < settings.rag_text_layer_min_space_ratio:
+            return False, f"low space ratio ({space_ratio:.1%}) — no-space mojibake"
+        repl = text.count("�") + sum(1 for c in text if ord(c) < 9 or 13 < ord(c) < 32)
+        if repl / n > settings.rag_text_layer_max_replacement_ratio:
+            return False, f"high replacement/control ratio ({repl / n:.1%}) — broken encoding"
+        toks = re.findall(r"\S+", text)
+        alpha = [t for t in toks if sum(c.isalpha() for c in t) >= 3]
+        if alpha:
+            vowel_ratio = sum(1 for t in alpha if any(c in cls._VOWELS for c in t)) / len(alpha)
+            if vowel_ratio < settings.rag_text_layer_min_vowel_ratio:
+                return False, f"low vowel-token ratio ({vowel_ratio:.0%}) — garbled glyphs"
+        return True, "usable"
 
     @staticmethod
     def _is_text_garbled(text: str) -> bool:
@@ -297,12 +369,35 @@ class DocumentProcessor:
                 + (f"({dropped} dropped as low-quality)" if dropped else "")
             )
 
+            # Field-extraction UNION (Schicht A): Docling/OCR output ∪ raw text layer.
+            # Docling recovers OCR-only image values; the raw text layer recovers
+            # positioned tokens Docling drops (right-aligned dates, no-ToUnicode fonts).
+            # Neither alone is complete on hybrid PDFs. RAG chunking is unaffected; this
+            # only populates result["field_text"] for downstream field extractors.
+            # Run both blocking calls off the event loop (executor), matching how
+            # Docling conversion is dispatched above — a 60s pdftotext or a large
+            # export must not stall concurrent requests.
+            docling_text = ""
+            if hasattr(doc, "export_to_text"):
+                docling_text = await loop.run_in_executor(None, doc.export_to_text)
+            field_text = docling_text
+            text_layer = await loop.run_in_executor(None, self.extract_text_layer, file_path)
+            if text_layer:
+                usable, reason = self.assess_text_layer_quality(
+                    text_layer, page_count=metadata.get("page_count") or 1
+                )
+                if usable:
+                    field_text = f"{docling_text}\n\n===TEXT-LAYER (raw)===\n{text_layer}"
+                else:
+                    logger.info(f"Text-layer union skipped for {path.name}: {reason}")
+
             return {
                 "metadata": metadata,
                 "chunks": chunks,
                 "status": "completed",
                 "ocr_engine": ocr_engine,
                 "chunks_dropped_low_quality": dropped,
+                "field_text": field_text,
             }
 
         except Exception as e:

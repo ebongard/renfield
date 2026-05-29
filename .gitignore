@@ -117,3 +117,6 @@ tests/e2e/results/
 # B.5 spike — production-sample corpus contains anonymised real prompts
 # but stays out of the repo regardless. See voice-server/tests/b5/README.md.
 voice-server/tests/b5/corpus_production.txt
+
+# Schicht A golden set — REAL household docs + labels, NEVER commit (privacy)
+tests/eval/schicht_a_fixtures_local/

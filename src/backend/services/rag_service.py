@@ -352,6 +352,7 @@ class RAGService:
                     if progress is not None:
                         await progress.set_stage("chunking")
                     chunks = result["chunks"]
+                    field_text = result.get("field_text", "")
                     doc_summary = f"{doc.title or doc.filename}"
                     if chunks:
                         doc_summary += (
@@ -423,6 +424,10 @@ class RAGService:
                                 chunks=kg_chunks,
                                 document_id=doc.id,
                                 user_id=user_id,
+                                # field_text = Docling/OCR ∪ raw text-layer union, for
+                                # field extractors (Schicht A). KG hook ignores it via
+                                # **kwargs; it reads entity-rich chunks, not fields.
+                                field_text=field_text,
                             )
                         )
                         _background_tasks.add(_task)
