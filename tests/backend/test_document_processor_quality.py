@@ -313,3 +313,138 @@ class TestProcessDocumentReOCRTrigger:
         assert result["chunks"] == []
         # Sanity: the converter was called exactly once for retry.
         assert processor._convert_document_ocr.call_count == 1
+
+
+# ============================== text-layer-chunk path (hybrid-PDF OOM/degrade fix)
+@pytest.mark.asyncio
+class TestProcessDocumentTextLayerChunkPath:
+    """When the per-chunk trigger fires but a poppler text layer is USABLE, the
+    Docling garbage is a font-decode failure (subsetted no-ToUnicode font), NOT a
+    scan. We chunk from the text layer and SKIP force-OCR — recovering positioned
+    tokens into the chunks AND avoiding the OOM-prone double conversion."""
+
+    def _wire(self, processor, *, first_chunks, text_layer, tl_usable, second_chunks=None):
+        result_obj = MagicMock()
+        result_obj.document = MagicMock()
+        result_obj.document.export_to_text = MagicMock(return_value="garbage docling export")
+        calls = {"n": 0}
+
+        def chunk_side_effect(d):
+            calls["n"] += 1
+            picked = first_chunks if calls["n"] == 1 else (second_chunks or [])
+            return iter([_mock_chunk(t, i) for i, t in enumerate(picked)])
+
+        processor._chunker.chunk.side_effect = chunk_side_effect
+        processor._convert_document = MagicMock(return_value=result_obj)
+        processor._convert_document_ocr = MagicMock(return_value=result_obj)
+        processor._extract_metadata = MagicMock(
+            return_value={"title": "t", "file_type": "pdf", "page_count": 1}
+        )
+        # Shadow the static/class methods on the instance to isolate the decision.
+        processor.extract_text_layer = MagicMock(return_value=text_layer)
+        processor.assess_text_layer_quality = MagicMock(
+            return_value=(tl_usable, "usable" if tl_usable else "garbled")
+        )
+
+    async def test_usable_text_layer_chunks_from_poppler_and_skips_ocr(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """3/4 Docling garbage (trigger fires) + usable poppler text layer →
+        chunk from the text layer, ocr_engine='poppler_text_layer', and the
+        degrading force-OCR pass is NOT run. Recovered tokens land in the CHUNKS
+        (not just field_text)."""
+        f = tmp_path / "hybrid.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        clean = (
+            "Finanzverwaltung NRW Muenster. Ihre Steuernummer: 114/5876/5293. "
+            "Datum: 17.04.2026. Frist zur Aktivierung: 23.07.2026. " * 4
+        )
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            text_layer=clean,
+            tl_usable=True,
+        )
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] == "poppler_text_layer"
+        # The whole point: NO degrading force-OCR pass.
+        processor._convert_document_ocr.assert_not_called()
+        joined = " ".join(c["text"] for c in result["chunks"])
+        assert "114/5876/5293" in joined          # recovered token now retrievable in CHUNKS
+        assert "23.07.2026" in joined             # the dropped deadline date too
+        assert "114/5876/5293" in result["field_text"]
+
+    async def test_unusable_text_layer_still_force_ocrs(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """Trigger fires but NO usable text layer (genuine scan) → the existing
+        force_full_page_ocr path runs unchanged."""
+        f = tmp_path / "scan.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            second_chunks=[CLEAN_CHUNK, CLEAN_CHUNK, CLEAN_CHUNK, CLEAN_CHUNK],
+            text_layer="",          # scan → no text layer
+            tl_usable=False,
+        )
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] == "docling_full_page_ocr"
+        processor._convert_document_ocr.assert_called_once()
+
+    async def test_auto_detect_then_trigger_takes_poppler_path(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """Chained path the OOM leak lived on: the doc-level auto-detect re-OCR
+        fires FIRST (binding ocr_result), THEN the per-chunk trigger fires on the
+        re-OCR'd chunks. With a usable text layer it must still take the poppler
+        path — no SECOND force-OCR — and ocr_result must be released before
+        gc.collect() (regression guard for the lingering-reference leak)."""
+        f = tmp_path / "hybrid.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        clean = (
+            "Finanzverwaltung NRW. Steuernummer: 114/5876/5293. "
+            "Frist: 23.07.2026. " * 4
+        )
+        # First chunking (of the auto-detect re-OCR'd doc) is 3/4 garbage → trigger.
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            text_layer=clean,
+            tl_usable=True,
+        )
+        # Force the doc-level auto-detect branch to fire (binds ocr_result).
+        processor._is_text_garbled = MagicMock(return_value=True)
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", True
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] == "poppler_text_layer"
+        # Auto-detect re-OCR'd ONCE; the poppler path must not force-OCR again.
+        processor._convert_document_ocr.assert_called_once()
+        joined = " ".join(c["text"] for c in result["chunks"])
+        assert "114/5876/5293" in joined
+
+
+def test_images_scale_config_default_within_bounds():
+    """OOM knob: the force-OCR raster scale is configurable and defaults to a
+    value that keeps the re-conversion within the 6Gi limit."""
+    from utils.config import settings
+
+    assert 0.5 <= settings.rag_ocr_images_scale <= 4.0
+    assert settings.rag_ocr_images_scale == 1.5

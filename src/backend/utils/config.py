@@ -301,6 +301,14 @@ class Settings(BaseSettings):
     rag_force_ocr: bool = False               # Always force full-page OCR (ignores embedded text)
     rag_ocr_auto_detect: bool = True          # Auto-detect garbled embedded text and re-run with OCR
     rag_ocr_space_threshold: float = 0.03    # Space ratio below this triggers auto OCR (default 3%)
+    # Page-raster scale for the force_full_page_ocr converter. Memory during a
+    # full-page-OCR pass scales ~quadratically with this (a multi-page PDF rasters
+    # every page at this factor). 2.0 doubled accuracy-vs-memory; dropped to 1.5 to
+    # keep the OCR re-conversion within the worker/backend 6Gi limit after a hybrid
+    # doc OOM'd ingestion (the Docling-default → force-OCR re-conversion held two
+    # converters + rasters at once). Raise toward 2.0 only if OCR accuracy regresses
+    # AND the memory limit is also raised.
+    rag_ocr_images_scale: float = Field(default=1.5, ge=0.5, le=4.0)
     # Per-chunk-rate trigger that complements rag_ocr_space_threshold.
     # When the chunker drops more than this fraction of chunks as
     # low-quality (utils.content_quality.is_low_quality_text), the
