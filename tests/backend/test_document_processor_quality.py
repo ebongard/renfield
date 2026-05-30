@@ -414,9 +414,11 @@ class TestProcessDocumentTextLayerChunkPath:
         gc.collect() (regression guard for the lingering-reference leak)."""
         f = tmp_path / "hybrid.pdf"
         f.write_bytes(b"%PDF-1.4")
+        # Word-rich enough to clear the per-chunk quality gate (number-heavy text
+        # alone trips the low-wordlike-ratio filter — that's the gate working).
         clean = (
-            "Finanzverwaltung NRW. Steuernummer: 114/5876/5293. "
-            "Frist: 23.07.2026. " * 4
+            "Finanzverwaltung NRW Muenster. Ihre Steuernummer lautet "
+            "114/5876/5293. Die Frist zur Aktivierung endet am 23.07.2026. " * 4
         )
         # First chunking (of the auto-detect re-OCR'd doc) is 3/4 garbage → trigger.
         self._wire(
@@ -439,6 +441,99 @@ class TestProcessDocumentTextLayerChunkPath:
         processor._convert_document_ocr.assert_called_once()
         joined = " ".join(c["text"] for c in result["chunks"])
         assert "114/5876/5293" in joined
+
+    async def test_poppler_path_applies_quality_gate(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """The poppler-chunk path runs the SAME per-chunk quality gate as
+        _create_chunks. A text layer the assessor called usable but whose
+        _simple_chunk output is low-quality is dropped, and
+        chunks_dropped_low_quality reflects it (NOT hardcoded 0) — so this path
+        can't ingest spans every other path rejects, and keeps the audit signal."""
+        f = tmp_path / "hybrid.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            text_layer=GARBAGE_CHUNK,   # single low-quality segment
+            tl_usable=True,
+        )
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["status"] == "completed"
+        assert result["ocr_engine"] == "poppler_text_layer"
+        assert result["chunks"] == []                     # garbage span was gated out
+        assert result["chunks_dropped_low_quality"] == 1  # honest count, not 0
+
+    async def test_poppler_path_frees_memory_before_chunking(
+        self, processor, tmp_path, monkeypatch
+    ):
+        """OOM regression guard: the trigger path must release the Docling
+        conversion via gc.collect() before chunking from the text layer. Patches
+        gc.collect and asserts it ran — reverting the free+collect lines (the
+        actual memory fix) fails this test instead of silently passing."""
+        f = tmp_path / "hybrid.pdf"
+        f.write_bytes(b"%PDF-1.4")
+        clean = "Steuernummer 114/5876/5293, Frist 23.07.2026. " * 6
+        self._wire(
+            processor,
+            first_chunks=[GARBAGE_CHUNK, GARBAGE_CHUNK, GARBAGE_CHUNK, CLEAN_CHUNK],
+            text_layer=clean,
+            tl_usable=True,
+        )
+        collect_spy = MagicMock()
+        monkeypatch.setattr("services.document_processor.gc.collect", collect_spy)
+        monkeypatch.setattr(
+            "services.document_processor.settings.rag_ocr_auto_detect", False
+        )
+
+        result = await processor.process_document(str(f), force_ocr=False)
+
+        assert result["ocr_engine"] == "poppler_text_layer"
+        collect_spy.assert_called()   # conversion freed before chunking from text
+
+
+def test_ocr_converter_uses_configured_images_scale(monkeypatch):
+    """Wiring guard: the force-OCR converter must apply
+    settings.rag_ocr_images_scale, not a hardcoded constant. Captures the
+    PdfPipelineOptions the OCR converter is built from and asserts images_scale
+    came from settings — reverting line 66 to a literal fails this."""
+    import types
+
+    import services.document_processor as dp
+
+    captured = types.SimpleNamespace(opts=None)
+
+    class _Opts:
+        def __init__(self):
+            self.ocr_options = None
+            self.images_scale = None
+            captured.opts = self
+
+    # docling may be REAL in the test container, so stub the validating/heavy
+    # classes (_ensure_initialized imports them locally) and keep only the
+    # line-66 wiring under test: PdfPipelineOptions().images_scale = settings.…
+    pipeline_mod = sys.modules["docling.datamodel.pipeline_options"]
+    conv_mod = sys.modules["docling.document_converter"]
+    chunk_mod = sys.modules["docling.chunking"]
+    monkeypatch.setattr(pipeline_mod, "PdfPipelineOptions", _Opts, raising=False)
+    monkeypatch.setattr(
+        pipeline_mod, "EasyOcrOptions", lambda **k: MagicMock(), raising=False
+    )
+    monkeypatch.setattr(conv_mod, "PdfFormatOption", MagicMock, raising=False)
+    monkeypatch.setattr(conv_mod, "DocumentConverter", MagicMock, raising=False)
+    monkeypatch.setattr(chunk_mod, "HybridChunker", MagicMock, raising=False)
+    monkeypatch.setattr(dp.settings, "rag_ocr_images_scale", 1.25)
+
+    p = dp.DocumentProcessor()
+    p._ensure_initialized()
+
+    assert captured.opts is not None
+    assert captured.opts.images_scale == 1.25
 
 
 def test_images_scale_config_default_within_bounds():

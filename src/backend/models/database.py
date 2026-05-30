@@ -2021,7 +2021,11 @@ class DocumentProcessingHistory(Base):
     force_ocr = Column(Boolean, nullable=False)
 
     # Nullable: legacy backfill rows + any caller that doesn't know.
-    # Values: 'easyocr' | 'docling_full_page_ocr' (set by document_processor).
+    # Values set by document_processor: 'docling' (standard convert) |
+    # 'docling_full_page_ocr' (forced full-page OCR) | 'poppler_text_layer'
+    # (chunked from the poppler text layer on a font-decode failure) |
+    # legacy 'easyocr'. Free text (no CHECK) — purely audit/display, no
+    # consumer branches on the value.
     ocr_engine = Column(String(50), nullable=True)
 
     chunks_produced = Column(Integer, nullable=True)

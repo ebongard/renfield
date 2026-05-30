@@ -329,6 +329,18 @@ class DocumentProcessor:
                         "error": "ocr_quality_low_after_forced_ocr",
                     }
 
+                # Both remaining branches discard the Standard conversion. Free it —
+                # plus any auto-detect re-OCR tree still held by ocr_result (lines
+                # ~263-268) — and gc.collect() BEFORE either chunking from the text
+                # layer or launching the force-OCR converter, so peak memory never
+                # holds two Docling document trees (the hybrid-doc OOM fix). collect()
+                # rather than relying on refcount drop because Docling trees are
+                # cycle-heavy (parent<->child node refs) and won't free on rebind.
+                result = None
+                doc = None
+                ocr_result = None
+                gc.collect()
+
                 if tl_usable:
                     logger.info(
                         f"Per-chunk quality trigger ({dropped}/{total_emitted} = "
@@ -336,17 +348,15 @@ class DocumentProcessor:
                         f"is usable ({tl_reason}) — chunking from the text layer and "
                         f"skipping force-OCR (avoids dropping positioned tokens)"
                     )
-                    # Free the Standard Docling conversion; we chunk from text now.
-                    # ocr_result is nulled too: if the doc-level auto-detect block
-                    # above already re-OCR'd, it still holds that document tree —
-                    # without this, gc.collect() reclaims nothing and the fix is a
-                    # no-op on the auto-detect→trigger chained path.
-                    result = None
-                    doc = None
-                    ocr_result = None
-                    gc.collect()
-                    chunks = self._simple_chunk(text_layer)
-                    dropped = 0
+                    # Apply the SAME per-chunk quality gate _create_chunks uses, so
+                    # this path can't ingest low-quality spans every other path drops,
+                    # and chunks_dropped_low_quality stays an honest audit signal.
+                    # A doc-level-usable text layer is overwhelmingly clean, so this
+                    # rarely drops anything — it's defense-in-depth, not the main act.
+                    from utils.content_quality import is_low_quality_text
+                    raw = self._simple_chunk(text_layer)
+                    chunks = [c for c in raw if not is_low_quality_text(c.get("text", ""))]
+                    dropped = len(raw) - len(chunks)
                     ocr_engine = "poppler_text_layer"
                 else:
                     logger.info(
@@ -354,15 +364,6 @@ class DocumentProcessor:
                         f"{drop_rate:.0%} > {settings.rag_chunk_quality_drop_threshold:.0%}) "
                         f"— re-konvertiere {path.name} mit force_full_page_ocr"
                     )
-                    # Free the Standard conversion BEFORE the OCR pass so peak memory
-                    # holds one doc tree + rasters, not two (the hybrid-doc OOM fix).
-                    # ocr_result is nulled too so an earlier auto-detect re-OCR doc is
-                    # reclaimed before the new converter loads (else the gc.collect()
-                    # frees nothing on the auto-detect→trigger chained path).
-                    result = None
-                    doc = None
-                    ocr_result = None
-                    gc.collect()
                     ocr_result = await loop.run_in_executor(
                         None, self._convert_document_ocr, file_path
                     )
