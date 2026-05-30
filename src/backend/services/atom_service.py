@@ -49,6 +49,7 @@ from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from models.database import (
+    ATOM_TYPE_DOCUMENT_FACT,
     ATOM_TYPE_KB_DOCUMENT,
     ATOM_TYPE_KG_EDGE,
     ATOM_TYPE_KG_NODE,
@@ -65,6 +66,7 @@ _SOURCE_TABLE_TIER_UPDATE = {
     "kg_entities": "id",
     "kg_relations": "id",
     "conversation_memories": "id",
+    "document_facts": "id",     # document_fact atom → document_facts.circle_tier
 }
 
 
@@ -281,12 +283,35 @@ class AtomService:
         # read stale document_chunks.circle_tier and leak chunks at the old
         # tier until someone noticed (Risk A from the design doc review).
         if atom_orm.atom_type == ATOM_TYPE_KB_DOCUMENT:
+            doc_id = int(atom_orm.source_id)
             await self.db.execute(
                 text(
                     "UPDATE document_chunks SET circle_tier = :tier "
                     "WHERE document_id = :doc_id"
                 ),
-                {"tier": new_tier, "doc_id": int(atom_orm.source_id)},
+                {"tier": new_tier, "doc_id": doc_id},
+            )
+            # Schicht A facts (document_fact atoms) inherit the parent document's
+            # tier the same way chunks do — keep them in lockstep so retrieval
+            # can't leak a Steuernummer/obligation at the old tier. Also bump
+            # the facts' own atoms.policy so the canonical policy stays in sync.
+            await self.db.execute(
+                text(
+                    "UPDATE document_facts SET circle_tier = :tier "
+                    "WHERE document_id = :doc_id"
+                ),
+                {"tier": new_tier, "doc_id": doc_id},
+            )
+            await self.db.execute(
+                text(
+                    "UPDATE atoms SET policy = json_build_object('tier', :tier), "
+                    "updated_at = NOW() "
+                    "FROM document_facts f "
+                    "WHERE atoms.atom_type = :fact_type "
+                    "AND atoms.source_id = f.id::text "
+                    "AND f.document_id = :doc_id"
+                ),
+                {"tier": new_tier, "fact_type": ATOM_TYPE_DOCUMENT_FACT, "doc_id": doc_id},
             )
 
         # KG node cascade: incident relations recompute MIN(subject, object).
@@ -396,6 +421,7 @@ def _table_for_atom_type(atom_type: str) -> str:
         "kg_edge": "kg_relations",
         "conversation_memory": "conversation_memories",
         "procedural_skill": "procedural_skills",
+        "document_fact": "document_facts",
     }
     if atom_type not in table_map:
         raise ValueError(f"Unknown atom_type: {atom_type}")

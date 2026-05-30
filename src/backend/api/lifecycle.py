@@ -802,6 +802,16 @@ async def lifespan(app: "FastAPI"):
         register_hook("post_document_ingest", kg_post_document_ingest_hook)
         logger.info("✅ Knowledge Graph hooks registered")
 
+    # Schicht A field extractor — post_document_ingest consumer of field_text.
+    if settings.schicht_a_extraction_enabled:
+        from services.schicht_a_extractor import schicht_a_post_document_ingest_hook
+        from utils.hooks import register_hook as _register_schicht_a_hook
+
+        _register_schicht_a_hook(
+            "post_document_ingest", schicht_a_post_document_ingest_hook
+        )
+        logger.info("✅ Schicht A field extractor hook registered")
+
     # Whisper prompt cache invalidation — listen on household_graph_changed.
     from services.whisper_prompt_builder import whisper_prompt_household_changed
     from utils.hooks import register_hook as _register_hook

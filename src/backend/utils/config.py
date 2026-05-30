@@ -330,6 +330,12 @@ class Settings(BaseSettings):
     rag_text_layer_max_replacement_ratio: float = 0.02  # above => broken encoding => drop text layer
     rag_text_layer_min_vowel_ratio: float = 0.55     # below => garbled glyphs => drop text layer
     rag_text_layer_max_chars: int = 1_000_000        # cap raw text-layer length (OOM guard on pathological PDFs)
+    # Schicht A field extractor (post_document_ingest consumer). Reads field_text,
+    # extracts identifiers (deterministic) + obligations (LLM), stores as atoms.
+    # Opt-in: the LLM obligation pass costs one classification call per ingest, and
+    # the obligation/alert layer that consumes these facts isn't wired yet.
+    schicht_a_extraction_enabled: bool = False
+    schicht_a_extraction_model: str = ""             # empty => ollama_chat_model || ollama_model
 
     # Conversation Memory (Long-term)
     memory_enabled: bool = False                                             # Opt-in

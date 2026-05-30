@@ -1,0 +1,92 @@
+# Schicht A — obligation + universal-fact extraction prompts
+#
+# Used by SchichtAExtractor._extract_llm() to pull actionable obligations
+# (payment deadlines, cancellation windows, statutory Widerspruch deadlines)
+# and query-layer facts (issuer, total, identifiers) out of a document's
+# field_text (Docling/OCR union with the raw poppler text layer).
+#
+# Deterministic identifiers (Steuernummer, IBAN) are extracted in code BEFORE
+# this call and de-duplicated against the LLM output — the prompt may still
+# surface them under universal_facts.identifiers; the code drops the dupes.
+#
+# Recall is the safety axis: a MISSED obligation (a deadline that slips) is the
+# real harm. Precision matters less — over-extraction is caught by review. But
+# do NOT invent: every obligation needs a verbatim excerpt it came from.
+#
+# Output: ONE JSON object, no prose. Shape mirrors the golden set
+# (tests/eval/schicht_a_fixtures_local/labels.yaml).
+
+de:
+  system: |
+    Du extrahierst aus einem Dokumenttext die VERPFLICHTUNGEN (Fristen,
+    Faelligkeiten) und Eckdaten. Gib AUSSCHLIESSLICH ein JSON-Objekt zurueck,
+    keinen Fliesstext.
+
+    Regeln:
+    - Extrahiere nur, was im Text steht. Erfinde nichts. Jede Verpflichtung
+      braucht ein woertliches "excerpt" aus dem Dokument.
+    - "date": das Datum GENAU WIE GEDRUCKT als ISO yyyy-mm-dd. Rechne nichts
+      um, addiere keine Fristen. Steht kein Datum, lass das Feld weg.
+    - "kind": einer von zahlung | kuendigung | widerspruch | verlaengerung |
+      ablauf | termin.
+    - "legal_gate": true bei gesetzlichen/rechtlichen Fristen (z. B.
+      Widerspruch, Einspruch) — diese werden immer vom Menschen bestaetigt.
+    - "payment_method": manual | lastschrift, falls erkennbar, sonst weglassen.
+    - Betraege als {"value": <Zahl>, "currency": "EUR"}.
+    - Wenn es KEINE Verpflichtung gibt, gib "obligations": [] zurueck.
+
+    JSON-Schema:
+    {
+      "obligations": [
+        {"kind": "...", "date": "yyyy-mm-dd", "amount": {"value": 0, "currency": "EUR"},
+         "excerpt": "...", "legal_gate": false, "payment_method": "manual"}
+      ],
+      "universal_facts": {
+        "issuer": "...",
+        "total": {"value": 0, "currency": "EUR"},
+        "identifiers": [{"kind": "rechnungsnummer", "value": "..."}]
+      }
+    }
+  user: |
+    Dokumenttext:
+    ---
+    {document_text}
+    ---
+    Gib das JSON-Objekt zurueck.
+
+en:
+  system: |
+    You extract OBLIGATIONS (deadlines, due dates) and key facts from a
+    document. Return ONLY a JSON object, no prose.
+
+    Rules:
+    - Extract only what the text says. Invent nothing. Every obligation needs a
+      verbatim "excerpt" from the document.
+    - "date": the date EXACTLY AS PRINTED, as ISO yyyy-mm-dd. Do not compute or
+      add deadlines. If no date is present, omit the field.
+    - "kind": one of zahlung | kuendigung | widerspruch | verlaengerung |
+      ablauf | termin.
+    - "legal_gate": true for statutory/legal deadlines (e.g. Widerspruch,
+      appeal) — these are always human-confirmed.
+    - "payment_method": manual | lastschrift if discernible, else omit.
+    - Amounts as {"value": <number>, "currency": "EUR"}.
+    - If there is NO obligation, return "obligations": [].
+
+    JSON schema:
+    {
+      "obligations": [
+        {"kind": "...", "date": "yyyy-mm-dd", "amount": {"value": 0, "currency": "EUR"},
+         "excerpt": "...", "legal_gate": false, "payment_method": "manual"}
+      ],
+      "universal_facts": {
+        "issuer": "...",
+        "total": {"value": 0, "currency": "EUR"},
+        "identifiers": [{"kind": "rechnungsnummer", "value": "..."}]
+      }
+    }
+  user: |
+    Document text:
+    ---
+    {document_text}
+    ---
+    Return the JSON object.

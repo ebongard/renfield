@@ -132,10 +132,10 @@ class TestUpdateTier:
         atom_orm.atom_type = "kb_document"
         atom_orm.source_table = "documents"
         atom_orm.source_id = "99"
+        # kb_document path: SELECT + generic-doc UPDATE + chunks + facts + fact-atoms.
         session.execute = AsyncMock(side_effect=[
             MagicMock(scalar_one_or_none=MagicMock(return_value=atom_orm)),
-            MagicMock(),
-            MagicMock(),
+            MagicMock(), MagicMock(), MagicMock(), MagicMock(),
         ])
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("atom-x", {"tier": 3})
@@ -166,17 +166,24 @@ class TestUpdateTier:
             MagicMock(scalar_one_or_none=MagicMock(return_value=atom_orm)),
             MagicMock(),  # UPDATE documents.circle_tier
             MagicMock(),  # UPDATE document_chunks.circle_tier — cascade
+            MagicMock(),  # UPDATE document_facts.circle_tier — Schicht A cascade
+            MagicMock(),  # UPDATE atoms.policy for the fact atoms
         ])
         svc = AtomService(session, resolver=MagicMock(invalidate_for_atom=MagicMock()))
         await svc.update_tier("atom-x", {"tier": 3})
 
-        # 3 executes: SELECT atom + UPDATE documents + UPDATE document_chunks.
-        assert session.execute.await_count == 3
+        # 5 executes: SELECT atom + UPDATE documents + chunks + facts + fact-atoms.
+        assert session.execute.await_count == 5
         cascade_sql = str(session.execute.await_args_list[2].args[0])
         assert "UPDATE document_chunks" in cascade_sql
         assert "document_id = :doc_id" in cascade_sql
         binds = session.execute.await_args_list[2].args[1]
         assert binds == {"tier": 3, "doc_id": 99}
+        # Schicht A facts inherit the document tier in the same transaction.
+        facts_sql = str(session.execute.await_args_list[3].args[0])
+        assert "UPDATE document_facts" in facts_sql
+        assert "document_id = :doc_id" in facts_sql
+        assert session.execute.await_args_list[3].args[1] == {"tier": 3, "doc_id": 99}
         session.commit.assert_awaited_once()
 
     @pytest.mark.asyncio

@@ -27,6 +27,7 @@ from models.database import (
     EMBEDDING_DIMENSION,
     Document,
     DocumentChunk,
+    DocumentFact,
     KnowledgeBase,
 )
 from services.document_processing_history import (
@@ -806,6 +807,21 @@ class RAGService:
             text("UPDATE chat_uploads SET document_id = NULL WHERE document_id = :doc_id"),
             {"doc_id": document_id}
         )
+
+        # Purge Schicht A fact atoms FIRST. The document_facts rows cascade-delete
+        # with the document (FK ON DELETE CASCADE), but the atoms each fact is
+        # wrapped in do NOT (the cascade runs the other way: atom→fact). Without
+        # this, deleting a document leaves orphan document_fact atoms with a
+        # dangling source_id — a retrieval/GDPR gap. AtomPurgeService is the
+        # sanctioned delete path (test_no_direct_atom_delete lint); purging the
+        # atom cascades the fact row away.
+        from services.atom_purge_service import AtomPurgeService
+        fact_atom_ids = (await self.db.execute(
+            select(DocumentFact.atom_id).where(DocumentFact.document_id == document_id)
+        )).scalars().all()
+        for aid in fact_atom_ids:
+            if aid:
+                await AtomPurgeService.purge(self.db, atom_id=aid, reason="document_deleted")
 
         # Lösche zuerst die Chunks (explizit, falls CASCADE nicht greift)
         chunk_stmt = delete(DocumentChunk).where(DocumentChunk.document_id == document_id)

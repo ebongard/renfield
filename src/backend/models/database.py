@@ -3,7 +3,7 @@ Datenbank Models
 """
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Column, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, SmallInteger, String, Text, UniqueConstraint, text as sa_text
+from sqlalchemy import JSON, BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, FetchedValue, Float, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text, UniqueConstraint, text as sa_text
 from sqlalchemy.dialects.postgresql import TSVECTOR
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -1587,6 +1587,18 @@ ATOM_TYPE_KG_NODE = "kg_node"
 ATOM_TYPE_KG_EDGE = "kg_edge"
 ATOM_TYPE_CONVERSATION_MEMORY = "conversation_memory"
 ATOM_TYPE_PROCEDURAL_SKILL = "procedural_skill"
+ATOM_TYPE_DOCUMENT_FACT = "document_fact"
+
+# DocumentFact.category discriminators (Schicht A). 'identifier' = a deterministic
+# regex hit (Steuernummer, IBAN, Rechnungsnummer); 'obligation' = an LLM-extracted
+# actionable (zahlung/kuendigung/widerspruch/...) carrying a date/amount + legal_gate;
+# 'universal' = a query-layer fact (issuer, total). Free text; no CHECK constraint.
+DOC_FACT_CATEGORY_IDENTIFIER = "identifier"
+DOC_FACT_CATEGORY_OBLIGATION = "obligation"
+DOC_FACT_CATEGORY_UNIVERSAL = "universal"
+# DocumentFact.source — provenance/trust: deterministic regex vs LLM inference.
+DOC_FACT_SOURCE_DETERMINISTIC = "deterministic"
+DOC_FACT_SOURCE_LLM = "llm"
 
 # ProceduralSkill.source discriminators are declared up-file (in front of
 # the ORM class body that references them as Column defaults). Asserting
@@ -1722,6 +1734,56 @@ class AtomExplicitGrant(Base):
     atom = relationship("Atom", back_populates="explicit_grants")
     grantee = relationship("User", foreign_keys=[granted_to_user_id])
     granter = relationship("User", foreign_keys=[granted_by])
+
+
+class DocumentFact(Base):
+    """One structured fact extracted from a Document's ``field_text`` (Schicht A).
+
+    Polymorphic atom source (``atom_type='document_fact'``): every row is wrapped
+    by an :class:`Atom` so the fact inherits the parent Document's ``circle_tier``
+    and participates in cross-source retrieval. Writers go through
+    ``SchichtAExtractor`` → ``AtomService.create_with_source`` /
+    ``finalize_source_id`` (never a direct INSERT — same rule as other atom sources).
+
+    One table holds three shapes, discriminated by ``category``:
+      * ``identifier`` — a deterministic regex hit. ``value`` is the verbatim span,
+        ``normalized_value`` the whitespace-collapsed form (poppler ``-layout``
+        letter-spaces wide-tracked lines, so the Steuernummer arrives as
+        ``11 4 / 5 8 7 6 / 5 2 9 3``; exact lookups MUST use ``normalized_value``).
+      * ``obligation`` — an LLM-extracted actionable; carries ``obligation_date``
+        (ISO, AS PRINTED — never computed), optional ``amount_*``, ``legal_gate``
+        (statutory/widerspruch kinds → always human-confirmed), ``payment_method``.
+      * ``universal`` — a query-layer fact (issuer, total).
+
+    ``excerpt`` is the verbatim source span (trust anchor) for every category.
+    ``source`` records provenance: ``deterministic`` (regex) vs ``llm`` (inference).
+    """
+    __tablename__ = "document_facts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    category = Column(String(16), nullable=False)   # identifier | obligation | universal
+    kind = Column(String(32), nullable=False)       # steuernummer | zahlung | issuer | ...
+    value = Column(Text, nullable=False)            # verbatim extracted value/summary
+    normalized_value = Column(Text, nullable=True)  # whitespace-collapsed (identifiers)
+    excerpt = Column(Text, nullable=True)           # verbatim source span (trust anchor)
+    obligation_date = Column(Date, nullable=True)   # Frist/Faelligkeit AS PRINTED
+    amount_value = Column(Numeric(14, 2), nullable=True)
+    amount_currency = Column(String(8), nullable=True)
+    legal_gate = Column(Boolean, nullable=False, default=False)
+    payment_method = Column(String(16), nullable=True)  # manual | lastschrift | ...
+    confidence = Column(Float, nullable=True)
+    source = Column(String(16), nullable=False, default=DOC_FACT_SOURCE_DETERMINISTIC)
+    atom_id = Column(String(36), ForeignKey("atoms.atom_id", ondelete="CASCADE"), nullable=False, index=True)
+    circle_tier = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=_utcnow)
+
+    __table_args__ = (
+        Index("idx_document_facts_doc_category", "document_id", "category"),
+        Index("idx_document_facts_doc_tier", "document_id", "circle_tier"),
+    )
+
+    document = relationship("Document", foreign_keys=[document_id])
 
 
 # ---------------------------------------------------------------------------

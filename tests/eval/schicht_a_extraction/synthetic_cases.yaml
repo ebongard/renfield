@@ -1,0 +1,33 @@
+# Schicht A extraction eval — SYNTHETIC cases (committed, safe to share).
+#
+# The real recall/precision/date_exact eval runs LOCALLY against the gitignored
+# golden set (tests/eval/schicht_a_fixtures_local/labels.yaml) with a live model.
+# This committed file carries only synthetic, invented documents so the
+# deterministic-identifier layer has a CI-runnable recall harness with no real
+# household data and no LLM dependency.
+#
+# `field_text` is shaped like a real poppler `pdftotext -layout` dump, including
+# the letter-spacing artifact that the normalization step must survive.
+
+cases:
+  - id: synthetic-steuer-letterspaced
+    field_text: |
+      Finanzverwaltung Musterstadt
+      *0000*  I h r e   S t e u e r n u m m e r :   12 3 / 4 5 6 / 7 8 9 0
+      Frist zur Aktivierung: 01.09.2026
+    expect_identifiers:
+      - kind: steuernummer
+        normalized_value: "123/456/7890"
+
+  - id: synthetic-iban-grouped
+    field_text: |
+      Rechnung 2024-99
+      Bitte ueberweisen Sie auf IBAN DE02 1203 0000 0000 2020 51 bei der Bank.
+    expect_identifiers:
+      - kind: iban
+        normalized_value: "DE02120300000000202051"
+
+  - id: synthetic-no-identifier
+    field_text: |
+      Vielen Dank fuer Ihren Einkauf. Wir freuen uns auf Ihren naechsten Besuch.
+    expect_identifiers: []
