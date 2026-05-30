@@ -115,6 +115,16 @@ async def main() -> None:
     consumer = _pod_name()
     logger.info(f"document-worker starting (consumer={consumer!r})")
 
+    # The worker fires run_hooks("post_document_ingest", ...) from
+    # RAGService.process_existing_document, but it never runs the FastAPI
+    # lifecycle where those hooks are normally registered. Populate the
+    # global registry here or KG + Schicht A extraction silently no-op for
+    # every knowledge-base upload (the primary ingestion path). Import-light
+    # by design — see services/document_ingest_hooks.py.
+    from services.document_ingest_hooks import register_document_ingest_hooks
+
+    register_document_ingest_hooks()
+
     # socket_timeout > read_one's block window — see _REDIS_SOCKET_TIMEOUT_S.
     # This client is shared by the blocking read loop AND the heartbeat, so the
     # explicit timeout must be set here too (passing the client in bypasses

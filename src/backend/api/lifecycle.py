@@ -788,10 +788,9 @@ async def lifespan(app: "FastAPI"):
     # flag internally. ha_glue also handles its own shutdown cleanup via
     # `shutdown` and `shutdown_finalize` hook handlers.
 
-    # Knowledge Graph hooks
+    # Knowledge Graph message/context hooks (chat path, API-pod only).
     if settings.knowledge_graph_enabled:
         from services.knowledge_graph_service import (
-            kg_post_document_ingest_hook,
             kg_post_message_hook,
             kg_retrieve_context_hook,
         )
@@ -799,18 +798,15 @@ async def lifespan(app: "FastAPI"):
 
         register_hook("post_message", kg_post_message_hook)
         register_hook("retrieve_context", kg_retrieve_context_hook)
-        register_hook("post_document_ingest", kg_post_document_ingest_hook)
-        logger.info("✅ Knowledge Graph hooks registered")
+        logger.info("✅ Knowledge Graph message/context hooks registered")
 
-    # Schicht A field extractor — post_document_ingest consumer of field_text.
-    if settings.schicht_a_extraction_enabled:
-        from services.schicht_a_extractor import schicht_a_post_document_ingest_hook
-        from utils.hooks import register_hook as _register_schicht_a_hook
+    # post_document_ingest consumers (KG + Schicht A field extractor). Shared
+    # with the document-worker via services/document_ingest_hooks.py — the
+    # worker is the primary ingestion path and registers these in its own
+    # startup, so the registration logic lives in one place to avoid drift.
+    from services.document_ingest_hooks import register_document_ingest_hooks
 
-        _register_schicht_a_hook(
-            "post_document_ingest", schicht_a_post_document_ingest_hook
-        )
-        logger.info("✅ Schicht A field extractor hook registered")
+    register_document_ingest_hooks()
 
     # Whisper prompt cache invalidation — listen on household_graph_changed.
     from services.whisper_prompt_builder import whisper_prompt_household_changed
