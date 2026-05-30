@@ -21,7 +21,7 @@ from __future__ import annotations
 from loguru import logger
 
 from utils.config import settings
-from utils.hooks import _hooks, register_hook
+from utils.hooks import is_hook_registered, register_hook
 
 _EVENT = "post_document_ingest"
 
@@ -32,22 +32,43 @@ def register_document_ingest_hooks() -> None:
     Idempotent: a handler already present is not re-appended, so calling this
     from both the API lifecycle and the worker startup in the same process is
     safe (``register_hook`` itself does not deduplicate).
+
+    Fail-open per consumer: if one consumer's import raises (bad prompt YAML, a
+    new top-level dependency, a model-init side effect), it is logged and
+    skipped — the other consumers still register, and crucially the worker's
+    ingestion loop still starts. A registration crash must not turn "extraction
+    off" into a full ingestion outage.
     """
     registered: list[str] = []
 
-    if settings.knowledge_graph_enabled:
-        from services.knowledge_graph_service import kg_post_document_ingest_hook
+    def _maybe_register(label: str, fn) -> None:
+        if not is_hook_registered(_EVENT, fn):
+            register_hook(_EVENT, fn)
+            registered.append(label)
 
-        if kg_post_document_ingest_hook not in _hooks.get(_EVENT, []):
-            register_hook(_EVENT, kg_post_document_ingest_hook)
-            registered.append("knowledge_graph")
+    if settings.knowledge_graph_enabled:
+        try:
+            from services.knowledge_graph_service import kg_post_document_ingest_hook
+
+            _maybe_register("knowledge_graph", kg_post_document_ingest_hook)
+        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+            logger.opt(exception=True).warning(
+                "Failed to register KG post_document_ingest hook — KG extraction "
+                "disabled for this process; ingestion continues."
+            )
 
     if settings.schicht_a_extraction_enabled:
-        from services.schicht_a_extractor import schicht_a_post_document_ingest_hook
+        try:
+            from services.schicht_a_extractor import (
+                schicht_a_post_document_ingest_hook,
+            )
 
-        if schicht_a_post_document_ingest_hook not in _hooks.get(_EVENT, []):
-            register_hook(_EVENT, schicht_a_post_document_ingest_hook)
-            registered.append("schicht_a")
+            _maybe_register("schicht_a", schicht_a_post_document_ingest_hook)
+        except Exception:  # noqa: BLE001 — fail-open, never block ingestion
+            logger.opt(exception=True).warning(
+                "Failed to register Schicht A post_document_ingest hook — field "
+                "extraction disabled for this process; ingestion continues."
+            )
 
     if registered:
         logger.info(

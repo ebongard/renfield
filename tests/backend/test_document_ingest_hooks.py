@@ -30,7 +30,7 @@ for _mod in _missing_stubs:
         sys.modules[_mod] = MagicMock()
 
 from services.document_ingest_hooks import register_document_ingest_hooks  # noqa: E402
-from utils.hooks import _hooks, clear_hooks  # noqa: E402
+from utils.hooks import _hooks, clear_hooks, register_hook  # noqa: E402
 
 _EVENT = "post_document_ingest"
 
@@ -78,6 +78,22 @@ def test_schicht_a_gated_off_by_default(monkeypatch):
 
 
 @pytest.mark.unit
+def test_kg_gated_off_registers_only_schicht_a(monkeypatch):
+    """Symmetric to the case above — guards against an inverted KG flag check."""
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.knowledge_graph_enabled", False
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
+    )
+    register_document_ingest_hooks()
+
+    names = _handler_names()
+    assert any("schicht_a_post_document_ingest_hook" in n for n in names)
+    assert not any("kg_post_document_ingest_hook" in n for n in names)
+
+
+@pytest.mark.unit
 def test_idempotent_no_double_registration(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.knowledge_graph_enabled", True
@@ -92,6 +108,57 @@ def test_idempotent_no_double_registration(monkeypatch):
 
 
 @pytest.mark.unit
+def test_idempotent_against_external_prior_registration(monkeypatch):
+    """The real-world case: the API lifecycle already registered the KG hook,
+    then the worker startup runs the helper. The KG handler must not be
+    double-added — this is what the is_hook_registered guard protects."""
+    from services.knowledge_graph_service import kg_post_document_ingest_hook
+
+    register_hook(_EVENT, kg_post_document_ingest_hook)  # pre-seed, as lifecycle would
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.knowledge_graph_enabled", True
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
+    )
+    register_document_ingest_hooks()
+
+    # KG present exactly once (not re-added), Schicht A newly added → 2 total.
+    assert len(_hooks.get(_EVENT, [])) == 2
+    names = _handler_names()
+    assert sum("kg_post_document_ingest_hook" in n for n in names) == 1
+
+
+@pytest.mark.unit
+def test_consumer_import_failure_is_fail_open(monkeypatch):
+    """A consumer whose import raises must not block the other consumer nor
+    raise — a registration crash in the worker would otherwise take down the
+    whole ingestion loop, not just extraction."""
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.knowledge_graph_enabled", True
+    )
+    monkeypatch.setattr(
+        "services.document_ingest_hooks.settings.schicht_a_extraction_enabled", True
+    )
+    # Make the KG import explode; Schicht A must still register.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _boom(name, *args, **kwargs):
+        if name == "services.knowledge_graph_service":
+            raise ImportError("simulated bad KG import")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _boom)
+    register_document_ingest_hooks()  # must not raise
+
+    names = _handler_names()
+    assert any("schicht_a_post_document_ingest_hook" in n for n in names)
+    assert not any("kg_post_document_ingest_hook" in n for n in names)
+
+
+@pytest.mark.unit
 def test_nothing_registered_when_all_flags_off(monkeypatch):
     monkeypatch.setattr(
         "services.document_ingest_hooks.settings.knowledge_graph_enabled", False
@@ -101,3 +168,21 @@ def test_nothing_registered_when_all_flags_off(monkeypatch):
     )
     register_document_ingest_hooks()
     assert _hooks.get(_EVENT, []) == []
+
+
+@pytest.mark.unit
+def test_worker_main_wires_the_helper():
+    """Regression guard for the actual bug: the document-worker must call
+    register_document_ingest_hooks() in its startup. The helper tests above all
+    pass even if main() never calls it — this asserts the wiring so a future
+    refactor that drops the call fails loudly instead of silently restoring the
+    no-op. Source-level (not a main() run) to avoid booting Redis/Docling."""
+    import inspect
+
+    import workers.document_processor_worker as worker
+
+    src = inspect.getsource(worker.main)
+    assert "register_document_ingest_hooks()" in src, (
+        "document_processor_worker.main() must call "
+        "register_document_ingest_hooks() or the worker registers no hooks"
+    )

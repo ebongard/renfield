@@ -407,6 +407,19 @@ def has_hook(event: str) -> bool:
     return bool(_hooks.get(event))
 
 
+def is_hook_registered(event: str, fn: HookFn) -> bool:
+    """True if *fn* is already registered for *event*.
+
+    Handler-level companion to `has_hook` (which is event-level only). Lets a
+    caller register idempotently — needed where the same registration may run
+    from more than one entry point in a single process (e.g. the document
+    ingest hooks, registered by both the API lifecycle and the worker startup
+    via services/document_ingest_hooks.py). Keeps the internal `_hooks`
+    representation private to this module.
+    """
+    return fn in _hooks.get(event, [])
+
+
 def clear_hooks() -> None:
     """Remove all registered hooks. Used for test isolation."""
     _hooks.clear()
