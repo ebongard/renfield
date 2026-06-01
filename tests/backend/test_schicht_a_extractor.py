@@ -29,6 +29,7 @@ for _mod in _missing_stubs:
         sys.modules[_mod] = MagicMock()
 
 from services.schicht_a_extractor import (  # noqa: E402
+    _MAX_OPEN_FACTS,
     SchichtAExtractor,
     _facts_from_payload,
     _parse_amount,
@@ -224,6 +225,8 @@ class TestFactsFromPayload:
         # identifier-category fact lands in the IDENTIFIER bucket + normalized.
         assert by_kind["vertragskonto"].category == "identifier"
         assert by_kind["vertragskonto"].normalized_value == "2012345678"
+        # amount-category fact stays in the UNIVERSAL bucket (not identifier).
+        assert by_kind["gesamtbetrag"].category == "universal"
         assert by_kind["gesamtbetrag"].amount_value == Decimal("12.34")
         assert by_kind["gesamtbetrag"].amount_currency == "EUR"
 
@@ -233,6 +236,57 @@ class TestFactsFromPayload:
                       {"category": "date", "kind": "rechnungsdatum", "value": "2024-01-01"}],
         })
         assert [f.kind for f in facts] == ["rechnungsdatum"]
+
+    def test_reference_category_maps_to_identifier_bucket(self):
+        """identifier AND reference both collapse to the IDENTIFIER bucket and
+        get a whitespace-stripped normalized_value."""
+        facts = _facts_from_payload({
+            "facts": [{"category": "reference", "kind": "aktenzeichen",
+                       "value": "AZ 12 3", "excerpt": "Aktenzeichen AZ 12 3"}],
+        })
+        assert facts[0].category == "identifier"
+        assert facts[0].normalized_value == "AZ123"
+
+    def test_open_facts_nonstr_category_not_fatal(self):
+        """A hostile non-str category must NOT raise out of _facts_from_payload
+        (which would discard the whole batch) — it falls back to UNIVERSAL."""
+        facts = _facts_from_payload({
+            "facts": [{"category": ["identifier"], "kind": "x", "value": "y"},
+                      {"category": 7, "kind": "z", "value": "w"}],
+        })
+        assert {f.kind for f in facts} == {"x", "z"}
+        assert all(f.category == "universal" for f in facts)
+
+    def test_nonlist_obligations_and_facts_not_fatal(self):
+        """A truthy non-list for obligations/facts must coerce to empty, not
+        raise on slice/iteration."""
+        assert _facts_from_payload({"obligations": {"k": "v"}, "facts": "nope"}) == []
+        assert _facts_from_payload({"facts": 5, "obligations": True}) == []
+
+    def test_open_facts_cap_enforced(self):
+        """The per-source open-facts cap bounds write amplification."""
+        facts = _facts_from_payload({
+            "facts": [{"category": "other", "kind": f"k{i}", "value": f"v{i}"}
+                      for i in range(_MAX_OPEN_FACTS + 25)],
+        })
+        assert len(facts) == _MAX_OPEN_FACTS
+
+    def test_legal_gate_substring_false_positive_not_gated(self):
+        """Prefix-boundary match: a routine bill whose excerpt merely contains a
+        legal keyword as a suffix/infix (Anklage, Preisrevision) is NOT gated."""
+        facts = _facts_from_payload({
+            "obligations": [{"kind": "zahlung", "legal_gate": False,
+                             "excerpt": "Preisrevision; siehe Beklagtenanschrift"}],
+        })
+        assert facts[0].legal_gate is False
+
+    def test_legal_gate_german_compound_still_gated(self):
+        """Open right edge: a compound like Widerspruchsfrist still gates."""
+        facts = _facts_from_payload({
+            "obligations": [{"kind": "termin", "legal_gate": False,
+                             "excerpt": "Die Widerspruchsfrist endet bald"}],
+        })
+        assert facts[0].legal_gate is True
 
 
 # ============================================================ hybrid extract()
@@ -296,6 +350,24 @@ class TestExtract:
         client = self._client(
             '{"obligations": [], "universal_facts": {"identifiers": '
             '[{"kind": "iban", "value": "DE89 3704 0044 0532 0130 00"}]}}'
+        )
+        result = await SchichtAExtractor(llm_client=client).extract(
+            "IBAN DE89 3704 0044 0532 0130 00 bei der Bank", lang="de"
+        )
+        ibans = [f for f in result.facts if f.kind == "iban"]
+        assert len(ibans) == 1
+        assert ibans[0].source == "deterministic"
+
+    async def test_open_facts_identifier_deduped_against_deterministic(self, monkeypatch):
+        """Current schema: the LLM echoes the IBAN via the open facts[] list
+        (category=identifier). It must dedup against the deterministic copy the
+        same way the legacy universal_facts path does."""
+        monkeypatch.setattr(
+            "services.schicht_a_extractor.settings.schicht_a_extraction_model", "x"
+        )
+        client = self._client(
+            '{"obligations": [], "facts": [{"category": "identifier", '
+            '"kind": "iban", "value": "DE89 3704 0044 0532 0130 00"}]}'
         )
         result = await SchichtAExtractor(llm_client=client).extract(
             "IBAN DE89 3704 0044 0532 0130 00 bei der Bank", lang="de"

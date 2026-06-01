@@ -11,10 +11,11 @@
 #     This is deliberately open so a tax letter, invoice, contract or policy each
 #     surface their own key facts instead of being forced into hand-picked slots.
 #
-# Storage collapses each fact's open `category` into the 3 stored categories
-# (identifier/reference → identifier, everything else → universal); the `kind`
-# is a free label. Deterministic identifiers (Steuernummer, IBAN) are extracted
-# in code BEFORE this call — the prompt is told NOT to repeat them.
+# Storage collapses each fact's open `category` into 2 stored buckets
+# (identifier/reference → identifier, everything else → universal); obligations
+# are stored separately from the obligations[] array. The `kind` is a free label.
+# Deterministic identifiers (Steuernummer, IBAN) are extracted in code BEFORE
+# this call — the prompt is told NOT to repeat them.
 #
 # Recall is the safety axis: a missed obligation (a deadline that slips) is the
 # real harm, and a missed Eckdatum makes the doc un-queryable. Precision matters
