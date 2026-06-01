@@ -177,6 +177,63 @@ class TestFactsFromPayload:
         })
         assert [f.kind for f in facts] == ["termin"]
 
+    def test_open_obligation_kind_free_label_kept(self):
+        """The obligation kind is now open — a free label like 'klagefrist' must
+        be kept, not dropped against a fixed enum."""
+        facts = _facts_from_payload({
+            "obligations": [{"kind": "klagefrist", "date": "2026-03-01",
+                             "excerpt": "Klage binnen eines Monats"}],
+        })
+        assert facts[0].kind == "klagefrist"
+        assert facts[0].legal_gate is True  # 'klage' keyword
+
+    def test_legal_gate_keyword_in_excerpt(self):
+        """A non-statutory-looking kind whose excerpt cites a statutory remedy
+        still forces the gate (keyword matched across kind AND excerpt)."""
+        facts = _facts_from_payload({
+            "obligations": [{"kind": "termin", "legal_gate": False,
+                             "excerpt": "Widerspruch binnen eines Monats moeglich"}],
+        })
+        assert facts[0].legal_gate is True
+
+    def test_ordinary_obligation_not_gated(self):
+        facts = _facts_from_payload({
+            "obligations": [{"kind": "zahlung", "excerpt": "Bitte ueberweisen Sie den Betrag"}],
+        })
+        assert facts[0].legal_gate is False
+
+    def test_open_facts_list_mapped(self):
+        """The open facts[] schema: rich category collapses to the 2 stored
+        buckets; identifier/reference get a normalized value, amounts parse."""
+        facts = _facts_from_payload({
+            "facts": [
+                {"category": "party", "kind": "aussteller", "value": "Stadtwerke",
+                 "excerpt": "Stadtwerke Musterstadt"},
+                {"category": "date", "kind": "rechnungsdatum", "value": "01.01.2020",
+                 "excerpt": "Rechnungsdatum: 01.01.2020"},
+                {"category": "identifier", "kind": "vertragskonto", "value": "20 1234 5678",
+                 "excerpt": "Vertragskonto 20 1234 5678"},
+                {"category": "amount", "kind": "gesamtbetrag", "value": "12,34",
+                 "amount": {"value": 12.34, "currency": "EUR"}, "excerpt": "12,34 EUR"},
+            ],
+        })
+        by_kind = {f.kind: f for f in facts}
+        assert by_kind["aussteller"].category == "universal"
+        assert by_kind["rechnungsdatum"].category == "universal"
+        assert by_kind["rechnungsdatum"].value == "01.01.2020"
+        # identifier-category fact lands in the IDENTIFIER bucket + normalized.
+        assert by_kind["vertragskonto"].category == "identifier"
+        assert by_kind["vertragskonto"].normalized_value == "2012345678"
+        assert by_kind["gesamtbetrag"].amount_value == Decimal("12.34")
+        assert by_kind["gesamtbetrag"].amount_currency == "EUR"
+
+    def test_open_facts_malformed_entries_skipped(self):
+        facts = _facts_from_payload({
+            "facts": ["garbage", {"category": "date"}, {"value": "no kind"},
+                      {"category": "date", "kind": "rechnungsdatum", "value": "2024-01-01"}],
+        })
+        assert [f.kind for f in facts] == ["rechnungsdatum"]
+
 
 # ============================================================ hybrid extract()
 @pytest.mark.asyncio

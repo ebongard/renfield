@@ -1,39 +1,67 @@
-# Schicht A — obligation + universal-fact extraction prompts
+# Schicht A — obligation + open key-fact extraction prompts
 #
-# Used by SchichtAExtractor._extract_llm() to pull actionable obligations
-# (payment deadlines, cancellation windows, statutory Widerspruch deadlines)
-# and query-layer facts (issuer, total, identifiers) out of a document's
-# field_text (Docling/OCR union with the raw poppler text layer).
+# Used by SchichtAExtractor._extract_llm() to pull, from a document's field_text
+# (Docling/OCR union with the raw poppler text layer):
+#   - "obligations": actionable deadlines (payment due, cancellation window,
+#     statutory Widerspruch deadline) — a TYPED category with Frist date +
+#     legal_gate, because it drives the Fristen agenda + human-confirm.
+#   - "facts": EVERY other salient datum as a GENERIC entry. NOT a fixed list:
+#     issuer, all document dates (Rechnungsdatum, period…), amounts, balances,
+#     reference/account numbers, status, parties — whatever the document carries.
+#     This is deliberately open so a tax letter, invoice, contract or policy each
+#     surface their own key facts instead of being forced into hand-picked slots.
 #
-# Deterministic identifiers (Steuernummer, IBAN) are extracted in code BEFORE
-# this call and de-duplicated against the LLM output — the prompt may still
-# surface them under universal_facts.identifiers; the code drops the dupes.
+# Storage collapses each fact's open `category` into the 3 stored categories
+# (identifier/reference → identifier, everything else → universal); the `kind`
+# is a free label. Deterministic identifiers (Steuernummer, IBAN) are extracted
+# in code BEFORE this call — the prompt is told NOT to repeat them.
 #
-# Recall is the safety axis: a MISSED obligation (a deadline that slips) is the
-# real harm. Precision matters less — over-extraction is caught by review. But
-# do NOT invent: every obligation needs a verbatim excerpt it came from.
-#
-# Output: ONE JSON object, no prose. Shape mirrors the golden set
-# (tests/eval/schicht_a_fixtures_local/labels.yaml).
+# Recall is the safety axis: a missed obligation (a deadline that slips) is the
+# real harm, and a missed Eckdatum makes the doc un-queryable. Precision matters
+# less — review catches over-extraction. But do NOT invent: every entry needs a
+# verbatim excerpt.
 
 de:
   system: |
-    Du extrahierst aus einem Dokumenttext die VERPFLICHTUNGEN (Fristen,
-    Faelligkeiten) und Eckdaten. Gib AUSSCHLIESSLICH ein JSON-Objekt zurueck,
-    keinen Fliesstext.
+    Du extrahierst aus einem Dokumenttext (1) VERPFLICHTUNGEN (Fristen,
+    Faelligkeiten) und (2) ALLE wesentlichen Eckdaten als generische Fakten.
+    Gib AUSSCHLIESSLICH ein JSON-Objekt zurueck, keinen Fliesstext.
 
-    Regeln:
-    - Extrahiere nur, was im Text steht. Erfinde nichts. Jede Verpflichtung
-      braucht ein woertliches "excerpt" aus dem Dokument.
-    - "date": das Datum GENAU WIE GEDRUCKT als ISO yyyy-mm-dd. Rechne nichts
-      um, addiere keine Fristen. Steht kein Datum, lass das Feld weg.
-    - "kind": einer von zahlung | kuendigung | widerspruch | verlaengerung |
-      ablauf | termin.
-    - "legal_gate": true bei gesetzlichen/rechtlichen Fristen (z. B.
-      Widerspruch, Einspruch) — diese werden immer vom Menschen bestaetigt.
-    - "payment_method": manual | lastschrift, falls erkennbar, sonst weglassen.
+    Allgemein:
+    - Extrahiere nur, was im Text steht. Erfinde nichts. Jeder Eintrag braucht
+      ein woertliches "excerpt" aus dem Dokument.
     - Betraege als {"value": <Zahl>, "currency": "EUR"}.
-    - Wenn es KEINE Verpflichtung gibt, gib "obligations": [] zurueck.
+    - Steuernummer und IBAN werden bereits separat erfasst — NICHT wiederholen.
+
+    "obligations" (nur handlungsrelevante Fristen/Faelligkeiten):
+    - "date": Datum GENAU WIE GEDRUCKT als ISO yyyy-mm-dd. Rechne nichts um. Kein
+      Datum -> Feld weglassen.
+    - "kind": bevorzugt zahlung | kuendigung | widerspruch | verlaengerung |
+      ablauf | termin; passt keiner, vergib ein freies snake_case-Label (z. B.
+      klagefrist, abgabefrist).
+    - "legal_gate": true bei gesetzlichen Fristen (Widerspruch, Einspruch, Klage).
+    - "payment_method": manual | lastschrift, falls erkennbar.
+    - Wiederkehrende kuenftige Abschlags-Faelligkeiten (Abschlagsplan) NICHT
+      einzeln als obligations auflisten — sie gehoeren als Fakt (z. B.
+      "naechster_abschlag") in "facts". Nur die konkrete, einmalige
+      Handlungsfrist (Restforderung zahlen, Kuendigung, Widerspruch) ist eine
+      obligation.
+    - Keine Verpflichtung -> "obligations": [].
+
+    "facts" (offene Eckdaten — NICHT auf eine feste Liste beschraenkt):
+    Erfasse u. a. Aussteller/Absender, ALLE Datumsangaben (Rechnungsdatum,
+    Ausstellungsdatum, Leistungs-/Abrechnungszeitraum — aber NICHT die
+    Faelligkeit einer Verpflichtung, die gehoert in "obligations"), Betraege
+    (Gesamtbetrag, Guthaben, Abschlag), Kennzeichen/Referenznummern
+    (Rechnungsnummer, Vertragskontonummer, Kundennummer, Aktenzeichen), Status.
+    Jeder Fakt:
+    - "category": party | date | amount | identifier | reference | status | other
+    - "kind": kurzes Label in snake_case (z. B. rechnungsdatum, vertragskonto,
+      gesamtbetrag, leistungszeitraum, aussteller), hoechstens 32 Zeichen.
+    - "value": WOERTLICH wie gedruckt.
+    - "amount": {"value": <Zahl>, "currency": "EUR"} nur bei Geldbetraegen.
+    - "excerpt": woertliche Belegstelle.
+    Lieber zu viele Eckdaten als zu wenige.
 
     JSON-Schema:
     {
@@ -41,11 +69,13 @@ de:
         {"kind": "...", "date": "yyyy-mm-dd", "amount": {"value": 0, "currency": "EUR"},
          "excerpt": "...", "legal_gate": false, "payment_method": "manual"}
       ],
-      "universal_facts": {
-        "issuer": "...",
-        "total": {"value": 0, "currency": "EUR"},
-        "identifiers": [{"kind": "rechnungsnummer", "value": "..."}]
-      }
+      "facts": [
+        {"category": "party", "kind": "aussteller", "value": "...", "excerpt": "..."},
+        {"category": "date", "kind": "rechnungsdatum", "value": "28.10.2024", "excerpt": "..."},
+        {"category": "identifier", "kind": "vertragskonto", "value": "...", "excerpt": "..."},
+        {"category": "amount", "kind": "gesamtbetrag", "value": "33,82",
+         "amount": {"value": 33.82, "currency": "EUR"}, "excerpt": "..."}
+      ]
     }
   user: |
     Dokumenttext:
@@ -56,21 +86,41 @@ de:
 
 en:
   system: |
-    You extract OBLIGATIONS (deadlines, due dates) and key facts from a
-    document. Return ONLY a JSON object, no prose.
+    You extract from a document's text (1) OBLIGATIONS (deadlines, due dates)
+    and (2) ALL other key data as generic facts. Return ONLY a JSON object, no
+    prose.
 
-    Rules:
-    - Extract only what the text says. Invent nothing. Every obligation needs a
+    General:
+    - Extract only what the text says. Invent nothing. Every entry needs a
       verbatim "excerpt" from the document.
-    - "date": the date EXACTLY AS PRINTED, as ISO yyyy-mm-dd. Do not compute or
-      add deadlines. If no date is present, omit the field.
-    - "kind": one of zahlung | kuendigung | widerspruch | verlaengerung |
-      ablauf | termin.
-    - "legal_gate": true for statutory/legal deadlines (e.g. Widerspruch,
-      appeal) — these are always human-confirmed.
-    - "payment_method": manual | lastschrift if discernible, else omit.
     - Amounts as {"value": <number>, "currency": "EUR"}.
-    - If there is NO obligation, return "obligations": [].
+    - Steuernummer and IBAN are already captured separately — do NOT repeat them.
+
+    "obligations" (only actionable deadlines / due dates):
+    - "date": EXACTLY AS PRINTED, ISO yyyy-mm-dd. Do not compute. No date -> omit.
+    - "kind": prefer zahlung | kuendigung | widerspruch | verlaengerung | ablauf
+      | termin; if none fits, use a free snake_case label (e.g. klagefrist).
+    - "legal_gate": true for statutory deadlines (Widerspruch, appeal, lawsuit).
+    - "payment_method": manual | lastschrift if discernible.
+    - Do NOT list recurring future instalment (Abschlag) due-dates individually
+      as obligations — they belong in "facts" (e.g. "naechster_abschlag"). Only
+      the concrete, one-off action deadline (pay the Restforderung, cancellation,
+      Widerspruch) is an obligation.
+    - No obligation -> "obligations": [].
+
+    "facts" (OPEN key data — NOT limited to a fixed list):
+    Capture e.g. issuer/sender, ALL dates (invoice date, issue date, service/
+    billing period — but NOT an obligation's due date, that goes in
+    "obligations"), amounts (total, balance, instalment), reference/account
+    numbers (invoice no., contract account, customer no., file no.), status.
+    Each fact:
+    - "category": party | date | amount | identifier | reference | status | other
+    - "kind": short snake_case label (e.g. rechnungsdatum, vertragskonto,
+      gesamtbetrag, leistungszeitraum, aussteller), at most 32 chars.
+    - "value": VERBATIM as printed.
+    - "amount": {"value": <number>, "currency": "EUR"} only for monetary facts.
+    - "excerpt": verbatim source span.
+    Prefer too many key facts over too few.
 
     JSON schema:
     {
@@ -78,11 +128,13 @@ en:
         {"kind": "...", "date": "yyyy-mm-dd", "amount": {"value": 0, "currency": "EUR"},
          "excerpt": "...", "legal_gate": false, "payment_method": "manual"}
       ],
-      "universal_facts": {
-        "issuer": "...",
-        "total": {"value": 0, "currency": "EUR"},
-        "identifiers": [{"kind": "rechnungsnummer", "value": "..."}]
-      }
+      "facts": [
+        {"category": "party", "kind": "issuer", "value": "...", "excerpt": "..."},
+        {"category": "date", "kind": "invoice_date", "value": "2024-10-28", "excerpt": "..."},
+        {"category": "identifier", "kind": "contract_account", "value": "...", "excerpt": "..."},
+        {"category": "amount", "kind": "total", "value": "33.82",
+         "amount": {"value": 33.82, "currency": "EUR"}, "excerpt": "..."}
+      ]
     }
   user: |
     Document text:

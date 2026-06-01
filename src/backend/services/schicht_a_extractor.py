@@ -46,13 +46,29 @@ from utils.llm_client import (
     get_default_client,
 )
 
-# Obligation kinds that are ALWAYS human-confirmed regardless of what the LLM
-# says about legal_gate (golden set: widerspruch/statutory => mandatory review).
-_ALWAYS_LEGAL_GATE_KINDS = {"widerspruch"}
+# Obligations that are ALWAYS human-confirmed regardless of what the LLM says
+# about legal_gate (golden set: statutory remedy => mandatory review). Now that
+# the obligation kind is an OPEN label (no fixed enum), match keywords on the
+# kind OR the excerpt — an exact-kind set would miss e.g. a "termin" whose
+# excerpt cites a Widerspruch. Recall-first: over-gating only adds a review
+# step, a missed statutory deadline is the real harm.
+_LEGAL_GATE_KEYWORDS = (
+    "widerspruch", "einspruch", "klage", "klagefrist", "rechtsbehelf",
+    "berufung", "beschwerde", "revision",
+)
 
 _MAX_DOC_CHARS = 12_000  # prompt budget; field_text beyond this is truncated
 _MAX_OBLIGATIONS = 50    # hard cap on LLM obligations (hostile/garbage JSON guard)
+_MAX_UNIVERSAL_FACTS = 60  # hard cap on open LLM key-facts (write-amplification guard)
 _MAX_FACTS_PER_DOC = 100  # hard cap on facts stored per document (write-amplification guard)
+
+
+def _is_legal_gate(kind: str, excerpt: object) -> bool:
+    """A statutory-remedy deadline (Widerspruch/Einspruch/Klage…) always needs
+    human confirmation. Keyword-matched across the kind AND the excerpt so an
+    open/free kind label can't slip a legal deadline past the gate."""
+    hay = f"{kind} {excerpt or ''}".lower()
+    return any(kw in hay for kw in _LEGAL_GATE_KEYWORDS)
 
 # Steuernummer: German tax number, NN(N)/NNN(N)/NNNN(N). Distinctive enough that
 # a keyword gate (below) is the precision guard, not the pattern alone.
@@ -268,9 +284,11 @@ class SchichtAExtractor:
 
 
 def _facts_from_payload(payload: dict) -> list[ExtractedFact]:
-    """Map the LLM JSON ({obligations:[...], universal_facts:{...}}) to facts.
-    Tolerant of missing/oddly-typed fields — a malformed entry is skipped, not
-    fatal (recall: keep the good ones)."""
+    """Map the LLM JSON to facts. Current prompt schema is
+    {obligations:[...], facts:[{category,kind,value,amount?,excerpt}, ...]}; the
+    legacy {universal_facts:{issuer,total,identifiers}} shape is still mapped for
+    back-compat with any in-flight/older payloads. Tolerant of missing/oddly-typed
+    fields — a malformed entry is skipped, not fatal (recall: keep the good ones)."""
     facts: list[ExtractedFact] = []
 
     for ob in (payload.get("obligations") or [])[:_MAX_OBLIGATIONS]:
@@ -284,7 +302,7 @@ def _facts_from_payload(payload: dict) -> list[ExtractedFact]:
         if not kind:
             continue
         amount = ob.get("amount") if isinstance(ob.get("amount"), dict) else {}
-        legal_gate = bool(ob.get("legal_gate")) or kind in _ALWAYS_LEGAL_GATE_KINDS
+        legal_gate = bool(ob.get("legal_gate")) or _is_legal_gate(kind, ob.get("excerpt"))
         facts.append(ExtractedFact(
             category=DOC_FACT_CATEGORY_OBLIGATION,
             kind=kind,
@@ -329,6 +347,35 @@ def _facts_from_payload(payload: dict) -> list[ExtractedFact]:
                     value=ival, normalized_value=re.sub(r"\s+", "", ival),
                     confidence=0.6, source=DOC_FACT_SOURCE_LLM,
                 ))
+
+    # Open key-fact list (current prompt schema). Each entry is
+    # {category, kind, value, amount?, excerpt} where the LLM's rich `category`
+    # (party|date|amount|identifier|reference|status|other) is collapsed into
+    # the two stored buckets: identifier/reference -> IDENTIFIER (carries a
+    # whitespace-stripped normalized_value for matching), everything else ->
+    # UNIVERSAL. `kind` is a free snake_case label; the deliberately open shape
+    # lets each document surface its own Eckdaten instead of fixed slots.
+    for f in (payload.get("facts") or [])[:_MAX_UNIVERSAL_FACTS]:
+        if not isinstance(f, dict):
+            continue
+        # .lower() AFTER the 32-char truncation (kind column width).
+        kind = (_clean_str(f.get("kind"), 32) or "").lower()
+        value = _clean_str(f.get("value"), 500)
+        if not kind or not value:
+            continue
+        is_ident = (f.get("category") or "").strip().lower() in ("identifier", "reference")
+        amount = f.get("amount") if isinstance(f.get("amount"), dict) else {}
+        facts.append(ExtractedFact(
+            category=DOC_FACT_CATEGORY_IDENTIFIER if is_ident else DOC_FACT_CATEGORY_UNIVERSAL,
+            kind=kind,
+            value=value,
+            normalized_value=re.sub(r"\s+", "", value) if is_ident else None,
+            excerpt=_clean_str(f.get("excerpt"), 500),
+            amount_value=_parse_amount(amount.get("value")),
+            amount_currency=_clean_currency(amount.get("currency")),
+            confidence=0.7,
+            source=DOC_FACT_SOURCE_LLM,
+        ))
 
     return facts
 
