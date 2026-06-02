@@ -363,6 +363,66 @@ class TestWebSocketSessionManagement:
         updated = await room_service.get_device(device.device_id)
         assert updated.is_online is False
 
+    @pytest.mark.unit
+    async def test_notify_session_requires_registration(self):
+        """Delivery contract behind the async-upload push: notify_session only
+        reaches a session that has been registered via register_ws_connection.
+        An unregistered session no-ops (returns False) — which is why the chat
+        WS must register on connect (a `register` frame), not just on the first
+        text message, or an upload-then-wait push is silently dropped."""
+        from unittest.mock import AsyncMock
+
+        from api.websocket.shared import (
+            notify_session,
+            register_ws_connection,
+            unregister_ws_connection,
+        )
+
+        sid = "session-notify-contract-test"
+        # Unregistered → no delivery.
+        assert await notify_session(sid, {"type": "upload_processed"}) is False
+
+        ws = MagicMock()
+        ws.send_json = AsyncMock()
+        register_ws_connection(sid, ws)
+        try:
+            assert await notify_session(sid, {"type": "upload_processed", "upload_id": 7}) is True
+            ws.send_json.assert_awaited_once()
+            assert ws.send_json.await_args.args[0]["upload_id"] == 7
+        finally:
+            unregister_ws_connection(sid)
+
+        # After unregister → no delivery again.
+        assert await notify_session(sid, {"type": "upload_processed"}) is False
+
+    @pytest.mark.unit
+    async def test_unregister_is_identity_aware(self):
+        """Two tabs share a session_id (localStorage); the later tab's register
+        overwrites the entry. A disconnecting first tab must NOT evict the live
+        second tab — unregister(sid, ws) only pops when the stored socket IS ws."""
+        from unittest.mock import AsyncMock
+
+        from api.websocket.shared import (
+            _ws_connections,
+            notify_session,
+            register_ws_connection,
+            unregister_ws_connection,
+        )
+
+        sid = "session-identity-test"
+        ws_a = MagicMock(); ws_a.send_json = AsyncMock()
+        ws_b = MagicMock(); ws_b.send_json = AsyncMock()
+        register_ws_connection(sid, ws_a)
+        register_ws_connection(sid, ws_b)  # tab B wins the entry
+        try:
+            # Tab A disconnects — must not remove tab B's live entry.
+            unregister_ws_connection(sid, ws_a)
+            assert _ws_connections.get(sid) is ws_b
+            assert await notify_session(sid, {"type": "upload_processed"}) is True
+            ws_b.send_json.assert_awaited_once()
+        finally:
+            unregister_ws_connection(sid)  # unconditional cleanup
+
 
 # ============================================================================
 # WebSocket Rate Limiting Tests

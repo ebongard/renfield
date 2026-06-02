@@ -677,6 +677,22 @@ async def websocket_endpoint(
             # value automatically (Python 3.7+ context propagation).
             voice_originated.set(False)
 
+            # Lightweight session-register frame (client sends it on WS open /
+            # when it has a session_id). Registers the connection NOW so
+            # background pushes — e.g. the async chat-upload `upload_processed`
+            # event — can reach this session BEFORE the user's first text
+            # message. Without this, register_ws_connection only fires on the
+            # first chat message, so an upload-then-wait flow leaves the session
+            # unregistered and notify_session silently no-ops (chip stuck in
+            # "processing"). WSChatMessage is Literal["text"], so handle the
+            # register frame before that validation.
+            if isinstance(data, dict) and data.get("type") == "register":
+                reg_sid = data.get("session_id")
+                if reg_sid:
+                    register_ws_connection(reg_sid, websocket)
+                    session_state.db_session_id = reg_sid
+                continue
+
             # Validate message
             try:
                 msg = WSChatMessage(**data)
@@ -1864,11 +1880,11 @@ WICHTIG: Nutze die ECHTEN Daten aus dem Ergebnis! Gib NUR die Antwort, KEIN JSON
 
     except WebSocketDisconnect:
         if session_state.db_session_id:
-            unregister_ws_connection(session_state.db_session_id)
+            unregister_ws_connection(session_state.db_session_id, websocket)
         logger.info("👋 WebSocket Verbindung getrennt")
     except Exception as e:
         if session_state.db_session_id:
-            unregister_ws_connection(session_state.db_session_id)
+            unregister_ws_connection(session_state.db_session_id, websocket)
         logger.error(f"❌ WebSocket Fehler: {e}")
         import traceback
         logger.error(traceback.format_exc())

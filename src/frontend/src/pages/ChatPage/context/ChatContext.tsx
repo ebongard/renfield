@@ -910,6 +910,18 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onCard: handleCard,
   });
 
+  // Register this session on the WS as soon as it's connected, so background
+  // pushes (e.g. async chat-upload `upload_processed`) can reach it BEFORE the
+  // first chat message — otherwise an upload-then-wait flow leaves the chip
+  // stuck in "processing" because the backend only registered the session on
+  // the first text message. Re-runs on reconnect (wsConnected flips) and on
+  // session change. wsSendMessage re-checks readyState and no-ops if not open.
+  useEffect(() => {
+    if (wsConnected && sessionId) {
+      wsSendMessage({ type: 'register', session_id: sessionId });
+    }
+  }, [wsConnected, sessionId, wsSendMessage]);
+
   // Handle transcription from audio recording
   const handleTranscription = useCallback((text: string) => {
     debug.log('Transcription received:', text);

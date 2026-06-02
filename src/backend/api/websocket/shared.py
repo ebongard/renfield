@@ -207,8 +207,16 @@ def register_ws_connection(session_id: str, websocket: WebSocket) -> None:
     _ws_connections[session_id] = websocket
 
 
-def unregister_ws_connection(session_id: str) -> None:
-    """Unregister a WebSocket connection. No-op if not registered."""
+def unregister_ws_connection(session_id: str, websocket: "WebSocket | None" = None) -> None:
+    """Unregister a session's WebSocket connection. No-op if not registered.
+
+    Identity-aware: when ``websocket`` is given, only pop if the stored socket
+    IS that socket. Two tabs can share a session_id (localStorage), and the
+    register-on-connect effect means a later tab overwrites the entry — without
+    this guard, the first tab's disconnect would evict the live tab and kill its
+    pushes. Pass the disconnecting socket so it can only remove its own entry."""
+    if websocket is not None and _ws_connections.get(session_id) is not websocket:
+        return
     _ws_connections.pop(session_id, None)
 
 
