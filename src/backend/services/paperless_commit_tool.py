@@ -663,9 +663,8 @@ async def _finalize_paperless_commit(
     # message persisted to the conversation so it survives a reload or a dropped
     # WS push (the live push below is best-effort and no-ops on a gone socket).
     try:
-        from sqlalchemy import update as _update
-
-        from models.database import PaperlessUploadTracking, User
+        from models.database import PaperlessUploadTracking
+        from services.chat_upload_tool import _bump_confirms_used
         from services.conversation_service import ConversationService
         from services.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
@@ -677,12 +676,11 @@ async def _finalize_paperless_commit(
                     original_metadata=dict(user_approved),
                     doc_text=doc_text,
                 ))
-            if status == "completed" and user_id is not None:
-                await db.execute(
-                    _update(User)
-                    .where(User.id == user_id)
-                    .values(paperless_confirms_used=User.paperless_confirms_used + 1)
-                )
+            # Bump the cold-start trust counter ONLY on a confirmed consume.
+            # Per-user when known; a global SystemSetting key in single-user mode
+            # (else the confirm would fire on every archive forever).
+            if status == "completed":
+                await _bump_confirms_used(db, user_id)
             if session_id:
                 await ConversationService(db).save_message(
                     session_id, "assistant", message, user_id=user_id,

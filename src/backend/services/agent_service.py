@@ -1620,6 +1620,12 @@ class AgentService:
 
                     # Yield results and add to context
                     no_result = "No result" if lang == "en" else "Kein Ergebnis"
+                    # An action_required tool (e.g. paperless confirm) returns a
+                    # preview the user MUST see verbatim. The single-tool
+                    # short-circuit below never runs in the parallel path, so
+                    # capture it here and relay it instead of letting the LLM
+                    # summarise (which drops the per-field choices).
+                    parallel_preview: tuple[str, Any] | None = None
                     for act, res in zip(valid_actions, exec_results):
                         if isinstance(res, Exception):
                             logger.error(f"❌ Parallel tool '{act['action']}' failed: {res}")
@@ -1652,6 +1658,30 @@ class AgentService:
                         context.steps.append(result_step)
                         context.tool_results.append(res)
                         yield result_step
+
+                        _rd = res.get("data")
+                        if (
+                            parallel_preview is None
+                            and isinstance(_rd, dict)
+                            and _rd.get("action_required")
+                        ):
+                            parallel_preview = (
+                                res.get("message") or "", _rd["action_required"],
+                            )
+
+                    # Relay an action_required preview verbatim + stop the loop
+                    # (mirrors the single-tool short-circuit below).
+                    if parallel_preview is not None and parallel_preview[0]:
+                        yield AgentStep(
+                            step_number=step_num,
+                            step_type="final_answer",
+                            content=parallel_preview[0],
+                            reason=(
+                                "Relaying tool preview verbatim — "
+                                f"action_required={parallel_preview[1]}"
+                            ),
+                        )
+                        return
 
                     continue  # Next iteration of ReAct loop
 

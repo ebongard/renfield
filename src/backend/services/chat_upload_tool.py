@@ -631,26 +631,60 @@ async def _run_extraction(
         return None
 
 
-async def _get_confirms_used(user_id: int | None) -> int:
-    """Read ``users.paperless_confirms_used`` for the cold-start check.
+# Single-user (AUTH-off) cold-start counter. There's no user row to hang
+# ``paperless_confirms_used`` on, so the trust-after-N ramp is tracked in a
+# global SystemSetting key instead — otherwise the confirm would fire forever.
+_SINGLEUSER_CONFIRMS_KEY = "paperless.singleuser_confirms_used"
 
-    Returns 0 when ``user_id`` is None (auth-disabled dev) so extraction
-    always runs with confirm in that mode — the operator can decide to
-    flip the flag via the admin UI once they're comfortable.
+
+async def _get_confirms_used(user_id: int | None) -> int:
+    """Read the cold-start confirm counter. Per-user (``users.
+    paperless_confirms_used``) when known; a global SystemSetting key in
+    single-user / auth-disabled mode so trust-after-N works without a user id.
     """
-    if user_id is None:
-        return 0
     from sqlalchemy import select
 
-    from models.database import User
+    from models.database import SystemSetting, User
     from services.database import AsyncSessionLocal
 
     async with AsyncSessionLocal() as db:
+        if user_id is None:
+            row = await db.get(SystemSetting, _SINGLEUSER_CONFIRMS_KEY)
+            if row is None:
+                return 0
+            try:
+                return int(json.loads(row.value))
+            except (ValueError, TypeError):
+                return 0
         result = await db.execute(
             select(User.paperless_confirms_used).where(User.id == user_id)
         )
-        value = result.scalar()
-    return int(value or 0)
+        return int(result.scalar() or 0)
+
+
+async def _bump_confirms_used(db, user_id: int | None) -> None:
+    """Increment the cold-start confirm counter on the given session (no commit).
+    Per-user when known; the global SystemSetting key in single-user mode."""
+    from sqlalchemy import update
+
+    from models.database import SystemSetting, User
+
+    if user_id is not None:
+        await db.execute(
+            update(User)
+            .where(User.id == user_id)
+            .values(paperless_confirms_used=User.paperless_confirms_used + 1)
+        )
+        return
+    row = await db.get(SystemSetting, _SINGLEUSER_CONFIRMS_KEY)
+    if row is None:
+        db.add(SystemSetting(key=_SINGLEUSER_CONFIRMS_KEY, value=json.dumps(1)))
+    else:
+        try:
+            cur = int(json.loads(row.value))
+        except (ValueError, TypeError):
+            cur = 0
+        row.value = json.dumps(cur + 1)
 
 
 def _extraction_to_upload_params(post_fuzzy: dict) -> dict:

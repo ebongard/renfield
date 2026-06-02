@@ -455,3 +455,83 @@ def test_chat_upload_tools_declares_both_confirm_flow_steps():
     # confirm_token (required) and user_response_text.
     assert "confirm_token" in commit["parameters"]
     assert "user_response_text" in commit["parameters"]
+
+
+# ── cold-start confirm counter: single-user (AUTH-off) global key ──────────
+
+
+class TestColdStartConfirmCounter:
+    """In single-user mode (user_id=None) the 'trust after N' counter is tracked
+    in a global SystemSetting key instead of users.paperless_confirms_used, so
+    the confirm doesn't fire on every archive forever."""
+
+    @pytest.mark.unit
+    async def test_bump_singleuser_creates_then_increments_setting(self):
+        from types import SimpleNamespace
+
+        from services.chat_upload_tool import _SINGLEUSER_CONFIRMS_KEY, _bump_confirms_used
+
+        # No row yet → create with value 1.
+        db = MagicMock()
+        db.get = AsyncMock(return_value=None)
+        db.add = MagicMock()
+        db.execute = AsyncMock()
+        await _bump_confirms_used(db, None)
+        added = db.add.call_args.args[0]
+        assert added.key == _SINGLEUSER_CONFIRMS_KEY
+        assert json.loads(added.value) == 1
+        db.execute.assert_not_awaited()  # single-user path doesn't touch User
+
+        # Existing row → increment in place.
+        row = SimpleNamespace(key=_SINGLEUSER_CONFIRMS_KEY, value=json.dumps(4))
+        db2 = MagicMock()
+        db2.get = AsyncMock(return_value=row)
+        db2.add = MagicMock()
+        await _bump_confirms_used(db2, None)
+        assert json.loads(row.value) == 5
+        db2.add.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_bump_per_user_updates_user_row(self):
+        from services.chat_upload_tool import _bump_confirms_used
+
+        db = MagicMock()
+        db.execute = AsyncMock()
+        db.add = MagicMock()
+        db.get = AsyncMock()
+        await _bump_confirms_used(db, 7)
+        db.execute.assert_awaited_once()  # update(User)... issued
+        db.add.assert_not_called()
+        db.get.assert_not_called()
+
+    @pytest.mark.unit
+    async def test_get_singleuser_reads_setting(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from services.chat_upload_tool import _SINGLEUSER_CONFIRMS_KEY, _get_confirms_used
+
+        db = MagicMock()
+        db.get = AsyncMock(return_value=SimpleNamespace(
+            key=_SINGLEUSER_CONFIRMS_KEY, value=json.dumps(9),
+        ))
+
+        @asynccontextmanager
+        async def _sess():
+            yield db
+
+        monkeypatch.setattr("services.database.AsyncSessionLocal", _sess, raising=False)
+        assert await _get_confirms_used(None) == 9
+
+    @pytest.mark.unit
+    async def test_get_singleuser_zero_when_no_setting(self, monkeypatch):
+        from services.chat_upload_tool import _get_confirms_used
+
+        db = MagicMock()
+        db.get = AsyncMock(return_value=None)
+
+        @asynccontextmanager
+        async def _sess():
+            yield db
+
+        monkeypatch.setattr("services.database.AsyncSessionLocal", _sess, raising=False)
+        assert await _get_confirms_used(None) == 0
