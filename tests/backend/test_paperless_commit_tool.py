@@ -27,6 +27,7 @@ from services.paperless_commit_tool import (
     _ABORT_TOKENS,
     _APPROVE_TOKENS,
     _MAX_EDIT_ROUNDS,
+    _finalize_paperless_commit,
     paperless_commit_upload,
 )
 
@@ -135,6 +136,16 @@ def _stub_embed_doc_text():
 
 
 class TestApprovePath:
+    @pytest.fixture(autouse=True)
+    def _no_background(self, monkeypatch):
+        """The commit now finishes async (poll consume → patch → WS push) in a
+        fire-and-forget task. These tests assert the SYNCHRONOUS contract, so
+        stub the spawner to a no-op — the background finalizer is covered by
+        TestFinalizeAsync."""
+        monkeypatch.setattr(
+            "services.paperless_commit_tool._spawn_bg", lambda coro: coro.close()
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.unit
     async def test_ja_fires_upload_and_cleanup(self, tmp_path):
@@ -183,11 +194,14 @@ class TestApprovePath:
         assert result["success"] is True
         assert result["action_taken"] is True
         assert result["data"]["task_id"] == "t-1"
-        assert result["data"]["document_id"] == 555
-        # Upload was the only MCP call (no creates — no proposals).
+        # Upload was the only sync MCP call (no creates; finalizer is stubbed).
         assert mcp.execute_tool.await_count == 1
-        # Response message confirms archival.
-        assert "abgelegt" in result["message"].lower() or "paperless" in result["message"].lower()
+        # Submitted async — message confirms it's en route to Paperless.
+        assert "paperless" in result["message"].lower()
+        # Submitted non-blocking so the consume queue can't time out the call.
+        upload_call = mcp.execute_tool.await_args_list[0]
+        assert upload_call.args[0] == "mcp.paperless.upload_document"
+        assert upload_call.args[1]["wait_for_consume"] is False
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -436,61 +450,55 @@ class TestApprovePath:
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_persist_path_writes_upload_tracking_row(self, tmp_path):
-        """PR 4: a successful upload (document_id returned) must
-        persist a PaperlessUploadTracking row so the UI-edit sweeper
-        has a baseline to diff against later."""
+    @pytest.mark.asyncio
+    @pytest.mark.unit
+    async def test_finalize_writes_tracking_and_pushes_completed(self, monkeypatch):
+        """The async finalizer: poll consume → document id → write the
+        PaperlessUploadTracking row (UI-sweeper baseline) → push the final
+        'Im Paperless abgelegt' over the chat WS."""
         from models.database import PaperlessUploadTracking
 
-        file = tmp_path / "f.pdf"
-        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
-
-        pending = _make_pending(
-            confirm_token="tok-track",
-            attachment_id=42,
-            llm_output={"_doc_text": "Stadtwerke Rechnung", "title": "T"},
-            post_fuzzy={"title": "T", "correspondent": "Stadtwerke",
-                        "document_type": "Rechnung", "tags": ["wohnung"],
-                        "storage_path": None, "created_date": None},
-            proposals=[],
+        monkeypatch.setattr(
+            "services.chat_upload_tool._poll_paperless_task",
+            AsyncMock(return_value=(None, 999)),  # (failure_reason, document_id)
         )
-        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
-
-        mcp = MagicMock()
-        mcp.execute_tool = AsyncMock(return_value={
-            "success": True, "message": json.dumps({
-                "task_id": "t", "document_id": 999,
-                "post_upload_patch": "success",
-            }),
-        })
-
         adds: list = []
-        original_factory = _make_session_factory(pending=pending, upload=upload)
 
-        def _capturing_factory():
-            session = original_factory()
-            session.add = MagicMock(side_effect=lambda obj: adds.append(obj))
-            return session
+        def _factory():
+            s = AsyncMock()
+            s.__aenter__ = AsyncMock(return_value=s)
+            s.__aexit__ = AsyncMock(return_value=False)
+            s.add = MagicMock(side_effect=lambda o: adds.append(o))
+            s.commit = AsyncMock()
+            return s
 
-        with patch(
-            "services.paperless_example_retriever.embed_doc_text",
-            AsyncMock(return_value=None),
-        ):
-            with patch(
-                "services.database.AsyncSessionLocal", _capturing_factory,
-            ):
-                result = await paperless_commit_upload(
-                    {"confirm_token": "tok-track", "user_response_text": "ja"},
-                    mcp_manager=mcp, session_id="s", user_id=1,
-                )
+        monkeypatch.setattr("services.database.AsyncSessionLocal", _factory)
+        pushed: list = []
 
-        assert result["success"] is True
+        async def _notify(sid, msg):
+            pushed.append((sid, msg))
+            return True
+
+        monkeypatch.setattr("api.websocket.shared.notify_session", _notify)
+        mcp = MagicMock()
+        mcp.execute_tool = AsyncMock()  # no deferred patch → must not be called
+
+        await _finalize_paperless_commit(
+            task_id="t", deferred_patch={},
+            user_approved={"correspondent": "Stadtwerke"},
+            attachment_id=42, user_id=1, session_id="s", filename="f.pdf",
+            created_note="", doc_text="doc", mcp_manager=mcp,
+        )
+
         tracking = [a for a in adds if isinstance(a, PaperlessUploadTracking)]
         assert len(tracking) == 1
         assert tracking[0].paperless_document_id == 999
         assert tracking[0].chat_upload_id == 42
         assert tracking[0].user_id == 1
         assert tracking[0].original_metadata["correspondent"] == "Stadtwerke"
+        assert pushed and pushed[0][1]["status"] == "completed"
+        assert "abgelegt" in pushed[0][1]["message"].lower()
+        mcp.execute_tool.assert_not_awaited()  # no deferred patch to apply
 
     @pytest.mark.asyncio
     @pytest.mark.unit
@@ -545,45 +553,49 @@ class TestApprovePath:
 class TestApproveMessageShape:
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_patch_failure_surfaces_user_warning(self, tmp_path):
-        """When the MCP upload reports post_upload_patch other than
-        success, the user-facing message must mention the gap."""
-        file = tmp_path / "f.pdf"
-        file.write_bytes(b"%PDF-1.4 " + b"x" * 200)
-
-        pending = _make_pending(
-            confirm_token="tok-d",
-            attachment_id=42,
-            llm_output={},
-            post_fuzzy={"title": "T", "storage_path": "/x"},
-            proposals=[],
+    async def test_finalize_patch_failure_surfaces_in_push(self, monkeypatch):
+        """When the deferred PATCH (update_document) fails, the finalizer still
+        reports the document as filed but the WS push warns the metadata gap."""
+        monkeypatch.setattr(
+            "services.chat_upload_tool._poll_paperless_task",
+            AsyncMock(return_value=(None, 99)),
         )
-        upload = MagicMock(id=42, filename="f.pdf", file_path=str(file))
 
+        def _factory():
+            s = AsyncMock()
+            s.__aenter__ = AsyncMock(return_value=s)
+            s.__aexit__ = AsyncMock(return_value=False)
+            s.add = MagicMock()
+            s.commit = AsyncMock()
+            return s
+
+        monkeypatch.setattr("services.database.AsyncSessionLocal", _factory)
+        pushed: list = []
+
+        async def _notify(sid, msg):
+            pushed.append((sid, msg))
+            return True
+
+        monkeypatch.setattr("api.websocket.shared.notify_session", _notify)
         mcp = MagicMock()
-        mcp.execute_tool = AsyncMock(return_value={
-            "success": True,
-            "message": json.dumps({
-                "task_id": "t", "document_id": 99,
-                "post_upload_patch": "timed_out",
-            }),
-        })
+        # update_document (the deferred PATCH) fails.
+        mcp.execute_tool = AsyncMock(return_value={"success": False, "message": "boom"})
 
-        with patch(
-            "services.database.AsyncSessionLocal",
-            _make_session_factory(pending=pending, upload=upload),
-        ):
-            result = await paperless_commit_upload(
-                {"confirm_token": "tok-d", "user_response_text": "ja"},
-                mcp_manager=mcp, session_id="s", user_id=1,
-            )
-
-        assert result["success"] is True
-        # User is explicitly told about the gap.
-        assert (
-            "Speicherpfad" in result["message"]
-            or "anpassen" in result["message"].lower()
+        await _finalize_paperless_commit(
+            task_id="t", deferred_patch={"storage_path": "/x"},
+            user_approved={"title": "T", "storage_path": "/x"},
+            attachment_id=42, user_id=1, session_id="s", filename="f.pdf",
+            created_note="", doc_text="doc", mcp_manager=mcp,
         )
+
+        # update_document was attempted with the deferred field.
+        mcp.execute_tool.assert_awaited_once()
+        call = mcp.execute_tool.await_args
+        assert call.args[0] == "mcp.paperless.update_document"
+        assert call.args[1]["storage_path"] == "/x"
+        # The push reports the doc as filed but flags the metadata gap.
+        assert pushed and pushed[0][1]["status"] == "completed"
+        assert "nicht gesetzt" in pushed[0][1]["message"].lower()
 
 
 # ===========================================================================

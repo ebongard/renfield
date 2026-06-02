@@ -37,6 +37,7 @@ import type {
   DocumentReadyMessage,
   DoneMessage,
   IntentFeedbackRequestMessage,
+  PaperlessCommittedMessage,
   RagContextMessage,
   UploadProcessedMessage,
 } from '../hooks/useChatWebSocket';
@@ -867,6 +868,15 @@ export function ChatProvider({ children }: ChatProviderProps) {
     ));
   }, []);
 
+  // An async Paperless commit finished in the background (consume + deferred
+  // PATCH). The commit's immediate reply was "wird verarbeitet…"; this push
+  // carries the final outcome ("Im Paperless abgelegt" / a failure), shown as
+  // an assistant message so the user sees the result without re-asking.
+  const handlePaperlessCommitted = useCallback((data: PaperlessCommittedMessage) => {
+    if (!data.message) return;
+    setMessages((prev) => [...prev, { role: 'assistant', content: data.message }]);
+  }, []);
+
   // Adaptive Card from server (sent after orchestrated/single-role response)
   const handleCard = useCallback((data: CardMessage) => {
     if (!data.card) return;
@@ -902,6 +912,7 @@ export function ChatProvider({ children }: ChatProviderProps) {
     onDocumentProcessing: handleDocumentProcessing,
     onDocumentReady: handleDocumentReady,
     onUploadProcessed: handleUploadProcessed,
+    onPaperlessCommitted: handlePaperlessCommitted,
     onDocumentError: handleDocumentError,
     onAgentThinking: handleAgentThinking,
     onAgentToolCall: handleAgentToolCall,

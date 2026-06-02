@@ -36,11 +36,23 @@ This tool handles that second turn:
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from typing import Any
 
 from loguru import logger
+
+# Hold references to fire-and-forget background tasks (the async-commit
+# finalizer). asyncio.create_task keeps only a weak ref, so without this the
+# GC can cancel an in-flight finalize mid-poll.
+_bg_tasks: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> None:
+    task = asyncio.create_task(coro)
+    _bg_tasks.add(task)
+    task.add_done_callback(_bg_tasks.discard)
 
 # NB: SQLAlchemy + ORM-model + session-factory imports are done lazily
 # inside each function. Importing ``services.database`` at module level
@@ -310,13 +322,12 @@ async def _commit_approved(
     None / empty when the pending row had no resolutions (every field
     resolved exactly during extraction).
     """
-    from sqlalchemy import delete, update
+    from sqlalchemy import delete
 
     from models.database import (
         ChatUpload,
         PaperlessExtractionExample,
         PaperlessPendingConfirm,
-        User,
     )
     from services.database import AsyncSessionLocal
 
@@ -463,6 +474,12 @@ async def _commit_approved(
         "title": post_fuzzy.get("title") or upload.filename,
         "filename": upload.filename,
         "file_content_base64": file_content_base64,
+        # Submit async: return right after the POST, don't block the MCP call
+        # (and the agent turn) on Paperless's consume queue — which exceeds the
+        # 30s tool-call timeout for large/OCR-heavy docs. The deferred PATCH
+        # (storage_path/created_date/custom_fields) is applied in the background
+        # by _finalize_paperless_commit once the document id exists.
+        "wait_for_consume": False,
     }
     for key in ("correspondent", "document_type", "tags", "storage_path", "created_date"):
         val = final_fields.get(key)
@@ -488,7 +505,8 @@ async def _commit_approved(
             "action_taken": False,
         }
 
-    # Parse the MCP envelope to pull out post_upload_patch status.
+    # Parse the MCP envelope. wait_for_consume=False → task_id + deferred_patch,
+    # NO document_id yet (the background finalizer polls for it).
     inner_msg = mcp_result.get("message")
     inner: dict[str, Any] = {}
     if isinstance(inner_msg, str):
@@ -502,36 +520,22 @@ async def _commit_approved(
         inner = inner_msg
 
     task_id = inner.get("task_id")
-    document_id = inner.get("document_id")
-    patch_state = inner.get("post_upload_patch")
+    deferred_patch = inner.get("deferred_patch") or {}
 
-    # Step 3 — compute the approved field set + embed the doc_text
-    # BEFORE opening the write session. The embed call is up to 5 s
-    # (see retriever ``_EMBED_TIMEOUT_S``); holding a DB connection
-    # across it would tie up the pool for no reason.
+    # Compute the approved field set (for the diff row + tracking metadata) +
+    # embed the doc_text BEFORE the write session (the embed is up to 5s).
     user_approved = dict(post_fuzzy)
     user_approved["title"] = tool_params["title"]
     for key in ("correspondent", "document_type", "storage_path", "created_date"):
         if key in final_fields:
             user_approved[key] = final_fields[key]
         else:
-            # User explicitly skipped (or extraction produced nothing).
             user_approved.pop(key, None)
     user_approved["tags"] = list(final_fields.get("tags") or [])
 
     diff_row: PaperlessExtractionExample | None = None
     if user_approved != post_fuzzy:
         doc_text = _truncate_doc_text(pending)
-        # PR 3: embed at write time so the row is retrievable as a
-        # learning example on subsequent extractions. Embed failure
-        # is non-fatal — the row still captures the raw diff signal,
-        # just won't surface via similarity until a backfill runs.
-        #
-        # Strip the ``_doc_text`` scratchpad key from ``llm_output``
-        # before persisting: leaving it in would double the document
-        # inside every future prompt (once as the snippet, once inside
-        # the rendered LLM-proposal JSON) and leak the untruncated
-        # text — the snippet is already capped at 600 chars.
         from services.paperless_example_retriever import embed_doc_text
         doc_text_embedding = await embed_doc_text(doc_text)
         llm_output_for_persist = {
@@ -546,58 +550,21 @@ async def _commit_approved(
             user_id=user_id,
         )
 
-    # Step 3.5 — build the upload-tracking row (PR 4). Only if we
-    # actually got a document_id back; without it the sweeper has
-    # nothing to fetch. ``doc_text`` here feeds the future ui_sweep
-    # row if the user edits in the Paperless UI within 1 h.
-    tracking_row = None
-    if document_id is not None:
-        from models.database import PaperlessUploadTracking
-        tracking_row = PaperlessUploadTracking(
-            chat_upload_id=pending.attachment_id,
-            paperless_document_id=int(document_id),
-            user_id=user_id,
-            original_metadata=dict(user_approved),
-            doc_text=_truncate_doc_text(pending) if pending else None,
-        )
-
+    # Synchronous writes that DON'T need the document id: the diff row + delete
+    # the pending row. The cold-start trust counter is NOT bumped here — only
+    # after a CONFIRMED consume (in the finalizer), so a doc Paperless later
+    # rejects (e.g. a duplicate) doesn't wrongly increment it. The upload-
+    # tracking row + deferred PATCH need the document id → background finalizer.
+    # (ChatUpload bytes are retained, so a failed consume can be re-uploaded.)
     async with AsyncSessionLocal() as db:
         if diff_row is not None:
             db.add(diff_row)
-        if tracking_row is not None:
-            db.add(tracking_row)
-
-        # Step 4 — increment the cold-start counter. Design: increment
-        # ONLY on successful upload, and only when we actually know the
-        # user. Resolution from session → conversation → user is done
-        # by the caller and passed as user_id.
-        if user_id is not None:
-            await db.execute(
-                update(User)
-                .where(User.id == user_id)
-                .values(
-                    paperless_confirms_used=User.paperless_confirms_used + 1
-                )
-            )
-
-        # Step 5 — delete the pending confirm row.
         await db.execute(
             delete(PaperlessPendingConfirm).where(
                 PaperlessPendingConfirm.confirm_token == pending.confirm_token
             )
         )
         await db.commit()
-
-    # Step 6 — user-facing response.
-    if patch_state == "success":
-        suffix = " mit allen Metadaten."
-    elif patch_state in ("timed_out", "retries_exhausted", "client_error"):
-        suffix = (
-            " — aber der Speicherpfad konnte nicht gesetzt werden. "
-            "Bitte in Paperless selbst anpassen."
-        )
-    else:
-        suffix = "."
 
     created_note = ""
     if created_entries:
@@ -607,17 +574,135 @@ async def _commit_approved(
         if flat:
             created_note = f" (Neu angelegt: {', '.join(sorted(set(flat)))})"
 
+    # Finish in the background: poll consume → document id → apply the deferred
+    # PATCH via update_document → write the tracking row → push the final result
+    # over the chat WS. Keeps the agent turn from blocking on Paperless consume.
+    if task_id:
+        _spawn_bg(_finalize_paperless_commit(
+            task_id=str(task_id),
+            deferred_patch=deferred_patch,
+            user_approved=user_approved,
+            attachment_id=pending.attachment_id,
+            user_id=user_id,
+            session_id=pending.session_id,
+            filename=upload.filename,
+            created_note=created_note,
+            doc_text=_truncate_doc_text(pending) if pending else None,
+            mcp_manager=mcp_manager,
+        ))
+
     return {
         "success": True,
-        "message": f"Im Paperless abgelegt: {upload.filename}{suffix}{created_note}",
+        "message": (
+            f"An Paperless gesendet: {upload.filename}{created_note}. Wird im "
+            "Hintergrund verarbeitet — ich melde mich, sobald es abgelegt ist."
+        ),
         "action_taken": True,
-        "data": {
-            "task_id": task_id,
-            "document_id": document_id,
-            "post_upload_patch": patch_state,
-            "created_entries": created_entries,
-        },
+        "data": {"task_id": task_id, "created_entries": created_entries},
     }
+
+
+async def _finalize_paperless_commit(
+    *,
+    task_id: str,
+    deferred_patch: dict[str, Any],
+    user_approved: dict[str, Any],
+    attachment_id: int,
+    user_id: int | None,
+    session_id: str | None,
+    filename: str,
+    created_note: str,
+    doc_text: str | None,
+    mcp_manager: Any,
+) -> None:
+    """Background tail of an async Paperless commit: poll the consume task for
+    the document id, apply the deferred PATCH (storage_path/created_date/
+    custom_fields) via update_document, write the upload-tracking row, and push
+    the final outcome over the chat WS. Best-effort — every step is guarded; a
+    failure is logged and surfaced in the push, never raised."""
+    failure_reason: str | None = None
+    document_id: int | None = None
+    try:
+        from services.chat_upload_tool import _poll_paperless_task
+        failure_reason, document_id = await _poll_paperless_task(
+            task_id, timeout_s=300.0,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("paperless finalize: task poll failed: %s", exc)
+
+    patch_note = ""
+    if document_id is not None and deferred_patch and any(deferred_patch.values()):
+        upd: dict[str, Any] = {"document_id": int(document_id)}
+        for k in ("storage_path", "created_date", "custom_fields"):
+            v = deferred_patch.get(k)
+            if v:
+                upd[k] = v
+        try:
+            res = await mcp_manager.execute_tool("mcp.paperless.update_document", upd)
+            if not (res and res.get("success")):
+                patch_note = (
+                    " (Zusatz-Metadaten konnten nicht gesetzt werden — "
+                    "bitte in Paperless prüfen)"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("paperless finalize: update_document failed: %s", exc)
+            patch_note = " (Zusatz-Metadaten konnten nicht gesetzt werden)"
+
+    if failure_reason:
+        status, message = "failed", f"Paperless-Verarbeitung fehlgeschlagen: {failure_reason}"
+    elif document_id is None:
+        status, message = "pending", (
+            f"In Paperless hochgeladen: {filename} — die Verarbeitung dauert "
+            "noch an."
+        )
+    else:
+        status, message = "completed", f"Im Paperless abgelegt: {filename}{created_note}{patch_note}"
+
+    # One write session: the upload-tracking row (sweeper baseline), the
+    # cold-start counter (bumped ONLY on a confirmed consume), and the outcome
+    # message persisted to the conversation so it survives a reload or a dropped
+    # WS push (the live push below is best-effort and no-ops on a gone socket).
+    try:
+        from sqlalchemy import update as _update
+
+        from models.database import PaperlessUploadTracking, User
+        from services.conversation_service import ConversationService
+        from services.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
+            if document_id is not None:
+                db.add(PaperlessUploadTracking(
+                    chat_upload_id=attachment_id,
+                    paperless_document_id=int(document_id),
+                    user_id=user_id,
+                    original_metadata=dict(user_approved),
+                    doc_text=doc_text,
+                ))
+            if status == "completed" and user_id is not None:
+                await db.execute(
+                    _update(User)
+                    .where(User.id == user_id)
+                    .values(paperless_confirms_used=User.paperless_confirms_used + 1)
+                )
+            if session_id:
+                await ConversationService(db).save_message(
+                    session_id, "assistant", message, user_id=user_id,
+                )
+            await db.commit()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("paperless finalize: outcome persist failed: %s", exc)
+
+    if session_id:
+        try:
+            from api.websocket.shared import notify_session
+            await notify_session(session_id, {
+                "type": "paperless_committed",
+                "status": status,
+                "document_id": document_id,
+                "filename": filename,
+                "message": message,
+            })
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("paperless finalize: notify_session failed: %s", exc)
 
 
 async def _abort_pending(pending) -> dict:

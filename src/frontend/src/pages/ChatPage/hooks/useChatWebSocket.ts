@@ -67,6 +67,16 @@ export interface UploadProcessedMessage extends BaseWsMessage {
   error?: string | null;
 }
 
+// Pushed when an async Paperless commit finishes in the background (consume +
+// deferred PATCH) — carries the final user-facing result to show in chat.
+export interface PaperlessCommittedMessage extends BaseWsMessage {
+  type: 'paperless_committed';
+  status: string;            // "completed" | "failed" | "pending"
+  document_id?: number | null;
+  filename: string;
+  message: string;
+}
+
 export interface AgentThinkingMessage extends BaseWsMessage {
   type: 'agent_thinking';
   step?: number;
@@ -118,6 +128,7 @@ interface UseChatWebSocketOptions {
   onDocumentReady?: (data: DocumentReadyMessage) => void;
   onDocumentError?: (data: DocumentErrorMessage) => void;
   onUploadProcessed?: (data: UploadProcessedMessage) => void;
+  onPaperlessCommitted?: (data: PaperlessCommittedMessage) => void;
   onAgentThinking?: (data: AgentThinkingMessage) => void;
   onAgentToolCall?: (data: AgentToolCallMessage) => void;
   onAgentToolResult?: (data: AgentToolResultMessage) => void;
@@ -139,6 +150,7 @@ export function useChatWebSocket({
   onDocumentReady,
   onDocumentError,
   onUploadProcessed,
+  onPaperlessCommitted,
   onAgentThinking,
   onAgentToolCall,
   onAgentToolResult,
@@ -209,6 +221,10 @@ export function useChatWebSocket({
         const msg = data as UploadProcessedMessage;
         debug.log('Upload processed:', msg.filename, msg.status);
         onUploadProcessed?.(msg);
+      } else if (data.type === 'paperless_committed') {
+        const msg = data as PaperlessCommittedMessage;
+        debug.log('Paperless committed:', msg.filename, msg.status);
+        onPaperlessCommitted?.(msg);
       } else if (data.type === 'agent_thinking') {
         const msg = data as AgentThinkingMessage;
         debug.log('Agent thinking:', msg.content?.substring(0, 80));
