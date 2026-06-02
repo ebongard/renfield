@@ -57,6 +57,10 @@ CHAT_UPLOAD_TOOLS: dict = {
             "Forward a file the user has attached to this chat to Paperless-NGX "
             "for OCR and archiving. Reads the file from server storage using the "
             "attachment_id shown in the UPLOADED DOCUMENT section of this prompt. "
+            "If no attachment_id is shown (e.g. the user asks in a follow-up "
+            "message), call this tool WITHOUT attachment_id — the server resolves "
+            "the most recent completed upload in this chat session. Never invent "
+            "an attachment_id. "
             "Do NOT pass file_content_base64 — the tool does that internally from "
             "real file bytes. Preferred over mcp.paperless.upload_document for "
             "user-attached files. "
@@ -69,7 +73,9 @@ CHAT_UPLOAD_TOOLS: dict = {
         "parameters": {
             "attachment_id": (
                 "Integer ID of the attachment shown in the UPLOADED DOCUMENT "
-                "section. Required."
+                "section. OPTIONAL — omit it if no id is shown and the server "
+                "will use the most recent completed upload in this chat session. "
+                "Never guess or fabricate an id."
             ),
             "title": (
                 "Optional Paperless document title. Defaults to the attachment "
@@ -168,26 +174,35 @@ async def forward_attachment_to_paperless(
             auth-disabled), the cold-start check is bypassed and
             extraction always runs with confirm.
     """
-    attachment_id_raw = params.get("attachment_id")
-    if attachment_id_raw is None:
-        return {
-            "success": False,
-            "message": "Parameter 'attachment_id' is required",
-            "action_taken": False,
-        }
-    try:
-        attachment_id = int(attachment_id_raw)
-    except (TypeError, ValueError):
-        return {
-            "success": False,
-            "message": f"'attachment_id' must be an integer, got: {attachment_id_raw!r}",
-            "action_taken": False,
-        }
-
     if mcp_manager is None:
         return {
             "success": False,
             "message": "MCP manager not available — Paperless MCP not wired in",
+            "action_taken": False,
+        }
+
+    # attachment_id is a HINT, not a hard requirement. The agent often forwards
+    # as a follow-up message ("auch an Paperless schicken") that carries no bound
+    # attachment, or guesses an id that isn't in this session. Parse leniently —
+    # an unresolvable id falls through to the session fallback below instead of
+    # failing with a confusing "not found" (or the agent fabricating an id).
+    attachment_id_raw = params.get("attachment_id")
+    attachment_id: int | None = None
+    if attachment_id_raw is not None:
+        try:
+            attachment_id = int(attachment_id_raw)
+        except (TypeError, ValueError):
+            attachment_id = None
+
+    # Nothing to resolve from: no usable id AND no session to fall back on.
+    # Return without touching the DB.
+    if attachment_id is None and session_id is None:
+        return {
+            "success": False,
+            "message": (
+                "Kein hochgeladenes Dokument gefunden. Bitte hänge die Datei an "
+                "und warte, bis der Upload abgeschlossen ist."
+            ),
             "action_taken": False,
         }
 
@@ -198,18 +213,48 @@ async def forward_attachment_to_paperless(
         from services.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            query = select(ChatUpload).where(ChatUpload.id == attachment_id)
-            if session_id is not None:
-                query = query.where(ChatUpload.session_id == session_id)
-            result = await db.execute(query)
-            upload = result.scalar_one_or_none()
+            upload = None
+            if attachment_id is not None:
+                query = select(ChatUpload).where(ChatUpload.id == attachment_id)
+                if session_id is not None:
+                    query = query.where(ChatUpload.session_id == session_id)
+                upload = (await db.execute(query)).scalar_one_or_none()
+
+            # Session fallback: resolve to the most recent completed upload in
+            # THIS chat session when the agent passed no/unresolvable id. Scoped
+            # to session_id, so it can never reach another user's upload.
+            if upload is None and session_id is not None:
+                fb = (
+                    select(ChatUpload)
+                    .where(
+                        ChatUpload.session_id == session_id,
+                        ChatUpload.status == "completed",
+                        ChatUpload.extracted_text.isnot(None),
+                    )
+                    .order_by(ChatUpload.id.desc())
+                    .limit(1)
+                )
+                upload = (await db.execute(fb)).scalar_one_or_none()
+                if upload is not None:
+                    logger.info(
+                        "forward_attachment_to_paperless: no usable attachment_id "
+                        "(%r); session fallback → upload %s (%s)",
+                        attachment_id_raw, upload.id, upload.filename,
+                    )
 
         if not upload:
             return {
                 "success": False,
-                "message": f"Attachment {attachment_id} not found",
+                "message": (
+                    "In diesem Chat ist kein hochgeladenes Dokument vorhanden. "
+                    "Bitte hänge die Datei an und warte, bis der Upload "
+                    "abgeschlossen ist, bevor du sie an Paperless schickst."
+                ),
                 "action_taken": False,
             }
+
+        # Authoritative from here on — the fallback may have resolved the id.
+        attachment_id = upload.id
 
         if not upload.file_path or not Path(upload.file_path).is_file():
             return {

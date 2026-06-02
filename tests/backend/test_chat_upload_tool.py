@@ -82,20 +82,23 @@ def _mock_db_returning(upload, captured_query_holder: list | None = None):
 class TestForwardAttachmentToPaperless:
 
     @pytest.mark.unit
-    async def test_missing_attachment_id(self):
-        """Required attachment_id triggers a clear error, no DB/MCP access."""
+    async def test_no_id_no_session_returns_no_document(self):
+        """No attachment_id AND no session to fall back on → clear no-document
+        message, no DB/MCP access (nothing to resolve)."""
         result = await forward_attachment_to_paperless({}, mcp_manager=MagicMock())
         assert result["success"] is False
-        assert "attachment_id" in result["message"]
+        assert "dokument" in result["message"].lower()
 
     @pytest.mark.unit
-    async def test_non_integer_attachment_id(self):
-        """Non-integer attachment_id is rejected with a message including the bad value."""
+    async def test_non_integer_attachment_id_without_session(self):
+        """A non-integer id is treated as 'no usable id' (a hint, not a hard
+        requirement); with no session to fall back on, returns the no-document
+        message instead of a type error."""
         result = await forward_attachment_to_paperless(
             {"attachment_id": "not-a-number"}, mcp_manager=MagicMock()
         )
         assert result["success"] is False
-        assert "integer" in result["message"].lower()
+        assert "dokument" in result["message"].lower()
 
     @pytest.mark.unit
     async def test_missing_mcp_manager(self):
@@ -107,8 +110,9 @@ class TestForwardAttachmentToPaperless:
         assert "mcp" in result["message"].lower()
 
     @pytest.mark.unit
-    async def test_attachment_not_found(self):
-        """Unknown attachment_id returns a not-found error."""
+    async def test_unknown_id_and_empty_session_returns_no_document(self):
+        """Unknown id AND no completed upload in the session → clear no-document
+        message (no leak of the fabricated/guessed id)."""
         stubs = _stub_db_module()
         try:
             with patch(
@@ -117,12 +121,51 @@ class TestForwardAttachmentToPaperless:
                 create=True,
             ):
                 result = await forward_attachment_to_paperless(
-                    {"attachment_id": 999}, mcp_manager=AsyncMock()
+                    {"attachment_id": 999},
+                    mcp_manager=AsyncMock(),
+                    session_id="session-abc",
                 )
         finally:
             _teardown_stubs(stubs)
         assert result["success"] is False
-        assert "999" in result["message"]
+        assert "dokument" in result["message"].lower()
+
+    @pytest.mark.unit
+    async def test_session_fallback_resolves_latest_upload(self):
+        """No attachment_id in the message (agent forwards as a follow-up) → the
+        tool resolves the most recent completed upload in the session instead of
+        failing or making the agent guess an id."""
+        pdf_bytes = b"%PDF-1.4\n" + b"f" * 200
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_bytes)
+            tmp_path = f.name
+        try:
+            upload = _make_upload(
+                file_path=tmp_path, filename="Fallback.pdf", session_id="session-abc"
+            )
+            mock_mcp = AsyncMock()
+            mock_mcp.execute_tool = AsyncMock(return_value={
+                "success": True,
+                "message": json.dumps({"task_id": "fb-1"}),
+            })
+            stubs = _stub_db_module()
+            try:
+                with patch(
+                    "services.database.AsyncSessionLocal",
+                    _mock_db_returning(upload),
+                    create=True,
+                ):
+                    result = await forward_attachment_to_paperless(
+                        {"skip_metadata": True},  # no attachment_id passed
+                        mcp_manager=mock_mcp,
+                        session_id="session-abc",
+                    )
+            finally:
+                _teardown_stubs(stubs)
+            assert result["success"] is True
+            assert result["data"]["attachment_id"] == 42
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
 
     @pytest.mark.unit
     async def test_file_missing_on_disk(self):

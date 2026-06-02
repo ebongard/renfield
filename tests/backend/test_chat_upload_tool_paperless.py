@@ -739,19 +739,23 @@ class TestPaperlessTaskPolling:
 class TestForwardAttachmentValidation:
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_missing_attachment_id_errors(self):
+    async def test_missing_attachment_id_no_session_returns_no_document(self):
+        # attachment_id is now optional: with no id AND no session to fall back
+        # on, return a clear no-document message (was: 'attachment_id required').
         result = await forward_attachment_to_paperless({}, mcp_manager=MagicMock())
         assert result["success"] is False
-        assert "attachment_id" in result["message"]
+        assert "dokument" in result["message"].lower()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
-    async def test_non_integer_attachment_id_errors(self):
+    async def test_non_integer_attachment_id_no_session_returns_no_document(self):
+        # A non-integer id is treated as 'no usable id' (a hint, not a hard
+        # error); with no session it falls through to the no-document message.
         result = await forward_attachment_to_paperless(
             {"attachment_id": "abc"}, mcp_manager=MagicMock(),
         )
         assert result["success"] is False
-        assert "integer" in result["message"].lower()
+        assert "dokument" in result["message"].lower()
 
     @pytest.mark.asyncio
     @pytest.mark.unit
