@@ -32,13 +32,15 @@ from pathlib import Path
 
 from loguru import logger
 
+from utils.config import settings
 
-# Cold-start window for the LLM-metadata confirm flow. Design doc § 5:
-# first N uploads per user require explicit confirm; after that the
-# system trusts itself and extraction runs silently. N=10 is
-# conservative — covers "first two weeks of household use" at ~1
-# upload/day without becoming permanent friction.
-_COLD_START_CONFIRM_N = 10
+
+# Cold-start window for the LLM-metadata confirm flow: the first N archives
+# require an explicit confirm; after that the system trusts itself and archives
+# silently. Sourced from settings (default 3) so it's tunable without a code
+# change — `PAPERLESS_COLD_START_CONFIRM_N=0` disables the confirm entirely.
+# (Was a hard-coded 10, which felt like permanent friction in practice.)
+_COLD_START_CONFIRM_N = settings.paperless_cold_start_confirm_n
 
 # Skip-metadata heuristic. The agent can pass ``skip_metadata=True``
 # explicitly when the user said "ohne Metadaten". The tool itself also

@@ -485,6 +485,10 @@ class Settings(BaseSettings):
     chat_upload_retention_days: int = Field(default=30, ge=1, le=365)
     chat_upload_cleanup_enabled: bool = False
     chat_upload_email_account: str = "primary"
+    # Paperless cold-start confirm ramp: the first N archives show a metadata
+    # confirm; after N the system trusts itself and archives silently. 0 =
+    # never confirm (always silent). Tunable without a code change.
+    paperless_cold_start_confirm_n: int = Field(default=3, ge=0, le=100)
 
     # Federation (v2 — F5a depth + cycle detection)
     # Max number of federation hops a query can traverse before
